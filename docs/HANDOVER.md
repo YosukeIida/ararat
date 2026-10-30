@@ -26,18 +26,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Harness window not yet viewed by the owner (README: `xc swift run AraratHarness [path]`).
 - Everything up to here is in the initial commit. Xcode 27.1 installed and selected; `.mcp.json`
   registers the Xcode MCP (`xcrun mcpbridge`).
+- Yab static analysis done: findings in `docs/research/yab-static.md`, method and scripts in
+  `docs/research/yab/`. The floating sidebar's logic was not located (stripped Swift closures in
+  the `Column*` classes); its values come from observing Yab. The saved Ghidra project (1.2 GB) and the arm64
+  slice are in `analysis/yab/` (gitignored); reopen with `docs/research/yab/README.md` section 3. No REA MCP registration was made.
 
 ## Next
 
-1. Analyse Yab statically with REA. Ready: REA at `~/workspace/github.com/morluto/rea`
-   (commit 8f920bb6, `npm ci && npm run build` done); the devshell has nodejs_22 22.23.4 and, from
-   nixpkgs-unstable, Ghidra 12.1.4 (REA's verified version) with OpenJDK 21. `rea doctor` admits
-   Ghidra; it still flags the other engines and the agent registrations, which are not wanted
-   (no MCP registration made). Yab 0.42.1 (`dev.serafim.fast`) is universal (x86_64 + arm64);
-   analyse the arm64 slice (`lipo -thin arm64`). Owner chose Ghidra over IDA Pro (IDA Free has no
-   ARM64 decompiler and decompiles in Hex-Rays' cloud; Pro starts at EUR 1,099 a year).
-   Yab's terms (2026-09-30) were checked: lawful use allowed, no anti-analysis clause.
-2. Observe Yab's floating sidebar and settings; write the spec.
+1. Observe Yab's floating sidebar and settings (an owner task in the GUI); write the spec.
 
 ## Blocked
 
