@@ -1,0 +1,53 @@
+{
+  "sidebar": {
+    "containers": [
+      { "global": {} },
+      {
+        "spaces": [
+          "space-work",
+          {
+            "id": "space-work",
+            "title": "Work",
+            "profile": { "default": true },
+            "containerIDs": ["pinned", "pin-work", "unpinned", "today-work"],
+            "customInfo": { "iconType": { "emoji_v2": "💼" } }
+          },
+          "space-home",
+          {
+            "id": "space-home",
+            "title": "Home",
+            "profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } },
+            "containerIDs": ["pinned", "pin-home", "unpinned", "today-home"]
+          }
+        ],
+        "topAppsContainerIDs": [{ "default": true }, "fav-default"],
+        "items": [
+          "fav-default", { "id": "fav-default", "parentID": null, "childrenIds": ["tab-mail"], "title": null,
+            "data": { "itemContainer": { "containerType": { "topApps": { "_0": { "default": true } } } } } },
+          "tab-mail", { "id": "tab-mail", "parentID": "fav-default", "childrenIds": [], "title": null,
+            "data": { "tab": { "savedURL": "https://mail.example.com/", "savedTitle": "Mail" } } },
+          "pin-work", { "id": "pin-work", "parentID": null, "childrenIds": ["folder-docs", "split-1"], "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-work" } } } } },
+          "folder-docs", { "id": "folder-docs", "parentID": "pin-work", "childrenIds": ["tab-spec"], "title": "Docs",
+            "data": { "list": {} } },
+          "tab-spec", { "id": "tab-spec", "parentID": "folder-docs", "childrenIds": [], "title": "Spec (renamed)",
+            "data": { "tab": { "savedURL": "https://docs.example.com/spec", "savedTitle": "Spec" } } },
+          "split-1", { "id": "split-1", "parentID": "pin-work", "childrenIds": ["tab-a", "tab-b"], "title": null,
+            "data": { "splitView": { "layoutOrientation": "horizontal", "itemWidthFactors": ["tab-a", 0.3, "tab-b", 0.7] } } },
+          "tab-a", { "id": "tab-a", "parentID": "split-1", "childrenIds": [], "title": null,
+            "data": { "tab": { "savedURL": "https://a.example.com", "savedTitle": "A" } } },
+          "tab-b", { "id": "tab-b", "parentID": "split-1", "childrenIds": [], "title": null,
+            "data": { "tab": { "savedURL": "https://b.example.com", "savedTitle": "B" } } },
+          "today-work", { "id": "today-work", "parentID": null, "childrenIds": ["easel-1"], "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-work" } } } } },
+          "easel-1", { "id": "easel-1", "parentID": "today-work", "childrenIds": [], "title": "Board",
+            "data": { "easel": {} } },
+          "pin-home", { "id": "pin-home", "parentID": null, "childrenIds": [], "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-home" } } } } },
+          "today-home", { "id": "today-home", "parentID": null, "childrenIds": [], "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-home" } } } } }
+        ]
+      }
+    ]
+  }
+}

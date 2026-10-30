@@ -1,0 +1,4 @@
+.build/
+Generated/
+Sources/ararat_ffiFFI/include/
+Sources/AraratKit/Generated.swift
