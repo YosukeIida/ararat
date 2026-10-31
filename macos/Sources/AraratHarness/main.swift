@@ -76,7 +76,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let window = NSWindow(
+        let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
