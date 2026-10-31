@@ -8,7 +8,7 @@ Japanese translation: `arc-sidebar-layout.ja.md`. Arc 1.171.0, dark appearance, 
 | URL field | x 9 to 169 (8 pt from the sidebar's right edge), y 46–81, 36 pt tall | x 8, y 46, 36 tall, radius 10, host text 13 pt |
 | URL field to favorites | 8 pt | 8 |
 | Favorites tiles | 2 columns at this width, each 76 pt wide and 47 pt tall, 8 pt apart, from x 8 | 47 tall, 8 apart; 4 columns while a tile stays at least 47 wide, else 2, never 3; radius 13 |
-| Corner radius (URL field, tiles, selected row) | About 12 pt when fitted as a circle; the corners may be continuous, which reads larger than their nominal radius | 10 (field, rows), 13 (tiles) |
+| Corner radius (URL field, tiles, selected row) | 11 pt, continuous, the same for all three (see below) | 10 (field, rows), 13 (tiles) |
 | Space name | Text from x 16; its top 22 pt below the tiles | Header 31 tall, title 14 pt medium |
 | Rows | 41 pt pitch, single- and two-line rows alike | 41 pitch |
 | Selected row fill | 36 pt tall (5 pt between two filled rows), x 8–169; dark fill rgb(67, 63, 75) on a sidebar of rgb(22, 15, 31) | 36 tall, radius 10; dark white 13% |
@@ -18,5 +18,7 @@ Japanese translation: `arc-sidebar-layout.ja.md`. Arc 1.171.0, dark appearance, 
 | Divider above New Tab | 1 pt line from x 18 to 159; "New Tab" label from x 20 | |
 | Bottom bar | Icons 16 pt tall centred about 25 pt above the window's bottom edge; Library at x 17, + ending at x 160 | 36 tall, 6 pt from the bottom |
 | Sidebar width | The page card starts at x 178 (the owner's width) | Default 328, range 220–520 |
+
+**Corner radius.** Apple's design guidance gives no number for these; it asks for continuous corners and for inner shapes concentric with their container (radius = the container's minus the padding; WWDC25 session 356). Each corner's edge profile, read with sub-pixel coverage over its first 14 rows, was compared with rounded rectangles drawn by Core Animation at 1× (`cornerCurve` `.continuous` and `.circular`, radius 8–15 in 0.5 steps). All six corners (top and bottom of the URL field, a tile and the selected row) fit radius 11–11.5; continuous 11 is among the best three for every corner and best for four, with 0.14–0.17 pt rms. Circular and continuous differ by less than the fit's noise at this size, so the curve itself is Apple's default (continuous) rather than measured. Cra's 13 for tiles does not fit.
 
 Not measured: the light appearance, hover fill, fonts by name, the space-name row's height, and the empty state. The nesting indent rests on one row and disagrees with Cra's 18 pt; measure a second level before relying on it.
