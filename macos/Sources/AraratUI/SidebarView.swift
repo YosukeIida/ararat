@@ -26,6 +26,17 @@ public final class SidebarView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    public var spaceShown: Int { spaceIndex }
+    public var selectedRowID: String? { selectedID }
+
+    public func selectRow(id: String) -> Bool {
+        guard snapshot.spaces.indices.contains(spaceIndex) else { return false }
+        let space = snapshot.spaces[spaceIndex]
+        guard let row = (space.favorites + space.pinned + space.today).first(where: { $0.id == id }) else { return false }
+        select(row)
+        return true
+    }
+
     public func showSpace(at index: Int) {
         guard snapshot.spaces.indices.contains(index) else { return }
         spaceIndex = index

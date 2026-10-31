@@ -38,6 +38,7 @@ if checkOnly {
 final class HarnessDelegate: NSObject, NSApplicationDelegate {
     let snapshot: WorkspaceSnapshot
     var window: NSWindow?
+    var sidebar: SidebarView?
 
     init(snapshot: WorkspaceSnapshot) { self.snapshot = snapshot }
 
@@ -57,6 +58,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         background.blendingMode = .behindWindow
 
         let sidebar = SidebarView(snapshot: snapshot)
+        self.sidebar = sidebar
         let card = PlaceholderCard()
         sidebar.onSelect = { row in card.show(title: row.title, url: row.url) }
 
@@ -79,6 +81,36 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         self.window = window
         NSApp.activate()
+        readCommands()
+        HitchMonitor.start()
+    }
+
+    private func readCommands() {
+        Thread.detachNewThread {
+            while let line = readLine() {
+                DispatchQueue.main.async { self.run(line) }
+            }
+        }
+    }
+
+    private func run(_ line: String) {
+        guard let sidebar else { return }
+        let words = line.split(separator: " ", maxSplits: 1).map(String.init)
+        let reply: String
+        switch (words.first, words.count > 1 ? words[1] : nil) {
+        case ("space", let arg?):
+            guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply = "error no space \(arg)"; break }
+            sidebar.showSpace(at: index)
+            reply = "ok space \(index)"
+        case ("select", let id?):
+            reply = sidebar.selectRow(id: id) ? "ok select \(id)" : "error no row \(id)"
+        case ("state", nil):
+            reply = "state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-")"
+        default:
+            reply = "error unknown command"
+        }
+        print(reply)
+        fflush(stdout)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -92,7 +124,7 @@ final class PlaceholderCard: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = 10
-        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        updateFill()
         label.alignment = .center
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -109,6 +141,33 @@ final class PlaceholderCard: NSView {
 
     func show(title: String, url: String?) {
         label.stringValue = [title, url].compactMap { $0 }.joined(separator: "\n")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
+    private func updateFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        }
+    }
+}
+
+enum HitchMonitor {
+    static func start() {
+        Thread.detachNewThread {
+            while true {
+                let sent = DispatchTime.now().uptimeNanoseconds
+                let done = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { done.signal() }
+                done.wait()
+                let ms = (DispatchTime.now().uptimeNanoseconds - sent) / 1_000_000
+                if ms > 100 { FileHandle.standardError.write(Data("hitch \(ms) ms\n".utf8)) }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
     }
 }
 

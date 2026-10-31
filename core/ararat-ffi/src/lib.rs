@@ -93,3 +93,17 @@ fn row(depth: usize, item: &Item) -> Option<Row> {
         kind,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cyclic_arc_file_still_gives_a_snapshot() {
+        let json = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
+            .replace(r#""id": "pin-work", "parentID": null"#, r#""id": "pin-work", "parentID": "tab-spec""#);
+        assert!(json.contains(r#""id": "pin-work", "parentID": "tab-spec""#));
+        let snapshot = import_arc_sidebar(json).unwrap();
+        assert!(!snapshot.spaces.is_empty());
+    }
+}

@@ -141,6 +141,9 @@ fn run(mut conn: Connection, rx: Receiver<Msg>, error: &Mutex<Option<String>>) {
     loop {
         let msg = match due {
             None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            // Checked before receiving: with writes still queued, recv_timeout would keep
+            // returning them and the commit would never come due.
+            Some(due) if Instant::now() >= due => Err(RecvTimeoutError::Timeout),
             Some(due) => rx.recv_timeout(due.saturating_duration_since(Instant::now())),
         };
         let result = match msg {

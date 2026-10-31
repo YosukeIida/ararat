@@ -1,4 +1,4 @@
-// Format from Cra's notes on Arc 1.168–1.170, not checked against a real file yet.
+// Format from Cra's notes on Arc 1.168–1.170; it read the owner's Arc 1.171 file without error.
 // Unmodelled kinds (easel, arcDocument, tabGroup) are skipped rather than rejected, so one
 // easel does not fail a whole import.
 
@@ -28,7 +28,7 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
     }
 
     let mut favorites = HashMap::new();
-    for (key, value) in flat_pairs(&container["topAppsContainerIDs"])? {
+    for (key, value) in optional_flat_pairs(&container["topAppsContainerIDs"])? {
         let id = value.as_str().ok_or_else(|| err("topAppsContainerIDs: id is not a string"))?;
         favorites.insert(profile(key), id.to_string());
     }
@@ -43,7 +43,18 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
         }
     }
 
-    Ok(Workspace { spaces, favorites, items })
+    for space in &spaces {
+        for id in [&space.pinned, &space.today] {
+            if !matches!(items.get(id), Some(Item { kind: ItemKind::Container, .. })) {
+                return Err(err(&format!("space {} refers to {id}, which is not a container", space.id)));
+            }
+        }
+    }
+    let mut workspace = Workspace { spaces, favorites, items };
+    // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
+    workspace.repair_tree();
+    workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
+    Ok(workspace)
 }
 
 fn space(id: String, obj: &Value, order: String) -> Result<Space> {
@@ -86,7 +97,7 @@ fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {
                 Some("vertical") => Orientation::Vertical,
                 _ => Orientation::Horizontal,
             },
-            width_factors: flat_pairs(&body["itemWidthFactors"])?
+            width_factors: optional_flat_pairs(&body["itemWidthFactors"])?
                 .into_iter()
                 .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_f64()?)))
                 .collect(),
@@ -147,10 +158,12 @@ fn pairs(value: &Value) -> Result<Vec<(Id, &Value)>> {
         .collect()
 }
 
+fn optional_flat_pairs(value: &Value) -> Result<Vec<(&Value, &Value)>> {
+    if value.is_null() { Ok(Vec::new()) } else { flat_pairs(value) }
+}
+
 fn flat_pairs(value: &Value) -> Result<Vec<(&Value, &Value)>> {
-    let Some(list) = value.as_array() else {
-        return Ok(Vec::new());
-    };
+    let list = value.as_array().ok_or_else(|| err("expected a flat list"))?;
     if list.len() % 2 != 0 {
         return Err(err("flat list has an odd length"));
     }

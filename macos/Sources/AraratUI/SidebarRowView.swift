@@ -59,9 +59,32 @@ final class SidebarRowView: NSView {
     override func mouseUp(with event: NSEvent) { action() }
     override func accessibilityPerformPress() -> Bool { action(); return true }
 
+    override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { true }
+    override func becomeFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
+    override func resignFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case " ", "\r", "\u{3}": action()
+        default: super.keyDown(with: event)
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
     private func updateFill() {
         let alpha: CGFloat = selected ? 0.22 : hovered ? 0.12 : 0
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+        }
     }
 
     static func symbol(for kind: RowKind) -> NSImage {
@@ -88,7 +111,7 @@ final class FavoriteTile: NSButton {
         setAccessibilityLabel(row.title)
         wantsLayer = true
         layer?.cornerRadius = 13
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
         action = #selector(pressed)
@@ -98,4 +121,15 @@ final class FavoriteTile: NSButton {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     @objc private func pressed() { onPress() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
+    private func updateFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        }
+    }
 }

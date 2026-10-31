@@ -16,8 +16,10 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Tree repair done (`core/ararat-core/src/tree.rs`, `tests/tree.rs`): cycles, orphans and
   containers given a parent. Not done: "delete wins over a concurrent edit unless it is a
   restore" needs tombstones and belongs to the sync merge (phase 8). Nothing ticks the HLC yet;
-  imported items carry a zero HLC. Nothing calls `repair_tree` yet; the hooks are after `load` in
-  `Store::open` and after every sync merge.
+  imported items carry a zero HLC. The Arc importer calls `repair_tree` and keeps its result (the
+  file is the origin of those registers). Elsewhere repair is to be a view over unmodified
+  registers (architecture 6.1, Codex A2): `repair_tree` still mutates, so the view form is built
+  with the sync merge in phase 8, together with delivery-order tests.
 - Importer ran on the owner's real `StorableSidebar.json` without error: 6 spaces, favorites and
   pinned counted, **today 0 in every space**. Most likely Arc's auto-archive (the owner's
   setting archives Today after a set time; one space was seen empty in Arc on 2026-10-31). The
@@ -34,6 +36,9 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 - Yab observation done by GUI automation: findings in `docs/research/yab-observed.md`, tools in
   `docs/research/yab/` (README section 4). Phase 1's parallel research track is complete.
+- Phase-1 review findings fixed after three Codex rounds (`docs/reviews/2026-10-31-phase1-judgement.md`).
+  Left open on purpose: the C1 starvation and an interrupted commit have no deterministic test
+  (a writer hook was not taken); repair as a view waits for the sync merge (phase 8).
 - Arc and Ardia floating sidebars measured the same way: `docs/research/arc-ardia-observed.md`.
   Arc, like Yab, keeps the sidebar while the pointer is left of the window, up to about 250 pt
   away; above the window and on deactivation Arc hides, Yab stays. Ardia hides on leaving the
@@ -45,10 +50,9 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Next
 
-1. Fix the findings judged in `docs/reviews/2026-10-31-phase1-judgement.md` (core C1–C5, macOS
-   M1–M5, architecture A1–A4 and A6), then send the fixes to Codex review.
-2. Expose `Store` through UniFFI and load the harness from SQLite; call `repair_tree` after `load`.
-3. Owner: view the harness window.
+1. Expose `Store` through UniFFI and load the harness from SQLite; show the repaired view after
+   `load` without writing it back.
+2. Owner: view the harness window.
 
 ## Known loose ends
 

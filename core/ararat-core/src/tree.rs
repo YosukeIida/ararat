@@ -1,6 +1,7 @@
 // Repair runs on the merged state on every device and must give every device the same tree, so
-// it reads nothing but that state and visits ids in sorted order (architecture 6.1). Its writes
-// keep their HLC: every device computes the same ones, so they never compete in a merge.
+// it reads nothing but that state and visits ids in sorted order (architecture 6.1). Why not
+// persist its ops after a sync merge: rewritten registers make the result depend on the order
+// moves arrived in; there it is a view, and only an import writes repaired registers.
 
 use std::collections::BTreeSet;
 

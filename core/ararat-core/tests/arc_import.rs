@@ -1,5 +1,5 @@
-//! The fixture is synthetic, built from Cra's notes on Arc's format; field names still need
-//! checking against a real `StorableSidebar.json` before the importer ships.
+//! The fixture is synthetic, built from Cra's notes on Arc's format. The importer has also read
+//! the owner's real `StorableSidebar.json` (Arc 1.171) without error.
 
 use ararat_core::import::arc_sidebar;
 use ararat_core::model::{ItemKind, Orientation, Profile};
@@ -41,4 +41,39 @@ fn skips_unmodelled_kinds_and_rejects_broken_input() {
     assert!(!ws.items.contains_key("easel-1"));
     assert!(arc_sidebar("{}").is_err());
     assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":["a"]}]}}"#).is_err());
+}
+
+fn fixture_with(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut root: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+    edit(&mut root["sidebar"]["containers"][1]);
+    root.to_string()
+}
+
+#[test]
+fn rejects_missing_or_mistyped_required_lists() {
+    assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":null}]}}"#).is_err());
+    let no_items = fixture_with(|c| {
+        c.as_object_mut().unwrap().remove("items");
+    });
+    assert!(arc_sidebar(&no_items).is_err());
+}
+
+#[test]
+fn rejects_a_space_whose_containers_are_not_containers() {
+    let json = fixture_with(|c| {
+        let spaces = c["spaces"].as_array_mut().unwrap();
+        spaces[1]["containerIDs"][1] = "folder-docs".into();
+    });
+    assert!(arc_sidebar(&json).is_err());
+}
+
+#[test]
+fn repairs_a_cycle_in_the_imported_tree() {
+    let json = fixture_with(|c| {
+        let items = c["items"].as_array_mut().unwrap();
+        let folder = items.iter().position(|v| v == "folder-docs").unwrap() + 1;
+        items[folder]["parentID"] = "tab-spec".into();
+    });
+    let ws = arc_sidebar(&json).unwrap();
+    assert_eq!(ws.check_tree(), Ok(()));
 }

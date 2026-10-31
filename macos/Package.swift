@@ -17,7 +17,9 @@ let package = Package(
     targets: [
         .target(
             name: "ararat_ffiFFI",
-            linkerSettings: [.unsafeFlags(["-L\(coreLib)", "-lararat_ffi"])]
+            // Why not -lararat_ffi: the linker prefers the dylib next to the archive and the
+            // harness would then load it from this checkout's absolute path at launch.
+            linkerSettings: [.unsafeFlags(["\(coreLib)/libararat_ffi.a"])]
         ),
         .target(
             name: "AraratKit",

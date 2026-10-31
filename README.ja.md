@@ -14,7 +14,10 @@ xc() { env -u SDKROOT DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
 macos/scripts/build-core.sh             # 中核をビルドし、Swift の binding を生成し直す
 (cd macos && xc swift run AraratHarness) # 合成した Arc のサイドバーで harness を開く
 (cd macos && xc swift run AraratHarness --check path/to/StorableSidebar.json)
+printf 'space 1\nselect tab-a\nstate\n' | (cd macos && xc swift run AraratHarness)   # ポインタを使わずに harness を動かす
 xc node ~/workspace/github.com/morluto/rea/scripts/rea.mjs doctor   # devshell の Ghidra で REA を使う
 ```
+
+harness は標準入力から `space <index>`、`select <row id>`、`state` を読み、それぞれに標準出力で答える。メインスレッドが 100 ms を超えて止まると、標準エラー出力に `hitch <ms> ms` と書く。
 
 この文書は `README.md` の日本語訳である。内容が食い違うときは英語版に従う。

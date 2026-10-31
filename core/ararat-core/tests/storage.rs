@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ararat_core::import::arc_sidebar;
 use ararat_core::model::{Kind, Op, Record, Workspace};
@@ -98,6 +98,42 @@ fn writes_commit_within_the_batch_window_without_a_flush() {
 }
 
 #[test]
+fn steady_writes_still_commit_within_the_batch_window() {
+    let path = fresh_db("steady");
+    let (store, _) = Store::open(&path).unwrap();
+    let ops = imported().to_ops();
+    let start = Instant::now();
+    let mut committed_while_writing = false;
+    while start.elapsed() < BATCH_WINDOW * 3 {
+        store.write(ops.clone());
+        std::thread::sleep(Duration::from_millis(5));
+        if start.elapsed() > BATCH_WINDOW + Duration::from_millis(500) && count(&path) > 0 {
+            committed_while_writing = true;
+            break;
+        }
+    }
+    assert!(committed_while_writing);
+}
+
+#[test]
+fn a_failed_commit_is_retried_without_a_flush() {
+    let path = fresh_db("retry");
+    let (store, _) = Store::open(&path).unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    store.write(imported().to_ops());
+    std::thread::sleep(BATCH_WINDOW + Duration::from_millis(500));
+    assert!(store.last_error().is_some());
+    assert_eq!(count(&path), 0);
+
+    blocker.execute_batch("ROLLBACK").unwrap();
+    // The first retry is due one BATCH_WINDOW after the failure, the next two after that.
+    std::thread::sleep(BATCH_WINDOW * 3 + Duration::from_millis(500));
+    assert!(count(&path) > 0);
+    assert_eq!(store.last_error(), None);
+}
+
+#[test]
 fn a_failed_commit_keeps_the_batch_and_reports_it() {
     let path = fresh_db("busy");
     let (store, _) = Store::open(&path).unwrap();
@@ -135,6 +171,7 @@ fn rows_of_unknown_kinds_survive() {
 }
 
 const CRASH_DB: &str = "ARARAT_CRASH_DB";
+const CHURN_DB: &str = "ARARAT_CHURN_DB";
 
 // Runs as a no-op in the normal test run; `killed_process_keeps_every_flushed_batch` starts it
 // in a child process that aborts with a batch still unflushed.
@@ -146,6 +183,59 @@ fn crash_child() {
     store.flush().unwrap();
     store.write(vec![Op::Delete(Kind::Item, "tab-spec".into())]);
     std::process::abort();
+}
+
+// Runs as a no-op in the normal test run; `kills_during_a_stream_of_commits_leave_journal_and_records_agreeing`
+// starts it and kills it at varying times while large batches are being committed.
+#[test]
+fn churn_child() {
+    let Ok(path) = std::env::var(CHURN_DB) else { return };
+    let (store, _) = Store::open(PathBuf::from(path).as_path()).unwrap();
+    let mut ws = imported();
+    for round in 0.. {
+        let ops: Vec<Op> = ws.items.values().cloned().map(|mut item| {
+            item.title = Some(format!("round {round}"));
+            Op::Put(Record::Item(item))
+        }).collect();
+        for op in &ops {
+            ws.apply(op);
+        }
+        for _ in 0..50 {
+            store.write(ops.clone());
+        }
+        store.flush().unwrap();
+        if round == 0 {
+            println!("ready");
+        }
+    }
+}
+
+// Why not a hook that aborts between the record writes and COMMIT: it would put test-only code in
+// the writer. This is stress coverage: kills after the first commit, while large commits follow one
+// another, usually land inside one, but no run is guaranteed to.
+#[test]
+fn kills_during_a_stream_of_commits_leave_journal_and_records_agreeing() {
+    let path = fresh_db("churn");
+    for delay in [3, 11, 23, 37, 53, 71] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["churn_child", "--exact", "--nocapture"])
+            .env(CHURN_DB, &path)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        while !line.contains("ready") {
+            line.clear();
+            assert!(std::io::BufRead::read_line(&mut out, &mut line).unwrap() > 0, "child ended early");
+        }
+        std::thread::sleep(Duration::from_millis(delay));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        Store::open(&path).unwrap();
+        assert!(count(&path) > 0);
+        assert_journal_matches_records(&path);
+    }
 }
 
 #[test]

@@ -60,8 +60,18 @@ impl UrlCondition {
 
 fn normalize(s: &str) -> String {
     let s = s.trim().to_lowercase();
-    let s = s.split_once("://").map_or(s.as_str(), |(_, rest)| rest);
+    let s = match s.split_once("://") {
+        Some((scheme, rest)) if is_scheme(scheme) => rest,
+        _ => s.as_str(),
+    };
     s.strip_prefix("www.").unwrap_or(s).to_string()
+}
+
+// RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+fn is_scheme(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
 }
 
 fn host_and_path(normalized: &str) -> &str {
@@ -94,6 +104,13 @@ mod tests {
         assert!(goes_to_work(&r, "https://www.meet.google.com/abc"));
         let r = routing(MatchStyle::Contains, "ref=mail");
         assert!(goes_to_work(&r, "https://example.com/a?ref=mail#top"));
+    }
+
+    #[test]
+    fn contains_keeps_a_scheme_inside_the_condition() {
+        let r = routing(MatchStyle::Contains, "redirect=https://example.com");
+        assert!(!goes_to_work(&r, "https://example.com/plain"));
+        assert!(goes_to_work(&r, "https://login.example.org/?redirect=https://example.com"));
     }
 
     #[test]
