@@ -56,7 +56,6 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 ## Next
 
 1. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
-2. After the owner runs `darwin-switch` (dotfiles' agent-switch shims now load direnv into claude and codex): in a freshly started seat, check `command -v cargo` points into the devshell, then drop the `direnv exec . cargo` workaround from `AGENTS.md`. Homebrew's `rust` is already removed and `core/target` was rebuilt with the devshell toolchain (2026-10-31).
 
 ## Known loose ends
 
