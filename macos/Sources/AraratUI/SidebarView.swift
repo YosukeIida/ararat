@@ -1,8 +1,6 @@
 import AppKit
 import AraratKit
 
-// Sizes are Dia's measured values (research/arc-dia-components.md §5.2), not Arc's 328 pt
-// layout, until the owner picks a target.
 @MainActor
 public final class SidebarView: NSView {
     public var onSelect: ((Row) -> Void)?
@@ -12,7 +10,11 @@ public final class SidebarView: NSView {
     private var selectedID: String?
 
     private let header = NSTextField(labelWithString: "")
+    private let urlField = NSView()
+    private let host = NSTextField(labelWithString: "")
     private let favorites = NSStackView()
+    private var favoriteColumns = 0
+    private var favoritesHeight: NSLayoutConstraint!
     private let rows = NSStackView()
     private let dock = NSStackView()
 
@@ -44,15 +46,26 @@ public final class SidebarView: NSView {
     }
 
     private func build() {
-        header.font = .systemFont(ofSize: 13, weight: .semibold)
+        urlField.wantsLayer = true
+        urlField.layer?.cornerRadius = 11
+        urlField.layer?.cornerCurve = .continuous
+        host.font = .systemFont(ofSize: 13)
+        host.lineBreakMode = .byTruncatingTail
+        host.setAccessibilityLabel("Selected tab host")
+        host.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(host)
+        header.font = .systemFont(ofSize: 14, weight: .medium)
         header.textColor = .secondaryLabelColor
+        let heading = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        heading.addSubview(header)
 
         favorites.orientation = .vertical
         favorites.spacing = 8
         favorites.alignment = .leading
 
         rows.orientation = .vertical
-        rows.spacing = 3
+        rows.spacing = 0
         rows.alignment = .leading
 
         let scroll = NSScrollView()
@@ -68,26 +81,63 @@ public final class SidebarView: NSView {
         dock.orientation = .horizontal
         dock.spacing = 0
 
-        let column = NSStackView(views: [header, favorites, scroll, dock])
+        let column = NSStackView(views: [urlField, favorites, heading, scroll, dock])
         column.orientation = .vertical
         column.alignment = .leading
-        column.spacing = 10
-        column.edgeInsets = NSEdgeInsets(top: 46, left: 6, bottom: 8, right: 6)
+        column.spacing = 0
+        column.setCustomSpacing(8, after: urlField)
+        column.setCustomSpacing(22, after: favorites)
+        column.setCustomSpacing(10, after: scroll)
+        column.edgeInsets = NSEdgeInsets(top: 46, left: 8, bottom: 8, right: 8)
         addSubview(column)
         column.translatesAutoresizingMaskIntoConstraints = false
+        favoritesHeight = favorites.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             column.topAnchor.constraint(equalTo: topAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
-            favorites.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -12),
-            scroll.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -12),
+            urlField.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -16),
+            urlField.heightAnchor.constraint(equalToConstant: 36),
+            host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
+            host.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12),
+            host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            favorites.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            favoritesHeight,
+            heading.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            heading.heightAnchor.constraint(equalToConstant: 31),
+            header.leadingAnchor.constraint(equalTo: heading.leadingAnchor, constant: 8),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: heading.trailingAnchor, constant: -8),
+            header.firstBaselineAnchor.constraint(equalTo: heading.topAnchor, constant: header.font!.capHeight),
+            scroll.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             rows.leadingAnchor.constraint(equalTo: document.leadingAnchor),
             rows.topAnchor.constraint(equalTo: document.topAnchor),
             rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: rows.heightAnchor),
         ])
+        updateFill()
+    }
+
+    override public func layout() {
+        super.layout()
+        let width = bounds.width - 16
+        let columns = width >= 4 * 47 + 3 * 8 ? 4 : width >= 2 * 47 + 8 ? 2 : 1
+        if columns != favoriteColumns {
+            favoriteColumns = columns
+            reloadFavorites()
+        }
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
+    private func updateFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            urlField.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        }
     }
 
     // shortcut: rebuilds every row on each change; switch to rows reused by id when the sidebar becomes live (architecture §7, Cra ledger 12).
@@ -95,18 +145,10 @@ public final class SidebarView: NSView {
         guard snapshot.spaces.indices.contains(spaceIndex) else { return }
         let space = snapshot.spaces[spaceIndex]
         header.stringValue = [space.icon, space.title].compactMap { $0 }.joined(separator: " ")
+        let selected = (space.favorites + space.pinned + space.today).first { $0.id == selectedID }
+        host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
 
-        favorites.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for chunk in stride(from: 0, to: space.favorites.count, by: 4) {
-            let tiles = space.favorites[chunk..<min(chunk + 4, space.favorites.count)].map { row in
-                FavoriteTile(row: row) { [weak self] in self?.select(row) }
-            }
-            let line = NSStackView(views: tiles)
-            line.distribution = .fillEqually
-            line.spacing = 8
-            favorites.addArrangedSubview(line)
-            line.widthAnchor.constraint(equalTo: favorites.widthAnchor).isActive = true
-        }
+        reloadFavorites()
 
         rows.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for row in space.pinned { addRow(row) }
@@ -128,6 +170,27 @@ public final class SidebarView: NSView {
             button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
             button.widthAnchor.constraint(equalToConstant: 34).isActive = true
             dock.addArrangedSubview(button)
+        }
+    }
+
+    private func reloadFavorites() {
+        guard snapshot.spaces.indices.contains(spaceIndex) else { return }
+        let space = snapshot.spaces[spaceIndex]
+        favorites.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let columns = max(1, favoriteColumns)
+        let lineCount = (space.favorites.count + columns - 1) / columns
+        favoritesHeight.constant = CGFloat(lineCount * 47 + max(0, lineCount - 1) * 8)
+        for chunk in stride(from: 0, to: space.favorites.count, by: columns) {
+            var tiles: [NSView] = space.favorites[chunk..<min(chunk + columns, space.favorites.count)].map { row in
+                FavoriteTile(row: row) { [weak self] in self?.select(row) }
+            }
+            while tiles.count < columns { tiles.append(NSView()) }
+            let line = NSStackView(views: tiles)
+            line.distribution = .fillEqually
+            line.spacing = 8
+            line.heightAnchor.constraint(equalToConstant: 47).isActive = true
+            favorites.addArrangedSubview(line)
+            line.widthAnchor.constraint(equalTo: favorites.widthAnchor).isActive = true
         }
     }
 

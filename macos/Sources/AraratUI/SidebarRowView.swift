@@ -5,39 +5,48 @@ import AraratKit
 final class SidebarRowView: NSView {
     private let action: () -> Void
     private let selected: Bool
+    private let fill = NSView()
     private var hovered = false { didSet { updateFill() } }
 
     init(row: Row, selected: Bool, action: @escaping () -> Void) {
         self.action = action
         self.selected = selected
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 10
+        fill.wantsLayer = true
+        fill.layer?.cornerRadius = 11
+        fill.layer?.cornerCurve = .continuous
 
         let icon = NSImageView(image: Self.symbol(for: row.kind))
+        icon.imageScaling = .scaleNone
         icon.contentTintColor = .secondaryLabelColor
-        let title = NSTextField(labelWithString: row.title)
-        title.font = .systemFont(ofSize: 13)
+        let displayTitle = row.kind == .split && row.title.isEmpty ? "Split" : row.title
+        let title = NSTextField(labelWithString: displayTitle)
+        title.font = .systemFont(ofSize: 14)
+        title.maximumNumberOfLines = 2
         title.lineBreakMode = .byTruncatingTail
         title.toolTip = row.url
-        for view in [icon, title] {
+        for view in [fill, icon, title] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
-        let indent = CGFloat(row.depth) * 18
+        let indent = CGFloat(row.depth) * 16
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 34),
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9 + indent),
+            heightAnchor.constraint(equalToConstant: 41),
+            fill.leadingAnchor.constraint(equalTo: leadingAnchor),
+            fill.trailingAnchor.constraint(equalTo: trailingAnchor),
+            fill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            fill.heightAnchor.constraint(equalToConstant: 36),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10 + indent),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
-            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(row.title)
+        setAccessibilityLabel(displayTitle)
         updateFill()
     }
 
@@ -63,9 +72,9 @@ final class SidebarRowView: NSView {
     override var canBecomeKeyView: Bool { true }
     override func becomeFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
     override func resignFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
-    override var focusRingMaskBounds: NSRect { bounds }
+    override var focusRingMaskBounds: NSRect { fill.frame }
     override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+        NSBezierPath(roundedRect: fill.frame, xRadius: 11, yRadius: 11).fill()
     }
 
     override func keyDown(with event: NSEvent) {
@@ -83,7 +92,7 @@ final class SidebarRowView: NSView {
     private func updateFill() {
         let alpha: CGFloat = selected ? 0.22 : hovered ? 0.12 : 0
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+            fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
     }
 
@@ -93,13 +102,15 @@ final class SidebarRowView: NSView {
         case .folder: "folder.fill"
         case .split: "rectangle.split.2x1"
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) ?? NSImage()
     }
 }
 
 @MainActor
 final class FavoriteTile: NSButton {
     private let onPress: () -> Void
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     init(row: Row, onPress: @escaping () -> Void) {
         self.onPress = onPress
@@ -110,7 +121,8 @@ final class FavoriteTile: NSButton {
         toolTip = row.title
         setAccessibilityLabel(row.title)
         wantsLayer = true
-        layer?.cornerRadius = 13
+        layer?.cornerRadius = 11
+        layer?.cornerCurve = .continuous
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
