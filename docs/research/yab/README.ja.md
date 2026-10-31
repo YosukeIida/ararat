@@ -56,3 +56,5 @@ driver は REA のツールの一覧を `box/tools.json` に書き出す。続�
 `settingstext [pane]...` は、開いている設定ウィンドウの各ペインをアクセシビリティ API で選び、各コントロールの種類とラベルを出力する。出力にはオーナー自身のデータ（space の名前、サイト）が含まれるため、repo に入れない。設定のファイル（`~/Library/Preferences/dev.serafim.fast.plist`）は、キーの名前と型だけを読み、値は読まない。
 
 スクロール（`../arc-ardia-observed.ja.md` の 5 節）: `scrollrec <seconds>` は、システム全体のスクロールのイベントを出力する（受信のみのイベントタップで、デルタ、フェーズ、方向の反転の印を記録し、内容は記録しない）。`scrollplay <recording> <fromMs> <toMs> <x> <y>` は、記録のうち指定した時間の範囲のイベントを、元の間隔で指定した点に送る。`scroll <x> <y> wheel <lines>` と `scroll <x> <y> pad <px> <steps> <momentum steps>` は、合成したホイールとトラックパッドのイベントの列を送る。`INV=1` で方向の反転の印を立てる。
+
+動き（`../arc-ardia-observed.ja.md` の 5〜6 節）: `lineprobe <out> <x> <y> <w> <h> <step>...` は、1 画素の行または列（画面の point）の取り込んだフレームをすべて `out` に保存しながら、同じ時計で手順を送る。手順は `m:x:y`、`w:ms`、`k:keycode[:cmd]`、`l:lines`（ホイール）、`p:px:phase:momentum`（トラックパッド）、`x:command`、`o:text`（目印）である。`uvx --with numpy python -I lineshift.py <out> <w> <h> <maxshift> x|y first|last` は、最初または最後のフレームの模様がどれだけ動いたかを、変化したフレームごとに出力する。変化したフレームしか届かないため、静止した画面ではフレームは少ない。タブを id で閉じる前に、その id がスクリプトの作ったタブのものであることを確かめる。Arc は `make new tab` で `about:blank` を受け付けず、そのときアクティブなタブはオーナーのタブのままである。

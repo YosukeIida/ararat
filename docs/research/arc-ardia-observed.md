@@ -43,21 +43,39 @@ Subjects: Arc 1.171.0 with the sidebar hidden (View › Show Sidebar), window 11
 
 ## 5. Switching spaces by scrolling over the sidebar
 
-Measured 2026-10-31 on Arc, Yab 0.42.1 and Ardia, with natural scrolling on. Devices: a Magic Trackpad and a trackball with a scroll mode. The owner swiped and rolled each device over the sidebars of Arc and Yab and reported what moved; `scrollrec` recorded the same events system-wide; `scrollplay` replayed each of the 14 recorded gestures (5 wheel, 9 trackpad) to each app from a middle space; `scroll` posted synthetic streams. Spaces were read and put back with AppleScript. The tools are in `yab/` (README section 4).
+Measured 2026-10-31 on Arc, Yab 0.42.1 and Ardia, with natural scrolling on. Devices: a Magic Trackpad and a trackball with a scroll mode. The owner swiped and rolled each device over the sidebars of Arc and Yab and reported what moved; `scrollrec` recorded the same events system-wide; `scrollplay` replayed each of the 14 recorded gestures (5 wheel, 9 trackpad) to each app from a middle space; `scroll` and `lineprobe` posted synthetic events. Spaces were read and put back with AppleScript. The tools are in `yab/` (README section 4). Directions below are given as the sign of the horizontal delta (`scrollingDeltaX`), not as a hand motion: the owner's "moves right" can mean either the space to the right or the content moving right, so which hand motion gives which sign was not established.
 
-**What the devices send.** Both set the inverted-direction flag (CGEvent field 137, `NSEvent.isDirectionInvertedFromDevice`). A rightward motion gives a negative horizontal delta on both; this is the only assignment that fits the owner's reports for both Arc and Yab together with the replays. The trackball sends wheel events without phases (`isContinuous` 0): 7–12 events over 90–180 ms per flick, the OS acceleration growing the line delta to 15–20 per event, 600–1,600 pt in total. The trackpad sends phased events (may-begin, began, changed, ended) followed by 0.8–1.6 s of momentum events.
+**What the devices send.** Both set the inverted-direction flag (CGEvent field 137, `NSEvent.isDirectionInvertedFromDevice`), and the same hand motion gives the same sign on both: Yab, which follows the sign alone, moved the same way for both devices in the owner's test. The trackball sends wheel events without phases (`isContinuous` 0): 7–12 events over 90–180 ms per flick, the OS acceleration growing the delta to 15–20 lines per event. The trackpad sends phased events (may-begin, began, changed, ended) followed by 0.8–1.6 s of momentum events.
 
-| Rightward motion | Arc | Yab | Ardia (replay only) |
+| Same hand motion | Arc | Yab | Ardia (replay only) |
 |---|---|---|---|
-| Trackball | Previous space (left) | Next space (right) | Next space |
-| Trackpad | Next space | Next space | Next space |
+| Trackball and trackpad | Opposite directions | Same direction | Same direction |
 | Strong trackball flick | 1 space | 2 spaces (each of 5 recorded flicks) | 1 space |
 | Strong trackpad flick | 1 space | 1 space | 1 space |
 
 The replays agree with the owner's reports. In Arc every recorded gesture moved one space except one slow trackpad drag, which moved none; in Ardia every gesture moved one; in Yab every wheel flick moved two and every trackpad gesture one (the slow drag none).
 
-**Why the direction differs.** Arc reverses the direction of wheel events when the flag is set and leaves trackpad events as they are: with synthetic events, setting the flag flips Arc's wheel direction only. Under natural scrolling the two devices therefore move Arc's spaces in opposite directions for the same physical motion. Yab ignores the flag and follows the delta's sign for both. Ardia also reverses wheel events on the flag, but its unflagged wheel direction is the opposite of Arc's, so with natural scrolling both devices go the same way.
+**Direction.** Arc goes to the next space on a negative delta from the trackpad, and on a negative delta from the wheel only after reversing the sign when the inverted flag is set; with synthetic events, setting the flag flipped Arc's wheel direction and left the trackpad's alone. Under natural scrolling the two devices therefore move Arc's spaces in opposite directions for the same hand motion. Yab ignores the flag. Ardia also reverses wheel events on the flag, but its unflagged wheel direction is the opposite of Arc's, so with natural scrolling both devices go the same way.
 
-**Why Yab moves several spaces.** The trackpad is gated by its gesture: in all three apps one gesture moves one space, even with 10,000 pt of momentum. Wheel input has no phases. Arc and Ardia ignore further wheel events for about 300 ms after a switch: a stream of 1-line events 30 ms apart moved one space with 10 events (last at about 270 ms) and two with 12 or 16 (last at about 330 ms), the same in both apps. A real flick ends within 180 ms, so it moves one space. Yab has no such pause: the same streams moved one space with 2–4 events, three with 6 or 8 and five with 12.
+**Arc's wheel rule** (synthetic single events and pairs from `scrollplay`). Arc sums the fixed-point delta (the `scrollingDeltaX` of a line-based event) over a short window: one event of 1.0 does not switch and one of 1.2 does; two events of 1.0 switch when 40 ms apart and not when 50 ms or more apart. After a switch it ignores wheel input: a second strong event 230 ms after the switch was ignored and one 260 ms after switched again. The pause counts from the switch, not from the first event: with the switch made by a second event at 40 ms, an event at 270 ms (230 ms after the switch) was ignored and one at 310 ms switched. Further events do not extend the pause: a stream of 1-line events 30 ms apart moved one space with 10 events (last at about 270 ms), two with 12 (about 330 ms) and two with 16 (about 450 ms). A real flick ends within 180 ms, so it moves one space. Ardia gave the same counts for those streams. Yab moved one space with 2–4 events, three with 6 or 8 and five with 12: it switches again well within 250 ms; its rule was not measured further.
 
-Not measured: how many lines or points start Arc's first switch, whether Arc's pause counts from the switch or from the first event, and vertical wheel input (a diagonal trackball roll was replayed and behaved like its horizontal part).
+**Arc's trackpad rule** (`lineprobe` capturing one pixel row of the sidebar at up to 240 frames per second while posting phased events). The sidebar follows the gesture: each event moves it by half its delta (−4 moves it 2 pt left), with the next or previous space beside it about 180 pt away. On release Arc looks at the motion in about the last 100 ms: any motion picks the space in its direction (−1 three times 16 ms apart, then release, switched; −2 three times, a 60 ms pause and release switched; after a 120 ms pause it did not). With no recent motion it picks the nearest space: held at 90 pt (180 delta) it stayed, at 92 pt it switched, half the 180 pt spacing. Momentum events after the release do not move it further. Settling after a switch fits a spring of response about 250 ms and damping 0.88 (1.5 pt rms); springing back without a switch fits about 190 ms and 0.98 (1.1 pt rms).
+
+**Ends of the list.** Past the last space the sidebar moves with a rubber band: 600 delta moved it about 38 pt, and the intermediate points fall within a few points of `255·(1 − 1/(0.15·x/255 + 1))` with `x` half the delta. Releasing there opened Arc's "Create a Space" page (no space was created; the test returned to the last space). Before the first space sits the Library: the same drag there slid the Library page in, and Arc stayed on it after release.
+
+These values coincide with Dia's published ones (`arc-dia-components.md` section 5.3, profile paging): half the delta, the same rubber band, a 49 ms wheel window above 1, a 0.25 s pause, a 100 ms velocity history. Dia's settle spring is critically damped at 0.25 s; Arc's fitted damping is 0.88.
+
+Not measured: vertical wheel input (a diagonal trackball roll was replayed and behaved like its horizontal part), and whether the 90 pt threshold scales with the sidebar's width.
+
+## 6. Arc's other motion
+
+Measured the same way on the docked sidebar (window 1146×1410 pt, sidebar about 180 pt wide).
+
+| Action | Measured |
+|---|---|
+| Hide the docked sidebar (⌘S) | The page's left edge starts about 50 ms after the key and covers 168 pt in about 90 ms, easing out. Fits an ease-out cubic of 91 ms (2.2 pt rms) or a spring of response 103 ms and damping 0.89 (2.1 pt rms). 3 runs |
+| Show it (⌘S) | Starts 555–585 ms after the key in all 3 runs, then covers 168 pt in about 100 ms, easing out: an ease-out cubic of 99 ms (1.8 pt rms) or a spring of 122 ms and 0.83 (1.2 pt rms). The delay was not explained |
+| Open a tab | The new row is inserted at the top of Today; the rows below move down one row. Their first 28 pt took about 40 ms; the end of the motion could not be tracked |
+| Close a tab | The rows below move up one row (about 41 pt): an ease-out cubic of 117 ms (0.3 pt rms over 3 runs). A closed row at the end of the list fades over about 110 ms |
+
+The View menu's Show/Hide Sidebar item did not always match the sidebar's state when read through the Accessibility API; the sidebar's state was checked on screen.

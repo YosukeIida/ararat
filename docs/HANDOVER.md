@@ -49,15 +49,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   with an "add from Arc" path.
 - Space switching by scrolling measured on Arc, Yab and Ardia with the owner's trackball and trackpad
   (`docs/research/arc-ardia-observed.md` section 5). The owner chose Arc's rule (architecture §7), and
-  Arc's values replace Dia's for all motion; Dia's values are no longer used.
+  Arc's values replace Dia's for all motion. Arc's trackpad paging, wheel rule, ⌘S motion and tab
+  close were then measured (sections 5–6); most coincide with Dia's published values.
 
 ## Next
 
 1. Expose `Store` through UniFFI and load the harness from SQLite; show the repaired view after
    `load` without writing it back.
 2. Owner: view the harness window.
-3. Measure Arc's docked-sidebar show and hide (⌘S), its space slide and its tab open and close with the
-   probe, before building those parts (architecture §7).
 
 ## Known loose ends
 
