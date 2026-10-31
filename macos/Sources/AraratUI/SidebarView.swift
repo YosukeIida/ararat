@@ -5,7 +5,7 @@ import AraratKit
 public final class SidebarView: NSView {
     public var onSelect: ((Row) -> Void)?
 
-    private let snapshot: WorkspaceSnapshot
+    private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
     private var selectedID: String?
 
@@ -16,6 +16,9 @@ public final class SidebarView: NSView {
     private var favoriteColumns = 0
     private var favoritesHeight: NSLayoutConstraint!
     private let rows = NSStackView()
+    private var rowViews: [String: SidebarRowView] = [:]
+    private var favoriteTiles: [String: FavoriteTile] = [:]
+    private var rowDivider: NSBox?
     private let dock = NSStackView()
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
@@ -39,6 +42,22 @@ public final class SidebarView: NSView {
 
     public var spaceShown: Int { spaceIndex }
     public var selectedRowID: String? { selectedID }
+
+    public func update(snapshot: WorkspaceSnapshot) {
+        let shownID = snapshotSpace?.id
+        clearScrollPresentation()
+        spaceScroll = SpaceScrollState()
+        self.snapshot = snapshot
+        spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
+        if let selectedID, !snapshot.spaces.contains(where: {
+            ($0.favorites + $0.pinned + $0.today).contains { $0.id == selectedID }
+        }) { self.selectedID = nil }
+        reload()
+    }
+
+    private var snapshotSpace: SpaceSnapshot? {
+        snapshot.spaces.indices.contains(spaceIndex) ? snapshot.spaces[spaceIndex] : nil
+    }
 
     public func selectRow(id: String) -> Bool {
         guard snapshot.spaces.indices.contains(spaceIndex) else { return false }
@@ -172,25 +191,33 @@ public final class SidebarView: NSView {
         }
     }
 
-    // shortcut: rebuilds every row on each change; switch to rows reused by id when the sidebar becomes live (architecture §7, Cra ledger 12).
     private func reload() {
-        guard snapshot.spaces.indices.contains(spaceIndex) else { return }
-        let space = snapshot.spaces[spaceIndex]
-        header.stringValue = [space.icon, space.title].compactMap { $0 }.joined(separator: " ")
-        let selected = (space.favorites + space.pinned + space.today).first { $0.id == selectedID }
+        let space = snapshotSpace
+        header.stringValue = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
+        let pinned = space?.pinned ?? []
+        let today = space?.today ?? []
+        let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
         host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
 
         reloadFavorites()
 
-        rows.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for row in space.pinned { addRow(row) }
-        if !space.pinned.isEmpty && !space.today.isEmpty {
-            let divider = NSBox()
-            divider.boxType = .separator
-            rows.addArrangedSubview(divider)
-            divider.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        let ids = Set((pinned + today).map(\.id))
+        for id in Array(rowViews.keys) where !ids.contains(id) { removeRow(id: id) }
+        var ordered: [NSView] = (pinned + today).map { rowView(for: $0) }
+        if !pinned.isEmpty && !today.isEmpty {
+            if rowDivider == nil {
+                let divider = NSBox()
+                divider.boxType = .separator
+                rows.addArrangedSubview(divider)
+                divider.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+                rowDivider = divider
+            }
+            ordered.insert(rowDivider!, at: pinned.count)
+        } else {
+            rowDivider?.removeFromSuperview()
+            rowDivider = nil
         }
-        for row in space.today { addRow(row) }
+        arrange(ordered, in: rows)
 
         dock.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, space) in snapshot.spaces.enumerated() {
@@ -206,32 +233,72 @@ public final class SidebarView: NSView {
     }
 
     private func reloadFavorites() {
-        guard snapshot.spaces.indices.contains(spaceIndex) else { return }
-        let space = snapshot.spaces[spaceIndex]
-        favorites.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let models = snapshotSpace?.favorites ?? []
+        let ids = Set(models.map(\.id))
+        let focused = window?.firstResponder as? FavoriteTile
+        for id in Array(favoriteTiles.keys) where !ids.contains(id) {
+            favoriteTiles.removeValue(forKey: id)?.removeFromSuperview()
+        }
         let columns = max(1, favoriteColumns)
-        let lineCount = (space.favorites.count + columns - 1) / columns
+        let lineCount = (models.count + columns - 1) / columns
         favoritesHeight.constant = CGFloat(lineCount * 47 + max(0, lineCount - 1) * 8)
-        for chunk in stride(from: 0, to: space.favorites.count, by: columns) {
-            var tiles: [NSView] = space.favorites[chunk..<min(chunk + columns, space.favorites.count)].map { row in
-                FavoriteTile(row: row) { [weak self] in self?.select(row) }
-            }
-            while tiles.count < columns { tiles.append(NSView()) }
-            let line = NSStackView(views: tiles)
+        var lines = favorites.arrangedSubviews.compactMap { $0 as? NSStackView }
+        while lines.count < lineCount {
+            let line = NSStackView()
             line.distribution = .fillEqually
             line.spacing = 8
-            line.heightAnchor.constraint(equalToConstant: 47).isActive = true
             favorites.addArrangedSubview(line)
-            line.widthAnchor.constraint(equalTo: favorites.widthAnchor).isActive = true
+            NSLayoutConstraint.activate([
+                line.heightAnchor.constraint(equalToConstant: 47),
+                line.widthAnchor.constraint(equalTo: favorites.widthAnchor),
+            ])
+            lines.append(line)
+        }
+        for index in 0..<lineCount {
+            let line = lines[index]
+            line.arrangedSubviews.filter { !($0 is FavoriteTile) }.forEach { $0.removeFromSuperview() }
+            let start = index * columns
+            var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
+                let tile = favoriteTiles[row.id] ?? FavoriteTile(row: row) { [weak self] row in self?.select(row) }
+                favoriteTiles[row.id] = tile
+                tile.update(row: row)
+                tile.refusesFirstResponder = isScrollPreview
+                return tile
+            }
+            while tiles.count < columns { tiles.append(NSView()) }
+            arrange(tiles, in: line)
+        }
+        lines.dropFirst(lineCount).forEach { $0.removeFromSuperview() }
+        if let focused, favoriteTiles[focused.row.id] === focused, window?.firstResponder !== focused {
+            window?.makeFirstResponder(focused)
         }
     }
 
-    private func addRow(_ row: Row) {
-        let view = SidebarRowView(row: row, selected: row.id == selectedID) { [weak self] in
-            self?.select(row)
+    private func rowView(for row: Row) -> SidebarRowView {
+        let view: SidebarRowView
+        if let existing = rowViews[row.id] {
+            view = existing
+        } else {
+            view = SidebarRowView(row: row, selected: row.id == selectedID) { [weak self] row in self?.select(row) }
+            rowViews[row.id] = view
+            rows.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
-        rows.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        view.update(row: row, selected: row.id == selectedID)
+        view.acceptsKeyboardFocus = !isScrollPreview
+        return view
+    }
+
+    private func removeRow(id: String) {
+        rowViews.removeValue(forKey: id)?.removeFromSuperview()
+    }
+
+    private func arrange(_ views: [NSView], in stack: NSStackView) {
+        for (index, view) in views.enumerated() {
+            if index >= stack.arrangedSubviews.count || stack.arrangedSubviews[index] !== view {
+                stack.insertArrangedSubview(view, at: index)
+            }
+        }
     }
 
     private func select(_ row: Row) {

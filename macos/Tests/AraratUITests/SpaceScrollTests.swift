@@ -421,11 +421,23 @@ private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     return (window, sidebar)
 }
 
-private func delayScrollCleanup(for duration: TimeInterval) {
+private func blockScrollCleanup(for duration: TimeInterval) {
     Thread.sleep(forTimeInterval: duration)
 }
 
-@Test @MainActor
+@MainActor
+private final class ScrollCleanupProbe: NSView {
+    var onRemoval: (() -> Void)?
+    private var attached = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { attached = true }
+        else if attached { attached = false; onRemoval?() }
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
 func outgoingPageStaysOutsideViewportWhileSettleCleanupIsDelayed() async throws {
     let (window, sidebar) = scrollTestWindow(spaces: 2)
     defer { window.orderOut(nil); window.contentView = nil }
@@ -436,20 +448,24 @@ func outgoingPageStaysOutsideViewportWhileSettleCleanupIsDelayed() async throws 
     CATransaction.flush()
     let outgoing = try #require(scrollDescendants(sidebar).compactMap { $0 as? SidebarView }.first)
     let page = try #require(outgoing.superview)
+    let (removals, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let probe = ScrollCleanupProbe()
+    probe.onRemoval = { continuation.yield(()); continuation.finish() }
+    page.addSubview(probe)
     page.setFrameOrigin(NSPoint(x: 1, y: 0))
     page.setFrameOrigin(.zero)
     window.display()
     CATransaction.flush()
     #expect(page.layer?.transform.m41 == 0)
     let spring = try #require(page.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
-    try await Task.sleep(for: .seconds(spring.duration * 0.75))
-    #expect(try #require(page.layer?.presentation()).transform.m41 < -224)
-    delayScrollCleanup(for: spring.duration * 0.5)
+    blockScrollCleanup(for: spring.duration * 1.25)
     window.displayIfNeeded()
     CATransaction.flush()
     #expect(page.superview != nil)
     #expect(try #require(page.layer?.presentation()).transform.m41 <= -224)
-    try await Task.sleep(for: .milliseconds(50))
+    var iterator = removals.makeAsyncIterator()
+    let removed: Void? = await iterator.next()
+    #expect(removed != nil)
     #expect(!scrollDescendants(sidebar).contains { $0 is SidebarView })
     #expect(sidebar.spaceShown == 1)
 }

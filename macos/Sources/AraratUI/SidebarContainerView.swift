@@ -69,6 +69,18 @@ public final class SidebarContainerView: NSView {
         processPointer()
     }
 
+    override public func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        if !isHiddenOrHasHiddenAncestor, bounds.contains(local), let window {
+            for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                guard let button = window.standardWindowButton(type), button.window === window,
+                      !button.isHiddenOrHasHiddenAncestor else { continue }
+                if convert(button.bounds, from: button).contains(local) { return button }
+            }
+        }
+        return super.hitTest(point)
+    }
+
     public func selectionChanged() {
         state.hasSelection = sidebar.selectedRowID != nil
         processPointer()

@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 import Testing
 @testable import AraratUI
 
@@ -39,7 +40,13 @@ private func measuredButtonsWindow() -> NSWindow {
                           backing: .buffered, defer: false)
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
-    window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: []))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.frame = content.bounds
+    container.autoresizingMask = [.width, .height]
+    content.addSubview(container)
+    window.contentView = content
     window.layoutIfNeeded()
     return window
 }
@@ -129,4 +136,12 @@ func applicationWindowUpdatesKeepTheMeasuredButtonPositions() throws {
         #expect(frame.midX == x)
         #expect(window.frame.height - frame.midY == 23.5)
     }
+}
+
+@Test @MainActor
+func themeFrameContainsNoApplicationOwnedSiblingViews() throws {
+    let window = measuredButtonsWindow()
+    defer { window.contentView = nil }
+    let theme = try #require(window.contentView?.superview)
+    #expect(!theme.subviews.contains { String(reflecting: type(of: $0)).hasPrefix("AraratUI.") })
 }

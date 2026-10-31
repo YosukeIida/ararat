@@ -3,13 +3,19 @@ import AraratKit
 
 @MainActor
 final class SidebarRowView: NSView {
+    private(set) var row: Row
     var acceptsKeyboardFocus = true
-    private let action: () -> Void
-    private let selected: Bool
+    private let action: (Row) -> Void
+    private var selected: Bool
     private let fill = NSView()
+    private let icon = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    private var fillLeading: NSLayoutConstraint!
+    private var iconLeading: NSLayoutConstraint!
     private var hovered = false { didSet { updateFill() } }
 
-    init(row: Row, selected: Bool, action: @escaping () -> Void) {
+    init(row: Row, selected: Bool, action: @escaping (Row) -> Void) {
+        self.row = row
         self.action = action
         self.selected = selected
         super.init(frame: .zero)
@@ -17,27 +23,24 @@ final class SidebarRowView: NSView {
         fill.layer?.cornerRadius = 11
         fill.layer?.cornerCurve = .continuous
 
-        let icon = NSImageView(image: Self.symbol(for: row.kind))
         icon.imageScaling = .scaleNone
         icon.contentTintColor = .secondaryLabelColor
-        let displayTitle = row.kind == .split && row.title.isEmpty ? "Split" : row.title
-        let title = NSTextField(labelWithString: displayTitle)
         title.font = .systemFont(ofSize: 14)
         title.maximumNumberOfLines = 2
         title.lineBreakMode = .byTruncatingTail
-        title.toolTip = row.url
         for view in [fill, icon, title] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
-        let indent = CGFloat(row.depth) * 16
+        fillLeading = fill.leadingAnchor.constraint(equalTo: leadingAnchor)
+        iconLeading = icon.leadingAnchor.constraint(equalTo: leadingAnchor)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 41),
-            fill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: indent),
+            fillLeading,
             fill.trailingAnchor.constraint(equalTo: trailingAnchor),
             fill.centerYAnchor.constraint(equalTo: centerYAnchor),
             fill.heightAnchor.constraint(equalToConstant: 36),
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10 + indent),
+            iconLeading,
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
@@ -47,12 +50,24 @@ final class SidebarRowView: NSView {
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(displayTitle)
-        updateFill()
+        update(row: row, selected: selected)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func update(row: Row, selected: Bool) {
+        self.row = row
+        self.selected = selected
+        title.stringValue = row.kind == .split && row.title.isEmpty ? "Split" : row.title
+        title.toolTip = row.url
+        icon.image = Self.symbol(for: row.kind)
+        fillLeading.constant = CGFloat(row.depth) * 16
+        iconLeading.constant = 10 + CGFloat(row.depth) * 16
+        setAccessibilityLabel(title.stringValue)
+        updateFill()
+        noteFocusRingMaskChanged()
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -66,8 +81,8 @@ final class SidebarRowView: NSView {
 
     override func mouseEntered(with event: NSEvent) { hovered = true }
     override func mouseExited(with event: NSEvent) { hovered = false }
-    override func mouseUp(with event: NSEvent) { action() }
-    override func accessibilityPerformPress() -> Bool { action(); return true }
+    override func mouseUp(with event: NSEvent) { action(row) }
+    override func accessibilityPerformPress() -> Bool { action(row); return true }
 
     override var acceptsFirstResponder: Bool { acceptsKeyboardFocus }
     override var canBecomeKeyView: Bool { acceptsKeyboardFocus }
@@ -84,7 +99,7 @@ final class SidebarRowView: NSView {
 
     override func keyDown(with event: NSEvent) {
         switch event.charactersIgnoringModifiers {
-        case " ", "\r", "\u{3}": action()
+        case " ", "\r", "\u{3}": action(row)
         default: super.keyDown(with: event)
         }
     }
@@ -114,17 +129,16 @@ final class SidebarRowView: NSView {
 
 @MainActor
 final class FavoriteTile: NSButton {
-    private let onPress: () -> Void
+    private(set) var row: Row
+    private let onPress: (Row) -> Void
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    init(row: Row, onPress: @escaping () -> Void) {
+    init(row: Row, onPress: @escaping (Row) -> Void) {
+        self.row = row
         self.onPress = onPress
         super.init(frame: .zero)
-        image = SidebarRowView.symbol(for: row.kind)
         imagePosition = .imageOnly
         isBordered = false
-        toolTip = row.title
-        setAccessibilityLabel(row.title)
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
@@ -132,12 +146,20 @@ final class FavoriteTile: NSButton {
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
         action = #selector(pressed)
+        update(row: row)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    @objc private func pressed() { onPress() }
+    func update(row: Row) {
+        self.row = row
+        image = SidebarRowView.symbol(for: row.kind)
+        toolTip = row.title
+        setAccessibilityLabel(row.title)
+    }
+
+    @objc private func pressed() { onPress(row) }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

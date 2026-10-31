@@ -83,7 +83,7 @@ func selectedHostTracksVisibleSpace() {
 func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
     for kind in [RowKind.tab, .folder, .split] {
         let row = Row(id: "row", title: "Title", url: nil, depth: 0, kind: kind)
-        let view = SidebarRowView(row: row, selected: false, action: {})
+        let view = SidebarRowView(row: row, selected: false, action: { _ in })
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first!
         #expect(icon.imageScaling == .scaleNone)
         #expect(icon.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: 16, weight: .regular))
@@ -94,7 +94,7 @@ func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
 func rowsKeepPitchIndentAndSplitPlaceholder() {
     for title in ["", "First\nSecond"] {
         let row = Row(id: "split", title: title, url: nil, depth: 1, kind: .split)
-        let view = SidebarRowView(row: row, selected: true, action: {})
+        let view = SidebarRowView(row: row, selected: true, action: { _ in })
         view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
         view.layoutSubtreeIfNeeded()
         let label = view.subviews.compactMap { $0 as? NSTextField }.first!
