@@ -53,11 +53,12 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   Arc's values replace Dia's for all motion. Arc's trackpad paging, wheel rule, ⌘S motion and tab
   close were then measured (sections 5–6); most coincide with Dia's published values.
 
+- Harness sidebar laid out with Arc's measured dimensions (f6c3ff4; three review rounds, last with no findings). Open nits: empty favorites keep both gaps above the space name (Arc's empty state unmeasured); a focused tile loses focus when the column count changes.
+
 ## Next
 
-1. In progress on orca-agent-team (branch `feat/sidebar-layout`): apply Arc's measured layout to the harness (envelope `~/.config/orca-agent-team/ararat/envelopes/sidebar-layout.md`); design commits when review has no must items.
-2. Next after that: sidebar width by dragging its edge, with "reset width" to 240 pt and Arc's limits (card edge 164–500 pt, hide past half the minimum; architecture §7).
-3. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
+1. Sidebar width by dragging its edge, with "reset width" to 240 pt and Arc's limits (card edge 164–500 pt, hide past half the minimum; architecture §7).
+2. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
 
 ## Known loose ends
 
