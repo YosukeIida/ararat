@@ -55,7 +55,9 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Next
 
-1. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
+1. In progress on orca-agent-team (branch `feat/sidebar-layout`): apply Arc's measured layout to the harness (envelope `~/.config/orca-agent-team/ararat/envelopes/sidebar-layout.md`); design commits when review has no must items.
+2. Next after that: sidebar width by dragging its edge, with "reset width" to 240 pt (architecture §7); measure Arc's drag limits first.
+3. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
 
 ## Known loose ends
 
