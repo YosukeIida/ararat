@@ -266,16 +266,23 @@ public final class SidebarView: NSView {
         else if event.phase.contains(.mayBegin) { phase = .mayBegin }
         else if event.phase.isEmpty { phase = .none }
         else { phase = .changed }
-        if phase == .began && event.momentumPhase.isEmpty { clearScrollPresentation() }
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
                                      inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
-        switch spaceScroll.handle(input, index: spaceIndex, count: snapshot.spaces.count, pitch: spacePagePitch) {
+        let layer = spaceColumn.layer
+        let offset = layer?.animation(forKey: "space.scroll") == nil
+            ? layer?.transform.m41 : (layer?.presentation()?.transform.m41 ?? layer?.transform.m41)
+        let action = spaceScroll.handle(input, index: spaceIndex, count: snapshot.spaces.count,
+                                        pitch: spacePagePitch, presentationOffset: Double(offset ?? 0))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        switch action {
         case .vertical: return false
         case .ignored: return true
-        case .switchTo(let index):
-            scrollToSpace(at: index)
         case .follow(let offset):
+            scrollGeneration += 1
+            for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
             prepareScrollPages(offset: offset)
             for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
         case .settle(let index, let offset, let switched):
@@ -300,7 +307,7 @@ public final class SidebarView: NSView {
     }
 
     private func prepareScrollPages(offset: Double) {
-        guard !spaceViewport.bounds.isEmpty else { return }
+        guard !spaceViewport.bounds.isEmpty, spacePagePitch > 0 else { return }
         let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
         let indices = Set((center - 1...center + 1).filter { snapshot.spaces.indices.contains($0) && $0 != spaceIndex })
         guard !showingScrollPages || Set(scrollPreviews.map(\.spaceIndex)) != indices else { return }
@@ -332,9 +339,12 @@ public final class SidebarView: NSView {
             }
             scrollPreviews.append(preview)
         }
+        // Don't translate fresh backing layers before AppKit synchronizes their view geometry.
+        window?.displayIfNeeded()
     }
 
     private func settleScroll(from offset: Double, switched: Bool) {
+        scrollGeneration += 1
         let response = switched ? SidebarMetrics.spaceSwitchResponse : SidebarMetrics.spaceReturnResponse
         let damping = switched ? SidebarMetrics.spaceSwitchDamping : SidebarMetrics.spaceReturnDamping
         let omega = 2 * CGFloat.pi / response
@@ -352,6 +362,8 @@ public final class SidebarView: NSView {
             spring.stiffness = omega * omega
             spring.damping = 2 * damping * omega
             spring.duration = spring.settlingDuration
+            spring.fillMode = .forwards
+            spring.isRemovedOnCompletion = false
             spring.fromValue = origin + offset
             spring.toValue = origin
             view.layer?.transform = CATransform3DMakeTranslation(origin, 0, 0)

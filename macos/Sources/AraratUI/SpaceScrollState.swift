@@ -16,7 +16,6 @@ struct SpaceScrollEvent {
 struct SpaceScrollState {
     enum Action: Equatable {
         case vertical, ignored
-        case switchTo(Int)
         case follow(Double)
         case settle(index: Int, offset: Double, switched: Bool)
     }
@@ -30,7 +29,7 @@ struct SpaceScrollState {
     private var wheel: [(time: TimeInterval, delta: Double)] = []
     private var wheelPausedUntil = -Double.infinity
 
-    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double) -> Action {
+    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double, presentationOffset: Double = 0) -> Action {
         guard count > 0 else { return .vertical }
         if event.kind == .wheel {
             guard abs(event.dx) > abs(event.dy) else { return .vertical }
@@ -43,7 +42,10 @@ struct SpaceScrollState {
             let target = index + (delta < 0 ? 1 : -1)
             guard (0..<count).contains(target) else { return .ignored }
             wheelPausedUntil = event.time + SidebarMetrics.spaceWheelPause
-            return .switchTo(target)
+            tracking = false
+            axis = nil
+            ignoreMomentum = true
+            return .settle(index: target, offset: presentationOffset, switched: true)
         }
         if event.momentum { return ignoreMomentum ? .ignored : .vertical }
         if event.phase == .began {
@@ -59,6 +61,9 @@ struct SpaceScrollState {
         guard pitch > 0 else { return .ignored }
         if axis == nil && (event.dx != 0 || event.dy != 0) {
             axis = abs(event.dx) > abs(event.dy) ? .horizontal : .vertical
+            let boundary = min(Double(index) * pitch, max(-Double(count - 1 - index) * pitch, presentationOffset))
+            let excess = presentationOffset - boundary
+            rawOffset = boundary + excess / (SidebarMetrics.spaceRubberCoefficient * (1 - abs(excess) / SidebarMetrics.spaceRubberDistance))
         }
         let ending = event.phase == .ended || event.phase == .cancelled
         guard axis == .horizontal else {

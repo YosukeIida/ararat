@@ -19,7 +19,7 @@ func wheelAccumulatesOnlyWithinFortyNineMilliseconds() {
         let first = state.handle(.init(dx: -0.6, time: 0), index: 0, count: 3, pitch: 180)
         let second = state.handle(.init(dx: -0.6, time: delay), index: 0, count: 3, pitch: 180)
         #expect(first == .ignored)
-        #expect(second == (delay <= 0.049 ? .switchTo(1) : .ignored))
+        #expect(second == (delay <= 0.049 ? .settle(index: 1, offset: 0, switched: true) : .ignored))
     }
 }
 
@@ -29,14 +29,14 @@ func wheelThresholdIsStrictAndItsWindowSlides() {
     let one = state.handle(.init(dx: -1, time: 0), index: 0, count: 3, pitch: 180)
     let above = state.handle(.init(dx: -0.01, time: 0.01), index: 0, count: 3, pitch: 180)
     #expect(one == .ignored)
-    #expect(above == .switchTo(1))
+    #expect(above == .settle(index: 1, offset: 0, switched: true))
     state = SpaceScrollState()
     for time in [0.0, 0.030, 0.060] {
         let action = state.handle(.init(dx: -0.4, time: time), index: 0, count: 3, pitch: 180)
         #expect(action == .ignored)
     }
     let accumulated = state.handle(.init(dx: -0.4, time: 0.070), index: 0, count: 3, pitch: 180)
-    #expect(accumulated == .switchTo(1))
+    #expect(accumulated == .settle(index: 1, offset: 0, switched: true))
 }
 
 @Test @MainActor
@@ -44,7 +44,7 @@ func wheelInversionAndDirectionMatchArc() {
     for inverted in [false, true] {
         var state = SpaceScrollState()
         let action = state.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3, pitch: 180)
-        #expect(action == .switchTo(inverted ? 0 : 2))
+        #expect(action == .settle(index: inverted ? 0 : 2, offset: 0, switched: true))
     }
 }
 
@@ -52,13 +52,13 @@ func wheelInversionAndDirectionMatchArc() {
 func wheelPauseIsMeasuredFromTheSwitchAndDoesNotExtend() {
     var state = SpaceScrollState()
     let first = state.handle(.init(dx: -2, time: 0), index: 0, count: 4, pitch: 180)
-    #expect(first == .switchTo(1))
+    #expect(first == .settle(index: 1, offset: 0, switched: true))
     for time in [0.030, 0.100, 0.249] {
         let action = state.handle(.init(dx: -20, time: time), index: 1, count: 4, pitch: 180)
         #expect(action == .ignored)
     }
     let afterPause = state.handle(.init(dx: -2, time: 0.250), index: 1, count: 4, pitch: 180)
-    #expect(afterPause == .switchTo(2))
+    #expect(afterPause == .settle(index: 2, offset: 0, switched: true))
 }
 
 @Test @MainActor
@@ -402,5 +402,178 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     for element in during {
         guard let view = view(element) else { continue }
         #expect(!previews.contains { view === $0 || view.isDescendant(of: $0) })
+    }
+}
+
+@MainActor
+private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
+    _ = NSApplication.shared
+    let snapshot = WorkspaceSnapshot(spaces: (0..<spaces).map {
+        SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil,
+                      favorites: [Row(id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab)],
+                      pinned: [Row(id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab)], today: [])
+    })
+    let sidebar = SidebarView(snapshot: snapshot)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
+    window.contentView = sidebar
+    window.orderFront(nil)
+    sidebar.layoutSubtreeIfNeeded()
+    return (window, sidebar)
+}
+
+private func delayScrollCleanup(for duration: TimeInterval) {
+    Thread.sleep(forTimeInterval: duration)
+}
+
+@Test @MainActor
+func outgoingPageStaysOutsideViewportWhileSettleCleanupIsDelayed() async throws {
+    let (window, sidebar) = scrollTestWindow(spaces: 2)
+    defer { window.orderOut(nil); window.contentView = nil }
+    let scroll = try #require(scrollDescendants(sidebar).compactMap { $0 as? NSScrollView }.first)
+    scroll.scrollWheel(with: trackpadEvent(dx: -360, phase: .began, time: 100))
+    scroll.scrollWheel(with: trackpadEvent(dx: 0, phase: .ended, time: 100.020))
+    window.displayIfNeeded()
+    CATransaction.flush()
+    let outgoing = try #require(scrollDescendants(sidebar).compactMap { $0 as? SidebarView }.first)
+    let page = try #require(outgoing.superview)
+    page.setFrameOrigin(NSPoint(x: 1, y: 0))
+    page.setFrameOrigin(.zero)
+    window.display()
+    CATransaction.flush()
+    #expect(page.layer?.transform.m41 == 0)
+    let spring = try #require(page.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
+    try await Task.sleep(for: .seconds(spring.duration * 0.75))
+    #expect(try #require(page.layer?.presentation()).transform.m41 < -224)
+    delayScrollCleanup(for: spring.duration * 0.5)
+    window.displayIfNeeded()
+    CATransaction.flush()
+    #expect(page.superview != nil)
+    #expect(try #require(page.layer?.presentation()).transform.m41 <= -224)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(!scrollDescendants(sidebar).contains { $0 is SidebarView })
+    #expect(sidebar.spaceShown == 1)
+}
+
+@Test @MainActor
+func followPositionsSurviveWindowLayerTreeUpdates() async throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.orderOut(nil); window.contentView = nil }
+    sidebar.showSpace(at: 1)
+    sidebar.scrollWheel(with: trackpadEvent(dx: -80, phase: .began, time: 100))
+    sidebar.layoutSubtreeIfNeeded()
+    window.display()
+    CATransaction.flush()
+    try await Task.sleep(for: .milliseconds(20))
+    let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
+    #expect(previews.count == 2)
+    for preview in previews {
+        let page = try #require(preview.superview)
+        let expected = CGFloat(preview.spaceShown - sidebar.spaceShown) * 240 - 40
+        #expect(page.layer?.transform.m41 == expected)
+        #expect(try #require(page.layer?.presentation()).transform.m41 == expected)
+        let viewport = try #require(page.superview)
+        let current = try #require(viewport.subviews.compactMap { $0 as? NSStackView }.first)
+        #expect(current.layer?.transform.m41 == -40)
+        #expect(try #require(current.layer?.presentation()).transform.m41 == -40)
+    }
+}
+
+@Test @MainActor
+func wheelSlidesChainAndTrackpadTakesOverThePresentedOffset() {
+    var state = SpaceScrollState()
+    let first = state.handle(.init(dx: -2, time: 100), index: 0, count: 3, pitch: 240)
+    #expect(first == .settle(index: 1, offset: 0, switched: true))
+    let paused = state.handle(.init(dx: -2, time: 100.249), index: 1, count: 3, pitch: 240, presentationOffset: 70)
+    #expect(paused == .ignored)
+    let chained = state.handle(.init(dx: -2, time: 100.250), index: 1, count: 3, pitch: 240, presentationOffset: 64)
+    #expect(chained == .settle(index: 2, offset: 64, switched: true))
+    let takeover = state.handle(.init(dx: -20, phase: .began, time: 100.260), index: 2, count: 3, pitch: 240, presentationOffset: 304)
+    #expect(takeover == .follow(294))
+    let continued = state.handle(.init(dx: -20, phase: .changed, time: 100.280), index: 2, count: 3, pitch: 240, presentationOffset: 0)
+    #expect(continued == .follow(284))
+}
+
+@Test @MainActor
+func wheelDoesNotAnimatePastTheEndsOrRestartThePause() {
+    var state = SpaceScrollState()
+    #expect(state.handle(.init(dx: 2, time: 100), index: 0, count: 3, pitch: 240) == .ignored)
+    #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
+    #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .settle(index: 1, offset: 20, switched: true))
+}
+
+@MainActor
+private func currentScrollColumn(_ sidebar: SidebarView) throws -> NSView {
+    let header = try #require(scrollDescendants(sidebar).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Space \(sidebar.spaceShown)" })
+    return try #require(header.superview?.superview)
+}
+
+@MainActor
+private func installPresentedOffset(_ offset: CGFloat, on view: NSView) async throws {
+    let animation = CABasicAnimation(keyPath: "transform.translation.x")
+    animation.fromValue = offset
+    animation.toValue = offset
+    animation.duration = 60
+    view.layer?.transform = CATransform3DIdentity
+    view.layer?.add(animation, forKey: "space.scroll")
+    CATransaction.flush()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(try #require(view.layer?.presentation()).transform.m41 == offset)
+    #expect(view.layer?.transform.m41 == 0)
+}
+
+@Test @MainActor
+func wheelViewSlidesAndChainsFromPresentationRatherThanModel() async throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.orderOut(nil); window.contentView = nil }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    #expect(sidebar.spaceShown == 1)
+    let current = try currentScrollColumn(sidebar)
+    let first = try #require(current.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
+    #expect(first.fromValue as? Double == 240)
+    #expect(first.toValue as? Double == 0)
+    #expect(abs(first.stiffness - pow(2 * .pi / SidebarMetrics.spaceSwitchResponse, 2)) < 0.000001)
+    try await installPresentedOffset(64, on: current)
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100.250))
+    #expect(sidebar.spaceShown == 2)
+    let chained = try #require(try currentScrollColumn(sidebar).layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
+    #expect(chained.fromValue as? Double == 304)
+    #expect(chained.toValue as? Double == 0)
+}
+
+@Test @MainActor
+func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.orderOut(nil); window.contentView = nil }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    let current = try currentScrollColumn(sidebar)
+    window.displayIfNeeded()
+    try await installPresentedOffset(64, on: current)
+    sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100.050))
+    let followed = try currentScrollColumn(sidebar)
+    #expect(followed.layer?.transform.m41 == 54)
+    #expect(followed.layer?.animation(forKey: "space.scroll") == nil)
+    #expect(sidebar.spaceShown == 1)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(followed.layer?.transform.m41 == 54)
+    #expect(scrollDescendants(sidebar).contains { $0 is SidebarView })
+}
+
+@Test @MainActor
+func zeroDeltaGestureBeginsTakeOverAtTheFirstHorizontalMotion() {
+    var state = SpaceScrollState()
+    #expect(state.handle(.init(dx: 0, phase: .began, time: 100), index: 1, count: 3,
+                         pitch: 240, presentationOffset: 100) == .vertical)
+    #expect(state.handle(.init(dx: -20, phase: .changed, time: 100.020), index: 1, count: 3,
+                         pitch: 240, presentationOffset: 64) == .follow(54))
+}
+
+@Test @MainActor
+func trackpadTakeoverDoesNotRubberBandThePresentedOffsetTwice() {
+    for (index, offset) in [(0, 30.0), (2, -30.0)] {
+        var state = SpaceScrollState()
+        let action = state.handle(.init(dx: 0.000001, phase: .began, time: 100), index: index, count: 3,
+                                  pitch: 240, presentationOffset: offset)
+        guard case .follow(let position) = action else { Issue.record("Expected a follow"); continue }
+        #expect(abs(position - offset) < 0.000001)
     }
 }
