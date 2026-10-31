@@ -5,12 +5,15 @@ public final class SidebarResizeHandle: NSView {
     private let widthConstraint: NSLayoutConstraint
     private var dragStartX: CGFloat = 0
     private var dragStartWidth: CGFloat = 0
+    private var collapsedDuringDrag = false
+    var onDrag: ((CGFloat) -> Bool)?
+    var onWidthChanged: (() -> Void)?
 
     public var sidebarWidth: CGFloat {
         get { widthConstraint.constant }
         set {
-            // shortcut: clamp instead of hiding below half the minimum; add hiding when the harness has hidden and floating sidebar forms.
-            widthConstraint.constant = min(500, max(164, newValue))
+            widthConstraint.constant = min(SidebarMetrics.maximumWidth, max(SidebarMetrics.minimumWidth, newValue))
+            onWidthChanged?()
             window?.contentView?.layoutSubtreeIfNeeded()
             setAccessibilityValue(widthConstraint.constant)
             NSAccessibility.post(element: self, notification: .valueChanged)
@@ -29,18 +32,21 @@ public final class SidebarResizeHandle: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    public func resetWidth() { sidebarWidth = 240 }
+    public func resetWidth() { sidebarWidth = SidebarMetrics.defaultWidth }
 
     override public func resetCursorRects() {
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
     override public func mouseDown(with event: NSEvent) {
+        collapsedDuringDrag = false
         dragStartX = event.locationInWindow.x
         dragStartWidth = sidebarWidth
     }
 
     override public func mouseDragged(with event: NSEvent) {
+        guard !collapsedDuringDrag else { return }
+        if onDrag?(event.locationInWindow.x) == true { collapsedDuringDrag = true; return }
         sidebarWidth = dragStartWidth + event.locationInWindow.x - dragStartX
     }
 

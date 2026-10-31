@@ -68,6 +68,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     var sidebar: SidebarView?
     var resizeHandle: SidebarResizeHandle?
+    var sidebarContainer: SidebarContainerView?
 
     init(snapshot: WorkspaceSnapshot, store: WorkspaceStore?) {
         self.snapshot = snapshot
@@ -92,28 +93,21 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         let sidebar = SidebarView(snapshot: snapshot)
         self.sidebar = sidebar
         let card = PlaceholderCard()
-        sidebar.onSelect = { row in card.show(title: row.title, url: row.url) }
-        let sidebarWidth = sidebar.widthAnchor.constraint(equalToConstant: 240)
-        let resizeHandle = SidebarResizeHandle(widthConstraint: sidebarWidth)
-        self.resizeHandle = resizeHandle
-
-        for view in [sidebar, card, resizeHandle] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            background.addSubview(view)
+        let container = SidebarContainerView(sidebar: sidebar, page: card)
+        sidebarContainer = container
+        resizeHandle = container.resizeHandle
+        sidebar.onSelect = { [weak container] row in
+            card.show(title: row.title, url: row.url)
+            container?.selectionChanged()
         }
+
+        container.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(container)
         NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            sidebar.topAnchor.constraint(equalTo: background.topAnchor),
-            sidebar.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-            sidebarWidth,
-            card.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
-            card.topAnchor.constraint(equalTo: background.topAnchor, constant: 6),
-            card.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -7),
-            card.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -7),
-            resizeHandle.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -4),
-            resizeHandle.widthAnchor.constraint(equalToConstant: 5),
-            resizeHandle.topAnchor.constraint(equalTo: background.topAnchor),
-            resizeHandle.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+            container.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            container.topAnchor.constraint(equalTo: background.topAnchor),
+            container.bottomAnchor.constraint(equalTo: background.bottomAnchor),
         ])
         window.contentView = background
         let menu = NSMenu()
@@ -121,6 +115,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
         let viewMenu = NSMenu(title: "View")
+        let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        toggle.target = self
         let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
         reset.target = self
         menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
@@ -142,7 +138,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func run(_ line: String) {
-        guard let sidebar, let resizeHandle else { return }
+        guard let sidebar, let resizeHandle, let sidebarContainer else { return }
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
         let reply: String
         switch (words.first, words.count > 1 ? words[1] : nil) {
@@ -159,6 +155,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         case ("reset-width", nil):
             resetSidebarWidth(nil)
             reply = "ok 240"
+        case ("sidebar", nil):
+            reply = "ok \(sidebarContainer.sidebarState)"
+        case ("toggle-sidebar", nil):
+            toggleSidebar(nil)
+            reply = "ok \(sidebarContainer.sidebarState)"
         default:
             reply = "error unknown command"
         }
@@ -168,6 +169,10 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func resetSidebarWidth(_ sender: Any?) {
         resizeHandle?.resetWidth()
+    }
+
+    @objc private func toggleSidebar(_ sender: Any?) {
+        sidebarContainer?.toggleSidebar()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
