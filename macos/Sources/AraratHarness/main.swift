@@ -2,26 +2,49 @@ import AppKit
 import AraratKit
 import AraratUI
 
-let arguments = Array(CommandLine.arguments.dropFirst())
-let checkOnly = arguments.first == "--check"
-let path = arguments.last { $0 != "--check" }
-
-let json: String
-do {
-    if let path {
-        json = try String(contentsOfFile: path, encoding: .utf8)
-    } else {
-        let url = Bundle.module.url(forResource: "arc-sidebar-synthetic", withExtension: "json", subdirectory: "Fixtures")!
-        json = try String(contentsOf: url, encoding: .utf8)
+var arguments = CommandLine.arguments.dropFirst().makeIterator()
+var checkOnly = false
+var databasePath: String?
+var path: String?
+while let argument = arguments.next() {
+    switch argument {
+    case "--check": checkOnly = true
+    case "--db":
+        guard let value = arguments.next(), !value.hasPrefix("--") else {
+            FileHandle.standardError.write(Data("--db requires a path\n".utf8))
+            exit(1)
+        }
+        databasePath = value
+    default:
+        guard !argument.hasPrefix("--"), path == nil else {
+            FileHandle.standardError.write(Data("usage: AraratHarness [--check] [--db path] [StorableSidebar.json]\n".utf8))
+            exit(1)
+        }
+        path = argument
     }
-} catch {
-    FileHandle.standardError.write(Data("cannot read sidebar file: \(error)\n".utf8))
-    exit(1)
 }
 
+func sidebarJSON(path: String?) throws -> String {
+    if let path {
+        return try String(contentsOfFile: path, encoding: .utf8)
+    } else {
+        let url = Bundle.module.url(forResource: "arc-sidebar-synthetic", withExtension: "json", subdirectory: "Fixtures")!
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+}
+
+let store: WorkspaceStore?
 let snapshot: WorkspaceSnapshot
 do {
-    snapshot = try importArcSidebar(json: json)
+    if let databasePath {
+        let opened = try WorkspaceStore.open(path: databasePath)
+        store = opened
+        let loaded = opened.snapshot()
+        snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
+    } else {
+        store = nil
+        snapshot = try importArcSidebar(json: sidebarJSON(path: path))
+    }
 } catch {
     FileHandle.standardError.write(Data("\(error)\n".utf8))
     exit(1)
@@ -31,16 +54,24 @@ if checkOnly {
     for space in snapshot.spaces {
         print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
     }
+    do { try store?.flush() } catch {
+        FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
+        exit(1)
+    }
     exit(0)
 }
 
 @MainActor
 final class HarnessDelegate: NSObject, NSApplicationDelegate {
     let snapshot: WorkspaceSnapshot
+    let store: WorkspaceStore?
     var window: NSWindow?
     var sidebar: SidebarView?
 
-    init(snapshot: WorkspaceSnapshot) { self.snapshot = snapshot }
+    init(snapshot: WorkspaceSnapshot, store: WorkspaceStore?) {
+        self.snapshot = snapshot
+        self.store = store
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = NSWindow(
@@ -114,6 +145,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        do { try store?.flush() } catch {
+            FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
+        }
+    }
 }
 
 @MainActor
@@ -173,6 +210,6 @@ enum HitchMonitor {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let delegate = HarnessDelegate(snapshot: snapshot)
+let delegate = HarnessDelegate(snapshot: snapshot, store: store)
 app.delegate = delegate
 app.run()

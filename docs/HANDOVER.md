@@ -9,17 +9,18 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   (`docs/reviews/2026-10-30-architecture-draft1-judgement.md`).
 - Phase 1 in progress. Done: Rust core model (membership register + fractional order keys),
   ATC routing, Arc sidebar importer, UniFFI binding, AppKit sidebar harness (`macos/`),
-  SQLite storage (`core/ararat-core/src/storage.rs`, tests in `tests/storage.rs`). `Store` is not
-  exposed through UniFFI yet; private-browsing rejection (§5.3) and the backup API (§5.2) are
+  SQLite storage (`core/ararat-core/src/storage.rs`, tests in `tests/storage.rs`), exposed through
+  UniFFI as `WorkspaceStore` (`core/ararat-ffi`, tests in `tests/store.rs`); the harness loads from
+  SQLite with `--db`. Edits made in the UI are not saved yet. Private-browsing rejection (§5.3) and the backup API (§5.2) are
   not implemented yet. Journal rows carry no HLC or device id; they are not the sync log of §8.3
   until phase 8 adds those.
 - Tree repair done (`core/ararat-core/src/tree.rs`, `tests/tree.rs`): cycles, orphans and
   containers given a parent. Not done: "delete wins over a concurrent edit unless it is a
   restore" needs tombstones and belongs to the sync merge (phase 8). Nothing ticks the HLC yet;
   imported items carry a zero HLC. The Arc importer calls `repair_tree` and keeps its result (the
-  file is the origin of those registers). Elsewhere repair is to be a view over unmodified
-  registers (architecture 6.1, Codex A2): `repair_tree` still mutates, so the view form is built
-  with the sync merge in phase 8, together with delivery-order tests.
+  file is the origin of those registers). Snapshots from the store are a view: they
+  repair a clone and never write back (architecture 6.1, Codex A2). The view form inside the merge,
+  with delivery-order tests, comes with the sync merge in phase 8.
 - Importer ran on the owner's real `StorableSidebar.json` without error: 6 spaces, favorites and
   pinned counted, **today 0 in every space**. Most likely Arc's auto-archive (the owner's
   setting archives Today after a set time; one space was seen empty in Arc on 2026-10-31). The
@@ -38,7 +39,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   `docs/research/yab/` (README section 4). Phase 1's parallel research track is complete.
 - Phase-1 review findings fixed after three Codex rounds (`docs/reviews/2026-10-31-phase1-judgement.md`).
   Left open on purpose: the C1 starvation and an interrupted commit have no deterministic test
-  (a writer hook was not taken); repair as a view waits for the sync merge (phase 8).
+  (a writer hook was not taken); repair as a view inside the sync merge waits for phase 8.
 - Arc and Ardia floating sidebars measured the same way: `docs/research/arc-ardia-observed.md`.
   Arc, like Yab, keeps the sidebar while the pointer is left of the window, up to about 250 pt
   away; above the window and on deactivation Arc hides, Yab stays. Ardia hides on leaving the
@@ -54,25 +55,8 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Next
 
-1. Expose `Store` through UniFFI and load the harness from SQLite; show the repaired view after
-   `load` without writing it back. Run it on herdr-agent-team from a Claude session started inside
-   herdr (`AGENTS.md`): Opus scopes and reviews, Codex `gpt-6.1-sol` medium (labteam) implements.
-   Scope, decided 2026-10-31:
-   - `core/ararat-ffi/src/lib.rs`: a `uniffi::Object` wrapping `Store` with `open(path)` (returns
-     the object; the snapshot is read separately), `snapshot()`, `import_arc_sidebar(json)` (imports,
-     writes `Workspace::to_ops()` through the store, flushes, returns the snapshot), `flush()` and
-     `last_error()`. Store errors become a new `CoreError` variant. Keep the existing free
-     `import_arc_sidebar` for the JSON-only path.
-   - Repair as a view: `snapshot()` clones the loaded `Workspace`, runs `repair_tree` on the clone
-     and builds rows from it; the store is never written by it. The view form proper waits for phase 8.
-   - `macos/Sources/AraratHarness/main.swift`: `--db <path>` opens the store; an empty store first
-     imports the bundled synthetic fixture (or the given `StorableSidebar.json`); without `--db`
-     behaviour is unchanged and no file is created. Flush on quit and report its error.
-   - Tests (Rust): import, close, reopen gives the same snapshot; a store holding a cycle gives a
-     snapshot without hanging and its rows in SQLite are unchanged afterwards; the FFI object can be
-     used from two threads. Harness: `--db` on a temp file answers the stdin `state` command.
-   - Not in scope: saving edits made in the UI.
-2. Owner: view the harness window.
+1. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
+2. After the owner's go-ahead: remove Homebrew's orphaned `rust` (`brew uninstall rust`; nothing depends on it) and rebuild `core/target` with the devshell toolchain.
 
 ## Known loose ends
 

@@ -29,6 +29,7 @@ name = "ararat-ffi"
 version = "0.1.0"
 dependencies = [
  "ararat-core",
+ "rusqlite",
  "uniffi",
 ]
 

@@ -39,7 +39,7 @@ Ararat は、Arc のワークフロー（space、ピン留めタブと Today タ
 | コア | Rust の crate `ararat-core`、SQLite のストレージ、Swift 向けの UniFFI バインディング、C++ 向けの C ABI | macOS、Windows、Linux、iPhone で同一のコアを使用する | 6 |
 | macOS の UI | 動きのある部分はすべて AppKit、設定とオンボーディングは SwiftUI | Cra は SwiftUI から AppKit へ移行した後、space のスワイプ時のメインスレッドの処理時間が 1900 → 440 ms になったことを計測した（Cra ledger 12） | 7 |
 | 同期 | エンドツーエンド暗号化とし、アカウントを必要としない。独自サーバーは、認証済みで追記のみの blob を中継するブラインドリレーとする。デバイスはリカバリーフレーズ、または PAKE（パスワード認証鍵交換）で認証したペアリングコードで参加する | 「独自サーバー、ログインなし」の条件を満たす。Chromium の同期エンジンや共有フォルダが存在しない環境（iPhone、Windows）でも動作する | 8 |
-| プロセス | すべての作業単位は、設計・実装（Opus 5.5）→ レビュー（Codex gpt-6.1-sol）→ 判定（Opus 5.5）の順で進める | オーナーの規則（`AGENTS.md`） | 13 |
+| プロセス | すべての作業単位は、スコープ（Opus 5.5）→ 実装（Codex gpt-6.1-sol）→ レビュー（Opus 5.5）の順で進める。際どいエッジケースのバグは Codex から始める | オーナーの規則（`AGENTS.md`） | 13 |
 
 ## 3. レイヤーとリポジトリの構成
 
@@ -319,7 +319,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 13. 開発プロセス
 
-各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-sol` が実装し（effort medium、labteam アカウント）→ Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
+各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-sol` が実装し（effort medium、labteam アカウント）→ Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
 
 ## 14. オーナーが決める未決の事項
 

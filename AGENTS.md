@@ -18,7 +18,7 @@ For a hard edge-case bug the order is reversed: Codex investigates, Claude gives
 
 Measurement and design-stage work (research notes, `docs/architecture.md`) needs no review unless the owner asks for one.
 
-The seats run on herdr-agent-team (design / orchestrator / implementation / review in one herdr tab). That needs a Claude session started inside herdr (`HERDR_ENV=1`).
+The seats run on orca-agent-team (one Orca tab per role) from a Claude session inside Orca, or on herdr-agent-team from one inside herdr. Agents run `cargo` through the devshell (`direnv exec . cargo ...`): their shells do not load direnv, and a `cargo` found elsewhere on `PATH` builds with another toolchain into the same `target/`.
 
 ## Prior art
 

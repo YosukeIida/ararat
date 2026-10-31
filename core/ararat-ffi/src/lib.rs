@@ -3,32 +3,85 @@
 
 use ararat_core::import;
 use ararat_core::model::{Item, ItemKind, Space, Workspace};
+use ararat_core::storage::{Store, StoreError};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 uniffi::setup_scaffolding!();
 
 #[derive(Debug, uniffi::Error)]
 pub enum CoreError {
     Import { message: String },
+    Store { message: String },
 }
 
 impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoreError::Import { message } => write!(f, "import failed: {message}"),
+            CoreError::Store { message } => write!(f, "store failed: {message}"),
         }
     }
 }
 
 impl std::error::Error for CoreError {}
 
-#[derive(uniffi::Enum)]
+impl From<StoreError> for CoreError {
+    fn from(error: StoreError) -> Self {
+        Self::Store { message: error.0 }
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct WorkspaceStore {
+    store: Store,
+    workspace: Mutex<Workspace>,
+}
+
+#[uniffi::export]
+impl WorkspaceStore {
+    #[uniffi::constructor]
+    pub fn open(path: String) -> Result<Arc<Self>, CoreError> {
+        let (store, workspace) = Store::open(Path::new(&path))?;
+        Ok(Arc::new(Self { store, workspace: Mutex::new(workspace) }))
+    }
+
+    pub fn snapshot(&self) -> WorkspaceSnapshot {
+        let workspace = self.workspace.lock().unwrap().clone();
+        snapshot(workspace)
+    }
+
+    pub fn import_arc_sidebar(&self, json: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let imported = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = imported.to_ops();
+        for op in &ops {
+            workspace.apply(op);
+        }
+        self.store.write(ops);
+        let view = workspace.clone();
+        drop(workspace);
+        self.store.flush()?;
+        Ok(snapshot(view))
+    }
+
+    pub fn flush(&self) -> Result<(), CoreError> {
+        self.store.flush().map_err(Into::into)
+    }
+
+    pub fn last_error(&self) -> Option<String> {
+        self.store.last_error()
+    }
+}
+
+#[derive(Debug, PartialEq, uniffi::Enum)]
 pub enum RowKind {
     Tab,
     Folder,
     Split,
 }
 
-#[derive(uniffi::Record)]
+#[derive(Debug, PartialEq, uniffi::Record)]
 pub struct Row {
     pub id: String,
     pub title: String,
@@ -37,7 +90,7 @@ pub struct Row {
     pub kind: RowKind,
 }
 
-#[derive(uniffi::Record)]
+#[derive(Debug, PartialEq, uniffi::Record)]
 pub struct SpaceSnapshot {
     pub id: String,
     pub title: String,
@@ -47,7 +100,7 @@ pub struct SpaceSnapshot {
     pub today: Vec<Row>,
 }
 
-#[derive(uniffi::Record)]
+#[derive(Debug, PartialEq, uniffi::Record)]
 pub struct WorkspaceSnapshot {
     pub spaces: Vec<SpaceSnapshot>,
 }
@@ -55,11 +108,12 @@ pub struct WorkspaceSnapshot {
 #[uniffi::export]
 pub fn import_arc_sidebar(json: String) -> Result<WorkspaceSnapshot, CoreError> {
     let ws = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
-    Ok(snapshot(&ws))
+    Ok(snapshot(ws))
 }
 
-fn snapshot(ws: &Workspace) -> WorkspaceSnapshot {
-    WorkspaceSnapshot { spaces: ws.spaces.iter().map(|s| space(ws, s)).collect() }
+fn snapshot(mut view: Workspace) -> WorkspaceSnapshot {
+    view.repair_tree();
+    WorkspaceSnapshot { spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
 }
 
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {

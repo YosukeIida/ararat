@@ -14,8 +14,11 @@ xc() { env -u SDKROOT DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer "
 macos/scripts/build-core.sh             # build the core and regenerate the Swift bindings
 (cd macos && xc swift run AraratHarness) # sidebar harness on a synthetic Arc sidebar
 (cd macos && xc swift run AraratHarness --check path/to/StorableSidebar.json)
+(cd macos && xc swift run AraratHarness --db "$TMPDIR/ararat.sqlite")
 printf 'space 1\nselect tab-a\nstate\n' | (cd macos && xc swift run AraratHarness)   # drive the harness without the pointer
 xc node ~/workspace/github.com/morluto/rea/scripts/rea.mjs doctor   # REA with the devshell's Ghidra
 ```
 
 The harness reads `space <index>`, `select <row id>` and `state` on stdin and answers each on stdout. Main-thread stalls over 100 ms are written to stderr as `hitch <ms> ms`.
+
+`--db <path>` loads a SQLite workspace. If it has no spaces, the harness imports the bundled synthetic fixture, or a sidebar file supplied as an additional argument, and flushes it to disk. Later runs load the stored workspace without importing again. The harness flushes on quit and reports errors to stderr. Without `--db`, it reads JSON without creating a database. UI edits are not saved yet.
