@@ -57,16 +57,27 @@ pub struct Hlc {
     pub node: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Lifecycle {
+    Open,
+    Unloaded,
+    Closed,
+    Archived,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: Id,
     pub membership: Membership,
     pub title: Option<String>,
     pub kind: ItemKind,
+    pub lifecycle: Lifecycle,
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
+    pub selected: Option<Id>,
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
     pub items: HashMap<Id, Item>,
@@ -77,6 +88,7 @@ pub enum Kind {
     Space,
     Item,
     Favorites,
+    Selection,
 }
 
 impl Kind {
@@ -85,11 +97,12 @@ impl Kind {
             Kind::Space => "space",
             Kind::Item => "item",
             Kind::Favorites => "favorites",
+            Kind::Selection => "selection",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Space, Kind::Item, Kind::Favorites].into_iter().find(|k| k.as_str() == s)
+        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Selection].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -97,6 +110,7 @@ impl Kind {
 pub enum Record {
     Space(Space),
     Item(Item),
+    Selection(Option<Id>),
     Favorites { profile: Profile, container: Id },
 }
 
@@ -104,6 +118,7 @@ impl Record {
     pub fn kind(&self) -> Kind {
         match self {
             Record::Space(_) => Kind::Space,
+            Record::Selection(_) => Kind::Selection,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
         }
@@ -112,6 +127,7 @@ impl Record {
     pub fn id(&self) -> Id {
         match self {
             Record::Space(s) => s.id.clone(),
+            Record::Selection(_) => "workspace".into(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
         }
@@ -120,6 +136,7 @@ impl Record {
     pub fn body(&self) -> String {
         match self {
             Record::Space(s) => serde_json::to_string(s),
+            Record::Selection(selected) => serde_json::to_string(selected),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
         }
@@ -129,6 +146,7 @@ impl Record {
     pub fn parse(kind: Kind, id: &str, body: &str) -> serde_json::Result<Record> {
         Ok(match kind {
             Kind::Space => Record::Space(serde_json::from_str(body)?),
+            Kind::Selection => Record::Selection(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
             Kind::Favorites => Record::Favorites {
                 profile: serde_json::from_str(id)?,
@@ -164,17 +182,37 @@ impl Workspace {
     }
 
     pub fn outline(&self, container: &str) -> Vec<(usize, &Item)> {
+        self.outline_entries(container).into_iter().filter(|(_, _, visible)| *visible)
+            .map(|(depth, item, _)| (depth, item)).collect()
+    }
+
+    pub(crate) fn outline_entries(&self, container: &str) -> Vec<(usize, &Item, bool)> {
         let mut rows = Vec::new();
-        let mut stack: Vec<_> = self.children(container).into_iter().rev().map(|i| (0, i)).collect();
-        while let Some((depth, item)) = stack.pop() {
-            rows.push((depth, item));
-            stack.extend(self.children(&item.id).into_iter().rev().map(|c| (depth + 1, c)));
+        let mut stack: Vec<_> = self.children(container).into_iter().rev().map(|i| (0, i, true)).collect();
+        while let Some((depth, item, parent_visible)) = stack.pop() {
+            let visible = parent_visible && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+                && (!matches!(item.kind, ItemKind::Split { .. }) || self.has_open_tab(&item.id));
+            rows.push((depth, item, visible));
+            stack.extend(self.children(&item.id).into_iter().rev()
+                .map(|c| (depth + 1, c, visible && !item.collapsed)));
         }
         rows
     }
 
+    fn has_open_tab(&self, parent: &str) -> bool {
+        let mut stack = self.children(parent);
+        while let Some(item) = stack.pop() {
+            if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue }
+            if matches!(item.kind, ItemKind::Tab { .. }) { return true }
+            stack.extend(self.children(&item.id));
+        }
+        false
+    }
+
     pub fn apply(&mut self, op: &Op) {
         match op {
+            Op::Put(Record::Selection(selected)) => self.selected = selected.clone(),
+            Op::Delete(Kind::Selection, _) => self.selected = None,
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);
                 self.spaces.push(space.clone());
@@ -201,7 +239,8 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).map(Op::Put).collect()
+        spaces.chain(favorites).chain(items).chain(std::iter::once(Record::Selection(self.selected.clone())))
+            .map(Op::Put).collect()
     }
 }
 

@@ -9,7 +9,7 @@ private func reuseDescendants(_ view: NSView) -> [NSView] {
 }
 
 private func reuseSnapshot(pinned: [Row], today: [Row] = [], favorites: [Row] = []) -> WorkspaceSnapshot {
-    WorkspaceSnapshot(spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
+    WorkspaceSnapshot(selectedId: nil, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
                                             favorites: favorites, pinned: pinned, today: today)])
 }
 
@@ -61,7 +61,7 @@ func survivingRowsAndFavoritesKeepTheirInstancesAndRowFocus() throws {
 }
 
 @MainActor
-private struct ReuseTree: Equatable {
+struct ReuseTree: Equatable {
     let type: String
     let frame: NSRect
     let row: Row?
@@ -121,7 +121,7 @@ func incrementalRowsMatchFreshSnapshotTrees() {
         reuseSnapshot(pinned: [b], today: [a, c], favorites: [g, Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab), favorite]),
         reuseSnapshot(pinned: [a, b], favorites: [g]),
         reuseSnapshot(pinned: [], favorites: []),
-        WorkspaceSnapshot(spaces: []),
+        WorkspaceSnapshot(selectedId: nil, spaces: []),
     ]
     for width: CGFloat in [164, 240, 500] {
         for snapshot in changes {
@@ -133,7 +133,6 @@ func incrementalRowsMatchFreshSnapshotTrees() {
                 reused.layoutSubtreeIfNeeded()
                 reused.layoutSubtreeIfNeeded()
                 let fresh = laidOutSidebar(snapshot, width: width)
-                _ = fresh.selectRow(id: "a")
                 _ = fresh.selectRow(id: selected)
                 fresh.layoutSubtreeIfNeeded()
                 fresh.layoutSubtreeIfNeeded()

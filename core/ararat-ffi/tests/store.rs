@@ -99,3 +99,122 @@ fn store_failures_cross_the_ffi_boundary() {
     store.flush().unwrap();
     assert_eq!(store.last_error(), None);
 }
+
+fn today_fixture() -> String {
+    FIXTURE.replace("\"parentID\": \"split-1\"", "\"parentID\": \"today-work\"")
+        .replace("\"childrenIds\": [\"tab-a\", \"tab-b\"]", "\"childrenIds\": []")
+        .replace("\"childrenIds\": [\"easel-1\"]", "\"childrenIds\": [\"tab-a\", \"tab-b\", \"easel-1\"]")
+}
+
+#[test]
+fn closing_a_today_tab_persists_lifecycle_and_successor_before_returning() {
+    let path = fresh_db("close-today");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar(today_fixture()).unwrap();
+    store.select_item("tab-a".into()).unwrap();
+    let closed = store.close_today_tab("tab-a".into()).unwrap();
+    assert_eq!(closed.selected_id.as_deref(), Some("tab-b"));
+    assert!(!closed.spaces[0].today.iter().any(|r| r.id == "tab-a"));
+    let (_, disk) = Store::open(&path).unwrap();
+    assert_eq!(disk.items["tab-a"].lifecycle, ararat_core::model::Lifecycle::Closed);
+    assert_eq!(disk.selected.as_deref(), Some("tab-b"));
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'selection'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    let body: String = conn.query_row("SELECT body FROM journal WHERE kind = 'item' AND id = 'tab-a' ORDER BY seq DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+    assert!(body.contains("Closed"));
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot(), closed);
+}
+
+#[test]
+fn invalid_closes_write_neither_records_nor_journal() {
+    let path = fresh_db("invalid-close");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let original = store.import_arc_sidebar(today_fixture()).unwrap();
+    let before = records(&path);
+    let journal_count = || Connection::open(&path).unwrap().query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
+    let count = journal_count();
+    for id in ["tab-spec", "tab-mail", "unknown", "folder-docs"] {
+        assert!(matches!(store.close_today_tab(id.into()), Err(CoreError::Edit { .. })));
+        store.flush().unwrap();
+        assert_eq!(store.snapshot(), original);
+        assert_eq!(records(&path), before);
+        assert_eq!(journal_count(), count);
+    }
+}
+
+#[test]
+fn a_failed_close_flush_keeps_the_edit_for_retry() {
+    let path = fresh_db("close-busy");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar(today_fixture()).unwrap();
+    store.select_item("tab-a".into()).unwrap();
+    store.flush().unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert!(matches!(store.close_today_tab("tab-a".into()), Err(CoreError::Store { .. })));
+    assert_eq!(store.snapshot().selected_id.as_deref(), Some("tab-b"));
+    let (_, before_retry) = Store::open(&path).unwrap();
+    assert_eq!(before_retry.items["tab-a"].lifecycle, ararat_core::model::Lifecycle::Open);
+    assert_eq!(before_retry.selected.as_deref(), Some("tab-a"));
+    blocker.execute_batch("ROLLBACK").unwrap();
+    store.flush().unwrap();
+    let expected = store.snapshot(); drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot(), expected);
+}
+
+fn split_today_fixture() -> String {
+    FIXTURE.replace("\"childrenIds\": [\"folder-docs\", \"split-1\"]", "\"childrenIds\": [\"folder-docs\"]")
+        .replace("\"id\": \"split-1\", \"parentID\": \"pin-work\"", "\"id\": \"split-1\", \"parentID\": \"today-work\"")
+        .replace("\"childrenIds\": [\"easel-1\"]", "\"childrenIds\": [\"split-1\", \"easel-1\"]")
+}
+
+#[test]
+fn split_close_and_both_member_orders_leave_no_empty_selection_after_reopen() {
+    for (index, order) in [vec!["split-1"], vec!["tab-a", "tab-b"], vec!["tab-b", "tab-a"]].into_iter().enumerate() {
+        let path = fresh_db(&format!("split-close-{index}"));
+        let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+        store.import_arc_sidebar(split_today_fixture()).unwrap();
+        store.select_item("split-1".into()).unwrap();
+        for id in order { store.close_today_tab(id.into()).unwrap(); }
+        let closed = store.snapshot();
+        assert!(closed.spaces[0].today.is_empty());
+        assert_eq!(closed.selected_id, None);
+        let (_, disk) = Store::open(&path).unwrap();
+        for id in ["split-1", "tab-a", "tab-b"] { assert_eq!(disk.items[id].lifecycle, ararat_core::model::Lifecycle::Closed); }
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'selection'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE body LIKE '%Closed%'", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+        drop(store);
+        assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot(), closed);
+    }
+}
+
+#[test]
+fn selecting_rows_persists_locally_without_adding_sync_entries() {
+    let path = fresh_db("local-clicks");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar(split_today_fixture()).unwrap();
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before = count();
+    for id in ["tab-spec", "tab-mail", "split-1"] { store.select_item(id.into()).unwrap(); }
+    store.flush().unwrap();
+    assert_eq!(count(), before);
+    let expected = store.snapshot(); drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot(), expected);
+}
+
+#[test]
+fn folders_and_hidden_tabs_are_rejected_without_writes() {
+    let path = fresh_db("hidden-selection");
+    let mut ws = import::arc_sidebar(FIXTURE).unwrap();
+    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
+    let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let before = records(&path);
+    for id in ["folder-docs", "tab-spec", "unknown"] { assert!(store.select_item(id.into()).is_err()); }
+    store.flush().unwrap();
+    assert_eq!(records(&path), before);
+    assert_eq!(store.snapshot().selected_id, None);
+}

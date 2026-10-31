@@ -33,18 +33,15 @@ func sidebarJSON(path: String?) throws -> String {
     }
 }
 
-let store: WorkspaceStore?
+let store: WorkspaceStore
 let snapshot: WorkspaceSnapshot
 do {
-    if let databasePath {
-        let opened = try WorkspaceStore.open(path: databasePath)
-        store = opened
-        let loaded = opened.snapshot()
-        snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
-    } else {
-        store = nil
-        snapshot = try importArcSidebar(json: sidebarJSON(path: path))
-    }
+    let storagePath = databasePath ?? FileManager.default.temporaryDirectory
+        .appendingPathComponent("ararat-harness-\(UUID().uuidString).sqlite").path
+    let opened = try WorkspaceStore.open(path: storagePath)
+    store = opened
+    let loaded = opened.snapshot()
+    snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
 } catch {
     FileHandle.standardError.write(Data("\(error)\n".utf8))
     exit(1)
@@ -54,7 +51,7 @@ if checkOnly {
     for space in snapshot.spaces {
         print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
     }
-    do { try store?.flush() } catch {
+    do { try store.flush() } catch {
         FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
         exit(1)
     }
@@ -63,14 +60,15 @@ if checkOnly {
 
 @MainActor
 final class HarnessDelegate: NSObject, NSApplicationDelegate {
-    let snapshot: WorkspaceSnapshot
-    let store: WorkspaceStore?
+    var snapshot: WorkspaceSnapshot
+    let store: WorkspaceStore
     var window: NSWindow?
     var sidebar: SidebarView?
     var resizeHandle: SidebarResizeHandle?
     var sidebarContainer: SidebarContainerView?
+    private var card: PlaceholderCard?
 
-    init(snapshot: WorkspaceSnapshot, store: WorkspaceStore?) {
+    init(snapshot: WorkspaceSnapshot, store: WorkspaceStore) {
         self.snapshot = snapshot
         self.store = store
     }
@@ -93,13 +91,27 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         let sidebar = SidebarView(snapshot: snapshot)
         self.sidebar = sidebar
         let card = PlaceholderCard()
+        self.card = card
         let container = SidebarContainerView(sidebar: sidebar, page: card)
         sidebarContainer = container
         resizeHandle = container.resizeHandle
-        sidebar.onSelect = { [weak container] row in
-            card.show(title: row.title, url: row.url)
-            container?.selectionChanged()
+        sidebar.onSelect = { [weak self] row in
+            guard let self else { return }
+            do {
+                self.snapshot = try self.store.selectItem(id: row.id)
+            } catch {
+                FileHandle.standardError.write(Data("cannot select item: \(error)\n".utf8))
+                self.snapshot = self.store.snapshot()
+                self.sidebar?.update(snapshot: self.snapshot)
+            }
+            self.showSelection()
         }
+        sidebar.onClose = { [weak self] id in
+            do { try self?.closeTab(id: id) } catch {
+                FileHandle.standardError.write(Data("cannot close tab: \(error)\n".utf8))
+            }
+        }
+        showSelection()
 
         container.translatesAutoresizingMaskIntoConstraints = false
         background.addSubview(container)
@@ -114,6 +126,10 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
+        let fileMenu = NSMenu(title: "File")
+        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTodayTab(_:)), keyEquivalent: "w")
+        close.target = sidebar
+        menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
         let viewMenu = NSMenu(title: "View")
         let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
         toggle.target = self
@@ -148,6 +164,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             reply = "ok space \(index)"
         case ("select", let id?):
             reply = sidebar.selectRow(id: id) ? "ok select \(id)" : "error no row \(id)"
+        case ("close", let id?):
+            do {
+                try closeTab(id: id)
+                reply = "ok close \(id)"
+            } catch { reply = "error close \(id): \(error)" }
         case ("state", nil):
             reply = "state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-")"
         case ("width", nil):
@@ -167,6 +188,25 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         fflush(stdout)
     }
 
+    private func closeTab(id: String) throws {
+        do {
+            snapshot = try store.closeTodayTab(id: id)
+            sidebar?.applyClose(id: id, snapshot: snapshot)
+        } catch {
+            snapshot = store.snapshot()
+            sidebar?.update(snapshot: snapshot)
+            showSelection()
+            throw error
+        }
+        showSelection()
+    }
+
+    private func showSelection() {
+        let row = snapshot.spaces.flatMap { $0.favorites + $0.pinned + $0.today }.first { $0.id == snapshot.selectedId }
+        card?.show(title: row?.title ?? "Select a tab", url: row?.url)
+        sidebarContainer?.selectionChanged()
+    }
+
     @objc private func resetSidebarWidth(_ sender: Any?) {
         resizeHandle?.resetWidth()
     }
@@ -178,7 +218,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        do { try store?.flush() } catch {
+        do { try store.flush() } catch {
             FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
         }
     }

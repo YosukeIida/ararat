@@ -1,5 +1,5 @@
-// Each batch writes the workspace records and the sync journal in one transaction, so a crash
-// loses at most the last batch and never leaves the two disagreeing (architecture 5.2).
+// Why not store local selection separately: lifecycle and selection must commit together,
+// while only synced records enter the journal (architecture 5.2).
 
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -127,7 +127,15 @@ fn load(conn: &Connection) -> Result<Workspace, StoreError> {
     while let Some(row) = rows.next()? {
         let (kind, id, body): (String, String, String) = (row.get(0)?, row.get(1)?, row.get(2)?);
         let Some(kind) = Kind::parse(&kind) else { continue };
-        workspace.apply(&Op::Put(Record::parse(kind, &id, &body)?));
+        let record = Record::parse(kind, &id, &body).map_err(|error| {
+            let predates_lifecycle = kind == Kind::Item && serde_json::from_str::<serde_json::Value>(&body)
+                .is_ok_and(|value| value.is_object() && value.get("lifecycle").is_none());
+            let cause = if predates_lifecycle {
+                "this database predates lifecycle; delete it or re-import".to_string()
+            } else { error.to_string() };
+            StoreError(format!("record {}/{id}: {cause}", kind.as_str()))
+        })?;
+        workspace.apply(&Op::Put(record));
     }
     Ok(workspace)
 }
@@ -201,7 +209,9 @@ fn write_batch(conn: &mut Connection, ops: &[Op]) -> Result<(), StoreError> {
                 Some(body) => put.execute(params![kind.as_str(), id, body])?,
                 None => delete.execute(params![kind.as_str(), id])?,
             };
-            journal.execute(params![kind.as_str(), id, body])?;
+            if kind != Kind::Selection {
+                journal.execute(params![kind.as_str(), id, body])?;
+            }
         }
     }
     tx.commit()?;

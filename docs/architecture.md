@@ -190,7 +190,7 @@ Hooks are `g_ararat_*` function pointers declared in `ararat_hooks.h`, included 
 
 - Workspace tabs that are not loaded have no `WebContents`.
 - The coordinator in the core issues live-tab commands with ids. The engine replies with transactions `{epoch, rev, cause, strips}`: `epoch` changes on every engine start; `rev` increases monotonically within an epoch; `cause` is our command id, our own engine call, or Chrome itself. One transaction never mixes causes. No echo windows, no "did we cause this" flags.
-- Changes Chrome makes on its own (an extension moves a tab, the successor after a close) are diffed and applied to the workspace by the core's rules; the successor follows the core's rule (split continuity, skipping collapsed and unloaded tabs), not Chrome's choice.
+- Changes Chrome makes on its own (an extension moves a tab, the successor after a close) are diffed and applied to the workspace by the core's rules; the successor follows the core's rule (split continuity, skipping collapsed and unloaded tabs), not Chrome's choice. Our successor order (Arc's was not measured): the nearest visible open tab below the closed one in the same list, else the nearest above, else none; a split member's successor is its split, and a split closes with its last open member.
 - Tab switching shows the page natively first; no round trip through UI state is on the display path.
 
 ### 5.2 Crash consistency

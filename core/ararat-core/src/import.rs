@@ -50,7 +50,7 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
             }
         }
     }
-    let mut workspace = Workspace { spaces, favorites, items };
+    let mut workspace = Workspace { spaces, favorites, items, selected: None };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
@@ -113,6 +113,8 @@ fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {
         },
         title: obj["title"].as_str().map(str::to_string),
         kind,
+        lifecycle: crate::model::Lifecycle::Open,
+        collapsed: false,
         id,
     }))
 }

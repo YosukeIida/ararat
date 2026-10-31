@@ -27,11 +27,11 @@ fn count(path: &PathBuf) -> i64 {
     conn.query_row("SELECT count(*) FROM records", [], |r| r.get(0)).unwrap()
 }
 
-// The property crash safety rests on: replaying the journal from empty gives the records table.
+// Why not replay local selection: it is deliberately absent from the sync journal.
 fn assert_journal_matches_records(path: &PathBuf) {
     let conn = Connection::open(path).unwrap();
     let mut records = BTreeMap::new();
-    let mut stmt = conn.prepare("SELECT kind, id, body FROM records").unwrap();
+    let mut stmt = conn.prepare("SELECT kind, id, body FROM records WHERE kind != 'selection'").unwrap();
     let mut rows = stmt.query([]).unwrap();
     while let Some(r) = rows.next().unwrap() {
         records.insert((r.get::<_, String>(0).unwrap(), r.get::<_, String>(1).unwrap()), r.get::<_, String>(2).unwrap());
@@ -251,4 +251,33 @@ fn killed_process_keeps_every_flushed_batch() {
     let (_store, reopened) = Store::open(&path).unwrap();
     assert_eq!(reopened, imported());
     assert_journal_matches_records(&path);
+}
+
+#[test]
+fn selection_is_local_and_persists_in_existing_records() {
+    let path = fresh_db("local-selection");
+    let (store, _) = Store::open(&path).unwrap();
+    let mut ws = imported(); store.write(ws.to_ops()); store.flush().unwrap();
+    let conn = Connection::open(&path).unwrap();
+    let journal_count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before = journal_count();
+    for id in ["tab-spec", "tab-a", "split-1"] { store.write(ws.select_item(id).unwrap()); }
+    store.flush().unwrap();
+    assert_eq!(journal_count(), before);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'selection'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    drop(store);
+    assert_eq!(Store::open(&path).unwrap().1.selected.as_deref(), Some("split-1"));
+}
+
+#[test]
+fn old_item_errors_name_the_record_and_explain_the_lifecycle_format() {
+    let path = fresh_db("old-lifecycle");
+    drop(Store::open(&path).unwrap());
+    let mut item = serde_json::to_value(&imported().items["tab-spec"]).unwrap();
+    item.as_object_mut().unwrap().remove("lifecycle");
+    item.as_object_mut().unwrap().remove("collapsed");
+    Connection::open(&path).unwrap().execute("INSERT INTO records (kind, id, body) VALUES ('item', 'tab-spec', ?1)", [item.to_string()]).unwrap();
+    let error = Store::open(&path).err().unwrap().0;
+    assert!(error.contains("record item/tab-spec"), "{error}");
+    assert!(error.contains("this database predates lifecycle; delete it or re-import"), "{error}");
 }

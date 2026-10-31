@@ -160,7 +160,7 @@ func cancelledTrackpadGestureReturnsWithoutSwitching() {
 @Test @MainActor
 func wheelSwitchUsesTheExistingSpacePathAndPreservesItsPause() {
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
     let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -2, wheel3: 0)!
     let event = NSEvent(cgEvent: cg)!
     sidebar.scrollWheel(with: event)
@@ -189,7 +189,7 @@ private func trackpadEvent(dx: Int32, phase: CGScrollPhase?, momentum: Bool = fa
 @Test @MainActor
 func trackpadRoutesThroughTheRowScrollViewAndAnimatesNeighborPages() throws {
     let spaces = (0..<2).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
     let scroll = try #require(scrollDescendants(sidebar).compactMap { $0 as? NSScrollView }.first)
@@ -263,7 +263,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
     for floating in [false, true] {
         for width: CGFloat in [164, 240, 500] {
             let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-            let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+            let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
             sidebar.showSpace(at: 1)
             let container = SidebarContainerView(sidebar: sidebar, page: NSView())
             container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
@@ -303,7 +303,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
 @Test @MainActor
 func resizingAndResettingCancelTheActiveGestureUntilTheNextBegin() {
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
@@ -332,7 +332,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
     let spaces = (0..<3).map {
         SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [favorite], pinned: [tab], today: [])
     }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
@@ -375,7 +375,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     _ = NSApplication.shared
     let tab = Row(id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab)
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
@@ -408,7 +408,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
 @MainActor
 private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
-    let snapshot = WorkspaceSnapshot(spaces: (0..<spaces).map {
+    let snapshot = WorkspaceSnapshot(selectedId: nil, spaces: (0..<spaces).map {
         SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil,
                       favorites: [Row(id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab)],
                       pinned: [Row(id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab)], today: [])

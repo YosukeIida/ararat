@@ -41,7 +41,7 @@ private func measuredButtonsWindow() -> NSWindow {
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
     let content = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(spaces: []))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: []))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = content.bounds
     container.autoresizingMask = [.width, .height]

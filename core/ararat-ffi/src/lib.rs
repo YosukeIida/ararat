@@ -13,6 +13,7 @@ uniffi::setup_scaffolding!();
 pub enum CoreError {
     Import { message: String },
     Store { message: String },
+    Edit { message: String },
 }
 
 impl std::fmt::Display for CoreError {
@@ -20,6 +21,7 @@ impl std::fmt::Display for CoreError {
         match self {
             CoreError::Import { message } => write!(f, "import failed: {message}"),
             CoreError::Store { message } => write!(f, "store failed: {message}"),
+            CoreError::Edit { message } => write!(f, "edit failed: {message}"),
         }
     }
 }
@@ -29,6 +31,12 @@ impl std::error::Error for CoreError {}
 impl From<StoreError> for CoreError {
     fn from(error: StoreError) -> Self {
         Self::Store { message: error.0 }
+    }
+}
+
+impl From<ararat_core::edit::EditError> for CoreError {
+    fn from(error: ararat_core::edit::EditError) -> Self {
+        Self::Edit { message: error.0 }
     }
 }
 
@@ -63,6 +71,21 @@ impl WorkspaceStore {
         drop(workspace);
         self.store.flush()?;
         Ok(snapshot(view))
+    }
+
+    pub fn select_item(&self, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.select_item(&id)?;
+        self.store.write(ops);
+        Ok(snapshot(workspace.clone()))
+    }
+
+    pub fn close_today_tab(&self, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.close_today_tab(&id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone()))
     }
 
     pub fn flush(&self) -> Result<(), CoreError> {
@@ -102,6 +125,7 @@ pub struct SpaceSnapshot {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct WorkspaceSnapshot {
+    pub selected_id: Option<String>,
     pub spaces: Vec<SpaceSnapshot>,
 }
 
@@ -113,7 +137,7 @@ pub fn import_arc_sidebar(json: String) -> Result<WorkspaceSnapshot, CoreError> 
 
 fn snapshot(mut view: Workspace) -> WorkspaceSnapshot {
     view.repair_tree();
-    WorkspaceSnapshot { spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
+    WorkspaceSnapshot { selected_id: view.selected.clone().filter(|id| view.is_selectable(id)), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
 }
 
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {

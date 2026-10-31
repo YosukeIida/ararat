@@ -19,6 +19,7 @@ final class SidebarRowView: NSView {
         self.action = action
         self.selected = selected
         super.init(frame: .zero)
+        wantsLayer = true
         fill.wantsLayer = true
         fill.layer?.cornerRadius = 11
         fill.layer?.cornerCurve = .continuous
@@ -81,8 +82,15 @@ final class SidebarRowView: NSView {
 
     override func mouseEntered(with event: NSEvent) { hovered = true }
     override func mouseExited(with event: NSEvent) { hovered = false }
-    override func mouseUp(with event: NSEvent) { action(row) }
-    override func accessibilityPerformPress() -> Bool { action(row); return true }
+    override func mouseUp(with event: NSEvent) { if acceptsKeyboardFocus { action(row) } }
+    override func accessibilityPerformPress() -> Bool {
+        guard acceptsKeyboardFocus else { return false }
+        action(row)
+        return true
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        acceptsKeyboardFocus ? super.hitTest(point) : nil
+    }
 
     override var acceptsFirstResponder: Bool { acceptsKeyboardFocus }
     override var canBecomeKeyView: Bool { acceptsKeyboardFocus }

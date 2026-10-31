@@ -4,6 +4,7 @@ import AraratKit
 @MainActor
 public final class SidebarView: NSView {
     public var onSelect: ((Row) -> Void)?
+    public var onClose: ((String) -> Void)?
 
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
@@ -17,6 +18,8 @@ public final class SidebarView: NSView {
     private var favoritesHeight: NSLayoutConstraint!
     private let rows = NSStackView()
     private var rowViews: [String: SidebarRowView] = [:]
+    private var retiringRows: [String: SidebarRowView] = [:]
+    private var fadeFrame: (id: String, frame: NSRect)?
     private var favoriteTiles: [String: FavoriteTile] = [:]
     private var rowDivider: NSBox?
     private let dock = NSStackView()
@@ -32,6 +35,7 @@ public final class SidebarView: NSView {
 
     public init(snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
+        self.selectedID = snapshot.selectedId
         super.init(frame: .zero)
         build()
         reload()
@@ -44,15 +48,59 @@ public final class SidebarView: NSView {
     public var selectedRowID: String? { selectedID }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        finishRowMotion()
+        replaceSnapshot(snapshot)
+    }
+
+    private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
         let shownID = snapshotSpace?.id
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
         self.snapshot = snapshot
         spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
-        if let selectedID, !snapshot.spaces.contains(where: {
-            ($0.favorites + $0.pinned + $0.today).contains { $0.id == selectedID }
-        }) { self.selectedID = nil }
+        selectedID = snapshot.selectedId
         reload()
+    }
+
+    public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
+        clearScrollPresentation()
+        layoutSubtreeIfNeeded()
+        let oldFrames = rowViews.mapValues { presentedFrame($0) }
+        if let last = snapshotSpace?.today.last,
+           snapshotSpace?.today.contains(where: { $0.id == id }) == true,
+           !(snapshot.spaces.first { $0.id == snapshotSpace?.id }?.today.contains { $0.id == last.id } ?? false),
+           let frame = oldFrames[last.id] {
+            fadeFrame = (last.id, frame)
+        }
+        for view in rowViews.values { view.layer?.removeAnimation(forKey: "row.close.move") }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        replaceSnapshot(snapshot)
+        fadeFrame = nil
+        layoutSubtreeIfNeeded()
+        for (id, view) in rowViews {
+            guard let old = oldFrames[id], let parent = view.superview else { continue }
+            let offset = parent.convert(old, from: self).minY - view.frame.minY
+            guard abs(offset) > 0.01 else { continue }
+            let animation = CABasicAnimation(keyPath: "transform.translation.y")
+            animation.fromValue = offset
+            animation.toValue = 0
+            animation.duration = SidebarMetrics.rowCloseMoveDuration
+            animation.timingFunction = SidebarMetrics.easeOutCubic
+            view.layer?.add(animation, forKey: "row.close.move")
+        }
+        CATransaction.commit()
+    }
+
+    private func presentedFrame(_ view: NSView) -> NSRect {
+        let frame = view.layer?.animation(forKey: "row.close.move") == nil
+            ? view.frame : (view.layer?.presentation()?.frame ?? view.frame)
+        return convert(frame, from: view.superview)
+    }
+
+    private func finishRowMotion() {
+        for view in rowViews.values { view.layer?.removeAnimation(forKey: "row.close.move") }
+        for id in Array(retiringRows.keys) { removeRow(id: id) }
     }
 
     private var snapshotSpace: SpaceSnapshot? {
@@ -67,8 +115,15 @@ public final class SidebarView: NSView {
         return true
     }
 
+    @objc public func closeSelectedTodayTab(_ sender: Any?) {
+        guard let id = selectedID,
+              snapshot.spaces.contains(where: { $0.today.contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
+        onClose?(id)
+    }
+
     public func showSpace(at index: Int) {
         guard snapshot.spaces.indices.contains(index) else { return }
+        finishRowMotion()
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
         spaceIndex = index
@@ -139,6 +194,7 @@ public final class SidebarView: NSView {
             column.topAnchor.constraint(equalTo: topAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             urlField.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -16),
+            dock.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
             host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
             host.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12),
@@ -168,6 +224,7 @@ public final class SidebarView: NSView {
     override public func layout() {
         super.layout()
         if bounds.width != laidOutSidebarWidth {
+            finishRowMotion()
             if showingScrollPages { spaceScroll.cancelGesture() }
             clearScrollPresentation()
             laidOutSidebarWidth = bounds.width
@@ -290,7 +347,37 @@ public final class SidebarView: NSView {
     }
 
     private func removeRow(id: String) {
-        rowViews.removeValue(forKey: id)?.removeFromSuperview()
+        if let retired = retiringRows.removeValue(forKey: id) {
+            retired.layer?.removeAnimation(forKey: "row.close.fade")
+            retired.removeFromSuperview()
+            return
+        }
+        guard let view = rowViews.removeValue(forKey: id) else { return }
+        guard let fadeFrame, fadeFrame.id == id else { view.removeFromSuperview(); return }
+        rows.removeArrangedSubview(view)
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(view)
+        view.frame = fadeFrame.frame
+        view.acceptsKeyboardFocus = false
+        view.setAccessibilityHidden(true)
+        retiringRows[id] = view
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self, weak view] in
+            Task { @MainActor in
+                guard let self, let view, self.retiringRows[id] === view else { return }
+                self.removeRow(id: id)
+            }
+        }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1
+        animation.toValue = 0
+        animation.duration = SidebarMetrics.rowCloseFadeDuration
+        animation.timingFunction = SidebarMetrics.easeOutCubic
+        animation.fillMode = .forwards
+        animation.isRemovedOnCompletion = false
+        view.layer?.add(animation, forKey: "row.close.fade")
+        CATransaction.commit()
     }
 
     private func arrange(_ views: [NSView], in stack: NSStackView) {
@@ -303,6 +390,7 @@ public final class SidebarView: NSView {
 
     private func select(_ row: Row) {
         selectedID = row.id
+        snapshot.selectedId = row.id
         reload()
         onSelect?(row)
     }
