@@ -55,7 +55,23 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 ## Next
 
 1. Expose `Store` through UniFFI and load the harness from SQLite; show the repaired view after
-   `load` without writing it back.
+   `load` without writing it back. Run it on herdr-agent-team from a Claude session started inside
+   herdr (`AGENTS.md`): Opus scopes and reviews, Codex `gpt-6.1-sol` medium (labteam) implements.
+   Scope, decided 2026-10-31:
+   - `core/ararat-ffi/src/lib.rs`: a `uniffi::Object` wrapping `Store` with `open(path)` (returns
+     the object; the snapshot is read separately), `snapshot()`, `import_arc_sidebar(json)` (imports,
+     writes `Workspace::to_ops()` through the store, flushes, returns the snapshot), `flush()` and
+     `last_error()`. Store errors become a new `CoreError` variant. Keep the existing free
+     `import_arc_sidebar` for the JSON-only path.
+   - Repair as a view: `snapshot()` clones the loaded `Workspace`, runs `repair_tree` on the clone
+     and builds rows from it; the store is never written by it. The view form proper waits for phase 8.
+   - `macos/Sources/AraratHarness/main.swift`: `--db <path>` opens the store; an empty store first
+     imports the bundled synthetic fixture (or the given `StorableSidebar.json`); without `--db`
+     behaviour is unchanged and no file is created. Flush on quit and report its error.
+   - Tests (Rust): import, close, reopen gives the same snapshot; a store holding a cycle gives a
+     snapshot without hanging and its rows in SQLite are unchanged afterwards; the FFI object can be
+     used from two threads. Harness: `--db` on a temp file answers the stdin `state` command.
+   - Not in scope: saving edits made in the UI.
 2. Owner: view the harness window.
 
 ## Known loose ends
