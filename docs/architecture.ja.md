@@ -319,7 +319,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 13. 開発プロセス
 
-設計または実装の各作業単位は次の順で進める: Opus 5.5 が設計と実装を行い（effort medium）→ Codex `gpt-6.1-sol` がレビューだけを行い（effort medium、labteam アカウント）→ Opus 5.5 が指摘ごとに修正するか否かを判定し、修正を差し戻す。タスクは orca-agent-team の席で実行してよい。レビューと判定は `docs/reviews/` に保存する。
+各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-sol` が実装し（effort medium、labteam アカウント）→ Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
 
 ## 14. オーナーが決める未決の事項
 

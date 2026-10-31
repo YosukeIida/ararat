@@ -317,7 +317,7 @@ A small Rust service: blob put/get/list per group, device-key verification, rate
 
 ## 13. Development process
 
-Each unit of design or implementation: Opus 5.5 designs and implements (effort medium) → Codex `gpt-6.1-sol` reviews only (effort medium, labteam account) → Opus 5.5 decides fix or no fix per finding and sends fixes back. Tasks may run on orca-agent-team seats. Reviews and judgements are kept in `docs/reviews/`.
+Each unit of work: Opus 5.5 sets the scope → Codex `gpt-6.1-sol` implements (effort medium, labteam account) → Opus 5.5 reviews and decides fix or no fix per finding. Hard edge-case bugs run the other way round (Codex investigates, Opus gives a second opinion, Codex implements, Opus reviews). Measurement and design-stage work need no review unless the owner asks. Tasks run on herdr-agent-team seats (`AGENTS.md`). Reviews and judgements are kept in `docs/reviews/`.
 
 ## 14. Open decisions for the owner
 
