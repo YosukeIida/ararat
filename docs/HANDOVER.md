@@ -47,12 +47,17 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Owner's settings choices (2026-10-31), in architecture §7: one settings window for all spaces,
   opened at the current space's settings; extensions added from a settings pane per profile,
   with an "add from Arc" path.
+- Space switching by scrolling measured on Arc, Yab and Ardia with the owner's trackball and trackpad
+  (`docs/research/arc-ardia-observed.md` section 5). The owner chose Arc's rule (architecture §7), and
+  Arc's values replace Dia's for all motion; Dia's values are no longer used.
 
 ## Next
 
 1. Expose `Store` through UniFFI and load the harness from SQLite; show the repaired view after
    `load` without writing it back.
 2. Owner: view the harness window.
+3. Measure Arc's docked-sidebar show and hide (⌘S), its space slide and its tab open and close with the
+   probe, before building those parts (architecture §7).
 
 ## Known loose ends
 
