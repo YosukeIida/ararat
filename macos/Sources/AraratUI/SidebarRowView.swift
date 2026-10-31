@@ -3,6 +3,7 @@ import AraratKit
 
 @MainActor
 final class SidebarRowView: NSView {
+    var acceptsKeyboardFocus = true
     private let action: () -> Void
     private let selected: Bool
     private let fill = NSView()
@@ -68,9 +69,13 @@ final class SidebarRowView: NSView {
     override func mouseUp(with event: NSEvent) { action() }
     override func accessibilityPerformPress() -> Bool { action(); return true }
 
-    override var acceptsFirstResponder: Bool { true }
-    override var canBecomeKeyView: Bool { true }
-    override func becomeFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
+    override var acceptsFirstResponder: Bool { acceptsKeyboardFocus }
+    override var canBecomeKeyView: Bool { acceptsKeyboardFocus }
+    override func becomeFirstResponder() -> Bool {
+        guard acceptsKeyboardFocus else { return false }
+        noteFocusRingMaskChanged()
+        return true
+    }
     override func resignFirstResponder() -> Bool { noteFocusRingMaskChanged(); return true }
     override var focusRingMaskBounds: NSRect { fill.frame }
     override func drawFocusRingMask() {

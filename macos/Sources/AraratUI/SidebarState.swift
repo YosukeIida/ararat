@@ -22,6 +22,17 @@ enum SidebarMetrics {
     static let grabInset: CGFloat = 4
     static let grabWidth: CGFloat = 5
     static let cardInset: CGFloat = 10
+    static let spaceFollowFactor = 0.5
+    static let spaceVelocityWindow = 0.100
+    static let spaceSwitchResponse = 0.250
+    static let spaceSwitchDamping: CGFloat = 0.88
+    static let spaceReturnResponse = 0.190
+    static let spaceReturnDamping: CGFloat = 0.98
+    static let spaceRubberDistance = 255.0
+    static let spaceRubberCoefficient = 0.15
+    static let spaceWheelWindow = 0.049
+    static let spaceWheelThreshold = 1.0
+    static let spaceWheelPause = 0.250
     static let easeOutCubic = CAMediaTimingFunction(controlPoints: 1 / 3, 1, 2 / 3, 1)
 }
 

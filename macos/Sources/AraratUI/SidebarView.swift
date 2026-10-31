@@ -17,6 +17,15 @@ public final class SidebarView: NSView {
     private var favoritesHeight: NSLayoutConstraint!
     private let rows = NSStackView()
     private let dock = NSStackView()
+    private let spaceViewport = NSView()
+    private let spaceColumn = NSStackView()
+    private var spaceScroll = SpaceScrollState()
+    private var scrollPreviews: [SidebarView] = []
+    private var showingScrollPages = false
+    private var scrollGeneration = 0
+    private var isScrollPreview = false
+    private var laidOutSidebarWidth: CGFloat = 0
+    private var spacePagePitch: Double { Double(bounds.width) }
 
     public init(snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
@@ -41,6 +50,8 @@ public final class SidebarView: NSView {
 
     public func showSpace(at index: Int) {
         guard snapshot.spaces.indices.contains(index) else { return }
+        clearScrollPresentation()
+        spaceScroll = SpaceScrollState()
         spaceIndex = index
         reload()
     }
@@ -68,7 +79,8 @@ public final class SidebarView: NSView {
         rows.spacing = 0
         rows.alignment = .leading
 
-        let scroll = NSScrollView()
+        let scroll = SidebarScrollView()
+        scroll.onScroll = { [weak self] event in self?.handleSpaceScroll(event) ?? false }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -81,13 +93,23 @@ public final class SidebarView: NSView {
         dock.orientation = .horizontal
         dock.spacing = 0
 
-        let column = NSStackView(views: [urlField, favorites, heading, scroll, dock])
+        spaceViewport.wantsLayer = true
+        spaceViewport.layer?.masksToBounds = true
+        spaceColumn.wantsLayer = true
+        spaceColumn.orientation = .vertical
+        spaceColumn.alignment = .leading
+        spaceColumn.spacing = 0
+        for view in [favorites, heading, scroll] { spaceColumn.addArrangedSubview(view) }
+        spaceColumn.setCustomSpacing(22, after: favorites)
+        spaceColumn.translatesAutoresizingMaskIntoConstraints = false
+        spaceViewport.addSubview(spaceColumn)
+
+        let column = NSStackView(views: [urlField, spaceViewport, dock])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 0
         column.setCustomSpacing(8, after: urlField)
-        column.setCustomSpacing(22, after: favorites)
-        column.setCustomSpacing(10, after: scroll)
+        column.setCustomSpacing(10, after: spaceViewport)
         column.edgeInsets = NSEdgeInsets(top: 46, left: 8, bottom: 8, right: 8)
         addSubview(column)
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -102,6 +124,11 @@ public final class SidebarView: NSView {
             host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
             host.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12),
             host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            spaceViewport.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            spaceColumn.leadingAnchor.constraint(equalTo: spaceViewport.leadingAnchor),
+            spaceColumn.trailingAnchor.constraint(equalTo: spaceViewport.trailingAnchor),
+            spaceColumn.topAnchor.constraint(equalTo: spaceViewport.topAnchor),
+            spaceColumn.bottomAnchor.constraint(equalTo: spaceViewport.bottomAnchor),
             favorites.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             favoritesHeight,
             heading.widthAnchor.constraint(equalTo: urlField.widthAnchor),
@@ -121,6 +148,11 @@ public final class SidebarView: NSView {
 
     override public func layout() {
         super.layout()
+        if bounds.width != laidOutSidebarWidth {
+            if showingScrollPages { spaceScroll.cancelGesture() }
+            clearScrollPresentation()
+            laidOutSidebarWidth = bounds.width
+        }
         let width = bounds.width - 16
         let columns = width >= 4 * 47 + 3 * 8 ? 4 : width >= 2 * 47 + 8 ? 2 : 1
         if columns != favoriteColumns {
@@ -211,8 +243,143 @@ public final class SidebarView: NSView {
     @objc private func dockClicked(_ sender: NSButton) {
         showSpace(at: sender.tag)
     }
+
+    override public func scrollWheel(with event: NSEvent) {
+        if !handleSpaceScroll(event) { super.scrollWheel(with: event) }
+    }
+
+    override public func hitTest(_ point: NSPoint) -> NSView? {
+        isScrollPreview ? nil : super.hitTest(point)
+    }
+
+    override public func accessibilityChildren() -> [Any]? {
+        isScrollPreview ? [] : super.accessibilityChildren()
+    }
+
+    private func handleSpaceScroll(_ event: NSEvent) -> Bool {
+        guard !isScrollPreview else { return false }
+        layoutSubtreeIfNeeded()
+        let phase: SpaceScrollEvent.Phase
+        if event.phase.contains(.began) { phase = .began }
+        else if event.phase.contains(.ended) { phase = .ended }
+        else if event.phase.contains(.cancelled) { phase = .cancelled }
+        else if event.phase.contains(.mayBegin) { phase = .mayBegin }
+        else if event.phase.isEmpty { phase = .none }
+        else { phase = .changed }
+        if phase == .began && event.momentumPhase.isEmpty { clearScrollPresentation() }
+        let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
+                                     momentum: !event.momentumPhase.isEmpty,
+                                     inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
+        switch spaceScroll.handle(input, index: spaceIndex, count: snapshot.spaces.count, pitch: spacePagePitch) {
+        case .vertical: return false
+        case .ignored: return true
+        case .switchTo(let index):
+            scrollToSpace(at: index)
+        case .follow(let offset):
+            prepareScrollPages(offset: offset)
+            for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
+        case .settle(let index, let offset, let switched):
+            let from = offset + Double(index - spaceIndex) * spacePagePitch
+            if switched { scrollToSpace(at: index) }
+            prepareScrollPages(offset: from)
+            settleScroll(from: from, switched: switched)
+        }
+        return true
+    }
+
+    private var scrollPages: [(NSView, Double)] {
+        [(spaceColumn, 0)] + scrollPreviews.compactMap { preview in
+            preview.superview.map { ($0, Double(preview.spaceIndex - spaceIndex) * spacePagePitch) }
+        }
+    }
+
+    private func scrollToSpace(at index: Int) {
+        let decision = spaceScroll
+        showSpace(at: index)
+        spaceScroll = decision
+    }
+
+    private func prepareScrollPages(offset: Double) {
+        guard !spaceViewport.bounds.isEmpty else { return }
+        let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
+        let indices = Set((center - 1...center + 1).filter { snapshot.spaces.indices.contains($0) && $0 != spaceIndex })
+        guard !showingScrollPages || Set(scrollPreviews.map(\.spaceIndex)) != indices else { return }
+        showingScrollPages = true
+        layoutSubtreeIfNeeded()
+        for preview in scrollPreviews where !indices.contains(preview.spaceIndex) { preview.superview?.removeFromSuperview() }
+        scrollPreviews.removeAll { !indices.contains($0.spaceIndex) }
+        for index in indices.sorted() {
+            guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
+            let preview = SidebarView(snapshot: snapshot)
+            preview.isScrollPreview = true
+            preview.selectedID = selectedID
+            preview.showSpace(at: index)
+            preview.wantsLayer = true
+            preview.setAccessibilityHidden(true)
+            let page = NSView(frame: spaceViewport.bounds)
+            page.wantsLayer = true
+            page.layer?.masksToBounds = true
+            page.setAccessibilityHidden(true)
+            preview.frame = spaceViewport.convert(bounds, from: self)
+            page.addSubview(preview)
+            spaceViewport.addSubview(page, positioned: .below, relativeTo: spaceColumn)
+            preview.layoutSubtreeIfNeeded()
+            var descendants = preview.subviews
+            while let view = descendants.popLast() {
+                (view as? NSControl)?.refusesFirstResponder = true
+                (view as? SidebarRowView)?.acceptsKeyboardFocus = false
+                descendants.append(contentsOf: view.subviews)
+            }
+            scrollPreviews.append(preview)
+        }
+    }
+
+    private func settleScroll(from offset: Double, switched: Bool) {
+        let response = switched ? SidebarMetrics.spaceSwitchResponse : SidebarMetrics.spaceReturnResponse
+        let damping = switched ? SidebarMetrics.spaceSwitchDamping : SidebarMetrics.spaceReturnDamping
+        let omega = 2 * CGFloat.pi / response
+        let generation = scrollGeneration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in
+                guard let self, self.scrollGeneration == generation else { return }
+                self.clearScrollPresentation()
+            }
+        }
+        for (view, origin) in scrollPages {
+            let spring = CASpringAnimation(keyPath: "transform.translation.x")
+            spring.mass = 1
+            spring.stiffness = omega * omega
+            spring.damping = 2 * damping * omega
+            spring.duration = spring.settlingDuration
+            spring.fromValue = origin + offset
+            spring.toValue = origin
+            view.layer?.transform = CATransform3DMakeTranslation(origin, 0, 0)
+            view.layer?.add(spring, forKey: "space.scroll")
+        }
+        CATransaction.commit()
+    }
+
+    private func clearScrollPresentation() {
+        scrollGeneration += 1
+        for (view, _) in scrollPages {
+            view.layer?.removeAnimation(forKey: "space.scroll")
+            view.layer?.transform = CATransform3DIdentity
+        }
+        scrollPreviews.forEach { $0.superview?.removeFromSuperview() }
+        scrollPreviews.removeAll()
+        showingScrollPages = false
+    }
 }
 
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+private final class SidebarScrollView: NSScrollView {
+    var onScroll: ((NSEvent) -> Bool)?
+
+    override func scrollWheel(with event: NSEvent) {
+        if onScroll?(event) != true { super.scrollWheel(with: event) }
+    }
 }
