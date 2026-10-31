@@ -71,4 +71,4 @@ None of these was confirmed as a `UserDefaults` key; they may be menu or command
 
 - Swift function names are stripped except for `@objc` methods, so most logic appears as unnamed functions.
 - The Objective-C message analyzer was disabled (section 2 of `yab/README.md`), so calls through `objc_msgSend` are not resolved to their selectors in the decompiled output. Selector stubs can still be followed by hand.
-- Static analysis cannot give timing values such as delays and slack widths. Those come from observing Yab (HANDOVER Next 2).
+- Static analysis cannot give timing values such as delays and slack widths. Those come from observing Yab (`yab-observed.md`).

@@ -236,9 +236,10 @@ workspace、archive、同期のジャーナルには SQLite（WAL）を用いる
 - サイドバー、space のページング、favorites のグリッド、リストの行、dock、command bar、Little window、ウィンドウの chrome、ツールチップには AppKit を用いる。行は layer を基盤とするビューであり、キーごとに再利用する。space のページングでは layer だけを移動する（Cra ledger 12、4）。
 - 設定とオンボーディングには、`NSHostingView` 内の SwiftUI を用いる。
 - 動きとサイズの値は、計測した Arc と Dia の値（components note 5）を出発点とする: サイドバーの表示 / 非表示の spring（response 0.215 s、damping 0.79、Dia）、space のページング（`scrollingDeltaX × −0.5`、ラバーバンド `255·(1 − 1/(0.15·x/255 + 1))`、response 0.25 s の臨界減衰の spring で静止、Dia）、タブを開く / 閉じるときの曲線、Arc のサイドバーの peek（5 pt の inset、spring の response 0.185 s、damping 0.77）。
-- フローティングサイドバーは Yab の挙動に従う。サイドバーは、ポインタがウィンドウの左端に達するか左端を越えたときに現れ、ポインタがウィンドウの左外側にある間は表示を維持する。サイドバーは、ポインタがサイドバーの幅に余裕を加えた位置より右へ移動したとき、またはポインタがウィンドウの他の辺の外側に短時間とどまったときに消える。ウィンドウ内では tracking area を用いる。ウィンドウの外では tracking area は何も報告しないため、サイドバーの表示中はポインタの位置（`NSEvent.mouseLocation`）をディスプレイのリフレッシュレートでサンプリングする。サンプリングはサイドバーが隠れたとき、またはアプリが非アクティブになったときに停止し、非アクティブになったときはサイドバーを隠す。正確な値は Yab の観察から決める（phase 1）。
+- フローティングサイドバーは、計測した Arc の挙動に従う（`docs/research/arc-ardia-observed.ja.md`。オーナーの選択、2026-10-31）。サイドバーは、ポインタがウィンドウの左端から 5 pt 以内またはウィンドウの左外側におよそ 150 ms とどまった後に現れ、動き始めてからおよそ 110 ms で全幅に達し、およそ 1% 行き過ぎる（上記の動きの値の peek の spring）。ポインタがウィンドウの左外側にある間は、ウィンドウの左端からおよそ 250 pt までは表示を維持する。サイドバーは、ポインタがウィンドウからおよそ 250 pt より左へ離れたとき、ウィンドウ内でもウィンドウの右端より右でもサイドバーの端からおよそ 72 pt より右へ移動したとき、またはウィンドウの上へ出たときに、およそ 90 ms で減速しながら隠れる。ウィンドウ内では tracking area を用いる。ウィンドウの外では tracking area は何も報告しないため、サイドバーの表示中はポインタの位置（`NSEvent.mouseLocation`）をディスプレイのリフレッシュレートでサンプリングする。サンプリングはサイドバーが隠れたときに停止する。Arc と同じく、アプリが非アクティブになったときにもサイドバーを隠す。Yab の異なる値は `docs/research/yab-observed.ja.md` にある。
 - テーマ: Arc の `blendedGradient`（2 つの基調色、オーバーレイの色、ノイズと強度、類似色または補色の色相環、ライトまたはダークの半透明）を、`NSVisualEffectView` とグラデーションの layer に対応付ける。非公開 API の `CABackdropLayer` は、計測した差がその使用を正当化しない限り使用しない（Cra ledger 34）。
-- 設定ウィンドウ: unified toolbar を持つ `NSSplitViewController` とし、各ペインは SwiftUI で実装する。space の間をスライドすると切り替わる space ごとの設定は、オーナーが設計する未決の項目である（14）。
+- 設定ウィンドウ: unified toolbar を持つ `NSSplitViewController` とし、各ペインは SwiftUI で実装する。1 つのウィンドウにすべての space の設定を置き（Yab の Spaces のペインと同じ）、space から設定を開いたときは、そのウィンドウでその space の設定を開く（オーナーの選択、2026-10-31）。space の間をスライドしたときに space ごとの設定がどう切り替わるかは、まだモックで決める（14）。
+- 拡張機能は、設定ウィンドウの Extensions のペインからプロファイルごとに追加・管理する。Arc に入っていて未導入の拡張機能を一覧して追加する経路を持つ（Yab と同じ。オーナーの選択、2026-10-31）。このペインは §9 のインポートの規則に従う。
 
 ## 8. 同期
 
@@ -323,7 +324,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 | 項目 | 選択肢 | 現時点の方向 |
 |---|---|---|
-| space の間をスライドすると切り替わる space ごとの設定 | オーナーの設計。入力: space のヘッダーから行う Arc の space ごとのテーマ / プロファイルの編集、Dia の設定ウィンドウ、Yab の設定（phase 1 で観察） | まずモックを作り、その後に決定する |
+| space の間をスライドすると切り替わる space ごとの設定 | オーナーの設計。入力: space のヘッダーから行う Arc の space ごとのテーマ / プロファイルの編集、Dia の設定ウィンドウ、Yab の設定（`docs/research/yab-observed.ja.md`）。決まっていること: すべての space を 1 つのウィンドウに置き、今の space の設定から開く（7） | まずモックを作り、その後に決定する |
 | favorites をプロファイルごと（Arc）に共有するか、space ごと（Cra）に共有するか | プロファイル / space | Arc と同じくプロファイル。モックの後に再検討する |
 | セキュリティのための Chromium の milestone の更新（フルビルド）を事前承認するか | する / 毎回確認する | する。4.9 のパッチの遅延の上限の範囲内で |
 | DRM | Google の VMP 署名付きの Widevine / DRM を要するサイト向けに第 2 のエンジンとして WebKit（Ardia）/ 当初はなし | phase 6 の前に決定する |
@@ -341,7 +342,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 | 1 | エンジンなしのコアの基礎: 所属のレジスタを持つモデル、ATC、Arc のインポート、クラッシュに対して安全な書き込みを行う SQLite、UniFFI バインディング。harness 上でコアのデータを用いる `AraratUI` の最小限のサイドバー。これと並んで、`morluto/rea` の clone、Yab の利用規約の範囲内での Yab の静的解析（レイアウト、クラス名、設定の構造）、Yab のフローティングサイドバーと設定の観察、仕様の作成を行う | harness が実際の Arc のインポートを表示する。ツリーの不変条件とクラッシュに対して安全な書き込みに関するコアのテストが通る |
 | 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、両方のベース候補の一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series check`、ベースの決定 | 独自のスクリプトによる、選んだベースの標準ビルド。ベースの決定を記録済み |
 | 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
-| 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Yab の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
+| 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Arc の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
 | 5 | Little window、既定のハンドラーとしての Air Traffic Control、split view、archive、ダウンロード、セッションの復元 | 日常の使用において Arc のワークフローと同等 |
 | 6 | 配布とセキュリティの関門: Developer ID、notarization、Sparkle、CI での署名、Corresponding Source、4.9 の保守のジョブ、評判の検査。DRM を決定し、ページの API を凍結する | 自己更新する署名済みのビルド。オーナーが日常的な使用を開始する |
 | 7 | 設定（オーナーによる space ごとの設計を含む）、パスワード・cookie・拡張のインポート、キーバインド | オーナーが Arc から移行する |

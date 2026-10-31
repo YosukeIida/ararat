@@ -31,9 +31,21 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   the `Column*` classes); its values come from observing Yab. The saved Ghidra project (1.2 GB) and the arm64
   slice are in `analysis/yab/` (gitignored); reopen with `docs/research/yab/README.md` section 3. No REA MCP registration was made.
 
+- Yab observation done by GUI automation: findings in `docs/research/yab-observed.md`, tools in
+  `docs/research/yab/` (README section 4). Phase 1's parallel research track is complete.
+- Arc and Ardia floating sidebars measured the same way: `docs/research/arc-ardia-observed.md`.
+  Arc, like Yab, keeps the sidebar while the pointer is left of the window, up to about 250 pt
+  away; above the window and on deactivation Arc hides, Yab stays. Ardia hides on leaving the
+  window in any direction. The owner chose Arc's values and rules for Ararat, including
+  hiding on deactivation (architecture §7).
+- Owner's settings choices (2026-10-31), in architecture §7: one settings window for all spaces,
+  opened at the current space's settings; extensions added from a settings pane per profile,
+  with an "add from Arc" path.
+
 ## Next
 
-1. Observe Yab's floating sidebar and settings (an owner task in the GUI); write the spec.
+1. Owner: view the harness window and answer the Arc Today question (State above).
+2. Expose `Store` through UniFFI and load the harness from SQLite; call `repair_tree` after `load`.
 
 ## Blocked
 
@@ -47,5 +59,4 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Fresh clone must run `macos/scripts/build-core.sh` before `swift build`.
 - Inside the devshell `swift` and `swiftc` are hidden by nix's apple-sdk; use the README's `xc`.
   `mkShellNoCC` was tried to avoid this and breaks Rust linking (`-liconv`).
-- Open owner decisions: architecture §14 (per-space settings mock first, favorites per profile
-  or per space, DRM, content blocker, Safe Browsing source, sync hosting).
+- Open owner decisions: architecture §14 (per-space settings mock first, favorites per profile or per space, DRM, content blocker, Safe Browsing source, sync hosting).

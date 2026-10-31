@@ -40,3 +40,17 @@ Useful tools: `analyze_swift_types`, `search_procedures` and `search_strings` (r
 2. Take its `xrefs` to reach the selector reference.
 3. Take the `xrefs` of that reference to reach the `objc_msgSend` stub.
 4. Ask `procedure_callers` for the stub's callers.
+
+## 4. Observe the floating sidebar and settings
+
+Findings: `../yab-observed.md`. The two Swift scripts need the Accessibility and Screen Recording permissions for the terminal that runs them. Compile them with `xc swiftc -O <file>.swift -o "$WORK/<name>"`.
+
+`yabprobe <winX> <rowY> <stripWidth> <step>...` captures one pixel row starting at the window's left edge (screen points, top-left origin; the window frame comes from AppleScript `bounds of front window` or the Accessibility API) at up to 240 frames per second. Each step is `m:x:y` (move the pointer) or `w:ms` (wait). It prints `m <ms> <x> <y>` for each move and `f <ms> <edge>` whenever the sidebar's reach changes; `edge` is the last pixel that differs from the page colour at the strip's right end. Pick a row where the page is blank, or text makes the edge jump. Example, a 330 ms touch on the left edge:
+
+```sh
+"$WORK/yabprobe" 1147 1300 400 m:1600:700 w:500 m:1150:700 w:330 m:1600:700 w:800
+```
+
+Before measuring, make sure the main window has the sidebar shut and is the front window. A link opened from another app goes to Yab's small window, which has no sidebar; make a tab in the main window with AppleScript `make new tab` instead.
+
+`settingstext [pane]...` selects each pane of the open settings window through the Accessibility API and prints each control's kind and label. Its output includes the owner's own data (space names, sites); keep it out of the repo. Read the preference file (`~/Library/Preferences/dev.serafim.fast.plist`) for key names and types only, never values.
