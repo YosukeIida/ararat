@@ -2,7 +2,7 @@
 
 Japanese translation: `yab-observed.ja.md`. Static analysis: `yab-static.md`. Tools and method: `yab/README.md` section 4.
 
-Subject: Yab 0.42.1 on macOS 27.0.1, one 3440×1440 display at 1× scale and 165 Hz, the main browser window at 1146×1410 pt with the sidebar on the left in its shut (hidden) state. A script moved the pointer with synthetic mouse events and recorded, per captured frame, how far the sidebar reached along one blank pixel row. Frames arrived about every 6 ms; capture latency is about 15–20 ms, judged from the hide reaction, and is included in the times below.
+Subject: Yab 0.42.1 on macOS 27.0.1, one 3440×1440 display at 1× scale and 165 Hz, the main browser window at 1146×1410 pt with the sidebar on the left in its shut (hidden) state. A script moved the pointer with synthetic mouse events and recorded, per captured frame, how far the sidebar reached along one blank pixel row. Frames arrived about every 6 ms. Times below run from posting the mouse event to the frame callback, so they include the capture delay, which was not measured separately.
 
 ## 1. Floating sidebar
 
@@ -26,7 +26,7 @@ Subject: Yab 0.42.1 on macOS 27.0.1, one 3440×1440 display at 1× scale and 165
 | Moving out of the window to the left | Stays (4 s tested) |
 | Moving above the window, into the menu bar | Stays at any horizontal position, even beyond the window's right edge (up to 10 s tested). Coming back into the window to the right of the slack hides it; coming back over the sidebar keeps it |
 | Activating another app | Stayed shown for at least 2.5 s |
-| Motion | Starts within capture latency of the pointer crossing, then runs almost linearly and finishes in about 85 ms |
+| Motion | The first changed frame arrives about 20 ms after the move; it then runs almost linearly and finishes in about 85 ms |
 
 ### Differences from architecture §7
 

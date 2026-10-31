@@ -1,8 +1,3 @@
 # Reviews waiting for Codex
 
-The labteam Codex workspace ran out of credits on 2026-10-30. The owner chose to wait for a refill rather than switch accounts. These units need the review and judgement steps once it is back:
-
-1. Architecture draft 2 (`docs/architecture.md`): round 2, checking the round-1 findings and the new sections (sync protocol requirements, tree repair, crash consistency, extension window semantics, pointer sampling, roadmap).
-2. Phase-1 core code (`core/`): model with membership registers, fractional order keys (`order.rs`), Air Traffic Control matching, Arc sidebar import, UniFFI surface, SQLite storage (`storage.rs`: records + journal in one transaction, 1 s batch writer, retry on failure; `tests/storage.rs` including a process-abort test), tree repair (`tree.rs`, HLC and previous parent on `Membership`; `tests/tree.rs` with a randomised damage test).
-3. Phase-1 macOS code (`macos/`): package layout, `SidebarView`, `SidebarRowView`, `FavoriteTile`, the harness.
-4. Yab, Arc and Ardia observation (`docs/research/yab-observed.md`, `docs/research/arc-ardia-observed.md`, `docs/research/yab/yabprobe.swift`, `settingstext.swift`) and the architecture §7 and §14 changes it led to, including the owner's settings and extensions choices.
+None. The 2026-10-31 round covered every queued unit; the fixes it led to (`2026-10-31-phase1-judgement.md`) need their own review once made.

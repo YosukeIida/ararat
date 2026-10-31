@@ -19,8 +19,9 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   imported items carry a zero HLC. Nothing calls `repair_tree` yet; the hooks are after `load` in
   `Store::open` and after every sync merge.
 - Importer ran on the owner's real `StorableSidebar.json` without error: 6 spaces, favorites and
-  pinned counted, **today 0 in every space**. Unresolved: either Arc auto-archived Today, or the
-  importer misreads unpinned children. The owner was asked to look in Arc. Do not read
+  pinned counted, **today 0 in every space**. Most likely Arc's auto-archive (the owner's
+  setting archives Today after a set time; one space was seen empty in Arc on 2026-10-31). The
+  importer does not read `StorableArchiveItems` yet. Do not read
   `~/Library/Application Support/Arc` yourself; a structure-only diagnostic (keys and counts, no
   titles or URLs) needs the owner's approval first.
 - Harness window not yet viewed by the owner (README: `xc swift run AraratHarness [path]`).
@@ -44,13 +45,10 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Next
 
-1. Owner: view the harness window and answer the Arc Today question (State above).
+1. Fix the findings judged in `docs/reviews/2026-10-31-phase1-judgement.md` (core C1–C5, macOS
+   M1–M5, architecture A1–A4 and A6), then send the fixes to Codex review.
 2. Expose `Store` through UniFFI and load the harness from SQLite; call `repair_tree` after `load`.
-
-## Blocked
-
-- Codex reviews paused until the labteam account is refilled (owner's choice). Queue:
-  `docs/reviews/PENDING.md`. Keep doing non-review-dependent work.
+3. Owner: view the harness window.
 
 ## Known loose ends
 
