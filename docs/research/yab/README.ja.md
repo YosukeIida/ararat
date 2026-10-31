@@ -54,3 +54,5 @@ driver は REA のツールの一覧を `box/tools.json` に書き出す。続�
 計測の前に、メインウィンドウのサイドバーが閉じており、そのウィンドウが最前面にあることを確かめる。他のアプリから開いたリンクは、サイドバーの無い Yab の小さいウィンドウに入る。メインウィンドウのタブは AppleScript の `make new tab` で作る。
 
 `settingstext [pane]...` は、開いている設定ウィンドウの各ペインをアクセシビリティ API で選び、各コントロールの種類とラベルを出力する。出力にはオーナー自身のデータ（space の名前、サイト）が含まれるため、repo に入れない。設定のファイル（`~/Library/Preferences/dev.serafim.fast.plist`）は、キーの名前と型だけを読み、値は読まない。
+
+スクロール（`../arc-ardia-observed.ja.md` の 5 節）: `scrollrec <seconds>` は、システム全体のスクロールのイベントを出力する（受信のみのイベントタップで、デルタ、フェーズ、方向の反転の印を記録し、内容は記録しない）。`scrollplay <recording> <fromMs> <toMs> <x> <y>` は、記録のうち指定した時間の範囲のイベントを、元の間隔で指定した点に送る。`scroll <x> <y> wheel <lines>` と `scroll <x> <y> pad <px> <steps> <momentum steps>` は、合成したホイールとトラックパッドのイベントの列を送る。`INV=1` で方向の反転の印を立てる。
