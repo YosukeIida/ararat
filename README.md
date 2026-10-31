@@ -19,6 +19,6 @@ printf 'space 1\nselect tab-a\nstate\n' | (cd macos && xc swift run AraratHarnes
 xc node ~/workspace/github.com/morluto/rea/scripts/rea.mjs doctor   # REA with the devshell's Ghidra
 ```
 
-The harness reads `space <index>`, `select <row id>` and `state` on stdin and answers each on stdout. Main-thread stalls over 100 ms are written to stderr as `hitch <ms> ms`.
+The harness reads `space <index>`, `select <row id>`, `state`, `width` and `reset-width` on stdin and answers each on stdout. `width` reports the current sidebar width in points as `ok <width>`; `reset-width` restores 240 pt and replies `ok 240`. Drag the sidebar's right edge to resize it between 164 and 500 pt, or use View → Reset Sidebar Width to restore 240 pt. Width is kept per window in memory only. Main-thread stalls over 100 ms are written to stderr as `hitch <ms> ms`.
 
 `--db <path>` loads a SQLite workspace. If it has no spaces, the harness imports the bundled synthetic fixture, or a sidebar file supplied as an additional argument, and flushes it to disk. Later runs load the stored workspace without importing again. The harness flushes on quit and reports errors to stderr. Without `--db`, it reads JSON without creating a database. UI edits are not saved yet.

@@ -54,10 +54,11 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   close were then measured (sections 5–6); most coincide with Dia's published values.
 
 - Harness sidebar laid out with Arc's measured dimensions (f6c3ff4; three review rounds, last with no findings). Open nits: empty favorites keep both gaps above the space name (Arc's empty state unmeasured); a focused tile loses focus when the column count changes.
+- Sidebar width by drag in the harness: 164–500 pt, follows the pointer, per window in memory, View → Reset Sidebar Width and stdin `width` / `reset-width`; nested rows' fills indented 16 pt per level. Open: no `acceptsFirstMouse`, so a drag on an inactive window may only activate it (Arc unmeasured).
 
 ## Next
 
-1. Sidebar width by dragging its edge, with "reset width" to 240 pt and Arc's limits (card edge 164–500 pt, hide past half the minimum; architecture §7).
+1. Floating form of the sidebar (§7): hidden state, ⌘S with Arc's motion, reveal at the left edge, and hiding when a width drag passes half the minimum (the harness clamps at 164 for now).
 2. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
 
 ## Known loose ends

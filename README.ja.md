@@ -19,7 +19,7 @@ printf 'space 1\nselect tab-a\nstate\n' | (cd macos && xc swift run AraratHarnes
 xc node ~/workspace/github.com/morluto/rea/scripts/rea.mjs doctor   # devshell の Ghidra で REA を使う
 ```
 
-harness は標準入力から `space <index>`、`select <row id>`、`state` を読み、それぞれに標準出力で答える。メインスレッドが 100 ms を超えて止まると、標準エラー出力に `hitch <ms> ms` と書く。
+harness は標準入力から `space <index>`、`select <row id>`、`state`、`width`、`reset-width` を読み、それぞれに標準出力で答える。`width` は現在のサイドバー幅を pt 単位で `ok <width>` と返し、`reset-width` は幅を 240 pt に戻して `ok 240` と返す。サイドバーの右端をドラッグすると、幅を 164〜500 pt の範囲で変更できる。View → Reset Sidebar Width でも 240 pt に戻せる。幅は window ごとにメモリ内だけで保持する。メインスレッドが 100 ms を超えて止まると、標準エラー出力に `hitch <ms> ms` と書く。
 
 `--db <path>` は SQLite から workspace を読み込む。space がなければ、同梱の合成 fixture、または追加の引数で指定されたサイドバーファイルをインポートし、ディスクに flush する。次回以降は再インポートせず、保存済みの workspace を読み込む。harness は終了時にも flush し、エラーを標準エラー出力に報告する。`--db` を省略すると、データベースを作成せずに JSON を読み込む。UI の編集内容はまだ保存されない。
 

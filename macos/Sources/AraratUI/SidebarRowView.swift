@@ -32,7 +32,7 @@ final class SidebarRowView: NSView {
         let indent = CGFloat(row.depth) * 16
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 41),
-            fill.leadingAnchor.constraint(equalTo: leadingAnchor),
+            fill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: indent),
             fill.trailingAnchor.constraint(equalTo: trailingAnchor),
             fill.centerYAnchor.constraint(equalTo: centerYAnchor),
             fill.heightAnchor.constraint(equalToConstant: 36),
