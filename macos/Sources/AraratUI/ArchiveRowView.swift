@@ -8,6 +8,8 @@ final class ArchiveRowView: NSView {
     private(set) var hovered = false
     private var focused = false
     var moveFocus: ((ArchiveRowView, Int) -> Void)?
+    var focusChanged: ((Int) -> Void)?
+    var tabTarget: ((Bool) -> NSView?)?
     private let icon = NSImageView(image: SidebarRowView.symbol(for: .tab))
     private let title = NSTextField(labelWithString: "")
     private let address = NSTextField(labelWithString: "")
@@ -47,11 +49,16 @@ final class ArchiveRowView: NSView {
             button.setAccessibilityLabel(label)
             button.target = self
             button.action = action
-            button.focusChanged = { [weak self] in self?.refreshActions() }
+            button.focusChanged = { [weak self, weak button] in
+                guard let self else { return }
+                if button?.focused == true { self.focusChanged?(button === self.deleteButton ? 1 : 2) }
+                self.refreshActions()
+            }
             button.navigate = { [weak self] event in self?.navigate(with: event) ?? false }
         }
         deleteButton.toolTip = "Delete Permanently"
         restoreButton.toolTip = "Restore Tab"
+        restoreButton.nextTarget = { [weak self] in self?.tabTarget?(false) }
         restoreButton.identifier = NSUserInterfaceItemIdentifier(entry.id)
         for view in [icon, title, address, deleteButton, restoreButton] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         setAccessibilityElement(true)
@@ -75,7 +82,17 @@ final class ArchiveRowView: NSView {
     override var isFlipped: Bool { true }
     func update(entry: ArchiveEntry) {
         guard self.entry != entry || title.stringValue.isEmpty else { return }
+        if self.entry.id != entry.id {
+            let wasActive = hovered || focused || deleteButton.focused || restoreButton.focused
+            pointerLocation = nil
+            hovered = false
+            focused = false
+            deleteButton.resetFocus()
+            restoreButton.resetFocus()
+            if wasActive { refreshActions() }
+        }
         self.entry = entry
+        restoreButton.identifier = NSUserInterfaceItemIdentifier(entry.id)
         needsLayout = true
         title.stringValue = entry.title
         address.stringValue = Self.displayURL(entry.url)
@@ -101,8 +118,16 @@ final class ArchiveRowView: NSView {
         address.frame = NSRect(x: x, y: title.frame.maxY + gap, width: width, height: addressHeight)
         refreshHover()
     }
+    func focusTarget(_ part: Int) -> NSView { part == 1 ? deleteButton : part == 2 ? restoreButton : self }
     private func navigate(with event: NSEvent) -> Bool {
         switch event.keyCode {
+        case 48:
+            let targets: [NSView] = [self, deleteButton, restoreButton]
+            let index = targets.firstIndex { $0 === window?.firstResponder } ?? 0
+            let backwards = event.modifierFlags.contains(.shift)
+            let next = index + (backwards ? -1 : 1)
+            if targets.indices.contains(next) { window?.makeFirstResponder(targets[next]) }
+            else { window?.makeFirstResponder(tabTarget?(backwards)) }
         case 125: moveFocus?(self, 1)
         case 126: moveFocus?(self, -1)
         case 123, 124:
@@ -113,10 +138,10 @@ final class ArchiveRowView: NSView {
         }
         return true
     }
-    func chainNext(to view: NSView) { restoreButton.nextKeyView = view }
+    override var previousValidKeyView: NSView? { tabTarget?(true) ?? super.previousValidKeyView }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isHiddenOrHasHiddenAncestor }
-    override func becomeFirstResponder() -> Bool { focused = true; refreshActions(); noteFocusRingMaskChanged(); return true }
+    override func becomeFirstResponder() -> Bool { focused = true; scrollToVisible(bounds); focusChanged?(0); refreshActions(); noteFocusRingMaskChanged(); return true }
     override func resignFirstResponder() -> Bool { focused = false; refreshActions(); noteFocusRingMaskChanged(); return true }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: SidebarMetrics.archiveRowRadius, yRadius: SidebarMetrics.archiveRowRadius).fill() }
@@ -142,7 +167,9 @@ final class ArchiveRowView: NSView {
     }
     @objc func refreshHover() {
         let point = pointerLocation.map { $0() } ?? (window?.isKeyWindow == true ? window?.mouseLocationOutsideOfEventStream : nil)
-        hovered = !isHiddenOrHasHiddenAncestor && (point.map { bounds.intersection(visibleRect).contains(convert($0, from: nil)) } ?? false)
+        let updated = !isHiddenOrHasHiddenAncestor && (point.map { bounds.intersection(visibleRect).contains(convert($0, from: nil)) } ?? false)
+        guard hovered != updated else { return }
+        hovered = updated
         refreshActions()
     }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); refreshHover() }
@@ -160,6 +187,8 @@ final class ArchiveRowView: NSView {
 }
 
 private final class ArchiveActionButton: NSButton {
+    var nextTarget: (() -> NSView?)?
+    override var nextValidKeyView: NSView? { nextTarget?() ?? super.nextValidKeyView }
     var focusChanged: (() -> Void)?
     var navigate: ((NSEvent) -> Bool)?
     override func keyDown(with event: NSEvent) {
@@ -168,9 +197,10 @@ private final class ArchiveActionButton: NSButton {
         else { super.keyDown(with: event) }
     }
     private(set) var focused = false
+    func resetFocus() { focused = false }
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     override var acceptsFirstResponder: Bool { isEnabled }
     override var canBecomeKeyView: Bool { isEnabled && !isHiddenOrHasHiddenAncestor }
-    override func becomeFirstResponder() -> Bool { focused = true; focusChanged?(); return true }
+    override func becomeFirstResponder() -> Bool { focused = true; if let row = superview { row.scrollToVisible(row.bounds) }; focusChanged?(); return true }
     override func resignFirstResponder() -> Bool { focused = false; focusChanged?(); return true }
 }

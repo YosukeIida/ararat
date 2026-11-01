@@ -34,6 +34,7 @@ enum SidebarMetrics {
     static let archiveActionSize: CGFloat = 24
     static let archiveURLSize: CGFloat = 12
     static let archiveHeadingHeight: CGFloat = 32
+    static let archiveHeadingLabelHeight: CGFloat = 18
     static let archiveBackHeight: CGFloat = 32
     static let archiveRowRadius: CGFloat = 8
     static let archiveHoverAlpha: CGFloat = 0.08
