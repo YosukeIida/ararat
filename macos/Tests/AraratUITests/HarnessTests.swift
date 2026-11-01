@@ -283,3 +283,48 @@ func harnessPermanentlyDeletesOnlyAnArchivedTab() throws {
     let reopened = try runHarness(in: directory, arguments: arguments, commands: "restore tab-a\n")
     #expect(reopened.output.contains("error restore tab-a"))
 }
+
+@Test
+func harnessRejectsMalformedCommandsAndKeepsProcessing() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let malformed = [
+        "", " ", "\t\t", "unknown", "unknown extra", "input", "input menu", "input key",
+        "quit extra", "state extra", "width 1", "reset-width 1", "sidebar extra", "toggle-sidebar extra",
+        "select", "select \t", "select tab-mail extra", "close", "close tab-mail extra",
+        "restore", "restore tab-a extra", "archive-delete", "archive-delete tab-a extra",
+        "space", "space +1", "space x", "space 1.5", "space 0 extra", "space 99999999999999999999999999999999",
+        "library invalid", "library close extra", "create-space", "create-space \t  ",
+    ]
+    let run = try runHarness(in: directory, commands: malformed.joined(separator: "\n") + "\n")
+    #expect(run.status == 0, "\(run.error)")
+    #expect(run.runningBeforeStop)
+    let replies = run.output.split(separator: "\n").map(String.init)
+    #expect(replies.count == malformed.count + 2)
+    let known = Set(["quit", "state", "width", "reset-width", "sidebar", "toggle-sidebar", "select", "close", "restore", "archive-delete", "space", "library", "create-space"])
+    for (command, reply) in zip(malformed, replies) {
+        #expect(reply.hasPrefix("error "), "\(command.debugDescription) answered \(reply)")
+        if let verb = command.split(whereSeparator: \.isWhitespace).first, known.contains(String(verb)) {
+            #expect(reply.hasPrefix("error \(verb): usage "), "\(command.debugDescription) answered \(reply)")
+        }
+    }
+    #expect(replies.dropFirst(malformed.count).first?.hasPrefix("state space ") == true)
+    #expect(replies.last == "ok quit")
+}
+
+@Test
+func harnessValidatedCommandsKeepTheirRepliesAndFreeTextArguments() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let run = try runHarness(in: directory, commands:
+        "\twidth \t\nreset-width\nsidebar\ntoggle-sidebar\nlibrary\nlibrary close\narchive-search \t\narchive-search Mixed query words\nspace 0000\nselect tab-mail\nclose tab-spec\nrestore tab-spec\narchive-delete missing\ncreate-space   Project  Notes   \n")
+    #expect(run.status == 0, "\(run.error)")
+    #expect(run.runningBeforeStop)
+    let lines = run.output.split(separator: "\n").map(String.init)
+    #expect(Array(lines.prefix(11)) == ["ok 240", "ok 240", "ok docked", "ok floating", "ok library", "ok library close",
+        "ok archive-search count 0", "ok archive-search count 0", "ok space 0", "ok select tab-mail", "ok close tab-spec"])
+    #expect(lines.contains { $0.hasPrefix("error restore tab-spec:") })
+    #expect(lines.contains { $0.hasPrefix("error archive-delete missing:") })
+    #expect(lines.contains("ok create-space Project  Notes"))
+    #expect(lines.last == "ok quit")
+}

@@ -199,37 +199,36 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
 
     private func runNext() {
         guard let line = commands.first else { return }
-        run(line) { [weak self] reply in
+        let command = HarnessCommand.parse(line)
+        run(command) { [weak self] reply in
             guard let self else { return }
             print(reply)
             fflush(stdout)
             self.commands.removeFirst()
-            if line.split(separator: " ") == ["quit"] { NSApp.terminate(nil) }
+            if case .quit = command { NSApp.terminate(nil) }
             else { self.runNext() }
         }
     }
 
-    private func run(_ line: String, reply: @escaping @MainActor (String) -> Void) {
+    private func run(_ command: HarnessCommand, reply: @escaping @MainActor (String) -> Void) {
         guard let sidebar, let resizeHandle, let sidebarContainer else { reply("error not ready"); return }
-        let words = line.split(separator: " ", maxSplits: 1).map(String.init)
-        switch (words.first, words.count > 1 ? words[1] : nil) {
-        case ("archive-delete", let id?): deleteArchive(id: id, reply: reply)
-        case ("archive-search", let query): reply("ok archive-search count \(sidebar.searchArchive(query ?? ""))")
-        case ("create-space", let name): createSpace(name: name ?? "", reply: reply)
-        case ("library", let arg):
-            guard arg == nil || arg == "close" else { reply("error library command"); return }
-            sidebar.setLibraryOpen(arg == nil)
-            reply(arg == nil ? "ok library" : "ok library close")
-        case ("restore", let id?): restore(id: id, reply: reply)
-        case ("quit", nil): reply("ok quit")
-        case ("space", let arg?):
-            guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply("error no space \(arg)"); return }
+        switch command {
+        case .archiveDelete(let id): deleteArchive(id: id, reply: reply)
+        case .archiveSearch(let query): reply("ok archive-search count \(sidebar.searchArchive(query))")
+        case .createSpace(let name): createSpace(name: name, reply: reply)
+        case .library(let open):
+            sidebar.setLibraryOpen(open)
+            reply(open ? "ok library" : "ok library close")
+        case .restore(let id): restore(id: id, reply: reply)
+        case .quit: reply("ok quit")
+        case .space(let index):
+            guard snapshot.spaces.indices.contains(index) else { reply("error no space \(index)"); return }
             sidebar.showSpace(at: index)
             adapter.snapshot { result in
                 if case .failure(let error) = result { reply("error space \(index): \(error)") }
                 else { reply("ok space \(index)") }
             }
-        case ("select", let id?):
+        case .select(let id):
             guard snapshot.spaces.indices.contains(sidebar.spaceShown) else { reply("error no row \(id)"); return }
             let space = snapshot.spaces[sidebar.spaceShown]
             guard (space.favorites + space.pinned + space.today).contains(where: { $0.id == id }) else { reply("error no row \(id)"); return }
@@ -237,17 +236,17 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
                 if let error = self?.publish(result) { reply("error select \(id): \(error)") }
                 else { reply("ok select \(id)") }
             }
-        case ("close", let id?):
+        case .close(let id):
             adapter.close(id: id) { [weak self] result in
                 if let error = self?.publishChange(result) { reply("error close \(id): \(error)") }
                 else { reply("ok close \(id)") }
             }
-        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-") library \(sidebar.libraryOpen ? "open" : "closed") spaces \(snapshot.spaces.count)")
-        case ("width", nil): reply(String(format: "ok %g", Double(resizeHandle.sidebarWidth)))
-        case ("reset-width", nil): resetSidebarWidth(nil); reply("ok 240")
-        case ("sidebar", nil): reply("ok \(sidebarContainer.sidebarState)")
-        case ("toggle-sidebar", nil): toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
-        default: reply("error unknown command")
+        case .state: reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-") library \(sidebar.libraryOpen ? "open" : "closed") spaces \(snapshot.spaces.count)")
+        case .width: reply(String(format: "ok %g", Double(resizeHandle.sidebarWidth)))
+        case .resetWidth: resetSidebarWidth(nil); reply("ok 240")
+        case .sidebar: reply("ok \(sidebarContainer.sidebarState)")
+        case .toggleSidebar: toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
+        case .invalid(let error): reply(error)
         }
     }
 

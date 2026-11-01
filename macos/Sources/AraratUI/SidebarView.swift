@@ -123,7 +123,7 @@ public final class SidebarView: NSView {
     override public var acceptsFirstResponder: Bool { true }
     override public func cancelOperation(_ sender: Any?) {
         if createSpaceOpen { if !creation.submitting { setCreateSpaceOpen(false) } }
-        else if libraryOpen { setLibraryOpen(false) } else { super.cancelOperation(sender) }
+        else if libraryOpen { setLibraryOpen(false) } else { _ = nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: sender) }
     }
 
     public var spaceShown: Int { spaceIndex }
