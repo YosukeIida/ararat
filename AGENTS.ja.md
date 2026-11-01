@@ -10,13 +10,17 @@ repo の中のファイル（README、AGENTS.md、`docs/` の下すべて、コ�
 
 ## 作業の進め方（サンドイッチ）
 
-設計・実装の 1 単位ごとに、次の 3 段で進める。
+作業の 1 単位ごとに、Claude と Codex で分担する。Codex は閉じた論理の一貫性を保つのが得意で、Claude は緩く制約された多くの変数から信号を拾うのが得意である。そのため、Claude が範囲を決めてレビューし、Codex が実装する。
 
-1. 設計・実装: Claude Opus 5.5（`claude-opus-5-5`）、effort medium
-2. 詳細なレビュー: Codex の `gpt-6.1-sol`、effort medium。labteam のアカウントで動かす（起動の前に `cx labteam` で切り替える）。レビューだけを頼み、編集はさせない
-3. 総合判断: Claude Opus 5.5、effort medium。レビューの指摘ごとに、直す・直さないとその理由を決め、直すものを 1 に戻す
+1. 範囲と設計: Claude Opus 5.5（`claude-opus-5-5`）。作るもの、触るファイル、不変条件、境界の場合を書く。
+2. 実装: Codex の `gpt-6.1-sol`、effort low（オーナーの選択、2026-11-02、使用量を抑えるため。行き詰まったら medium に上げる）。labteam のアカウント（`CODEX_HOME=$HOME/.codex-labteam`）で動かす。Terra ではなく Sol を使う。OpenAI の Codex のモデルの案内は、コードには Sol を勧め、Terra を文章、画像の理解、コンピュータ操作向けとしている。
+3. レビュー: Claude Opus 5.5。指摘ごとに、直すか直さないかとその理由を決め、直すものを 2 に戻す。
 
-タスクに切り分けたあとは、orca-agent-team の席（design / orchestrator / implementation / review）で回してよい。
+際どい境界の不具合では順序を逆にする。Codex が調べ、Claude がセカンドオピニオンを出し、Codex が実装し、Claude がレビューする。
+
+計測と設計の段階の作業（研究ノート、`docs/architecture.md`）は、オーナーが頼まない限りレビューを要しない。
+
+席は、Orca の中の Claude のセッションからは orca-agent-team（役割ごとに Orca のタブ 1 つ）で、herdr の中のセッションからは herdr-agent-team で動かす。agent は、dotfiles の agent-switch の shim から devshell を得る。shim は、repo で `claude` か `codex` が起動するときに direnv を読み込む。`command -v cargo` が `/nix/store` を指さないときは、別のツールチェーンでビルドせず、repo から agent を起動し直す。2 つ目のツールチェーンは同じ `target/` に書き込むためである。
 
 ## 先行実装
 
