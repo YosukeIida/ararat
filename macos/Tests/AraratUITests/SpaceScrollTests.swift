@@ -139,7 +139,7 @@ func horizontalGestureMomentumCannotSwitchAgain() {
 @Test @MainActor
 func trackpadRubberBandsBothBoundariesAndSpringsBack() {
     let expected = 255 * (1 - 1 / (0.15 * 200 / 255 + 1))
-    for (index, delta) in [(0, 400.0), (2, -400.0)] {
+    for (index, delta) in [(-1, 400.0), (2, -400.0)] {
         var state = SpaceScrollState()
         let sign = delta < 0 ? -1.0 : 1.0
         let follow = state.handle(.init(dx: delta, phase: .began, time: 0), index: index, count: 3, pitch: 180)
@@ -160,7 +160,7 @@ func cancelledTrackpadGestureReturnsWithoutSwitching() {
 @Test @MainActor
 func wheelSwitchUsesTheExistingSpacePathAndPreservesItsPause() {
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -2, wheel3: 0)!
     let event = NSEvent(cgEvent: cg)!
     sidebar.scrollWheel(with: event)
@@ -189,7 +189,7 @@ private func trackpadEvent(dx: Int32, phase: CGScrollPhase?, momentum: Bool = fa
 @Test @MainActor
 func trackpadRoutesThroughTheRowScrollViewAndAnimatesNeighborPages() throws {
     let spaces = (0..<2).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
     let scroll = try #require(scrollDescendants(sidebar).compactMap { $0 as? NSScrollView }.first)
@@ -263,7 +263,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
     for floating in [false, true] {
         for width: CGFloat in [164, 240, 500] {
             let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-            let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+            let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
             sidebar.showSpace(at: 1)
             let container = SidebarContainerView(sidebar: sidebar, page: NSView())
             container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
@@ -303,7 +303,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
 @Test @MainActor
 func resizingAndResettingCancelTheActiveGestureUntilTheNextBegin() {
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
@@ -332,7 +332,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
     let spaces = (0..<3).map {
         SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [favorite], pinned: [tab], today: [])
     }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
@@ -375,7 +375,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     _ = NSApplication.shared
     let tab = Row(id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab, unloaded: false)
     let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: spaces))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
@@ -392,7 +392,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     let before = descendants(window)
     #expect(before.filter { view($0)?.accessibilityLabel() == "Selected tab host" }.count == 1)
     let buttons = before.filter { $0.accessibilityRole() == .button }
-    #expect(buttons.count == spaces.count + 1)
+    #expect(buttons.count == spaces.count + 2)
     sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100))
     let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
     #expect(previews.count == 2)
@@ -408,7 +408,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
 @MainActor
 private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
-    let snapshot = WorkspaceSnapshot(selectedId: nil, spaces: (0..<spaces).map {
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: (0..<spaces).map {
         SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil,
                       favorites: [Row(id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)],
                       pinned: [Row(id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false)], today: [])

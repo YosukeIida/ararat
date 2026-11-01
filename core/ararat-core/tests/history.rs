@@ -7,7 +7,7 @@ fn workspace() -> Workspace {
         let id = format!("y{i}");
         ws.items.insert(id.clone(), Item {
             id: id.clone(), membership: Membership { parent: Some("today-work".into()), order: format!("{i:03}"), hlc: Default::default(), previous_parent: None },
-            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, collapsed: false,
+            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, collapsed: false,
         });
     }
     ws

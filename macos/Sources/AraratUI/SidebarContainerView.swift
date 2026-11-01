@@ -44,6 +44,12 @@ public final class SidebarContainerView: NSView {
             resizeHandle.topAnchor.constraint(equalTo: panel.topAnchor),
             resizeHandle.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
         ])
+        sidebar.onLibraryChanged = { [weak self] open, scroll in
+            guard let self else { return }
+            self.render(scroll ? .spaceSwitch : open ? .dockShow : .dockHide) {
+                self.resizeHandle.widthExtension = open ? SidebarMetrics.libraryWidthIncrease : 0
+            }
+        }
         resizeHandle.onWidthChanged = { [weak self] in
             self?.needsLayout = true
             self?.layoutSubtreeIfNeeded()
@@ -88,7 +94,7 @@ public final class SidebarContainerView: NSView {
 
     override public func layout() {
         super.layout()
-        let width = resizeHandle.sidebarWidth
+        let width = resizeHandle.displayedWidth
         let docked = state.mode == .docked
         let floating = state.mode == .floating
         let x: CGFloat = docked ? 0 : floating ? SidebarMetrics.floatingInset : -width
@@ -116,11 +122,12 @@ public final class SidebarContainerView: NSView {
         }
     }
 
-    private enum Motion { case dockShow, dockHide, floatingShow, floatingHide }
+    private enum Motion { case dockShow, dockHide, floatingShow, floatingHide, spaceSwitch }
 
-    private func render(_ motion: Motion) {
+    private func render(_ motion: Motion, changes: () -> Void = {}) {
         let views = [panel as NSView, page]
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
+        changes()
         layout()
         for (view, previous) in zip(views, old) {
             guard let layer = view.layer, let previous else { continue }
@@ -129,12 +136,12 @@ public final class SidebarContainerView: NSView {
             for (key, from, to) in [("position", NSValue(point: previous.0), NSValue(point: layer.position)),
                                     ("bounds", NSValue(rect: previous.1), NSValue(rect: layer.bounds))] {
                 let animation: CABasicAnimation
-                if motion == .floatingShow {
+                if motion == .floatingShow || motion == .spaceSwitch {
                     let spring = CASpringAnimation(keyPath: key)
-                    let omega = 2 * CGFloat.pi / SidebarMetrics.floatingResponse
+                    let omega = 2 * CGFloat.pi / (motion == .spaceSwitch ? SidebarMetrics.spaceSwitchResponse : SidebarMetrics.floatingResponse)
                     spring.mass = 1
                     spring.stiffness = omega * omega
-                    spring.damping = 2 * SidebarMetrics.floatingDamping * omega
+                    spring.damping = 2 * (motion == .spaceSwitch ? SidebarMetrics.spaceSwitchDamping : SidebarMetrics.floatingDamping) * omega
                     spring.duration = spring.settlingDuration
                     animation = spring
                 } else {
@@ -191,7 +198,7 @@ public final class SidebarContainerView: NSView {
         guard let window else { return }
         let old = state.mode
         state.update(pointer: NSEvent.mouseLocation, now: ProcessInfo.processInfo.systemUptime,
-                     window: window.frame, width: resizeHandle.sidebarWidth, active: NSApp.isActive, key: window.isKeyWindow)
+                     window: window.frame, width: resizeHandle.displayedWidth, active: NSApp.isActive, key: window.isKeyWindow)
         if state.mode != old { render(state.mode == .floating ? .floatingShow : .floatingHide) }
         updateMonitoring()
     }

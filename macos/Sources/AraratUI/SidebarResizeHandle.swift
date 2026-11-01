@@ -3,6 +3,9 @@ import AppKit
 @MainActor
 public final class SidebarResizeHandle: NSView {
     private let widthConstraint: NSLayoutConstraint
+    private var userWidth: CGFloat
+    var widthExtension: CGFloat = 0 { didSet { applyWidth() } }
+    var displayedWidth: CGFloat { userWidth + widthExtension }
     private var dragStartX: CGFloat = 0
     private var dragStartWidth: CGFloat = 0
     private var collapsedDuringDrag = false
@@ -10,11 +13,10 @@ public final class SidebarResizeHandle: NSView {
     var onWidthChanged: (() -> Void)?
 
     public var sidebarWidth: CGFloat {
-        get { widthConstraint.constant }
+        get { userWidth }
         set {
-            widthConstraint.constant = min(SidebarMetrics.maximumWidth, max(SidebarMetrics.minimumWidth, newValue))
-            onWidthChanged?()
-            window?.contentView?.layoutSubtreeIfNeeded()
+            userWidth = min(SidebarMetrics.maximumWidth, max(SidebarMetrics.minimumWidth, newValue))
+            applyWidth()
             setAccessibilityValue(widthConstraint.constant)
             NSAccessibility.post(element: self, notification: .valueChanged)
         }
@@ -22,6 +24,7 @@ public final class SidebarResizeHandle: NSView {
 
     public init(widthConstraint: NSLayoutConstraint) {
         self.widthConstraint = widthConstraint
+        userWidth = widthConstraint.constant
         super.init(frame: .zero)
         setAccessibilityElement(true)
         setAccessibilityRole(.splitter)
@@ -31,6 +34,12 @@ public final class SidebarResizeHandle: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    private func applyWidth() {
+        widthConstraint.constant = displayedWidth
+        onWidthChanged?()
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
 
     public func resetWidth() { sidebarWidth = SidebarMetrics.defaultWidth }
 

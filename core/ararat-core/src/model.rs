@@ -72,6 +72,7 @@ pub struct Item {
     pub title: Option<String>,
     pub kind: ItemKind,
     pub lifecycle: Lifecycle,
+    pub lifecycle_changed_at: u64,
     pub collapsed: bool,
 }
 

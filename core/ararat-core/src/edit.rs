@@ -34,6 +34,44 @@ impl Workspace {
         Ok(ops)
     }
 
+    pub fn shown_space(&self, window: &str) -> Option<&str> {
+        self.windows.get(window).and_then(|state| state.shown_space.as_deref())
+            .filter(|id| self.spaces.iter().any(|space| space.id == *id))
+            .or_else(|| self.spaces.first().map(|space| space.id.as_str()))
+    }
+
+    fn lifecycle_time(&self) -> u64 {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        now.max(self.items.values().map(|item| item.lifecycle_changed_at).max().unwrap_or(0).saturating_add(1))
+    }
+
+    pub fn archive(&self) -> Vec<&crate::model::Item> {
+        let mut items: Vec<_> = self.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })
+            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).collect();
+        items.sort_by(|a, b| b.lifecycle_changed_at.cmp(&a.lifecycle_changed_at).then_with(|| a.id.cmp(&b.id)));
+        items
+    }
+
+    pub fn restore_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
+        let mut item = self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. })
+            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).cloned()
+            .ok_or_else(|| EditError(format!("item {id} is not an archived tab")))?;
+        let root = self.list_for(id).map(|(root, _)| root);
+        let space = self.spaces.iter().find(|space| root == Some(space.today.as_str()) || root == Some(space.pinned.as_str()))
+            .or_else(|| self.shown_space(window).and_then(|id| self.spaces.iter().find(|space| space.id == id)))
+            .ok_or_else(|| EditError("no space to restore into".into()))?;
+        item.membership.order = crate::order::key_between(None, self.children(&space.today).first().map(|item| item.membership.order.as_str()));
+        item.membership.previous_parent = item.membership.parent.replace(space.today.clone());
+        item.lifecycle = Lifecycle::Open;
+        item.lifecycle_changed_at = self.lifecycle_time();
+        let mut state = self.window_state(window);
+        state.shown_space = Some(space.id.clone());
+        state.select(Some(id.into()));
+        let ops = vec![Op::Put(Record::Item(item)), Op::Put(Record::Window(state))];
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
     pub fn selected(&self, window: &str) -> Option<&str> {
         self.windows.get(window).and_then(|state| state.selected.as_deref())
     }
@@ -65,9 +103,11 @@ impl Workspace {
             if matches!(ancestor.kind, ItemKind::Split { .. }) { loading.push(ancestor.clone()); }
             parent = ancestor.membership.parent.as_ref();
         }
+        let changed_at = self.lifecycle_time();
         for mut item in loading {
             if item.lifecycle == Lifecycle::Unloaded {
                 item.lifecycle = Lifecycle::Open;
+                item.lifecycle_changed_at = changed_at;
                 ops.push(Op::Put(Record::Item(item)));
             }
         }
@@ -102,10 +142,12 @@ impl Workspace {
                 parent = ancestor.membership.parent.as_ref();
             }
         }
+        let changed_at = self.lifecycle_time();
         let mut ops: Vec<_> = outline.iter().filter(|(_, item, _)| changing.contains(&item.id) && (item.lifecycle == Lifecycle::Open || (today && item.lifecycle == Lifecycle::Unloaded)))
             .map(|(_, item, _)| {
                 let mut changed = (*item).clone();
                 changed.lifecycle = if today { Lifecycle::Closed } else { Lifecycle::Unloaded };
+                changed.lifecycle_changed_at = changed_at;
                 Op::Put(Record::Item(changed))
             }).collect();
         let mut windows: Vec<_> = self.windows.values().cloned().collect();

@@ -13,7 +13,7 @@ func favoritesUseFourTwoOrOneColumns() {
     let favorites = (0..<5).map {
         Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     }
-    let snapshot = WorkspaceSnapshot(selectedId: nil, spaces: [
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: favorites, pinned: [favorites[0]], today: [])
     ])
     for (width, columns) in [(240.0, 4), (228, 4), (227, 2), (118, 2), (117, 1)] {
@@ -40,7 +40,7 @@ func favoritesUseFourTwoOrOneColumns() {
 @Test @MainActor
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
     let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false)
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [favorite], pinned: [], today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
@@ -59,7 +59,7 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 @Test @MainActor
 func selectedHostTracksVisibleSpace() {
     let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false)
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [], pinned: [row], today: []),
         SpaceSnapshot(id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
     ]))
@@ -118,7 +118,7 @@ func nestedFillsIndentTheirLeftEdgeOnly() {
     let rows = (0...2).map {
         Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false)
     }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [], pinned: rows, today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
@@ -162,7 +162,7 @@ func sidebarDragPreservesTheGrabOffset() {
 func rowFocusSurvivesWidthChanges() {
     _ = NSApplication.shared
     let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [row], pinned: [row], today: [])
     ]))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 720), styleMask: [], backing: .buffered, defer: false)

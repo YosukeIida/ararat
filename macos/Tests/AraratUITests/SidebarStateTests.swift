@@ -126,7 +126,7 @@ func dragCollapseUsesThePointerThreshold() {
 
 @Test @MainActor
 func widthChangesRelayoutACleanContainerWithoutToggling() {
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: []))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)
     container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
@@ -154,7 +154,7 @@ func widthChangesRelayoutACleanContainerWithoutToggling() {
 @Test @MainActor
 func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
     let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [], pinned: [row], today: [])
     ]))
     let page = NSView()

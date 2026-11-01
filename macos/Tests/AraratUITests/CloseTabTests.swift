@@ -5,7 +5,7 @@ import Testing
 
 private func closeSnapshot(_ ids: [String], selected: String? = nil, pinned: Bool = false) -> WorkspaceSnapshot {
     let row: (String) -> Row = { Row(id: $0, title: $0, url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false) }
-    return WorkspaceSnapshot(selectedId: selected, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
+    return WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: selected, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
         favorites: [], pinned: pinned ? [row("pin")] : [], today: ids.map(row))])
 }
 
@@ -221,7 +221,7 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
 func closingATerminalSplitFadesItsLastMember() throws {
     let split = Row(id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false)
     let members = ["b", "c"].map { Row(id: $0, title: $0, url: nil, depth: 1, kind: .tab, unloaded: false) }
-    let before = WorkspaceSnapshot(selectedId: "split", spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
+    let before = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "split", spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
         favorites: [], pinned: [], today: [split] + members)])
     let sidebar = closeSidebar(before)
     let last = try #require(closeViews(sidebar).first { $0.row.id == "c" })

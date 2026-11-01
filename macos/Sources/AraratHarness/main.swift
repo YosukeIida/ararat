@@ -57,7 +57,7 @@ func removeTemporaryDatabase() -> Bool {
 
 @MainActor
 final class HarnessDelegate: NSObject, NSApplicationDelegate {
-    var snapshot = WorkspaceSnapshot(selectedId: nil, spaces: [])
+    var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
     let adapter: WorkspaceAdapter
     var exitStatus: Int32 = 0
     private var terminating = false
@@ -139,6 +139,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        sidebar.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
         showSelection()
 
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -209,6 +210,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         guard let sidebar, let resizeHandle, let sidebarContainer else { reply("error not ready"); return }
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
         switch (words.first, words.count > 1 ? words[1] : nil) {
+        case ("library", let arg):
+            guard arg == nil || arg == "close" else { reply("error library command"); return }
+            sidebar.setLibraryOpen(arg == nil)
+            reply(arg == nil ? "ok library" : "ok library close")
+        case ("restore", let id?): restore(id: id, reply: reply)
         case ("quit", nil): reply("ok quit")
         case ("space", let arg?):
             guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply("error no space \(arg)"); return }
@@ -230,12 +236,28 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
                 if let error = self?.publishChange(result) { reply("error close \(id): \(error)") }
                 else { reply("ok close \(id)") }
             }
-        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-")")
+        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-") library \(sidebar.libraryOpen ? "open" : "closed")")
         case ("width", nil): reply(String(format: "ok %g", Double(resizeHandle.sidebarWidth)))
         case ("reset-width", nil): resetSidebarWidth(nil); reply("ok 240")
         case ("sidebar", nil): reply("ok \(sidebarContainer.sidebarState)")
         case ("toggle-sidebar", nil): toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
         default: reply("error unknown command")
+        }
+    }
+
+    private func restore(id: String, reply: @escaping @MainActor (String) -> Void) {
+        adapter.restore(id: id) { [weak self] result in
+            switch result {
+            case .success(let snapshot):
+                self?.snapshot = snapshot
+                self?.sidebar?.applyRestore(snapshot: snapshot)
+                self?.showSelection()
+                reply("ok restore \(id)")
+            case .failure(let error):
+                _ = self?.publish(.failure(error))
+                FileHandle.standardError.write(Data("cannot restore tab: \(error)\n".utf8))
+                reply("error restore \(id): \(error)")
+            }
         }
     }
 

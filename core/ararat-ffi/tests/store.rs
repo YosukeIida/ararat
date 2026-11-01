@@ -290,3 +290,21 @@ fn shown_space_is_local_persistent_and_limits_successors_after_reopen() {
     assert_eq!(store.close_item("test".into(), "tab-a".into()).unwrap().selected_id, None);
     assert_eq!(count(), before + 2);
 }
+
+#[test]
+fn archive_and_restore_cross_the_boundary_and_persist() {
+    let path = fresh_db("archive-restore");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), today_fixture()).unwrap();
+    store.close_item("test".into(), "tab-a".into()).unwrap();
+    let closed = store.close_item("test".into(), "tab-b".into()).unwrap();
+    assert_eq!(closed.archive.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["tab-b", "tab-a"]);
+    store.show_space("test".into(), "space-home".into()).unwrap();
+    let restored = store.restore_item("test".into(), "tab-a".into()).unwrap();
+    assert_eq!(restored.selected_id.as_deref(), Some("tab-a"));
+    assert_eq!(restored.shown_space_id.as_deref(), Some("space-work"));
+    assert_eq!(restored.spaces[0].today[0].id, "tab-a");
+    assert_eq!(restored.archive.len(), 1);
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), restored);
+}

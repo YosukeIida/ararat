@@ -2,6 +2,17 @@ import AppKit
 
 @MainActor
 enum SidebarMetrics {
+    static let libraryWidthIncrease: CGFloat = 70
+    static let libraryRailWidth: CGFloat = 113
+    static let libraryButtonSize: CGFloat = 32
+    static let libraryIconSize: CGFloat = 16
+    static let libraryButtonLeading: CGFloat = 9
+    static let libraryButtonBottom: CGFloat = 9
+    static let libraryContentTop: CGFloat = 46
+    static let libraryContentInset: CGFloat = 12
+    static let libraryRowHeight: CGFloat = 32
+    static let libraryRowSpacing: CGFloat = 4
+    static let libraryFontSize: CGFloat = 14
     static let defaultWidth: CGFloat = 240
     static let minimumWidth: CGFloat = 164
     static let maximumWidth: CGFloat = 500

@@ -68,6 +68,9 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> Result<(Store, Workspace), StoreError> {
         let conn = Connection::open(path)?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let existing: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'records')", [], |row| row.get(0))?;
+        if version != 1 && (version != 0 || existing) { return Err(StoreError("unsupported database version; use a new database".into())); }
         let mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
         if mode != "wal" {
             return Err(StoreError(format!("journal_mode is {mode}, not wal")));
@@ -75,6 +78,7 @@ impl Store {
         // FULL rather than NORMAL: it also survives power loss, at one fsync per batch.
         conn.execute_batch("PRAGMA synchronous = FULL;")?;
         conn.execute_batch(SCHEMA)?;
+        if version == 0 { conn.pragma_update(None, "user_version", 1)?; }
         conn.busy_timeout(BUSY_TIMEOUT)?;
         let workspace = load(&conn)?;
 

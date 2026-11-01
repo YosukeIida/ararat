@@ -27,7 +27,6 @@ public final class WorkspaceAdapter: @unchecked Sendable {
             self.store = opened
             let snapshot = opened.snapshot(windowId: self.windowID)
             let loaded = snapshot.spaces.isEmpty ? try opened.importArcSidebar(windowId: self.windowID, json: json()) : snapshot
-            if let space = loaded.spaces.first { try opened.showSpace(windowId: self.windowID, spaceId: space.id) }
             return loaded
         }, completion: completion)
     }
@@ -38,6 +37,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 
     public func select(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().selectItem(windowId: self.windowID, id: id) }, completion: completion)
+    }
+
+    public func restore(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().restoreItem(windowId: self.windowID, id: id) }, completion: completion)
     }
 
     public func showSpace(id: String, completion: @escaping Completion<Void>) {

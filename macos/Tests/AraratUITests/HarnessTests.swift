@@ -92,7 +92,7 @@ func harnessSelectRepliesReflectCoreAcceptance() throws {
     #expect(replies.contains("ok close live"))
     #expect(replies.contains { $0.hasPrefix("error ") && $0.contains("live") })
     #expect(replies.contains("ok select pinned"))
-    #expect(replies.contains("state space 0 selected pinned"))
+    #expect(replies.contains("state space 0 selected pinned library closed"))
 }
 
 @Test
@@ -181,8 +181,8 @@ func harnessRepliesWaitForMRUUnloadsAndReselections() throws {
     #expect(lines.contains("ok close tab-spec"))
     #expect(lines.contains("ok close tab-mail"))
     #expect(lines.filter { $0.hasPrefix("state ") } == [
-        "state space 0 selected tab-mail", "state space 0 selected tab-spec",
-        "state space 0 selected tab-spec", "state space 0 selected tab-spec",
+        "state space 0 selected tab-mail library closed", "state space 0 selected tab-spec library closed",
+        "state space 0 selected tab-spec library closed", "state space 0 selected tab-spec library closed",
     ])
 }
 
@@ -202,6 +202,46 @@ func harnessCloseUsesTheShownSpaceWithoutPagingBackThroughHistory() throws {
     #expect(run.status == 0, "\(run.error)")
     #expect(run.error.isEmpty)
     #expect(run.output.split(separator: "\n").filter { $0.hasPrefix("state ") }.map(String.init) == [
-        "state space 1 selected tab-a", "state space 1 selected tab-spec", "state space 1 selected -", "state space 1 selected -",
+        "state space 1 selected tab-a library closed", "state space 1 selected tab-spec library closed", "state space 1 selected - library closed", "state space 1 selected - library closed",
     ])
+}
+
+@Test
+func harnessReopensOnTheStoredSpaceWithItsCloseSuccessor() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: source, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"split-1\"", with: "\"parentID\": \"today-home\"")
+    let fixture = directory.appendingPathComponent("sidebar.json")
+    try json.write(to: fixture, atomically: true, encoding: .utf8)
+    let arguments = [fixture.path, "--db", directory.appendingPathComponent("workspace.sqlite").path]
+    let first = try runHarness(in: directory, arguments: arguments, commands: "space 1\nselect tab-a\nselect tab-b\nclose tab-b\n")
+    #expect(first.status == 0)
+    let reopened = try runHarness(in: directory, arguments: arguments)
+    #expect(reopened.status == 0, "\(reopened.error)")
+    #expect(reopened.output.contains("state space 1 selected tab-a library closed"))
+}
+
+@Test
+func harnessLibraryRestoreClosesTheLibraryAndPersistsTheRestoredTab() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: source, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"split-1\"", with: "\"parentID\": \"today-home\"")
+    let fixture = directory.appendingPathComponent("sidebar.json")
+    try json.write(to: fixture, atomically: true, encoding: .utf8)
+    let args = [fixture.path, "--db", directory.appendingPathComponent("workspace.sqlite").path]
+    let run = try runHarness(in: directory, arguments: args, commands:
+        "space 1\nselect tab-a\nclose tab-a\nspace 0\nlibrary\nstate\nlibrary close\nlibrary\nrestore tab-a\nstate\n")
+    #expect(run.status == 0, "\(run.error)")
+    #expect(run.output.contains("library open"))
+    #expect(run.output.contains("ok restore tab-a"))
+    #expect(run.output.contains("state space 1 selected tab-a library closed"))
+    let reopened = try runHarness(in: directory, arguments: args)
+    #expect(reopened.status == 0)
+    #expect(reopened.output.contains("state space 1 selected tab-a library closed"))
 }

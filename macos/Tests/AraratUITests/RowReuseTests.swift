@@ -9,7 +9,7 @@ private func reuseDescendants(_ view: NSView) -> [NSView] {
 }
 
 private func reuseSnapshot(pinned: [Row], today: [Row] = [], favorites: [Row] = []) -> WorkspaceSnapshot {
-    WorkspaceSnapshot(selectedId: nil, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
+    WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
                                             favorites: favorites, pinned: pinned, today: today)])
 }
 
@@ -121,7 +121,7 @@ func incrementalRowsMatchFreshSnapshotTrees() {
         reuseSnapshot(pinned: [b], today: [a, c], favorites: [g, Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab, unloaded: false), favorite]),
         reuseSnapshot(pinned: [a, b], favorites: [g]),
         reuseSnapshot(pinned: [], favorites: []),
-        WorkspaceSnapshot(selectedId: nil, spaces: []),
+        WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []),
     ]
     for width: CGFloat in [164, 240, 500] {
         for snapshot in changes {
