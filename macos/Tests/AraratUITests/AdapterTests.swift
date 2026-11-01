@@ -95,7 +95,7 @@ func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
     var favorite = Row(id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     let today = Row(id: "t", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false)
     let snapshot: ([Row], [Row]) -> WorkspaceSnapshot = { pins, favorites in
-        WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "t", spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: favorites, pinned: pins, today: [today])])
+        WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "t", spaces: [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: favorites, pinned: pins, today: [today])])
     }
     let sidebar = SidebarView(snapshot: snapshot([pinned], [favorite]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)

@@ -308,3 +308,41 @@ fn archive_and_restore_cross_the_boundary_and_persist() {
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), restored);
 }
+
+#[test]
+fn creating_a_space_persists_the_snapshot_and_journals_one_complete_change() {
+    let path = fresh_db("create-space");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into()).unwrap();
+    store.show_space("test".into(), "space-home".into()).unwrap();
+    store.flush().unwrap();
+    let conn = Connection::open(&path).unwrap();
+    let before: i64 = conn.query_row("SELECT count(*) FROM journal", [], |row| row.get(0)).unwrap();
+    let created = store.create_space("test".into(), "  Project Notes  ".into(), "created-space".into()).unwrap();
+    assert_eq!(created.spaces.len(), 3);
+    assert_eq!(created.spaces[2].title, "Project Notes");
+    assert_eq!(created.spaces[2].profile_name, created.spaces[1].profile_name);
+    assert!(created.spaces[2].today.is_empty() && created.spaces[2].pinned.is_empty());
+    assert_eq!(created.shown_space_id.as_deref(), Some("created-space"));
+    assert_eq!(created.selected_id, None);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 3);
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), created);
+}
+
+#[test]
+fn rejected_space_names_write_no_records_or_journal() {
+    let path = fresh_db("reject-space");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into()).unwrap();
+    let before = records(&path);
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
+    let journal = count();
+    for name in ["", " \t\n", "\u{3000}"] {
+        assert!(store.create_space("test".into(), name.into(), "new-space".into()).is_err());
+        store.flush().unwrap();
+        assert_eq!(records(&path), before);
+        assert_eq!(count(), journal);
+    }
+}

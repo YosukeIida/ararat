@@ -3,13 +3,20 @@ import AraratKit
 
 @MainActor
 public final class SidebarView: NSView {
+    public var onCreateSpace: ((String) -> Void)?
+    public var onCreatePageChanged: (() -> Void)?
+    private(set) public var createSpaceOpen = false
+    private let creation = CreateSpaceView(frame: .zero)
+    private let plusButton = SidebarDockButton()
+    let newSpaceMenu = NSMenu()
+    private var scrollPageIndex: Int { libraryOpen ? -1 : createSpaceOpen ? snapshot.spaces.count : spaceIndex }
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
     public var onRestore: ((String) -> Void)?
     var onLibraryChanged: ((Bool, Bool) -> Void)?
     private(set) public var libraryOpen = false
     private let library = LibraryView(frame: .zero)
-    private let libraryButton = LibraryButton()
+    private let libraryButton = SidebarDockButton()
     private var mainColumn: NSStackView!
     var libraryPage: String { library.page.rawValue }
     public var onShowSpace: ((String) -> Void)?
@@ -53,10 +60,41 @@ public final class SidebarView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    @objc public func showCreateSpace(_ sender: Any? = nil) { setCreateSpaceOpen(true) }
+
+    public func setCreateSpaceOpen(_ open: Bool, scrolling: Bool = false) {
+        guard open != createSpaceOpen else { return }
+        if open && libraryOpen { setLibraryOpen(false, scrolling: scrolling) }
+        finishRowMotion()
+        if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
+        createSpaceOpen = open
+        if open && creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
+        if !open && !scrolling { creation.removeFromSuperview() }
+        creation.isHidden = !open
+        creation.active = open
+        mainColumn.isHidden = open || libraryOpen
+        if open { creation.begin(profileName: snapshotSpace?.profileName ?? "Default") }
+        onCreatePageChanged?()
+    }
+
+    public func applyCreatedSpace(snapshot: WorkspaceSnapshot) {
+        creation.finish(error: nil)
+        applySelection(snapshot: snapshot)
+        if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) { showSpace(at: index) }
+        setCreateSpaceOpen(false)
+    }
+
+    public func creationFailed(_ message: String) { creation.finish(error: message) }
+
+    @objc private func showNewSpaceMenu(_ sender: NSButton) {
+        newSpaceMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
+    }
+
     @objc public func toggleLibrary(_ sender: Any? = nil) { setLibraryOpen(!libraryOpen) }
 
     public func setLibraryOpen(_ open: Bool, scrolling: Bool = false) {
         guard open != libraryOpen else { return }
+        if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
         finishRowMotion()
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
         libraryOpen = open
@@ -64,7 +102,7 @@ public final class SidebarView: NSView {
         if !open && !scrolling { library.removeFromSuperview() }
         library.update(archive: snapshot.archive)
         library.isHidden = !open
-        mainColumn.isHidden = open
+        mainColumn.isHidden = open || createSpaceOpen
         libraryButton.setAccessibilityValue(open ? 1 : 0)
         if open { window?.makeFirstResponder(self) }
         onLibraryChanged?(open, scrolling)
@@ -78,7 +116,8 @@ public final class SidebarView: NSView {
 
     override public var acceptsFirstResponder: Bool { true }
     override public func cancelOperation(_ sender: Any?) {
-        if libraryOpen { setLibraryOpen(false) } else { super.cancelOperation(sender) }
+        if createSpaceOpen { if !creation.submitting { setCreateSpaceOpen(false) } }
+        else if libraryOpen { setLibraryOpen(false) } else { super.cancelOperation(sender) }
     }
 
     public var spaceShown: Int { spaceIndex }
@@ -222,7 +261,6 @@ public final class SidebarView: NSView {
 
         dock.orientation = .horizontal
         dock.spacing = 0
-        dock.edgeInsets.left = SidebarMetrics.libraryButtonSize
 
         spaceViewport.wantsLayer = true
         spaceViewport.layer?.masksToBounds = true
@@ -235,7 +273,26 @@ public final class SidebarView: NSView {
         spaceColumn.translatesAutoresizingMaskIntoConstraints = false
         spaceViewport.addSubview(spaceColumn)
 
-        let column = NSStackView(views: [urlField, spaceViewport, dock])
+        let dockScroll = NSScrollView()
+        dockScroll.drawsBackground = false
+        dockScroll.hasHorizontalScroller = false
+        dockScroll.hasVerticalScroller = false
+        dockScroll.documentView = dock
+        dock.translatesAutoresizingMaskIntoConstraints = false
+        let bottomBar = NSView()
+        bottomBar.addSubview(dockScroll)
+        dockScroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            dock.leadingAnchor.constraint(equalTo: dockScroll.contentView.leadingAnchor),
+            dock.topAnchor.constraint(equalTo: dockScroll.contentView.topAnchor),
+            dock.heightAnchor.constraint(equalTo: dockScroll.contentView.heightAnchor),
+            dock.widthAnchor.constraint(greaterThanOrEqualTo: dockScroll.contentView.widthAnchor),
+            dockScroll.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: SidebarMetrics.libraryButtonSize),
+            dockScroll.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -SidebarMetrics.libraryButtonSize),
+            dockScroll.topAnchor.constraint(equalTo: bottomBar.topAnchor), dockScroll.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
+            bottomBar.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
+        ])
+        let column = NSStackView(views: [urlField, spaceViewport, bottomBar])
         mainColumn = column
         column.orientation = .vertical
         column.alignment = .leading
@@ -252,7 +309,7 @@ public final class SidebarView: NSView {
             column.topAnchor.constraint(equalTo: topAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             urlField.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -16),
-            dock.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
             host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
             host.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12),
@@ -295,12 +352,36 @@ public final class SidebarView: NSView {
             libraryButton.widthAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
             libraryButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
         ])
+        creation.autoresizingMask = [.width, .height]
+        creation.onCreate = { [weak self] name in self?.onCreateSpace?(name) }
+        creation.onCancel = { [weak self] in self?.setCreateSpaceOpen(false) }
+        creation.active = false
+        let newSpace = newSpaceMenu.addItem(withTitle: "New Space", action: #selector(showCreateSpace(_:)), keyEquivalent: "")
+        newSpace.target = self
+        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Space")?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.libraryIconSize, weight: .regular))
+        plusButton.imagePosition = .imageOnly
+        plusButton.isBordered = false
+        plusButton.target = self
+        plusButton.action = #selector(showNewSpaceMenu(_:))
+        plusButton.toolTip = "New Space"
+        plusButton.setAccessibilityLabel("New Space menu")
+        plusButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(plusButton)
+        NSLayoutConstraint.activate([
+            plusButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SidebarMetrics.createSpacePlusTrailing),
+            plusButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -SidebarMetrics.libraryButtonBottom),
+            plusButton.widthAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
+            plusButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
+        ])
         updateFill()
     }
 
     override public func layout() {
         super.layout()
         library.frame = bounds
+        creation.frame = bounds
+        dock.layoutSubtreeIfNeeded()
+        if dock.arrangedSubviews.indices.contains(spaceIndex) { _ = dock.scrollToVisible(dock.arrangedSubviews[spaceIndex].frame) }
         if bounds.width != laidOutSidebarWidth {
             finishRowMotion()
             if showingScrollPages { spaceScroll.cancelGesture() }
@@ -502,10 +583,10 @@ public final class SidebarView: NSView {
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
                                      inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
-        let layer = libraryOpen ? library.layer : spaceColumn.layer
+        let layer = libraryOpen ? library.layer : createSpaceOpen ? creation.layer : spaceColumn.layer
         let offset = layer?.animation(forKey: "space.scroll") == nil
             ? layer?.transform.m41 : (layer?.presentation()?.transform.m41 ?? layer?.transform.m41)
-        let logicalIndex = libraryOpen ? -1 : spaceIndex
+        let logicalIndex = scrollPageIndex
         let action = spaceScroll.handle(input, index: logicalIndex, count: snapshot.spaces.count,
                                         pitch: spacePagePitch, presentationOffset: Double(offset ?? 0))
         CATransaction.begin()
@@ -523,7 +604,8 @@ public final class SidebarView: NSView {
             let from = offset + Double(index - logicalIndex) * spacePagePitch
             if switched {
                 if index == -1 { setLibraryOpen(true, scrolling: true) }
-                else { setLibraryOpen(false, scrolling: true); scrollToSpace(at: index) }
+                else if index == snapshot.spaces.count { setCreateSpaceOpen(true, scrolling: true) }
+                else { setLibraryOpen(false, scrolling: true); setCreateSpaceOpen(false, scrolling: true); scrollToSpace(at: index) }
             }
             prepareScrollPages(offset: from)
             settleScroll(from: from, switched: switched)
@@ -531,11 +613,12 @@ public final class SidebarView: NSView {
         return true
     }
 
-    private var libraryPageOrigin: Double { Double(-1 - (libraryOpen ? -1 : spaceIndex)) * spacePagePitch }
+    private var libraryPageOrigin: Double { Double(-1 - scrollPageIndex) * spacePagePitch }
 
     private var scrollPages: [(NSView, Double)] {
-        [(spaceColumn, libraryOpen ? spacePagePitch : 0), (library, libraryPageOrigin)] + scrollPreviews.compactMap { preview in
-            preview.superview.map { ($0, Double(preview.spaceIndex - (libraryOpen ? -1 : spaceIndex)) * spacePagePitch) }
+        [(spaceColumn, Double(spaceIndex - scrollPageIndex) * spacePagePitch), (library, libraryPageOrigin),
+         (creation, Double(snapshot.spaces.count - scrollPageIndex) * spacePagePitch)] + scrollPreviews.compactMap { preview in
+            preview.superview.map { ($0, Double(preview.spaceIndex - scrollPageIndex) * spacePagePitch) }
         }
     }
 
@@ -553,7 +636,13 @@ public final class SidebarView: NSView {
             library.isHidden = false
             library.update(archive: snapshot.archive)
         }
-        if libraryOpen && offset < 0 { mainColumn.isHidden = false }
+        let creationX = Double(snapshot.spaces.count - scrollPageIndex) * spacePagePitch + offset
+        if !createSpaceOpen && creationX > -spacePagePitch && creationX < spacePagePitch {
+            if creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
+            creation.isHidden = false
+            creation.prepare(profileName: snapshotSpace?.profileName ?? "Default")
+        }
+        if (libraryOpen && offset < 0) || (createSpaceOpen && offset > 0) { mainColumn.isHidden = false }
         let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
         let indices = Set((center - 1...center + 1).filter { snapshot.spaces.indices.contains($0) && $0 != spaceIndex })
         guard !showingScrollPages || Set(scrollPreviews.map(\.spaceIndex)) != indices else { return }
@@ -629,7 +718,10 @@ public final class SidebarView: NSView {
         showingScrollPages = false
         library.isHidden = !libraryOpen
         if !libraryOpen { library.removeFromSuperview() }
-        mainColumn.isHidden = libraryOpen
+        creation.isHidden = !createSpaceOpen
+        if !createSpaceOpen { creation.removeFromSuperview() }
+        creation.layer?.transform = CATransform3DIdentity
+        mainColumn.isHidden = libraryOpen || createSpaceOpen
         library.layer?.transform = CATransform3DIdentity
     }
 }

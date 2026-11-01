@@ -140,6 +140,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             }
         }
         sidebar.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
+        sidebar.onCreateSpace = { [weak self] name in self?.createSpace(name: name) { _ in } }
+        sidebar.onCreatePageChanged = { [weak self] in self?.showSelection() }
         showSelection()
 
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -210,6 +212,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         guard let sidebar, let resizeHandle, let sidebarContainer else { reply("error not ready"); return }
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
         switch (words.first, words.count > 1 ? words[1] : nil) {
+        case ("create-space", let name): createSpace(name: name ?? "", reply: reply)
         case ("library", let arg):
             guard arg == nil || arg == "close" else { reply("error library command"); return }
             sidebar.setLibraryOpen(arg == nil)
@@ -236,12 +239,27 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
                 if let error = self?.publishChange(result) { reply("error close \(id): \(error)") }
                 else { reply("ok close \(id)") }
             }
-        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-") library \(sidebar.libraryOpen ? "open" : "closed")")
+        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-") library \(sidebar.libraryOpen ? "open" : "closed") spaces \(snapshot.spaces.count)")
         case ("width", nil): reply(String(format: "ok %g", Double(resizeHandle.sidebarWidth)))
         case ("reset-width", nil): resetSidebarWidth(nil); reply("ok 240")
         case ("sidebar", nil): reply("ok \(sidebarContainer.sidebarState)")
         case ("toggle-sidebar", nil): toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
         default: reply("error unknown command")
+        }
+    }
+
+    private func createSpace(name: String, reply: @escaping @MainActor (String) -> Void) {
+        adapter.createSpace(name: name) { [weak self] result in
+            switch result {
+            case .success(let snapshot):
+                self?.snapshot = snapshot
+                self?.sidebar?.applyCreatedSpace(snapshot: snapshot)
+                self?.showSelection()
+                reply("ok create-space \(snapshot.spaces.last?.title ?? name)")
+            case .failure(let error):
+                self?.sidebar?.creationFailed(String(describing: error))
+                reply("error create-space: \(error)")
+            }
         }
     }
 
@@ -286,6 +304,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showSelection() {
+        if sidebar?.createSpaceOpen == true {
+            card?.show(title: "", url: nil)
+            sidebarContainer?.selectionChanged()
+            return
+        }
         let row = snapshot.spaces.flatMap { $0.favorites + $0.pinned + $0.today }.first { $0.id == snapshot.selectedId }
         card?.show(title: row?.title ?? "Select a tab", url: row?.url)
         sidebarContainer?.selectionChanged()

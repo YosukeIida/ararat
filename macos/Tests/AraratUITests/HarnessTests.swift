@@ -92,7 +92,7 @@ func harnessSelectRepliesReflectCoreAcceptance() throws {
     #expect(replies.contains("ok close live"))
     #expect(replies.contains { $0.hasPrefix("error ") && $0.contains("live") })
     #expect(replies.contains("ok select pinned"))
-    #expect(replies.contains("state space 0 selected pinned library closed"))
+    #expect(replies.contains("state space 0 selected pinned library closed spaces 1"))
 }
 
 @Test
@@ -181,8 +181,8 @@ func harnessRepliesWaitForMRUUnloadsAndReselections() throws {
     #expect(lines.contains("ok close tab-spec"))
     #expect(lines.contains("ok close tab-mail"))
     #expect(lines.filter { $0.hasPrefix("state ") } == [
-        "state space 0 selected tab-mail library closed", "state space 0 selected tab-spec library closed",
-        "state space 0 selected tab-spec library closed", "state space 0 selected tab-spec library closed",
+        "state space 0 selected tab-mail library closed spaces 2", "state space 0 selected tab-spec library closed spaces 2",
+        "state space 0 selected tab-spec library closed spaces 2", "state space 0 selected tab-spec library closed spaces 2",
     ])
 }
 
@@ -202,7 +202,7 @@ func harnessCloseUsesTheShownSpaceWithoutPagingBackThroughHistory() throws {
     #expect(run.status == 0, "\(run.error)")
     #expect(run.error.isEmpty)
     #expect(run.output.split(separator: "\n").filter { $0.hasPrefix("state ") }.map(String.init) == [
-        "state space 1 selected tab-a library closed", "state space 1 selected tab-spec library closed", "state space 1 selected - library closed", "state space 1 selected - library closed",
+        "state space 1 selected tab-a library closed spaces 2", "state space 1 selected tab-spec library closed spaces 2", "state space 1 selected - library closed spaces 2", "state space 1 selected - library closed spaces 2",
     ])
 }
 
@@ -221,7 +221,7 @@ func harnessReopensOnTheStoredSpaceWithItsCloseSuccessor() throws {
     #expect(first.status == 0)
     let reopened = try runHarness(in: directory, arguments: arguments)
     #expect(reopened.status == 0, "\(reopened.error)")
-    #expect(reopened.output.contains("state space 1 selected tab-a library closed"))
+    #expect(reopened.output.contains("state space 1 selected tab-a library closed spaces 2"))
 }
 
 @Test
@@ -240,8 +240,22 @@ func harnessLibraryRestoreClosesTheLibraryAndPersistsTheRestoredTab() throws {
     #expect(run.status == 0, "\(run.error)")
     #expect(run.output.contains("library open"))
     #expect(run.output.contains("ok restore tab-a"))
-    #expect(run.output.contains("state space 1 selected tab-a library closed"))
+    #expect(run.output.contains("state space 1 selected tab-a library closed spaces 2"))
     let reopened = try runHarness(in: directory, arguments: args)
     #expect(reopened.status == 0)
-    #expect(reopened.output.contains("state space 1 selected tab-a library closed"))
+    #expect(reopened.output.contains("state space 1 selected tab-a library closed spaces 2"))
+}
+
+@Test
+func harnessCreatesAndReopensANamedSpaceAfterTheExistingSpaces() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let arguments = ["--db", directory.appendingPathComponent("workspace.sqlite").path]
+    let created = try runHarness(in: directory, arguments: arguments, commands: "create-space   Project Notes   \nstate\n")
+    #expect(created.status == 0, "\(created.error)")
+    #expect(created.output.contains("ok create-space Project Notes"))
+    #expect(created.output.contains("state space 2 selected - library closed spaces 3"))
+    let reopened = try runHarness(in: directory, arguments: arguments)
+    #expect(reopened.status == 0, "\(reopened.error)")
+    #expect(reopened.output.contains("state space 2 selected - library closed spaces 3"))
 }

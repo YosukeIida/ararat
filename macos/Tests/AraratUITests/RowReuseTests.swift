@@ -9,7 +9,7 @@ private func reuseDescendants(_ view: NSView) -> [NSView] {
 }
 
 private func reuseSnapshot(pinned: [Row], today: [Row] = [], favorites: [Row] = []) -> WorkspaceSnapshot {
-    WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
+    WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil,
                                             favorites: favorites, pinned: pinned, today: today)])
 }
 

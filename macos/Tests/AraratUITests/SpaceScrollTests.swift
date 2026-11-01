@@ -139,7 +139,7 @@ func horizontalGestureMomentumCannotSwitchAgain() {
 @Test @MainActor
 func trackpadRubberBandsBothBoundariesAndSpringsBack() {
     let expected = 255 * (1 - 1 / (0.15 * 200 / 255 + 1))
-    for (index, delta) in [(-1, 400.0), (2, -400.0)] {
+    for (index, delta) in [(-1, 400.0), (3, -400.0)] {
         var state = SpaceScrollState()
         let sign = delta < 0 ? -1.0 : 1.0
         let follow = state.handle(.init(dx: delta, phase: .began, time: 0), index: index, count: 3, pitch: 180)
@@ -159,7 +159,7 @@ func cancelledTrackpadGestureReturnsWithoutSwitching() {
 
 @Test @MainActor
 func wheelSwitchUsesTheExistingSpacePathAndPreservesItsPause() {
-    let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -2, wheel3: 0)!
     let event = NSEvent(cgEvent: cg)!
@@ -188,7 +188,7 @@ private func trackpadEvent(dx: Int32, phase: CGScrollPhase?, momentum: Bool = fa
 
 @Test @MainActor
 func trackpadRoutesThroughTheRowScrollViewAndAnimatesNeighborPages() throws {
-    let spaces = (0..<2).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -224,11 +224,11 @@ func longTrackpadDragsChooseTheNearestPageAndBandBeyondTheList() {
         #expect(release == .settle(index: delta < 0 ? 5 : 1, offset: delta / 2, switched: true))
     }
     var state = SpaceScrollState()
-    let follow = state.handle(.init(dx: -800, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    let offset = -180 + SpaceScrollState.rubberBand(-220)
+    let follow = state.handle(.init(dx: -1160, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
+    let offset = -360 + SpaceScrollState.rubberBand(-220)
     let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 1, count: 3, pitch: 180)
     #expect(follow == .follow(offset))
-    #expect(release == .settle(index: 2, offset: offset, switched: true))
+    #expect(release == .settle(index: 3, offset: offset, switched: true))
 }
 
 @Test @MainActor
@@ -262,7 +262,7 @@ func halfPageThresholdAndDirectionalReleaseScaleWithPitch() {
 func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
     for floating in [false, true] {
         for width: CGFloat in [164, 240, 500] {
-            let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+            let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
             let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
             sidebar.showSpace(at: 1)
             let container = SidebarContainerView(sidebar: sidebar, page: NSView())
@@ -302,7 +302,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
 
 @Test @MainActor
 func resizingAndResettingCancelTheActiveGestureUntilTheNextBegin() {
-    let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
@@ -330,7 +330,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
     let tab = Row(id: "tab", title: "Neighbor row", url: nil, depth: 0, kind: .tab, unloaded: false)
     let favorite = Row(id: "favorite", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     let spaces = (0..<3).map {
-        SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [favorite], pinned: [tab], today: [])
+        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [favorite], pinned: [tab], today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
@@ -374,7 +374,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
 func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     _ = NSApplication.shared
     let tab = Row(id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab, unloaded: false)
-    let spaces = (0..<3).map { SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
@@ -392,7 +392,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     let before = descendants(window)
     #expect(before.filter { view($0)?.accessibilityLabel() == "Selected tab host" }.count == 1)
     let buttons = before.filter { $0.accessibilityRole() == .button }
-    #expect(buttons.count == spaces.count + 2)
+    #expect(buttons.count == spaces.count + 3)
     sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100))
     let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
     #expect(previews.count == 2)
@@ -409,7 +409,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
 private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: (0..<spaces).map {
-        SpaceSnapshot(id: "space-\($0)", title: "Space \($0)", icon: nil,
+        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil,
                       favorites: [Row(id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)],
                       pinned: [Row(id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false)], today: [])
     })
@@ -515,6 +515,16 @@ func wheelDoesNotAnimatePastTheEndsOrRestartThePause() {
     #expect(state.handle(.init(dx: 2, time: 100), index: 0, count: 3, pitch: 240) == .ignored)
     #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
     #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .settle(index: 1, offset: 20, switched: true))
+}
+
+@Test @MainActor
+func trackpadPastLastSpaceOpensCreationAtTheHalfPageThreshold() {
+    for distance in [239.0, 240, 241] {
+        var scroll = SpaceScrollState()
+        _ = scroll.handle(.init(dx: -distance, phase: .began, time: 0), index: 2, count: 3, pitch: 240)
+        let result = scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 2, count: 3, pitch: 240)
+        #expect(result == .settle(index: distance > 240 ? 3 : 2, offset: -distance / 2, switched: distance > 240))
+    }
 }
 
 @MainActor

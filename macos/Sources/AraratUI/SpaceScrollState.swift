@@ -33,7 +33,7 @@ struct SpaceScrollState {
         guard count > 0 else { return .vertical }
         if event.kind == .wheel {
             guard abs(event.dx) > abs(event.dy) else { return .vertical }
-            guard index >= 0 else { return .ignored }
+            guard index >= 0 && index < count else { return .ignored }
             guard event.time >= wheelPausedUntil else { return .ignored }
             wheel.removeAll { $0.time < event.time - SidebarMetrics.spaceWheelWindow }
             wheel.append((event.time, event.inverted ? -event.dx : event.dx))
@@ -62,7 +62,7 @@ struct SpaceScrollState {
         guard pitch > 0 else { return .ignored }
         if axis == nil && (event.dx != 0 || event.dy != 0) {
             axis = abs(event.dx) > abs(event.dy) ? .horizontal : .vertical
-            let boundary = min(Double(index + 1) * pitch, max(-Double(count - 1 - index) * pitch, presentationOffset))
+            let boundary = min(Double(index + 1) * pitch, max(-Double(count - index) * pitch, presentationOffset))
             let excess = presentationOffset - boundary
             rawOffset = boundary + excess / (SidebarMetrics.spaceRubberCoefficient * (1 - abs(excess) / SidebarMetrics.spaceRubberDistance))
         }
@@ -75,7 +75,7 @@ struct SpaceScrollState {
         rawOffset += event.dx * SidebarMetrics.spaceFollowFactor
         if event.dx != 0 { motion.append((event.time, event.dx)) }
         let firstOffset = Double(index + 1) * pitch
-        let lastOffset = -Double(count - 1 - index) * pitch
+        let lastOffset = -Double(count - index) * pitch
         let boundary = min(firstOffset, max(lastOffset, rawOffset))
         let outside = rawOffset != boundary
         let offset = outside ? boundary + Self.rubberBand(rawOffset - boundary) : rawOffset
@@ -87,7 +87,7 @@ struct SpaceScrollState {
         var target = index
         if event.phase != .cancelled {
             if outside {
-                target = rawOffset > firstOffset ? -1 : count - 1
+                target = rawOffset > firstOffset ? -1 : count
             } else if velocity != 0 {
                 target = index + Int(velocity < 0 ? ceil(-rawOffset / pitch) : floor(-rawOffset / pitch))
             } else {
@@ -95,7 +95,7 @@ struct SpaceScrollState {
                 target += rawOffset < 0 ? pages : -pages
             }
         }
-        target = min(count - 1, max(-1, target))
+        target = min(count, max(-1, target))
         return .settle(index: target, offset: offset, switched: target != index)
     }
 

@@ -19,6 +19,36 @@ impl WindowState {
 }
 
 impl Workspace {
+    pub fn create_space(&mut self, window: &str, name: &str, id: &str) -> Result<Vec<Op>, EditError> {
+        let name = name.trim();
+        if name.is_empty() { return Err(EditError("space name is empty".into())); }
+        let pinned = format!("{id}:pinned");
+        let today = format!("{id}:today");
+        if id.trim().is_empty() || [id, pinned.as_str(), today.as_str()].iter().any(|id| {
+            self.items.contains_key(*id) || self.spaces.iter().any(|space| space.id == *id)
+        }) { return Err(EditError("space id already exists or is empty".into())); }
+        let profile = self.shown_space(window).and_then(|id| self.spaces.iter().find(|space| space.id == id))
+            .map_or(crate::model::Profile::Default, |space| space.profile.clone());
+        let space = crate::model::Space {
+            id: id.into(), order: crate::order::key_between(self.spaces.last().map(|space| space.order.as_str()), None),
+            title: name.into(), profile, icon: None, pinned: pinned.clone(), today: today.clone(),
+        };
+        let mut state = self.window_state(window);
+        state.shown_space = Some(id.into());
+        state.select(None);
+        let changed_at = self.lifecycle_time();
+        let mut ops = vec![Op::Put(Record::Space(space))];
+        for id in [pinned, today] {
+            ops.push(Op::Put(Record::Item(crate::model::Item {
+                id, membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
+                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at, collapsed: false,
+            })));
+        }
+        ops.push(Op::Put(Record::Window(state)));
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
     fn window_state(&self, window: &str) -> WindowState {
         self.windows.get(window).cloned().unwrap_or_else(|| WindowState {
             id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(),

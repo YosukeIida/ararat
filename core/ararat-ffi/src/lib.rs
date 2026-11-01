@@ -103,6 +103,14 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn create_space(&self, window_id: String, name: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.create_space(&window_id, &name, &space_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
         self.store.flush().map_err(Into::into)
     }
@@ -131,6 +139,7 @@ pub struct Row {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct SpaceSnapshot {
+    pub profile_name: String,
     pub id: String,
     pub title: String,
     pub icon: Option<String>,
@@ -165,6 +174,7 @@ fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
         })
     };
     SpaceSnapshot {
+        profile_name: match &s.profile { ararat_core::model::Profile::Default => "Default".into(), ararat_core::model::Profile::Named(name) => name.clone() },
         id: s.id.clone(),
         title: s.title.clone(),
         icon: s.icon.clone(),

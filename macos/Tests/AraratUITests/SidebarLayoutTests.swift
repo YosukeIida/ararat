@@ -14,7 +14,7 @@ func favoritesUseFourTwoOrOneColumns() {
         Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: favorites, pinned: [favorites[0]], today: [])
+        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, favorites: favorites, pinned: [favorites[0]], today: [])
     ])
     for (width, columns) in [(240.0, 4), (228, 4), (227, 2), (118, 2), (117, 1)] {
         let sidebar = SidebarView(snapshot: snapshot)
@@ -41,7 +41,7 @@ func favoritesUseFourTwoOrOneColumns() {
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
     let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [favorite], pinned: [], today: [])
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [favorite], pinned: [], today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -60,8 +60,8 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 func selectedHostTracksVisibleSpace() {
     let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [], pinned: [row], today: []),
-        SpaceSnapshot(id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [], pinned: [row], today: []),
+        SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     #expect(sidebar.selectRow(id: "tab"))
@@ -119,7 +119,7 @@ func nestedFillsIndentTheirLeftEdgeOnly() {
         Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [], pinned: rows, today: [])
+        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, favorites: [], pinned: rows, today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -163,7 +163,7 @@ func rowFocusSurvivesWidthChanges() {
     _ = NSApplication.shared
     let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [row], pinned: [row], today: [])
+        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, favorites: [row], pinned: [row], today: [])
     ]))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 720), styleMask: [], backing: .buffered, defer: false)
     let content = NSView()

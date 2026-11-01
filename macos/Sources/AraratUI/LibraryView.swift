@@ -96,7 +96,7 @@ final class LibraryView: NSView {
     }
 }
 
-final class LibraryButton: NSButton {
+final class SidebarDockButton: NSButton {
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 }
 

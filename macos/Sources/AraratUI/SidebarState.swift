@@ -2,6 +2,20 @@ import AppKit
 
 @MainActor
 enum SidebarMetrics {
+    static let createSpaceInset: CGFloat = 14
+    static let createSpaceGap: CGFloat = 6
+    static let createSpaceFieldHeight: CGFloat = 36
+    static let createSpaceProfileHeight: CGFloat = 59
+    static let createSpaceButtonHeight: CGFloat = 36
+    static let createSpaceTopInset: CGFloat = 70
+    static let createSpaceHeaderGap: CGFloat = 18
+    static let createSpaceHeadingSize: CGFloat = 20
+    static let createSpaceBodySize: CGFloat = 14
+    static let createSpaceCaptionSize: CGFloat = 12
+    static let createSpaceCardInset: CGFloat = 10
+    static let createSpaceCardRadius: CGFloat = 8
+    static let createSpaceCancelHeight: CGFloat = 24
+    static let createSpacePlusTrailing: CGFloat = 10
     static let libraryWidthIncrease: CGFloat = 70
     static let libraryRailWidth: CGFloat = 113
     static let libraryButtonSize: CGFloat = 32

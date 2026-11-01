@@ -88,7 +88,7 @@ public final class SidebarContainerView: NSView {
     }
 
     public func selectionChanged() {
-        state.hasSelection = sidebar.selectedRowID != nil
+        state.hasSelection = sidebar.selectedRowID != nil && !sidebar.createSpaceOpen
         processPointer()
     }
 
