@@ -40,7 +40,7 @@ struct SpaceScrollState {
             guard abs(delta) > SidebarMetrics.spaceWheelThreshold else { return .ignored }
             wheel.removeAll()
             let target = index + (delta < 0 ? 1 : -1)
-            guard (0..<count).contains(target) else { return .ignored }
+            guard (-1..<count).contains(target) else { return .ignored }
             wheelPausedUntil = event.time + SidebarMetrics.spaceWheelPause
             tracking = false
             axis = nil

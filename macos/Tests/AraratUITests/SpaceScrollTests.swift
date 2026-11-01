@@ -513,7 +513,7 @@ func wheelSlidesChainAndTrackpadTakesOverThePresentedOffset() {
 @Test @MainActor
 func wheelDoesNotAnimatePastTheEndsOrRestartThePause() {
     var state = SpaceScrollState()
-    #expect(state.handle(.init(dx: 2, time: 100), index: 0, count: 3, pitch: 240) == .ignored)
+    #expect(state.handle(.init(dx: 2, time: 100), index: -1, count: 3, pitch: 240) == .ignored)
     #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
     #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .settle(index: 1, offset: 20, switched: true))
 }

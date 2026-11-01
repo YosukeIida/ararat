@@ -59,7 +59,7 @@ func libraryIsTheScrollPageBeforeTheFirstSpaceAndStaysOnRelease() {
 }
 
 @Test @MainActor
-func wheelCannotOpenLibraryAtFirstSpaceOrPassLastSpace() {
+func wheelOpensLibraryAtFirstSpaceButCannotPassLastSpace() {
     let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space-0", selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
@@ -70,7 +70,7 @@ func wheelCannotOpenLibraryAtFirstSpaceOrPassLastSpace() {
         return NSEvent(cgEvent: cg)!
     }
     sidebar.scrollWheel(with: event(5, 100))
-    #expect(!sidebar.libraryOpen && sidebar.spaceShown == 0)
+    #expect(sidebar.libraryOpen && sidebar.spaceShown == 0)
     sidebar.setLibraryOpen(false)
     sidebar.showSpace(at: 1)
     sidebar.scrollWheel(with: event(-5, 101))
