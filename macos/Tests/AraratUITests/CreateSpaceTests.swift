@@ -45,6 +45,8 @@ func newSpaceMenuCancelEscapeAndReturnUseTheCreationPage() throws {
     #expect(abs(page.convert(field.bounds, from: field).minX - 14) < 0.1)
     let card = try #require(profile.superview?.superview)
     #expect(card.frame.height == 59)
+    #expect(card.layer?.cornerRadius == 11)
+    #expect(card.layer?.cornerCurve == .continuous)
     #expect(abs(page.convert(card.bounds, from: card).minY - page.convert(field.bounds, from: field).maxY - 6) < 0.1)
     #expect(!create.isEnabled)
     field.stringValue = " \t\n"

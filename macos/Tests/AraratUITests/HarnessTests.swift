@@ -259,3 +259,27 @@ func harnessCreatesAndReopensANamedSpaceAfterTheExistingSpaces() throws {
     #expect(reopened.status == 0, "\(reopened.error)")
     #expect(reopened.output.contains("state space 2 selected - library closed spaces 3"))
 }
+
+@Test
+func harnessPermanentlyDeletesOnlyAnArchivedTab() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: source, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"split-1\"", with: "\"parentID\": \"today-work\"")
+    let fixture = directory.appendingPathComponent("sidebar.json")
+    try json.write(to: fixture, atomically: true, encoding: .utf8)
+    let arguments = [fixture.path, "--db", directory.appendingPathComponent("workspace.sqlite").path]
+    let deleted = try runHarness(in: directory, arguments: arguments, commands:
+        "close tab-a\narchive-search A.EXAMPLE\narchive-search no-match\narchive-delete tab-a\narchive-search A.EXAMPLE\nrestore tab-a\narchive-delete missing\narchive-delete tab-mail\n")
+    #expect(deleted.status == 0, "\(deleted.error)")
+    #expect(deleted.output.contains("ok archive-delete tab-a"))
+    #expect(deleted.output.contains("ok archive-search count 1"))
+    #expect(deleted.output.contains("ok archive-search count 0"))
+    #expect(deleted.output.contains("error restore tab-a"))
+    #expect(deleted.output.contains("error archive-delete missing"))
+    #expect(deleted.output.contains("error archive-delete tab-mail"))
+    let reopened = try runHarness(in: directory, arguments: arguments, commands: "restore tab-a\n")
+    #expect(reopened.output.contains("error restore tab-a"))
+}

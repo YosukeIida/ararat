@@ -13,6 +13,7 @@ public final class SidebarView: NSView {
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
     public var onRestore: ((String) -> Void)?
+    public var onArchiveDelete: ((String) -> Void)?
     var onLibraryChanged: ((Bool, Bool) -> Void)?
     private(set) public var libraryOpen = false
     private let library = LibraryView(frame: .zero)
@@ -92,6 +93,11 @@ public final class SidebarView: NSView {
 
     @objc public func toggleLibrary(_ sender: Any? = nil) { setLibraryOpen(!libraryOpen) }
 
+    public func searchArchive(_ query: String) -> Int {
+        library.setSearchQuery(query)
+        return library.filteredEntries.count
+    }
+
     public func setLibraryOpen(_ open: Bool, scrolling: Bool = false) {
         guard open != libraryOpen else { return }
         if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
@@ -100,8 +106,8 @@ public final class SidebarView: NSView {
         libraryOpen = open
         if open && library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton) }
         if !open && !scrolling { library.removeFromSuperview() }
-        library.update(archive: snapshot.archive)
         library.isHidden = !open
+        library.update(archive: snapshot.archive)
         mainColumn.isHidden = open || createSpaceOpen
         libraryButton.setAccessibilityValue(open ? 1 : 0)
         if open { window?.makeFirstResponder(self) }
@@ -337,6 +343,8 @@ public final class SidebarView: NSView {
         library.update(archive: snapshot.archive)
         library.autoresizingMask = [.width, .height]
         library.onRestore = { [weak self] id in self?.onRestore?(id) }
+        library.onDelete = { [weak self] id in self?.onArchiveDelete?(id) }
+        library.onExit = { [weak self] in self?.setLibraryOpen(false) }
         libraryButton.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: "Library")?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.libraryIconSize, weight: .regular))
         libraryButton.imagePosition = .imageOnly
         libraryButton.isBordered = false

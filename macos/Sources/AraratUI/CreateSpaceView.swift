@@ -38,6 +38,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         name.action = #selector(submit)
         profileCard.wantsLayer = true
         profileCard.layer?.cornerRadius = SidebarMetrics.createSpaceCardRadius
+        profileCard.layer?.cornerCurve = .continuous
         let caption = NSTextField(labelWithString: "Profile")
         caption.font = .systemFont(ofSize: SidebarMetrics.createSpaceCaptionSize)
         caption.textColor = .secondaryLabelColor

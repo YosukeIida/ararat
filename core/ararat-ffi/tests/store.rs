@@ -346,3 +346,30 @@ fn rejected_space_names_write_no_records_or_journal() {
         assert_eq!(count(), journal);
     }
 }
+
+#[test]
+fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone() {
+    let path = fresh_db("archive-delete");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), today_fixture()).unwrap();
+    for id in ["tab-a", "tab-b"] { store.close_item("test".into(), id.into()).unwrap(); }
+    let before = records(&path);
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
+    let journal = count();
+    let remaining = store.delete_archive_item("test".into(), "tab-a".into()).unwrap();
+    assert_eq!(remaining.archive.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), ["tab-b"]);
+    assert!(remaining.archive[0].lifecycle_changed_at > 0);
+    assert_eq!(records(&path), before.into_iter().filter(|(kind, id, _)| kind != "item" || id != "tab-a").collect::<Vec<_>>());
+    assert_eq!(count(), journal + 1);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE id='tab-a' AND body IS NULL", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    let after = records(&path);
+    for id in ["missing", "tab-a", "tab-mail", "folder-docs"] {
+        assert!(store.delete_archive_item("test".into(), id.into()).is_err());
+        store.flush().unwrap();
+        assert_eq!(records(&path), after);
+        assert_eq!(count(), journal + 1);
+    }
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), remaining);
+}

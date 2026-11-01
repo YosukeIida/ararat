@@ -69,3 +69,39 @@ fn old_database_versions_are_rejected_without_a_migration() {
     drop(conn);
     assert!(Store::open(&path).err().unwrap().0.contains("unsupported database version"));
 }
+
+#[test]
+fn deleting_archived_tabs_removes_only_the_item_and_persists_a_journal_tombstone() {
+    let mut ws = workspace();
+    for id in ["tab-a", "tab-b"] { ws.close_item(id).unwrap(); }
+    ws.items.get_mut("tab-b").unwrap().lifecycle = Lifecycle::Archived;
+    assert_eq!(ws.archive().iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["tab-b", "tab-a"]);
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("archive-delete.sqlite");
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let before: i64 = conn.query_row("SELECT count(*) FROM journal", [], |row| row.get(0)).unwrap();
+    let mut expected = ws.clone(); expected.items.remove("tab-a");
+    let ops = ws.delete_archive_item("tab-a").unwrap();
+    assert_eq!(ops, [Op::Delete(ararat_core::model::Kind::Item, "tab-a".into())]);
+    assert_eq!(ws, expected);
+    store.write(ops); store.flush().unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 1);
+    assert_eq!(conn.query_row("SELECT kind, id, body FROM journal ORDER BY seq DESC LIMIT 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))).unwrap(), ("item".into(), "tab-a".into(), None));
+    drop(store);
+    assert_eq!(Store::open(&path).unwrap().1, expected);
+    assert!(ws.restore_item("one", "tab-a").is_err());
+    ws.delete_archive_item("tab-b").unwrap();
+    assert!(ws.archive().is_empty());
+}
+
+#[test]
+fn deleting_unknown_or_non_archived_items_is_rejected_without_changes() {
+    let mut ws = workspace();
+    ws.close_item("tab-mail").unwrap();
+    let before = ws.clone();
+    for id in ["missing", "tab-a", "tab-mail", "folder-docs", "today-work"] {
+        assert!(ws.delete_archive_item(id).is_err());
+        assert_eq!(ws, before);
+    }
+}

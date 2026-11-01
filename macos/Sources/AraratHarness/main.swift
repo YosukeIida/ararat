@@ -140,6 +140,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             }
         }
         sidebar.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
+        sidebar.onArchiveDelete = { [weak self] id in self?.deleteArchive(id: id) { _ in } }
         sidebar.onCreateSpace = { [weak self] name in self?.createSpace(name: name) { _ in } }
         sidebar.onCreatePageChanged = { [weak self] in self?.showSelection() }
         showSelection()
@@ -212,6 +213,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         guard let sidebar, let resizeHandle, let sidebarContainer else { reply("error not ready"); return }
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
         switch (words.first, words.count > 1 ? words[1] : nil) {
+        case ("archive-delete", let id?): deleteArchive(id: id, reply: reply)
+        case ("archive-search", let query): reply("ok archive-search count \(sidebar.searchArchive(query ?? ""))")
         case ("create-space", let name): createSpace(name: name ?? "", reply: reply)
         case ("library", let arg):
             guard arg == nil || arg == "close" else { reply("error library command"); return }
@@ -245,6 +248,13 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         case ("sidebar", nil): reply("ok \(sidebarContainer.sidebarState)")
         case ("toggle-sidebar", nil): toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
         default: reply("error unknown command")
+        }
+    }
+
+    private func deleteArchive(id: String, reply: @escaping @MainActor (String) -> Void) {
+        adapter.deleteArchive(id: id) { [weak self] result in
+            if let error = self?.publish(result) { reply("error archive-delete \(id): \(error)") }
+            else { reply("ok archive-delete \(id)") }
         }
     }
 

@@ -13,7 +13,7 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     _ = NSApplication.shared
     let entry = Row(id: "closed", title: "A closed tab", url: "https://closed.example", depth: 0, kind: .tab, unloaded: false)
     let space = SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [entry], shownSpaceId: "home", selectedId: nil, spaces: [space]))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [ArchiveEntry(id: entry.id, title: entry.title, url: entry.url ?? "", lifecycleChangedAt: 0)], shownSpaceId: "home", selectedId: nil, spaces: [space]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = NSRect(x: 0, y: 0, width: 1000, height: 720)
     container.resizeHandle.sidebarWidth = 347

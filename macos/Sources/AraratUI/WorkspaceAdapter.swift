@@ -43,6 +43,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ try self.opened().createSpace(windowId: self.windowID, name: name, spaceId: UUID().uuidString) }, completion: completion)
     }
 
+    public func deleteArchive(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().deleteArchiveItem(windowId: self.windowID, id: id) }, completion: completion)
+    }
+
     public func restore(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().restoreItem(windowId: self.windowID, id: id) }, completion: completion)
     }

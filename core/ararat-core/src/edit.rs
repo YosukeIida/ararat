@@ -82,6 +82,16 @@ impl Workspace {
         items
     }
 
+    pub fn delete_archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })
+            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)) {
+            return Err(EditError(format!("item {id} is not an archived tab")));
+        }
+        let ops = vec![Op::Delete(crate::model::Kind::Item, id.into())];
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
     pub fn restore_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
         let mut item = self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. })
             && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).cloned()

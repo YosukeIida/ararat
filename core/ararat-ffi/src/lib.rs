@@ -111,6 +111,14 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn delete_archive_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.delete_archive_item(&id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
         self.store.flush().map_err(Into::into)
     }
@@ -149,8 +157,16 @@ pub struct SpaceSnapshot {
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]
+pub struct ArchiveEntry {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub lifecycle_changed_at: u64,
+}
+
+#[derive(Debug, PartialEq, uniffi::Record)]
 pub struct WorkspaceSnapshot {
-    pub archive: Vec<Row>,
+    pub archive: Vec<ArchiveEntry>,
     pub shown_space_id: Option<String>,
     pub selected_id: Option<String>,
     pub spaces: Vec<SpaceSnapshot>,
@@ -164,7 +180,11 @@ pub fn import_arc_sidebar(json: String) -> Result<WorkspaceSnapshot, CoreError> 
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
     view.repair_tree();
-    WorkspaceSnapshot { archive: view.archive().into_iter().filter_map(|item| row(0, item)).collect(), shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.is_selectable(id) && view.items[*id].lifecycle == Lifecycle::Open).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
+    let archive = view.archive().into_iter().filter_map(|item| match &item.kind {
+        ItemKind::Tab { url, .. } => Some(ArchiveEntry { id: item.id.clone(), title: item.display_title().into(), url: url.clone(), lifecycle_changed_at: item.lifecycle_changed_at }),
+        _ => None,
+    }).collect();
+    WorkspaceSnapshot { archive, shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.is_selectable(id) && view.items[*id].lifecycle == Lifecycle::Open).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
 }
 
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
