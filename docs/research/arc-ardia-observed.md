@@ -79,3 +79,11 @@ Measured the same way on the docked sidebar (window 1146×1410 pt, sidebar about
 | Close a tab | The rows below move up one row (about 41 pt): an ease-out cubic of 117 ms (0.3 pt rms over 3 runs). A closed row at the end of the list fades over about 110 ms |
 
 The View menu's Show/Hide Sidebar item did not always match the sidebar's state when read through the Accessibility API; the sidebar's state was checked on screen.
+
+## 7. Which tab is selected after a close (2026-11-01)
+
+Measured on Arc 1.171.0 with tabs this measurement created (example.com) and closed again; Arc archived them. First with Arc's AppleScript `close tab` while another app was in front, then with ⌘W with Arc in front; both gave the same results.
+
+- Selecting Y4 then Y2 and closing Y2 selected Y4, not Y2's neighbours Y1 or Y3.
+- Selecting Y1, Y3, Y4 and closing them in turn selected Y3, then Y1, then the tab selected before Y1: the selection history.
+- In another space, opening a tab there and closing it (the space had pinned tabs only, nothing selected before) left nothing selected and stayed in that space: the history does not cross spaces, and no pinned neighbour was picked.

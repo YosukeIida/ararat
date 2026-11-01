@@ -5,7 +5,7 @@ Japanese translation: `arc-sidebar-layout.ja.md`. Arc 1.171.0, dark appearance, 
 | Item | Arc, measured | Cra |
 |---|---|---|
 | Traffic lights | 14 pt across, centres x 19.5 / 42.5 / 65.5, y 23.5 | Centres 19 / 43 / 67 in its notes, 20 / 44 / 68 in code; y 24 |
-| URL field | x 9 to 169 (8 pt from the sidebar's right edge), y 46–81, 36 pt tall | x 8, y 46, 36 tall, radius 10, host text 13 pt |
+| URL field | x 8 to 169 (8 pt from the sidebar's right edge; re-measured 2026-11-01 at the field's vertical middle: the fill starts 8 pt from the window's left edge, the same inset as the tiles; the first reading of 9 was taken off its antialiased corner), y 46–81, 36 pt tall | x 8, y 46, 36 tall, radius 10, host text 13 pt |
 | URL field to favorites | 8 pt | 8 |
 | Favorites tiles | 2 columns at this width, each 76 pt wide and 47 pt tall, 8 pt apart, from x 8 | 47 tall, 8 apart; 4 columns while a tile stays at least 47 wide, else 2, never 3; radius 13 |
 | Corner radius (URL field, tiles, selected row) | 11 pt, continuous, the same for all three (see below) | 10 (field, rows), 13 (tiles) |
@@ -16,6 +16,8 @@ Japanese translation: `arc-sidebar-layout.ja.md`. Arc 1.171.0, dark appearance, 
 | Title | Starts at x 44–45; glyphs 13 pt tall, consistent with a 14 pt font | x 45, 14 pt regular; subtitle 11 pt |
 | Nesting indent | 16 pt (one nested row measured) | 18 |
 | Divider above New Tab | 1 pt line from x 18 to 159; "New Tab" label from x 20 | |
+| Library (open) | Replaces the sidebar; 417 pt wide from the window's left edge: a rail of about 112 pt, a 1 pt divider, and a list of about 304 pt. Rail: Media, Downloads, Easels, Spaces, Boosts, Archived Tabs, icons over labels on a 100 pt pitch; the selected page has a fill of about 97×80 pt. List: a search field 36 pt tall at the top (y 163–199 in a 1257 pt window), a Filter button beside it, day headings ("Today"), rows of title over URL on a 56 pt pitch, trash and restore buttons on the hovered row. Bottom: a back arrow and an "Exit Library" tooltip | Not measured |
+| Create a Space | Shown in the sidebar (docked width 178) with the page card empty: an illustration, the title "Create a Space" and one line of subtitle; then, 14 pt from both sides, a name field 36 pt tall with an icon button, a Profile card 59 pt tall with a profile pop-up, and a "Choose a Theme" button 37 pt tall, 6 pt apart; at the bottom a "Create Space" button 36 pt tall (disabled until named) and a Cancel link. Opened from the + menu (New Space, New Folder; New Easel, New Boost; New Split, New Tab) | Not measured |
 | Bottom bar | Icons 16 pt tall centred about 25 pt above the window's bottom edge; Library at x 17, + ending at x 160 | 36 tall, 6 pt from the bottom |
 | Sidebar width | The page card starts at x 178 (the owner's width). Dragging the edge keeps the card's left edge between x 164 and x 500 | Default 328, range 220–520 |
 
