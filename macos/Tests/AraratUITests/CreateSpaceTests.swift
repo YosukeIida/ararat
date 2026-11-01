@@ -92,7 +92,7 @@ func addingSpaceDockButtonsKeepsTheSidebarWidthAndShowsTheSelectedSpace() throws
 }
 
 @Test @MainActor
-func trackpadCreationUsesTheAbsoluteLastPageAndWheelRemainsInert() async throws {
+func trackpadCreationUsesTheAbsoluteLastPageAndWheelReturnsInward() async throws {
     _ = NSApplication.shared
     for floating in [false, true] {
         let sidebar = SidebarView(snapshot: creationSnapshot())
@@ -122,7 +122,8 @@ func trackpadCreationUsesTheAbsoluteLastPageAndWheelRemainsInert() async throws 
         try await Task.sleep(for: .milliseconds(800))
         #expect(sidebar.createSpaceOpen && sidebar.frame.width == container.resizeHandle.sidebarWidth)
         send(5, nil, 103)
-        #expect(sidebar.createSpaceOpen)
+        #expect(!sidebar.createSpaceOpen && sidebar.spaceShown == 2)
+        sidebar.showCreateSpace()
         send(300, .began, 104)
         send(0, .ended, 104.2)
         #expect(!sidebar.createSpaceOpen && sidebar.spaceShown == 2)

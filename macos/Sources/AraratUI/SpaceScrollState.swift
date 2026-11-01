@@ -33,7 +33,6 @@ struct SpaceScrollState {
         guard count > 0 else { return .vertical }
         if event.kind == .wheel {
             guard abs(event.dx) > abs(event.dy) else { return .vertical }
-            guard index >= 0 && index < count else { return .ignored }
             guard event.time >= wheelPausedUntil else { return .ignored }
             wheel.removeAll { $0.time < event.time - SidebarMetrics.spaceWheelWindow }
             wheel.append((event.time, event.inverted ? -event.dx : event.dx))
@@ -73,6 +72,7 @@ struct SpaceScrollState {
         }
         motion.removeAll { $0.time < event.time - SidebarMetrics.spaceVelocityWindow }
         rawOffset += event.dx * SidebarMetrics.spaceFollowFactor
+        if index == -1 { rawOffset = max(-pitch, min(0, rawOffset)) }
         if event.dx != 0 { motion.append((event.time, event.dx)) }
         let firstOffset = Double(index + 1) * pitch
         let lastOffset = -Double(count - index) * pitch

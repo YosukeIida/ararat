@@ -59,7 +59,7 @@ func libraryIsTheScrollPageBeforeTheFirstSpaceAndStaysOnRelease() {
 }
 
 @Test @MainActor
-func wheelCannotOpenLibraryAtFirstSpaceOrLeaveLibraryOrPassLastSpace() {
+func wheelCannotOpenLibraryAtFirstSpaceOrPassLastSpace() {
     let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space-0", selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
@@ -75,11 +75,6 @@ func wheelCannotOpenLibraryAtFirstSpaceOrLeaveLibraryOrPassLastSpace() {
     sidebar.showSpace(at: 1)
     sidebar.scrollWheel(with: event(-5, 101))
     #expect(!sidebar.libraryOpen && sidebar.spaceShown == 1)
-    sidebar.setLibraryOpen(true)
-    sidebar.scrollWheel(with: event(-5, 102))
-    #expect(sidebar.libraryOpen && sidebar.spaceShown == 1)
-    sidebar.scrollWheel(with: event(5, 103))
-    #expect(sidebar.libraryOpen && sidebar.spaceShown == 1)
 }
 
 @Test @MainActor
@@ -94,6 +89,7 @@ func sidebarScrollOpensLibraryStaysOpenAndScrollsBackToFirstSpace() async throws
     container.layoutSubtreeIfNeeded()
     let event: (Int32, CGScrollPhase, Double) -> NSEvent = { dx, phase, time in
         let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: dx, wheel3: 0)!
+        cg.location = CGPoint(x: 20, y: (NSScreen.screens.first?.frame.maxY ?? 0) - 350)
         cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
         cg.timestamp = UInt64(time * 1_000_000_000)
         return NSEvent(cgEvent: cg)!

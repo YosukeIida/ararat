@@ -42,6 +42,11 @@ public final class SidebarView: NSView {
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
     private var spaceScroll = SpaceScrollState()
+    private enum ScrollOrigin { case page, rail, list }
+    private enum ScrollAxis { case horizontal, vertical }
+    private var scrollOrigin: ScrollOrigin?
+    private var scrollAxis: ScrollAxis?
+    private weak var gestureScroll: NSScrollView?
     private var scrollPreviews: [SidebarView] = []
     private var showingScrollPages = false
     private var scrollGeneration = 0
@@ -232,6 +237,9 @@ public final class SidebarView: NSView {
     }
 
     private func build() {
+        wantsLayer = true
+        layer?.masksToBounds = true
+        library.onScroll = { [weak self] event, scroll in self?.handleSpaceScroll(event, from: scroll) ?? false }
         urlField.wantsLayer = true
         urlField.layer?.cornerRadius = 11
         urlField.layer?.cornerCurve = .continuous
@@ -255,7 +263,7 @@ public final class SidebarView: NSView {
         rows.alignment = .leading
 
         let scroll = SidebarScrollView()
-        scroll.onScroll = { [weak self] event in self?.handleSpaceScroll(event) ?? false }
+        scroll.onScroll = { [weak self, weak scroll] event in self?.handleSpaceScroll(event, from: scroll) ?? false }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -578,7 +586,7 @@ public final class SidebarView: NSView {
         isScrollPreview ? [] : super.accessibilityChildren()
     }
 
-    private func handleSpaceScroll(_ event: NSEvent) -> Bool {
+    private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
         guard !isScrollPreview else { return false }
         layoutSubtreeIfNeeded()
         let phase: SpaceScrollEvent.Phase
@@ -591,6 +599,30 @@ public final class SidebarView: NSView {
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
                                      inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
+        let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
+        if phase == .began {
+            scrollOrigin = origin
+            scrollAxis = nil
+            gestureScroll = source
+        }
+        let owner = input.kind == .wheel ? origin : (scrollOrigin ?? origin)
+        let axis: ScrollAxis?
+        if input.kind == .wheel {
+            axis = abs(input.dx) > abs(input.dy) ? .horizontal : .vertical
+        } else {
+            if scrollAxis == nil && (input.dx != 0 || input.dy != 0) {
+                scrollAxis = abs(input.dx) > abs(input.dy) ? .horizontal : .vertical
+            }
+            axis = scrollAxis
+        }
+        if owner == .list || axis == .vertical {
+            if axis == .horizontal { return true }
+            if input.kind == .trackpad, let scroll = gestureScroll, scroll !== source {
+                scroll.scrollWheel(with: event)
+                return true
+            }
+            return false
+        }
         let layer = libraryOpen ? library.layer : createSpaceOpen ? creation.layer : spaceColumn.layer
         let offset = layer?.animation(forKey: "space.scroll") == nil
             ? layer?.transform.m41 : (layer?.presentation()?.transform.m41 ?? layer?.transform.m41)

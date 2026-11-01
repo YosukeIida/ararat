@@ -137,15 +137,16 @@ func horizontalGestureMomentumCannotSwitchAgain() {
 }
 
 @Test @MainActor
-func trackpadRubberBandsBothBoundariesAndSpringsBack() {
+func trackpadRubberBandsCreationAndKeepsLibraryOutwardMotionInert() {
     let expected = 255 * (1 - 1 / (0.15 * 200 / 255 + 1))
     for (index, delta) in [(-1, 400.0), (3, -400.0)] {
         var state = SpaceScrollState()
         let sign = delta < 0 ? -1.0 : 1.0
+        let offset = index == -1 ? 0 : sign * expected
         let follow = state.handle(.init(dx: delta, phase: .began, time: 0), index: index, count: 3, pitch: 180)
         let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: index, count: 3, pitch: 180)
-        #expect(follow == .follow(sign * expected))
-        #expect(release == .settle(index: index, offset: sign * expected, switched: false))
+        #expect(follow == .follow(offset))
+        #expect(release == .settle(index: index, offset: offset, switched: false))
     }
 }
 

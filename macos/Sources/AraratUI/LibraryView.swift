@@ -8,6 +8,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     var onRestore: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
     var onExit: (() -> Void)?
+    var onScroll: ((NSEvent, NSScrollView?) -> Bool)?
     private(set) var filteredEntries: [ArchiveEntry] = []
     private enum ListRow: Equatable {
         enum ID: Hashable { case day(Date), entry(String) }
@@ -71,6 +72,10 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         search.target = self
         search.action = #selector(rebuild)
         scroll.drawsBackground = false
+        scroll.onScroll = { [weak self] event in
+            guard let self else { return false }
+            return self.onScroll?(event, self.scroll) ?? false
+        }
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.contentView.postsBoundsChangedNotifications = true
@@ -154,6 +159,14 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var isFlipped: Bool { true }
+
+    func isOverRail(_ event: NSEvent) -> Bool {
+        rail.frame.contains(convert(event.locationInWindow, from: nil))
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if onScroll?(event, nil) != true { super.scrollWheel(with: event) }
+    }
 
     override var isHidden: Bool {
         didSet {
@@ -436,8 +449,8 @@ private final class ArchiveHeadingView: NSTableCellView {
     override func layout() { super.layout(); label.frame = NSRect(x: 0, y: (bounds.height - SidebarMetrics.archiveHeadingLabelHeight) / 2, width: bounds.width, height: SidebarMetrics.archiveHeadingLabelHeight) }
 }
 private final class LibraryScrollView: NSScrollView {
+    var onScroll: ((NSEvent) -> Bool)?
     override func scrollWheel(with event: NSEvent) {
-        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) { nextResponder?.scrollWheel(with: event) }
-        else { super.scrollWheel(with: event) }
+        if onScroll?(event) != true { super.scrollWheel(with: event) }
     }
 }
