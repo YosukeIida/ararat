@@ -531,8 +531,10 @@ public final class SidebarView: NSView {
         return true
     }
 
+    private var libraryPageOrigin: Double { Double(-1 - (libraryOpen ? -1 : spaceIndex)) * spacePagePitch }
+
     private var scrollPages: [(NSView, Double)] {
-        [(spaceColumn, libraryOpen ? spacePagePitch : 0), (library, libraryOpen ? 0 : -spacePagePitch)] + scrollPreviews.compactMap { preview in
+        [(spaceColumn, libraryOpen ? spacePagePitch : 0), (library, libraryPageOrigin)] + scrollPreviews.compactMap { preview in
             preview.superview.map { ($0, Double(preview.spaceIndex - (libraryOpen ? -1 : spaceIndex)) * spacePagePitch) }
         }
     }
@@ -545,7 +547,8 @@ public final class SidebarView: NSView {
 
     private func prepareScrollPages(offset: Double) {
         guard !spaceViewport.bounds.isEmpty, spacePagePitch > 0 else { return }
-        if !libraryOpen && offset > 0 {
+        let libraryX = libraryPageOrigin + offset
+        if !libraryOpen && libraryX > -spacePagePitch && libraryX < spacePagePitch {
             if library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton); library.frame = bounds }
             library.isHidden = false
             library.update(archive: snapshot.archive)
