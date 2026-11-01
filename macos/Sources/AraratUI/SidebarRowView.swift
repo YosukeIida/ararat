@@ -4,7 +4,7 @@ import AraratKit
 @MainActor
 final class SidebarRowView: NSView {
     private(set) var row: Row
-    var acceptsKeyboardFocus = true
+    var acceptsKeyboardFocus = true { didSet { refreshHover() } }
     private let action: (Row) -> Void
     private var selected: Bool
     private let fill = NSView()
@@ -12,13 +12,16 @@ final class SidebarRowView: NSView {
     private let title = NSTextField(labelWithString: "")
     private var fillLeading: NSLayoutConstraint!
     private var iconLeading: NSLayoutConstraint!
-    private var hovered = false { didSet { updateFill() } }
+    private(set) var hovered = false { didSet { updateFill() } }
+    var pointerLocation: (() -> NSPoint?)?
 
     init(row: Row, selected: Bool, action: @escaping (Row) -> Void) {
         self.row = row
         self.action = action
         self.selected = selected
         super.init(frame: .zero)
+        postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshHover), name: NSView.frameDidChangeNotification, object: self)
         wantsLayer = true
         fill.wantsLayer = true
         fill.layer?.cornerRadius = 11
@@ -78,10 +81,25 @@ final class SidebarRowView: NSView {
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self
         ))
+        refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) { hovered = true }
-    override func mouseExited(with event: NSEvent) { hovered = false }
+    @objc func refreshHover() {
+        let point: NSPoint?
+        if let pointerLocation { point = pointerLocation() }
+        else { point = window?.isKeyWindow == true ? window?.mouseLocationOutsideOfEventStream : nil }
+        let inside = point.map { bounds.intersection(visibleRect).contains(convert($0, from: nil)) } ?? false
+        let updated = acceptsKeyboardFocus && !isHiddenOrHasHiddenAncestor && inside
+        if hovered != updated { hovered = updated }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshHover()
+    }
+
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
     override func mouseUp(with event: NSEvent) { if acceptsKeyboardFocus { action(row) } }
     override func accessibilityPerformPress() -> Bool {
         guard acceptsKeyboardFocus else { return false }

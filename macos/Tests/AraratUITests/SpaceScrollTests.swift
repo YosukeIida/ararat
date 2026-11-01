@@ -416,8 +416,8 @@ private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     let sidebar = SidebarView(snapshot: snapshot)
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar
-    window.orderFront(nil)
     sidebar.layoutSubtreeIfNeeded()
+    window.displayIfNeeded()
     return (window, sidebar)
 }
 

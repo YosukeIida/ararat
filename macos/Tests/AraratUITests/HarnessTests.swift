@@ -10,15 +10,17 @@ private struct HarnessRun {
     let runningBeforeStop: Bool
 }
 
+private final class HarnessTestBundle: NSObject {}
+
 private func runHarness(in directory: URL, arguments: [String] = [], commands: String = "", stopSignal: Int32? = nil, nullInput: Bool = false) throws -> HarnessRun {
-    let macos = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let process = Process()
-    process.executableURL = macos.appendingPathComponent(".build/debug/AraratHarness")
-    process.arguments = arguments
+    process.executableURL = Bundle(for: HarnessTestBundle.self).bundleURL.deletingLastPathComponent().appendingPathComponent("AraratHarness")
+    process.arguments = ["--headless"] + arguments
     var environment = ProcessInfo.processInfo.environment
     environment["TMPDIR"] = directory.path + "/"
     process.environment = environment
     let input = Pipe()
+    _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
     let output = Pipe()
     let error = Pipe()
     process.standardInput = nullInput ? FileHandle(forReadingAtPath: "/dev/null")! : input

@@ -5,11 +5,13 @@ import AraratUI
 
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 var checkOnly = false
+var headless = false
 var databasePath: String?
 var path: String?
 while let argument = arguments.next() {
     switch argument {
     case "--check": checkOnly = true
+    case "--headless": headless = true
     case "--db":
         guard let value = arguments.next(), !value.hasPrefix("--") else {
             FileHandle.standardError.write(Data("--db requires a path\n".utf8))
@@ -18,7 +20,7 @@ while let argument = arguments.next() {
         databasePath = value
     default:
         guard !argument.hasPrefix("--"), path == nil else {
-            FileHandle.standardError.write(Data("usage: AraratHarness [--check] [--db path] [StorableSidebar.json]\n".utf8))
+            FileHandle.standardError.write(Data("usage: AraratHarness [--check] [--headless] [--db path] [StorableSidebar.json]\n".utf8))
             exit(1)
         }
         path = argument
@@ -97,6 +99,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     var resizeHandle: SidebarResizeHandle?
     var sidebarContainer: SidebarContainerView?
     private var card: PlaceholderCard?
+    private var headlessContent: NSView?
 
     init(snapshot: WorkspaceSnapshot, store: WorkspaceStore) {
         self.snapshot = snapshot
@@ -104,15 +107,15 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let window = BrowserWindow(
+        let window = headless ? nil : BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.title = "Ararat Harness"
+        window?.titlebarAppearsTransparent = true
+        window?.titleVisibility = .hidden
+        window?.title = "Ararat Harness"
 
         let background = NSVisualEffectView()
         background.material = .sidebar
@@ -145,26 +148,32 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             container.topAnchor.constraint(equalTo: background.topAnchor),
             container.bottomAnchor.constraint(equalTo: background.bottomAnchor),
         ])
-        window.contentView = background
-        let menu = NSMenu()
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
-        let fileMenu = NSMenu(title: "File")
-        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTodayTab(_:)), keyEquivalent: "w")
-        close.target = sidebar
-        menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
-        let viewMenu = NSMenu(title: "View")
-        let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
-        toggle.target = self
-        let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
-        reset.target = self
-        menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
-        NSApp.mainMenu = menu
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
-        NSApp.activate()
+        if let window {
+            window.contentView = background
+            let menu = NSMenu()
+            let appMenu = NSMenu()
+            appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
+            let fileMenu = NSMenu(title: "File")
+            let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTodayTab(_:)), keyEquivalent: "w")
+            close.target = sidebar
+            menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
+            let viewMenu = NSMenu(title: "View")
+            let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+            toggle.target = self
+            let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
+            reset.target = self
+            menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
+            NSApp.mainMenu = menu
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            self.window = window
+            NSApp.activate()
+        } else {
+            headlessContent = background
+            background.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
+            background.layoutSubtreeIfNeeded()
+        }
         readCommands()
         HitchMonitor.start()
     }
@@ -326,7 +335,7 @@ enum HitchMonitor {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.regular)
+app.setActivationPolicy(headless ? .prohibited : .regular)
 let delegate = HarnessDelegate(snapshot: snapshot, store: store)
 app.delegate = delegate
 let terminationSignals = [SIGTERM, SIGINT].map { number in

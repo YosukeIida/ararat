@@ -50,6 +50,8 @@ public final class SidebarView: NSView {
     public func update(snapshot: WorkspaceSnapshot) {
         finishRowMotion()
         replaceSnapshot(snapshot)
+        layoutSubtreeIfNeeded()
+        rowViews.values.forEach { $0.refreshHover() }
     }
 
     public func updateSelection(id: String?) {
@@ -86,6 +88,7 @@ public final class SidebarView: NSView {
         fadeFrame = nil
         layoutSubtreeIfNeeded()
         for (id, view) in rowViews {
+            view.refreshHover()
             guard let old = oldFrames[id], let parent = view.superview else { continue }
             let offset = parent.convert(old, from: self).minY - view.frame.minY
             guard abs(offset) > 0.01 else { continue }
