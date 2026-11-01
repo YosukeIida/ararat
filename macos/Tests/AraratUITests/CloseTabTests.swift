@@ -235,3 +235,31 @@ func closingATerminalSplitFadesItsLastMember() throws {
     let fresh = closeSidebar(next)
     #expect(ReuseTree(sidebar, in: sidebar) == ReuseTree(fresh, in: fresh))
 }
+
+@Test @MainActor
+func aClickDuringCloseKeepsTheMoveAndFadeAnimations() throws {
+    for (terminal, rejected) in [(false, false), (true, false), (false, true), (true, true)] {
+        var initial = closeSnapshot(["a", "b", "c"], selected: "b")
+        var next = terminal ? closeSnapshot(["a", "b"], selected: "b") : closeSnapshot(["a", "c"], selected: "c")
+        if rejected {
+            initial.spaces[0].today[0].kind = .folder
+            next.spaces[0].today[0].kind = .folder
+        }
+        let sidebar = closeSidebar(initial)
+        let c = try #require(closeViews(sidebar).first { $0.row.id == "c" })
+        sidebar.applyClose(id: terminal ? "c" : "b", snapshot: next)
+        let key = terminal ? "row.close.fade" : "row.close.move"
+        let animation = try #require(c.layer?.animation(forKey: key) as? CABasicAnimation)
+        let coreSelection = next.selectedId
+        sidebar.onSelect = { [weak sidebar] row in sidebar?.updateSelection(id: rejected ? coreSelection : row.id) }
+        let a = try #require(closeViews(sidebar).first { $0.row.id == "a" })
+        #expect(a.accessibilityPerformPress())
+        #expect(sidebar.selectedRowID == (rejected ? coreSelection : "a"))
+        let continued = c.layer?.animation(forKey: key) as? CABasicAnimation
+        #expect(continued?.fromValue as? Double == animation.fromValue as? Double)
+        #expect(continued?.toValue as? Double == animation.toValue as? Double)
+        #expect(continued?.duration == animation.duration)
+        if terminal { #expect(c.superview === sidebar) }
+        else { #expect(closeViews(sidebar).first { $0.row.id == "c" } === c) }
+    }
+}

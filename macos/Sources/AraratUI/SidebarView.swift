@@ -52,6 +52,13 @@ public final class SidebarView: NSView {
         replaceSnapshot(snapshot)
     }
 
+    public func updateSelection(id: String?) {
+        guard selectedID != id else { return }
+        selectedID = id
+        snapshot.selectedId = id
+        reload()
+    }
+
     private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
         let shownID = snapshotSpace?.id
         clearScrollPresentation()

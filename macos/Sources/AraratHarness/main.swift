@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import AraratKit
 import AraratUI
 
@@ -33,29 +34,58 @@ func sidebarJSON(path: String?) throws -> String {
     }
 }
 
+let temporaryDirectory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory(), isDirectory: true)
+let temporaryDatabasePath = databasePath == nil
+    ? temporaryDirectory.appendingPathComponent("ararat-harness-\(UUID().uuidString).sqlite").path : nil
+
+@discardableResult
+func removeTemporaryDatabase() -> Bool {
+    guard let temporaryDatabasePath else { return true }
+    var removed = true
+    for suffix in ["", "-wal", "-shm"] {
+        let file = temporaryDatabasePath + suffix
+        guard FileManager.default.fileExists(atPath: file) else { continue }
+        do { try FileManager.default.removeItem(atPath: file) } catch {
+            FileHandle.standardError.write(Data("cannot remove temporary database \(file): \(error)\n".utf8))
+            removed = false
+        }
+    }
+    return removed
+}
+
 let store: WorkspaceStore
 let snapshot: WorkspaceSnapshot
 do {
-    let storagePath = databasePath ?? FileManager.default.temporaryDirectory
-        .appendingPathComponent("ararat-harness-\(UUID().uuidString).sqlite").path
-    let opened = try WorkspaceStore.open(path: storagePath)
+    let opened = try WorkspaceStore.open(path: databasePath ?? temporaryDatabasePath!)
     store = opened
-    let loaded = opened.snapshot()
-    snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
+    do {
+        let loaded = opened.snapshot()
+        snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
+    } catch {
+        try? opened.flush()
+        throw error
+    }
 } catch {
+    removeTemporaryDatabase()
     FileHandle.standardError.write(Data("\(error)\n".utf8))
     exit(1)
+}
+
+func flushAndCleanup() -> Bool {
+    var flushed = true
+    do { try store.flush() } catch {
+        FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
+        flushed = false
+    }
+    let removed = removeTemporaryDatabase()
+    return flushed && removed
 }
 
 if checkOnly {
     for space in snapshot.spaces {
         print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
     }
-    do { try store.flush() } catch {
-        FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
-        exit(1)
-    }
-    exit(0)
+    exit(flushAndCleanup() ? 0 : 1)
 }
 
 @MainActor
@@ -96,15 +126,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         sidebarContainer = container
         resizeHandle = container.resizeHandle
         sidebar.onSelect = { [weak self] row in
-            guard let self else { return }
-            do {
-                self.snapshot = try self.store.selectItem(id: row.id)
-            } catch {
+            do { try self?.selectItem(id: row.id) } catch {
                 FileHandle.standardError.write(Data("cannot select item: \(error)\n".utf8))
-                self.snapshot = self.store.snapshot()
-                self.sidebar?.update(snapshot: self.snapshot)
             }
-            self.showSelection()
         }
         sidebar.onClose = { [weak self] id in
             do { try self?.closeTab(id: id) } catch {
@@ -158,12 +182,22 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
         let reply: String
         switch (words.first, words.count > 1 ? words[1] : nil) {
+        case ("quit", nil):
+            reply = "ok quit"
         case ("space", let arg?):
             guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply = "error no space \(arg)"; break }
             sidebar.showSpace(at: index)
             reply = "ok space \(index)"
         case ("select", let id?):
-            reply = sidebar.selectRow(id: id) ? "ok select \(id)" : "error no row \(id)"
+            guard snapshot.spaces.indices.contains(sidebar.spaceShown) else { reply = "error no row \(id)"; break }
+            let space = snapshot.spaces[sidebar.spaceShown]
+            guard (space.favorites + space.pinned + space.today).contains(where: { $0.id == id }) else {
+                reply = "error no row \(id)"; break
+            }
+            do {
+                try selectItem(id: id)
+                reply = "ok select \(id)"
+            } catch { reply = "error select \(id): \(error)" }
         case ("close", let id?):
             do {
                 try closeTab(id: id)
@@ -186,6 +220,20 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         }
         print(reply)
         fflush(stdout)
+        if words == ["quit"] { NSApp.terminate(nil) }
+    }
+
+    private func selectItem(id: String) throws {
+        do {
+            snapshot = try store.selectItem(id: id)
+        } catch {
+            snapshot = store.snapshot()
+            sidebar?.updateSelection(id: snapshot.selectedId)
+            showSelection()
+            throw error
+        }
+        sidebar?.updateSelection(id: snapshot.selectedId)
+        showSelection()
     }
 
     private func closeTab(id: String) throws {
@@ -218,9 +266,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        do { try store.flush() } catch {
-            FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
-        }
+        _ = flushAndCleanup()
     }
 }
 
@@ -283,4 +329,12 @@ let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = HarnessDelegate(snapshot: snapshot, store: store)
 app.delegate = delegate
-app.run()
+let terminationSignals = [SIGTERM, SIGINT].map { number in
+    _ = signal(number, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+    source.setEventHandler { MainActor.assumeIsolated { NSApp.terminate(nil) } }
+    source.resume()
+    return source
+}
+withExtendedLifetime(terminationSignals) { app.run() }
+if !flushAndCleanup() { exit(1) }
