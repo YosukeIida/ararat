@@ -2,7 +2,7 @@
 // the core's internal representation.
 
 use ararat_core::import;
-use ararat_core::model::{Item, ItemKind, Space, Workspace};
+use ararat_core::model::{Item, ItemKind, Lifecycle, Space, Workspace};
 use ararat_core::storage::{Store, StoreError};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -54,12 +54,12 @@ impl WorkspaceStore {
         Ok(Arc::new(Self { store, workspace: Mutex::new(workspace) }))
     }
 
-    pub fn snapshot(&self) -> WorkspaceSnapshot {
+    pub fn snapshot(&self, window_id: String) -> WorkspaceSnapshot {
         let workspace = self.workspace.lock().unwrap().clone();
-        snapshot(workspace)
+        snapshot(workspace, &window_id)
     }
 
-    pub fn import_arc_sidebar(&self, json: String) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn import_arc_sidebar(&self, window_id: String, json: String) -> Result<WorkspaceSnapshot, CoreError> {
         let imported = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = imported.to_ops();
@@ -70,22 +70,29 @@ impl WorkspaceStore {
         let view = workspace.clone();
         drop(workspace);
         self.store.flush()?;
-        Ok(snapshot(view))
+        Ok(snapshot(view, &window_id))
     }
 
-    pub fn select_item(&self, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn select_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.select_item(&id)?;
+        let ops = workspace.select_item(&window_id, &id)?;
         self.store.write(ops);
-        Ok(snapshot(workspace.clone()))
+        Ok(snapshot(workspace.clone(), &window_id))
     }
 
-    pub fn close_today_tab(&self, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn show_space(&self, window_id: String, space_id: String) -> Result<(), CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.close_today_tab(&id)?;
+        let ops = workspace.show_space(&window_id, &space_id)?;
+        self.store.write(ops);
+        Ok(())
+    }
+
+    pub fn close_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.close_item(&id)?;
         self.store.write(ops);
         self.store.flush()?;
-        Ok(snapshot(workspace.clone()))
+        Ok(snapshot(workspace.clone(), &window_id))
     }
 
     pub fn flush(&self) -> Result<(), CoreError> {
@@ -111,6 +118,7 @@ pub struct Row {
     pub url: Option<String>,
     pub depth: u32,
     pub kind: RowKind,
+    pub unloaded: bool,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]
@@ -132,12 +140,12 @@ pub struct WorkspaceSnapshot {
 #[uniffi::export]
 pub fn import_arc_sidebar(json: String) -> Result<WorkspaceSnapshot, CoreError> {
     let ws = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
-    Ok(snapshot(ws))
+    Ok(snapshot(ws, ""))
 }
 
-fn snapshot(mut view: Workspace) -> WorkspaceSnapshot {
+fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
     view.repair_tree();
-    WorkspaceSnapshot { selected_id: view.selected.clone().filter(|id| view.is_selectable(id)), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
+    WorkspaceSnapshot { selected_id: view.selected(window_id).filter(|id| view.is_selectable(id) && view.items[*id].lifecycle == Lifecycle::Open).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
 }
 
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
@@ -169,6 +177,7 @@ fn row(depth: usize, item: &Item) -> Option<Row> {
         url,
         depth: depth as u32,
         kind,
+        unloaded: item.lifecycle == Lifecycle::Unloaded,
     })
 }
 

@@ -64,8 +64,9 @@ private func runHarness(in directory: URL, arguments: [String] = [], commands: S
                       databasesBeforeQuit: databasesBeforeQuit, runningBeforeStop: runningBeforeStop)
 }
 
-private func harnessTestDirectory() throws -> URL {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-test-\(UUID().uuidString)")
+func testTemporaryDirectory() throws -> URL {
+    let base = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory(), isDirectory: true)
+    let directory = base.appendingPathComponent("ararat-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory
 }
@@ -76,7 +77,7 @@ private func harnessDatabaseFiles(in directory: URL) throws -> [String] {
 
 @Test
 func harnessSelectRepliesReflectCoreAcceptance() throws {
-    let directory = try harnessTestDirectory()
+    let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let fixture = directory.appendingPathComponent("sidebar.json")
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":["folder-docs","pinned"],"data":{"itemContainer":{}}},"folder-docs",{"id":"folder-docs","parentID":"pin","childrenIds":[],"data":{"list":{}}},"pinned",{"id":"pinned","parentID":"pin","childrenIds":[],"data":{"tab":{"savedURL":"https://pinned.example"}}},"today",{"id":"today","parentID":null,"childrenIds":["live"],"data":{"itemContainer":{}}},"live",{"id":"live","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://live.example"}}}]}]}}"#
@@ -96,7 +97,7 @@ func harnessSelectRepliesReflectCoreAcceptance() throws {
 
 @Test
 func harnessQuitRemovesOnlyItsTemporaryDatabase() throws {
-    let directory = try harnessTestDirectory()
+    let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let run = try runHarness(in: directory)
     #expect(run.status == 0, "\(run.error)")
@@ -115,7 +116,7 @@ func harnessQuitRemovesOnlyItsTemporaryDatabase() throws {
 
 @Test
 func harnessCheckCleansTemporaryDatabasesAndKeepsExplicitDatabases() throws {
-    let directory = try harnessTestDirectory()
+    let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let temporary = try runHarness(in: directory, arguments: ["--check"])
     #expect(temporary.status == 0, "\(temporary.error)")
@@ -131,7 +132,7 @@ func harnessCheckCleansTemporaryDatabasesAndKeepsExplicitDatabases() throws {
 
 @Test
 func harnessStartupFailureCleansTemporaryFilesAndKeepsExplicitDatabase() throws {
-    let directory = try harnessTestDirectory()
+    let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let fixture = directory.appendingPathComponent("invalid.json")
     try "invalid".write(to: fixture, atomically: true, encoding: .utf8)
@@ -147,7 +148,7 @@ func harnessStartupFailureCleansTemporaryFilesAndKeepsExplicitDatabase() throws 
 
 @Test
 func harnessNullStdinKeepsRunningUntilStoppedAndThenCleansUp() throws {
-    let directory = try harnessTestDirectory()
+    let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let run = try runHarness(in: directory, stopSignal: SIGTERM, nullInput: true)
     #expect(run.runningBeforeStop)
@@ -159,7 +160,7 @@ func harnessNullStdinKeepsRunningUntilStoppedAndThenCleansUp() throws {
 @Test
 func harnessTerminationSignalsUseNormalCleanup() throws {
     for number in [SIGTERM, SIGINT] {
-        let directory = try harnessTestDirectory()
+        let directory = try testTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let run = try runHarness(in: directory, stopSignal: number)
         #expect(run.runningBeforeStop)
@@ -167,4 +168,40 @@ func harnessTerminationSignalsUseNormalCleanup() throws {
         #expect(run.status == 0, "signal \(number): \(run.error)")
         #expect(try harnessDatabaseFiles(in: directory).isEmpty)
     }
+}
+
+@Test
+func harnessRepliesWaitForMRUUnloadsAndReselections() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let run = try runHarness(in: directory, commands:
+        "select tab-mail\nselect tab-spec\nclose tab-spec\nstate\nselect tab-spec\nstate\nclose tab-mail\nstate\n")
+    #expect(run.status == 0, "\(run.error)")
+    let lines = run.output.split(separator: "\n").map(String.init)
+    #expect(lines.contains("ok close tab-spec"))
+    #expect(lines.contains("ok close tab-mail"))
+    #expect(lines.filter { $0.hasPrefix("state ") } == [
+        "state space 0 selected tab-mail", "state space 0 selected tab-spec",
+        "state space 0 selected tab-spec", "state space 0 selected tab-spec",
+    ])
+}
+
+@Test
+func harnessCloseUsesTheShownSpaceWithoutPagingBackThroughHistory() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: source, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"split-1\"", with: "\"parentID\": \"today-home\"")
+        .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-home\"")
+    let fixture = directory.appendingPathComponent("sidebar.json")
+    try json.write(to: fixture, atomically: true, encoding: .utf8)
+    let run = try runHarness(in: directory, arguments: [fixture.path], commands:
+        "select tab-mail\nspace 1\nselect tab-a\nselect tab-b\nclose tab-b\nstate\nclose tab-a\nstate\nclose tab-spec\nstate\n")
+    #expect(run.status == 0, "\(run.error)")
+    #expect(run.error.isEmpty)
+    #expect(run.output.split(separator: "\n").filter { $0.hasPrefix("state ") }.map(String.init) == [
+        "state space 1 selected tab-a", "state space 1 selected tab-spec", "state space 1 selected -", "state space 1 selected -",
+    ])
 }

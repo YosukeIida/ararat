@@ -65,6 +65,8 @@ final class SidebarRowView: NSView {
         self.selected = selected
         title.stringValue = row.kind == .split && row.title.isEmpty ? "Split" : row.title
         title.toolTip = row.url
+        title.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+        icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         icon.image = Self.symbol(for: row.kind)
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = 10 + CGFloat(row.depth) * 16
@@ -157,6 +159,7 @@ final class SidebarRowView: NSView {
 final class FavoriteTile: NSButton {
     private(set) var row: Row
     private let onPress: (Row) -> Void
+    private let icon = NSImageView()
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     init(row: Row, onPress: @escaping (Row) -> Void) {
@@ -168,6 +171,17 @@ final class FavoriteTile: NSButton {
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
+        icon.imageScaling = .scaleNone
+        icon.contentTintColor = .labelColor
+        icon.setAccessibilityHidden(true)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+        ])
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
@@ -180,12 +194,17 @@ final class FavoriteTile: NSButton {
 
     func update(row: Row) {
         self.row = row
-        image = SidebarRowView.symbol(for: row.kind)
+        icon.image = SidebarRowView.symbol(for: row.kind)
+        icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         toolTip = row.title
         setAccessibilityLabel(row.title)
     }
 
     @objc private func pressed() { onPress(row) }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

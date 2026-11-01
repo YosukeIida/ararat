@@ -55,45 +55,13 @@ func removeTemporaryDatabase() -> Bool {
     return removed
 }
 
-let store: WorkspaceStore
-let snapshot: WorkspaceSnapshot
-do {
-    let opened = try WorkspaceStore.open(path: databasePath ?? temporaryDatabasePath!)
-    store = opened
-    do {
-        let loaded = opened.snapshot()
-        snapshot = loaded.spaces.isEmpty ? try opened.importArcSidebar(json: sidebarJSON(path: path)) : loaded
-    } catch {
-        try? opened.flush()
-        throw error
-    }
-} catch {
-    removeTemporaryDatabase()
-    FileHandle.standardError.write(Data("\(error)\n".utf8))
-    exit(1)
-}
-
-func flushAndCleanup() -> Bool {
-    var flushed = true
-    do { try store.flush() } catch {
-        FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
-        flushed = false
-    }
-    let removed = removeTemporaryDatabase()
-    return flushed && removed
-}
-
-if checkOnly {
-    for space in snapshot.spaces {
-        print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
-    }
-    exit(flushAndCleanup() ? 0 : 1)
-}
-
 @MainActor
 final class HarnessDelegate: NSObject, NSApplicationDelegate {
-    var snapshot: WorkspaceSnapshot
-    let store: WorkspaceStore
+    var snapshot = WorkspaceSnapshot(selectedId: nil, spaces: [])
+    let adapter: WorkspaceAdapter
+    var exitStatus: Int32 = 0
+    private var terminating = false
+    private var commands: [String] = []
     var window: NSWindow?
     var sidebar: SidebarView?
     var resizeHandle: SidebarResizeHandle?
@@ -101,12 +69,31 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
 
-    init(snapshot: WorkspaceSnapshot, store: WorkspaceStore) {
-        self.snapshot = snapshot
-        self.store = store
-    }
+    init(adapter: WorkspaceAdapter) { self.adapter = adapter }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !terminating else { return }
+        let fixturePath = path
+        adapter.open(path: databasePath ?? temporaryDatabasePath!, json: { try sidebarJSON(path: fixturePath) }) { [weak self] result in
+            guard let self, !self.terminating else { return }
+            switch result {
+            case .success(let snapshot):
+                self.snapshot = snapshot
+                if checkOnly {
+                    for space in snapshot.spaces {
+                        print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
+                    }
+                    NSApp.terminate(nil)
+                } else { self.build() }
+            case .failure(let error):
+                FileHandle.standardError.write(Data("\(error)\n".utf8))
+                self.exitStatus = 1
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func build() {
         let window = headless ? nil : BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
@@ -129,13 +116,27 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         sidebarContainer = container
         resizeHandle = container.resizeHandle
         sidebar.onSelect = { [weak self] row in
-            do { try self?.selectItem(id: row.id) } catch {
-                FileHandle.standardError.write(Data("cannot select item: \(error)\n".utf8))
+            guard let self, !self.terminating else { return }
+            self.adapter.select(id: row.id) { [weak self] result in
+                if let error = self?.publish(result) {
+                    FileHandle.standardError.write(Data("cannot select item: \(error)\n".utf8))
+                }
             }
         }
-        sidebar.onClose = { [weak self] id in
-            do { try self?.closeTab(id: id) } catch {
-                FileHandle.standardError.write(Data("cannot close tab: \(error)\n".utf8))
+        sidebar.onClose = { [weak self] _ in
+            guard let self, !self.terminating else { return }
+            self.adapter.closeSelected { [weak self] result in
+                if let error = self?.publishChange(result) {
+                    FileHandle.standardError.write(Data("cannot close tab: \(error)\n".utf8))
+                }
+            }
+        }
+        sidebar.onShowSpace = { [weak self] id in
+            guard let self, !self.terminating else { return }
+            self.adapter.showSpace(id: id) { result in
+                if case .failure(let error) = result {
+                    FileHandle.standardError.write(Data("cannot show space: \(error)\n".utf8))
+                }
             }
         }
         showSelection()
@@ -155,7 +156,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
             let fileMenu = NSMenu(title: "File")
-            let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTodayTab(_:)), keyEquivalent: "w")
+            let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")
             close.target = sidebar
             menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
             let viewMenu = NSMenu(title: "View")
@@ -181,81 +182,85 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     private func readCommands() {
         Thread.detachNewThread {
             while let line = readLine() {
-                DispatchQueue.main.async { self.run(line) }
+                DispatchQueue.main.async { self.receive(line) }
             }
         }
     }
 
-    private func run(_ line: String) {
-        guard let sidebar, let resizeHandle, let sidebarContainer else { return }
+    private func receive(_ line: String) {
+        guard !terminating else { return }
+        commands.append(line)
+        if commands.count == 1 { runNext() }
+    }
+
+    private func runNext() {
+        guard let line = commands.first else { return }
+        run(line) { [weak self] reply in
+            guard let self else { return }
+            print(reply)
+            fflush(stdout)
+            self.commands.removeFirst()
+            if line.split(separator: " ") == ["quit"] { NSApp.terminate(nil) }
+            else { self.runNext() }
+        }
+    }
+
+    private func run(_ line: String, reply: @escaping @MainActor (String) -> Void) {
+        guard let sidebar, let resizeHandle, let sidebarContainer else { reply("error not ready"); return }
         let words = line.split(separator: " ", maxSplits: 1).map(String.init)
-        let reply: String
         switch (words.first, words.count > 1 ? words[1] : nil) {
-        case ("quit", nil):
-            reply = "ok quit"
+        case ("quit", nil): reply("ok quit")
         case ("space", let arg?):
-            guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply = "error no space \(arg)"; break }
+            guard let index = Int(arg), snapshot.spaces.indices.contains(index) else { reply("error no space \(arg)"); return }
             sidebar.showSpace(at: index)
-            reply = "ok space \(index)"
-        case ("select", let id?):
-            guard snapshot.spaces.indices.contains(sidebar.spaceShown) else { reply = "error no row \(id)"; break }
-            let space = snapshot.spaces[sidebar.spaceShown]
-            guard (space.favorites + space.pinned + space.today).contains(where: { $0.id == id }) else {
-                reply = "error no row \(id)"; break
+            adapter.snapshot { result in
+                if case .failure(let error) = result { reply("error space \(index): \(error)") }
+                else { reply("ok space \(index)") }
             }
-            do {
-                try selectItem(id: id)
-                reply = "ok select \(id)"
-            } catch { reply = "error select \(id): \(error)" }
+        case ("select", let id?):
+            guard snapshot.spaces.indices.contains(sidebar.spaceShown) else { reply("error no row \(id)"); return }
+            let space = snapshot.spaces[sidebar.spaceShown]
+            guard (space.favorites + space.pinned + space.today).contains(where: { $0.id == id }) else { reply("error no row \(id)"); return }
+            adapter.select(id: id) { [weak self] result in
+                if let error = self?.publish(result) { reply("error select \(id): \(error)") }
+                else { reply("ok select \(id)") }
+            }
         case ("close", let id?):
-            do {
-                try closeTab(id: id)
-                reply = "ok close \(id)"
-            } catch { reply = "error close \(id): \(error)" }
-        case ("state", nil):
-            reply = "state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-")"
-        case ("width", nil):
-            reply = String(format: "ok %g", Double(resizeHandle.sidebarWidth))
-        case ("reset-width", nil):
-            resetSidebarWidth(nil)
-            reply = "ok 240"
-        case ("sidebar", nil):
-            reply = "ok \(sidebarContainer.sidebarState)"
-        case ("toggle-sidebar", nil):
-            toggleSidebar(nil)
-            reply = "ok \(sidebarContainer.sidebarState)"
-        default:
-            reply = "error unknown command"
+            adapter.close(id: id) { [weak self] result in
+                if let error = self?.publishChange(result) { reply("error close \(id): \(error)") }
+                else { reply("ok close \(id)") }
+            }
+        case ("state", nil): reply("state space \(sidebar.spaceShown) selected \(sidebar.selectedRowID ?? "-")")
+        case ("width", nil): reply(String(format: "ok %g", Double(resizeHandle.sidebarWidth)))
+        case ("reset-width", nil): resetSidebarWidth(nil); reply("ok 240")
+        case ("sidebar", nil): reply("ok \(sidebarContainer.sidebarState)")
+        case ("toggle-sidebar", nil): toggleSidebar(nil); reply("ok \(sidebarContainer.sidebarState)")
+        default: reply("error unknown command")
         }
-        print(reply)
-        fflush(stdout)
-        if words == ["quit"] { NSApp.terminate(nil) }
     }
 
-    private func selectItem(id: String) throws {
-        do {
-            snapshot = try store.selectItem(id: id)
-        } catch {
-            snapshot = store.snapshot()
-            sidebar?.updateSelection(id: snapshot.selectedId)
+    private func publish(_ result: Result<WorkspaceSnapshot, Error>, closing id: String? = nil) -> Error? {
+        switch result {
+        case .success(let snapshot):
+            self.snapshot = snapshot
+            if let id { sidebar?.applyClose(id: id, snapshot: snapshot) }
+            else { sidebar?.applySelection(snapshot: snapshot) }
             showSelection()
-            throw error
+            return nil
+        case .failure(let error):
+            if terminating { return error }
+            adapter.snapshot { [weak self] result in
+                if case .success = result { _ = self?.publish(result) }
+            }
+            return error
         }
-        sidebar?.updateSelection(id: snapshot.selectedId)
-        showSelection()
     }
 
-    private func closeTab(id: String) throws {
-        do {
-            snapshot = try store.closeTodayTab(id: id)
-            sidebar?.applyClose(id: id, snapshot: snapshot)
-        } catch {
-            snapshot = store.snapshot()
-            sidebar?.update(snapshot: snapshot)
-            showSelection()
-            throw error
+    private func publishChange(_ result: Result<WorkspaceAdapter.Change, Error>) -> Error? {
+        switch result {
+        case .success(let change): return publish(.success(change.snapshot), closing: change.id)
+        case .failure(let error): return publish(.failure(error))
         }
-        showSelection()
     }
 
     private func showSelection() {
@@ -274,9 +279,22 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        _ = flushAndCleanup()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        adapter.shutdown { [weak self] result in
+            guard let self else { return }
+            if case .failure(let error) = result {
+                FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
+                self.exitStatus = 1
+            }
+            if !removeTemporaryDatabase() { self.exitStatus = 1 }
+            if self.exitStatus != 0 { exit(self.exitStatus) }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
+
 }
 
 @MainActor
@@ -335,8 +353,8 @@ enum HitchMonitor {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(headless ? .prohibited : .regular)
-let delegate = HarnessDelegate(snapshot: snapshot, store: store)
+app.setActivationPolicy(headless || checkOnly ? .prohibited : .regular)
+let delegate = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "harness-window"))
 app.delegate = delegate
 let terminationSignals = [SIGTERM, SIGINT].map { number in
     _ = signal(number, SIG_IGN)
@@ -346,4 +364,4 @@ let terminationSignals = [SIGTERM, SIGINT].map { number in
     return source
 }
 withExtendedLifetime(terminationSignals) { app.run() }
-if !flushAndCleanup() { exit(1) }
+exit(delegate.exitStatus)

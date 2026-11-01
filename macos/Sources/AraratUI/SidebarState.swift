@@ -33,6 +33,7 @@ enum SidebarMetrics {
     static let spaceWheelWindow = 0.049
     static let spaceWheelThreshold = 1.0
     static let spaceWheelPause = 0.250
+    static let unloadedOpacity: CGFloat = 0.45
     static let rowCloseMoveDuration = 0.120
     static let rowCloseFadeDuration = 0.110
     static let easeOutCubic = CAMediaTimingFunction(controlPoints: 1 / 3, 1, 2 / 3, 1)

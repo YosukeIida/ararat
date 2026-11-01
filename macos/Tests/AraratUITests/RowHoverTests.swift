@@ -5,7 +5,7 @@ import Testing
 
 private func hoverSnapshot(_ ids: [String]) -> WorkspaceSnapshot {
     WorkspaceSnapshot(selectedId: nil, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
-        favorites: [], pinned: [], today: ids.map { Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab) })])
+        favorites: [], pinned: [], today: ids.map { Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false) })])
 }
 
 @MainActor

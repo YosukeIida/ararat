@@ -11,7 +11,7 @@ private func descendants(of view: NSView) -> [NSView] {
 @Test @MainActor
 func favoritesUseFourTwoOrOneColumns() {
     let favorites = (0..<5).map {
-        Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab)
+        Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     }
     let snapshot = WorkspaceSnapshot(selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: favorites, pinned: [favorites[0]], today: [])
@@ -39,7 +39,7 @@ func favoritesUseFourTwoOrOneColumns() {
 
 @Test @MainActor
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
-    let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab)
+    let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
         SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [favorite], pinned: [], today: [])
     ]))
@@ -58,7 +58,7 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 
 @Test @MainActor
 func selectedHostTracksVisibleSpace() {
-    let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab)
+    let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
         SpaceSnapshot(id: "work", title: "Work", icon: nil, favorites: [], pinned: [row], today: []),
         SpaceSnapshot(id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
@@ -82,7 +82,7 @@ func selectedHostTracksVisibleSpace() {
 @Test @MainActor
 func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
     for kind in [RowKind.tab, .folder, .split] {
-        let row = Row(id: "row", title: "Title", url: nil, depth: 0, kind: kind)
+        let row = Row(id: "row", title: "Title", url: nil, depth: 0, kind: kind, unloaded: false)
         let view = SidebarRowView(row: row, selected: false, action: { _ in })
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first!
         #expect(icon.imageScaling == .scaleNone)
@@ -93,7 +93,7 @@ func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
 @Test @MainActor
 func rowsKeepPitchIndentAndSplitPlaceholder() {
     for title in ["", "First\nSecond"] {
-        let row = Row(id: "split", title: title, url: nil, depth: 1, kind: .split)
+        let row = Row(id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false)
         let view = SidebarRowView(row: row, selected: true, action: { _ in })
         view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
         view.layoutSubtreeIfNeeded()
@@ -116,7 +116,7 @@ func rowsKeepPitchIndentAndSplitPlaceholder() {
 @Test @MainActor
 func nestedFillsIndentTheirLeftEdgeOnly() {
     let rows = (0...2).map {
-        Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab)
+        Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [], pinned: rows, today: [])
@@ -161,7 +161,7 @@ func sidebarDragPreservesTheGrabOffset() {
 @Test @MainActor
 func rowFocusSurvivesWidthChanges() {
     _ = NSApplication.shared
-    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab)
+    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(selectedId: nil, spaces: [
         SpaceSnapshot(id: "space", title: "Work", icon: nil, favorites: [row], pinned: [row], today: [])
     ]))

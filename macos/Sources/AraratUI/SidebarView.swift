@@ -5,6 +5,7 @@ import AraratKit
 public final class SidebarView: NSView {
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
+    public var onShowSpace: ((String) -> Void)?
 
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
@@ -59,6 +60,11 @@ public final class SidebarView: NSView {
         selectedID = id
         snapshot.selectedId = id
         reload()
+    }
+
+    public func applySelection(snapshot: WorkspaceSnapshot) {
+        if self.snapshot.spaces == snapshot.spaces { updateSelection(id: snapshot.selectedId) }
+        else { replaceSnapshot(snapshot) }
     }
 
     private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
@@ -125,9 +131,9 @@ public final class SidebarView: NSView {
         return true
     }
 
-    @objc public func closeSelectedTodayTab(_ sender: Any?) {
+    @objc public func closeSelectedTab(_ sender: Any?) {
         guard let id = selectedID,
-              snapshot.spaces.contains(where: { $0.today.contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
+              snapshot.spaces.contains(where: { ($0.favorites + $0.pinned + $0.today).contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
         onClose?(id)
     }
 
@@ -138,6 +144,7 @@ public final class SidebarView: NSView {
         spaceScroll = SpaceScrollState()
         spaceIndex = index
         reload()
+        onShowSpace?(snapshot.spaces[index].id)
     }
 
     private func build() {

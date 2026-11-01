@@ -4,7 +4,7 @@ import Testing
 @testable import AraratUI
 
 private func closeSnapshot(_ ids: [String], selected: String? = nil, pinned: Bool = false) -> WorkspaceSnapshot {
-    let row: (String) -> Row = { Row(id: $0, title: $0, url: "https://\($0).example", depth: 0, kind: .tab) }
+    let row: (String) -> Row = { Row(id: $0, title: $0, url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false) }
     return WorkspaceSnapshot(selectedId: selected, spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
         favorites: [], pinned: pinned ? [row("pin")] : [], today: ids.map(row))])
 }
@@ -85,20 +85,20 @@ func swiftStoreCloseSurvivesReopenAndDrivesSidebarSelection() throws {
     let closed: WorkspaceSnapshot
     do {
         let store = try WorkspaceStore.open(path: path)
-        _ = try store.importArcSidebar(json: json)
-        let selected = try store.selectItem(id: "a")
+        _ = try store.importArcSidebar(windowId: "test", json: json)
+        let selected = try store.selectItem(windowId: "test", id: "a")
         let sidebar = closeSidebar(selected)
         #expect(sidebar.selectedRowID == "a")
-        closed = try store.closeTodayTab(id: "a")
+        closed = try store.closeItem(windowId: "test", id: "a")
         sidebar.applyClose(id: "a", snapshot: closed)
         #expect(sidebar.selectedRowID == "b")
         #expect(!closeViews(sidebar).contains { $0.row.id == "a" })
     }
     let reopened = try WorkspaceStore.open(path: path)
-    #expect(reopened.snapshot() == closed)
-    #expect(reopened.snapshot().spaces[0].today.map(\.id) == ["b"])
-    #expect(throws: CoreError.self) { try reopened.closeTodayTab(id: "missing") }
-    #expect(reopened.snapshot() == closed)
+    #expect(reopened.snapshot(windowId: "test") == closed)
+    #expect(reopened.snapshot(windowId: "test").spaces[0].today.map(\.id) == ["b"])
+    #expect(throws: CoreError.self) { try reopened.closeItem(windowId: "test", id: "missing") }
+    #expect(reopened.snapshot(windowId: "test") == closed)
 }
 
 @MainActor
@@ -190,37 +190,37 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
     let path = directory.appendingPathComponent("workspace.sqlite").path
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["split","d"],"data":{"itemContainer":{}}},"split",{"id":"split","parentID":"today","childrenIds":["b","c"],"data":{"splitView":{"layoutOrientation":"horizontal"}}},"b",{"id":"b","parentID":"split","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"split","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}},"d",{"id":"d","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://d.example"}}}]}]}}"#
     let store = try WorkspaceStore.open(path: path)
-    _ = try store.importArcSidebar(json: json)
-    let selected = try store.selectItem(id: "split")
+    _ = try store.importArcSidebar(windowId: "test", json: json)
+    let selected = try store.selectItem(windowId: "test", id: "split")
     let sidebar = closeSidebar(selected)
     let survivor = try #require(closeViews(sidebar).first { $0.row.id == "d" })
     var failure: Error?
     sidebar.onClose = { [weak sidebar] id in
-        do { sidebar?.applyClose(id: id, snapshot: try store.closeTodayTab(id: id)) }
+        do { sidebar?.applyClose(id: id, snapshot: try store.closeItem(windowId: "test", id: id)) }
         catch { failure = error }
     }
     let menu = NSMenu()
-    let close = menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTodayTab(_:)), keyEquivalent: "w")
+    let close = menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")
     close.target = sidebar
     let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
         timestamp: 0, windowNumber: 0, context: nil, characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13))
     #expect(menu.performKeyEquivalent(with: key))
     #expect(failure == nil)
-    #expect(store.snapshot().spaces[0].today.map(\.id) == ["d"])
+    #expect(store.snapshot(windowId: "test").spaces[0].today.map(\.id) == ["d"])
     #expect(sidebar.selectedRowID == "d")
     #expect(closeViews(sidebar).first === survivor)
     let motion = try #require(survivor.layer?.animation(forKey: "row.close.move") as? CABasicAnimation)
     #expect(abs(try #require(motion.fromValue as? Double)) == 123)
     #expect(menu.performKeyEquivalent(with: key))
-    #expect(store.snapshot().spaces[0].today.isEmpty)
-    #expect(store.snapshot().selectedId == nil)
-    #expect(try WorkspaceStore.open(path: path).snapshot().spaces[0].today.isEmpty)
+    #expect(store.snapshot(windowId: "test").spaces[0].today.isEmpty)
+    #expect(store.snapshot(windowId: "test").selectedId == nil)
+    #expect(try WorkspaceStore.open(path: path).snapshot(windowId: "test").spaces[0].today.isEmpty)
 }
 
 @Test @MainActor
 func closingATerminalSplitFadesItsLastMember() throws {
-    let split = Row(id: "split", title: "", url: nil, depth: 0, kind: .split)
-    let members = ["b", "c"].map { Row(id: $0, title: $0, url: nil, depth: 1, kind: .tab) }
+    let split = Row(id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false)
+    let members = ["b", "c"].map { Row(id: $0, title: $0, url: nil, depth: 1, kind: .tab, unloaded: false) }
     let before = WorkspaceSnapshot(selectedId: "split", spaces: [SpaceSnapshot(id: "work", title: "Work", icon: nil,
         favorites: [], pinned: [], today: [split] + members)])
     let sidebar = closeSidebar(before)

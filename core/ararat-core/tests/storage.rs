@@ -31,7 +31,7 @@ fn count(path: &PathBuf) -> i64 {
 fn assert_journal_matches_records(path: &PathBuf) {
     let conn = Connection::open(path).unwrap();
     let mut records = BTreeMap::new();
-    let mut stmt = conn.prepare("SELECT kind, id, body FROM records WHERE kind != 'selection'").unwrap();
+    let mut stmt = conn.prepare("SELECT kind, id, body FROM records WHERE kind != 'window'").unwrap();
     let mut rows = stmt.query([]).unwrap();
     while let Some(r) = rows.next().unwrap() {
         records.insert((r.get::<_, String>(0).unwrap(), r.get::<_, String>(1).unwrap()), r.get::<_, String>(2).unwrap());
@@ -261,12 +261,12 @@ fn selection_is_local_and_persists_in_existing_records() {
     let conn = Connection::open(&path).unwrap();
     let journal_count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = journal_count();
-    for id in ["tab-spec", "tab-a", "split-1"] { store.write(ws.select_item(id).unwrap()); }
+    for id in ["tab-spec", "tab-a", "split-1"] { store.write(ws.select_item("test", id).unwrap()); }
     store.flush().unwrap();
     assert_eq!(journal_count(), before);
-    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'selection'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'window'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     drop(store);
-    assert_eq!(Store::open(&path).unwrap().1.selected.as_deref(), Some("split-1"));
+    assert_eq!(Store::open(&path).unwrap().1.selected("test"), Some("split-1"));
 }
 
 #[test]

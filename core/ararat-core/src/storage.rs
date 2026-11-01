@@ -1,4 +1,4 @@
-// Why not store local selection separately: lifecycle and selection must commit together,
+// Why not store local window state separately: lifecycle and selection must commit together,
 // while only synced records enter the journal (architecture 5.2).
 
 use std::path::Path;
@@ -209,7 +209,7 @@ fn write_batch(conn: &mut Connection, ops: &[Op]) -> Result<(), StoreError> {
                 Some(body) => put.execute(params![kind.as_str(), id, body])?,
                 None => delete.execute(params![kind.as_str(), id])?,
             };
-            if kind != Kind::Selection {
+            if kind != Kind::Window {
                 journal.execute(params![kind.as_str(), id, body])?;
             }
         }

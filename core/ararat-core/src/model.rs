@@ -75,9 +75,17 @@ pub struct Item {
     pub collapsed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowState {
+    pub id: Id,
+    pub shown_space: Option<Id>,
+    pub selected: Option<Id>,
+    pub history: Vec<Id>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
-    pub selected: Option<Id>,
+    pub windows: HashMap<Id, WindowState>,
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
     pub items: HashMap<Id, Item>,
@@ -88,7 +96,7 @@ pub enum Kind {
     Space,
     Item,
     Favorites,
-    Selection,
+    Window,
 }
 
 impl Kind {
@@ -97,12 +105,12 @@ impl Kind {
             Kind::Space => "space",
             Kind::Item => "item",
             Kind::Favorites => "favorites",
-            Kind::Selection => "selection",
+            Kind::Window => "window",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Selection].into_iter().find(|k| k.as_str() == s)
+        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -110,7 +118,7 @@ impl Kind {
 pub enum Record {
     Space(Space),
     Item(Item),
-    Selection(Option<Id>),
+    Window(WindowState),
     Favorites { profile: Profile, container: Id },
 }
 
@@ -118,7 +126,7 @@ impl Record {
     pub fn kind(&self) -> Kind {
         match self {
             Record::Space(_) => Kind::Space,
-            Record::Selection(_) => Kind::Selection,
+            Record::Window(_) => Kind::Window,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
         }
@@ -127,7 +135,7 @@ impl Record {
     pub fn id(&self) -> Id {
         match self {
             Record::Space(s) => s.id.clone(),
-            Record::Selection(_) => "workspace".into(),
+            Record::Window(window) => window.id.clone(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
         }
@@ -136,7 +144,7 @@ impl Record {
     pub fn body(&self) -> String {
         match self {
             Record::Space(s) => serde_json::to_string(s),
-            Record::Selection(selected) => serde_json::to_string(selected),
+            Record::Window(window) => serde_json::to_string(window),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
         }
@@ -146,7 +154,7 @@ impl Record {
     pub fn parse(kind: Kind, id: &str, body: &str) -> serde_json::Result<Record> {
         Ok(match kind {
             Kind::Space => Record::Space(serde_json::from_str(body)?),
-            Kind::Selection => Record::Selection(serde_json::from_str(body)?),
+            Kind::Window => Record::Window(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
             Kind::Favorites => Record::Favorites {
                 profile: serde_json::from_str(id)?,
@@ -211,8 +219,8 @@ impl Workspace {
 
     pub fn apply(&mut self, op: &Op) {
         match op {
-            Op::Put(Record::Selection(selected)) => self.selected = selected.clone(),
-            Op::Delete(Kind::Selection, _) => self.selected = None,
+            Op::Put(Record::Window(window)) => { self.windows.insert(window.id.clone(), window.clone()); },
+            Op::Delete(Kind::Window, id) => { self.windows.remove(id); },
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);
                 self.spaces.push(space.clone());
@@ -239,7 +247,7 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).chain(std::iter::once(Record::Selection(self.selected.clone())))
+        spaces.chain(favorites).chain(items).chain(self.windows.values().cloned().map(Record::Window))
             .map(Op::Put).collect()
     }
 }

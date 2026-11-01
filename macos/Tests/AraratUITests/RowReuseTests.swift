@@ -25,11 +25,11 @@ private func laidOutSidebar(_ snapshot: WorkspaceSnapshot, width: CGFloat = 240)
 @Test @MainActor
 func survivingRowsAndFavoritesKeepTheirInstancesAndRowFocus() throws {
     _ = NSApplication.shared
-    let a = Row(id: "a", title: "Alpha", url: "https://a.example", depth: 0, kind: .tab)
-    let b = Row(id: "b", title: "Beta", url: nil, depth: 0, kind: .folder)
-    let favorite = Row(id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab)
-    let other = Row(id: "g", title: "Other", url: nil, depth: 0, kind: .folder)
-    let added = Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab)
+    let a = Row(id: "a", title: "Alpha", url: "https://a.example", depth: 0, kind: .tab, unloaded: false)
+    let b = Row(id: "b", title: "Beta", url: nil, depth: 0, kind: .folder, unloaded: false)
+    let favorite = Row(id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
+    let other = Row(id: "g", title: "Other", url: nil, depth: 0, kind: .folder, unloaded: false)
+    let added = Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab, unloaded: false)
     let sidebar = laidOutSidebar(reuseSnapshot(pinned: [a, b], favorites: [favorite, other]), width: 164)
     let window = NSWindow(contentRect: sidebar.bounds, styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar
@@ -94,11 +94,11 @@ struct ReuseTree: Equatable {
 
 @Test @MainActor
 func incrementalRowsMatchFreshSnapshotTrees() {
-    let a = Row(id: "a", title: "Alpha", url: "https://a.example", depth: 0, kind: .tab)
-    let b = Row(id: "b", title: "Beta", url: nil, depth: 0, kind: .folder)
-    let c = Row(id: "c", title: "Gamma", url: nil, depth: 1, kind: .tab)
-    let f = Row(id: "f", title: "Favorite", url: "https://f.example", depth: 0, kind: .tab)
-    let g = Row(id: "g", title: "Other favorite", url: nil, depth: 0, kind: .folder)
+    let a = Row(id: "a", title: "Alpha", url: "https://a.example", depth: 0, kind: .tab, unloaded: false)
+    let b = Row(id: "b", title: "Beta", url: nil, depth: 0, kind: .folder, unloaded: false)
+    let c = Row(id: "c", title: "Gamma", url: nil, depth: 1, kind: .tab, unloaded: false)
+    let f = Row(id: "f", title: "Favorite", url: "https://f.example", depth: 0, kind: .tab, unloaded: false)
+    let g = Row(id: "g", title: "Other favorite", url: nil, depth: 0, kind: .folder, unloaded: false)
     let initial = reuseSnapshot(pinned: [a, b], today: [c], favorites: [f, g])
     var renamed = a
     renamed.title = "Renamed on two\nlines"
@@ -112,13 +112,13 @@ func incrementalRowsMatchFreshSnapshotTrees() {
     favorite.title = "Renamed favorite"
     favorite.kind = .split
     let changes = [
-        reuseSnapshot(pinned: [a, b, Row(id: "new", title: "New", url: nil, depth: 0, kind: .tab)], today: [c], favorites: [f, g]),
+        reuseSnapshot(pinned: [a, b, Row(id: "new", title: "New", url: nil, depth: 0, kind: .tab, unloaded: false)], today: [c], favorites: [f, g]),
         reuseSnapshot(pinned: [a], today: [c], favorites: [f, g]),
         reuseSnapshot(pinned: [b, a], today: [c], favorites: [f, g]),
         reuseSnapshot(pinned: [renamed, b], today: [c], favorites: [f, g]),
         reuseSnapshot(pinned: [a, indented], today: [c], favorites: [f, g]),
         reuseSnapshot(pinned: [split, b], today: [c], favorites: [f, g]),
-        reuseSnapshot(pinned: [b], today: [a, c], favorites: [g, Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab), favorite]),
+        reuseSnapshot(pinned: [b], today: [a, c], favorites: [g, Row(id: "h", title: "Added", url: nil, depth: 0, kind: .tab, unloaded: false), favorite]),
         reuseSnapshot(pinned: [a, b], favorites: [g]),
         reuseSnapshot(pinned: [], favorites: []),
         WorkspaceSnapshot(selectedId: nil, spaces: []),
@@ -144,8 +144,8 @@ func incrementalRowsMatchFreshSnapshotTrees() {
 
 @Test @MainActor
 func reusedRowAndFavoriteActionsDeliverTheUpdatedModels() throws {
-    let row = Row(id: "a", title: "Old", url: "https://old.example", depth: 0, kind: .tab)
-    let favorite = Row(id: "f", title: "Old favorite", url: "https://old-favorite.example", depth: 0, kind: .tab)
+    let row = Row(id: "a", title: "Old", url: "https://old.example", depth: 0, kind: .tab, unloaded: false)
+    let favorite = Row(id: "f", title: "Old favorite", url: "https://old-favorite.example", depth: 0, kind: .tab, unloaded: false)
     let sidebar = laidOutSidebar(reuseSnapshot(pinned: [row], favorites: [favorite]))
     var renamed = row
     renamed.title = "New"

@@ -50,7 +50,7 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
             }
         }
     }
-    let mut workspace = Workspace { spaces, favorites, items, selected: None };
+    let mut workspace = Workspace { spaces, favorites, items, windows: HashMap::new() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
