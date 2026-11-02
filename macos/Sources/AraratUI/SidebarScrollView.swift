@@ -78,14 +78,14 @@ class SidebarScrollView: NSScrollView {
         updateHairlines()
     }
 
-    func reveal(_ row: NSRect) {
+    func reveal(_ row: NSRect, animated: Bool = true) {
         stopReveal()
         let visible = contentView.bounds
         let target: CGFloat
         if row.minY < visible.minY { target = row.minY }
         else if row.maxY > visible.maxY { target = row.maxY - visible.height }
         else { return }
-        if reduceMotion() { move(to: target); return }
+        if !animated || reduceMotion() { move(to: target); return }
         let start = clock()
         let origin = visible.minY
         revealStep = { [weak self] in

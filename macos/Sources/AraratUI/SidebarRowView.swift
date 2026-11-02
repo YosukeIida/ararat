@@ -130,10 +130,11 @@ final class SidebarRowView: NSView {
         trackingPress = true
         pressed = true
     }
-    override func mouseDragged(with event: NSEvent) { refreshHover() }
+    override func mouseDragged(with event: NSEvent) {
+        pressed = trackingPress && bounds.intersection(visibleRect).contains(convert(event.locationInWindow, from: nil))
+    }
     override func mouseUp(with event: NSEvent) {
-        refreshHover()
-        let activate = acceptsKeyboardFocus && pressed
+        let activate = acceptsKeyboardFocus && trackingPress && bounds.intersection(visibleRect).contains(convert(event.locationInWindow, from: nil))
         trackingPress = false
         pressed = false
         if activate { action(row) }

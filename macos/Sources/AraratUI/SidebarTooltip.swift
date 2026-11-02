@@ -23,7 +23,9 @@ final class SidebarTooltip {
     func capture(in view: NSView) {
         if let text = view.toolTip {
             texts.setObject(text as NSString, forKey: view)
+            let help = view.accessibilityHelp() ?? text
             view.toolTip = nil
+            view.setAccessibilityHelp(help)
         }
         for child in view.subviews { capture(in: child) }
     }
@@ -60,7 +62,9 @@ final class SidebarTooltip {
         while let current = view {
             if let text = current.toolTip {
                 texts.setObject(text as NSString, forKey: current)
+                let help = current.accessibilityHelp() ?? text
                 current.toolTip = nil
+                current.setAccessibilityHelp(help)
             }
             if texts.object(forKey: current) != nil { return current }
             view = current.superview

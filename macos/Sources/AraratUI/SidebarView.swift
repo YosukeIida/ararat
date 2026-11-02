@@ -29,6 +29,7 @@ public final class SidebarView: NSView {
 
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
+    private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
 
     private let header = NSTextField(labelWithString: "")
@@ -44,7 +45,7 @@ public final class SidebarView: NSView {
     private var fadeFrame: (id: String, frame: NSRect)?
     private var favoriteTiles: [String: FavoriteTile] = [:]
     private var rowDivider: NSBox?
-    private let dock = NSStackView()
+    private let dock = SpaceDockView()
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
     private var spaceScroll = SpaceScrollState()
@@ -184,6 +185,7 @@ public final class SidebarView: NSView {
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
         self.snapshot = snapshot
+        spaceListOrigins = spaceListOrigins.filter { id, _ in snapshot.spaces.contains { $0.id == id } }
         spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
         selectedID = snapshot.selectedId
         library.update(archive: snapshot.archive)
@@ -259,13 +261,21 @@ public final class SidebarView: NSView {
     }
 
     public func showSpace(at index: Int) {
+        showSpace(at: index, animatedReveal: true)
+    }
+
+    private func showSpace(at index: Int, animatedReveal: Bool) {
         guard snapshot.spaces.indices.contains(index) else { return }
+        listScroll.stopReveal()
+        if !isScrollPreview, let id = snapshotSpace?.id { spaceListOrigins[id] = listScroll.contentView.bounds.minY }
         finishRowMotion()
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
         spaceIndex = index
         reload()
-        revealSelection()
+        layoutSubtreeIfNeeded()
+        listScroll.move(to: spaceListOrigins[snapshot.spaces[index].id] ?? 0)
+        revealSelection(animated: animatedReveal)
         refreshPointer()
         onShowSpace?(snapshot.spaces[index].id)
     }
@@ -308,8 +318,6 @@ public final class SidebarView: NSView {
         rows.translatesAutoresizingMaskIntoConstraints = false
         document.translatesAutoresizingMaskIntoConstraints = false
 
-        dock.orientation = .horizontal
-        dock.spacing = 0
 
         spaceViewport.wantsLayer = true
         spaceViewport.layer?.masksToBounds = true
@@ -322,23 +330,11 @@ public final class SidebarView: NSView {
         spaceColumn.translatesAutoresizingMaskIntoConstraints = false
         spaceViewport.addSubview(spaceColumn)
 
-        let dockScroll = NSScrollView()
-        dockScroll.drawsBackground = false
-        dockScroll.hasHorizontalScroller = false
-        dockScroll.hasVerticalScroller = false
-        dockScroll.documentView = dock
         dock.translatesAutoresizingMaskIntoConstraints = false
         let bottomBar = NSView()
-        bottomBar.addSubview(dockScroll)
-        dockScroll.translatesAutoresizingMaskIntoConstraints = false
+        bottomBar.addSubview(dock)
         NSLayoutConstraint.activate([
-            dock.leadingAnchor.constraint(equalTo: dockScroll.contentView.leadingAnchor),
-            dock.topAnchor.constraint(equalTo: dockScroll.contentView.topAnchor),
-            dock.heightAnchor.constraint(equalTo: dockScroll.contentView.heightAnchor),
-            dock.widthAnchor.constraint(greaterThanOrEqualTo: dockScroll.contentView.widthAnchor),
-            dockScroll.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: SidebarMetrics.libraryButtonSize),
-            dockScroll.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -SidebarMetrics.libraryButtonSize),
-            dockScroll.topAnchor.constraint(equalTo: bottomBar.topAnchor), dockScroll.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
+            dock.topAnchor.constraint(equalTo: bottomBar.topAnchor), dock.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
         ])
         let column = NSStackView(views: [urlField, spaceViewport, bottomBar])
@@ -424,6 +420,8 @@ public final class SidebarView: NSView {
             plusButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -SidebarMetrics.libraryButtonBottom),
             plusButton.widthAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
             plusButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
+            dock.leadingAnchor.constraint(equalTo: libraryButton.trailingAnchor),
+            dock.trailingAnchor.constraint(equalTo: plusButton.leadingAnchor),
         ])
         updateFill()
         addSubview(pullIndicator)
@@ -474,7 +472,6 @@ public final class SidebarView: NSView {
         creation.frame = bounds
         pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
-        if dock.arrangedSubviews.indices.contains(spaceIndex) { _ = dock.scrollToVisible(dock.arrangedSubviews[spaceIndex].frame) }
         if bounds.width != laidOutSidebarWidth {
             finishRowMotion()
             if showingScrollPages { spaceScroll.cancelGesture() }
@@ -528,18 +525,19 @@ public final class SidebarView: NSView {
         }
         arrange(ordered, in: rows)
 
-        dock.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        dock.subviews.forEach { $0.removeFromSuperview() }
         for (index, space) in snapshot.spaces.enumerated() {
             let title = space.icon ?? String(space.title.prefix(1))
-            let button = NSButton(title: title, target: self, action: #selector(dockClicked(_:)))
+            let button = SpaceDockButton(title: title, target: self, action: #selector(dockClicked(_:)))
             button.tag = index
             button.isBordered = false
             button.toolTip = space.title
             button.setAccessibilityLabel(space.title)
             button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
-            button.widthAnchor.constraint(equalToConstant: 34).isActive = true
-            dock.addArrangedSubview(button)
+            dock.addSubview(button)
         }
+        dock.selectedIndex = spaceIndex
+        dock.layoutSubtreeIfNeeded()
         tooltip.capture(in: self)
     }
 
@@ -657,13 +655,15 @@ public final class SidebarView: NSView {
         onSelect?(row)
     }
 
-    public func revealSelection() {
-        guard !isScrollPreview, let id = selectedID, let row = rowViews[id] else { return }
+    public func revealSelection(animated: Bool = true) {
+        guard let id = selectedID, let row = rowViews[id] else { return }
         layoutSubtreeIfNeeded()
-        listScroll.reveal(listScroll.documentView!.convert(row.bounds, from: row))
+        listScroll.reveal(listScroll.documentView!.convert(row.bounds, from: row), animated: animated)
     }
 
     @objc private func dockClicked(_ sender: NSButton) {
+        setLibraryOpen(false)
+        setCreateSpaceOpen(false)
         showSpace(at: sender.tag)
     }
 
@@ -732,6 +732,7 @@ public final class SidebarView: NSView {
         case .pull:
             playWheelPull(from: Double(offset ?? 0))
         case .follow(let offset):
+            listScroll.stopReveal()
             stopPullAnimation()
             scrollGeneration += 1
             for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
@@ -749,7 +750,7 @@ public final class SidebarView: NSView {
                 if index == -1 { setLibraryOpen(true, scrolling: true) }
                 else { setLibraryOpen(false, scrolling: true); setCreateSpaceOpen(false, scrolling: true); scrollToSpace(at: index) }
             }
-            prepareScrollPages(offset: from)
+            prepareScrollPages(offset: from, departingIndex: logicalIndex)
             settleScroll(from: from, switched: switched)
             if excess > 0 { returnPullIndicator(excess: excess) }
         }
@@ -767,11 +768,11 @@ public final class SidebarView: NSView {
 
     private func scrollToSpace(at index: Int) {
         let decision = spaceScroll
-        showSpace(at: index)
+        showSpace(at: index, animatedReveal: false)
         spaceScroll = decision
     }
 
-    private func prepareScrollPages(offset: Double) {
+    private func prepareScrollPages(offset: Double, departingIndex: Int? = nil) {
         guard !spaceViewport.bounds.isEmpty, spacePagePitch > 0 else { return }
         let libraryX = libraryPageOrigin + offset
         if !libraryOpen && libraryX > -spacePagePitch && libraryX < spacePagePitch {
@@ -792,8 +793,9 @@ public final class SidebarView: NSView {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
             let preview = SidebarView(snapshot: snapshot)
             preview.isScrollPreview = true
+            preview.spaceListOrigins = spaceListOrigins
             preview.selectedID = selectedID
-            preview.showSpace(at: index)
+            preview.showSpace(at: index, animatedReveal: false)
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
@@ -804,6 +806,8 @@ public final class SidebarView: NSView {
             page.addSubview(preview)
             spaceViewport.addSubview(page, positioned: .below, relativeTo: spaceColumn)
             preview.layoutSubtreeIfNeeded()
+            preview.listScroll.move(to: spaceListOrigins[snapshot.spaces[index].id] ?? 0)
+            if index != departingIndex { preview.revealSelection(animated: false) }
             var descendants = preview.subviews
             while let view = descendants.popLast() {
                 (view as? NSControl)?.refusesFirstResponder = true
