@@ -8,7 +8,7 @@ func middleClickClosesTodayThroughTheSharedClosePath() throws {
     _ = NSApplication.shared
     let row = Row(id: "today", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false)
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [], pinned: [], today: [row])])
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [row])])
     let sidebar = SidebarView(snapshot: snapshot)
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 500)
     sidebar.layoutSubtreeIfNeeded()

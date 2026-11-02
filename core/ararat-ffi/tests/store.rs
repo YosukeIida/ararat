@@ -436,3 +436,70 @@ fn folder_restore_fallbacks_and_missing_neighbours_cross_the_boundary() {
         assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), snapshot);
     }
 }
+
+#[test]
+fn space_edits_flush_complete_records_and_local_window_changes() {
+    use ararat_ffi::{Appearance, Look, LookColor};
+    let path = fresh_db("space-look-edits");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into()).unwrap();
+    let view = store.rename_space("one".into(), "space-work".into(), "  Research  ".into()).unwrap();
+    assert_eq!(view.spaces[0].title, "Research");
+    let view = store.set_space_icon("one".into(), "space-work".into(), Some("👩🏽‍💻".into())).unwrap();
+    assert_eq!(view.spaces[0].icon.as_deref(), Some("👩🏽‍💻"));
+    let look = Look { colors: vec![LookColor { red: 0.1, green: 0.2, blue: 0.3, x: 0.4, y: 0.5 }], opacity: 0.6, grain: 0.7, glass: true, appearance: Appearance::Dark };
+    let view = store.set_space_look("one".into(), "space-work".into(), Some(look.clone())).unwrap();
+    assert_eq!(view.spaces[0].look.as_ref(), Some(&look));
+    let (_, disk) = Store::open(&path).unwrap(); assert_eq!(disk.spaces[0].look.as_ref().unwrap().opacity, 0.6);
+    let conn = Connection::open(&path).unwrap();
+    let body: String = conn.query_row("SELECT body FROM journal WHERE kind='space' AND id='space-work' ORDER BY seq DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+    let ararat_core::model::Record::Space(record) = ararat_core::model::Record::parse(ararat_core::model::Kind::Space, "space-work", &body).unwrap() else { panic!("expected space") };
+    assert!(record.look.unwrap().glass);
+    store.set_space_icon("one".into(), "space-work".into(), None).unwrap();
+    store.set_space_look("one".into(), "space-work".into(), None).unwrap();
+    let view = store.move_space("one".into(), "space-home".into(), 0).unwrap(); assert_eq!(view.spaces[0].id, "space-home");
+    for window in ["one", "two"] { store.show_space(window.into(), "space-work".into()).unwrap(); store.select_item(window.into(), "tab-spec".into()).unwrap(); }
+    let deleted = store.delete_space("one".into(), "space-work".into()).unwrap();
+    assert_eq!(deleted.shown_space_id.as_deref(), Some("space-home")); assert_eq!(deleted.selected_id, None); assert_eq!(deleted.archive.len(), 3);
+    assert_eq!(store.snapshot("two".into()).shown_space_id.as_deref(), Some("space-home"));
+    let (_, disk) = Store::open(&path).unwrap(); disk.check_tree().unwrap();
+    assert_eq!(disk.items["folder-docs"].lifecycle, ararat_core::model::Lifecycle::Archived);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind='space' AND id='space-work' AND body IS NULL", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    let restored = store.restore_item("one".into(), "tab-spec".into()).unwrap();
+    assert_eq!(restored.spaces[0].today[0].id, "tab-spec");
+    drop(store); assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()), restored);
+}
+
+#[test]
+fn rejected_space_edits_write_neither_records_nor_journal() {
+    let path = fresh_db("space-edit-rejections");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let original = store.import_arc_sidebar("one".into(), FIXTURE.into()).unwrap();
+    let before = records(&path);
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap(); let journal = count();
+    assert!(store.rename_space("one".into(), "space-work".into(), " \n".into()).is_err());
+    assert!(store.set_space_icon("one".into(), "space-work".into(), Some(" ".into())).is_err());
+    assert!(store.set_space_look("one".into(), "space-work".into(), Some(ararat_ffi::Look { colors: vec![], opacity: 0.0, grain: 0.0, glass: false, appearance: ararat_ffi::Appearance::Auto })).is_err());
+    assert!(store.move_space("one".into(), "space-work".into(), 2).is_err());
+    assert!(store.delete_space("one".into(), "missing".into()).is_err());
+    store.flush().unwrap(); assert_eq!(records(&path), before); assert_eq!(count(), journal); assert_eq!(store.snapshot("one".into()), original);
+    store.delete_space("one".into(), "space-home".into()).unwrap(); let before = records(&path); let journal = count();
+    assert!(store.delete_space("one".into(), "space-work".into()).is_err());
+    store.flush().unwrap(); assert_eq!(records(&path), before); assert_eq!(count(), journal);
+}
+
+#[test]
+fn snapshot_repairs_live_items_in_deleted_space_roots_without_writing_the_view_back() {
+    for root in ["pin-work", "today-work"] {
+        let path = fresh_db(&format!("space-delete-concurrent-{root}"));
+        let mut ws = import::arc_sidebar(FIXTURE).unwrap(); ws.delete_space("space-work").unwrap();
+        ws.items.get_mut("tab-mail").unwrap().membership.parent = Some(root.into());
+        let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
+        let before = records(&path);
+        let store = WorkspaceStore::open(path.display().to_string()).unwrap(); let view = store.snapshot("one".into());
+        assert!(view.spaces[0].today.iter().any(|row| row.id == "tab-mail"));
+        store.flush().unwrap(); drop(store); assert_eq!(records(&path), before);
+        assert_eq!(Store::open(&path).unwrap().1.items["tab-mail"].membership.parent.as_deref(), Some(root));
+    }
+}

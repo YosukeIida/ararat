@@ -6,15 +6,24 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::model::{Hlc, Id, Item, ItemKind, Membership, Orientation, Profile, Space, Workspace};
+use crate::model::{Appearance, Hlc, Id, Item, ItemKind, Look, LookColor, Membership, Orientation, Profile, Space, Workspace};
 use crate::order::key_between;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ImportError(pub String);
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ImportReport {
+    pub unknown_space_looks: usize,
+}
+
 type Result<T> = std::result::Result<T, ImportError>;
 
 pub fn arc_sidebar(json: &str) -> Result<Workspace> {
+    arc_sidebar_with_report(json).map(|(workspace, _)| workspace)
+}
+
+pub fn arc_sidebar_with_report(json: &str) -> Result<(Workspace, ImportReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     let container = root["sidebar"]["containers"]
         .as_array()
@@ -22,9 +31,12 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
         .ok_or_else(|| err("sidebar.containers has no container with spaces"))?;
 
     let mut spaces = Vec::new();
+    let mut report = ImportReport::default();
     for (id, obj) in pairs(&container["spaces"])? {
         let order = key_between(spaces.last().map(|s: &Space| s.order.as_str()), None);
-        spaces.push(space(id, obj, order)?);
+        let space = space(id, obj, order)?;
+        if !obj["customInfo"]["windowTheme"].is_null() && space.look.is_none() { report.unknown_space_looks += 1; }
+        spaces.push(space);
     }
 
     let mut favorites = HashMap::new();
@@ -54,7 +66,7 @@ pub fn arc_sidebar(json: &str) -> Result<Workspace> {
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
-    Ok(workspace)
+    Ok((workspace, report))
 }
 
 fn space(id: String, obj: &Value, order: String) -> Result<Space> {
@@ -75,9 +87,56 @@ fn space(id: String, obj: &Value, order: String) -> Result<Space> {
             .as_object()
             .and_then(|icon| icon.values().next()?.as_str())
             .map(str::to_string),
+        look: arc_look(&obj["customInfo"]["windowTheme"]),
         id,
         order,
     })
+}
+
+// Why not use Arc's derived palettes: the editable colours live in the background style.
+// Schema/mapping adapted from mantrakp04/ardia, apps/browser/src/state/import/arcTheme.ts (GPL-3.0).
+fn arc_look(theme: &Value) -> Option<Look> {
+    let forced = theme["windowAppearance"]["single"]["_0"].as_str().or_else(|| {
+        let based = &theme["windowAppearance"]["appearanceBased"];
+        (based["light"] == based["dark"]).then(|| based["light"].as_str()).flatten()
+    });
+    let based = &theme["background"]["appearanceBased"];
+    let background = if !theme["background"]["single"]["_0"].is_null() { &theme["background"]["single"]["_0"] }
+        else if forced == Some("dark") && !based["dark"].is_null() { &based["dark"] }
+        else if !based["light"].is_null() { &based["light"] } else { &based["dark"] };
+    let kind = &background["style"]["color"]["_0"];
+    let (config, basic, raw_colors): (&Value, bool, Vec<&Value>) = if let Some(config) = kind.get("blendedGradient").and_then(|v| v.get("_0")) {
+        let colors: Vec<_> = config["baseColors"].as_array()?.iter().take(3).collect();
+        (config, false, colors)
+    } else if let Some(config) = kind.get("blendedSingleColor").and_then(|v| v.get("_0")) {
+        (config, false, vec![&config["color"]])
+    } else if let Some(config) = kind.get("basicColor").and_then(|v| v.get("_0")) {
+        (config, true, vec![&config["color"]])
+    } else { return None };
+    let colors = raw_colors.into_iter().map(arc_color).collect::<Option<Vec<_>>>()?;
+    let modifiers = &config["modifiers"];
+    let appearance = match forced {
+        Some("light") => Appearance::Light,
+        Some("dark") => Appearance::Dark,
+        _ => Appearance::Auto,
+    };
+    let look = Look { colors, opacity: if basic { 1.0 } else { (0.19 + 0.55 * modifiers["intensityFactor"].as_f64().unwrap_or(1.0)).clamp(0.0, 1.0) },
+        grain: if basic { 0.0 } else { modifiers["noiseFactor"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) }, glass: false, appearance };
+    look.is_valid().then_some(look)
+}
+
+fn arc_color(color: &Value) -> Option<LookColor> {
+    let red = color["red"].as_f64()?.clamp(0.0, 1.0);
+    let green = color["green"].as_f64()?.clamp(0.0, 1.0);
+    let blue = color["blue"].as_f64()?.clamp(0.0, 1.0);
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let delta = max - min;
+    let hue = if delta == 0.0 { 0.0 } else if max == red { ((green - blue) / delta).rem_euclid(6.0) }
+        else if max == green { (blue - red) / delta + 2.0 } else { (red - green) / delta + 4.0 } / 6.0;
+    Some(LookColor { red, green, blue,
+        x: color["position"]["x"].as_f64().unwrap_or(hue).clamp(0.0, 1.0),
+        y: color["position"]["y"].as_f64().unwrap_or(1.0 - (max + min) / 2.0).clamp(0.0, 1.0) })
 }
 
 fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {

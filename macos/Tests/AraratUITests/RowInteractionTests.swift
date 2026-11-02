@@ -11,7 +11,7 @@ private func interactionRows(_ view: NSView) -> [SidebarRowView] {
 private func interactionSnapshot(selected: String? = "pin") -> WorkspaceSnapshot {
     let row: (String) -> Row = { Row(id: $0, title: String(repeating: $0, count: 60), url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false) }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil,
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
                       favorites: [row("favorite")], pinned: [row("pin"), row("other")], today: [row("a"), row("b")])])
 }
 
@@ -124,7 +124,7 @@ func slightMovementClicksWithoutReorderingAndPressTracksStillPointer() throws {
     #expect(!row.pressed)
     row.mouseDown(with: try rowEvent(.leftMouseDown, point: start))
     sidebar.applyClose(id: "other", snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: "pin", spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [], pinned: [],
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [],
                       today: [Row(id: "a", title: "a", url: nil, depth: 0, kind: .tab, unloaded: false)])]))
     row.refreshHover()
     #expect(!row.hovered && !row.pressed)

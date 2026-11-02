@@ -12,7 +12,7 @@ private func libraryDescendants(_ view: NSView) -> [NSView] {
 func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     _ = NSApplication.shared
     let entry = Row(id: "closed", title: "A closed tab", url: "https://closed.example", depth: 0, kind: .tab, unloaded: false)
-    let space = SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
+    let space = SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [ArchiveEntry(id: entry.id, title: entry.title, url: entry.url ?? "", lifecycleChangedAt: 0)], shownSpaceId: "home", selectedId: nil, spaces: [space]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = NSRect(x: 0, y: 0, width: 1000, height: 720)
@@ -60,7 +60,7 @@ func libraryIsTheScrollPageBeforeTheFirstSpaceAndStaysOnRelease() {
 
 @Test @MainActor
 func wheelOpensLibraryAtFirstSpaceButCannotPassLastSpace() {
-    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space-0", selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -80,7 +80,7 @@ func wheelOpensLibraryAtFirstSpaceButCannotPassLastSpace() {
 @Test @MainActor
 func sidebarScrollOpensLibraryStaysOpenAndScrollsBackToFirstSpace() async throws {
     _ = NSApplication.shared
-    let space = SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, favorites: [], pinned: [], today: [])
+    let space = SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "home", selectedId: nil, spaces: [space]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 720), styleMask: [], backing: .buffered, defer: false)

@@ -19,8 +19,39 @@ pub struct Space {
     pub title: String,
     pub profile: Profile,
     pub icon: Option<String>,
+    #[serde(default)]
+    pub look: Option<Look>,
     pub pinned: Id,
     pub today: Id,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Appearance { Auto, Light, Dark }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookColor {
+    pub red: f64,
+    pub green: f64,
+    pub blue: f64,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Look {
+    pub colors: Vec<LookColor>,
+    pub opacity: f64,
+    pub grain: f64,
+    pub glass: bool,
+    pub appearance: Appearance,
+}
+
+impl Look {
+    pub fn is_valid(&self) -> bool {
+        (1..=3).contains(&self.colors.len()) && self.colors.iter().all(|c|
+            [c.red, c.green, c.blue, c.x, c.y].into_iter().all(|v| (0.0..=1.0).contains(&v)))
+            && [self.opacity, self.grain].into_iter().all(|v| (0.0..=1.0).contains(&v))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

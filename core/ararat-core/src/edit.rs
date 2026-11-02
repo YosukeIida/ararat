@@ -19,6 +19,73 @@ impl WindowState {
 }
 
 impl Workspace {
+    fn edit_space(&mut self, id: &str, edit: impl FnOnce(&mut crate::model::Space)) -> Result<Vec<Op>, EditError> {
+        let mut space = self.spaces.iter().find(|space| space.id == id).cloned()
+            .ok_or_else(|| EditError(format!("unknown space {id}")))?;
+        edit(&mut space);
+        let ops = vec![Op::Put(Record::Space(space))];
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
+    pub fn rename_space(&mut self, id: &str, name: &str) -> Result<Vec<Op>, EditError> {
+        let name = name.trim();
+        if name.is_empty() { return Err(EditError("space name is empty".into())); }
+        self.edit_space(id, |space| space.title = name.into())
+    }
+
+    pub fn set_space_icon(&mut self, id: &str, icon: Option<String>) -> Result<Vec<Op>, EditError> {
+        if icon.as_ref().is_some_and(|icon| icon.trim().is_empty() || icon.len() > 64
+            || icon.chars().any(|c| c.is_whitespace() || c.is_control())) {
+            return Err(EditError("invalid space icon".into()));
+        }
+        self.edit_space(id, |space| space.icon = icon)
+    }
+
+    pub fn set_space_look(&mut self, id: &str, look: Option<crate::model::Look>) -> Result<Vec<Op>, EditError> {
+        if look.as_ref().is_some_and(|look| !look.is_valid()) { return Err(EditError("invalid space look".into())); }
+        self.edit_space(id, |space| space.look = look)
+    }
+
+    pub fn move_space(&mut self, id: &str, index: usize) -> Result<Vec<Op>, EditError> {
+        if index >= self.spaces.len() { return Err(EditError("space index out of range".into())); }
+        let others: Vec<_> = self.spaces.iter().filter(|space| space.id != id).collect();
+        let order = crate::order::key_between(index.checked_sub(1).and_then(|i| others.get(i)).map(|s| s.order.as_str()), others.get(index).map(|s| s.order.as_str()));
+        self.edit_space(id, |space| space.order = order)
+    }
+
+    pub fn delete_space(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let index = self.spaces.iter().position(|space| space.id == id)
+            .ok_or_else(|| EditError(format!("unknown space {id}")))?;
+        if self.spaces.len() == 1 { return Err(EditError("cannot delete the last space".into())); }
+        let space = &self.spaces[index];
+        let neighbour = &self.spaces[if index + 1 < self.spaces.len() { index + 1 } else { index - 1 }].id;
+        let changing: HashSet<_> = [&space.pinned, &space.today].into_iter()
+            .flat_map(|root| self.outline_entries(root).into_iter().map(|(_, item, _)| item.id.clone())).collect();
+        let changed_at = self.lifecycle_time();
+        let mut ids: Vec<_> = changing.iter().collect();
+        ids.sort();
+        let mut ops: Vec<_> = ids.into_iter().filter(|id| matches!(self.items[*id].lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).map(|id| {
+            let mut item = self.items[id].clone();
+            item.lifecycle = Lifecycle::Archived;
+            item.lifecycle_changed_at = changed_at;
+            Op::Put(Record::Item(item))
+        }).collect();
+        let mut windows: Vec<_> = self.windows.values().cloned().collect();
+        windows.sort_by(|a, b| a.id.cmp(&b.id));
+        for mut state in windows {
+            let before = state.clone();
+            if self.shown_space(&state.id) == Some(id) { state.shown_space = Some(neighbour.clone()); }
+            if state.selected.as_ref().is_some_and(|id| changing.contains(id)) { state.selected = None; }
+            state.history.retain(|id| !changing.contains(id));
+            if state != before { ops.push(Op::Put(Record::Window(state))); }
+        }
+        ops.push(Op::Delete(crate::model::Kind::Space, id.into()));
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
     pub fn create_space(&mut self, window: &str, name: &str, id: &str) -> Result<Vec<Op>, EditError> {
         let name = name.trim();
         if name.is_empty() { return Err(EditError("space name is empty".into())); }
@@ -31,7 +98,7 @@ impl Workspace {
             .map_or(crate::model::Profile::Default, |space| space.profile.clone());
         let space = crate::model::Space {
             id: id.into(), order: crate::order::key_between(self.spaces.last().map(|space| space.order.as_str()), None),
-            title: name.into(), profile, icon: None, pinned: pinned.clone(), today: today.clone(),
+            title: name.into(), profile, icon: None, look: None, pinned: pinned.clone(), today: today.clone(),
         };
         let mut state = self.window_state(window);
         state.shown_space = Some(id.into());

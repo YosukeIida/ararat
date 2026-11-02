@@ -14,9 +14,9 @@ private func listRow(_ id: String) -> Row {
 
 private func listSnapshot(_ count: Int = 45, selected: String? = "t0") -> WorkspaceSnapshot {
     WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil,
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
                       favorites: [listRow("favorite")], pinned: [listRow("pin")], today: (0..<count).map { listRow("t\($0)") }),
-        SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil,
+        SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil,
                       favorites: [], pinned: [], today: [listRow("home-tab")])
     ])
 }
@@ -240,7 +240,7 @@ func listKeyboardSelectionAndCreatedTabRevealWithoutOrderingWindow() throws {
     sidebar.applySelection(snapshot: snapshot)
     #expect(scroll.contentView.bounds.contains(try frame("new-tab", in: sidebar)))
     sidebar.showCreateSpace()
-    snapshot.spaces.append(SpaceSnapshot(profileName: "Default", id: "created", title: "Created", icon: nil, favorites: [], pinned: [], today: []))
+    snapshot.spaces.append(SpaceSnapshot(profileName: "Default", id: "created", title: "Created", icon: nil, look: nil, favorites: [], pinned: [], today: []))
     snapshot.shownSpaceId = "created"
     snapshot.selectedId = nil
     sidebar.applyCreatedSpace(snapshot: snapshot)

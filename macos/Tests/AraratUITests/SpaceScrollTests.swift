@@ -160,7 +160,7 @@ func cancelledTrackpadGestureReturnsWithoutSwitching() {
 
 @Test @MainActor
 func wheelSwitchUsesTheExistingSpacePathAndPreservesItsPause() {
-    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -2, wheel3: 0)!
     let event = NSEvent(cgEvent: cg)!
@@ -189,7 +189,7 @@ private func trackpadEvent(dx: Int32, phase: CGScrollPhase?, momentum: Bool = fa
 
 @Test @MainActor
 func trackpadRoutesThroughTheRowScrollViewAndAnimatesNeighborPages() throws {
-    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -263,7 +263,7 @@ func halfPageThresholdAndDirectionalReleaseScaleWithPitch() {
 func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
     for floating in [false, true] {
         for width: CGFloat in [164, 240, 500] {
-            let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+            let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
             let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
             sidebar.showSpace(at: 1)
             let container = SidebarContainerView(sidebar: sidebar, page: NSView())
@@ -303,7 +303,7 @@ func neighborPagesUseTheSidebarWidthWithPaddingInBothForms() throws {
 
 @Test @MainActor
 func resizingAndResettingCancelTheActiveGestureUntilTheNextBegin() {
-    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
@@ -331,7 +331,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
     let tab = Row(id: "tab", title: "Neighbor row", url: nil, depth: 0, kind: .tab, unloaded: false)
     let favorite = Row(id: "favorite", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
     let spaces = (0..<3).map {
-        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [favorite], pinned: [tab], today: [])
+        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [favorite], pinned: [tab], today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
@@ -375,7 +375,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
 func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     _ = NSApplication.shared
     let tab = Row(id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab, unloaded: false)
-    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
     #expect(sidebar.selectRow(id: tab.id))
@@ -410,7 +410,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
 private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: (0..<spaces).map {
-        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil,
+        SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil,
                       favorites: [Row(id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)],
                       pinned: [Row(id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false)], today: [])
     })

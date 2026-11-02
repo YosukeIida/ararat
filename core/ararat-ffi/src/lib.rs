@@ -119,6 +119,46 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn rename_space(&self, window_id: String, space_id: String, name: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.rename_space(&space_id, &name)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn set_space_icon(&self, window_id: String, space_id: String, icon: Option<String>) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_space_icon(&space_id, icon)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn set_space_look(&self, window_id: String, space_id: String, look: Option<Look>) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_space_look(&space_id, look.map(Into::into))?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn move_space(&self, window_id: String, space_id: String, index: u32) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.move_space(&space_id, index as usize)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn delete_space(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.delete_space(&space_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn delete_archive_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_archive_item(&id)?;
@@ -153,12 +193,60 @@ pub struct Row {
     pub unloaded: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum Appearance { Auto, Light, Dark }
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LookColor {
+    pub red: f64,
+    pub green: f64,
+    pub blue: f64,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Look {
+    pub colors: Vec<LookColor>,
+    pub opacity: f64,
+    pub grain: f64,
+    pub glass: bool,
+    pub appearance: Appearance,
+}
+
+impl From<ararat_core::model::Look> for Look {
+    fn from(look: ararat_core::model::Look) -> Self {
+        Self { colors: look.colors.into_iter().map(|c| LookColor { red: c.red, green: c.green, blue: c.blue, x: c.x, y: c.y }).collect(),
+            opacity: look.opacity, grain: look.grain, glass: look.glass,
+            appearance: match look.appearance {
+                ararat_core::model::Appearance::Auto => Appearance::Auto,
+                ararat_core::model::Appearance::Light => Appearance::Light,
+                ararat_core::model::Appearance::Dark => Appearance::Dark,
+            },
+        }
+    }
+}
+
+impl From<Look> for ararat_core::model::Look {
+    fn from(look: Look) -> Self {
+        Self { colors: look.colors.into_iter().map(|c| ararat_core::model::LookColor { red: c.red, green: c.green, blue: c.blue, x: c.x, y: c.y }).collect(),
+            opacity: look.opacity, grain: look.grain, glass: look.glass,
+            appearance: match look.appearance {
+                Appearance::Auto => ararat_core::model::Appearance::Auto,
+                Appearance::Light => ararat_core::model::Appearance::Light,
+                Appearance::Dark => ararat_core::model::Appearance::Dark,
+            },
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct SpaceSnapshot {
     pub profile_name: String,
     pub id: String,
     pub title: String,
     pub icon: Option<String>,
+    pub look: Option<Look>,
     pub favorites: Vec<Row>,
     pub pinned: Vec<Row>,
     pub today: Vec<Row>,
@@ -206,6 +294,7 @@ fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
         id: s.id.clone(),
         title: s.title.clone(),
         icon: s.icon.clone(),
+        look: s.look.clone().map(Into::into),
         favorites: rows(ws.favorites.get(&s.profile)),
         pinned: rows(Some(&s.pinned)),
         today: rows(Some(&s.today)),

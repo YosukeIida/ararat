@@ -27,7 +27,7 @@ private func polishWindow(count: Int = 3, floating: Bool = false, rowCount: Int 
     let spaces = (0..<count).map { index in
         let row = Row(id: "r\(index)", title: "Row \(index)", url: nil, depth: 0, kind: .tab, unloaded: false)
         let pins = (0..<rowCount).map { Row(id: "p\(index)-\($0)", title: "Pin \(index)-\($0)", url: nil, depth: 0, kind: .tab, unloaded: false) }
-        return SpaceSnapshot(profileName: "Default", id: "s\(index)", title: "Space \(index)", icon: nil,
+        return SpaceSnapshot(profileName: "Default", id: "s\(index)", title: "Space \(index)", icon: nil, look: nil,
                              favorites: [row], pinned: pins, today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
@@ -186,7 +186,7 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
 func verticalGestureImmediatelyAfterSpaceSwipeScrollsTheList() throws {
     _ = NSApplication.shared
     let rows = (0..<40).map { Row(id: "r\($0)", title: "Row \($0)", url: nil, depth: 0, kind: .tab, unloaded: false) }
-    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: rows) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: rows) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 500), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar
@@ -312,7 +312,7 @@ func sampledSpaceFramesKeepEachPagesHeadingPinsAndRowsTogether() async throws {
 func scrolledPinsKeepTheirPositionWhenLiveAndPreviewPagesExchange() throws {
     _ = NSApplication.shared
     let rows = (0..<40).map { Row(id: "r\($0)", title: "Pin \($0)", url: nil, depth: 0, kind: .tab, unloaded: false) }
-    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: rows, today: []) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: rows, today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 500), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar

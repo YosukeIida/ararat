@@ -6,7 +6,7 @@ import Testing
 @Test @MainActor
 func libraryHistoryKeepsPageWheelAndCorrectedDeltaSwipeWorking() async throws {
     _ = NSApplication.shared
-    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<2).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let archive = (0..<100).map { ArchiveEntry(id: "a\($0)", title: "Entry \($0)", url: "https://example.com", lifecycleChangedAt: UInt64($0)) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: archive, shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())

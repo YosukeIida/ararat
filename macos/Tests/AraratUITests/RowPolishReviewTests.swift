@@ -11,7 +11,7 @@ private func reviewSnapshot(pinned: Bool = false, selected: String = "t0", remov
         Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false)
     }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [],
+        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [],
                       pinned: pinned ? rows : [], today: pinned ? [] : rows)])
 }
 

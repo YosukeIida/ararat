@@ -10,14 +10,37 @@
             "title": "Work",
             "profile": { "default": true },
             "containerIDs": ["pinned", "pin-work", "unpinned", "today-work"],
-            "customInfo": { "iconType": { "emoji_v2": "💼" } }
+            "customInfo": {
+              "iconType": { "emoji_v2": "💼" },
+              "windowTheme": {
+                "windowAppearance": { "single": { "_0": "light" } },
+                "background": { "single": { "_0": { "style": { "color": { "_0": {
+                  "blendedSingleColor": { "_0": {
+                    "color": { "red": 0.8, "green": 0.2, "blue": 0.4, "alpha": 1, "colorSpace": "extendedSRGB", "position": { "x": 0.7, "y": 0.3 } },
+                    "modifiers": { "intensityFactor": 0.5, "noiseFactor": 0.3, "overlay": "grain" },
+                    "translucencyStyle": "light"
+                  } }
+                } } } } } }
+              }
+            }
           },
           "space-home",
           {
             "id": "space-home",
             "title": "Home",
             "profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } },
-            "containerIDs": ["pinned", "pin-home", "unpinned", "today-home"]
+            "containerIDs": ["pinned", "pin-home", "unpinned", "today-home"],
+            "customInfo": { "windowTheme": {
+              "windowAppearance": { "appearanceBased": { "light": "light", "dark": "dark" } },
+              "background": { "appearanceBased": { "light": { "style": { "color": { "_0": {
+                "blendedGradient": { "_0": {
+                  "baseColors": [ { "red": 1, "green": 0, "blue": 0, "alpha": 1 }, { "red": 0, "green": 0, "blue": 1, "alpha": 1 } ],
+                  "overlayColors": [ { "red": 0.5, "green": 0.5, "blue": 0.5 }, { "red": 0, "green": 1, "blue": 0 } ],
+                  "modifiers": { "intensityFactor": 0.8, "noiseFactor": 0.45, "overlay": "sand" },
+                  "translucencyStyle": "auto"
+                } }
+              } } } } } }
+            } }
           }
         ],
         "topAppsContainerIDs": [{ "default": true }, "fav-default"],

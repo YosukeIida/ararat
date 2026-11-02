@@ -163,7 +163,7 @@ func archiveVirtualListBudgetsAndDeferredUpdates() throws {
     _ = NSApplication.shared
     for count in [50, 200, 500, 2000] {
         let ordinary = (0..<17).map { Row(id: "tab-\($0)", title: "Tab \($0)", url: "https://tabs.example/\($0)", depth: 0, kind: .tab, unloaded: false) }
-        let spaces = [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, favorites: [], pinned: Array(ordinary.prefix(8)), today: []), SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, favorites: [], pinned: Array(ordinary.suffix(9)), today: [])]
+        let spaces = [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: Array(ordinary.prefix(8)), today: []), SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: Array(ordinary.suffix(9)), today: [])]
         var snapshot = WorkspaceSnapshot(archive: virtualArchiveEntries(count), shownSpaceId: "work", selectedId: "tab-0", spaces: spaces)
         let sidebar = SidebarView(snapshot: snapshot)
         sidebar.frame = NSRect(x: 0, y: 0, width: 417, height: 720)

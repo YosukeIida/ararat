@@ -42,7 +42,12 @@ impl Workspace {
             }
         }
         loop {
+            // Why not move archived descendants of deleted spaces: their original parents are kept for restore.
             let broken = self.sorted_ids().into_iter().find_map(|id| match self.walk(&id) {
+                Walk::Root(root) if !self.is_root(&id)
+                    && matches!(self.items[&id].lifecycle, crate::model::Lifecycle::Open | crate::model::Lifecycle::Unloaded)
+                    && !self.spaces.iter().any(|s| s.pinned == root || s.today == root)
+                    && !self.favorites.values().any(|id| *id == root) => Some(Walk::Orphan(id)),
                 Walk::Root(_) => None,
                 broken => Some(broken),
             });
