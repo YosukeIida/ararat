@@ -92,3 +92,18 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         return store
     }
 }
+
+extension WorkspaceAdapter {
+    public func renameSpace(id: String, name: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().renameSpace(windowId: self.windowID, spaceId: id, name: name) }, completion: completion)
+    }
+    public func setSpaceIcon(id: String, icon: String?, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setSpaceIcon(windowId: self.windowID, spaceId: id, icon: icon) }, completion: completion)
+    }
+    public func moveSpace(id: String, index: Int, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().moveSpace(windowId: self.windowID, spaceId: id, index: UInt32(index)) }, completion: completion)
+    }
+    public func deleteSpace(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().deleteSpace(windowId: self.windowID, spaceId: id) }, completion: completion)
+    }
+}

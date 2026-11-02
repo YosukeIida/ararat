@@ -27,7 +27,7 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(name: "AraratUI", dependencies: ["AraratKit"]),
-        .testTarget(name: "AraratUITests", dependencies: ["AraratUI", "AraratKit"]),
+        .testTarget(name: "AraratUITests", dependencies: ["AraratUI", "AraratKit", "AraratHarness"]),
         .executableTarget(
             name: "AraratHarness",
             dependencies: ["AraratUI", "AraratKit"],

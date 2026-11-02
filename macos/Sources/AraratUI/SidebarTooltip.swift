@@ -119,12 +119,7 @@ final class SidebarTooltip {
             shortcutAction = row.closeShortcutAction
         } else { shortcutAction = action }
         if let shortcutAction, let item = Self.menuItem(for: shortcutAction, in: NSApp.mainMenu), !item.keyEquivalent.isEmpty {
-            var mask = item.keyEquivalentModifierMask
-            if item.keyEquivalent.rangeOfCharacter(from: .uppercaseLetters) != nil { mask.insert(.shift) }
-            for (flag, glyph) in [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")] where mask.contains(flag) {
-                label.keycaps.append(TooltipKeycap(glyph, modifier: flag))
-            }
-            label.keycaps.append(TooltipKeycap(Self.keyGlyph(item.keyEquivalent), modifier: []))
+            label.keycaps = Self.keycaps(for: item)
         }
         let modifiers = modifierFlags()
         var x = label.frame.width + (label.keycaps.isEmpty ? 10 : 18)
@@ -151,6 +146,16 @@ final class SidebarTooltip {
             if let found = menuItem(for: action, in: item.submenu) { return found }
         }
         return nil
+    }
+
+    static func keycaps(for item: NSMenuItem) -> [TooltipKeycap] {
+        guard !item.keyEquivalent.isEmpty else { return [] }
+        var mask = item.keyEquivalentModifierMask
+        if item.keyEquivalent.rangeOfCharacter(from: .uppercaseLetters) != nil { mask.insert(.shift) }
+        var caps = [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+            .filter { mask.contains($0.0) }.map { TooltipKeycap($0.1, modifier: $0.0) }
+        caps.append(TooltipKeycap(keyGlyph(item.keyEquivalent), modifier: []))
+        return caps
     }
 
     private static func keyGlyph(_ key: String) -> String {

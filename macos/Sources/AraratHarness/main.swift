@@ -56,7 +56,7 @@ func removeTemporaryDatabase() -> Bool {
 }
 
 @MainActor
-final class HarnessDelegate: NSObject, NSApplicationDelegate {
+final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
     let adapter: WorkspaceAdapter
     var exitStatus: Int32 = 0
@@ -66,10 +66,15 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
     var sidebar: SidebarView?
     var resizeHandle: SidebarResizeHandle?
     var sidebarContainer: SidebarContainerView?
+    private var settings: SettingsWindowController?
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
 
-    init(adapter: WorkspaceAdapter) { self.adapter = adapter }
+    var terminate: () -> Void
+    init(adapter: WorkspaceAdapter, terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
+        self.adapter = adapter
+        self.terminate = terminate
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !terminating else { return }
@@ -100,6 +105,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
+        window?.isReleasedWhenClosed = false
+        window?.delegate = self
         window?.titlebarAppearsTransparent = true
         window?.titleVisibility = .hidden
         window?.title = "Ararat Harness"
@@ -171,24 +178,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         ])
         if let window {
             window.contentView = background
-            let menu = NSMenu()
-            let appMenu = NSMenu()
-            appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-            menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
-            let fileMenu = NSMenu(title: "File")
-            let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")
-            close.target = sidebar
-            menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
-            let viewMenu = NSMenu(title: "View")
-            let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
-            toggle.target = self
-            let library = viewMenu.addItem(withTitle: "Toggle Library", action: #selector(SidebarView.toggleLibrary(_:)), keyEquivalent: "l")
-            library.keyEquivalentModifierMask = [.command, .shift]
-            library.target = sidebar
-            let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
-            reset.target = self
-            menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
-            NSApp.mainMenu = menu
+            NSApp.mainMenu = makeMenu()
             window.center()
             window.makeKeyAndOrderFront(nil)
             self.window = window
@@ -200,6 +190,66 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         }
         readCommands()
         HitchMonitor.start()
+    }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let appMenu = NSMenu()
+        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsItem.toolTip = "Open settings for the shown space."
+        appMenu.addItem(.separator())
+        let quit = appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.toolTip = "Close all windows and quit Ararat."
+        menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
+        let fileMenu = NSMenu(title: "File")
+        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
+        close.target = self
+        close.toolTip = "Close the selected tab in the browser window."
+        menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
+        let viewMenu = NSMenu(title: "View")
+        let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        toggle.target = self
+        toggle.toolTip = "Show or hide the sidebar."
+        let library = viewMenu.addItem(withTitle: "Toggle Library", action: #selector(SidebarView.toggleLibrary(_:)), keyEquivalent: "l")
+        library.keyEquivalentModifierMask = [.command, .shift]
+        library.target = sidebar
+        library.toolTip = "Show or hide the Library."
+        let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
+        reset.target = self
+        viewMenu.addItem(.separator())
+        for index in 0..<9 {
+            let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: #selector(showSpace(_:)), keyEquivalent: String(index + 1))
+            item.keyEquivalentModifierMask = [.control]
+            item.tag = index
+            item.target = self
+            item.toolTip = "Show space \(index + 1) in sidebar order."
+        }
+        menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
+        return menu
+    }
+
+    func canCloseTab(keyWindow: NSWindow?) -> Bool { window != nil && keyWindow === window }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(closeTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
+        if menuItem.action == #selector(showSpace(_:)) { return snapshot.spaces.indices.contains(menuItem.tag) }
+        return true
+    }
+
+    @objc func closeTab(_ sender: Any?) {
+        guard canCloseTab(keyWindow: NSApp.keyWindow) else { return }
+        sidebar?.closeSelectedTab(sender)
+    }
+
+    @objc func showSpace(_ sender: NSMenuItem) {
+        guard snapshot.spaces.indices.contains(sender.tag) else { return }
+        sidebar?.showSpace(at: sender.tag)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        terminate()
     }
 
     private func readCommands() {
@@ -331,7 +381,27 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func openSettings(_ sender: Any?) {
+        prepareSettings().open(shownSpaceID: shownSpaceID)
+    }
+
+    private var shownSpaceID: String? {
+        sidebar.flatMap { snapshot.spaces.indices.contains($0.spaceShown) ? snapshot.spaces[$0.spaceShown].id : nil }
+    }
+
+    func prepareSettings() -> SettingsWindowController {
+        if settings == nil {
+            let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { [weak self] snapshot in
+                _ = self?.publish(.success(snapshot))
+            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) })
+            settings = SettingsWindowController(model: model)
+        }
+        settings!.prepare(shownSpaceID: shownSpaceID)
+        return settings!
+    }
+
     private func showSelection() {
+        settings?.modelUpdate(snapshot: snapshot)
         if sidebar?.createSpaceOpen == true {
             card?.show(title: "", url: nil)
             sidebarContainer?.selectionChanged()
