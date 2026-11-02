@@ -386,3 +386,53 @@ fn archive_pinned_tab_survives_reopen() {
     drop(store);
     assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("test".into()), archived);
 }
+
+#[test]
+fn folder_archive_restore_keeps_order_and_survives_reopen() {
+    let path = fresh_db("folder-restore");
+    let mut ws = import::arc_sidebar(FIXTURE).unwrap();
+    ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
+    ws.items.get_mut("tab-a").unwrap().membership.order = "A".into();
+    ws.items.get_mut("tab-spec").unwrap().membership.order = "B".into();
+    let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.archive_item("test".into(), "tab-a".into()).unwrap();
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let snapshot = store.restore_item("test".into(), "tab-a".into()).unwrap();
+    let rows = &snapshot.spaces[0].pinned;
+    let index = rows.iter().position(|row| row.id == "tab-a").unwrap();
+    assert_eq!(rows[index - 1].id, "folder-docs");
+    assert_eq!(rows[index + 1].id, "tab-spec");
+    assert_eq!(rows[index].depth, 1);
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), snapshot);
+}
+
+#[test]
+fn folder_restore_fallbacks_and_missing_neighbours_cross_the_boundary() {
+    for situation in ["deleted", "archived", "neighbours gone", "collapsed"] {
+        let path = fresh_db(&format!("folder-restore-{situation}"));
+        let mut ws = import::arc_sidebar(FIXTURE).unwrap();
+        ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
+        ws.archive_item("tab-a").unwrap();
+        match situation {
+            "deleted" => { ws.items.remove("folder-docs"); }
+            "archived" => ws.items.get_mut("folder-docs").unwrap().lifecycle = ararat_core::model::Lifecycle::Archived,
+            "collapsed" => ws.items.get_mut("folder-docs").unwrap().collapsed = true,
+            _ => { ws.items.remove("tab-spec"); ws.items.remove("tab-b"); }
+        }
+        let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+        let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+        let snapshot = store.restore_item("test".into(), "tab-a".into()).unwrap();
+        assert_eq!(snapshot.selected_id.as_deref(), Some("tab-a"));
+        if ["deleted", "archived"].contains(&situation) { assert_eq!(snapshot.spaces[0].today[0].id, "tab-a"); }
+        else { assert_eq!(snapshot.spaces[0].pinned.iter().find(|row| row.id == "tab-a").unwrap().depth, 1); }
+        drop(store);
+        let (disk, reopened) = Store::open(&path).unwrap();
+        assert_eq!(reopened.items["tab-a"].membership.parent.as_deref(), Some(if ["deleted", "archived"].contains(&situation) { "today-work" } else { "folder-docs" }));
+        if situation == "collapsed" { assert!(!reopened.items["folder-docs"].collapsed); }
+        drop(disk);
+        assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), snapshot);
+    }
+}

@@ -100,14 +100,35 @@ impl Workspace {
         let space = self.spaces.iter().find(|space| root == Some(space.today.as_str()) || root == Some(space.pinned.as_str()))
             .or_else(|| self.shown_space(window).and_then(|id| self.spaces.iter().find(|space| space.id == id)))
             .ok_or_else(|| EditError("no space to restore into".into()))?;
-        item.membership.order = crate::order::key_between(None, self.children(&space.today).first().map(|item| item.membership.order.as_str()));
-        item.membership.previous_parent = item.membership.parent.replace(space.today.clone());
+        let folder = item.membership.parent.as_deref().and_then(|id| self.items.get(id))
+            .filter(|parent| matches!(parent.kind, ItemKind::Folder) && matches!(parent.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+                && self.list_for(&parent.id).is_some());
+        if let Some(folder) = folder {
+            let neighbours: Vec<_> = self.children(&folder.id).into_iter().filter(|other| other.id != id).collect();
+            let before = neighbours.iter().rfind(|other| other.membership.order < item.membership.order);
+            let after = neighbours.iter().find(|other| other.membership.order >= item.membership.order);
+            item.membership.order = crate::order::key_between(before.map(|other| other.membership.order.as_str()), after.map(|other| other.membership.order.as_str()));
+        } else {
+            item.membership.order = crate::order::key_between(None, self.children(&space.today).first().map(|item| item.membership.order.as_str()));
+            item.membership.previous_parent = item.membership.parent.replace(space.today.clone());
+        }
         item.lifecycle = Lifecycle::Open;
         item.lifecycle_changed_at = self.lifecycle_time();
         let mut state = self.window_state(window);
         state.shown_space = Some(space.id.clone());
         state.select(Some(id.into()));
-        let ops = vec![Op::Put(Record::Item(item)), Op::Put(Record::Window(state))];
+        let mut parent = item.membership.parent.clone();
+        let mut ops = vec![Op::Put(Record::Item(item))];
+        for _ in 0..self.items.len() {
+            let Some(ancestor) = parent.as_deref().and_then(|id| self.items.get(id)) else { break };
+            parent = ancestor.membership.parent.clone();
+            if ancestor.collapsed {
+                let mut expanded = ancestor.clone();
+                expanded.collapsed = false;
+                ops.push(Op::Put(Record::Item(expanded)));
+            }
+        }
+        ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         Ok(ops)
     }

@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class SidebarTooltip {
     var clock: () -> CFTimeInterval = CACurrentMediaTime
+    var menuTracking = false { didSet { dismiss() } }
     private let texts = NSMapTable<NSView, NSString>.weakToStrongObjects()
     private weak var target: NSView?
     private var point: NSPoint?
@@ -31,6 +32,7 @@ final class SidebarTooltip {
     }
 
     func update(target next: NSView?, point nextPoint: NSPoint?) {
+        guard !menuTracking else { return }
         let now = clock()
         if point != nextPoint || target !== next { movedAt = now }
         point = nextPoint

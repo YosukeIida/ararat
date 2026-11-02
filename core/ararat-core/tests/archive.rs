@@ -105,3 +105,59 @@ fn deleting_unknown_or_non_archived_items_is_rejected_without_changes() {
         assert_eq!(ws, before);
     }
 }
+
+#[test]
+fn folder_restore_preserves_position_replays_and_survives_reopen() {
+    for archived in [false, true] {
+        let mut ws = workspace();
+        for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("folder-docs".into()); }
+        ws.items.get_mut("tab-a").unwrap().membership.order = "B".into();
+        ws.items.get_mut("tab-b").unwrap().membership.order = "C".into();
+        ws.items.get_mut("tab-spec").unwrap().membership.order = "A".into();
+        if archived { ws.archive_item("tab-a").unwrap(); }
+        else { ws.items.get_mut("folder-docs").unwrap().membership.parent = Some("today-work".into()); ws.close_item("tab-a").unwrap(); }
+        let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("folder-restore-{archived}.sqlite"));
+        let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
+        ws = Store::open(&path).unwrap().1;
+        let before = ws.clone();
+        let ops = ws.restore_item("one", "tab-a").unwrap();
+        assert_eq!(ws.items["tab-a"].membership.parent.as_deref(), Some("folder-docs"));
+        assert!(ws.items["tab-spec"].membership.order < ws.items["tab-a"].membership.order);
+        assert!(ws.items["tab-a"].membership.order < ws.items["tab-b"].membership.order);
+        let mut replay = before;
+        for op in &ops { replay.apply(op); }
+        assert_eq!(replay, ws);
+        let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
+        assert_eq!(Store::open(&path).unwrap().1, ws);
+    }
+}
+
+#[test]
+fn folder_restore_handles_missing_neighbours_deleted_and_archived_folders() {
+    for situation in ["neighbours gone", "deleted", "archived"] {
+        let mut ws = workspace();
+        ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
+        ws.archive_item("tab-a").unwrap();
+        match situation {
+            "deleted" => { ws.items.remove("folder-docs"); }
+            "archived" => ws.items.get_mut("folder-docs").unwrap().lifecycle = Lifecycle::Archived,
+            _ => { ws.items.remove("tab-spec"); ws.items.remove("tab-b"); }
+        }
+        ws.restore_item("one", "tab-a").unwrap();
+        assert_eq!(ws.items["tab-a"].membership.parent.as_deref(), Some(if situation == "neighbours gone" { "folder-docs" } else { "today-work" }));
+    }
+}
+
+#[test]
+fn restoring_in_a_collapsed_folder_expands_ancestors_in_the_replayed_transaction() {
+    let mut ws = workspace();
+    ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
+    ws.archive_item("tab-a").unwrap();
+    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
+    let mut replay = ws.clone();
+    let ops = ws.restore_item("one", "tab-a").unwrap();
+    assert!(!ws.items["folder-docs"].collapsed);
+    assert!(ws.is_selectable("tab-a"));
+    for op in &ops { replay.apply(op); }
+    assert_eq!(replay, ws);
+}

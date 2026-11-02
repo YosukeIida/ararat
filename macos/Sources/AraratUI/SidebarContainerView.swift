@@ -13,6 +13,9 @@ public final class SidebarContainerView: NSView {
     private var dwellTimer: Timer?
     private var sampling: CADisplayLink?
     private var menuTracking = false
+    private var libraryRevealedSidebar = false
+    private var maskingTransition = false
+    private var motionGeneration = 0
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
@@ -33,7 +36,6 @@ public final class SidebarContainerView: NSView {
         page.wantsLayer = true
         pageMask.fillRule = .evenOdd
         pageMask.actions = ["path": NSNull()]
-        page.layer?.mask = pageMask
         panel.material = .sidebar
         panel.blendingMode = .behindWindow
         panel.wantsLayer = true
@@ -56,6 +58,13 @@ public final class SidebarContainerView: NSView {
         ])
         sidebar.onLibraryChanged = { [weak self] open, scroll in
             guard let self else { return }
+            if open && self.state.mode == .hidden {
+                self.libraryRevealedSidebar = true
+                self.state.toggle()
+            } else if !open && self.libraryRevealedSidebar {
+                self.libraryRevealedSidebar = false
+                self.state.toggle()
+            }
             self.render(scroll ? .spaceSwitch : open ? .dockShow : .dockHide) {
                 self.resizeHandle.widthExtension = open ? SidebarMetrics.libraryWidthIncrease : 0
             }
@@ -68,6 +77,7 @@ public final class SidebarContainerView: NSView {
             guard let self else { return false }
             var collapsedState = self.state
             guard collapsedState.collapseDrag(pointerX: x) else { return false }
+            self.libraryRevealedSidebar = false
             self.resizeHandle.sidebarWidth = SidebarMetrics.minimumWidth
             self.state = collapsedState
             self.render(.dockHide)
@@ -80,6 +90,7 @@ public final class SidebarContainerView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     public func toggleSidebar() {
+        libraryRevealedSidebar = false
         state.toggle()
         render(state.mode == .docked ? .dockShow : .dockHide)
         processPointer()
@@ -117,6 +128,7 @@ public final class SidebarContainerView: NSView {
         panel.layer?.cornerRadius = docked ? 0 : SidebarMetrics.cornerRadius
         panel.layer?.masksToBounds = !docked
         panel.layer?.borderWidth = docked ? 0 : SidebarMetrics.borderWidth
+        page.layer?.mask = floating || maskingTransition ? pageMask : nil
         let path = CGMutablePath()
         path.addRect(page.bounds)
         path.addRect(convert(panel.frame, to: page))
@@ -139,6 +151,17 @@ public final class SidebarContainerView: NSView {
     private enum Motion { case dockShow, dockHide, floatingShow, floatingHide, spaceSwitch }
 
     private func render(_ motion: Motion, changes: () -> Void = {}) {
+        motionGeneration += 1
+        let generation = motionGeneration
+        maskingTransition = page.layer?.mask != nil || state.mode == .floating
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in
+                guard let self, self.motionGeneration == generation else { return }
+                self.finishMotion(scrolling: motion == .spaceSwitch)
+            }
+        }
+        defer { CATransaction.commit() }
         let oldMaskPath = (pageMask.presentation() as? CAShapeLayer)?.path ?? pageMask.path
         let views = [panel as NSView, page]
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
@@ -180,6 +203,12 @@ public final class SidebarContainerView: NSView {
         }
     }
 
+    func finishMotion(scrolling: Bool = false) {
+        maskingTransition = false
+        layout()
+        if !scrolling { sidebar.libraryDidLand() }
+    }
+
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         stopMonitoring()
@@ -201,6 +230,8 @@ public final class SidebarContainerView: NSView {
 
     @objc private func menuChanged(_ notification: Notification) {
         menuTracking = notification.name == NSMenu.didBeginTrackingNotification
+        sidebar.tooltip.menuTracking = menuTracking
+        if !menuTracking { sidebar.refreshPointer() }
         processPointer()
     }
 
@@ -229,7 +260,7 @@ public final class SidebarContainerView: NSView {
         let old = state.mode
         state.update(pointer: pointerLocation(), now: clock(),
                      window: window.frame, width: resizeHandle.displayedWidth, active: applicationActive(), key: windowKey?() ?? window.isKeyWindow,
-                     interacting: menuTracking || pressedButtons() != 0)
+                     interacting: menuTracking || pressedButtons() != 0 || sidebar.libraryOpen)
         if state.mode != old { render(state.mode == .floating ? .floatingShow : .floatingHide) }
         updateMonitoring()
     }

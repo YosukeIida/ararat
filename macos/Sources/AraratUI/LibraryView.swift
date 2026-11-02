@@ -43,6 +43,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     private let now: () -> Date
     private let calendar: Calendar
     private var archive: [ArchiveEntry] = []
+    private var dayObserver: (any NSObjectProtocol)?
 
     init(frame: NSRect, now: @escaping () -> Date = Date.init, calendar: Calendar = .autoupdatingCurrent) {
         self.now = now
@@ -108,6 +109,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         emptyState.isHidden = true
         emptyState.label.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize)
         emptyState.label.textColor = .secondaryLabelColor
+        emptyState.label.alignment = .center
         back.image = NSImage(systemSymbolName: "arrow.left", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.archiveIconSize, weight: .regular))
         back.imagePosition = .imageOnly
         back.isBordered = false
@@ -144,20 +146,25 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             scroll.bottomAnchor.constraint(equalTo: back.topAnchor, constant: -SidebarMetrics.archiveRowInset),
             emptyState.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            emptyState.topAnchor.constraint(equalTo: scroll.topAnchor),
+            emptyState.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             emptyState.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
             back.leadingAnchor.constraint(equalTo: search.leadingAnchor),
             back.bottomAnchor.constraint(equalTo: list.bottomAnchor, constant: -SidebarMetrics.libraryContentInset),
             back.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveBackHeight),
             back.widthAnchor.constraint(equalToConstant: SidebarMetrics.archiveBackHeight),
         ])
-        NotificationCenter.default.addObserver(self, selector: #selector(rebuild), name: .NSCalendarDayChanged, object: nil)
+        dayObserver = NotificationCenter.default.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuild() }
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(refreshRowHover), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         updateFill()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    isolated deinit {
+        if let dayObserver { NotificationCenter.default.removeObserver(dayObserver) }
+    }
     override var isFlipped: Bool { true }
 
     func isOverRail(_ event: NSEvent) -> Bool {
@@ -183,6 +190,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         needsGrouping = true
         rebuild()
     }
+    func focusSearch() { window?.makeFirstResponder(search) }
     func setSearchQuery(_ query: String) { search.stringValue = query; rebuild() }
     func controlTextDidChange(_ notification: Notification) { rebuild() }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

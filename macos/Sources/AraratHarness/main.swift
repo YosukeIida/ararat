@@ -182,6 +182,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             let viewMenu = NSMenu(title: "View")
             let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
             toggle.target = self
+            let library = viewMenu.addItem(withTitle: "Toggle Library", action: #selector(SidebarView.toggleLibrary(_:)), keyEquivalent: "l")
+            library.keyEquivalentModifierMask = [.command, .shift]
+            library.target = sidebar
             let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
             reset.target = self
             menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu

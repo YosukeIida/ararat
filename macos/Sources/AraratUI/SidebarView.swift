@@ -21,6 +21,7 @@ public final class SidebarView: NSView {
     public var onArchiveDelete: ((String) -> Void)?
     var onLibraryChanged: ((Bool, Bool) -> Void)?
     private(set) public var libraryOpen = false
+    private var libraryNeedsFocus = false
     private let library = LibraryView(frame: .zero)
     private let libraryButton = SidebarDockButton()
     private var mainColumn: NSStackView!
@@ -105,6 +106,7 @@ public final class SidebarView: NSView {
     public func creationFailed(_ message: String) { creation.finish(error: message) }
 
     @objc private func showNewSpaceMenu(_ sender: NSButton) {
+        tooltip.dismiss()
         newSpaceMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
     }
 
@@ -121,6 +123,7 @@ public final class SidebarView: NSView {
         finishRowMotion()
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
         libraryOpen = open
+        libraryNeedsFocus = open
         if open && library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton) }
         if !open && !scrolling { library.removeFromSuperview() }
         library.isHidden = !open
@@ -130,6 +133,13 @@ public final class SidebarView: NSView {
         libraryButton.setAccessibilityValue(open ? 1 : 0)
         if open { window?.makeFirstResponder(self) }
         onLibraryChanged?(open, scrolling)
+    }
+
+    func libraryDidLand() {
+        if libraryOpen && libraryNeedsFocus && !showingScrollPages {
+            libraryNeedsFocus = false
+            library.focusSearch()
+        }
     }
 
     public func applyRestore(snapshot: WorkspaceSnapshot) {
@@ -830,8 +840,7 @@ public final class SidebarView: NSView {
         CATransaction.setCompletionBlock { [weak self] in
             Task { @MainActor in
                 guard let self, self.scrollGeneration == generation else { return }
-                self.clearScrollPresentation()
-                self.refreshPointer()
+                self.finishScrollPresentation()
             }
         }
         for (view, origin) in scrollPages {
@@ -848,6 +857,12 @@ public final class SidebarView: NSView {
             view.layer?.add(spring, forKey: "space.scroll")
         }
         CATransaction.commit()
+    }
+
+    func finishScrollPresentation() {
+        clearScrollPresentation()
+        libraryDidLand()
+        refreshPointer()
     }
 
     private func clearScrollPresentation() {
