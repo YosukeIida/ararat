@@ -448,9 +448,12 @@ public final class SidebarView: NSView {
         tooltip.dismiss()
         guard window != nil && !isScrollPreview else { return }
         tooltip.capture(in: self)
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .flagsChanged]) { [weak self] event in
             MainActor.assumeIsolated {
-                if event.window === self?.window { self?.tooltip.dismiss() }
+                if event.window === self?.window {
+                    if event.type == .flagsChanged { self?.tooltip.flagsChanged(with: event) }
+                    else { self?.tooltip.dismiss() }
+                }
             }
             return event
         }

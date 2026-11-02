@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class SidebarTooltip {
     var clock: () -> CFTimeInterval = CACurrentMediaTime
+    var modifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
     var menuTracking = false { didSet { dismiss() } }
     private let texts = NSMapTable<NSView, NSString>.weakToStrongObjects()
     private weak var target: NSView?
@@ -11,6 +12,12 @@ final class SidebarTooltip {
     private(set) var idleTimer: Timer?
     private(set) var text: String?
     private let label = TooltipLabel(labelWithString: "")
+    var keycaps: [TooltipKeycap] { label.keycaps }
+
+    func flagsChanged(with event: NSEvent) {
+        guard text != nil else { return }
+        label.keycaps.forEach { $0.setPressed(event.modifierFlags.contains($0.modifier) && !$0.modifier.isEmpty) }
+    }
 
     init() {
         label.font = .systemFont(ofSize: 12, weight: .medium)
@@ -104,7 +111,30 @@ final class SidebarTooltip {
         label.layer?.removeAnimation(forKey: "tooltip.hide")
         label.stringValue = text
         label.sizeToFit()
-        let size = NSSize(width: min(root.bounds.width, label.frame.width + 20), height: 28)
+        label.keycaps.forEach { $0.removeFromSuperview() }
+        label.keycaps = []
+        let action = (target as? NSControl)?.action
+        let shortcutAction: Selector?
+        if let row = target.superview as? SidebarRowView, target === row.closeButton {
+            shortcutAction = row.closeShortcutAction
+        } else { shortcutAction = action }
+        if let shortcutAction, let item = Self.menuItem(for: shortcutAction, in: NSApp.mainMenu), !item.keyEquivalent.isEmpty {
+            var mask = item.keyEquivalentModifierMask
+            if item.keyEquivalent.rangeOfCharacter(from: .uppercaseLetters) != nil { mask.insert(.shift) }
+            for (flag, glyph) in [(NSEvent.ModifierFlags.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")] where mask.contains(flag) {
+                label.keycaps.append(TooltipKeycap(glyph, modifier: flag))
+            }
+            label.keycaps.append(TooltipKeycap(Self.keyGlyph(item.keyEquivalent), modifier: []))
+        }
+        let modifiers = modifierFlags()
+        var x = label.frame.width + (label.keycaps.isEmpty ? 10 : 18)
+        for cap in label.keycaps {
+            cap.frame = NSRect(x: x, y: 5, width: max(18, cap.intrinsicContentSize.width + 6), height: 18)
+            label.addSubview(cap)
+            cap.setPressed(!cap.modifier.isEmpty && modifiers.contains(cap.modifier))
+            x += cap.frame.width + 3
+        }
+        let size = NSSize(width: min(root.bounds.width, label.keycaps.isEmpty ? x + 10 : x + 7), height: 28)
         let cursor = root.convert(point, from: nil)
         label.frame = NSRect(x: min(max(0, cursor.x + 13), root.bounds.width - size.width),
                              y: min(max(0, cursor.y - 14 - size.height), root.bounds.height - size.height),
@@ -114,9 +144,76 @@ final class SidebarTooltip {
         label.alignment = .center
         if label.superview !== root { label.removeFromSuperview(); root.addSubview(label) }
     }
+
+    private static func menuItem(for action: Selector, in menu: NSMenu?) -> NSMenuItem? {
+        for item in menu?.items ?? [] {
+            if item.action == action, !item.keyEquivalent.isEmpty { return item }
+            if let found = menuItem(for: action, in: item.submenu) { return found }
+        }
+        return nil
+    }
+
+    private static func keyGlyph(_ key: String) -> String {
+        guard key.unicodeScalars.count == 1, let scalar = key.unicodeScalars.first else { return key.uppercased() }
+        switch scalar.value {
+        case 0x0d, 0x03: return "↩"
+        case 0x7f, 0x08: return "⌫"
+        case 0x09: return "⇥"
+        case 0x1b: return "⎋"
+        case 0x20: return "␣"
+        case UInt32(NSDeleteFunctionKey): return "⌦"
+        case UInt32(NSUpArrowFunctionKey): return "↑"
+        case UInt32(NSDownArrowFunctionKey): return "↓"
+        case UInt32(NSLeftArrowFunctionKey): return "←"
+        case UInt32(NSRightArrowFunctionKey): return "→"
+        case UInt32(NSPageUpFunctionKey): return "⇞"
+        case UInt32(NSPageDownFunctionKey): return "⇟"
+        case UInt32(NSHomeFunctionKey): return "↖"
+        case UInt32(NSEndFunctionKey): return "↘"
+        default: return key.uppercased()
+        }
+    }
 }
 
 @MainActor
 private final class TooltipLabel: NSTextField {
+    var keycaps: [TooltipKeycap] = []
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        backgroundColor?.setFill()
+        bounds.fill()
+        let attributes: [NSAttributedString.Key: Any] = [.font: font!, .foregroundColor: textColor!]
+        let size = stringValue.size(withAttributes: attributes)
+        stringValue.draw(at: NSPoint(x: 10, y: (bounds.height - size.height) / 2), withAttributes: attributes)
+    }
+}
+
+@MainActor
+final class TooltipKeycap: NSTextField {
+    let modifier: NSEvent.ModifierFlags
+    private(set) var pressed = false
+
+    init(_ text: String, modifier: NSEvent.ModifierFlags) {
+        self.modifier = modifier
+        super.init(frame: .zero)
+        stringValue = text
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        font = .systemFont(ofSize: 11, weight: .medium)
+        alignment = .center
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        setAccessibilityHidden(true)
+        setPressed(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func setPressed(_ value: Bool) {
+        pressed = value
+        frame.origin.y = value ? 4 : 5
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(value ? 0.18 : 0.08).cgColor
+    }
 }

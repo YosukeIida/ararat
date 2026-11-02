@@ -8,6 +8,7 @@ final class SidebarRowView: NSView {
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
     let closeButton = NSButton()
+    var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
     var pinned = false { didSet { updateCloseButton() } }
     private var trackingPress = false
     private(set) var pressed = false { didSet { updateFill() } }

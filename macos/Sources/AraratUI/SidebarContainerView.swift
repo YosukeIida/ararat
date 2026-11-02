@@ -16,6 +16,8 @@ public final class SidebarContainerView: NSView {
     private var libraryRevealedSidebar = false
     private var maskingTransition = false
     private var motionGeneration = 0
+    private var moving = false
+    private var windowButtons: SidebarWindowButtons?
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
@@ -121,6 +123,7 @@ public final class SidebarContainerView: NSView {
         let x: CGFloat = docked ? 0 : floating ? SidebarMetrics.floatingInset : -width
         let inset: CGFloat = docked ? 0 : SidebarMetrics.floatingInset
         panel.frame = NSRect(x: x, y: inset, width: width, height: max(0, bounds.height - inset * 2))
+        windowButtons?.frame.origin = NSPoint(x: 12.5, y: panel.bounds.height - 30.5)
         let pageX: CGFloat = docked ? width : SidebarMetrics.cardInset
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
@@ -134,6 +137,8 @@ public final class SidebarContainerView: NSView {
         path.addRect(convert(panel.frame, to: page))
         pageMask.path = path
         panel.setAccessibilityHidden(state.mode == .hidden)
+        windowButtons?.sidebarHidden = state.mode == .hidden && !moving
+        windowButtons?.isHidden = window?.styleMask.contains(.fullScreen) == true || windowButtons?.sidebarHidden == true
         updateBorder()
     }
 
@@ -151,6 +156,7 @@ public final class SidebarContainerView: NSView {
     private enum Motion { case dockShow, dockHide, floatingShow, floatingHide, spaceSwitch }
 
     private func render(_ motion: Motion, changes: () -> Void = {}) {
+        moving = true
         motionGeneration += 1
         let generation = motionGeneration
         maskingTransition = page.layer?.mask != nil || state.mode == .floating
@@ -167,6 +173,21 @@ public final class SidebarContainerView: NSView {
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
         changes()
         layout()
+        if let lights = windowButtons, let layer = lights.layer {
+            let previous = layer.presentation()?.opacity ?? 1
+            layer.removeAnimation(forKey: "sidebar.lights")
+            if motion != .spaceSwitch {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = previous
+                fade.toValue = state.mode == .hidden ? 0 : 1
+                fade.duration = motion == .dockShow || motion == .floatingShow ? SidebarMetrics.dockShowDuration
+                    : motion == .dockHide ? SidebarMetrics.dockHideDuration : SidebarMetrics.floatingHideDuration
+                fade.timingFunction = SidebarMetrics.easeOutCubic
+                fade.fillMode = .forwards
+                fade.isRemovedOnCompletion = false
+                layer.add(fade, forKey: "sidebar.lights")
+            }
+        }
         pageMask.removeAnimation(forKey: "sidebar.mask")
         for (view, previous) in zip(views, old) {
             guard let layer = view.layer, let previous else { continue }
@@ -204,6 +225,8 @@ public final class SidebarContainerView: NSView {
     }
 
     func finishMotion(scrolling: Bool = false) {
+        moving = false
+        windowButtons?.layer?.removeAnimation(forKey: "sidebar.lights")
         maskingTransition = false
         layout()
         if !scrolling { sidebar.libraryDidLand() }
@@ -213,7 +236,19 @@ public final class SidebarContainerView: NSView {
         super.viewDidMoveToWindow()
         stopMonitoring()
         NotificationCenter.default.removeObserver(self)
+        let previousWindow = windowButtons?.browserWindow as? BrowserWindow
+        windowButtons?.removeFromSuperview()
+        windowButtons = nil
+        previousWindow?.sidebarLights = nil
+        previousWindow?.layoutIfNeeded()
         guard let window else { return }
+        if let window = window as? BrowserWindow {
+            let buttons = SidebarWindowButtons(window: window)
+            windowButtons = buttons
+            panel.addSubview(buttons)
+            window.sidebarLights = buttons
+            window.layoutIfNeeded()
+        }
         window.acceptsMouseMovedEvents = true
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: nil)

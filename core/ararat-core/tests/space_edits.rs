@@ -140,6 +140,35 @@ fn concurrent_item_puts_into_deleted_roots_repair_into_the_first_surviving_today
 }
 
 #[test]
+fn orphaned_live_folders_keep_their_children_in_both_id_orders() {
+    for (folder_id, child_id) in [("zz-folder", "aa-child"), ("aa-folder", "zz-child")] {
+        for lifecycle in [Lifecycle::Open, Lifecycle::Unloaded, Lifecycle::Archived] {
+            let mut ws = workspace();
+            ws.delete_space("space-work").unwrap();
+            let mut folder = ws.items["folder-docs"].clone();
+            folder.id = folder_id.into();
+            folder.lifecycle = lifecycle.clone();
+            folder.membership.parent = Some("today-work".into());
+            let mut child = ws.items["tab-spec"].clone();
+            child.id = child_id.into();
+            child.lifecycle = Lifecycle::Open;
+            child.membership.parent = Some(folder_id.into());
+            for item in [folder, child] { ws.apply(&Op::Put(Record::Item(item))); }
+            ws.repair_tree();
+            ws.check_tree().unwrap();
+            if lifecycle == Lifecycle::Archived {
+                assert_eq!(ws.items[child_id].membership.parent.as_deref(), Some("today-home"));
+            } else {
+                assert_eq!(ws.items[folder_id].membership.parent.as_deref(), Some("today-home"));
+                assert_eq!(ws.items[child_id].membership.parent.as_deref(), Some(folder_id));
+                assert!(ws.outline("today-home").iter().any(|(depth, item)| *depth == 1 && item.id == child_id));
+            }
+            assert!(ws.repair_tree().is_empty());
+        }
+    }
+}
+
+#[test]
 fn deletion_then_local_rename_or_reorder_is_rejected_without_resurrection() {
     for edit in [0, 1] {
         let mut ws = workspace(); ws.delete_space("space-work").unwrap(); let deleted = ws.clone();
