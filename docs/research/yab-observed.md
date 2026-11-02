@@ -62,6 +62,35 @@ Panes relevant to Ararat's workspace and sidebar:
 
 The preference file stores only values that differ from the defaults. Its key names include `sidebar`, `sidebar.shut`, `space.current`, `pins.everySpace`, `tabs.todayEveryWindow`, `backdrop`, `backdrop.color`, `backdrop.grain`, `backdrop.grain.amount`, `reader.mode`, `reader.style`, `addressbar` and `live-folders.enabled`. Only key names and types were read, never values.
 
+### Measured geometry (Yab 0.42.1, 2026-11-02, light, 1x display, window captures)
+
+Window 760 × 540 pt, full-size content (traffic lights over the pane list).
+
+- Pane list: 180 pt wide, no divider line against the detail; inactive tint 243/242/241.
+- Search field: x 10–170, y 60–91 (161 × 32), pill (radius 16), fill 236/235/234.
+- Pane rows: 160 × 26, x 10, pitch 28; selection fill 215, radius about 6; icon at x 18–34, label at x 44. Groups are separated by 14 extra points (Shortcuts → AI).
+- Toolbar: 52 pt tall over the detail only, a 1 pt hairline (229) under it. Back/forward: one capsule x 187–262, y 8–43 (76 × 36), divided in two; back is enabled once a page was pushed.
+- Detail: cards from x 199 to 739 (19 pt from the pane list, 20 from the right edge), first card 19 pt under the hairline, 10 pt between cards, radius 12, fill 247 on white. Rows inside a card: 54 pt for title + subtitle, 60 with an icon; hairline separators (235) inset 10 pt from the card edges.
+- Pane pages open with a header: a 56 pt icon, a bold title and a one-line subtitle, centred. When the page scrolls, the header fades into the toolbar's title.
+- Spaces pane: one card, a 44 pt row per space: drag handle, space icon, name, "N tabs · its own sign-ins", the switch shortcut as key caps (⌃N), a chevron. The row pushes the space's own page.
+- Per-space page: header (icon, name, "N tabs · ⌃N"), then cards: Name (text field), Icon, Look (colour and texture), Search with, Sign-ins, Save downloads to, Delete Space ("Its tab closes; ⇧⌘T brings it back."). Every per-space setting carries a small "This space" caption under its subtitle.
+- Search: typing replaces the pane list with results grouped under pane headers (pane icon + name, then result rows indented to the label column and truncated); the first result is selected. Clicking a result opens its pane, scrolls to the row and fills that row with the selection grey (215, inset 3 pt inside the card); the highlight appears at once and stays (still there after 4 s). The toolbar gets a search button and a Filters menu while results show.
+
+Dark (Yab's Theme set to Dark for the capture, then back to Light; Window style "A color", so the greys carry the space's warm tint): geometry is identical. Colours (light → dark): pane list 243/242/241 → 46/41/39; detail 255 → 41/39/37; card 247 → 47/45/44; card separator 235 → 57/55/54; pane selection and search-hit highlight 215 → 61/61/61; search field 236/235/234 → 75/69/65; back/forward capsule 240 → 70/67/65. The toolbar hairline (229 in light) is not drawn in dark: the toolbar and the detail share one colour. Dark rows read as a lighter card on a darker page, the same order as light.
+
+### Look popover (per-space page › Look, 2026-11-02; opened and read only, nothing changed)
+
+A popover about 288 pt wide anchored on the Look row's colour ring, arrow pointing right at it. From the top:
+- Colour field (about 266 × 197 pt, rounded): a grid of dots whose hue runs left to right and lightness top to bottom; the chosen colour is a 30 pt white-rimmed handle, dots near the handle grow (a lens). Over the field's top edge sit three mode buttons (sparkle = automatic, sun = light, moon = dark) and a "…" button whose menu has one item, "Use for All Spaces".
+- − and + under the field (remove / add a colour handle; the owner's Arc screenshot shows the same pair with two handles).
+- A row of 9 preset swatches with ‹ › paging.
+- A wave slider (the line's waviness grows to the right) with a colour dot at its right end.
+- A grain slider (scattered dots, sparse to dense).
+- "Take the site's color" toggle: "Pages that have one tint a color of yours."
+- Drawings: None, Browser, Life, Halloween (thumbnails of a pattern drawn over the colour).
+The preference file's key names for the default look are `backdrop`, `backdrop.color`, `backdrop.grain`, `backdrop.grain.amount` (names and types only).
+Owner's captures (2026-11-02): dragging the wave slider shows a value tag ("Transparency 90%"), so the wave slider is transparency in percent; the round bead at its right end is labelled "Glass" on hover (Yab's manual: past the end of the track the window becomes Liquid Glass).
+
 ## 3. Points for Ararat
 
 - The owner chose Arc's values and rules over Yab's for §7's floating sidebar (`arc-ardia-observed.md`). Yab's values here stay as the comparison.
