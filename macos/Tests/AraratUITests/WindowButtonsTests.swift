@@ -240,6 +240,8 @@ func floatingLightsResumeFromMidHideOpacity() throws {
     #expect(show.duration == SidebarMetrics.dockShowDuration)
     #expect(show.timingFunction == SidebarMetrics.easeOutCubic)
     #expect(layer.opacity == 1)
+    container.finishMotion()
+    #expect(layer.animation(forKey: "sidebar.lights") == nil)
     #expect(!window.isVisible)
 }
 

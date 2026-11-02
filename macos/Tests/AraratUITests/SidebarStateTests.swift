@@ -132,7 +132,7 @@ func widthChangesRelayoutACleanContainerWithoutToggling() {
     container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
     container.layoutSubtreeIfNeeded()
     #expect(!container.needsLayout)
-    let panel = container.subviews.compactMap { $0 as? NSVisualEffectView }.first!
+    let panel = container.subviews.compactMap { $0 as? SidebarPanelView }.first!
     for width: CGFloat in [320, 164] {
         container.resizeHandle.sidebarWidth = width
         #expect(panel.frame.width == width)
@@ -163,7 +163,7 @@ func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
     container.layoutSubtreeIfNeeded()
     #expect(page.frame == NSRect(x: 240, y: 10, width: 850, height: 700))
     container.toggleSidebar()
-    let panel = container.subviews.compactMap { $0 as? NSVisualEffectView }.first!
+    let panel = container.subviews.compactMap { $0 as? SidebarPanelView }.first!
     #expect(panel.frame == NSRect(x: 5, y: 5, width: 240, height: 710))
     #expect(panel.layer?.cornerCurve == .continuous)
     #expect(panel.layer?.cornerRadius == 11)

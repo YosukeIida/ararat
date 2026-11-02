@@ -87,7 +87,7 @@ func inactiveHoverCannotReuseTheEarlierDwell() {
 func floatingAnimationReplacementKeepsTheLatestModelState() throws {
     let (window, _, container, page) = floatingFixture()
     defer { window.contentView = nil }
-    let panel = try #require(container.subviews.compactMap { $0 as? NSVisualEffectView }.first)
+    let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
     var now = 0.0
     var point = NSPoint(x: window.frame.minX, y: window.frame.midY)
     container.clock = { now }
@@ -148,7 +148,7 @@ func floatingCornersExposeTheBackdropInsteadOfThePage() throws {
     container.toggleSidebar()
     now = 0.150
     container.processPointer()
-    let panel = try #require(container.subviews.compactMap { $0 as? NSVisualEffectView }.first)
+    let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
     container.layer?.removeAllAnimations()
     page.layer?.removeAllAnimations()
     panel.layer?.removeAllAnimations()
@@ -191,7 +191,7 @@ func floatingPageMaskTracksRevealAndLibraryWidth() throws {
         container.toggleSidebar()
         now = 0.150
         container.processPointer()
-        let panel = try #require(container.subviews.compactMap { $0 as? NSVisualEffectView }.first)
+        let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
         if widening {
             panel.layer?.removeAllAnimations()
             page.layer?.removeAllAnimations()

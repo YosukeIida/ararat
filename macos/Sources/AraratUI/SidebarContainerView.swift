@@ -4,7 +4,7 @@ import AppKit
 public final class SidebarContainerView: NSView {
     private let sidebar: SidebarView
     private let page: NSView
-    private let panel = NSVisualEffectView()
+    private let panel = SidebarPanelView()
     private let pageMask = CAShapeLayer()
     public let resizeHandle: SidebarResizeHandle
     private var state = SidebarState()
@@ -38,8 +38,6 @@ public final class SidebarContainerView: NSView {
         page.wantsLayer = true
         pageMask.fillRule = .evenOdd
         pageMask.actions = ["path": NSNull()]
-        panel.material = .sidebar
-        panel.blendingMode = .behindWindow
         panel.wantsLayer = true
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
@@ -71,6 +69,10 @@ public final class SidebarContainerView: NSView {
                 self.resizeHandle.widthExtension = open ? SidebarMetrics.libraryWidthIncrease : 0
             }
         }
+        sidebar.onLookChanged = { [weak self] from, to, fraction in
+            self?.panel.updateLook(from, to, fraction: fraction)
+        }
+        sidebar.refreshLook()
         resizeHandle.onWidthChanged = { [weak self] in
             self?.needsLayout = true
             self?.layoutSubtreeIfNeeded()

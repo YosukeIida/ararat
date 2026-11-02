@@ -28,6 +28,11 @@ public final class SidebarView: NSView {
     var libraryPage: String { library.page.rawValue }
     public var onShowSpace: ((String) -> Void)?
 
+    var onLookChanged: ((Look?, Look?, Double) -> Void)?
+    private(set) var lookSampling: CADisplayLink?
+    private var libraryLookSpaceID: String?
+    private var creationLookSpaceID: String?
+
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
@@ -86,6 +91,7 @@ public final class SidebarView: NSView {
         if open && libraryOpen { setLibraryOpen(false, scrolling: scrolling) }
         finishRowMotion()
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
+        if open { creationLookSpaceID = snapshotSpace?.id }
         createSpaceOpen = open
         if open && creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
         if !open && !scrolling { creation.removeFromSuperview() }
@@ -93,6 +99,7 @@ public final class SidebarView: NSView {
         creation.active = open
         mainColumn.isHidden = open || libraryOpen
         if open { creation.begin(profileName: snapshotSpace?.profileName ?? "Default") }
+        refreshLook()
         onCreatePageChanged?()
     }
 
@@ -122,6 +129,7 @@ public final class SidebarView: NSView {
         if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
         finishRowMotion()
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
+        if open { libraryLookSpaceID = snapshotSpace?.id }
         libraryOpen = open
         libraryNeedsFocus = open
         if open && library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton) }
@@ -132,6 +140,7 @@ public final class SidebarView: NSView {
         mainColumn.isHidden = open || createSpaceOpen
         libraryButton.setAccessibilityValue(open ? 1 : 0)
         if open { window?.makeFirstResponder(self) }
+        refreshLook()
         onLibraryChanged?(open, scrolling)
     }
 
@@ -446,7 +455,11 @@ public final class SidebarView: NSView {
         super.viewDidMoveToWindow()
         if let clickMonitor { removeClickMonitor(clickMonitor); self.clickMonitor = nil }
         tooltip.dismiss()
-        guard window != nil && !isScrollPreview else { return }
+        guard window != nil && !isScrollPreview else {
+            lookSampling?.invalidate()
+            lookSampling = nil
+            return
+        }
         tooltip.capture(in: self)
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .flagsChanged]) { [weak self] event in
             MainActor.assumeIsolated {
@@ -511,6 +524,7 @@ public final class SidebarView: NSView {
     }
 
     private func reload() {
+        defer { refreshLook() }
         let space = snapshotSpace
         header.stringValue = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
         let pinned = space?.pinned ?? []
@@ -745,11 +759,14 @@ public final class SidebarView: NSView {
         case .pull:
             playWheelPull(from: Double(offset ?? 0))
         case .follow(let offset):
+            lookSampling?.invalidate()
+            lookSampling = nil
             listScroll.stopReveal()
             stopPullAnimation()
             scrollGeneration += 1
             for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
             prepareScrollPages(offset: offset)
+            refreshLook(offset: offset)
             for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
             pullIndicator.update(excess: spaceScroll.followedExcess)
         case .settle(let index, let offset, let switched):
@@ -789,6 +806,7 @@ public final class SidebarView: NSView {
         guard !spaceViewport.bounds.isEmpty, spacePagePitch > 0 else { return }
         let libraryX = libraryPageOrigin + offset
         if !libraryOpen && libraryX > -spacePagePitch && libraryX < spacePagePitch {
+            if library.isHidden || library.superview == nil { libraryLookSpaceID = snapshotSpace?.id }
             if library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton); library.frame = bounds }
             library.isHidden = false
             library.update(archive: snapshot.archive)
@@ -833,7 +851,31 @@ public final class SidebarView: NSView {
         window?.displayIfNeeded()
     }
 
+    func refreshLook(offset: Double = 0) {
+        guard let onLookChanged else { return }
+        let position = Double(scrollPageIndex) - (spacePagePitch > 0 ? offset / spacePagePitch : 0)
+        let lower = Int(floor(position))
+        func look(at index: Int) -> Look? {
+            if snapshot.spaces.indices.contains(index) { return snapshot.spaces[index].look }
+            let id = index < 0 ? libraryLookSpaceID : creationLookSpaceID
+            return (snapshot.spaces.first { $0.id == id } ?? snapshotSpace)?.look
+        }
+        let fraction = position - Double(lower)
+        onLookChanged(look(at: lower), look(at: fraction == 0 ? lower : lower + 1), fraction)
+    }
+
+    @objc private func sampleLook() {
+        let view: NSView = libraryOpen ? library : createSpaceOpen ? creation : spaceColumn
+        refreshLook(offset: Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0))
+    }
+
     private func settleScroll(from offset: Double, switched: Bool) {
+        refreshLook(offset: offset)
+        lookSampling?.invalidate()
+        if onLookChanged != nil, window != nil {
+            lookSampling = displayLink(target: self, selector: #selector(sampleLook))
+            lookSampling?.add(to: .main, forMode: .common)
+        }
         scrollGeneration += 1
         let response = switched ? SidebarMetrics.spaceSwitchResponse : SidebarMetrics.spaceReturnResponse
         let damping = switched ? SidebarMetrics.spaceSwitchDamping : SidebarMetrics.spaceReturnDamping
@@ -869,6 +911,9 @@ public final class SidebarView: NSView {
     }
 
     private func clearScrollPresentation() {
+        lookSampling?.invalidate()
+        lookSampling = nil
+        refreshLook()
         stopPullAnimation()
         pullIndicator.update(excess: 0)
         scrollGeneration += 1
@@ -943,6 +988,7 @@ public final class SidebarView: NSView {
             let position = raw < 0 ? SpaceScrollState.rubberBand(raw) : raw
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            self.refreshLook(offset: position)
             for (view, origin) in self.scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + position, 0, 0) }
             self.pullIndicator.update(excess: -followed)
             CATransaction.commit()
