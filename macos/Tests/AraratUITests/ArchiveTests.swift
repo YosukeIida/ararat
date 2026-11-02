@@ -143,7 +143,13 @@ func archiveBackArrowClosesTheLibrary() throws {
     sidebar.setLibraryOpen(true)
     sidebar.layoutSubtreeIfNeeded()
     let back = try #require(archiveDescendants(sidebar).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Exit Library" })
-    #expect(back.toolTip == "Exit Library")
+    #expect(back.toolTip == nil)
+    var now = 0.0
+    sidebar.tooltip.clock = { now }
+    sidebar.tooltip.update(target: back, point: .zero)
+    now = 1.6
+    sidebar.tooltip.update(target: back, point: .zero)
+    #expect(sidebar.tooltip.text == "Exit Library")
     back.performClick(nil)
     #expect(!sidebar.libraryOpen)
 }

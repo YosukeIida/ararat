@@ -59,6 +59,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ (id, try self.opened().closeItem(windowId: self.windowID, id: id)) }, completion: completion)
     }
 
+    public func archive(id: String, completion: @escaping Completion<Change>) {
+        enqueue({ (id, try self.opened().archiveItem(windowId: self.windowID, id: id)) }, completion: completion)
+    }
+
     public func closeSelected(completion: @escaping Completion<Change>) {
         enqueue({
             let store = try self.opened()

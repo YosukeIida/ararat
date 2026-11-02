@@ -159,13 +159,25 @@ impl Workspace {
     }
 
     pub fn close_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        self.finish_item(id, false)
+    }
+
+    pub fn archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })) {
+            return Err(EditError(format!("item {id} is not a tab")));
+        }
+        self.finish_item(id, true)
+    }
+
+    fn finish_item(&mut self, id: &str, archive: bool) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let item = self.items.get(id).ok_or_else(|| EditError(format!("unknown item {id}")))?;
         if !matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }) || !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
             return Err(EditError(format!("item {id} is not an open tab or split")));
         }
         let (root, today) = self.list_for(id).ok_or_else(|| EditError(format!("item {id} is not a workspace tab or split")))?;
-        if !today && item.lifecycle == Lifecycle::Unloaded { return Err(EditError(format!("item {id} is already unloaded"))); }
+        if !today && !archive && item.lifecycle == Lifecycle::Unloaded { return Err(EditError(format!("item {id} is already unloaded"))); }
+        let today = today || archive;
         let outline = self.outline_entries(root);
         let position = outline.iter().position(|(_, item, _)| item.id == id).unwrap();
         let mut changing = HashSet::from([id.to_string()]);
@@ -186,7 +198,7 @@ impl Workspace {
         let mut ops: Vec<_> = outline.iter().filter(|(_, item, _)| changing.contains(&item.id) && (item.lifecycle == Lifecycle::Open || (today && item.lifecycle == Lifecycle::Unloaded)))
             .map(|(_, item, _)| {
                 let mut changed = (*item).clone();
-                changed.lifecycle = if today { Lifecycle::Closed } else { Lifecycle::Unloaded };
+                changed.lifecycle = if archive { Lifecycle::Archived } else if today { Lifecycle::Closed } else { Lifecycle::Unloaded };
                 changed.lifecycle_changed_at = changed_at;
                 Op::Put(Record::Item(changed))
             }).collect();

@@ -195,7 +195,8 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
     let sidebar = closeSidebar(selected)
     let survivor = try #require(closeViews(sidebar).first { $0.row.id == "d" })
     var failure: Error?
-    sidebar.onClose = { [weak sidebar] id in
+    sidebar.onCloseSelected = { [weak sidebar] in
+        guard let id = sidebar?.selectedRowID else { return }
         do { sidebar?.applyClose(id: id, snapshot: try store.closeItem(windowId: "test", id: id)) }
         catch { failure = error }
     }

@@ -373,3 +373,16 @@ fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone(
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), remaining);
 }
+
+#[test]
+fn archive_pinned_tab_survives_reopen() {
+    let path = fresh_db("archive-pin").display().to_string();
+    let store = WorkspaceStore::open(path.clone()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into()).unwrap();
+    store.select_item("test".into(), "tab-spec".into()).unwrap();
+    let archived = store.archive_item("test".into(), "tab-spec".into()).unwrap();
+    assert!(!archived.spaces[0].pinned.iter().any(|row| row.id == "tab-spec"));
+    assert!(archived.archive.iter().any(|row| row.id == "tab-spec"));
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("test".into()), archived);
+}

@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 class SidebarScrollView: NSScrollView {
     var onScroll: ((NSEvent) -> Bool)?
+    var onBoundsChanged: (() -> Void)?
     private let topHairline = CALayer()
     private let bottomHairline = CALayer()
     var clock: () -> CFTimeInterval = CACurrentMediaTime
@@ -37,7 +38,7 @@ class SidebarScrollView: NSScrollView {
         updateHairlines()
     }
 
-    @objc private func boundsChanged() { updateHairlines() }
+    @objc private func boundsChanged() { updateHairlines(); onBoundsChanged?() }
 
     func updateHairlines() {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua

@@ -61,7 +61,7 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
             replies += 1
             if replies == 2 { done.resume(returning: changes) }
         }
-        sidebar.onClose = { _ in adapter.closeSelected(completion: apply) }
+        sidebar.onCloseSelected = { adapter.closeSelected(completion: apply) }
         let menu = NSMenu()
         let close = menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")
         close.target = sidebar

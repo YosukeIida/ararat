@@ -82,7 +82,7 @@ func addingSpaceDockButtonsKeepsTheSidebarWidthAndShowsTheSelectedSpace() throws
     sidebar.frame = NSRect(x: 0, y: 0, width: 178, height: 720)
     sidebar.layoutSubtreeIfNeeded()
     #expect(sidebar.frame.width == 178)
-    let selected = try #require(creationDescendants(sidebar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Space 11" })
+    let selected = try #require(creationDescendants(sidebar).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Space 11" })
     let dock = try #require(selected.superview)
     let scroll = try #require(dock.enclosingScrollView)
     #expect(scroll.documentVisibleRect.contains(selected.frame))

@@ -123,11 +123,27 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        sidebar.onClose = { [weak self] _ in
+        sidebar.onClose = { [weak self] id in
+            guard let self, !self.terminating else { return }
+            self.adapter.close(id: id) { [weak self] result in
+                if let error = self?.publishChange(result) {
+                    FileHandle.standardError.write(Data("cannot close tab: \(error)\n".utf8))
+                }
+            }
+        }
+        sidebar.onCloseSelected = { [weak self] in
             guard let self, !self.terminating else { return }
             self.adapter.closeSelected { [weak self] result in
                 if let error = self?.publishChange(result) {
                     FileHandle.standardError.write(Data("cannot close tab: \(error)\n".utf8))
+                }
+            }
+        }
+        sidebar.onArchive = { [weak self] id in
+            guard let self, !self.terminating else { return }
+            self.adapter.archive(id: id) { [weak self] result in
+                if let error = self?.publishChange(result) {
+                    FileHandle.standardError.write(Data("cannot archive tab: \(error)\n".utf8))
                 }
             }
         }

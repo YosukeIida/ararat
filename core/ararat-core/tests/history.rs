@@ -219,3 +219,38 @@ fn a_profile_favorite_is_a_candidate_in_each_space_of_that_profile() {
     ws.close_item("y0").unwrap();
     assert_eq!(ws.selected("one"), Some("tab-mail"));
 }
+
+#[test]
+fn consecutive_pinned_closes_never_ping_pong() {
+    let mut ws = workspace();
+    for id in ["y0", "y1"] { ws.items.get_mut(id).unwrap().membership.parent = Some("pin-work".into()); }
+    for id in ["y2", "y0", "y1"] { ws.select_item("one", id).unwrap(); }
+    ws.close_item("y1").unwrap();
+    assert_eq!(ws.selected("one"), Some("y0"));
+    ws.close_item("y0").unwrap();
+    assert_eq!(ws.selected("one"), Some("y2"));
+    assert_eq!(ws.items["y0"].lifecycle, Lifecycle::Unloaded);
+    assert_eq!(ws.items["y1"].lifecycle, Lifecycle::Unloaded);
+}
+
+#[test]
+fn archive_pin_removes_open_and_unloaded_pins_and_replays() {
+    for unloaded in [false, true] {
+        let mut ws = workspace();
+        ws.select_item("one", "y0").unwrap();
+        ws.select_item("one", "tab-spec").unwrap();
+        if unloaded { ws.close_item("tab-spec").unwrap(); }
+        let mut replay = ws.clone();
+        let ops = ws.archive_item("tab-spec").unwrap();
+        for op in &ops { replay.apply(op); }
+        assert_eq!(ws, replay);
+        assert_eq!(ws.items["tab-spec"].lifecycle, Lifecycle::Archived);
+        assert_eq!(ws.selected("one"), Some("y0"));
+        assert!(!ws.outline("pin-work").iter().any(|(_, item)| item.id == "tab-spec"));
+        let before = ws.clone();
+        for id in ["missing", "folder-docs", "split-1", "tab-spec"] {
+            assert!(ws.archive_item(id).is_err());
+            assert_eq!(ws, before);
+        }
+    }
+}

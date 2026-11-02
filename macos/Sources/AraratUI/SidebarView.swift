@@ -12,6 +12,11 @@ public final class SidebarView: NSView {
     private var scrollPageIndex: Int { libraryOpen ? -1 : createSpaceOpen ? snapshot.spaces.count : spaceIndex }
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
+    public var onCloseSelected: (() -> Void)?
+    public var onArchive: ((String) -> Void)?
+    let tooltip = SidebarTooltip()
+    private var clickMonitor: Any?
+    var removeClickMonitor: (Any) -> Void = NSEvent.removeMonitor
     public var onRestore: ((String) -> Void)?
     public var onArchiveDelete: ((String) -> Void)?
     var onLibraryChanged: ((Bool, Bool) -> Void)?
@@ -119,6 +124,7 @@ public final class SidebarView: NSView {
         if !open && !scrolling { library.removeFromSuperview() }
         library.isHidden = !open
         library.update(archive: snapshot.archive)
+        tooltip.capture(in: library)
         mainColumn.isHidden = open || createSpaceOpen
         libraryButton.setAccessibilityValue(open ? 1 : 0)
         if open { window?.makeFirstResponder(self) }
@@ -144,6 +150,7 @@ public final class SidebarView: NSView {
         finishRowMotion()
         replaceSnapshot(snapshot)
         library.update(archive: snapshot.archive)
+        tooltip.capture(in: library)
         layoutSubtreeIfNeeded()
         rowViews.values.forEach { $0.refreshHover() }
     }
@@ -161,6 +168,7 @@ public final class SidebarView: NSView {
         if self.snapshot.spaces == snapshot.spaces { self.snapshot = snapshot; updateSelection(id: snapshot.selectedId) }
         else { replaceSnapshot(snapshot) }
         library.update(archive: snapshot.archive)
+        tooltip.capture(in: library)
         if selectionChanged { revealSelection() }
     }
 
@@ -179,14 +187,17 @@ public final class SidebarView: NSView {
         spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
         selectedID = snapshot.selectedId
         library.update(archive: snapshot.archive)
+        tooltip.capture(in: library)
         reload()
         layoutSubtreeIfNeeded()
         if wasScrolled, let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
             listScroll.move(to: listScroll.documentView!.convert(row.bounds, from: row).minY - anchor.1)
         }
+        refreshPointer()
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
+        let selectionChanged = selectedID != snapshot.selectedId
         clearScrollPresentation()
         layoutSubtreeIfNeeded()
         let oldFrames = rowViews.mapValues { presentedFrame($0) }
@@ -215,6 +226,7 @@ public final class SidebarView: NSView {
             view.layer?.add(animation, forKey: "row.close.move")
         }
         CATransaction.commit()
+        if selectionChanged { revealSelection() }
     }
 
     private func presentedFrame(_ view: NSView) -> NSRect {
@@ -243,7 +255,7 @@ public final class SidebarView: NSView {
     @objc public func closeSelectedTab(_ sender: Any?) {
         guard let id = selectedID,
               snapshot.spaces.contains(where: { ($0.favorites + $0.pinned + $0.today).contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
-        onClose?(id)
+        onCloseSelected?()
     }
 
     public func showSpace(at index: Int) {
@@ -254,6 +266,7 @@ public final class SidebarView: NSView {
         spaceIndex = index
         reload()
         revealSelection()
+        refreshPointer()
         onShowSpace?(snapshot.spaces[index].id)
     }
 
@@ -284,6 +297,7 @@ public final class SidebarView: NSView {
         rows.alignment = .leading
 
         let scroll = listScroll
+        scroll.onBoundsChanged = { [weak self] in self?.refreshPointer() }
         scroll.onScroll = { [weak self, weak scroll] event in self?.handleSpaceScroll(event, from: scroll) ?? false }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -370,6 +384,7 @@ public final class SidebarView: NSView {
         ])
         library.isHidden = true
         library.update(archive: snapshot.archive)
+        tooltip.capture(in: library)
         library.autoresizingMask = [.width, .height]
         library.onRestore = { [weak self] id in self?.onRestore?(id) }
         library.onDelete = { [weak self] id in self?.onArchiveDelete?(id) }
@@ -412,6 +427,45 @@ public final class SidebarView: NSView {
         ])
         updateFill()
         addSubview(pullIndicator)
+    }
+
+    isolated deinit {
+        if let clickMonitor { removeClickMonitor(clickMonitor) }
+        tooltip.dismiss()
+    }
+
+    override public func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let clickMonitor { removeClickMonitor(clickMonitor); self.clickMonitor = nil }
+        tooltip.dismiss()
+        guard window != nil && !isScrollPreview else { return }
+        tooltip.capture(in: self)
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                if event.window === self?.window { self?.tooltip.dismiss() }
+            }
+            return event
+        }
+    }
+
+    override public func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override public func mouseMoved(with event: NSEvent) { refreshPointer() }
+    override public func mouseEntered(with event: NSEvent) { refreshPointer() }
+    override public func mouseExited(with event: NSEvent) { tooltip.update(target: nil, point: nil) }
+
+    func refreshPointer() {
+        for row in rowViews.values { row.refreshHover() }
+        let point = window?.isKeyWindow == true ? window?.mouseLocationOutsideOfEventStream : nil
+        let hit = point.flatMap { point in
+            guard let root = window?.contentView else { return nil as NSView? }
+            return root.hitTest(root.superview?.convert(point, from: nil) ?? point)
+        }
+        tooltip.update(target: tooltip.target(at: hit), point: point)
     }
 
     override public func layout() {
@@ -481,10 +535,12 @@ public final class SidebarView: NSView {
             button.tag = index
             button.isBordered = false
             button.toolTip = space.title
+            button.setAccessibilityLabel(space.title)
             button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
             button.widthAnchor.constraint(equalToConstant: 34).isActive = true
             dock.addArrangedSubview(button)
         }
+        tooltip.capture(in: self)
     }
 
     private func reloadFavorites() {
@@ -527,6 +583,7 @@ public final class SidebarView: NSView {
         if let focused, favoriteTiles[focused.row.id] === focused, window?.firstResponder !== focused {
             window?.makeFirstResponder(focused)
         }
+        tooltip.capture(in: favorites)
     }
 
     private func rowView(for row: Row) -> SidebarRowView {
@@ -538,6 +595,12 @@ public final class SidebarView: NSView {
             rowViews[row.id] = view
             rows.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        }
+        view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
+        view.onClose = { [weak self, weak view] id in
+            guard let self, let view else { return }
+            if view.pinned && id != self.selectedID { self.onArchive?(id) }
+            else { self.onClose?(id) }
         }
         view.update(row: row, selected: row.id == selectedID)
         view.acceptsKeyboardFocus = !isScrollPreview
@@ -715,6 +778,7 @@ public final class SidebarView: NSView {
             if library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton); library.frame = bounds }
             library.isHidden = false
             library.update(archive: snapshot.archive)
+            tooltip.capture(in: library)
         }
         if (libraryOpen && offset < 0) || (createSpaceOpen && offset > 0) { mainColumn.isHidden = false }
         let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
@@ -763,6 +827,7 @@ public final class SidebarView: NSView {
             Task { @MainActor in
                 guard let self, self.scrollGeneration == generation else { return }
                 self.clearScrollPresentation()
+                self.refreshPointer()
             }
         }
         for (view, origin) in scrollPages {
