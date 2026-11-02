@@ -17,6 +17,7 @@ struct SpaceScrollState {
     enum Action: Equatable {
         case vertical, ignored
         case follow(Double)
+        case pull
         case settle(index: Int, offset: Double, switched: Bool)
     }
     private enum Axis { case horizontal, vertical }
@@ -25,6 +26,7 @@ struct SpaceScrollState {
     private var ignoreMomentum = false
     private var ignoreUntilBegan = false
     private var rawOffset = 0.0
+    private(set) var followedExcess = 0.0
     private var motion: [(time: TimeInterval, delta: Double)] = []
     private var wheel: [(time: TimeInterval, delta: Double)] = []
     private var wheelPausedUntil = -Double.infinity
@@ -40,11 +42,12 @@ struct SpaceScrollState {
             guard abs(delta) > SidebarMetrics.spaceWheelThreshold else { return .ignored }
             wheel.removeAll()
             let target = index + (delta < 0 ? 1 : -1)
-            guard (-1..<count).contains(target) else { return .ignored }
+            guard (-1...count).contains(target) else { return .ignored }
             wheelPausedUntil = event.time + SidebarMetrics.spaceWheelPause
             tracking = false
             axis = nil
             ignoreMomentum = true
+            if target == count { return .pull }
             return .settle(index: target, offset: presentationOffset, switched: true)
         }
         if event.momentum { return ignoreMomentum ? .ignored : .vertical }
@@ -61,7 +64,7 @@ struct SpaceScrollState {
         guard pitch > 0 else { return .ignored }
         if axis == nil && (event.dx != 0 || event.dy != 0) {
             axis = abs(event.dx) > abs(event.dy) ? .horizontal : .vertical
-            let boundary = min(Double(index + 1) * pitch, max(-Double(count - index) * pitch, presentationOffset))
+            let boundary = min(Double(index + 1) * pitch, max(-Double(max(0, count - 1 - index)) * pitch, presentationOffset))
             let excess = presentationOffset - boundary
             rawOffset = boundary + excess / (SidebarMetrics.spaceRubberCoefficient * (1 - abs(excess) / SidebarMetrics.spaceRubberDistance))
         }
@@ -75,7 +78,8 @@ struct SpaceScrollState {
         if index == -1 { rawOffset = max(-pitch, min(0, rawOffset)) }
         if event.dx != 0 { motion.append((event.time, event.dx)) }
         let firstOffset = Double(index + 1) * pitch
-        let lastOffset = -Double(count - index) * pitch
+        let lastOffset = -Double(max(0, count - 1 - index)) * pitch
+        followedExcess = index < count ? max(0, lastOffset - rawOffset) : 0
         let boundary = min(firstOffset, max(lastOffset, rawOffset))
         let outside = rawOffset != boundary
         let offset = outside ? boundary + Self.rubberBand(rawOffset - boundary) : rawOffset
@@ -87,7 +91,7 @@ struct SpaceScrollState {
         var target = index
         if event.phase != .cancelled {
             if outside {
-                target = rawOffset > firstOffset ? -1 : count
+                target = rawOffset > firstOffset ? -1 : (index == count || followedExcess >= SidebarMetrics.spaceCreateThreshold ? count : count - 1)
             } else if velocity != 0 {
                 target = index + Int(velocity < 0 ? ceil(-rawOffset / pitch) : floor(-rawOffset / pitch))
             } else {

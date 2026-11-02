@@ -226,7 +226,7 @@ func longTrackpadDragsChooseTheNearestPageAndBandBeyondTheList() {
     }
     var state = SpaceScrollState()
     let follow = state.handle(.init(dx: -1160, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    let offset = -360 + SpaceScrollState.rubberBand(-220)
+    let offset = -180 + SpaceScrollState.rubberBand(-400)
     let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 1, count: 3, pitch: 180)
     #expect(follow == .follow(offset))
     #expect(release == .settle(index: 3, offset: offset, switched: true))
@@ -511,20 +511,20 @@ func wheelSlidesChainAndTrackpadTakesOverThePresentedOffset() {
 }
 
 @Test @MainActor
-func wheelDoesNotAnimatePastTheEndsOrRestartThePause() {
+func wheelDoesNotLeaveLibraryOutwardAndPullsAtTheLastSpace() {
     var state = SpaceScrollState()
     #expect(state.handle(.init(dx: 2, time: 100), index: -1, count: 3, pitch: 240) == .ignored)
-    #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
-    #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .settle(index: 1, offset: 20, switched: true))
+    #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .pull)
+    #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
 }
 
 @Test @MainActor
-func trackpadPastLastSpaceOpensCreationAtTheHalfPageThreshold() {
-    for distance in [239.0, 240, 241] {
+func trackpadPastLastSpaceOpensCreationAtTheFollowedThreshold() {
+    for distance in [328.0, 330, 332] {
         var scroll = SpaceScrollState()
         _ = scroll.handle(.init(dx: -distance, phase: .began, time: 0), index: 2, count: 3, pitch: 240)
         let result = scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 2, count: 3, pitch: 240)
-        #expect(result == .settle(index: distance > 240 ? 3 : 2, offset: -distance / 2, switched: distance > 240))
+        #expect(result == .settle(index: distance >= 330 ? 3 : 2, offset: SpaceScrollState.rubberBand(-distance / 2), switched: distance >= 330))
     }
 }
 

@@ -120,7 +120,7 @@ func overlayWheelTargetsAreInwardOnlyAndRespectInversionAndPause() {
             #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240) == .settle(index: target, offset: 0, switched: true))
             #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100.249), index: target, count: 2, pitch: 240) == .ignored)
         }
-        for (index, dx) in [(-1, 2.0), (1, -2.0), (2, -2.0)] {
+        for (index, dx) in [(-1, 2.0), (2, -2.0)] {
             var state = SpaceScrollState()
             #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240) == .ignored)
         }

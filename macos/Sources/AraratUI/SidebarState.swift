@@ -60,6 +60,8 @@ enum SidebarMetrics {
     static let grabWidth: CGFloat = 5
     static let cardInset: CGFloat = 10
     static let spaceFollowFactor = 0.5
+    static let spaceCreateThreshold = 165.0
+    static let spaceCreateExitDuration = 0.070
     static let spaceVelocityWindow = 0.100
     static let spaceSwitchResponse = 0.250
     static let spaceSwitchDamping: CGFloat = 0.88

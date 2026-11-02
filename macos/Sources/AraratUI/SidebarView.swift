@@ -42,6 +42,11 @@ public final class SidebarView: NSView {
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
     private var spaceScroll = SpaceScrollState()
+    private let pullIndicator = SpacePullIndicator(frame: .zero)
+    private var pullTimer: Timer?
+    var pullClock: () -> CFTimeInterval = CACurrentMediaTime
+    private var pullStep: (() -> Void)?
+    private var wheelPullPlaying = false
     private enum ScrollOrigin { case page, rail, list }
     private enum ScrollAxis { case horizontal, vertical }
     private var scrollOrigin: ScrollOrigin?
@@ -390,12 +395,14 @@ public final class SidebarView: NSView {
             plusButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
         ])
         updateFill()
+        addSubview(pullIndicator)
     }
 
     override public func layout() {
         super.layout()
         library.frame = bounds
         creation.frame = bounds
+        pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
         if dock.arrangedSubviews.indices.contains(spaceIndex) { _ = dock.scrollToVisible(dock.arrangedSubviews[spaceIndex].frame) }
         if bounds.width != laidOutSidebarWidth {
@@ -599,6 +606,7 @@ public final class SidebarView: NSView {
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
                                      inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
+        if input.kind == .wheel && wheelPullPlaying { return true }
         let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
         if phase == .began {
             scrollOrigin = origin
@@ -635,20 +643,29 @@ public final class SidebarView: NSView {
         switch action {
         case .vertical: return false
         case .ignored: return true
+        case .pull:
+            playWheelPull(from: Double(offset ?? 0))
         case .follow(let offset):
+            stopPullAnimation()
             scrollGeneration += 1
             for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
             prepareScrollPages(offset: offset)
             for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
+            pullIndicator.update(excess: spaceScroll.followedExcess)
         case .settle(let index, let offset, let switched):
+            if index == snapshot.spaces.count && switched {
+                openCreationAfterPull()
+                return true
+            }
+            let excess = pullIndicator.excess
             let from = offset + Double(index - logicalIndex) * spacePagePitch
             if switched {
                 if index == -1 { setLibraryOpen(true, scrolling: true) }
-                else if index == snapshot.spaces.count { setCreateSpaceOpen(true, scrolling: true) }
                 else { setLibraryOpen(false, scrolling: true); setCreateSpaceOpen(false, scrolling: true); scrollToSpace(at: index) }
             }
             prepareScrollPages(offset: from)
             settleScroll(from: from, switched: switched)
+            if excess > 0 { returnPullIndicator(excess: excess) }
         }
         return true
     }
@@ -675,12 +692,6 @@ public final class SidebarView: NSView {
             if library.superview == nil { addSubview(library, positioned: .below, relativeTo: libraryButton); library.frame = bounds }
             library.isHidden = false
             library.update(archive: snapshot.archive)
-        }
-        let creationX = Double(snapshot.spaces.count - scrollPageIndex) * spacePagePitch + offset
-        if !createSpaceOpen && creationX > -spacePagePitch && creationX < spacePagePitch {
-            if creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
-            creation.isHidden = false
-            creation.prepare(profileName: snapshotSpace?.profileName ?? "Default")
         }
         if (libraryOpen && offset < 0) || (createSpaceOpen && offset > 0) { mainColumn.isHidden = false }
         let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
@@ -748,6 +759,8 @@ public final class SidebarView: NSView {
     }
 
     private func clearScrollPresentation() {
+        stopPullAnimation()
+        pullIndicator.update(excess: 0)
         scrollGeneration += 1
         for (view, _) in scrollPages {
             view.layer?.removeAnimation(forKey: "space.scroll")
@@ -763,6 +776,93 @@ public final class SidebarView: NSView {
         creation.layer?.transform = CATransform3DIdentity
         mainColumn.isHidden = libraryOpen || createSpaceOpen
         library.layer?.transform = CATransform3DIdentity
+    }
+
+    private func stopPullAnimation() {
+        pullTimer?.invalidate()
+        pullTimer = nil
+        pullStep = nil
+        wheelPullPlaying = false
+    }
+
+    private func animatePull(duration: Double, frame: @escaping @MainActor (Double) -> Void,
+                             completion: @escaping @MainActor () -> Void) {
+        stopPullAnimation()
+        let start = pullClock()
+        pullStep = { [weak self] in
+            guard let self else { return }
+            let elapsed = min(duration, self.pullClock() - start)
+            frame(elapsed)
+            if elapsed >= duration { self.stopPullAnimation(); completion() }
+        }
+        let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.stepPull() }
+        }
+        pullTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func stepPull() { pullStep?() }
+
+    private func pullSpring(switched: Bool) -> CASpringAnimation {
+        let spring = CASpringAnimation()
+        let omega = 2 * Double.pi / (switched ? SidebarMetrics.spaceSwitchResponse : SidebarMetrics.spaceReturnResponse)
+        spring.mass = 1
+        spring.stiffness = omega * omega
+        spring.damping = 2 * (switched ? SidebarMetrics.spaceSwitchDamping : SidebarMetrics.spaceReturnDamping) * omega
+        return spring
+    }
+
+    private func springProgress(_ time: Double, spring: CASpringAnimation) -> Double {
+        let omega = sqrt(spring.stiffness)
+        let decay = spring.damping / 2
+        let frequency = sqrt(omega * omega - decay * decay)
+        return 1 - exp(-decay * time) * (cos(frequency * time) + decay / frequency * sin(frequency * time))
+    }
+
+    private func playWheelPull(from offset: Double) {
+        let spring = pullSpring(switched: true)
+        scrollGeneration += 1
+        for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
+        prepareScrollPages(offset: offset)
+        animatePull(duration: spring.settlingDuration, frame: { [weak self] time in
+            guard let self else { return }
+            let raw = offset + (-SidebarMetrics.spaceCreateThreshold - offset) * self.springProgress(time, spring: spring)
+            let followed = min(0, raw)
+            let position = raw < 0 ? SpaceScrollState.rubberBand(raw) : raw
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for (view, origin) in self.scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + position, 0, 0) }
+            self.pullIndicator.update(excess: -followed)
+            CATransaction.commit()
+        }, completion: { [weak self] in
+            self?.pullIndicator.update(excess: SidebarMetrics.spaceCreateThreshold)
+            self?.openCreationAfterPull()
+        })
+        wheelPullPlaying = true
+    }
+
+    private func returnPullIndicator(excess: Double) {
+        let spring = pullSpring(switched: false)
+        let offset = abs(SpaceScrollState.rubberBand(excess))
+        animatePull(duration: spring.settlingDuration, frame: { [weak self] time in
+            guard let self else { return }
+            let shown = max(0, offset * (1 - self.springProgress(time, spring: spring)))
+            let raw = shown / (SidebarMetrics.spaceRubberCoefficient * (1 - shown / SidebarMetrics.spaceRubberDistance))
+            self.pullIndicator.update(excess: raw)
+        }, completion: { [weak self] in self?.pullIndicator.update(excess: 0) })
+    }
+
+    private func openCreationAfterPull() {
+        let excess = max(SidebarMetrics.spaceCreateThreshold, pullIndicator.excess)
+        clearScrollPresentation()
+        setCreateSpaceOpen(true, scrolling: true)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        pullIndicator.update(excess: excess)
+        animatePull(duration: SidebarMetrics.spaceCreateExitDuration, frame: { [weak self] time in
+            self?.pullIndicator.update(excess: excess, exit: 48 * time / SidebarMetrics.spaceCreateExitDuration)
+        }, completion: { [weak self] in self?.pullIndicator.update(excess: 0) })
     }
 }
 
