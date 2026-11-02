@@ -32,6 +32,7 @@ public final class SidebarView: NSView {
     private let favorites = NSStackView()
     private var favoriteColumns = 0
     private var favoritesHeight: NSLayoutConstraint!
+    private let listScroll = SidebarScrollView()
     private let rows = NSStackView()
     private var rowViews: [String: SidebarRowView] = [:]
     private var retiringRows: [String: SidebarRowView] = [:]
@@ -152,15 +153,25 @@ public final class SidebarView: NSView {
         selectedID = id
         snapshot.selectedId = id
         reload()
+        revealSelection()
     }
 
     public func applySelection(snapshot: WorkspaceSnapshot) {
+        let selectionChanged = selectedID != snapshot.selectedId
         if self.snapshot.spaces == snapshot.spaces { self.snapshot = snapshot; updateSelection(id: snapshot.selectedId) }
         else { replaceSnapshot(snapshot) }
         library.update(archive: snapshot.archive)
+        if selectionChanged { revealSelection() }
     }
 
     private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+        layoutSubtreeIfNeeded()
+        listScroll.stopReveal()
+        let wasScrolled = listScroll.contentView.bounds.minY > 0.5
+        let anchors = rowViews.values.map { ($0.row.id, listScroll.documentView!.convert($0.bounds, from: $0)) }
+            .filter { $0.1.intersects(listScroll.contentView.bounds) }
+            .sorted { $0.1.minY < $1.1.minY }
+            .map { ($0.0, $0.1.minY - listScroll.contentView.bounds.minY) }
         let shownID = snapshotSpace?.id
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
@@ -169,6 +180,10 @@ public final class SidebarView: NSView {
         selectedID = snapshot.selectedId
         library.update(archive: snapshot.archive)
         reload()
+        layoutSubtreeIfNeeded()
+        if wasScrolled, let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
+            listScroll.move(to: listScroll.documentView!.convert(row.bounds, from: row).minY - anchor.1)
+        }
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
@@ -238,6 +253,7 @@ public final class SidebarView: NSView {
         spaceScroll = SpaceScrollState()
         spaceIndex = index
         reload()
+        revealSelection()
         onShowSpace?(snapshot.spaces[index].id)
     }
 
@@ -267,7 +283,7 @@ public final class SidebarView: NSView {
         rows.spacing = 0
         rows.alignment = .leading
 
-        let scroll = SidebarScrollView()
+        let scroll = listScroll
         scroll.onScroll = { [weak self, weak scroll] event in self?.handleSpaceScroll(event, from: scroll) ?? false }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -574,7 +590,14 @@ public final class SidebarView: NSView {
         selectedID = row.id
         snapshot.selectedId = row.id
         reload()
+        revealSelection()
         onSelect?(row)
+    }
+
+    public func revealSelection() {
+        guard !isScrollPreview, let id = selectedID, let row = rowViews[id] else { return }
+        layoutSubtreeIfNeeded()
+        listScroll.reveal(listScroll.documentView!.convert(row.bounds, from: row))
     }
 
     @objc private func dockClicked(_ sender: NSButton) {
@@ -868,12 +891,4 @@ public final class SidebarView: NSView {
 
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
-}
-
-private final class SidebarScrollView: NSScrollView {
-    var onScroll: ((NSEvent) -> Bool)?
-
-    override func scrollWheel(with event: NSEvent) {
-        if onScroll?(event) != true { super.scrollWheel(with: event) }
-    }
 }

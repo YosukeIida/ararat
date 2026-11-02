@@ -234,7 +234,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate {
             guard (space.favorites + space.pinned + space.today).contains(where: { $0.id == id }) else { reply("error no row \(id)"); return }
             adapter.select(id: id) { [weak self] result in
                 if let error = self?.publish(result) { reply("error select \(id): \(error)") }
-                else { reply("ok select \(id)") }
+                else { self?.sidebar?.revealSelection(); reply("ok select \(id)") }
             }
         case .close(let id):
             adapter.close(id: id) { [weak self] result in
