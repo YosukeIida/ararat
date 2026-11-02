@@ -17,8 +17,9 @@ final class SpaceDockView: NSView {
 
     override func layout() {
         super.layout()
-        var x: CGFloat = 0
-        for (cell, width) in zip(subviews, Self.cellWidths(count: subviews.count, selected: selectedIndex, width: bounds.width)) {
+        let widths = Self.cellWidths(count: subviews.count, selected: selectedIndex, width: bounds.width)
+        var x = (bounds.width - widths.reduce(0, +)) / 2
+        for (cell, width) in zip(subviews, widths) {
             cell.frame = NSRect(x: x, y: 0, width: width, height: bounds.height)
             x += width
         }

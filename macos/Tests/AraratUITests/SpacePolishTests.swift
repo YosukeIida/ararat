@@ -89,7 +89,7 @@ func dockWidthsTouchAndKeepTheSelectedCell() throws {
         #expect(widths.reduce(0, +) <= dock.bounds.width)
         if dock.bounds.width / CGFloat(count) < 22 { #expect(widths[0] == 22) }
         let last = try #require(dock.subviews.last)
-        for x in stride(from: 0.25, to: last.frame.maxX, by: 0.5) {
+        for x in stride(from: (dock.subviews.first?.frame.minX ?? 0) + 0.25, to: last.frame.maxX, by: 0.5) {
             #expect(dock.hitTest(dock.convert(NSPoint(x: x, y: 5), to: dock.superview)) is SpaceDockButton)
         }
         #expect(!polishViews(sidebar).contains { ($0 as? NSScrollView)?.documentView === dock })

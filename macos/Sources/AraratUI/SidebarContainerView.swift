@@ -5,12 +5,19 @@ public final class SidebarContainerView: NSView {
     private let sidebar: SidebarView
     private let page: NSView
     private let panel = NSVisualEffectView()
+    private let pageMask = CAShapeLayer()
     public let resizeHandle: SidebarResizeHandle
     private var state = SidebarState()
     private var localMonitor: Any?
     private var globalMonitor: Any?
     private var dwellTimer: Timer?
     private var sampling: CADisplayLink?
+    private var menuTracking = false
+    var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
+    var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var applicationActive: () -> Bool = { NSApp.isActive }
+    var windowKey: (() -> Bool)?
+    var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
     public var sidebarState: String { state.mode.rawValue }
     override public var isFlipped: Bool { true }
@@ -24,6 +31,9 @@ public final class SidebarContainerView: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         page.wantsLayer = true
+        pageMask.fillRule = .evenOdd
+        pageMask.actions = ["path": NSNull()]
+        page.layer?.mask = pageMask
         panel.material = .sidebar
         panel.blendingMode = .behindWindow
         panel.wantsLayer = true
@@ -107,6 +117,10 @@ public final class SidebarContainerView: NSView {
         panel.layer?.cornerRadius = docked ? 0 : SidebarMetrics.cornerRadius
         panel.layer?.masksToBounds = !docked
         panel.layer?.borderWidth = docked ? 0 : SidebarMetrics.borderWidth
+        let path = CGMutablePath()
+        path.addRect(page.bounds)
+        path.addRect(convert(panel.frame, to: page))
+        pageMask.path = path
         panel.setAccessibilityHidden(state.mode == .hidden)
         updateBorder()
     }
@@ -125,10 +139,12 @@ public final class SidebarContainerView: NSView {
     private enum Motion { case dockShow, dockHide, floatingShow, floatingHide, spaceSwitch }
 
     private func render(_ motion: Motion, changes: () -> Void = {}) {
+        let oldMaskPath = (pageMask.presentation() as? CAShapeLayer)?.path ?? pageMask.path
         let views = [panel as NSView, page]
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
         changes()
         layout()
+        pageMask.removeAnimation(forKey: "sidebar.mask")
         for (view, previous) in zip(views, old) {
             guard let layer = view.layer, let previous else { continue }
             layer.removeAnimation(forKey: "sidebar.position")
@@ -153,6 +169,13 @@ public final class SidebarContainerView: NSView {
                 animation.fromValue = from
                 animation.toValue = to
                 layer.add(animation, forKey: "sidebar.\(key)")
+                if view === panel, key == "bounds", let oldMaskPath {
+                    let maskAnimation = animation.copy() as! CABasicAnimation
+                    maskAnimation.keyPath = "path"
+                    maskAnimation.fromValue = oldMaskPath
+                    maskAnimation.toValue = pageMask.path
+                    pageMask.add(maskAnimation, forKey: "sidebar.mask")
+                }
             }
         }
     }
@@ -170,6 +193,14 @@ public final class SidebarContainerView: NSView {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: window)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(windowClosed), name: NSWindow.willCloseNotification, object: window)
+        for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: sidebar.newSpaceMenu)
+        }
+        processPointer()
+    }
+
+    @objc private func menuChanged(_ notification: Notification) {
+        menuTracking = notification.name == NSMenu.didBeginTrackingNotification
         processPointer()
     }
 
@@ -190,21 +221,21 @@ public final class SidebarContainerView: NSView {
     }
 
     @objc private func samplePointer() {
-        guard let window, !window.frame.contains(NSEvent.mouseLocation) else { return }
         processPointer()
     }
 
-    private func processPointer() {
+    func processPointer() {
         guard let window else { return }
         let old = state.mode
-        state.update(pointer: NSEvent.mouseLocation, now: ProcessInfo.processInfo.systemUptime,
-                     window: window.frame, width: resizeHandle.displayedWidth, active: NSApp.isActive, key: window.isKeyWindow)
+        state.update(pointer: pointerLocation(), now: clock(),
+                     window: window.frame, width: resizeHandle.displayedWidth, active: applicationActive(), key: windowKey?() ?? window.isKeyWindow,
+                     interacting: menuTracking || pressedButtons() != 0)
         if state.mode != old { render(state.mode == .floating ? .floatingShow : .floatingHide) }
         updateMonitoring()
     }
 
     private func updateMonitoring() {
-        let enabled = window?.isKeyWindow == true && NSApp.isActive && state.hasSelection
+        let enabled = (windowKey?() ?? (window?.isKeyWindow == true)) && applicationActive() && state.hasSelection
         if enabled && state.mode == .hidden {
             sampling?.invalidate()
             sampling = nil
@@ -218,7 +249,7 @@ public final class SidebarContainerView: NSView {
                 }
             }
             if let start = state.dwellStartedAt, dwellTimer == nil {
-                let delay = max(0, start + SidebarMetrics.revealDwell - ProcessInfo.processInfo.systemUptime)
+                let delay = max(0, start + SidebarMetrics.revealDwell - clock())
                 let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
                     MainActor.assumeIsolated {
                         self?.dwellTimer = nil

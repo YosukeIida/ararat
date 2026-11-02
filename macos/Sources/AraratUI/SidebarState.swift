@@ -97,7 +97,7 @@ struct SidebarState {
         return true
     }
 
-    mutating func update(pointer: NSPoint, now: TimeInterval, window: NSRect, width: CGFloat, active: Bool, key: Bool) {
+    mutating func update(pointer: NSPoint, now: TimeInterval, window: NSRect, width: CGFloat, active: Bool, key: Bool, interacting: Bool = false) {
         guard mode != .docked else { dwellStartedAt = nil; return }
         guard hasSelection else { mode = .floating; dwellStartedAt = nil; return }
         guard active && key else { mode = .hidden; dwellStartedAt = nil; return }
@@ -105,6 +105,7 @@ struct SidebarState {
         let above = pointer.y > window.maxY
         let tooFarLeft = x < -SidebarMetrics.leftStayDistance
         if mode == .floating {
+            guard !interacting else { return }
             if above || tooFarLeft || x > SidebarMetrics.floatingInset + width + SidebarMetrics.rightStayDistance {
                 mode = .hidden
             }
