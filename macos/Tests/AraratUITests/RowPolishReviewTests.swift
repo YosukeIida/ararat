@@ -8,10 +8,10 @@ private func reviewAll(_ view: NSView) -> [NSView] { [view] + view.subviews.flat
 
 private func reviewSnapshot(pinned: Bool = false, selected: String = "t0", removing: String? = nil) -> WorkspaceSnapshot {
     let rows = (0..<30).map { "t\($0)" }.filter { $0 != removing }.map {
-        Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+        Row(parentId: "", siblingIndex: 0, collapsed: false, id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [],
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [],
                       pinned: pinned ? rows : [], today: pinned ? [] : rows)])
 }
 
@@ -123,7 +123,7 @@ func rowAccessibilityActionsWorkWithoutThePointer() throws {
 
 @Test @MainActor
 func middleClickClosesTodaySplitsButLeavesPinnedSplitsAlone() throws {
-    let row = Row(id: "split", title: "Split", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
+    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: "Split", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
     let view = SidebarRowView(row: row, selected: false) { _ in }
     var closed = 0
     view.onClose = { _ in closed += 1 }
@@ -137,7 +137,7 @@ func middleClickClosesTodaySplitsButLeavesPinnedSplitsAlone() throws {
 }
 
 @Test @MainActor
-func releaseOutsideARowDoesNotSelectIt() throws {
+func pressSelectsOnceAndReleaseOutsideDoesNothingElse() throws {
     let (window, sidebar) = reviewWindow()
     defer { window.contentView = nil }
     let row = try #require(reviewAll(sidebar).compactMap { $0 as? SidebarRowView }.first)
@@ -145,16 +145,17 @@ func releaseOutsideARowDoesNotSelectIt() throws {
     let outside = row.convert(NSPoint(x: -20, y: 20), to: nil)
     var point = inside
     row.pointerLocation = { point }
-    var selected = false
-    sidebar.onSelect = { _ in selected = true }
+    var selections = 0
+    sidebar.onSelect = { _ in selections += 1 }
     let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: inside, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: outside, modifierFlags: [], timestamp: 1, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
     row.mouseDown(with: down)
+    #expect(selections == 1)
     point = outside
     row.refreshHover()
     #expect(!row.pressed)
     row.mouseUp(with: up)
-    #expect(!selected)
+    #expect(selections == 1)
 }
 
 @Test @MainActor

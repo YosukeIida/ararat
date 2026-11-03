@@ -40,7 +40,7 @@ func tooltipReadsMenuKeysAndTracksModifierPressAndRelease() throws {
     item.keyEquivalentModifierMask = .option
     tooltip.update(target: button, point: NSPoint(x: 20, y: 200))
     #expect(tooltip.keycaps.map(\.stringValue) == ["⌥", "]"])
-    let row = SidebarRowView(row: Row(id: "pin", title: "Pin", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil), selected: true, action: { _ in })
+    let row = SidebarRowView(row: Row(parentId: "", siblingIndex: 0, collapsed: false, id: "pin", title: "Pin", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil), selected: true, action: { _ in })
     row.pinned = true
     window.contentView?.addSubview(row)
     menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")

@@ -43,6 +43,17 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ try self.opened().snapshot(windowId: self.windowID) }, completion: completion)
     }
 
+    public func move(id: String, container: String, index: Int, openFolder: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({
+            let store = try self.opened()
+            return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: openFolder)
+        }, completion: completion)
+    }
+
+    public func openFolder(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setFolderCollapsed(windowId: self.windowID, id: id, collapsed: false) }, completion: completion)
+    }
+
     public func select(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().selectItem(windowId: self.windowID, id: id) }, completion: completion)
     }

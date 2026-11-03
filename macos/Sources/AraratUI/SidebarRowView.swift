@@ -10,6 +10,12 @@ final class SidebarRowView: NSView {
     let closeButton = NSButton()
     var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
     var pinned = false { didSet { updateCloseButton() } }
+    var onDragPress: ((Row, NSPoint) -> Void)?
+    var onDragMove: ((NSPoint) -> Void)?
+    var onDragRelease: ((NSPoint) -> Bool)?
+    var dragSource = false { didSet { updateFill() } }
+    var dropHovered = false { didSet { updateFill() } }
+    var dragCopy = false { didSet { updateCloseButton() } }
     private var trackingPress = false
     private(set) var pressed = false { didSet { updateFill() } }
     private let titleMask = CAGradientLayer()
@@ -130,15 +136,18 @@ final class SidebarRowView: NSView {
         guard acceptsKeyboardFocus else { return }
         trackingPress = true
         pressed = true
+        onDragPress?(row, event.locationInWindow)
     }
     override func mouseDragged(with event: NSEvent) {
+        onDragMove?(event.locationInWindow)
         pressed = trackingPress && bounds.intersection(visibleRect).contains(convert(event.locationInWindow, from: nil))
     }
     override func mouseUp(with event: NSEvent) {
         let activate = acceptsKeyboardFocus && trackingPress && bounds.intersection(visibleRect).contains(convert(event.locationInWindow, from: nil))
         trackingPress = false
         pressed = false
-        if activate { action(row) }
+        let handled = onDragRelease?(event.locationInWindow) ?? false
+        if activate && !handled { action(row) }
     }
     override func otherMouseUp(with event: NSEvent) {
         if event.buttonNumber == 2 && acceptsKeyboardFocus && (row.kind == .tab || (row.kind == .split && !pinned)) { onClose?(row.id) }
@@ -160,7 +169,7 @@ final class SidebarRowView: NSView {
         setAccessibilityCustomActions(actions)
         if closeButton.accessibilityLabel() != label { closeButton.toolTip = label }
         closeButton.setAccessibilityLabel(label)
-        closeButton.isHidden = !acceptsKeyboardFocus || row.kind != .tab || !hovered
+        closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || !hovered))
         needsLayout = true
     }
 
@@ -214,7 +223,7 @@ final class SidebarRowView: NSView {
     }
 
     private func updateFill() {
-        let alpha: CGFloat = pressed ? 0.22 : selected ? 0.22 : hovered ? 0.12 : 0
+        let alpha: CGFloat = dragSource || dragCopy || pressed || selected ? 0.22 : hovered || dropHovered ? 0.12 : 0
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
@@ -234,6 +243,9 @@ final class SidebarRowView: NSView {
 @MainActor
 final class FavoriteTile: NSButton {
     private(set) var row: Row
+    var onDragPress: ((Row, NSPoint) -> Void)?
+    var onDragMove: ((NSPoint) -> Void)?
+    var onDragRelease: ((NSPoint) -> Bool)?
     private let onPress: (Row) -> Void
     private let icon = NSImageView()
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
@@ -277,6 +289,15 @@ final class FavoriteTile: NSButton {
     }
 
     @objc private func pressed() { onPress(row) }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onDragPress else { super.mouseDown(with: event); return }
+        onDragPress(row, event.locationInWindow)
+    }
+    override func mouseDragged(with event: NSEvent) { onDragMove?(event.locationInWindow) }
+    override func mouseUp(with event: NSEvent) {
+        if onDragRelease?(event.locationInWindow) != true && bounds.contains(convert(event.locationInWindow, from: nil)) { onPress(row) }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         super.hitTest(point) == nil ? nil : self

@@ -104,20 +104,26 @@ impl Workspace {
             .or_else(|| self.favorites.iter().find(|(_, container)| container.as_str() == root).map(|(p, _)| p))
     }
 
-    pub fn move_item(&mut self, id: &str, container: &str, index: usize) -> Result<Vec<Op>, EditError> {
-        self.move_item_at(id, container, index, self.lifecycle_time())
+    pub fn move_item(&mut self, id: &str, container: &str, index: usize, open_folder: bool) -> Result<Vec<Op>, EditError> {
+        self.move_item_at(id, container, index, open_folder, self.lifecycle_time())
     }
 
-    pub fn move_item_at(&mut self, id: &str, container: &str, index: usize, now: u64) -> Result<Vec<Op>, EditError> {
+    pub fn move_item_at(&mut self, id: &str, container: &str, index: usize, open_folder: bool, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let mut item = self.movable_item(id)?;
         self.check_destination(&item, container)?;
         if self.item_profile(&item.id) != self.item_profile(container) {
             return Err(EditError("cannot move across profiles".into()));
         }
+        let open_folder = open_folder && matches!(self.items[container].kind, ItemKind::Folder)
+            && self.folder_collapsed.get(container).copied().unwrap_or(false);
         let same_parent = item.membership.parent.as_deref() == Some(container);
         if same_parent && self.children(container).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
-            .position(|i| i.id == item.id) == Some(index) { return Ok(Vec::new()); }
+            .position(|i| i.id == item.id) == Some(index) {
+            return if open_folder {
+                self.set_folder_collapsed(container, false)
+            } else { Ok(Vec::new()) };
+        }
         let entering_today = !self.list_for(&item.id).is_some_and(|(_, today)| today)
             && self.list_for(container).is_some_and(|(_, today)| today);
         let (order, mut ops) = self.item_order(container, index, &HashSet::from([item.id.clone()]))?;
@@ -127,6 +133,9 @@ impl Workspace {
         ops.push(Op::Put(Record::Item(item)));
         for op in &ops { self.apply(op); }
         if entering_today { ops.extend(self.stamp_selection(&id, now)); }
+        if open_folder {
+            ops.extend(self.set_folder_collapsed(container, false)?);
+        }
         Ok(ops)
     }
 

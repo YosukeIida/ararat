@@ -554,7 +554,7 @@ fn item_edit_calls_flush_synced_changes_and_local_folder_state_before_returning(
     store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").replace(r#""profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } }"#, r#""profile": { "default": true }"#)).unwrap();
     store.select_item("one".into(), "tab-spec".into()).unwrap();
     store.create_folder("one".into(), "new".into(), "New".into(), "pin-home".into(), 0, vec![]).unwrap();
-    store.move_item("one".into(), "tab-spec".into(), "new".into(), 0).unwrap();
+    store.move_item("one".into(), "tab-spec".into(), "new".into(), 0, false).unwrap();
     let renamed = store.rename_tab("one".into(), "tab-spec".into(), "Custom".into()).unwrap();
     assert_eq!(renamed.spaces[1].pinned.iter().find(|r| r.id == "tab-spec").unwrap().title, "Custom");
     store.rename_folder("one".into(), "new".into(), "Folder".into()).unwrap();
@@ -579,7 +579,7 @@ fn a_same_position_move_writes_no_records_or_journal_rows() {
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let journal = count(); let view = store.snapshot("one".into());
-    assert_eq!(store.move_item("one".into(), "split-1".into(), "pin-work".into(), 1).unwrap(), view);
+    assert_eq!(store.move_item("one".into(), "split-1".into(), "pin-work".into(), 1, false).unwrap(), view);
     assert_eq!(records(&path), before); assert_eq!(count(), journal);
 }
 
@@ -593,10 +593,29 @@ fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
     let journal = count();
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-    store.move_item("one".into(), "tab-spec".into(), "today-work".into(), 0).unwrap();
+    store.move_item("one".into(), "tab-spec".into(), "today-work".into(), 0, false).unwrap();
     let (disk, reopened) = Store::open(&path).unwrap();
     assert!(reopened.last_selected["tab-spec"] >= now); assert_eq!(count(), journal + 1); drop(disk);
     store.auto_archive("one".into(), now + 1).unwrap();
     let (disk, reopened) = Store::open(&path).unwrap();
     assert_eq!(reopened.items["tab-spec"].lifecycle, ararat_core::model::Lifecycle::Open); drop(disk);
+}
+
+#[test]
+fn folder_drop_opens_in_the_move_call_and_flushes_both_states() {
+    let path = fresh_db("folder-drop");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("drag".into(), FIXTURE.into()).unwrap();
+    store.set_folder_collapsed("drag".into(), "folder-docs".into(), true).unwrap();
+    let conn = Connection::open(&path).unwrap();
+    let before: i64 = conn.query_row("SELECT max(seq) FROM journal", [], |r| r.get(0)).unwrap();
+    let moved = store.move_item("drag".into(), "tab-mail".into(), "folder-docs".into(), 0, true).unwrap();
+    assert!(moved.spaces[0].pinned.iter().any(|row| row.id == "tab-mail" && row.parent_id == "folder-docs"));
+    assert!(!moved.spaces[0].pinned.iter().find(|row| row.id == "folder-docs").unwrap().collapsed);
+    let ops: Vec<(String, String)> = conn.prepare("SELECT kind,id FROM journal WHERE seq > ?").unwrap()
+        .query_map([before], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+    assert_eq!(ops, [("item".into(), "tab-mail".into())]);
+    let (_, reopened) = Store::open(&path).unwrap();
+    assert_eq!(reopened.folder_collapsed.get("folder-docs"), Some(&false));
+    assert_eq!(reopened.items["tab-mail"].membership.parent.as_deref(), Some("folder-docs"));
 }

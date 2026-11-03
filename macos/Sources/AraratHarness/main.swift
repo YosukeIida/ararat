@@ -122,6 +122,31 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
+        sidebar.onMove = { [weak self] id, container, index, openFolder, completion in
+            guard let self, !self.terminating else { completion(nil); return }
+            self.adapter.move(id: id, container: container, index: index, openFolder: openFolder) { [weak self] result in
+                switch result {
+                case .success(let snapshot):
+                    self?.snapshot = snapshot
+                    completion(snapshot)
+                    self?.showSelection()
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot move item: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
+        sidebar.onOpenFolder = { [weak self] id, completion in
+            guard let self, !self.terminating else { completion(nil); return }
+            self.adapter.openFolder(id: id) { [weak self] result in
+                switch result {
+                case .success(let snapshot): self?.snapshot = snapshot; completion(snapshot)
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot open folder: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
         sidebar.onClose = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.close(id: id) { [weak self] result in

@@ -11,9 +11,9 @@ private func descendants(_ view: NSView) -> [NSView] {
 @MainActor
 private func fixture() -> (NSWindow, SidebarView, SidebarContainerView, NSView) {
     _ = NSApplication.shared
-    let row = Row(id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "home", selectedId: "tab", spaces: [
-        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)
@@ -164,10 +164,10 @@ func restoringIntoFolderRevealsOnlyExpandedRows() throws {
     for collapsed in [false, true] {
         let (window, sidebar, container, _) = fixture()
         defer { window.contentView = nil }
-        let rows = (0..<50).map { Row(id: "row-\($0)", title: "Row", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
-        let folder = Row(id: "folder", title: "Folder", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil)
-        let restored = Row(id: "restored", title: "Restored", url: nil, depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
-        let space = SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: rows + [folder] + (collapsed ? [] : [restored]))
+        let rows = (0..<50).map { Row(parentId: "", siblingIndex: 0, collapsed: false, id: "row-\($0)", title: "Row", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
+        let folder = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "folder", title: "Folder", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil)
+        let restored = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "restored", title: "Restored", url: nil, depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
+        let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: rows + [folder] + (collapsed ? [] : [restored]))
         let scroll = try #require(descendants(sidebar).compactMap { $0 as? SidebarScrollView }.first)
         var now = 0.0
         scroll.clock = { now }

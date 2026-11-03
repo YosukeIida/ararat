@@ -25,9 +25,9 @@ private func polishScroll(_ dx: Int32, _ phase: CGScrollPhase?, _ time: Double, 
 private func polishWindow(count: Int = 3, floating: Bool = false, rowCount: Int = 1) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
     let spaces = (0..<count).map { index in
-        let row = Row(id: "r\(index)", title: "Row \(index)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
-        let pins = (0..<rowCount).map { Row(id: "p\(index)-\($0)", title: "Pin \(index)-\($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
-        return SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\(index)", title: "Space \(index)", icon: nil, look: nil,
+        let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "r\(index)", title: "Row \(index)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+        let pins = (0..<rowCount).map { Row(parentId: "", siblingIndex: 0, collapsed: false, id: "p\(index)-\($0)", title: "Pin \(index)-\($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
+        return SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\(index)", title: "Space \(index)", icon: nil, look: nil,
                              favorites: [row], pinned: pins, today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
@@ -57,7 +57,7 @@ func tooltipCapturePreservesAccessibilityHelp() {
 }
 
 @Test @MainActor
-func nonKeyRowReleaseUsesEventCoordinates() throws {
+func nonKeyRowPressSelectsAndReleaseNeverSelectsAgain() throws {
     let (window, sidebar) = polishWindow()
     defer { window.contentView = nil }
     let row = try #require(polishViews(sidebar).compactMap { $0 as? SidebarRowView }.first)
@@ -70,8 +70,9 @@ func nonKeyRowReleaseUsesEventCoordinates() throws {
     row.mouseUp(with: polishMouse(.leftMouseUp, row))
     #expect(selections == 1)
     row.mouseDown(with: polishMouse(.leftMouseDown, row))
+    #expect(selections == 2)
     row.mouseUp(with: polishMouse(.leftMouseUp, row, inside: false))
-    #expect(selections == 1)
+    #expect(selections == 2)
 }
 
 @Test @MainActor
@@ -185,8 +186,8 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
 @Test @MainActor
 func verticalGestureImmediatelyAfterSpaceSwipeScrollsTheList() throws {
     _ = NSApplication.shared
-    let rows = (0..<40).map { Row(id: "r\($0)", title: "Row \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
-    let spaces = (0..<2).map { SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: rows) }
+    let rows = (0..<40).map { Row(parentId: "", siblingIndex: 0, collapsed: false, id: "r\($0)", title: "Row \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
+    let spaces = (0..<2).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: rows) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 500), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar
@@ -311,8 +312,8 @@ func sampledSpaceFramesKeepEachPagesHeadingPinsAndRowsTogether() async throws {
 @Test @MainActor
 func scrolledPinsKeepTheirPositionWhenLiveAndPreviewPagesExchange() throws {
     _ = NSApplication.shared
-    let rows = (0..<40).map { Row(id: "r\($0)", title: "Pin \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
-    let spaces = (0..<2).map { SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: rows, today: []) }
+    let rows = (0..<40).map { Row(parentId: "", siblingIndex: 0, collapsed: false, id: "r\($0)", title: "Pin \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
+    let spaces = (0..<2).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: rows, today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 500), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar

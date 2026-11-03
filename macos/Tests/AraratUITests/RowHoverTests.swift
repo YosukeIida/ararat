@@ -4,8 +4,8 @@ import Testing
 @testable import AraratUI
 
 private func hoverSnapshot(_ ids: [String]) -> WorkspaceSnapshot {
-    WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
-        favorites: [], pinned: [], today: ids.map { Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) })])
+    WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
+        favorites: [], pinned: [], today: ids.map { Row(parentId: "", siblingIndex: 0, collapsed: false, id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) })])
 }
 
 @MainActor

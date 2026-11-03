@@ -34,6 +34,19 @@ public final class SidebarView: NSView {
     private var creationLookSpaceID: String?
 
     private var lookPreview: (spaceID: String, look: Look?)?
+    public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    private(set) var drag: SidebarDragState?
+    private(set) var dropTarget = SidebarDrop.refused
+    private(set) var dragCopyView: SidebarRowView?
+    private(set) var dragSettling = false
+    let dropIndicator = CAShapeLayer()
+    var dragClock: () -> TimeInterval = CACurrentMediaTime
+    var dragReduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var dragTimer: Timer?
+    private var dragLastTick: TimeInterval = 0
+    private var dragFavoriteIndex: Int?
+    private var dragGeneration = 0
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
@@ -73,7 +86,7 @@ public final class SidebarView: NSView {
     public var onAutoArchiveReady: (() -> Void)?
     public var canPublishAutoArchive: Bool {
         let gestureActive = scrollGestureActive && pullClock() - lastScrollEventAt < 2
-        return !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
+        return drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
     }
     private func notifyAutoArchiveReady() {
         if canPublishAutoArchive { onAutoArchiveReady?() }
@@ -170,6 +183,7 @@ public final class SidebarView: NSView {
 
     override public var acceptsFirstResponder: Bool { true }
     override public func cancelOperation(_ sender: Any?) {
+        if drag != nil { cancelDrag(); return }
         if createSpaceOpen { if !creation.submitting { setCreateSpaceOpen(false) } }
         else if libraryOpen { setLibraryOpen(false) } else { _ = nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: sender) }
     }
@@ -229,7 +243,7 @@ public final class SidebarView: NSView {
         listScroll.stopReveal()
         let wasScrolled = listScroll.contentView.bounds.minY > 0.5
         let anchors = rowViews.values.map { ($0.row.id, listScroll.documentView!.convert($0.bounds, from: $0)) }
-            .filter { $0.1.intersects(listScroll.contentView.bounds) }
+            .filter { $0.1.intersects(listScroll.contentView.bounds) && $0.0 != drag?.row.id }
             .sorted { $0.1.minY < $1.1.minY }
             .map { ($0.0, $0.1.minY - listScroll.contentView.bounds.minY) }
         let shownID = snapshotSpace?.id
@@ -317,6 +331,7 @@ public final class SidebarView: NSView {
 
     private func showSpace(at index: Int, animatedReveal: Bool) {
         guard snapshot.spaces.indices.contains(index) else { return }
+        if drag != nil { cancelDrag() }
         listScroll.stopReveal()
         if !isScrollPreview, let id = snapshotSpace?.id { spaceListOrigins[id] = listScroll.contentView.bounds.minY }
         finishRowMotion()
@@ -358,7 +373,11 @@ public final class SidebarView: NSView {
         rows.alignment = .leading
 
         let scroll = listScroll
-        scroll.onBoundsChanged = { [weak self] in self?.refreshPointer() }
+        scroll.onBoundsChanged = { [weak self] in
+            guard let self else { return }
+            self.refreshPointer()
+            if self.drag?.active == true && !self.dragSettling { self.resolveDrag() }
+        }
         scroll.onScroll = { [weak self, weak scroll] event in self?.handleSpaceScroll(event, from: scroll) ?? false }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -486,6 +505,13 @@ public final class SidebarView: NSView {
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         scrollGestureActive = false
+        if window == nil, drag != nil {
+            dragTimer?.invalidate()
+            dragTimer = nil
+            dropIndicator.removeFromSuperlayer()
+            dragFavoriteIndex = nil
+            finishDrag()
+        }
         if let clickMonitor { removeClickMonitor(clickMonitor); self.clickMonitor = nil }
         tooltip.dismiss()
         guard window != nil && !isScrollPreview else {
@@ -516,6 +542,7 @@ public final class SidebarView: NSView {
     override public func mouseExited(with event: NSEvent) { tooltip.update(target: nil, point: nil) }
 
     func refreshPointer() {
+        guard drag?.active != true && !dragSettling else { tooltip.dismiss(); return }
         for row in rowViews.values { row.refreshHover() }
         let point = window?.isKeyWindow == true ? window?.mouseLocationOutsideOfEventStream : nil
         let hit = point.flatMap { point in
@@ -602,13 +629,17 @@ public final class SidebarView: NSView {
     }
 
     private func reloadFavorites() {
-        let models = snapshotSpace?.favorites ?? []
-        let ids = Set(models.map(\.id))
+        var models: [Row?] = (snapshotSpace?.favorites ?? []).map { $0 }
+        if let index = dragFavoriteIndex, let drag {
+            models.removeAll { $0?.id == drag.row.id }
+            models.insert(nil, at: min(index, models.count))
+        }
+        let ids = Set(models.compactMap { $0?.id })
         let focused = window?.firstResponder as? FavoriteTile
         for id in Array(favoriteTiles.keys) where !ids.contains(id) {
             favoriteTiles.removeValue(forKey: id)?.removeFromSuperview()
         }
-        let columns = max(1, favoriteColumns)
+        let columns = dragFavoriteIndex == nil ? max(1, favoriteColumns) : min(max(1, Int((bounds.width - 8) / 55)), min(4, max(1, models.count)))
         let lineCount = (models.count + columns - 1) / columns
         favoritesHeight.constant = CGFloat(lineCount * 47 + max(0, lineCount - 1) * 8)
         var lines = favorites.arrangedSubviews.compactMap { $0 as? NSStackView }
@@ -628,8 +659,10 @@ public final class SidebarView: NSView {
             line.arrangedSubviews.filter { !($0 is FavoriteTile) }.forEach { $0.removeFromSuperview() }
             let start = index * columns
             var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
+                guard let row else { return NSView() }
                 let tile = favoriteTiles[row.id] ?? FavoriteTile(row: row) { [weak self] row in self?.select(row) }
                 favoriteTiles[row.id] = tile
+                wireDrag(tile)
                 tile.update(row: row)
                 tile.refusesFirstResponder = isScrollPreview
                 return tile
@@ -654,6 +687,7 @@ public final class SidebarView: NSView {
             rows.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
+        wireDrag(view)
         view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
         view.onClose = { [weak self, weak view] id in
             guard let self, let view else { return }
@@ -780,6 +814,7 @@ public final class SidebarView: NSView {
             }
             axis = scrollAxis
         }
+        if (drag != nil || dragSettling) && axis != .vertical { return true }
         if owner == .list || axis == .vertical {
             if axis == .horizontal { return true }
             if input.kind == .trackpad, let scroll = gestureScroll, scroll !== source {
@@ -1073,4 +1108,252 @@ public final class SidebarView: NSView {
 
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+extension SidebarView {
+    private func wireDrag(_ view: SidebarRowView) {
+        guard !isScrollPreview else { return }
+        view.onDragPress = { [weak self, weak view] row, point in self?.pressDrag(row: row, view: view, windowPoint: point) }
+        view.onDragMove = { [weak self] point in self?.moveDrag(to: self?.dragPoint(point) ?? .zero) }
+        view.onDragRelease = { [weak self] point in self?.releaseDrag(at: self?.dragPoint(point) ?? .zero) ?? false }
+    }
+
+    private func wireDrag(_ view: FavoriteTile) {
+        guard !isScrollPreview else { return }
+        view.onDragPress = { [weak self, weak view] row, point in self?.pressDrag(row: row, view: view, windowPoint: point) }
+        view.onDragMove = { [weak self] point in self?.moveDrag(to: self?.dragPoint(point) ?? .zero) }
+        view.onDragRelease = { [weak self] point in self?.releaseDrag(at: self?.dragPoint(point) ?? .zero) ?? false }
+    }
+
+    private func dragPoint(_ point: CGPoint) -> CGPoint {
+        let local = convert(point, from: nil)
+        return CGPoint(x: local.x, y: bounds.height - local.y)
+    }
+
+    private func dragRect(_ view: NSView) -> CGRect {
+        let rect = convert(view.bounds, from: view)
+        return CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    private func nativeDragRect(_ rect: CGRect) -> CGRect {
+        CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    private func pressDrag(row: Row, view: NSView?, windowPoint: CGPoint) {
+        guard let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
+        finishRowMotion()
+        clearScrollPresentation()
+        var item = row
+        let models = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
+        var parent = models.first { $0.id == item.parentId }
+        while let ancestor = parent {
+            if ancestor.kind == .split { item = ancestor }
+            parent = models.first { $0.id == ancestor.parentId }
+        }
+        let source = rowViews[item.id] ?? view
+        let point = dragPoint(windowPoint)
+        drag = SidebarDragState(row: item, origin: point, originFrame: dragRect(source), position: point)
+        tooltip.dismiss()
+        window?.makeFirstResponder(self)
+        if row.kind != .folder { select(row); listScroll.stopReveal() }
+    }
+
+    func moveDrag(to position: CGPoint) {
+        guard var state = drag, !dragSettling else { return }
+        state.position = position
+        if !state.active && hypot(position.x - state.origin.x, position.y - state.origin.y) >= SidebarDragMetrics.threshold {
+            state.active = true
+            let copy = SidebarRowView(row: state.row, selected: true) { _ in }
+            copy.dragCopy = true
+            copy.acceptsKeyboardFocus = false
+            copy.setAccessibilityHidden(true)
+            copy.translatesAutoresizingMaskIntoConstraints = true
+            copy.frame = nativeDragRect(state.originFrame)
+            addSubview(copy)
+            dragCopyView = copy
+            rowViews[state.row.id]?.dragSource = true
+            listScroll.stopReveal()
+            dragLastTick = dragClock()
+            let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] timer in
+                guard let self else { timer.invalidate(); return }
+                MainActor.assumeIsolated { self.stepDrag() }
+            }
+            dragTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        drag = state
+        guard state.active else { return }
+        var frame = state.originFrame
+        frame.origin.x += position.x - state.origin.x
+        frame.origin.y += position.y - state.origin.y
+        dragCopyView?.frame = nativeDragRect(frame)
+        resolveDrag()
+    }
+
+    func dragGeometry() -> SidebarDragGeometry? {
+        guard let space = snapshotSpace else { return nil }
+        let models = space.pinned + space.today
+        func inSplit(_ row: Row) -> Bool {
+            var parent = models.first { $0.id == row.parentId }
+            while let item = parent {
+                if item.kind == .split { return true }
+                parent = models.first { $0.id == item.parentId }
+            }
+            return false
+        }
+        var entries = models.filter { !inSplit($0) }.compactMap { row -> SidebarDragGeometry.Entry? in
+            guard let view = rowViews[row.id] else { return nil }
+            return .init(row: row, frame: dragRect(view))
+        }
+        for i in entries.indices where entries[i].row.kind == .split {
+            let split = entries[i].row.id
+            for row in models where row.parentId == split {
+                if let view = rowViews[row.id] { entries[i].frame = entries[i].frame.union(dragRect(view)) }
+            }
+        }
+        var favoriteFrame = dragRect(favorites)
+        favoriteFrame.size.height = max(47, favoriteFrame.height)
+        return SidebarDragGeometry(bounds: CGRect(origin: .zero, size: bounds.size), list: dragRect(listScroll), pinnedArea: dragRect(header.superview!),
+            favorites: favoriteFrame, rows: entries,
+            dock: zip(snapshot.spaces, dock.subviews).map { ($0, dragRect($1)) }, space: space)
+    }
+
+    private func resolveDrag() {
+        guard let state = drag, state.active, let geometry = dragGeometry() else { return }
+        dropTarget = resolveSidebarDrop(position: state.position, geometry: geometry, dragged: state.row)
+        let favoriteIndex: Int?
+        if case .favorites(_, let index) = dropTarget { favoriteIndex = index } else { favoriteIndex = nil }
+        if favoriteIndex != dragFavoriteIndex {
+            dragFavoriteIndex = favoriteIndex
+            reloadFavorites()
+            layoutSubtreeIfNeeded()
+        }
+        for row in rowViews.values { row.dropHovered = dropTarget == .folder(row.row.id) }
+        let folder: String?
+        if case .folder(let id) = dropTarget { folder = id } else { folder = nil }
+        if drag?.hoverFolder != folder {
+            drag?.hoverFolder = folder
+            drag?.hoverStarted = folder == nil ? nil : dragClock()
+        }
+        dropIndicator.removeFromSuperlayer()
+        dropIndicator.frame = bounds
+        if case .insert(_, _, let y) = dropTarget {
+            let x = SidebarDragMetrics.lineLeading
+            let nativeY = bounds.height - y
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: x + SidebarDragMetrics.ringDiameter / 2, y: nativeY))
+            path.addLine(to: CGPoint(x: bounds.width - SidebarDragMetrics.lineTrailing, y: nativeY))
+            let diameter = SidebarDragMetrics.ringDiameter - SidebarDragMetrics.lineWidth
+            path.addEllipse(in: CGRect(x: x - diameter / 2, y: nativeY - diameter / 2, width: diameter, height: diameter))
+            dropIndicator.path = path
+            dropIndicator.lineWidth = SidebarDragMetrics.lineWidth
+            dropIndicator.fillColor = NSColor.clear.cgColor
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                dropIndicator.strokeColor = NSColor.labelColor.withAlphaComponent(0.95).cgColor
+            }
+            layer?.addSublayer(dropIndicator)
+        }
+    }
+
+    func stepDrag() {
+        guard let state = drag, state.active, !dragSettling, let geometry = dragGeometry() else { return }
+        let now = dragClock()
+        let elapsed = max(0, min(0.1, now - dragLastTick))
+        dragLastTick = now
+        if geometry.list.contains(state.position) {
+            let edge = SidebarDragMetrics.autoscrollEdge
+            let delta: CGFloat = state.position.y < geometry.list.minY + edge ? -1 : state.position.y > geometry.list.maxY - edge ? 1 : 0
+            if delta != 0 { listScroll.move(to: listScroll.contentView.bounds.minY + delta * SidebarDragMetrics.autoscrollSpeed * elapsed) }
+        }
+        resolveDrag()
+        if let id = drag?.hoverFolder, let start = drag?.hoverStarted,
+           now - start >= SidebarDragMetrics.folderHoverDelay,
+           rowViews[id]?.row.collapsed == true {
+            drag?.hoverStarted = nil
+            onOpenFolder?(id) { [weak self] snapshot in
+                guard let self, let snapshot else { return }
+                self.replaceSnapshot(snapshot)
+                self.resolveDrag()
+            }
+        }
+    }
+
+    @discardableResult
+    func releaseDrag(at position: CGPoint) -> Bool {
+        guard let state = drag else { return true }
+        guard state.active else {
+            drag = nil
+            refreshPointer()
+            return state.row.kind != .folder
+        }
+        moveDrag(to: position)
+        dragTimer?.invalidate()
+        dragTimer = nil
+        let target = dropTarget
+        dropIndicator.removeFromSuperlayer()
+        dragSettling = true
+        if let move = target.move, let onMove {
+            let generation = dragGeneration
+            onMove(state.row.id, move.container, move.index, { if case .folder = target { true } else { false } }()) { [weak self] snapshot in
+                guard let self, self.dragGeneration == generation else { return }
+                if let snapshot { self.replaceSnapshot(snapshot) }
+                self.settleDrag(accepted: snapshot != nil)
+            }
+        } else { settleDrag(accepted: false) }
+        return true
+    }
+
+    private func cancelDrag() {
+        guard drag != nil, !dragSettling else { return }
+        dragGeneration += 1
+        dragTimer?.invalidate()
+        dragTimer = nil
+        dropTarget = .refused
+        dropIndicator.removeFromSuperlayer()
+        dragSettling = true
+        settleDrag(accepted: false)
+    }
+
+    private func settleDrag(accepted: Bool) {
+        guard let state = drag else { return }
+        dragFavoriteIndex = nil
+        reloadFavorites()
+        layoutSubtreeIfNeeded()
+        let destination: CGRect
+        if accepted, case .dock(let space, _, _) = dropTarget,
+           let index = snapshot.spaces.firstIndex(where: { $0.id == space }), dock.subviews.indices.contains(index) {
+            destination = dragRect(dock.subviews[index])
+        } else if accepted, let view = rowViews[state.row.id] ?? favoriteTiles[state.row.id] { destination = dragRect(view) }
+        else { destination = state.originFrame }
+        guard let copy = dragCopyView, !dragReduceMotion() else { finishDrag(); return }
+        let from = copy.layer?.presentation()?.position ?? copy.layer?.position ?? .zero
+        copy.frame = nativeDragRect(destination)
+        let animation = CABasicAnimation(keyPath: "position")
+        animation.fromValue = NSValue(point: from)
+        animation.toValue = NSValue(point: copy.layer?.position ?? .zero)
+        animation.duration = SidebarDragMetrics.settleDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        let generation = dragGeneration
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in
+                guard let self, self.dragGeneration == generation else { return }
+                self.finishDrag()
+            }
+        }
+        copy.layer?.add(animation, forKey: "drag.settle")
+        CATransaction.commit()
+    }
+
+    private func finishDrag() {
+        dragGeneration += 1
+        dragCopyView?.removeFromSuperview()
+        dragCopyView = nil
+        drag = nil
+        dragSettling = false
+        for row in rowViews.values { row.dragSource = false; row.dropHovered = false }
+        tooltip.dismiss()
+        refreshPointer()
+        notifyAutoArchiveReady()
+    }
 }

@@ -189,9 +189,9 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
-    pub fn move_item(&self, window_id: String, id: String, container: String, index: u32) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn move_item(&self, window_id: String, id: String, container: String, index: u32, open_folder: bool) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.move_item(&id, &container, index as usize)?;
+        let ops = workspace.move_item(&id, &container, index as usize, open_folder)?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(snapshot(workspace.clone(), &window_id))
@@ -255,6 +255,9 @@ pub enum RowKind {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct Row {
+    pub parent_id: String,
+    pub sibling_index: u32,
+    pub collapsed: bool,
     pub id: String,
     pub title: String,
     pub url: Option<String>,
@@ -313,6 +316,12 @@ impl From<Look> for ararat_core::model::Look {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct SpaceSnapshot {
+    pub pinned_count: u32,
+    pub today_count: u32,
+    pub profile_key: String,
+    pub pinned_id: String,
+    pub today_id: String,
+    pub favorites_id: Option<String>,
     pub archive_after: ArchiveAfter,
     pub profile_name: String,
     pub id: String,
@@ -362,6 +371,12 @@ fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
         })
     };
     SpaceSnapshot {
+        pinned_count: ws.children(&s.pinned).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).count() as u32,
+        today_count: ws.children(&s.today).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).count() as u32,
+        profile_key: format!("{:?}", s.profile),
+        pinned_id: s.pinned.clone(),
+        today_id: s.today.clone(),
+        favorites_id: ws.favorites.get(&s.profile).cloned(),
         archive_after: ws.archive_after.get(&s.profile).copied().unwrap_or_default().into(),
         profile_name: match &s.profile { ararat_core::model::Profile::Default => "Default".into(), ararat_core::model::Profile::Named(name) => name.clone() },
         id: s.id.clone(),
@@ -382,6 +397,11 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
         ItemKind::Container => return None,
     };
     Some(Row {
+        parent_id: item.membership.parent.clone().unwrap_or_default(),
+        sibling_index: item.membership.parent.as_deref().map_or(0, |p| ws.children(p).into_iter()
+            .filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .position(|i| i.id == item.id).unwrap_or(0)) as u32,
+        collapsed: ws.folder_collapsed.get(&item.id).copied().unwrap_or(false),
         id: item.id.clone(),
         title: item.display_title().to_string(),
         url,
@@ -397,6 +417,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drag_snapshot_exposes_membership_roots_indices_profiles_and_fold_state() {
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")).unwrap();
+        ws.set_folder_collapsed("folder-docs", true).unwrap();
+        let snapshot = snapshot(ws, "drag");
+        let space = &snapshot.spaces[0];
+        assert_eq!(space.pinned_id, "pin-work");
+        assert_eq!(space.today_id, "today-work");
+        assert_eq!(space.favorites_id.as_deref(), Some("fav-default"));
+        assert_eq!(space.pinned_count, 2);
+        assert_ne!(space.profile_key, snapshot.spaces[1].profile_key);
+        let folder = space.pinned.iter().find(|r| r.id == "folder-docs").unwrap();
+        assert_eq!(folder.parent_id, "pin-work");
+        assert_eq!(folder.sibling_index, 0);
+        assert!(folder.collapsed);
+        assert!(!space.pinned.iter().any(|r| r.id == "tab-spec"));
+        let split = space.pinned.iter().find(|r| r.id == "split-1").unwrap();
+        assert_eq!(split.sibling_index, 1);
+    }
+
+    #[test]
     fn item_edits_snapshot_titles_and_keep_selection_when_hidden_or_moved_to_another_space() {
         let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")).unwrap();
         ws.spaces[1].profile = ararat_core::model::Profile::Default;
@@ -408,7 +448,7 @@ mod tests {
         assert_eq!(snapshot(ws.clone(), "one").spaces[0].pinned.iter().find(|r| r.id == "tab-spec").unwrap().title, "Spec");
         ws.set_folder_collapsed("folder-docs", true).unwrap();
         assert_eq!(snapshot(ws.clone(), "one").selected_id.as_deref(), Some("tab-spec"));
-        ws.move_item("folder-docs", "pin-home", 0).unwrap();
+        ws.move_item("folder-docs", "pin-home", 0, false).unwrap();
         let view = snapshot(ws, "one");
         assert_eq!(view.shown_space_id.as_deref(), Some("space-work"));
         assert_eq!(view.selected_id.as_deref(), Some("tab-spec"));

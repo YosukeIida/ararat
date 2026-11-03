@@ -31,7 +31,7 @@ private func pullEvent(_ dx: Int32, _ phase: CGScrollPhase?, _ time: Double) -> 
 @MainActor
 private func pullWindow() -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
-    let spaces = (0..<3).map { SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<3).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s2", selectedId: nil, spaces: spaces))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar

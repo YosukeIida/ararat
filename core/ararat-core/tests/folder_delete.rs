@@ -18,7 +18,7 @@ fn empty_folder_and_nested_empty_folders_are_removed_with_local_state() {
 fn deleting_nested_tabs_and_splits_archives_active_items_and_preserves_inactive_times() {
     let mut ws = workspace();
     ws.create_folder("outer", "Outer", "pin-work", 0, &[]).unwrap();
-    ws.move_item("folder-docs", "outer", 0).unwrap(); ws.move_item("split-1", "folder-docs", 1).unwrap();
+    ws.move_item("folder-docs", "outer", 0, false).unwrap(); ws.move_item("split-1", "folder-docs", 1, false).unwrap();
     let mut archived = ws.items["tab-spec"].clone(); archived.id = "already-archived".into(); archived.lifecycle = Lifecycle::Archived; archived.lifecycle_changed_at = 17; ws.apply(&Op::Put(Record::Item(archived)));
     let mut closed = ws.items["tab-spec"].clone(); closed.id = "already-closed".into(); closed.lifecycle = Lifecycle::Closed; closed.lifecycle_changed_at = 19; ws.apply(&Op::Put(Record::Item(closed)));
     ws.items.get_mut("tab-b").unwrap().lifecycle = Lifecycle::Unloaded;
@@ -51,7 +51,7 @@ fn deleting_a_selected_folder_tab_uses_the_archive_successor_and_history() {
 #[test]
 fn deletion_and_restore_persist_and_the_journal_replays_the_synced_state() {
     let path = std::env::temp_dir().join(format!("ararat-folder-delete-{}.sqlite", std::process::id())); assert!(!path.exists());
-    let mut ws = workspace(); ws.move_item("split-1", "folder-docs", 1).unwrap(); ws.set_folder_collapsed("folder-docs", true).unwrap();
+    let mut ws = workspace(); ws.move_item("split-1", "folder-docs", 1, false).unwrap(); ws.set_folder_collapsed("folder-docs", true).unwrap();
     let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap();
     let mut copy = ws.clone(); let ops = ws.delete_folder("folder-docs").unwrap(); for op in &ops { copy.apply(op); } assert_eq!(copy, ws);
     store.write(ops); store.flush().unwrap(); assert_eq!(Store::open(&path).unwrap().1, ws);
