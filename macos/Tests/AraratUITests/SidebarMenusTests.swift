@@ -1,0 +1,380 @@
+import AppKit
+import AraratKit
+import Testing
+import SQLite3
+@testable import AraratUI
+
+@MainActor
+private final class MenuFixture {
+    let directory: URL
+    let store: WorkspaceStore
+    let sidebar: SidebarView
+    let window: NSWindow
+    var edits: [SidebarItemEdit] = []
+    var moves: [(String, String, Int)] = []
+    var closes: [String] = []
+    var archives: [String] = []
+    init() throws {
+        directory = try testTemporaryDirectory()
+        store = try WorkspaceStore.open(path: directory.appendingPathComponent("menus.sqlite").path)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8))
+        _ = try store.createSpace(windowId: "menus", name: "Other", spaceId: "other")
+        try store.showSpace(windowId: "menus", spaceId: "space-work")
+        _ = NSApplication.shared
+        sidebar = SidebarView(snapshot: store.snapshot(windowId: "menus"))
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 700), styleMask: [], backing: .buffered, defer: false)
+        window.contentView = sidebar
+        sidebar.layoutSubtreeIfNeeded()
+        sidebar.layoutSubtreeIfNeeded()
+        sidebar.onItemEdit = { [weak self] edit, done in
+            guard let self else { done(nil); return }
+            self.edits.append(edit)
+            do {
+                let result: WorkspaceSnapshot
+                switch edit {
+                case let .createFolder(id, container, index): result = try self.store.createFolder(windowId: "menus", id: id, name: "Untitled", container: container, index: UInt32(index), wrapping: [])
+                case let .rename(id, title, folder): result = try folder ? self.store.renameFolder(windowId: "menus", id: id, name: title) : self.store.renameTab(windowId: "menus", id: id, title: title)
+                case let .collapse(id, collapsed): result = try self.store.setFolderCollapsed(windowId: "menus", id: id, collapsed: collapsed)
+                case let .deleteFolder(id): result = try self.store.deleteFolder(windowId: "menus", id: id)
+                }
+                done(result)
+            } catch { Issue.record("edit failed: \(error)"); done(nil) }
+        }
+        sidebar.onMove = { [weak self] id, container, index, open, done in
+            guard let self else { done(nil); return }
+            self.moves.append((id, container, index))
+            do { done(try self.store.moveItem(windowId: "menus", id: id, container: container, index: UInt32(index), openFolder: open)) }
+            catch { Issue.record("move failed: \(error)"); done(nil) }
+        }
+        sidebar.onClose = { [weak self] id in
+            self?.closes.append(id)
+            do { if let self { self.sidebar.applySelection(snapshot: try self.store.closeItem(windowId: "menus", id: id)) } }
+            catch { Issue.record("close failed: \(error)") }
+        }
+        sidebar.onArchive = { [weak self] id in
+            self?.archives.append(id)
+            do { if let self { self.sidebar.applySelection(snapshot: try self.store.archiveItem(windowId: "menus", id: id)) } }
+            catch { Issue.record("archive failed: \(error)") }
+        }
+        sidebar.dragReduceMotion = { true }
+    }
+    var snapshot: WorkspaceSnapshot { store.snapshot(windowId: "menus") }
+    var space: SpaceSnapshot { snapshot.spaces.first { $0.id == "space-work" }! }
+    func row(_ id: String) throws -> Row { try #require(snapshot.spaces.flatMap { $0.favorites + $0.pinned + $0.today }.first { $0.id == id }) }
+    func view(_ id: String) throws -> SidebarRowView { try #require(descendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id }) }
+    func dispose() { window.contentView = nil; try? FileManager.default.removeItem(at: directory) }
+}
+
+@MainActor
+private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+
+@MainActor
+private func invoke(_ menu: NSMenu, _ title: String) throws {
+    let item = try #require(menu.items.first { $0.title == title })
+    #expect(item.isEnabled)
+    #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+}
+
+@Test @MainActor
+func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let pin = try f.row("tab-spec")
+    let favorite = try f.row("tab-mail")
+    let folder = try f.row("folder-docs")
+    let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
+    let titles = [["Copy Link", "Rename…", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Move to", "Delete"]]
+    for (menu, expected) in zip(menus, titles) {
+        #expect(menu.items.map(\.title) == expected)
+        #expect(menu.items.allSatisfy { $0.isEnabled })
+        #expect(!menu.autoenablesItems)
+        #expect(menu.items.allSatisfy { $0.title == "Move to" || ($0.target != nil && $0.action != nil) })
+        #expect(!menu.items.contains { $0.title == "Duplicate" })
+    }
+    #expect(menus[2].items[2].keyEquivalent == "w")
+    #expect(menus[2].items[2].keyEquivalentModifierMask == .command)
+    #expect(menus[0].items[2].submenu?.items.map(\.title) == ["Other"])
+    #expect(f.sidebar.emptyAreaMenu().items.map(\.title) == ["New Folder"])
+    #expect(f.sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("Ararat-menu-test-\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    f.sidebar.pasteboard = pasteboard
+    for (menu, row) in zip(menus.prefix(3), [pin, pin, favorite]) {
+        try invoke(menu, "Copy Link")
+        #expect(pasteboard.string(forType: .string) == row.url)
+    }
+    var invalid = pin; invalid.url = nil
+    #expect(f.sidebar.todayMenu(row: invalid).items[0].isEnabled == false)
+    var noTargets = f.snapshot; noTargets.spaces.removeAll { $0.id == "other" }
+    f.sidebar.update(snapshot: noTargets)
+    #expect(!f.sidebar.pinnedMenu(row: pin).items[2].isEnabled)
+    #expect(!f.window.isVisible && !f.window.isKeyWindow)
+}
+
+@Test @MainActor
+func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
+    for action in ["Remove Pin", "Move pinned", "Move today", "Move folder", "Archive Tab", "Close Tab", "Remove Favorite"] {
+        let f = try MenuFixture(); defer { f.dispose() }
+        let pin = try f.row("tab-spec")
+        if action == "Remove Pin" {
+            try invoke(f.sidebar.pinnedMenu(row: pin), action)
+            #expect(f.moves.count == 1 && f.moves[0].1 == "today-work" && f.moves[0].2 == 0)
+            #expect(f.space.today.first?.id == pin.id)
+        } else if action.hasPrefix("Move") {
+            var row = pin
+            if action == "Move folder" { row = try f.row("folder-docs") }
+            if action == "Move today" {
+                let result = try f.store.moveItem(windowId: "menus", id: pin.id, container: "today-work", index: 0, openFolder: false)
+                f.sidebar.update(snapshot: result); row = try f.row(pin.id)
+            }
+            let menu = row.kind == .folder ? f.sidebar.folderMenu(row: row) : action == "Move today" ? f.sidebar.todayMenu(row: row) : f.sidebar.pinnedMenu(row: row)
+            try invoke(try #require(menu.items.first { $0.title == "Move to" }?.submenu), "Other")
+            let other = try #require(f.snapshot.spaces.first { $0.id == "other" })
+            #expect(f.moves.count == 1)
+            #expect(f.moves[0].1 == (action == "Move today" ? other.todayId : other.pinnedId))
+            #expect(f.snapshot.shownSpaceId == "space-work" && f.sidebar.spaceShown == 0)
+        } else if action == "Archive Tab" {
+            let result = try f.store.moveItem(windowId: "menus", id: pin.id, container: "today-work", index: 0, openFolder: false)
+            f.sidebar.update(snapshot: result)
+            try invoke(f.sidebar.todayMenu(row: try f.row(pin.id)), action)
+            #expect(f.archives == [pin.id] && f.snapshot.archive.contains { $0.id == pin.id })
+        } else {
+            try invoke(f.sidebar.favoriteMenu(row: try f.row("tab-mail")), action)
+            if action == "Remove Favorite" {
+                #expect(f.archives == ["tab-mail"] && f.space.favorites.isEmpty)
+            } else {
+                #expect(f.closes == ["tab-mail"] && f.space.favorites.first?.unloaded == true)
+            }
+            #expect(!f.space.today.contains { $0.id == "tab-mail" })
+        }
+    }
+}
+
+@Test @MainActor
+func renameCommitsCancelsClearsAndRefusesEmptyFolder() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let row = try f.view("tab-spec")
+    try invoke(f.sidebar.pinnedMenu(row: row.row), "Rename…")
+    let field = try #require(row.renameField)
+    field.stringValue = "Named"
+    #expect(field.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
+    #expect(try f.row("tab-spec").title == "Named" && row.renameField == nil && f.edits.count == 1)
+    f.sidebar.beginRename(id: row.row.id)
+    row.renameField?.stringValue = "Discard"
+    let cancelling = try #require(row.renameField)
+    #expect(cancelling.control(cancelling, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:))))
+    #expect(try f.row("tab-spec").title == "Named" && f.edits.count == 1)
+    f.sidebar.beginRename(id: row.row.id)
+    row.renameField?.stringValue = ""
+    row.renameField?.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification))
+    #expect(try f.row("tab-spec").title == "Spec" && f.edits.count == 2)
+    let folder = try f.view("folder-docs")
+    f.sidebar.beginRename(id: folder.row.id)
+    folder.renameField?.stringValue = "  "
+    folder.finishRename(commit: true)
+    #expect(folder.renameField != nil && f.edits.count == 2)
+    folder.renameField?.stringValue = "Sources"
+    folder.finishRename(commit: true)
+    #expect(try f.row("folder-docs").title == "Sources" && f.edits.count == 3)
+    let favorite = try #require(descendants(f.sidebar).compactMap { $0 as? FavoriteTile }.first)
+    try invoke(f.sidebar.favoriteMenu(row: favorite.row), "Rename…")
+    favorite.renameField?.stringValue = "Inbox"
+    favorite.renameField?.finish(commit: true)
+    #expect(try f.row("tab-mail").title == "Inbox" && f.edits.count == 4)
+}
+
+@Test @MainActor
+func newFoldersAppendAndRenameAndDeletionUsesInjectedConfirmation() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let previous = f.space.pinnedCount
+    try invoke(f.sidebar.newSpaceMenu, "New Folder")
+    let id = try #require(f.sidebar.renamingID)
+    let row = try f.row(id)
+    #expect(row.title == "Untitled" && row.parentId == "pin-work" && row.siblingIndex == previous)
+    #expect(try f.view(id).renameField != nil)
+    try f.view(id).finishRename(commit: false)
+    var confirmations = 0
+    var confirm = false
+    f.sidebar.confirmFolderDeletion = { row, done in
+        confirmations += 1; #expect(row.id == "folder-docs"); done(confirm)
+    }
+    try invoke(f.sidebar.folderMenu(row: row), "Delete")
+    #expect(confirmations == 0 && !f.space.pinned.contains { $0.id == id })
+    _ = try f.store.setFolderCollapsed(windowId: "menus", id: "folder-docs", collapsed: true)
+    f.sidebar.update(snapshot: f.snapshot)
+    let folder = try f.row("folder-docs")
+    #expect(folder.folderHasTabs && !f.space.pinned.contains { $0.id == "tab-spec" })
+    let before = f.edits.count
+    try invoke(f.sidebar.folderMenu(row: folder), "Delete")
+    #expect(confirmations == 1 && f.edits.count == before)
+    confirm = true
+    try invoke(f.sidebar.folderMenu(row: folder), "Delete")
+    #expect(confirmations == 2 && f.edits.count == before + 1)
+    #expect(!f.space.pinned.contains { $0.id == folder.id })
+    #expect(f.snapshot.archive.contains { $0.id == "tab-spec" })
+}
+
+@Test @MainActor
+func nestedFolderCreationOpensParentAndDoubleClickStartsRename() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    _ = try f.store.setFolderCollapsed(windowId: "menus", id: "folder-docs", collapsed: true)
+    f.sidebar.update(snapshot: f.snapshot)
+    try invoke(f.sidebar.folderMenu(row: try f.row("folder-docs")), "New Nested Folder…")
+    let id = try #require(f.sidebar.renamingID)
+    #expect(try f.row(id).parentId == "folder-docs" && f.row(id).siblingIndex == 1)
+    #expect(try f.row("folder-docs").collapsed == false)
+    try f.view(id).finishRename(commit: false)
+    let pin = try f.view("tab-spec")
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+    pin.mouseDown(with: event)
+    #expect(f.sidebar.renamingID == pin.row.id && pin.renameField != nil && f.sidebar.drag == nil)
+    #expect(descendants(pin).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Double-click to rename" && !$0.isHidden } == (f.sidebar.selectedRowID == pin.row.id))
+    pin.finishRename(commit: false)
+}
+
+@Test @MainActor
+func folderClickAndAccessibilityTogglePersistButDraggingNeverToggles() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let folder = try f.view("folder-docs")
+    let point = folder.convert(NSPoint(x: 30, y: 20), to: nil)
+    func event(_ type: NSEvent.EventType, _ point: NSPoint) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: f.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    folder.mouseDown(with: try event(.leftMouseDown, point))
+    folder.mouseUp(with: try event(.leftMouseUp, point))
+    #expect(try f.row("folder-docs").collapsed)
+    #expect(f.edits.count == 1)
+    let expanded = try #require(folder.accessibilityCustomActions()?.first)
+    #expect(expanded.name == "Expand" && expanded.handler?() == true)
+    #expect(try !f.row("folder-docs").collapsed && f.edits.count == 2)
+    folder.mouseDown(with: try event(.leftMouseDown, point))
+    folder.mouseDragged(with: try event(.leftMouseDragged, NSPoint(x: point.x + 4, y: point.y)))
+    folder.mouseUp(with: try event(.leftMouseUp, NSPoint(x: -20, y: -20)))
+    #expect(f.edits.count == 2 && f.sidebar.drag == nil)
+    #expect(try !f.row("folder-docs").collapsed)
+    _ = try f.store.setFolderCollapsed(windowId: "menus", id: "folder-docs", collapsed: true)
+    try f.store.flush()
+    let reopened = try WorkspaceStore.open(path: f.directory.appendingPathComponent("menus.sqlite").path)
+    #expect(reopened.snapshot(windowId: "menus").spaces[0].pinned.first { $0.id == "folder-docs" }?.collapsed == true)
+}
+
+@Test @MainActor
+func rowMenusParticipateInTooltipTrackingWithoutShowingMenus() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let menu = f.sidebar.folderMenu(row: try f.row("folder-docs"))
+    f.sidebar.menuWillOpen(menu)
+    #expect(f.sidebar.tooltip.menuTracking)
+    f.sidebar.menuDidClose(menu)
+    #expect(!f.sidebar.tooltip.menuTracking)
+    let row = try f.view("tab-spec")
+    let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Move to", "Remove Pin"])
+}
+
+@Test @MainActor
+func adapterFolderAndRenameEditsReachTheCoreAndPersist() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    let adapter = WorkspaceAdapter(windowID: "menu-adapter")
+    func value<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
+        try await withCheckedThrowingContinuation { done in start { done.resume(with: $0) } }
+    }
+    let path = directory.appendingPathComponent("adapter.sqlite").path
+    _ = try await value { adapter.open(path: path, json: { json }, completion: $0) }
+    let created = try await value { adapter.edit(.createFolder(id: "new", container: "pin-work", index: 2), completion: $0) }
+    #expect(created.spaces[0].pinned.last?.id == "new")
+    let renamed = try await value { adapter.edit(.rename(id: "new", title: "Named", folder: true), completion: $0) }
+    #expect(renamed.spaces[0].pinned.last?.title == "Named")
+    _ = try await value { adapter.edit(.rename(id: "tab-spec", title: "Custom", folder: false), completion: $0) }
+    let cleared = try await value { adapter.edit(.rename(id: "tab-spec", title: "", folder: false), completion: $0) }
+    #expect(cleared.spaces[0].pinned.first { $0.id == "tab-spec" }?.title == "Spec")
+    let folded = try await value { adapter.edit(.collapse(id: "folder-docs", collapsed: true), completion: $0) }
+    #expect(folded.spaces[0].pinned.first { $0.id == "folder-docs" }?.collapsed == true)
+    #expect(folded.spaces[0].pinned.first { $0.id == "folder-docs" }?.folderHasTabs == true)
+    let deleted = try await value { adapter.edit(.deleteFolder(id: "new"), completion: $0) }
+    #expect(!deleted.spaces[0].pinned.contains { $0.id == "new" })
+    _ = try await value { adapter.shutdown(completion: $0) }
+    let reopened = try WorkspaceStore.open(path: path)
+    #expect(reopened.snapshot(windowId: "menu-adapter").spaces[0].pinned.first { $0.id == "folder-docs" }?.collapsed == true)
+}
+
+@Test @MainActor
+func everyRowMenuHoldsFloatingSidebarUntilTrackingEnds() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let container = SidebarContainerView(sidebar: f.sidebar, page: NSView())
+    container.applicationActive = { true }
+    container.windowKey = { true }
+    container.pressedButtons = { 0 }
+    var now = 0.0
+    var point = NSPoint(x: f.window.frame.minX, y: f.window.frame.midY)
+    container.clock = { now }
+    container.pointerLocation = { point }
+    f.window.contentView = container
+    f.sidebar.updateSelection(id: "tab-spec")
+    container.selectionChanged()
+    container.layoutSubtreeIfNeeded()
+    let pin = try f.row("tab-spec")
+    let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: try f.row("tab-mail")), f.sidebar.folderMenu(row: try f.row("folder-docs")), f.sidebar.emptyAreaMenu()]
+    for menu in menus {
+        point.x = f.window.frame.minX
+        if container.sidebarState != "hidden" { container.toggleSidebar() }
+        container.processPointer()
+        now += 0.2
+        container.processPointer()
+        #expect(container.sidebarState == "floating")
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        point.x = f.window.frame.maxX + 100
+        container.processPointer()
+        #expect(container.sidebarState == "floating" && f.sidebar.tooltip.menuTracking)
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+        #expect(container.sidebarState == "hidden" && !f.sidebar.tooltip.menuTracking)
+    }
+    #expect(!f.window.isVisible && !f.window.isKeyWindow)
+}
+
+@Test @MainActor
+func unchangedRenameSkipsCoreEditsAndKeepsFollowingThePageTitle() throws {
+    for folder in [false, true] {
+        for focusLoss in [false, true] {
+            let f = try MenuFixture(); defer { f.dispose() }
+            let id = folder ? "folder-docs" : "tab-mail"
+            let row = try f.row(id)
+            try invoke(folder ? f.sidebar.folderMenu(row: row) : f.sidebar.favoriteMenu(row: row), "Rename…")
+            let field: SidebarRenameField
+            if folder { field = try #require(f.view(id).renameField) }
+            else { field = try #require(descendants(f.sidebar).compactMap { $0 as? FavoriteTile }.first?.renameField) }
+            field.stringValue = "  " + row.title + "  "
+            if focusLoss { field.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification)) }
+            else { _ = field.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))) }
+            #expect(f.edits.isEmpty && f.sidebar.renamingID == nil)
+            if !folder {
+                try f.store.flush()
+                var connection: OpaquePointer?
+                try #require(sqlite3_open(f.directory.appendingPathComponent("menus.sqlite").path, &connection) == SQLITE_OK)
+                defer { sqlite3_close(connection) }
+                try #require(sqlite3_exec(connection, "UPDATE records SET body = json_set(body, '$.kind.Tab.saved_title', 'Updated Mail') WHERE kind = 'item' AND id = 'tab-mail'", nil, nil, nil) == SQLITE_OK)
+                let reopened = try WorkspaceStore.open(path: f.directory.appendingPathComponent("menus.sqlite").path)
+                #expect(reopened.snapshot(windowId: "menus").spaces[0].favorites.first?.title == "Updated Mail")
+            }
+        }
+    }
+}
+
+@Test @MainActor
+func folderDoubleClickTogglesTwiceWithoutRenaming() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let folder = try f.view("folder-docs")
+    let point = folder.convert(NSPoint(x: 30, y: 20), to: nil)
+    for count in [1, 2] {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: f.window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: 1))
+            if type == .leftMouseDown { folder.mouseDown(with: event) }
+            else { folder.mouseUp(with: event) }
+        }
+    }
+    #expect(f.edits.count == 2)
+    #expect(try !f.row("folder-docs").collapsed)
+    #expect(folder.renameField == nil && f.sidebar.renamingID == nil)
+}

@@ -4,7 +4,7 @@ import Testing
 @testable import AraratUI
 
 private func dragRow(_ id: String, _ parent: String, _ index: UInt32 = 0, kind: RowKind = .tab, collapsed: Bool = false, depth: UInt32 = 0) -> Row {
-    Row(parentId: parent, siblingIndex: index, collapsed: collapsed, id: id, title: id, url: kind == .tab ? "https://\(id).example" : nil,
+    Row(folderHasTabs: false, parentId: parent, siblingIndex: index, collapsed: collapsed, id: id, title: id, url: kind == .tab ? "https://\(id).example" : nil,
         depth: depth, kind: kind, unloaded: false, lastSelectedAt: nil)
 }
 

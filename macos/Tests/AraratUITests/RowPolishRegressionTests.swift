@@ -6,7 +6,7 @@ import Testing
 @Test @MainActor
 func middleClickClosesTodayThroughTheSharedClosePath() throws {
     _ = NSApplication.shared
-    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "today", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "today", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [row])])
     let sidebar = SidebarView(snapshot: snapshot)
@@ -27,7 +27,7 @@ func middleClickClosesTodayThroughTheSharedClosePath() throws {
 @Test @MainActor
 func pinnedRowsExposeAnAccessibleHoverAction() throws {
     _ = NSApplication.shared
-    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "pin", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "pin", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let view = SidebarRowView(row: row, selected: true) { _ in }
     view.frame = NSRect(x: 0, y: 0, width: 220, height: 41)
     view.pointerLocation = { NSPoint(x: 20, y: 20) }

@@ -5,6 +5,12 @@ import AraratKit
 final class SidebarRowView: NSView {
     private(set) var row: Row
     var acceptsKeyboardFocus = true { didSet { refreshHover() } }
+    var menuProvider: (() -> NSMenu?)?
+    var onRename: ((Row) -> Void)?
+    var onRenameCommit: ((Row, String, @escaping (Bool) -> Void) -> Void)?
+    var onRenameEnd: (() -> Void)?
+    private(set) var renameField: SidebarRenameField?
+    private let renameHint = NSTextField(labelWithString: "Double-click to rename")
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
     let closeButton = NSButton()
@@ -24,6 +30,7 @@ final class SidebarRowView: NSView {
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private var fillLeading: NSLayoutConstraint!
+    private var titleCenterY: NSLayoutConstraint!
     private var iconLeading: NSLayoutConstraint!
     private(set) var hovered = false { didSet { updateFill(); updateCloseButton() } }
     var pointerLocation: (() -> NSPoint?)?
@@ -52,6 +59,7 @@ final class SidebarRowView: NSView {
         }
         fillLeading = fill.leadingAnchor.constraint(equalTo: leadingAnchor)
         iconLeading = icon.leadingAnchor.constraint(equalTo: leadingAnchor)
+        titleCenterY = title.centerYAnchor.constraint(equalTo: centerYAnchor)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 41),
             fillLeading,
@@ -64,8 +72,12 @@ final class SidebarRowView: NSView {
             icon.heightAnchor.constraint(equalToConstant: 16),
             title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            title.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleCenterY,
         ])
+        renameHint.font = .systemFont(ofSize: 10)
+        renameHint.textColor = .secondaryLabelColor
+        renameHint.isHidden = true
+        addSubview(renameHint)
         title.wantsLayer = true
         closeButton.isBordered = false
         closeButton.imagePosition = .imageOnly
@@ -94,7 +106,10 @@ final class SidebarRowView: NSView {
         toolTip = row.url ?? row.title
         title.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        icon.image = Self.symbol(for: row.kind)
+        icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed) : Self.symbol(for: row.kind)
+        renameHint.isHidden = !(pinned && selected && row.kind == .tab)
+        titleCenterY.constant = renameHint.isHidden ? 0 : 6
+        title.maximumNumberOfLines = renameHint.isHidden ? 2 : 1
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = 10 + CGFloat(row.depth) * 16
         setAccessibilityLabel(title.stringValue)
@@ -134,6 +149,8 @@ final class SidebarRowView: NSView {
     override func mouseExited(with event: NSEvent) { refreshHover() }
     override func mouseDown(with event: NSEvent) {
         guard acceptsKeyboardFocus else { return }
+        if event.modifierFlags.contains(.control) { super.mouseDown(with: event); return }
+        if event.clickCount == 2 && pinned && row.kind == .tab { onRename?(row); return }
         trackingPress = true
         pressed = true
         onDragPress?(row, event.locationInWindow)
@@ -166,7 +183,13 @@ final class SidebarRowView: NSView {
                 return true
             },
         ] : []
-        setAccessibilityCustomActions(actions)
+        var rowActions = actions
+        if row.kind == .folder && acceptsKeyboardFocus {
+            rowActions.append(NSAccessibilityCustomAction(name: row.collapsed ? "Expand" : "Collapse") { [weak self] in
+                guard let self, self.acceptsKeyboardFocus else { return false }; self.action(self.row); return true
+            })
+        }
+        setAccessibilityCustomActions(rowActions)
         if closeButton.accessibilityLabel() != label { closeButton.toolTip = label }
         closeButton.setAccessibilityLabel(label)
         closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || !hovered))
@@ -175,6 +198,8 @@ final class SidebarRowView: NSView {
 
     override func layout() {
         super.layout()
+        renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
+        renameHint.frame = NSRect(x: title.frame.minX, y: bounds.midY - 16, width: max(1, bounds.width - title.frame.minX - 8), height: 12)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if !closeButton.isHidden && closeButton.frame.minX < title.frame.maxX {
@@ -229,6 +254,49 @@ final class SidebarRowView: NSView {
         }
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? { acceptsKeyboardFocus ? menuProvider?() : nil }
+
+    func beginRename() {
+        guard renameField == nil else { return }
+        let field = SidebarRenameField(title: row.title, save: { [weak self] title, done in
+            guard let self, let save = self.onRenameCommit else { done(false); return }
+            save(self.row, title, done)
+        }, ended: { [weak self] in self?.renameField = nil; self?.onRenameEnd?() })
+        renameField = field
+        addSubview(field)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    func finishRename(commit: Bool) { renameField?.finish(commit: commit) }
+
+    static func folderSymbol(collapsed: Bool) -> NSImage {
+        if collapsed { return symbol(for: .folder) }
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
+            NSColor.labelColor.setFill()
+            let back = NSBezierPath()
+            back.move(to: NSPoint(x: 1, y: 3))
+            back.line(to: NSPoint(x: 1, y: 13))
+            back.line(to: NSPoint(x: 6, y: 13))
+            back.line(to: NSPoint(x: 8, y: 11))
+            back.line(to: NSPoint(x: 14, y: 11))
+            back.line(to: NSPoint(x: 14, y: 9))
+            back.line(to: NSPoint(x: 4, y: 9))
+            back.close(); back.fill()
+            let front = NSBezierPath()
+            front.move(to: NSPoint(x: 1, y: 3))
+            front.line(to: NSPoint(x: 4, y: 8))
+            front.line(to: NSPoint(x: 16, y: 8))
+            front.line(to: NSPoint(x: 13, y: 3))
+            front.close(); front.fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     static func symbol(for kind: RowKind) -> NSImage {
         let name = switch kind {
         case .tab: "globe"
@@ -246,6 +314,9 @@ final class FavoriteTile: NSButton {
     var onDragPress: ((Row, NSPoint) -> Void)?
     var onDragMove: ((NSPoint) -> Void)?
     var onDragRelease: ((NSPoint) -> Bool)?
+    var menuProvider: (() -> NSMenu?)?
+    var onRenameEnd: (() -> Void)?
+    private(set) var renameField: SidebarRenameField?
     private let onPress: (Row) -> Void
     private let icon = NSImageView()
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
@@ -291,6 +362,7 @@ final class FavoriteTile: NSButton {
     @objc private func pressed() { onPress(row) }
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { super.mouseDown(with: event); return }
         guard let onDragPress else { super.mouseDown(with: event); return }
         onDragPress(row, event.locationInWindow)
     }
@@ -299,8 +371,23 @@ final class FavoriteTile: NSButton {
         if onDragRelease?(event.locationInWindow) != true && bounds.contains(convert(event.locationInWindow, from: nil)) { onPress(row) }
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
+
+    func beginRename(save: @escaping (String, @escaping (Bool) -> Void) -> Void) {
+        guard renameField == nil else { return }
+        let field = SidebarRenameField(title: row.title, save: save, ended: { [weak self] in
+            self?.renameField = nil; self?.onRenameEnd?()
+        })
+        renameField = field
+        addSubview(field)
+        field.frame = bounds.insetBy(dx: 2, dy: 10)
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        super.hitTest(point) == nil ? nil : self
+        if let renameField, renameField.frame.contains(convert(point, from: superview)) { return renameField }
+        return super.hitTest(point) == nil ? nil : self
     }
 
     override func viewDidChangeEffectiveAppearance() {

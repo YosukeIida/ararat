@@ -9,7 +9,7 @@ private func listDescendants(_ view: NSView) -> [NSView] {
 }
 
 private func listRow(_ id: String) -> Row {
-    Row(parentId: "", siblingIndex: 0, collapsed: false, id: id, title: "Tab \(id)", url: "https://example.com/\(id)", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: id, title: "Tab \(id)", url: "https://example.com/\(id)", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
 }
 
 private func listSnapshot(_ count: Int = 45, selected: String? = "t0") -> WorkspaceSnapshot {
@@ -251,7 +251,7 @@ func listKeyboardSelectionAndCreatedTabRevealWithoutOrderingWindow() throws {
 @Test @MainActor
 func listDoesNotRevealASelectedChildOmittedByACollapsedFolder() throws {
     var snapshot = listSnapshot()
-    snapshot.spaces[0].pinned.append(Row(parentId: "", siblingIndex: 0, collapsed: false, id: "folder", title: "Closed", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil))
+    snapshot.spaces[0].pinned.append(Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "folder", title: "Closed", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil))
     let (window, sidebar, scroll) = listWindow(snapshot)
     defer { window.contentView = nil }
     let list = try #require(scroll as? SidebarScrollView)

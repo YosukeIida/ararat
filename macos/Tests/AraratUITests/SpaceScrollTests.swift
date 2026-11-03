@@ -328,8 +328,8 @@ func resizingAndResettingCancelTheActiveGestureUntilTheNextBegin() {
 @Test @MainActor
 func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
     _ = NSApplication.shared
-    let tab = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Neighbor row", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
-    let favorite = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "favorite", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let tab = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Neighbor row", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let favorite = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "favorite", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let spaces = (0..<3).map {
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [favorite], pinned: [tab], today: [])
     }
@@ -374,7 +374,7 @@ func neighborPreviewsKeepLiveContentWithoutLayerImagesAndRefuseFocus() throws {
 @Test @MainActor
 func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     _ = NSApplication.shared
-    let tab = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let tab = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Current tab", url: "https://example.com", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let spaces = (0..<3).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: $0 == 1 ? [tab] : [], today: []) }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: spaces))
     sidebar.showSpace(at: 1)
@@ -411,8 +411,8 @@ private func scrollTestWindow(spaces: Int = 3) -> (NSWindow, SidebarView) {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: (0..<spaces).map {
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil,
-                      favorites: [Row(parentId: "", siblingIndex: 0, collapsed: false, id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)],
-                      pinned: [Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)], today: [])
+                      favorites: [Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "favorite-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)],
+                      pinned: [Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab-\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)], today: [])
     })
     let sidebar = SidebarView(snapshot: snapshot)
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 720), styleMask: [], backing: .buffered, defer: false)

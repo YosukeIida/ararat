@@ -260,12 +260,13 @@ public final class SidebarContainerView: NSView {
         }
         NotificationCenter.default.addObserver(self, selector: #selector(windowClosed), name: NSWindow.willCloseNotification, object: window)
         for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: sidebar.newSpaceMenu)
+            NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: nil)
         }
         processPointer()
     }
 
     @objc private func menuChanged(_ notification: Notification) {
+        guard let menu = notification.object as? NSMenu, menu.delegate === sidebar else { return }
         menuTracking = notification.name == NSMenu.didBeginTrackingNotification
         sidebar.tooltip.menuTracking = menuTracking
         if !menuTracking { sidebar.refreshPointer() }

@@ -270,7 +270,7 @@ func selectedRowCloseKeycapResolvesAgainstTheRealHarnessMenu() throws {
     defer { NSApp.mainMenu = oldMenu }
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "close-keycap"))
     NSApp.mainMenu = harness.makeMenu()
-    let row = SidebarRowView(row: Row(parentId: "", siblingIndex: 0, collapsed: false, id: "row", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil), selected: true, action: { _ in })
+    let row = SidebarRowView(row: Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "row", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil), selected: true, action: { _ in })
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 200), styleMask: [], backing: .buffered, defer: false)
     window.contentView = row
     defer { window.contentView = nil }

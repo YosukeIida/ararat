@@ -10,6 +10,10 @@ public final class SidebarView: NSView {
     private let plusButton = SidebarDockButton()
     let newSpaceMenu = NSMenu()
     private var scrollPageIndex: Int { libraryOpen ? -1 : createSpaceOpen ? snapshot.spaces.count : spaceIndex }
+    public var onItemEdit: ((SidebarItemEdit, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
+    var pasteboard: NSPasteboard = .general
+    private(set) var renamingID: String?
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
@@ -86,7 +90,7 @@ public final class SidebarView: NSView {
     public var onAutoArchiveReady: (() -> Void)?
     public var canPublishAutoArchive: Bool {
         let gestureActive = scrollGestureActive && pullClock() - lastScrollEventAt < 2
-        return drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
+        return renamingID == nil && !tooltip.menuTracking && drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
     }
     private func notifyAutoArchiveReady() {
         if canPublishAutoArchive { onAutoArchiveReady?() }
@@ -474,8 +478,13 @@ public final class SidebarView: NSView {
         creation.onCreate = { [weak self] name in self?.onCreateSpace?(name) }
         creation.onCancel = { [weak self] in self?.setCreateSpaceOpen(false) }
         creation.active = false
+        newSpaceMenu.delegate = self
+        let newFolder = newSpaceMenu.addItem(withTitle: "New Folder", action: #selector(newFolder(_:)), keyEquivalent: "")
+        newFolder.target = self
         let newSpace = newSpaceMenu.addItem(withTitle: "New Space", action: #selector(showCreateSpace(_:)), keyEquivalent: "")
         newSpace.target = self
+        newSpaceMenu.removeItem(newSpace)
+        newSpaceMenu.insertItem(newSpace, at: 0)
         plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Space")?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.libraryIconSize, weight: .regular))
         plusButton.imagePosition = .imageOnly
         plusButton.isBordered = false
@@ -663,6 +672,10 @@ public final class SidebarView: NSView {
                 let tile = favoriteTiles[row.id] ?? FavoriteTile(row: row) { [weak self] row in self?.select(row) }
                 favoriteTiles[row.id] = tile
                 wireDrag(tile)
+                tile.menuProvider = { [weak self, weak tile] in
+                    guard let self, !self.isScrollPreview, let tile else { return nil }
+                    return self.favoriteMenu(row: tile.row)
+                }
                 tile.update(row: row)
                 tile.refusesFirstResponder = isScrollPreview
                 return tile
@@ -688,6 +701,16 @@ public final class SidebarView: NSView {
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
         wireDrag(view)
+        view.menuProvider = { [weak self, weak view] in
+            guard let self, let row = view?.row else { return nil }
+            return row.kind == .folder ? self.folderMenu(row: row) : row.kind == .tab ? (view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)) : nil
+        }
+        view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
+        view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
+        view.onRenameEnd = { [weak self] in
+            guard let self, self.renamingID == row.id else { return }
+            self.renamingID = nil; self.notifyAutoArchiveReady()
+        }
         view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
         view.onClose = { [weak self, weak view] id in
             guard let self, let view else { return }
@@ -742,6 +765,10 @@ public final class SidebarView: NSView {
     }
 
     private func select(_ row: Row) {
+        if row.kind == .folder {
+            performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
+            return
+        }
         selectedID = row.id
         snapshot.selectedId = row.id
         reload()
@@ -1355,5 +1382,166 @@ extension SidebarView {
         tooltip.dismiss()
         refreshPointer()
         notifyAutoArchiveReady()
+    }
+}
+
+@MainActor
+private final class SidebarMenuItem: NSMenuItem {
+    private let perform: () -> Void
+    init(_ title: String, key: String = "", enabled: Bool = true, perform: @escaping () -> Void) {
+        self.perform = perform
+        super.init(title: title, action: #selector(invoke), keyEquivalent: key)
+        target = self
+        isEnabled = enabled
+    }
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    @objc private func invoke() { perform() }
+}
+
+extension SidebarView: NSMenuDelegate {
+    public func menuWillOpen(_ menu: NSMenu) { tooltip.menuTracking = true }
+    public func menuDidClose(_ menu: NSMenu) { tooltip.menuTracking = false; refreshPointer(); notifyAutoArchiveReady() }
+
+    private func itemMenu(_ items: [NSMenuItem]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        items.forEach(menu.addItem)
+        return menu
+    }
+
+    private func copyItem(_ row: Row) -> NSMenuItem {
+        SidebarMenuItem("Copy Link", enabled: row.url != nil) { [weak self] in
+            guard let self, let url = row.url else { return }
+            self.pasteboard.clearContents()
+            self.pasteboard.setString(url, forType: .string)
+        }
+    }
+
+    private func renameItem(_ row: Row) -> NSMenuItem {
+        SidebarMenuItem("Rename…") { [weak self] in self?.beginRename(id: row.id) }
+    }
+
+    private func moveItem(_ row: Row) -> NSMenuItem {
+        let item = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
+        let targets = snapshot.spaces.filter { $0.profileKey == snapshotSpace?.profileKey && $0.id != snapshotSpace?.id }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for target in targets {
+            menu.addItem(SidebarMenuItem(target.title) { [weak self] in
+                guard let self else { return }
+                let pinned = row.kind == .folder || self.snapshotSpace?.pinned.contains { $0.id == row.id } == true
+                let container = pinned ? target.pinnedId : target.todayId
+                let index = Int(pinned ? target.pinnedCount : target.todayCount)
+                self.menuMove(row.id, container: container, index: index)
+            })
+        }
+        item.submenu = menu
+        item.isEnabled = !targets.isEmpty
+        return item
+    }
+
+    func todayMenu(row: Row) -> NSMenu {
+        itemMenu([copyItem(row), renameItem(row), moveItem(row),
+                  SidebarMenuItem("Archive Tab") { [weak self] in self?.onArchive?(row.id) }])
+    }
+
+    func pinnedMenu(row: Row) -> NSMenu {
+        itemMenu([copyItem(row), renameItem(row), moveItem(row),
+                  SidebarMenuItem("Remove Pin") { [weak self] in
+                      guard let self, let container = self.snapshotSpace?.todayId else { return }
+                      self.menuMove(row.id, container: container, index: 0)
+                  }])
+    }
+
+    func favoriteMenu(row: Row) -> NSMenu {
+        itemMenu([copyItem(row), renameItem(row),
+                  SidebarMenuItem("Close Tab", key: "w") { [weak self] in self?.onClose?(row.id) },
+                  SidebarMenuItem("Remove Favorite") { [weak self] in self?.onArchive?(row.id) }])
+    }
+
+    func folderMenu(row: Row) -> NSMenu {
+        itemMenu([SidebarMenuItem("New Nested Folder…") { [weak self] in self?.createFolder(in: row.id) },
+                  renameItem(row), moveItem(row),
+                  SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
+    }
+
+    func emptyAreaMenu() -> NSMenu {
+        itemMenu([SidebarMenuItem("New Folder", enabled: snapshotSpace != nil) { [weak self] in self?.newFolder(nil) }])
+    }
+
+    override public func menu(for event: NSEvent) -> NSMenu? {
+        guard !isScrollPreview, !libraryOpen, !createSpaceOpen else { return nil }
+        return emptyAreaMenu()
+    }
+
+    private func menuMove(_ id: String, container: String, index: Int) {
+        onMove?(id, container, index, false) { [weak self] snapshot in
+            if let snapshot { self?.replaceSnapshot(snapshot) }
+        }
+    }
+
+    func performEdit(_ edit: SidebarItemEdit, completion: ((Bool) -> Void)? = nil) {
+        guard let onItemEdit else { completion?(false); return }
+        onItemEdit(edit) { [weak self] snapshot in
+            if let snapshot { self?.replaceSnapshot(snapshot) }
+            completion?(snapshot != nil)
+        }
+    }
+
+    @objc func newFolder(_ sender: Any?) {
+        guard let space = snapshotSpace else { return }
+        createFolder(in: space.pinnedId)
+    }
+
+    func createFolder(in container: String) {
+        guard let space = snapshotSpace else { return }
+        let id = UUID().uuidString
+        let index = container == space.pinnedId ? Int(space.pinnedCount) : (space.pinned.filter { $0.parentId == container }.map { Int($0.siblingIndex) + 1 }.max() ?? 0)
+        // Why not use the visible child count: collapsed folders omit their children.
+        if let folder = space.pinned.first(where: { $0.id == container }), folder.collapsed {
+            performEdit(.collapse(id: container, collapsed: false)) { [weak self] success in
+                if success { self?.createFolder(in: container) }
+            }
+            return
+        }
+        performEdit(.createFolder(id: id, container: container, index: index)) { [weak self] success in
+            if success { self?.beginRename(id: id) }
+        }
+    }
+
+    func beginRename(id: String) {
+        if let old = renamingID, old != id {
+            rowViews[old]?.finishRename(commit: true)
+            favoriteTiles[old]?.renameField?.finish(commit: true)
+        }
+        if let view = rowViews[id] {
+            renamingID = id
+            view.beginRename()
+        } else if let tile = favoriteTiles[id] {
+            renamingID = id
+            tile.beginRename { [weak self, weak tile] title, done in
+                guard let self, let tile else { done(false); return }
+                self.commitRename(row: tile.row, title: title, completion: done)
+            }
+            tile.onRenameEnd = { [weak self] in
+                guard let self, self.renamingID == id else { return }
+                self.renamingID = nil; self.notifyAutoArchiveReady()
+            }
+        }
+    }
+
+    func commitRename(row: Row, title: String, completion: @escaping (Bool) -> Void) {
+        if row.kind == .folder && title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { completion(false); return }
+        performEdit(.rename(id: row.id, title: title, folder: row.kind == .folder), completion: completion)
+    }
+
+    func deleteFolder(_ row: Row) {
+        let remove: (Bool) -> Void = { [weak self] confirmed in
+            if confirmed { self?.performEdit(.deleteFolder(id: row.id)) }
+        }
+        if row.folderHasTabs { confirmFolderDeletion?(row, remove) }
+        else { remove(true) }
     }
 }

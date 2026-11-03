@@ -255,6 +255,7 @@ pub enum RowKind {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct Row {
+    pub folder_has_tabs: bool,
     pub parent_id: String,
     pub sibling_index: u32,
     pub collapsed: bool,
@@ -396,7 +397,15 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
         ItemKind::Split { .. } => (RowKind::Split, None),
         ItemKind::Container => return None,
     };
+    let mut children = if kind == RowKind::Folder { ws.children(&item.id) } else { Vec::new() };
+    let mut folder_has_tabs = false;
+    while let Some(child) = children.pop() {
+        if !matches!(child.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue; }
+        if matches!(child.kind, ItemKind::Tab { .. }) { folder_has_tabs = true; break; }
+        children.extend(ws.children(&child.id));
+    }
     Some(Row {
+        folder_has_tabs,
         parent_id: item.membership.parent.clone().unwrap_or_default(),
         sibling_index: item.membership.parent.as_deref().map_or(0, |p| ws.children(p).into_iter()
             .filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
@@ -431,6 +440,7 @@ mod tests {
         assert_eq!(folder.parent_id, "pin-work");
         assert_eq!(folder.sibling_index, 0);
         assert!(folder.collapsed);
+        assert!(folder.folder_has_tabs);
         assert!(!space.pinned.iter().any(|r| r.id == "tab-spec"));
         let split = space.pinned.iter().find(|r| r.id == "split-1").unwrap();
         assert_eq!(split.sibling_index, 1);

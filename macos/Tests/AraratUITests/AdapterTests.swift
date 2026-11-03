@@ -91,9 +91,9 @@ private func adapterDescendants(_ view: NSView) -> [NSView] {
 
 @Test @MainActor
 func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
-    var pinned = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "p", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
-    var favorite = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
-    let today = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "t", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    var pinned = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "p", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    var favorite = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let today = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "t", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let snapshot: ([Row], [Row]) -> WorkspaceSnapshot = { pins, favorites in
         WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "t", spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: pins, today: [today])])
     }

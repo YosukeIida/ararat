@@ -11,7 +11,7 @@ private func libraryDescendants(_ view: NSView) -> [NSView] {
 @Test @MainActor
 func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     _ = NSApplication.shared
-    let entry = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "closed", title: "A closed tab", url: "https://closed.example", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let entry = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "closed", title: "A closed tab", url: "https://closed.example", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [ArchiveEntry(id: entry.id, title: entry.title, url: entry.url ?? "", lifecycleChangedAt: 0)], shownSpaceId: "home", selectedId: nil, spaces: [space]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())

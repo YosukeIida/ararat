@@ -114,6 +114,31 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let container = SidebarContainerView(sidebar: sidebar, page: card)
         sidebarContainer = container
         resizeHandle = container.resizeHandle
+        sidebar.onItemEdit = { [weak self] edit, completion in
+            guard let self, !self.terminating else { completion(nil); return }
+            self.adapter.edit(edit) { [weak self] result in
+                switch result {
+                case .success(let snapshot):
+                    self?.snapshot = snapshot
+                    completion(snapshot)
+                    self?.showSelection()
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot edit item: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
+        sidebar.confirmFolderDeletion = { [weak self] row, completion in
+            guard let window = self?.window else { completion(false); return }
+            let alert = NSAlert()
+            alert.messageText = "Delete your “\(row.title)” folder?"
+            alert.informativeText = "Deleting this folder will archive the tabs inside it."
+            let delete = alert.addButton(withTitle: "Delete Folder")
+            delete.keyEquivalent = "\r"
+            delete.hasDestructiveAction = true
+            alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+            alert.beginSheetModal(for: window) { response in completion(response == .alertFirstButtonReturn) }
+        }
         sidebar.onSelect = { [weak self] row in
             guard let self, !self.terminating else { return }
             self.adapter.select(id: row.id) { [weak self] result in
@@ -425,7 +450,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             return
         }
         let row = snapshot.spaces.flatMap { $0.favorites + $0.pinned + $0.today }.first { $0.id == snapshot.selectedId }
-        card?.show(title: row?.title ?? "Select a tab", url: row?.url)
+        if row != nil || snapshot.selectedId == nil {
+            card?.show(title: row?.title ?? "Select a tab", url: row?.url)
+        }
         sidebarContainer?.selectionChanged()
     }
 

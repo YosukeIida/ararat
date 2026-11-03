@@ -11,7 +11,7 @@ private func descendants(of view: NSView) -> [NSView] {
 @Test @MainActor
 func favoritesUseFourTwoOrOneColumns() {
     let favorites = (0..<5).map {
-        Row(parentId: "", siblingIndex: 0, collapsed: false, id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+        Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: [favorites[0]], today: [])
@@ -39,7 +39,7 @@ func favoritesUseFourTwoOrOneColumns() {
 
 @Test @MainActor
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
-    let favorite = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let favorite = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [favorite], pinned: [], today: [])
     ]))
@@ -58,7 +58,7 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 
 @Test @MainActor
 func selectedHostTracksVisibleSpace() {
-    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: []),
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
@@ -82,18 +82,23 @@ func selectedHostTracksVisibleSpace() {
 @Test @MainActor
 func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
     for kind in [RowKind.tab, .folder, .split] {
-        let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "row", title: "Title", url: nil, depth: 0, kind: kind, unloaded: false, lastSelectedAt: nil)
+        let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "row", title: "Title", url: nil, depth: 0, kind: kind, unloaded: false, lastSelectedAt: nil)
         let view = SidebarRowView(row: row, selected: false, action: { _ in })
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first!
         #expect(icon.imageScaling == .scaleNone)
-        #expect(icon.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: 16, weight: .regular))
+        if kind == .folder {
+            #expect(icon.image?.size == NSSize(width: 16, height: 16))
+            #expect(icon.image?.isTemplate == true)
+        } else {
+            #expect(icon.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: 16, weight: .regular))
+        }
     }
 }
 
 @Test @MainActor
 func rowsKeepPitchIndentAndSplitPlaceholder() {
     for title in ["", "First\nSecond"] {
-        let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false, lastSelectedAt: nil)
+        let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false, lastSelectedAt: nil)
         let view = SidebarRowView(row: row, selected: true, action: { _ in })
         view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
         view.layoutSubtreeIfNeeded()
@@ -116,7 +121,7 @@ func rowsKeepPitchIndentAndSplitPlaceholder() {
 @Test @MainActor
 func nestedFillsIndentTheirLeftEdgeOnly() {
     let rows = (0...2).map {
-        Row(parentId: "", siblingIndex: 0, collapsed: false, id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false, lastSelectedAt: nil)
+        Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: rows, today: [])
@@ -161,7 +166,7 @@ func sidebarDragPreservesTheGrabOffset() {
 @Test @MainActor
 func rowFocusSurvivesWidthChanges() {
     _ = NSApplication.shared
-    let row = Row(parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [row], pinned: [row], today: [])
     ]))

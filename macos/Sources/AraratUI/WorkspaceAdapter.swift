@@ -131,3 +131,29 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().deleteSpace(windowId: self.windowID, spaceId: id) }, completion: completion)
     }
 }
+
+public enum SidebarItemEdit: Sendable {
+    case createFolder(id: String, container: String, index: Int)
+    case rename(id: String, title: String, folder: Bool)
+    case collapse(id: String, collapsed: Bool)
+    case deleteFolder(id: String)
+}
+
+extension WorkspaceAdapter {
+    public func edit(_ edit: SidebarItemEdit, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({
+            let store = try self.opened()
+            switch edit {
+            case let .createFolder(id, container, index):
+                return try store.createFolder(windowId: self.windowID, id: id, name: "Untitled", container: container, index: UInt32(index), wrapping: [])
+            case let .rename(id, title, folder):
+                if folder { return try store.renameFolder(windowId: self.windowID, id: id, name: title) }
+                return try store.renameTab(windowId: self.windowID, id: id, title: title)
+            case let .collapse(id, collapsed):
+                return try store.setFolderCollapsed(windowId: self.windowID, id: id, collapsed: collapsed)
+            case let .deleteFolder(id):
+                return try store.deleteFolder(windowId: self.windowID, id: id)
+            }
+        }, completion: completion)
+    }
+}

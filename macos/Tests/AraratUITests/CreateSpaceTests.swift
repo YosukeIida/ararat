@@ -20,7 +20,7 @@ func newSpaceMenuCancelEscapeAndReturnUseTheCreationPage() throws {
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.frame = NSRect(x: 0, y: 0, width: 1000, height: 720)
     container.layoutSubtreeIfNeeded()
-    #expect(sidebar.newSpaceMenu.items.map(\.title) == ["New Space"])
+    #expect(sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
     sidebar.setLibraryOpen(true)
     let menuItem = try #require(sidebar.newSpaceMenu.items.first)
     #expect(NSApp.sendAction(try #require(menuItem.action), to: menuItem.target, from: menuItem))
