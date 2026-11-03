@@ -94,6 +94,11 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 }
 
 extension WorkspaceAdapter {
+    @MainActor
+    public func setSpaceLook(id: String, look: Look?, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setSpaceLook(windowId: self.windowID, spaceId: id, look: look) }, completion: completion)
+    }
+
     public func renameSpace(id: String, name: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().renameSpace(windowId: self.windowID, spaceId: id, name: name) }, completion: completion)
     }

@@ -33,6 +33,7 @@ public final class SidebarView: NSView {
     private var libraryLookSpaceID: String?
     private var creationLookSpaceID: String?
 
+    private var lookPreview: (spaceID: String, look: Look?)?
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
@@ -183,7 +184,27 @@ public final class SidebarView: NSView {
         revealSelection()
     }
 
+    public func previewLook(spaceID: String, look: Look?, active: Bool = true) {
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
+        if active { lookPreview = (spaceID, look) }
+        else if lookPreview?.spaceID == spaceID { lookPreview = nil }
+        snapshot.spaces[index].look = look
+        refreshLook()
+    }
+
+    private func keepingLookPreview(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
+        guard let preview = lookPreview else { return snapshot }
+        var snapshot = snapshot
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == preview.spaceID }) else {
+            lookPreview = nil
+            return snapshot
+        }
+        snapshot.spaces[index].look = preview.look
+        return snapshot
+    }
+
     public func applySelection(snapshot: WorkspaceSnapshot) {
+        let snapshot = keepingLookPreview(snapshot)
         let selectionChanged = selectedID != snapshot.selectedId
         if self.snapshot.spaces == snapshot.spaces { self.snapshot = snapshot; updateSelection(id: snapshot.selectedId) }
         else { replaceSnapshot(snapshot) }
@@ -193,6 +214,7 @@ public final class SidebarView: NSView {
     }
 
     private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+        let snapshot = keepingLookPreview(snapshot)
         layoutSubtreeIfNeeded()
         listScroll.stopReveal()
         let wasScrolled = listScroll.contentView.bounds.minY > 0.5

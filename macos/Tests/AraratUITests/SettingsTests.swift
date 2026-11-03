@@ -82,7 +82,7 @@ func settingsEditsPublishCoreSnapshotsAndValidateOneGrapheme() async throws {
     let iconDock = try #require(settingsDescendants(sidebar).compactMap { $0 as? SpaceDockView }.first)
     #expect((iconDock.subviews.first as? NSButton)?.title == "😀")
     iconWindow.contentView = nil
-    #expect(model.tabCount(model.snapshot.spaces[0]) == (model.snapshot.spaces[0].pinned + model.snapshot.spaces[0].today).filter { $0.kind == .tab || $0.kind == .split }.count)
+    #expect(model.tabCount(model.snapshot.spaces[0]) == model.snapshot.spaces[0].today.filter { $0.kind == .tab || $0.kind == .split }.count)
     model.icon(id, value: "👨‍👩‍👧‍👦")
     try await waitUntil { model.snapshot.spaces.first?.icon == "👨‍👩‍👧‍👦" }
     model.icon(id, value: "ab")
@@ -170,7 +170,7 @@ func settingsHarnessMenusReuseLifetimeAndWindowCloseRouting() throws {
     let menu = harness.makeMenu()
     let file = try #require(menu.items.first { $0.title == "File" }?.submenu)
     let close = try #require(file.items.first)
-    #expect(close.action == #selector(HarnessDelegate.closeTab(_:)))
+    #expect(close.action == #selector(HarnessDelegate.closeSelectedTab(_:)))
     #expect(!harness.validateMenuItem(close))
     #expect(harness.canCloseTab(keyWindow: browser))
     let first = harness.prepareSettings()

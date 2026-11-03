@@ -36,25 +36,6 @@ func sidebarJSON(path: String?) throws -> String {
     }
 }
 
-let temporaryDirectory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory(), isDirectory: true)
-let temporaryDatabasePath = databasePath == nil
-    ? temporaryDirectory.appendingPathComponent("ararat-harness-\(UUID().uuidString).sqlite").path : nil
-
-@discardableResult
-func removeTemporaryDatabase() -> Bool {
-    guard let temporaryDatabasePath else { return true }
-    var removed = true
-    for suffix in ["", "-wal", "-shm"] {
-        let file = temporaryDatabasePath + suffix
-        guard FileManager.default.fileExists(atPath: file) else { continue }
-        do { try FileManager.default.removeItem(atPath: file) } catch {
-            FileHandle.standardError.write(Data("cannot remove temporary database \(file): \(error)\n".utf8))
-            removed = false
-        }
-    }
-    return removed
-}
-
 @MainActor
 final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
@@ -70,21 +51,23 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
 
+    let options: HarnessOptions
     var terminate: () -> Void
-    init(adapter: WorkspaceAdapter, terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
+    init(adapter: WorkspaceAdapter, options: HarnessOptions = HarnessOptions(), terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
+        self.options = options
         self.adapter = adapter
         self.terminate = terminate
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !terminating else { return }
-        let fixturePath = path
-        adapter.open(path: databasePath ?? temporaryDatabasePath!, json: { try sidebarJSON(path: fixturePath) }) { [weak self] result in
+        let fixturePath = options.fixturePath
+        adapter.open(path: options.databasePath, json: { try sidebarJSON(path: fixturePath) }) { [weak self] result in
             guard let self, !self.terminating else { return }
             switch result {
             case .success(let snapshot):
                 self.snapshot = snapshot
-                if checkOnly {
+                if options.checkOnly {
                     for space in snapshot.spaces {
                         print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
                     }
@@ -99,7 +82,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     private func build() {
-        let window = headless ? nil : BrowserWindow(
+        let window = options.headless ? nil : BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
@@ -203,7 +186,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         quit.toolTip = "Close all windows and quit Ararat."
         menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
         let fileMenu = NSMenu(title: "File")
-        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
+        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeSelectedTab(_:)), keyEquivalent: "w")
         close.target = self
         close.toolTip = "Close the selected tab in the browser window."
         menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
@@ -219,7 +202,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         reset.target = self
         viewMenu.addItem(.separator())
         for index in 0..<9 {
-            let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: #selector(showSpace(_:)), keyEquivalent: String(index + 1))
+            let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: WorkspaceCommands.showSpace, keyEquivalent: String(index + 1))
             item.keyEquivalentModifierMask = [.control]
             item.tag = index
             item.target = self
@@ -232,12 +215,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func canCloseTab(keyWindow: NSWindow?) -> Bool { window != nil && keyWindow === window }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(closeTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
-        if menuItem.action == #selector(showSpace(_:)) { return snapshot.spaces.indices.contains(menuItem.tag) }
+        if menuItem.action == #selector(closeSelectedTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
+        if menuItem.action == WorkspaceCommands.showSpace { return snapshot.spaces.indices.contains(menuItem.tag) }
         return true
     }
 
-    @objc func closeTab(_ sender: Any?) {
+    @objc func closeSelectedTab(_ sender: Any?) {
         guard canCloseTab(keyWindow: NSApp.keyWindow) else { return }
         sidebar?.closeSelectedTab(sender)
     }
@@ -393,7 +376,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if settings == nil {
             let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { [weak self] snapshot in
                 _ = self?.publish(.success(snapshot))
-            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) })
+            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) }, preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) })
             settings = SettingsWindowController(model: model)
         }
         settings!.prepare(shownSpaceID: shownSpaceID)
@@ -431,7 +414,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 FileHandle.standardError.write(Data("cannot flush store: \(error)\n".utf8))
                 self.exitStatus = 1
             }
-            if !removeTemporaryDatabase() { self.exitStatus = 1 }
+            if !options.removeTemporaryDatabase() { self.exitStatus = 1 }
             if self.exitStatus != 0 { exit(self.exitStatus) }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
@@ -497,7 +480,7 @@ enum HitchMonitor {
 
 let app = NSApplication.shared
 app.setActivationPolicy(headless || checkOnly ? .prohibited : .regular)
-let delegate = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "harness-window"))
+let delegate = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "harness-window"), options: HarnessOptions(checkOnly: checkOnly, headless: headless, databasePath: databasePath, fixturePath: path))
 app.delegate = delegate
 let terminationSignals = [SIGTERM, SIGINT].map { number in
     _ = signal(number, SIG_IGN)

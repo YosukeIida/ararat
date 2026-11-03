@@ -43,7 +43,7 @@ private func send(_ window: NSWindow, sidebar: SidebarView, x: CGFloat, dx: Int3
 }
 
 @Test @MainActor
-func libraryPreviewReceivesTerminalEventsThroughActualHitTargets() async throws {
+func libraryPreviewReceivesTerminalEventsThroughActualHitTargets() throws {
     for populated in [false, true] {
         for cancelled in [false, true] {
             let (window, sidebar, container) = fixture(populated: populated)
@@ -54,8 +54,8 @@ func libraryPreviewReceivesTerminalEventsThroughActualHitTargets() async throws 
             try send(window, sidebar: sidebar, x: 310, phase: cancelled ? .cancelled : .ended, time: 100.02)
             try send(window, sidebar: sidebar, x: 310, dx: 100, momentum: .begin, time: 100.03)
             try send(window, sidebar: sidebar, x: 310, momentum: .end, time: 100.04)
-            try await waitUntil { library.layer?.transform.m41 == 0 }
             #expect(sidebar.libraryOpen == !cancelled)
+            sidebar.finishScrollPresentation()
             #expect(library.layer?.transform.m41 == 0)
             #expect(!window.isVisible)
         }

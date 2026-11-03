@@ -22,14 +22,16 @@ public final class SettingsModel: ObservableObject {
     @Published private(set) var history: [Page] = [.spaces]
     @Published private(set) var historyIndex = 0
     let adapter: WorkspaceAdapter
+    var preview: (String, Look?, Bool) -> Void
     var publish: (WorkspaceSnapshot) -> Void
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
 
-    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void) {
+    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }) {
         self.snapshot = snapshot
         self.adapter = adapter
+        self.preview = preview
         self.publish = publish
         self.resetWidth = resetWidth
     }
@@ -85,12 +87,17 @@ public final class SettingsModel: ObservableObject {
     }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     func select(_ row: Row) { navigate(row.pane, highlight: row.id) }
-    func tabCount(_ space: SpaceSnapshot) -> Int { (space.pinned + space.today).filter { $0.kind == .tab || $0.kind == .split }.count }
+    func tabCount(_ space: SpaceSnapshot) -> Int { space.today.filter { $0.kind == .tab || $0.kind == .split }.count }
     func resultTitle(_ row: Row) -> String {
         guard case .space(let id) = row.pane, let space = snapshot.spaces.first(where: { $0.id == id }) else { return row.title }
         return row.title + " — " + space.title
     }
-    static func iconDraft(_ value: String) -> String { value.last.map(String.init) ?? "" }
+    static func iconDraft(_ value: String, stored: String = "") -> String {
+        if value.count == 2, stored.count == 1, value.contains(where: { String($0) == stored }), value != stored + stored {
+            return value.filter { String($0) != stored }
+        }
+        return value.last.map(String.init) ?? ""
+    }
     static func settingsOffset(_ offset: Double, index: Int) -> Double {
         index == 0 && offset > 0 ? SpaceScrollState.rubberBand(offset) : offset
     }
@@ -100,6 +107,7 @@ public final class SettingsModel: ObservableObject {
             navigate(.space(snapshot.spaces[index + delta].id))
         }
     }
+    func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { error = "Enter a space name."; return }
@@ -142,7 +150,7 @@ public final class SettingsModel: ObservableObject {
             if let submenu = item.submenu { return shortcutRows(submenu) }
             guard !item.keyEquivalent.isEmpty else { return [] }
             let keys = SidebarTooltip.keycaps(for: item).map(\.stringValue)
-            if item.action == NSSelectorFromString("showSpace:"), item.keyEquivalentModifierMask == [.control] { spaceKeys[item.tag] = keys }
+            if item.action == WorkspaceCommands.showSpace, item.keyEquivalentModifierMask == [.control] { spaceKeys[item.tag] = keys }
             return [Row(id: "shortcut-\(item.title)", pane: .shortcuts, title: item.title, subtitle: item.toolTip ?? "Perform this menu command.", keys: keys)]
         }
     }

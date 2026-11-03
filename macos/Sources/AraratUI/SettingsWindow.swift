@@ -214,17 +214,13 @@ private struct SettingsDetail: View {
                 Button("Clear") { model.icon(space.id, value: "") }.disabled(space.icon == nil)
             }
             card("look", title: "Look", subtitle: "Colour and texture · This space") {
-                Circle().fill(LinearGradient(colors: swatches(space), startPoint: .top, endPoint: .bottom)).frame(width: 24, height: 24).accessibilityLabel("Current space look")
+                LookPopoverButton(settings: model, space: space).frame(width: 30, height: 30)
             }
             card("profile", title: "Profile", subtitle: "Read-only · This space") { Text(space.profileName).foregroundStyle(.secondary) }
             card("delete", title: "Delete Space", subtitle: model.snapshot.spaces.count == 1 ? "The last space cannot be deleted." : "Move pinned and Today tabs to the Archive.") {
                 Button("Delete Space", role: .destructive) { model.requestDelete(space.id) }.disabled(model.snapshot.spaces.count == 1)
             }
         }
-    }
-    func swatches(_ space: SpaceSnapshot) -> [Color] {
-        guard let look = space.look else { return [SettingsColor.rail] }
-        return look.colors.map { Color(red: $0.red, green: $0.green, blue: $0.blue).opacity(look.opacity) }
     }
     @State private var scroll = SpaceScrollState()
     func handleScroll(_ event: NSEvent) -> Bool {
@@ -257,7 +253,7 @@ struct SettingsField: View {
             .onAppear { draft = value }.onChange(of: value) { _, value in if !focused { draft = value } }
             .onChange(of: draft) { _, next in
                 guard characterPalette, next != value else { return }
-                let icon = SettingsModel.iconDraft(next)
+                let icon = SettingsModel.iconDraft(next, stored: value)
                 if next != icon { draft = icon }
                 commit(icon)
             }

@@ -8,6 +8,13 @@ private struct HarnessRun {
     let error: String
     let databasesBeforeQuit: [String]
     let runningBeforeStop: Bool
+    var diagnostics: [Substring] { harnessDiagnostics(error) }
+}
+
+private func harnessDiagnostics(_ error: String) -> [Substring] {
+    error.split(separator: "\n").filter {
+        !($0.hasPrefix("hitch ") && $0.hasSuffix(" ms") && UInt64($0.dropFirst(6).dropLast(3)) != nil)
+    }
 }
 
 private final class HarnessTestBundle: NSObject {}
@@ -138,7 +145,7 @@ func harnessStartupFailureCleansTemporaryFilesAndKeepsExplicitDatabase() throws 
     try "invalid".write(to: fixture, atomically: true, encoding: .utf8)
     let temporary = try runHarness(in: directory, arguments: ["--check", fixture.path])
     #expect(temporary.status == 1)
-    #expect(!temporary.error.isEmpty)
+    #expect(!temporary.diagnostics.isEmpty)
     #expect(try harnessDatabaseFiles(in: directory).isEmpty)
     let database = directory.appendingPathComponent("ararat-harness-explicit.sqlite")
     let persistent = try runHarness(in: directory, arguments: ["--check", "--db", database.path, fixture.path])
@@ -200,7 +207,7 @@ func harnessCloseUsesTheShownSpaceWithoutPagingBackThroughHistory() throws {
     let run = try runHarness(in: directory, arguments: [fixture.path], commands:
         "select tab-mail\nspace 1\nselect tab-a\nselect tab-b\nclose tab-b\nstate\nclose tab-a\nstate\nclose tab-spec\nstate\n")
     #expect(run.status == 0, "\(run.error)")
-    #expect(run.error.isEmpty)
+    #expect(run.diagnostics.isEmpty)
     #expect(run.output.split(separator: "\n").filter { $0.hasPrefix("state ") }.map(String.init) == [
         "state space 1 selected tab-a library closed spaces 2", "state space 1 selected tab-spec library closed spaces 2", "state space 1 selected - library closed spaces 2", "state space 1 selected - library closed spaces 2",
     ])
@@ -327,4 +334,11 @@ func harnessValidatedCommandsKeepTheirRepliesAndFreeTextArguments() throws {
     #expect(lines.contains { $0.hasPrefix("error archive-delete missing:") })
     #expect(lines.contains("ok create-space Project  Notes"))
     #expect(lines.last == "ok quit")
+}
+
+@Test
+func harnessDiagnosticsIgnoreOnlyHitchMeasurements() {
+    #expect(harnessDiagnostics("hitch 160 ms\nhitch 101 ms\n").isEmpty)
+    #expect(harnessDiagnostics("hitch 160 ms\nstore failed\n") == ["store failed"])
+    #expect(harnessDiagnostics("hitch unexpected ms\nhitch 160 ms extra") == ["hitch unexpected ms", "hitch 160 ms extra"])
 }
