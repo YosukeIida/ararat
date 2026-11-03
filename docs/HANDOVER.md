@@ -67,9 +67,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Library scroll fix (fix/library-scroll): a gesture keeps its owner (page, rail, list) from began to its end, so a zero-delta end over the Archive list no longer strands the Library preview; pages are clipped at the sidebar; the rail takes horizontal input back to space 0, the list only scrolls vertically. A stale-state report from review 1 was not reproduced (an event injector artefact). Real trackpad/wheel input and the floating form were not verified live (Screen Sharing was frontmost).
 - Next design work is not chosen yet: candidates are tab motion and the Library / space-creation pages.
 
+- 2026-11-02/03 (units 12–24, orca-agent-team, all on main, not pushed): row polish, dock, floating holds, Library rules, space edits and looks in the core with Arc theme import, sidebar looks, traffic lights on the sidebar, the settings window (Spaces, Tabs, Shortcuts, search, per-space pages, Look popover), auto-archive (local `LastSelected`), item moves and folders in the core (local `FolderState`), sidebar drag and drop, folder controls, rename in place and row menus. Rules and values are in §6.1, §6.2 and §7; Arc's drag measurement in `docs/research/arc-ardia-observed.md` §8. None of units 16b–24 has been checked on screen by the owner.
+
 ## Next
 
-1. Owner: view the harness window (`xc swift run AraratHarness --db /tmp/ararat.sqlite` from `macos/`).
+1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
+2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
+3. Importer: read Arc's `StorableWindows.json` for `expandedItems` (folder state) and `itemLastActiveDates` (seeds `LastSelected`).
+4. Open nits: `archiveVirtualListBudgetsAndDeferredUpdates` has a wall-clock budget that flakes under parallel load; the screen-lock Library test; a vertical scroll's ready signal fires before momentum.
 
 ## Known loose ends
 
