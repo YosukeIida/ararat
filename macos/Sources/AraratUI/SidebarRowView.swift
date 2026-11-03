@@ -11,6 +11,10 @@ final class SidebarRowView: NSView {
     var onRenameEnd: (() -> Void)?
     private(set) var renameField: SidebarRenameField?
     private let renameHint = NSTextField(labelWithString: "Double-click to rename")
+    var hintClock: () -> CFTimeInterval = CACurrentMediaTime
+    var hintReduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var hintStartedAt: CFTimeInterval?
+    private(set) var hintTimer: Timer?
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
     let closeButton = NSButton()
@@ -30,6 +34,7 @@ final class SidebarRowView: NSView {
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private var fillLeading: NSLayoutConstraint!
+    private var hintCloseTrailing: NSLayoutConstraint!
     private var titleCenterY: NSLayoutConstraint!
     private var iconLeading: NSLayoutConstraint!
     private(set) var hovered = false { didSet { updateFill(); updateCloseButton() } }
@@ -75,9 +80,17 @@ final class SidebarRowView: NSView {
             titleCenterY,
         ])
         renameHint.font = .systemFont(ofSize: 10)
+        renameHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        renameHint.lineBreakMode = .byTruncatingTail
         renameHint.textColor = .secondaryLabelColor
         renameHint.isHidden = true
+        renameHint.translatesAutoresizingMaskIntoConstraints = false
         addSubview(renameHint)
+        NSLayoutConstraint.activate([
+            renameHint.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            renameHint.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            renameHint.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 2),
+        ])
         title.wantsLayer = true
         closeButton.isBordered = false
         closeButton.imagePosition = .imageOnly
@@ -91,6 +104,7 @@ final class SidebarRowView: NSView {
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+        hintCloseTrailing = renameHint.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -renameHint.alignmentRectInsets.right - closeButton.alignmentRectInsets.left)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         update(row: row, selected: selected)
@@ -107,15 +121,55 @@ final class SidebarRowView: NSView {
         title.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed) : Self.symbol(for: row.kind)
-        renameHint.isHidden = !(pinned && selected && row.kind == .tab)
-        titleCenterY.constant = renameHint.isHidden ? 0 : 6
-        title.maximumNumberOfLines = renameHint.isHidden ? 2 : 1
+        if !pinned || !selected || row.kind != .tab { hideRenameHint() }
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = 10 + CGFloat(row.depth) * 16
         setAccessibilityLabel(title.stringValue)
         updateFill()
         updateCloseButton()
         noteFocusRingMaskChanged()
+    }
+
+    func showRenameHint() {
+        guard pinned, selected, row.kind == .tab, renameField == nil else { return }
+        hideRenameHint()
+        hintStartedAt = hintClock()
+        renameHint.isHidden = false
+        renameHint.alphaValue = 1
+        title.font = .systemFont(ofSize: 13)
+        titleCenterY.constant = -6
+        title.maximumNumberOfLines = 1
+        scheduleHintTimer(after: 3)
+    }
+
+    private func scheduleHintTimer(after interval: TimeInterval, repeats: Bool = false) {
+        hintTimer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: repeats) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.refreshRenameHint() }
+        }
+        hintTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func refreshRenameHint() {
+        guard let start = hintStartedAt else { return }
+        let elapsed = hintClock() - start
+        if elapsed >= 3.2 || (elapsed >= 3 && hintReduceMotion()) { hideRenameHint() }
+        else {
+            renameHint.alphaValue = min(1, max(0, (3.2 - elapsed) / 0.2))
+            if elapsed >= 3 && hintTimer?.timeInterval == 0 { scheduleHintTimer(after: 1.0 / 60, repeats: true) }
+        }
+    }
+
+    func hideRenameHint() {
+        hintTimer?.invalidate()
+        hintTimer = nil
+        hintStartedAt = nil
+        renameHint.isHidden = true
+        title.font = .systemFont(ofSize: 14)
+        titleCenterY.constant = 0
+        title.maximumNumberOfLines = 2
     }
 
     override func updateTrackingAreas() {
@@ -193,13 +247,13 @@ final class SidebarRowView: NSView {
         if closeButton.accessibilityLabel() != label { closeButton.toolTip = label }
         closeButton.setAccessibilityLabel(label)
         closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || !hovered))
+        hintCloseTrailing.isActive = !closeButton.isHidden
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
-        renameHint.frame = NSRect(x: title.frame.minX, y: bounds.midY - 16, width: max(1, bounds.width - title.frame.minX - 8), height: 12)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if !closeButton.isHidden && closeButton.frame.minX < title.frame.maxX {
@@ -258,6 +312,7 @@ final class SidebarRowView: NSView {
 
     func beginRename() {
         guard renameField == nil else { return }
+        hideRenameHint()
         let field = SidebarRenameField(title: row.title, save: { [weak self] title, done in
             guard let self, let save = self.onRenameCommit else { done(false); return }
             save(self.row, title, done)

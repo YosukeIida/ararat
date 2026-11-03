@@ -16,7 +16,9 @@ final class SidebarRenameField: NSTextField, NSTextFieldDelegate {
         stringValue = title
         font = .systemFont(ofSize: 14)
         isBordered = false
-        drawsBackground = true
+        isBezeled = false
+        focusRingType = .none
+        drawsBackground = false
         delegate = self
         setAccessibilityLabel("Rename")
     }

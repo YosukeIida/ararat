@@ -7,6 +7,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
     private let name = CreateSpaceNameField()
     private let profile = NSTextField(labelWithString: "")
     private let profileCard = NSView()
+    private let nameCard = CreateSpaceNameCard()
     private let create = SidebarDockButton(title: "Create Space", target: nil, action: nil)
     private let cancel = SidebarDockButton(title: "Cancel", target: nil, action: nil)
     private let error = NSTextField(wrappingLabelWithString: "")
@@ -31,11 +32,18 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         subtitle.lineBreakMode = .byTruncatingTail
         name.placeholderString = "Name"
         name.font = .systemFont(ofSize: SidebarMetrics.createSpaceBodySize)
-        name.bezelStyle = .roundedBezel
+        name.isBordered = false
+        name.isBezeled = false
+        name.focusRingType = .none
+        name.drawsBackground = false
         name.setAccessibilityLabel("Space name")
         name.delegate = self
         name.target = self
         name.action = #selector(submit)
+        nameCard.wantsLayer = true
+        nameCard.layer?.cornerRadius = SidebarMetrics.createSpaceCardRadius
+        nameCard.layer?.cornerCurve = .continuous
+        nameCard.addSubview(name)
         profileCard.wantsLayer = true
         profileCard.layer?.cornerRadius = SidebarMetrics.createSpaceCardRadius
         profileCard.layer?.cornerCurve = .continuous
@@ -51,7 +59,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         error.font = .systemFont(ofSize: SidebarMetrics.createSpaceCaptionSize)
         error.textColor = .systemRed
         error.isHidden = true
-        let form = NSStackView(views: [name, profileCard, error])
+        let form = NSStackView(views: [nameCard, profileCard, error])
         form.orientation = .vertical
         form.alignment = .leading
         form.spacing = SidebarMetrics.createSpaceGap
@@ -67,7 +75,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         cancel.setAccessibilityLabel("Cancel space creation")
         for button in [create, cancel] { button.font = .systemFont(ofSize: SidebarMetrics.createSpaceBodySize) }
         for view in [heading, subtitle, form, create, cancel] { addSubview(view) }
-        for view in [heading, subtitle, form, name, profileCard, profileLabels, error, create, cancel] { view.translatesAutoresizingMaskIntoConstraints = false }
+        for view in [heading, subtitle, form, nameCard, name, profileCard, profileLabels, error, create, cancel] { view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             heading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SidebarMetrics.createSpaceInset),
             heading.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -SidebarMetrics.createSpaceInset),
@@ -78,8 +86,11 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
             form.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
             form.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SidebarMetrics.createSpaceInset),
             form.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: SidebarMetrics.createSpaceHeaderGap),
-            name.widthAnchor.constraint(equalTo: form.widthAnchor),
-            name.heightAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceFieldHeight),
+            nameCard.widthAnchor.constraint(equalTo: form.widthAnchor),
+            nameCard.heightAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceFieldHeight),
+            name.leadingAnchor.constraint(equalTo: nameCard.leadingAnchor, constant: 10),
+            name.trailingAnchor.constraint(equalTo: nameCard.trailingAnchor, constant: -10),
+            name.centerYAnchor.constraint(equalTo: nameCard.centerYAnchor),
             profileCard.widthAnchor.constraint(equalTo: form.widthAnchor),
             profileCard.heightAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceProfileHeight),
             profileLabels.leadingAnchor.constraint(equalTo: profileCard.leadingAnchor, constant: SidebarMetrics.createSpaceCardInset),
@@ -141,10 +152,18 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             profileCard.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            nameCard.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }
     }
 }
 
 private final class CreateSpaceNameField: NSTextField {
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+}
+
+private final class CreateSpaceNameCard: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        return hit === self ? subviews.first : hit
+    }
 }

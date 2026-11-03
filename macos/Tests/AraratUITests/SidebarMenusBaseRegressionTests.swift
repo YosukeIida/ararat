@@ -29,7 +29,7 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     #expect(folder.accessibilityCustomActions()?.map(\.name) == ["Collapse"])
     sidebar.updateSelection(id: "tab-spec")
     let pin = try #require(rows.first { $0.row.id == "tab-spec" })
-    #expect(views(pin).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Double-click to rename" && !$0.isHidden })
+    #expect(!views(pin).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Double-click to rename" && !$0.isHidden })
     let doubleClick = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
     pin.mouseDown(with: doubleClick)
     #expect(views(pin).compactMap { $0 as? NSTextField }.contains { $0.accessibilityLabel() == "Rename" })

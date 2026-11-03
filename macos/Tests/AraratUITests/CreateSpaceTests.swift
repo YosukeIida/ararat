@@ -41,13 +41,25 @@ func newSpaceMenuCancelEscapeAndReturnUseTheCreationPage() throws {
     let create = try #require(creationDescendants(page).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Create Space" })
     let profile = try #require(creationDescendants(page).compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == "Current profile: Research" })
     #expect(!profile.isEditable && profile.stringValue == "Research")
-    #expect(field.frame.height == 36 && create.frame.height == 36)
-    #expect(abs(page.convert(field.bounds, from: field).minX - 14) < 0.1)
+    #expect(create.frame.height == 36)
+    #expect(field.focusRingType == .none && !field.isBezeled && !field.isBordered && !field.drawsBackground)
+    let nameCard = try #require(field.superview)
+    #expect(nameCard.frame.height == 36)
+    for x in [1.0, nameCard.bounds.midX, nameCard.bounds.maxX - 1] {
+        for y in [1.0, nameCard.bounds.midY, nameCard.bounds.maxY - 1] {
+            let point = nameCard.convert(NSPoint(x: x, y: y), to: nameCard.superview)
+            #expect(nameCard.hitTest(point) === field)
+        }
+    }
+    #expect(nameCard.layer?.cornerRadius == SidebarMetrics.createSpaceCardRadius)
+    #expect(abs(field.frame.minX - 10) < 0.1)
+    #expect(abs(page.convert(field.bounds, from: field).minX - 24) < 0.1)
     let card = try #require(profile.superview?.superview)
     #expect(card.frame.height == 59)
     #expect(card.layer?.cornerRadius == 11)
+    #expect(nameCard.layer?.backgroundColor == card.layer?.backgroundColor)
     #expect(card.layer?.cornerCurve == .continuous)
-    #expect(abs(page.convert(card.bounds, from: card).minY - page.convert(field.bounds, from: field).maxY - 6) < 0.1)
+    #expect(abs(page.convert(card.bounds, from: card).minY - page.convert(field.bounds, from: nameCard).maxY - 6) < 0.1)
     #expect(!create.isEnabled)
     field.stringValue = " \t\n"
     page.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))

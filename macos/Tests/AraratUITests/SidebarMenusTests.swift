@@ -228,7 +228,7 @@ func nestedFolderCreationOpensParentAndDoubleClickStartsRename() throws {
     let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
     pin.mouseDown(with: event)
     #expect(f.sidebar.renamingID == pin.row.id && pin.renameField != nil && f.sidebar.drag == nil)
-    #expect(descendants(pin).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Double-click to rename" && !$0.isHidden } == (f.sidebar.selectedRowID == pin.row.id))
+    #expect(descendants(pin).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Double-click to rename" && !$0.isHidden } == false)
     pin.finishRename(commit: false)
 }
 
@@ -377,4 +377,91 @@ func folderDoubleClickTogglesTwiceWithoutRenaming() throws {
     #expect(f.edits.count == 2)
     #expect(try !f.row("folder-docs").collapsed)
     #expect(folder.renameField == nil && f.sidebar.renamingID == nil)
+}
+
+@Test @MainActor
+func pinFromTodayShowsTimedHintWithSeparatedTextAndRestarts() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    _ = try f.store.moveItem(windowId: "menus", id: "tab-a", container: f.space.todayId, index: 0, openFolder: false)
+    _ = try f.store.selectItem(windowId: "menus", id: "tab-a")
+    f.sidebar.update(snapshot: f.snapshot)
+    var now: CFTimeInterval = 100
+    f.sidebar.renameHintClock = { now }
+    f.sidebar.dragReduceMotion = { false }
+    let row = try f.view("tab-a")
+    let hint = try #require(descendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
+    func pin() throws {
+        _ = try f.store.moveItem(windowId: "menus", id: row.row.id, container: f.space.pinnedId, index: 0, openFolder: false)
+        f.sidebar.update(snapshot: f.snapshot)
+        row.showRenameHint()
+    }
+    func unpin() throws {
+        _ = try f.store.moveItem(windowId: "menus", id: row.row.id, container: f.space.todayId, index: 0, openFolder: false)
+        f.sidebar.update(snapshot: f.snapshot)
+    }
+    #expect(hint.isHidden)
+    try pin()
+    #expect(!hint.isHidden && hint.alphaValue == 1)
+    #expect(row.hintTimer?.timeInterval == 0)
+    let holdTimer = try #require(row.hintTimer)
+    #expect(holdTimer.fireDate.timeIntervalSinceNow > 2 && holdTimer.fireDate.timeIntervalSinceNow <= 3)
+    f.sidebar.layoutSubtreeIfNeeded()
+    let title = try #require(descendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == row.row.title })
+    #expect(!title.frame.intersects(hint.frame))
+    #expect(title.frame.midY > row.bounds.midY)
+    #expect(title.frame.minY - hint.frame.maxY >= 2)
+    now = 102.9
+    row.refreshRenameHint()
+    #expect(!hint.isHidden && hint.alphaValue == 1)
+    now = 103.1
+    row.refreshRenameHint()
+    #expect(abs(hint.alphaValue - 0.5) < 0.001)
+    #expect(row.hintTimer?.timeInterval == 1.0 / 60)
+    now = 103.2
+    row.refreshRenameHint()
+    #expect(hint.isHidden && row.hintTimer == nil)
+    try unpin()
+    try pin()
+    now += 2
+    row.refreshRenameHint()
+    #expect(!hint.isHidden)
+    f.sidebar.updateSelection(id: "tab-spec")
+    #expect(hint.isHidden)
+    f.sidebar.updateSelection(id: row.row.id)
+    #expect(hint.isHidden)
+    try unpin()
+    try pin()
+    f.sidebar.dragReduceMotion = { true }
+    now += 3
+    row.refreshRenameHint()
+    #expect(hint.isHidden)
+    try unpin()
+    try pin()
+    row.beginRename()
+    #expect(hint.isHidden)
+    let field = try #require(row.renameField)
+    #expect(field.focusRingType == .none && !field.isBezeled && !field.isBordered && !field.drawsBackground)
+    row.finishRename(commit: false)
+}
+
+@Test @MainActor
+func renameFieldHasNoFocusRingBezelOrBackground() {
+    let field = SidebarRenameField(title: "A", save: { _, done in done(true) }, ended: {})
+    #expect(field.focusRingType == .none)
+    #expect(!field.isBezeled && !field.isBordered && !field.drawsBackground)
+}
+
+@Test @MainActor
+func narrowPinnedHintStopsBeforeVisibleCloseButton() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    f.sidebar.frame.size.width = 164
+    f.sidebar.updateSelection(id: "tab-spec")
+    let row = try f.view("tab-spec")
+    row.showRenameHint()
+    row.pointerLocation = { row.convert(NSPoint(x: 60, y: 20), to: nil) }
+    row.refreshHover()
+    f.sidebar.layoutSubtreeIfNeeded()
+    let hint = try #require(descendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
+    #expect(!hint.isHidden && !row.closeButton.isHidden)
+    #expect(hint.frame.maxX <= row.closeButton.frame.minX)
 }

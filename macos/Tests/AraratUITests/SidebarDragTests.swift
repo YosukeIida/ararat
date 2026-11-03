@@ -460,3 +460,32 @@ func draggingAllowsVerticalScrollAndRetargetsUnderTheStillPointer() throws {
     #expect(sidebar.drag?.position == point && sidebar.spaceShown == 0)
     sidebar.cancelOperation(nil)
 }
+
+@Test @MainActor
+func onlySuccessfulSameSpaceTodayDragShowsRenameHint() throws {
+    for target in 0..<4 {
+        let (window, sidebar) = dragWindow()
+        defer { window.contentView = nil }
+        sidebar.renameHintClock = { 100 }
+        let row = try startDrag(sidebar, id: "a")
+        let geometry = try #require(sidebar.dragGeometry())
+        let container = target == 2 ? "pother" : "ps"
+        sidebar.onMove = { _, _, _, _, done in
+            guard target != 1 else { done(nil); return }
+            var a = row.row
+            a.parentId = container
+            let source = dragSpace(pinned: target == 2 ? [] : [a], today: [])
+            let other = dragSpace("other", pinned: target == 2 ? [a] : [])
+            done(WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: "a", spaces: [source, other]))
+        }
+        let point = target == 2 ? CGPoint(x: geometry.dock[1].frame.midX, y: geometry.dock[1].frame.midY) : CGPoint(x: 30, y: geometry.rows[0].frame.minY)
+        row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+        row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
+        let hint = try #require(dragDescendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
+        #expect(hint.isHidden == (target == 1 || target == 2))
+        if target == 3 {
+            sidebar.showSpace(at: 1)
+            #expect(hint.isHidden)
+        }
+    }
+}

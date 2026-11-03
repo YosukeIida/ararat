@@ -64,6 +64,8 @@ public final class SidebarView: NSView {
     private var favoritesHeight: NSLayoutConstraint!
     private let listScroll = SidebarScrollView()
     private let rows = NSStackView()
+    private var hintSpaceID: String?
+    var renameHintClock: () -> CFTimeInterval = CACurrentMediaTime
     private var rowViews: [String: SidebarRowView] = [:]
     private var retiringRows: [String: SidebarRowView] = [:]
     private var fadeFrame: (id: String, frame: NSRect)?
@@ -595,6 +597,10 @@ public final class SidebarView: NSView {
     private func reload() {
         defer { refreshLook() }
         let space = snapshotSpace
+        if space?.id != hintSpaceID {
+            rowViews.values.forEach { $0.hideRenameHint() }
+            hintSpaceID = space?.id
+        }
         header.stringValue = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
@@ -700,6 +706,8 @@ public final class SidebarView: NSView {
             rows.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
+        view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
+        view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
         wireDrag(view)
         view.menuProvider = { [weak self, weak view] in
             guard let self, let row = view?.row else { return nil }
@@ -1320,10 +1328,14 @@ extension SidebarView {
         dropIndicator.removeFromSuperlayer()
         dragSettling = true
         if let move = target.move, let onMove {
+            let pinSpace = pinFromTodaySpace(id: state.row.id, container: move.container)
             let generation = dragGeneration
             onMove(state.row.id, move.container, move.index, { if case .folder = target { true } else { false } }()) { [weak self] snapshot in
                 guard let self, self.dragGeneration == generation else { return }
-                if let snapshot { self.replaceSnapshot(snapshot) }
+                if let snapshot {
+                    self.replaceSnapshot(snapshot)
+                    self.showPinHint(id: state.row.id, space: pinSpace)
+                }
                 self.settleDrag(accepted: snapshot != nil)
             }
         } else { settleDrag(accepted: false) }
@@ -1474,6 +1486,17 @@ extension SidebarView: NSMenuDelegate {
     override public func menu(for event: NSEvent) -> NSMenu? {
         guard !isScrollPreview, !libraryOpen, !createSpaceOpen else { return nil }
         return emptyAreaMenu()
+    }
+
+    private func pinFromTodaySpace(id: String, container: String) -> String? {
+        guard let space = snapshotSpace, space.today.contains(where: { $0.id == id }),
+              container == space.pinnedId || space.pinned.contains(where: { $0.id == container && $0.kind == .folder }) else { return nil }
+        return space.id
+    }
+
+    private func showPinHint(id: String, space: String?) {
+        guard let space, snapshotSpace?.id == space else { return }
+        rowViews[id]?.showRenameHint()
     }
 
     private func menuMove(_ id: String, container: String, index: Int) {
