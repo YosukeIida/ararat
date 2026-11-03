@@ -480,7 +480,11 @@ func followPositionsSurviveWindowLayerTreeUpdates() async throws {
     sidebar.layoutSubtreeIfNeeded()
     window.display()
     CATransaction.flush()
-    try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil {
+        scrollDescendants(sidebar).compactMap { $0 as? SidebarView }.allSatisfy { preview in
+            preview.superview?.layer?.presentation()?.transform.m41 == CGFloat(preview.spaceShown - sidebar.spaceShown) * 240 - 40
+        }
+    }
     let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
     #expect(previews.count == 2)
     for preview in previews {
@@ -543,7 +547,7 @@ private func installPresentedOffset(_ offset: CGFloat, on view: NSView) async th
     view.layer?.transform = CATransform3DIdentity
     view.layer?.add(animation, forKey: "space.scroll")
     CATransaction.flush()
-    try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil { view.layer?.presentation()?.transform.m41 == offset }
     #expect(try #require(view.layer?.presentation()).transform.m41 == offset)
     #expect(view.layer?.transform.m41 == 0)
 }

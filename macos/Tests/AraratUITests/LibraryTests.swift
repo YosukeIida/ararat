@@ -99,7 +99,7 @@ func sidebarScrollOpensLibraryStaysOpenAndScrollsBackToFirstSpace() async throws
     #expect(sidebar.libraryOpen)
     let library = try #require(libraryDescendants(sidebar).compactMap { $0 as? LibraryView }.first)
     #expect(library.layer?.animation(forKey: "space.scroll") is CASpringAnimation)
-    try await Task.sleep(for: .milliseconds(800))
+    try await waitUntil { library.layer?.animation(forKey: "space.scroll") == nil }
     #expect(sidebar.libraryOpen)
     sidebar.scrollWheel(with: event(-400, .began, 102))
     sidebar.scrollWheel(with: event(0, .ended, 102.2))

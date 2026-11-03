@@ -186,13 +186,17 @@ func wheelOpensLibraryLikeTrackpadAndPausesBeforeRailReturn() async throws {
         defer { window.contentView = nil }
         try send(window, sidebar: sidebar, x: 150, dx: 9500, phase: .began, time: 90)
         try send(window, sidebar: sidebar, x: 150, phase: .ended, time: 90.02)
-        try await Task.sleep(for: .milliseconds(700))
+        try await waitUntil {
+            descendants(sidebar).allSatisfy { $0.layer?.animation(forKey: "space.scroll") == nil }
+        }
         container.layoutSubtreeIfNeeded()
         let trackpadWidth = sidebar.bounds.width
         let trackpadState = container.sidebarState
         #expect(sidebar.libraryOpen && trackpadWidth == 402)
         sidebar.setLibraryOpen(false)
-        try await Task.sleep(for: .milliseconds(700))
+        try await waitUntil {
+            descendants(sidebar).allSatisfy { $0.layer?.animation(forKey: "space.scroll") == nil }
+        }
         container.layoutSubtreeIfNeeded()
         #expect(sidebar.bounds.width == 332)
         try send(window, sidebar: sidebar, x: 150, dx: 5, time: 100)
@@ -203,7 +207,9 @@ func wheelOpensLibraryLikeTrackpadAndPausesBeforeRailReturn() async throws {
         #expect(sidebar.libraryOpen && sidebar.spaceShown == 0)
         try send(window, sidebar: sidebar, x: 20, dx: -5, time: 100.249)
         #expect(sidebar.libraryOpen && sidebar.spaceShown == 0)
-        try await Task.sleep(for: .milliseconds(700))
+        try await waitUntil {
+            descendants(sidebar).allSatisfy { $0.layer?.animation(forKey: "space.scroll") == nil }
+        }
         container.layoutSubtreeIfNeeded()
         #expect(sidebar.bounds.width == trackpadWidth)
         #expect(container.sidebarState == trackpadState)

@@ -109,7 +109,7 @@ private func holdClosePresentation(_ offset: CGFloat, on view: NSView) async thr
     animation.duration = 60
     view.layer?.add(animation, forKey: "row.close.move")
     CATransaction.flush()
-    try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil { view.layer?.presentation()?.transform.m42 == offset }
     #expect(try #require(view.layer?.presentation()).transform.m42 == offset)
     #expect(view.layer?.transform.m42 == 0)
 }
@@ -171,10 +171,7 @@ func fadeCompletionRemovesTheRetiredRowAndLeavesTheFreshLayout() async throws {
     freshWindow.displayIfNeeded()
     sidebar.applyClose(id: "a", snapshot: next)
     CATransaction.flush()
-    for _ in 0..<250 {
-        if retired.superview == nil { break }
-        try await Task.sleep(for: .milliseconds(20))
-    }
+    try await waitUntil { retired.superview == nil }
     #expect(retired.superview == nil)
     sidebar.layoutSubtreeIfNeeded()
     fresh.layoutSubtreeIfNeeded()

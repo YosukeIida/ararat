@@ -73,8 +73,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Importer: read Arc's `StorableWindows.json` for `expandedItems` (folder state) and `itemLastActiveDates` (seeds `LastSelected`).
-4. Open nits: `archiveVirtualListBudgetsAndDeferredUpdates` has a wall-clock budget that flakes under parallel load; the screen-lock Library test; a vertical scroll's ready signal fires before momentum.
+3. Open nits: the screen-lock Library test; a vertical scroll's ready signal fires before momentum.
 
 ## Known loose ends
 

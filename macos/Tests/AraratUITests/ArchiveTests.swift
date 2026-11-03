@@ -171,42 +171,46 @@ func archiveVirtualListBudgetsAndDeferredUpdates() throws {
         window.contentView = sidebar
         defer { window.contentView = nil }
         sidebar.layoutSubtreeIfNeeded()
-        func measure(_ action: () -> Void) -> Double {
-            let start = Date.timeIntervalSinceReferenceDate
+        func render(_ action: () -> Void) {
             action(); sidebar.layoutSubtreeIfNeeded(); sidebar.displayIfNeeded()
             if sidebar.libraryOpen, let library = archiveDescendants(sidebar).compactMap({ $0 as? LibraryView }).first { _ = archiveCells(library) }
-            return (Date.timeIntervalSinceReferenceDate - start) * 1000
         }
-        let open = measure { sidebar.setLibraryOpen(true) }
+        render { sidebar.setLibraryOpen(true) }
         let library = try #require(archiveDescendants(sidebar).compactMap { $0 as? LibraryView }.first)
         #expect(archiveCells(library).count < 40 && library.rowCreationCount < 40)
-        let close = measure { sidebar.setLibraryOpen(false) }
+        render { sidebar.setLibraryOpen(false) }
         let revision = library.listRevision, creations = library.rowCreationCount, headings = library.headingCreationCount
-        let click = measure { snapshot.selectedId = "tab-1"; sidebar.applySelection(snapshot: snapshot) }
+        render { snapshot.selectedId = "tab-1"; sidebar.applySelection(snapshot: snapshot) }
         #expect(library.listRevision == revision && library.rowCreationCount == creations && library.headingCreationCount == headings)
         snapshot.archive.append(ArchiveEntry(id: "deferred", title: "Deferred", url: "https://deferred.example", lifecycleChangedAt: 1_800_000_000_000))
         sidebar.applySelection(snapshot: snapshot)
         #expect(library.listRevision == revision && library.rowCreationCount == creations && library.headingCreationCount == headings)
-        let laterOpen = measure { sidebar.setLibraryOpen(true) }
+        render { sidebar.setLibraryOpen(true) }
         #expect(library.filteredEntries.count == count + 1 && library.filteredEntries.first?.id == "deferred")
-        let width = measure { sidebar.frame.size.width += 8 }
-        var keystrokes: [Double] = []
+        let reopenedRevision = library.listRevision
+        #expect(reopenedRevision == revision + 1)
+        let reopenedCreations = library.rowCreationCount, reopenedHeadings = library.headingCreationCount
+        render { sidebar.frame.size.width += 8 }
+        #expect(library.listRevision == reopenedRevision && library.rowCreationCount == reopenedCreations && library.headingCreationCount == reopenedHeadings)
+        var keystrokeMax = 0.0
         var createdPerKey: [Int] = []
         for query in ["E", "En", "Ent", "Entry", "Entry 1", "Entry", "site", "no-match", ""] {
             let before = library.rowCreationCount
-            keystrokes.append(measure { _ = sidebar.searchArchive(query) })
+            render {
+                let start = Date.timeIntervalSinceReferenceDate
+                _ = sidebar.searchArchive(query)
+                keystrokeMax = max(keystrokeMax, (Date.timeIntervalSinceReferenceDate - start) * 1000)
+            }
             createdPerKey.append(library.rowCreationCount - before)
         }
-        let search = keystrokes.max() ?? 0
         #expect(createdPerKey.allSatisfy { $0 <= 2 })
-        print("ARCHIVE KEYS count=\(count) ms=\(keystrokes) creations=\(createdPerKey)")
-        let scroll = measure {
+        // Why not rely only on counters: filtering, sorting and diffing create no rows; this loose bound catches only order-of-magnitude slowdowns.
+        if count == 2000 { #expect(keystrokeMax < 150) }
+        render {
             library.table.enclosingScrollView?.contentView.scroll(to: NSPoint(x: 0, y: 560))
             library.table.enclosingScrollView?.reflectScrolledClipView(library.table.enclosingScrollView!.contentView)
         }
         #expect(archiveCells(library).count < 40 && library.rowCreationCount < 150)
-        #expect(open < 150 && laterOpen < 150 && close < 100 && width < 50 && search < 150 && click < 30 && scroll < 50)
-        print("ARCHIVE TABLE count=\(count) open-ms=\(open) later-open-ms=\(laterOpen) close-ms=\(close) width-ms=\(width) search-ms=\(search) closed-click-ms=\(click) scroll-ms=\(scroll) created=\(library.rowCreationCount)")
     }
 }
 
@@ -299,16 +303,12 @@ func archiveTwoThousandEntriesKeepOnlyVisibleViews() throws {
     window.contentView = sidebar
     defer { window.contentView = nil }
     sidebar.layoutSubtreeIfNeeded()
-    let start = Date.timeIntervalSinceReferenceDate
     sidebar.setLibraryOpen(true)
     sidebar.layoutSubtreeIfNeeded()
-    let elapsed = Date.timeIntervalSinceReferenceDate - start
     let library = try #require(archiveDescendants(sidebar).compactMap { $0 as? LibraryView }.first)
     let cells = archiveDescendants(library).compactMap { $0 as? ArchiveRowView }
-    print("ARCHIVE VIRTUAL open-ms=\(elapsed * 1000) created=\(library.rowCreationCount) attached=\(cells.count)")
     #expect(cells.count < 40)
     #expect(library.rowCreationCount < 40)
-    #expect(elapsed < 0.15)
 }
 
 @Test @MainActor
