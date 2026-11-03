@@ -1,6 +1,6 @@
 use ararat_core::{import::arc_sidebar, model::{Appearance, Kind, Lifecycle, Look, LookColor, Op, Record, Workspace}, storage::Store};
 
-fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json")).unwrap() }
+fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None).unwrap().0 }
 fn look() -> Look { Look { colors: vec![LookColor { red: 0.1, green: 0.2, blue: 0.3, x: 0.4, y: 0.5 }], opacity: 0.6, grain: 0.7, glass: true, appearance: Appearance::Dark } }
 fn replay(ws: &mut Workspace, edit: impl FnOnce(&mut Workspace) -> Vec<Op>) {
     let mut copy = ws.clone();

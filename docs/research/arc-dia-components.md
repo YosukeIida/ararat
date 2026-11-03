@@ -176,6 +176,7 @@ All are JSON under `~/Library/Application Support/Arc/`, described by the Cra do
 ### 3.3 StorableWindows.json
 
 - **[O]** Each element of `windows[]`: `sidebarWidth`, `sidebarMode`, `focusedSpaceID`, `lastFocusedSpaceID`, `expandedItems` (folder open/closed state, per window), `itemLastActiveDates`, `itemCreatedDates`, `splitViewState` (only `windowContentIDs` and `focusedContentID`; orientation and widths are rebuilt from the sidebar items), `windowContents`, `spacesWithCollapsedPinnedSections`.
+  - Shapes seen in the owner's file (2026-11-03, types and counts only; Arc 1.171.0): `itemLastActiveDates` and `expandedItems` are flat lists that alternate key and value (Swift's encoding of a dictionary whose keys are not strings). `itemLastActiveDates` pairs an item id with a float of seconds since 2001-01-01 (Swift's reference date; values near 8.2 × 10⁸). `expandedItems` pairs a folder id with `{"expanded":{}}` or `{"peeked":{"_0":[tab ids]}}` (closed but showing some of its tabs) and lists only some folders (2 of 11); a folder not listed is closed. Both lists also name ids that are not in `StorableSidebar.json`. The file held one window.
 - **[O]** Little Arc is `little { profile: {default: true}, session: { entryPoint: { externalLink } }, preferredFrame }`.
 
 ### 3.4 StorableArchiveItems.json

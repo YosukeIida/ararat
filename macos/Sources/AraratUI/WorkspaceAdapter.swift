@@ -21,13 +21,15 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
-    public func open(path: String, json: @escaping @Sendable () throws -> String, completion: @escaping Completion<WorkspaceSnapshot>) {
+    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
             self.store = opened
             let snapshot = opened.snapshot(windowId: self.windowID)
-            let loaded = snapshot.spaces.isEmpty ? try opened.importArcSidebar(windowId: self.windowID, json: json()) : snapshot
-            return loaded
+            guard snapshot.spaces.isEmpty else { return snapshot }
+            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON())
+            onImport(imported.report)
+            return imported.snapshot
         }, completion: completion)
     }
 

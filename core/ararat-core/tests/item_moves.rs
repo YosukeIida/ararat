@@ -1,6 +1,6 @@
 use ararat_core::{import::arc_sidebar, model::{Kind, Lifecycle, Op, Record, Workspace}, storage::Store};
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json")).unwrap();
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
     ws.spaces[1].profile = ararat_core::model::Profile::Default;
     ws
 }

@@ -34,6 +34,32 @@ func adapterRunsOffMainInOrderAndDeliversErrorsOnMain() async {
 }
 
 @Test @MainActor
+func missingAndMalformedWindowsKeepTheSidebarImportAvailable() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    for malformed in [false, true] {
+        let adapter = WorkspaceAdapter(windowID: "windows-import")
+        let reports = AsyncStream<ImportReport>.makeStream()
+        let missing = directory.appendingPathComponent("absent-windows.json")
+        let snapshot = try await adapterValue {
+            adapter.open(path: directory.appendingPathComponent("\(malformed).sqlite").path, json: { json }, windowsJSON: {
+                let data = malformed ? Data([0xff]) : (try? Data(contentsOf: missing))
+                return data.map { String(decoding: $0, as: UTF8.self) }
+            }, onImport: { reports.continuation.yield($0) }, completion: $0)
+        }
+        #expect(snapshot.spaces.count == 2)
+        var iterator = reports.stream.makeAsyncIterator()
+        let report = try #require(await iterator.next())
+        #expect(report.missingWindows == !malformed)
+        #expect((report.windowsError != nil) == malformed)
+        reports.continuation.finish()
+        _ = try await adapterValue { adapter.shutdown(completion: $0) }
+    }
+}
+
+@Test @MainActor
 func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
     let directory = try testTemporaryDirectory()
     let expectedRoot = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory(), isDirectory: true)
@@ -42,7 +68,7 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
     let path = directory.appendingPathComponent("workspace.sqlite").path
     let adapter = WorkspaceAdapter(windowID: "test-window")
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["a","b","c"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}},"b",{"id":"b","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}}]}]}}"#
-    _ = try await adapterValue { adapter.open(path: path, json: { json }, completion: $0) }
+    _ = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let selected = try await adapterValue { adapter.select(id: "a", completion: $0) }
     _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: selected)
@@ -79,7 +105,7 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
     _ = try await adapterValue { adapter.flush(completion: $0) }
     _ = try await adapterValue { adapter.shutdown(completion: $0) }
     let reopened = WorkspaceAdapter(windowID: "test-window")
-    let restored = try await adapterValue { reopened.open(path: path, json: { "invalid" }, completion: $0) }
+    let restored = try await adapterValue { reopened.open(path: path, json: { "invalid" }, windowsJSON: { nil }, completion: $0) }
     #expect(restored == results[1].snapshot)
     _ = try await adapterValue { reopened.shutdown(completion: $0) }
 }

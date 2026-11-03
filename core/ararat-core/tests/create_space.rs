@@ -1,7 +1,7 @@
 use ararat_core::{import::arc_sidebar, model::{ItemKind, Profile}, storage::Store};
 
 fn workspace() -> ararat_core::model::Workspace {
-    arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json")).unwrap()
+    arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None).unwrap().0
 }
 
 #[test]

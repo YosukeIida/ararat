@@ -15,7 +15,7 @@ func archiveSettingsReadWriteSearchAndExternalUpdatesUseTheShownProfile() async 
     let adapter = WorkspaceAdapter(windowID: "archive-settings")
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
-    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, completion: $0) }
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {})
     #expect(model.archiveAfter == .hours12)
     model.query = "Archive Today"
@@ -46,7 +46,7 @@ func archiveLaunchAndTimerTickUseInjectedClockAndPublishSidebarAndLibrary() asyn
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
         .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
-    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("timer.sqlite").path, json: { json }, completion: $0) }
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("timer.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let tabs = snapshot.spaces.flatMap(\.today).filter { $0.kind == .tab }
     let expiredID = try #require(tabs.first?.id)
     let sidebar = SidebarView(snapshot: snapshot)
@@ -89,7 +89,7 @@ func lostScrollEndDefersOnlyPublishUntilQuietOrWindowMove(recovery: String) asyn
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
         .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
-    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("lost-end.sqlite").path, json: { json }, completion: $0) }
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("lost-end.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let tab = try #require(snapshot.spaces.flatMap(\.today).first { $0.kind == .tab })
     let sidebar = SidebarView(snapshot: snapshot)
     var gestureClock = 100.0
@@ -138,7 +138,7 @@ func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() asyn
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
         .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
-    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("deferred.sqlite").path, json: { json }, completion: $0) }
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("deferred.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let tab = try #require(snapshot.spaces.flatMap(\.today).first { $0.kind == .tab })
     let pin = try #require(snapshot.spaces.flatMap(\.favorites).first { $0.kind == .tab })
     let clock = try #require(tab.lastSelectedAt) + 12 * 3_600_000 + 1

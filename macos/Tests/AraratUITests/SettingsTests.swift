@@ -59,7 +59,7 @@ func settingsEditsPublishCoreSnapshotsAndValidateOneGrapheme() async throws {
     let adapter = WorkspaceAdapter(windowID: "settings")
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
-    var snapshot = try await settingsValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, completion: $0) }
+    var snapshot = try await settingsValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     if snapshot.spaces.count < 2 { snapshot = try await settingsValue { adapter.createSpace(name: "Second", completion: $0) } }
     let sidebar = SidebarView(snapshot: snapshot)
     let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { sidebar.applySelection(snapshot: $0) }, resetWidth: {})

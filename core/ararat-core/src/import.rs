@@ -15,15 +15,18 @@ pub struct ImportError(pub String);
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ImportReport {
     pub unknown_space_looks: usize,
+    pub missing_windows: bool,
+    pub windows_error: Option<String>,
+    pub differing_folder_states: usize,
+    pub skipped_dates: usize,
+    pub peeked_folders: usize,
+    pub unknown_window_ids: usize,
+    pub malformed_window_entries: usize,
 }
 
 type Result<T> = std::result::Result<T, ImportError>;
 
-pub fn arc_sidebar(json: &str) -> Result<Workspace> {
-    arc_sidebar_with_report(json).map(|(workspace, _)| workspace)
-}
-
-pub fn arc_sidebar_with_report(json: &str) -> Result<(Workspace, ImportReport)> {
+pub fn arc_sidebar(json: &str, windows_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     let container = root["sidebar"]["containers"]
         .as_array()
@@ -66,7 +69,77 @@ pub fn arc_sidebar_with_report(json: &str) -> Result<(Workspace, ImportReport)> 
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
+    match windows_json {
+        None => report.missing_windows = true,
+        Some(json) => {
+            if let Err(error) = window_state(json, &mut workspace, &mut report) {
+                report.windows_error = Some(error.0);
+            }
+        }
+    }
     Ok((workspace, report))
+}
+
+fn window_state(json: &str, workspace: &mut Workspace, report: &mut ImportReport) -> Result<()> {
+    let root: Value = serde_json::from_str(json).map_err(|e| err(&e.to_string()))?;
+    let windows = root["windows"].as_array().filter(|w| !w.is_empty() && w.iter().all(Value::is_object))
+        .ok_or_else(|| err("windows must be a nonempty array of objects"))?;
+    let mut expanded = Vec::new();
+    for (index, window) in windows.iter().enumerate() {
+        let mut open = std::collections::HashSet::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut peeked = std::collections::HashSet::new();
+        for (id, state) in window_pairs(&window["expandedItems"], report) {
+            let Some(item) = workspace.items.get(&id) else { report.unknown_window_ids += usize::from(index == 0); continue; };
+            if !matches!(item.kind, ItemKind::Folder) { report.malformed_window_entries += 1; continue; }
+            if !seen.insert(id.clone()) { report.malformed_window_entries += 1; }
+            open.remove(&id);
+            peeked.remove(&id);
+            let Some(state) = state.as_object().filter(|state| state.len() == 1) else {
+                report.malformed_window_entries += 1; continue;
+            };
+            if let Some(payload) = state.get("expanded") {
+                if !payload.is_object() { report.malformed_window_entries += 1; }
+                open.insert(id);
+            } else if let Some(payload) = state.get("peeked") {
+                if !payload.is_object() { report.malformed_window_entries += 1; }
+                peeked.insert(id);
+            } else { report.malformed_window_entries += 1; }
+        }
+        if index == 0 { report.peeked_folders = peeked.len(); }
+        expanded.push(open);
+    }
+    for item in workspace.items.values().filter(|item| matches!(item.kind, ItemKind::Folder)) {
+        let open = expanded[0].contains(&item.id);
+        workspace.folder_collapsed.insert(item.id.clone(), !open);
+        report.differing_folder_states += usize::from(expanded.iter().skip(1).any(|ids| ids.contains(&item.id) != open));
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis() as u64;
+    for (id, date) in window_pairs(&windows[0]["itemLastActiveDates"], report) {
+        let Some(item) = workspace.items.get(&id) else { report.unknown_window_ids += 1; continue; };
+        if !matches!(item.kind, ItemKind::Tab { .. }) { report.skipped_dates += 1; continue; }
+        match arc_date(date, now) {
+            Some(at) => { workspace.last_selected.insert(id, at); }
+            None => report.skipped_dates += 1,
+        }
+    }
+    Ok(())
+}
+
+fn window_pairs<'a>(value: &'a Value, report: &mut ImportReport) -> Vec<(Id, &'a Value)> {
+    let Some(list) = value.as_array() else { report.malformed_window_entries += 1; return Vec::new(); };
+    report.malformed_window_entries += list.len() % 2;
+    list.chunks_exact(2).filter_map(|pair| {
+        let Some(id) = pair[0].as_str() else { report.malformed_window_entries += 1; return None; };
+        Some((id.to_string(), &pair[1]))
+    }).collect()
+}
+
+fn arc_date(value: &Value, now: u64) -> Option<u64> {
+    let millis = (value.as_f64()? + 978_307_200.0) * 1_000.0;
+    (millis.is_finite() && millis >= 0.0 && millis <= now as f64 && millis < u64::MAX as f64)
+        .then_some(millis as u64)
 }
 
 fn space(id: String, obj: &Value, order: String) -> Result<Space> {
@@ -232,4 +305,18 @@ fn flat_pairs(value: &Value) -> Result<Vec<(&Value, &Value)>> {
 
 fn err(message: &str) -> ImportError {
     ImportError(message.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::arc_date;
+    use serde_json::json;
+
+    #[test]
+    fn date_bounds_are_inclusive_and_future_milliseconds_are_rejected() {
+        let now = 978_307_201_000;
+        assert_eq!(arc_date(&json!(0.0), now), Some(978_307_200_000));
+        assert_eq!(arc_date(&json!(1.0), now), Some(now));
+        assert_eq!(arc_date(&json!(1.001), now), None);
+    }
 }

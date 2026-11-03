@@ -174,6 +174,7 @@ Dia の ArcCore は Ardia 文書がより詳しく調べている（第 4 節）
 ### 3.3 StorableWindows.json
 
 - **[O]** `windows[]` の各要素: `sidebarWidth`、`sidebarMode`、`focusedSpaceID`、`lastFocusedSpaceID`、`expandedItems`（folder の開閉、窓ごと）、`itemLastActiveDates`、`itemCreatedDates`、`splitViewState`（`windowContentIDs` と `focusedContentID` だけ。向きと幅はサイドバーの項目から作り直す）、`windowContents`、`spacesWithCollapsedPinnedSections`。
+  - オーナーのファイルで見た形（2026-11-03。型と件数だけを読んだ。Arc 1.171.0）: `itemLastActiveDates` と `expandedItems` は、キーと値を交互に並べた平たいリストである（キーが文字列でない辞書を Swift が書き出す形）。`itemLastActiveDates` は項目の id と、2001-01-01 からの秒数の浮動小数点数（Swift の基準日。値は 8.2 × 10⁸ 前後）を組にする。`expandedItems` はフォルダの id と、`{"expanded":{}}` または `{"peeked":{"_0":[タブの id]}}`（閉じているが、中のタブの一部を見せている状態）を組にし、一部のフォルダだけを載せる（11 個のうち 2 個）。載っていないフォルダは閉じている。どちらのリストにも、`StorableSidebar.json` に無い id が含まれる。ファイルのウィンドウは 1 つであった。
 - **[O]** Little Arc は `little { profile: {default: true}, session: { entryPoint: { externalLink } }, preferredFrame }`。
 
 ### 3.4 StorableArchiveItems.json

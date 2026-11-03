@@ -4,7 +4,7 @@ use ararat_core::model::{Hlc, Item, ItemKind, Membership, Op, Record, Workspace}
 const FIXTURE: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
 
 fn imported() -> Workspace {
-    arc_sidebar(FIXTURE).unwrap()
+    arc_sidebar(FIXTURE, None).unwrap().0
 }
 
 fn hlc(millis: u64) -> Hlc {

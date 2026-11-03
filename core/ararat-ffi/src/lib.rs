@@ -78,11 +78,12 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
-    pub fn import_arc_sidebar(&self, window_id: String, json: String) -> Result<WorkspaceSnapshot, CoreError> {
-        let mut imported = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
+    pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>) -> Result<ImportResult, CoreError> {
+        let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-        let ids: Vec<_> = imported.items.keys().cloned().collect();
-        for id in ids { imported.stamp_selection(&id, now); }
+        for item in imported.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
+            imported.last_selected.entry(item.id.clone()).or_insert(now);
+        }
         let mut workspace = self.workspace.lock().unwrap();
         let ops = imported.to_ops();
         for op in &ops {
@@ -92,7 +93,7 @@ impl WorkspaceStore {
         let view = workspace.clone();
         drop(workspace);
         self.store.flush()?;
-        Ok(snapshot(view, &window_id))
+        Ok(ImportResult { snapshot: snapshot(view, &window_id), report: report.into() })
     }
 
     pub fn select_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
@@ -350,10 +351,37 @@ pub struct WorkspaceSnapshot {
     pub spaces: Vec<SpaceSnapshot>,
 }
 
+#[derive(Debug, PartialEq, uniffi::Record)]
+pub struct ImportReport {
+    pub unknown_space_looks: u64,
+    pub missing_windows: bool,
+    pub windows_error: Option<String>,
+    pub differing_folder_states: u64,
+    pub skipped_dates: u64,
+    pub peeked_folders: u64,
+    pub unknown_window_ids: u64,
+    pub malformed_window_entries: u64,
+}
+
+impl From<import::ImportReport> for ImportReport {
+    fn from(report: import::ImportReport) -> Self {
+        Self { unknown_space_looks: report.unknown_space_looks as u64, missing_windows: report.missing_windows,
+            windows_error: report.windows_error, differing_folder_states: report.differing_folder_states as u64,
+            skipped_dates: report.skipped_dates as u64, peeked_folders: report.peeked_folders as u64,
+            unknown_window_ids: report.unknown_window_ids as u64, malformed_window_entries: report.malformed_window_entries as u64 }
+    }
+}
+
+#[derive(Debug, PartialEq, uniffi::Record)]
+pub struct ImportResult {
+    pub snapshot: WorkspaceSnapshot,
+    pub report: ImportReport,
+}
+
 #[uniffi::export]
-pub fn import_arc_sidebar(json: String) -> Result<WorkspaceSnapshot, CoreError> {
-    let ws = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
-    Ok(snapshot(ws, ""))
+pub fn import_arc_sidebar(json: String, windows_json: Option<String>) -> Result<ImportResult, CoreError> {
+    let (ws, report) = import::arc_sidebar(&json, windows_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
+    Ok(ImportResult { snapshot: snapshot(ws, ""), report: report.into() })
 }
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
@@ -427,7 +455,7 @@ mod tests {
 
     #[test]
     fn drag_snapshot_exposes_membership_roots_indices_profiles_and_fold_state() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")).unwrap();
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
         ws.set_folder_collapsed("folder-docs", true).unwrap();
         let snapshot = snapshot(ws, "drag");
         let space = &snapshot.spaces[0];
@@ -448,7 +476,7 @@ mod tests {
 
     #[test]
     fn item_edits_snapshot_titles_and_keep_selection_when_hidden_or_moved_to_another_space() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")).unwrap();
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
         ws.spaces[1].profile = ararat_core::model::Profile::Default;
         ws.select_item("one", "tab-spec").unwrap();
         ws.rename_tab("tab-spec", "Custom").unwrap();
@@ -469,7 +497,7 @@ mod tests {
         let json = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
             .replace(r#""id": "pin-work", "parentID": null"#, r#""id": "pin-work", "parentID": "tab-spec""#);
         assert!(json.contains(r#""id": "pin-work", "parentID": "tab-spec""#));
-        let snapshot = import_arc_sidebar(json).unwrap();
+        let snapshot = import_arc_sidebar(json, None).unwrap().snapshot;
         assert!(!snapshot.spaces.is_empty());
     }
 }

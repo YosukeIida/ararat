@@ -63,7 +63,16 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !terminating else { return }
         let fixturePath = options.fixturePath
-        adapter.open(path: options.databasePath, json: { try sidebarJSON(path: fixturePath) }) { [weak self] result in
+        adapter.open(path: options.databasePath, json: { try sidebarJSON(path: fixturePath) }, windowsJSON: {
+            guard let fixturePath else { return nil }
+            let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableWindows.json")
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }, onImport: { report in
+            guard report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
+            let summary = "Arc import: missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
+            FileHandle.standardError.write(Data(summary.utf8))
+        }) { [weak self] result in
             guard let self, !self.terminating else { return }
             switch result {
             case .success(let snapshot):

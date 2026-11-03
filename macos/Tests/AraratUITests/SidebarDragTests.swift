@@ -247,7 +247,7 @@ func successfulMovePreservesSelectionScrollAndCoreFolderState() throws {
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("drag.sqlite").path)
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
-    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8))
+    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8), windowsJson: nil).snapshot
     _ = try store.createSpace(windowId: "drag", name: "Other", spaceId: "other")
     try store.showSpace(windowId: "drag", spaceId: "space-work")
     _ = try store.setFolderCollapsed(windowId: "drag", id: "folder-docs", collapsed: true)
@@ -322,7 +322,7 @@ func adapterMoveAndFolderOpenPublishTheCoreResult() async throws {
     func value<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }
     }
-    _ = try await value { adapter.open(path: directory.appendingPathComponent("workspace.sqlite").path, json: { json }, completion: $0) }
+    _ = try await value { adapter.open(path: directory.appendingPathComponent("workspace.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let selected = try await value { adapter.select(id: "tab-mail", completion: $0) }
     let moved = try await value { adapter.move(id: "tab-mail", container: "folder-docs", index: 0, openFolder: true, completion: $0) }
     #expect(moved.selectedId == selected.selectedId)

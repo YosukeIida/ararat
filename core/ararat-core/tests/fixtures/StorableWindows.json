@@ -1,0 +1,12 @@
+{
+  "windows": [
+    {
+      "expandedItems": ["folder-docs", {"peeked":{"_0":["tab-spec"]}}, "missing-folder", {"expanded":{}}, false, {}],
+      "itemLastActiveDates": ["tab-a", 700000000.0, "tab-b", 700086399.5, "missing-tab", 700000001.0, "tab-spec", 1e30]
+    },
+    {
+      "expandedItems": ["folder-docs", {"expanded":{}}],
+      "itemLastActiveDates": ["tab-a", 700086400.0]
+    }
+  ]
+}

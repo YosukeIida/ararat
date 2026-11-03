@@ -18,7 +18,7 @@ private final class MenuFixture {
         directory = try testTemporaryDirectory()
         store = try WorkspaceStore.open(path: directory.appendingPathComponent("menus.sqlite").path)
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8))
+        _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil).snapshot
         _ = try store.createSpace(windowId: "menus", name: "Other", spaceId: "other")
         try store.showSpace(windowId: "menus", spaceId: "space-work")
         _ = NSApplication.shared
@@ -282,7 +282,7 @@ func adapterFolderAndRenameEditsReachTheCoreAndPersist() async throws {
         try await withCheckedThrowingContinuation { done in start { done.resume(with: $0) } }
     }
     let path = directory.appendingPathComponent("adapter.sqlite").path
-    _ = try await value { adapter.open(path: path, json: { json }, completion: $0) }
+    _ = try await value { adapter.open(path: path, json: { json }, windowsJSON: { nil }, completion: $0) }
     let created = try await value { adapter.edit(.createFolder(id: "new", container: "pin-work", index: 2), completion: $0) }
     #expect(created.spaces[0].pinned.last?.id == "new")
     let renamed = try await value { adapter.edit(.rename(id: "new", title: "Named", folder: true), completion: $0) }
