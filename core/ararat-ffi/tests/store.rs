@@ -227,17 +227,21 @@ fn selecting_rows_persists_time_and_history_locally() {
 }
 
 #[test]
-fn folders_and_hidden_tabs_are_rejected_without_writes() {
+fn folders_are_rejected_and_selecting_hidden_tabs_persists_local_expansion() {
     let path = fresh_db("hidden-selection");
     let mut ws = import::arc_sidebar(FIXTURE).unwrap();
-    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
+    ws.folder_collapsed.insert("folder-docs".into(), true);
     let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     let before = records(&path);
-    for id in ["folder-docs", "tab-spec", "unknown"] { assert!(store.select_item("test".into(), id.into()).is_err()); }
+    for id in ["folder-docs", "unknown"] { assert!(store.select_item("test".into(), id.into()).is_err()); }
     store.flush().unwrap();
     assert_eq!(records(&path), before);
     assert_eq!(store.snapshot("test".into()).selected_id, None);
+    store.select_item("test".into(), "tab-spec".into()).unwrap(); store.flush().unwrap();
+    let (disk, reopened) = Store::open(&path).unwrap();
+    assert!(!reopened.folder_collapsed["folder-docs"]);
+    assert_eq!(reopened.selected("test"), Some("tab-spec")); drop(disk);
 }
 
 #[test]
@@ -426,7 +430,7 @@ fn folder_restore_fallbacks_and_missing_neighbours_cross_the_boundary() {
         match situation {
             "deleted" => { ws.items.remove("folder-docs"); }
             "archived" => ws.items.get_mut("folder-docs").unwrap().lifecycle = ararat_core::model::Lifecycle::Archived,
-            "collapsed" => ws.items.get_mut("folder-docs").unwrap().collapsed = true,
+            "collapsed" => { ws.folder_collapsed.insert("folder-docs".into(), true); },
             _ => { ws.items.remove("tab-spec"); ws.items.remove("tab-b"); }
         }
         let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
@@ -438,7 +442,7 @@ fn folder_restore_fallbacks_and_missing_neighbours_cross_the_boundary() {
         drop(store);
         let (disk, reopened) = Store::open(&path).unwrap();
         assert_eq!(reopened.items["tab-a"].membership.parent.as_deref(), Some(if ["deleted", "archived"].contains(&situation) { "today-work" } else { "folder-docs" }));
-        if situation == "collapsed" { assert!(!reopened.items["folder-docs"].collapsed); }
+        if situation == "collapsed" { assert!(!reopened.folder_collapsed["folder-docs"]); }
         drop(disk);
         assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), snapshot);
     }
@@ -541,4 +545,58 @@ fn idle_auto_archive_returns_none_without_publishing_or_writing() {
     let before = records(&path);
     assert_eq!(store.auto_archive("test".into(), now).unwrap(), None);
     assert_eq!(records(&path), before);
+}
+
+#[test]
+fn item_edit_calls_flush_synced_changes_and_local_folder_state_before_returning() {
+    let path = fresh_db("item-edits");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").replace(r#""profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } }"#, r#""profile": { "default": true }"#)).unwrap();
+    store.select_item("one".into(), "tab-spec".into()).unwrap();
+    store.create_folder("one".into(), "new".into(), "New".into(), "pin-home".into(), 0, vec![]).unwrap();
+    store.move_item("one".into(), "tab-spec".into(), "new".into(), 0).unwrap();
+    let renamed = store.rename_tab("one".into(), "tab-spec".into(), "Custom".into()).unwrap();
+    assert_eq!(renamed.spaces[1].pinned.iter().find(|r| r.id == "tab-spec").unwrap().title, "Custom");
+    store.rename_folder("one".into(), "new".into(), "Folder".into()).unwrap();
+    let before = records(&path);
+    let folded = store.set_folder_collapsed("one".into(), "new".into(), true).unwrap();
+    assert_eq!(folded.selected_id.as_deref(), Some("tab-spec"));
+    assert_eq!(folded.shown_space_id.as_deref(), Some("space-work"));
+    assert!(!folded.spaces[1].pinned.iter().any(|r| r.id == "tab-spec"));
+    assert_eq!(Store::open(&path).unwrap().1.folder_collapsed["new"], true);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind != "folder_state").count(), before.len());
+    let after = store.delete_folder("one".into(), "new".into()).unwrap();
+    assert!(after.spaces[1].pinned.is_empty());
+    assert!(after.archive.iter().any(|item| item.id == "tab-spec" && item.title == "Custom"));
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()), after);
+}
+
+#[test]
+fn a_same_position_move_writes_no_records_or_journal_rows() {
+    let path = fresh_db("noop-item-move"); let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into()).unwrap();
+    let before = records(&path);
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
+    let journal = count(); let view = store.snapshot("one".into());
+    assert_eq!(store.move_item("one".into(), "split-1".into(), "pin-work".into(), 1).unwrap(), view);
+    assert_eq!(records(&path), before); assert_eq!(count(), journal);
+}
+
+#[test]
+fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
+    let path = fresh_db("unpin-usage");
+    let mut ws = import::arc_sidebar(FIXTURE).unwrap(); ws.stamp_selection("tab-spec", 1_000);
+    let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
+    let journal = count();
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    store.move_item("one".into(), "tab-spec".into(), "today-work".into(), 0).unwrap();
+    let (disk, reopened) = Store::open(&path).unwrap();
+    assert!(reopened.last_selected["tab-spec"] >= now); assert_eq!(count(), journal + 1); drop(disk);
+    store.auto_archive("one".into(), now + 1).unwrap();
+    let (disk, reopened) = Store::open(&path).unwrap();
+    assert_eq!(reopened.items["tab-spec"].lifecycle, ararat_core::model::Lifecycle::Open); drop(disk);
 }

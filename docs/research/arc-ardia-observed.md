@@ -87,3 +87,18 @@ Measured on Arc 1.171.0 with tabs this measurement created (example.com) and clo
 - Selecting Y4 then Y2 and closing Y2 selected Y4, not Y2's neighbours Y1 or Y3.
 - Selecting Y1, Y3, Y4 and closing them in turn selected Y3, then Y1, then the tab selected before Y1: the selection history.
 - In another space, opening a tab there and closing it (the space had pinned tabs only, nothing selected before) left nothing selected and stayed in that space: the history does not cross spaces, and no pinned neighbour was picked.
+
+## 8. Dragging and organizing in the sidebar (2026-11-03)
+
+Measured on Arc 1.171.0 at 1× with tabs and a folder this measurement created and removed again, by synthetic mouse events (press, drag in 8 ms steps, release) and window captures.
+
+- A press on a tab row selects it; the drag then carries the selected tab.
+- While dragging, the row stays in place with its fill, and a copy of the row (fill, favicon, title, ✕) follows the pointer. Other rows do not move apart. The drop position shows as a 2 pt line, nearly white, from x 16 to x 166 in a sidebar about 178 pt wide, with a hollow ring about 7 pt across at its left end. The line sits on the boundary between two rows (row centre + 20.5 pt on the 41 pt pitch).
+- After release the copy settles into place in about 100 ms (pixel changes on a vertical line stop about 120 ms after the release).
+- Dragging a Today tab above the divider pins it at that position; the pinned row then shows "Double-click to rename" under its title while selected. Dragging a pinned tab below the divider unpins it.
+- Over a folder row no line shows; dropping there puts the tab inside the folder (indented one level) and opens the folder.
+- Over favorites the tiles reflow while dragging (two tiles became three columns, with an empty tile at the drop place); the drop makes the tab a favorite. Remove Favorite in a favorite's menu closed the tab: it did not return to Today.
+- Folders are created from the + menu (New Space, New Folder, New Easel, New Boost, New Split, New Tab) or from the menu of the sidebar's empty area (space items, New Folder, Live Folders). The new folder, "Untitled", is added at the end of pinned with its title in rename mode. An empty folder's Delete removed it without asking.
+- Menus: a Today tab's menu has Copy Link, Share, Change Icon…, Rename…, Mute, Customize Page…, Open in Split View, Duplicate, Move to (the spaces, New Space…), Archive Tab, Archive Tabs Below. A pinned tab's menu replaces Open in Split View with Add Split View, adds Edit Pinned Page, and ends with Remove Pin instead of the archive items. A favorite's menu ends with Close Tab (⌘W) and Remove Favorite. A folder's menu has Share Folder…, New Nested Folder…, Turn into Space, Change Icon…, Rename…, Duplicate, Move to, Delete. No tab menu offers a new folder, so Arc offers no way to make a folder in Today.
+- Synthetic drags of a folder row did not start a drag (each press toggled the folder open or closed). The owner checked by hand (2026-11-03): a folder cannot be dragged into Today or into favorites; folders live in pinned only. Deleting a folder with tabs asks first: "Delete your “<name>” folder?" with "Deleting this folder will archive the tabs inside it.", Cancel (Esc) and a red Delete Folder (Return); confirming archives the tabs inside.
+- Still to measure (the owner wants it measured): how long a dragged tab must rest on a collapsed folder before the folder opens. Dragging onto another space's dock dot was not tried.

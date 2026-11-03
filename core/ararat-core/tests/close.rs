@@ -18,7 +18,7 @@ fn workspace() -> Workspace {
 fn add(ws: &mut Workspace, id: &str, parent: &str, order: &str, kind: ItemKind) {
     ws.items.insert(id.into(), Item {
         id: id.into(), membership: Membership { parent: Some(parent.into()), order: order.into(), hlc: Default::default(), previous_parent: None },
-        title: None, kind, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, collapsed: false,
+        title: None, kind, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
     });
 }
 
@@ -53,7 +53,7 @@ fn selected_only_tab_clears_selection() {
 fn successor_skips_tabs_inside_collapsed_folders() {
     let mut ws = workspace();
     add(&mut ws, "folder", "today-work", "ba", ItemKind::Folder);
-    ws.items.get_mut("folder").unwrap().collapsed = true;
+    ws.folder_collapsed.insert("folder".into(), true);
     ws.items.get_mut("c").unwrap().membership.parent = Some("folder".into());
     ws.close_item("b").unwrap();
     assert_eq!(ws.selected("test"), Some("a"));
@@ -163,13 +163,14 @@ fn closing_the_only_split_clears_selection() {
 }
 
 #[test]
-fn selection_rejects_folders_hidden_tabs_and_empty_splits() {
+fn selection_rejects_folders_and_empty_splits_but_expands_hidden_tabs() {
     let mut ws = split_workspace();
     for id in ["folder-docs", "pin-work", "unknown"] {
         let before = ws.clone(); assert!(ws.select_item("test", id).is_err()); assert_eq!(ws, before);
     }
-    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
-    let before = ws.clone(); assert!(ws.select_item("test", "tab-spec").is_err()); assert_eq!(ws, before);
+    ws.folder_collapsed.insert("folder-docs".into(), true);
+    ws.select_item("test", "tab-spec").unwrap();
+    assert!(!ws.folder_collapsed["folder-docs"]);
     ws.items.get_mut("b").unwrap().lifecycle = Lifecycle::Closed;
     ws.items.get_mut("c").unwrap().lifecycle = Lifecycle::Archived;
     let before = ws.clone(); assert!(ws.select_item("test", "split").is_err()); assert_eq!(ws, before);

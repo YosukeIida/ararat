@@ -19,6 +19,225 @@ impl WindowState {
 }
 
 impl Workspace {
+    fn commit_edit(&mut self, ops: Vec<Op>) -> Vec<Op> {
+        for op in &ops { self.apply(op); }
+        ops
+    }
+
+    fn movable_item(&self, id: &str) -> Result<crate::model::Item, EditError> {
+        let mut item = self.items.get(id).ok_or_else(|| EditError(format!("unknown item {id}")))?;
+        if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+            || matches!(item.kind, ItemKind::Container) || self.list_for(id).is_none() {
+            return Err(EditError(format!("item {id} cannot move")));
+        }
+        let mut parent = item.membership.parent.as_deref();
+        while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
+            if !matches!(ancestor.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
+                return Err(EditError("item has an inactive ancestor".into()));
+            }
+            if matches!(ancestor.kind, ItemKind::Split { .. }) { item = ancestor; }
+            parent = ancestor.membership.parent.as_deref();
+        }
+        Ok(item.clone())
+    }
+
+    fn check_destination(&self, item: &crate::model::Item, container: &str) -> Result<(), EditError> {
+        let target = self.items.get(container).ok_or_else(|| EditError(format!("unknown container {container}")))?;
+        if !matches!(target.kind, ItemKind::Container | ItemKind::Folder)
+            || !matches!(target.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
+            return Err(EditError("destination is not an open container or folder".into()));
+        }
+        let (root, today) = self.list_for(container).ok_or_else(|| EditError("destination has no active list".into()))?;
+        if matches!(item.kind, ItemKind::Folder) && (today || !self.spaces.iter().any(|s| s.pinned == root)) {
+            return Err(EditError("folders belong in pinned".into()));
+        }
+        if self.favorites.values().any(|id| id == root) && !matches!(item.kind, ItemKind::Tab { .. }) {
+            return Err(EditError("favorites hold tabs only".into()));
+        }
+        let mut parent = Some(container);
+        while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
+            if ancestor.id == item.id { return Err(EditError("cannot move an item into its subtree".into())); }
+            if !matches!(ancestor.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
+                return Err(EditError("destination has an inactive ancestor".into()));
+            }
+            parent = ancestor.membership.parent.as_deref();
+        }
+        Ok(())
+    }
+
+    fn insertion_keys(others: &[&crate::model::Item], index: usize, count: usize) -> Result<(Vec<String>, Vec<Op>), EditError> {
+        if index > others.len() { return Err(EditError("item index out of range".into())); }
+        let mut before = index.checked_sub(1).and_then(|i| others.get(i)).map(|i| i.membership.order.clone());
+        let mut after = others.get(index).map(|i| i.membership.order.clone());
+        let mut ops = Vec::new();
+        if count > 0 && before.as_ref().zip(after.as_ref()).is_some_and(|(a, b)| a == b) {
+            let tied: Vec<_> = others[index..].iter().take_while(|i| Some(&i.membership.order) == before.as_ref()).collect();
+            let next = others.get(index + tied.len()).map(|i| i.membership.order.as_str());
+            let mut previous = before.clone();
+            for (position, item) in tied.into_iter().enumerate() {
+                let mut item = (**item).clone();
+                item.membership.order = crate::order::key_between(previous.as_deref(), next);
+                if position == 0 { after = Some(item.membership.order.clone()); }
+                previous = Some(item.membership.order.clone());
+                ops.push(Op::Put(Record::Item(item)));
+            }
+        }
+        let mut keys = Vec::new();
+        for _ in 0..count {
+            let key = crate::order::key_between(before.as_deref(), after.as_deref());
+            before = Some(key.clone());
+            keys.push(key);
+        }
+        Ok((keys, ops))
+    }
+
+    fn item_order(&self, container: &str, index: usize, excluding: &HashSet<Id>) -> Result<(String, Vec<Op>), EditError> {
+        let others: Vec<_> = self.children(container).into_iter()
+            .filter(|item| !excluding.contains(&item.id) && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).collect();
+        let (mut keys, ops) = Self::insertion_keys(&others, index, 1)?;
+        Ok((keys.remove(0), ops))
+    }
+
+    fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
+        let (root, _) = self.list_for(id)?;
+        self.spaces.iter().find(|s| s.pinned == root || s.today == root).map(|s| &s.profile)
+            .or_else(|| self.favorites.iter().find(|(_, container)| container.as_str() == root).map(|(p, _)| p))
+    }
+
+    pub fn move_item(&mut self, id: &str, container: &str, index: usize) -> Result<Vec<Op>, EditError> {
+        self.move_item_at(id, container, index, self.lifecycle_time())
+    }
+
+    pub fn move_item_at(&mut self, id: &str, container: &str, index: usize, now: u64) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let mut item = self.movable_item(id)?;
+        self.check_destination(&item, container)?;
+        if self.item_profile(&item.id) != self.item_profile(container) {
+            return Err(EditError("cannot move across profiles".into()));
+        }
+        let same_parent = item.membership.parent.as_deref() == Some(container);
+        if same_parent && self.children(container).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .position(|i| i.id == item.id) == Some(index) { return Ok(Vec::new()); }
+        let entering_today = !self.list_for(&item.id).is_some_and(|(_, today)| today)
+            && self.list_for(container).is_some_and(|(_, today)| today);
+        let (order, mut ops) = self.item_order(container, index, &HashSet::from([item.id.clone()]))?;
+        item.membership.order = order;
+        if !same_parent { item.membership.previous_parent = item.membership.parent.replace(container.into()); }
+        let id = item.id.clone();
+        ops.push(Op::Put(Record::Item(item)));
+        for op in &ops { self.apply(op); }
+        if entering_today { ops.extend(self.stamp_selection(&id, now)); }
+        Ok(ops)
+    }
+
+    pub fn create_folder(&mut self, id: &str, name: &str, container: &str, index: usize, wrapping: &[Id]) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let name = name.trim();
+        if name.is_empty() || id.trim().is_empty() || self.items.contains_key(id) || self.spaces.iter().any(|s| s.id == id) {
+            return Err(EditError("folder name or id is empty, or id already exists".into()));
+        }
+        let (root, _) = self.list_for(container).ok_or_else(|| EditError("destination has no active list".into()))?;
+        let space = self.spaces.iter().find(|s| s.pinned == root)
+            .ok_or_else(|| EditError("folders belong in pinned".into()))?;
+        let mut selected = HashSet::new();
+        for id in wrapping {
+            let item = self.movable_item(id)?;
+            if !self.list_for(&item.id).is_some_and(|(root, _)| root == space.pinned || root == space.today) {
+                return Err(EditError("wrap selection must belong to the destination space, excluding favorites".into()));
+            }
+            selected.insert(item.id);
+        }
+        for id in selected.iter().map(String::as_str).chain(std::iter::once(container)) {
+            let mut parent = self.items[id].membership.parent.as_deref();
+            if id == container && selected.contains(id) { return Err(EditError("cannot wrap the destination".into())); }
+            while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
+                if selected.contains(&ancestor.id) { return Err(EditError("wrap selection contains an ancestor".into())); }
+                parent = ancestor.membership.parent.as_deref();
+            }
+        }
+        let ordered: Vec<_> = [&space.pinned, &space.today].into_iter()
+            .flat_map(|root| self.outline_entries(root)).filter(|(_, i, _)| selected.contains(&i.id))
+            .map(|(_, i, _)| i.clone()).collect();
+        let (order, mut ops) = self.item_order(container, index, &selected)?;
+        let folder = crate::model::Item {
+            id: id.into(), title: Some(name.into()), kind: ItemKind::Folder, lifecycle: Lifecycle::Open,
+            lifecycle_changed_at: self.lifecycle_time(), membership: crate::model::Membership {
+                parent: Some(container.into()), previous_parent: None, hlc: Default::default(),
+                order,
+            },
+        };
+        self.check_destination(&folder, container)?;
+        ops.push(Op::Put(Record::Item(folder)));
+        let mut previous = None;
+        for mut item in ordered {
+            item.membership.previous_parent = item.membership.parent.replace(id.into());
+            item.membership.order = crate::order::key_between(previous.as_deref(), None);
+            previous = Some(item.membership.order.clone());
+            ops.push(Op::Put(Record::Item(item)));
+        }
+        Ok(self.commit_edit(ops))
+    }
+
+    pub fn rename_folder(&mut self, id: &str, name: &str) -> Result<Vec<Op>, EditError> {
+        let name = name.trim();
+        let mut item = self.items.get(id).filter(|i| matches!(i.kind, ItemKind::Folder)).cloned()
+            .ok_or_else(|| EditError(format!("item {id} is not a folder")))?;
+        if name.is_empty() { return Err(EditError("folder name is empty".into())); }
+        item.title = Some(name.into());
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
+    pub fn rename_tab(&mut self, id: &str, title: &str) -> Result<Vec<Op>, EditError> {
+        let mut item = self.items.get(id).filter(|i| matches!(i.kind, ItemKind::Tab { .. })).cloned()
+            .ok_or_else(|| EditError(format!("item {id} is not a tab")))?;
+        item.title = (!title.trim().is_empty()).then(|| title.trim().into());
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
+    pub fn set_folder_collapsed(&mut self, id: &str, collapsed: bool) -> Result<Vec<Op>, EditError> {
+        if !self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Folder)) {
+            return Err(EditError(format!("item {id} is not a folder")));
+        }
+        Ok(self.commit_edit(vec![Op::Put(Record::FolderState { item: id.into(), collapsed })]))
+    }
+
+    pub fn delete_folder(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Folder)) {
+            return Err(EditError(format!("item {id} is not a folder")));
+        }
+        let (root, _) = self.list_for(id).ok_or_else(|| EditError("folder has no space".into()))?;
+        let pinned = self.spaces.iter().find(|space| space.pinned == root || space.today == root)
+            .ok_or_else(|| EditError("folder has no space".into()))?.pinned.clone();
+        let descendants: Vec<_> = self.outline_entries(id).into_iter().map(|(_, item, _)| item.id.clone()).collect();
+        let folders: HashSet<_> = std::iter::once(id.to_string()).chain(descendants.iter()
+            .filter(|id| matches!(self.items[*id].kind, ItemKind::Folder)).cloned()).collect();
+        let mut next = self.clone();
+        let changed_at = self.lifecycle_time();
+        let mut ops = Vec::new();
+        for id in &descendants {
+            if matches!(next.items[id].kind, ItemKind::Tab { .. } | ItemKind::Split { .. })
+                && matches!(next.items[id].lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
+                ops.extend(next.finish_item(id, true, changed_at)?);
+            }
+        }
+        let mut cleanup = Vec::new();
+        for id in &descendants {
+            let mut item = next.items[id].clone();
+            if !folders.contains(id) && item.membership.parent.as_ref().is_some_and(|parent| folders.contains(parent)) {
+                item.membership.previous_parent = item.membership.parent.replace(pinned.clone());
+                cleanup.push(Op::Put(Record::Item(item)));
+            }
+        }
+        for folder in descendants.iter().rev().map(String::as_str).chain(std::iter::once(id)).filter(|id| folders.contains(*id)) {
+            cleanup.push(Op::Delete(crate::model::Kind::Item, folder.into()));
+            if next.folder_collapsed.contains_key(folder) { cleanup.push(Op::Delete(crate::model::Kind::FolderState, folder.into())); }
+        }
+        ops.extend(next.commit_edit(cleanup));
+        *self = next;
+        Ok(ops)
+    }
+
     fn edit_space(&mut self, id: &str, edit: impl FnOnce(&mut crate::model::Space)) -> Result<Vec<Op>, EditError> {
         let mut space = self.spaces.iter().find(|space| space.id == id).cloned()
             .ok_or_else(|| EditError(format!("unknown space {id}")))?;
@@ -108,7 +327,7 @@ impl Workspace {
         for id in [pinned, today] {
             ops.push(Op::Put(Record::Item(crate::model::Item {
                 id, membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
-                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at, collapsed: false,
+                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at,
             })));
         }
         ops.push(Op::Put(Record::Window(state)));
@@ -185,21 +404,24 @@ impl Workspace {
         let mut state = self.window_state(window);
         state.shown_space = Some(space.id.clone());
         state.select(Some(id.into()));
-        let mut parent = item.membership.parent.clone();
-        let mut ops = vec![Op::Put(Record::Item(item))];
-        for _ in 0..self.items.len() {
-            let Some(ancestor) = parent.as_deref().and_then(|id| self.items.get(id)) else { break };
-            parent = ancestor.membership.parent.clone();
-            if ancestor.collapsed {
-                let mut expanded = ancestor.clone();
-                expanded.collapsed = false;
-                ops.push(Op::Put(Record::Item(expanded)));
-            }
-        }
+        let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
+        ops.push(Op::Put(Record::Item(item)));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         ops.extend(self.stamp_selection(id, self.items[id].lifecycle_changed_at));
         Ok(ops)
+    }
+
+    fn expand_ancestors<'a>(&'a self, mut parent: Option<&'a str>) -> Vec<Op> {
+        let mut ops = Vec::new();
+        for _ in 0..self.items.len() {
+            let Some(ancestor) = parent.and_then(|id| self.items.get(id)) else { break };
+            if self.folder_collapsed.get(&ancestor.id) == Some(&true) {
+                ops.push(Op::Put(Record::FolderState { item: ancestor.id.clone(), collapsed: false }));
+            }
+            parent = ancestor.membership.parent.as_deref();
+        }
+        ops
     }
 
     pub fn selected(&self, window: &str) -> Option<&str> {
@@ -226,8 +448,13 @@ impl Workspace {
 
     pub fn select_item_at(&mut self, window: &str, id: &str, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
-        if !self.is_selectable(id) { return Err(EditError(format!("item {id} cannot be selected"))); }
-        let mut ops = Vec::new();
+        let item = self.items.get(id).filter(|i| matches!(i.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }))
+            .ok_or_else(|| EditError(format!("item {id} cannot be selected")))?;
+        self.movable_item(id)?;
+        if matches!(item.kind, ItemKind::Split { .. }) && !self.has_open_tab(id) {
+            return Err(EditError(format!("item {id} cannot be selected")));
+        }
+        let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
         let mut loading = vec![self.items[id].clone()];
         if matches!(self.items[id].kind, ItemKind::Split { .. }) {
             loading.extend(self.outline_entries(id).into_iter().map(|(_, item, _)| item.clone()));
@@ -409,7 +636,7 @@ impl Workspace {
 impl Workspace {
     pub fn stamp_selection(&mut self, id: &str, now: u64) -> Vec<Op> {
         let mut ids = vec![id.to_string()];
-        if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. })) {
+        if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. } | ItemKind::Folder)) {
             ids.extend(self.outline_entries(id).into_iter().map(|(_, item, _)| item.id.clone()));
         }
         let ops: Vec<_> = ids.into_iter().filter(|id| self.items.get(id).is_some_and(|i|

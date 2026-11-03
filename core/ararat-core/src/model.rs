@@ -104,7 +104,6 @@ pub struct Item {
     pub kind: ItemKind,
     pub lifecycle: Lifecycle,
     pub lifecycle_changed_at: u64,
-    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,6 +116,7 @@ pub struct WindowState {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
+    pub folder_collapsed: HashMap<Id, bool>,
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
@@ -133,6 +133,7 @@ pub enum Kind {
     Window,
     ArchiveAfter,
     LastSelected,
+    FolderState,
 }
 
 impl Kind {
@@ -144,16 +145,18 @@ impl Kind {
             Kind::Window => "window",
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
+            Kind::FolderState => "folder_state",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected].into_iter().find(|k| k.as_str() == s)
+        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState].into_iter().find(|k| k.as_str() == s)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
+    FolderState { item: Id, collapsed: bool },
     ArchiveAfter { profile: Profile, value: ArchiveAfter },
     LastSelected { item: Id, at: u64 },
     Space(Space),
@@ -167,6 +170,7 @@ impl Record {
         match self {
             Record::ArchiveAfter { .. } => Kind::ArchiveAfter,
             Record::LastSelected { .. } => Kind::LastSelected,
+            Record::FolderState { .. } => Kind::FolderState,
             Record::Space(_) => Kind::Space,
             Record::Window(_) => Kind::Window,
             Record::Item(_) => Kind::Item,
@@ -178,6 +182,7 @@ impl Record {
         match self {
             Record::ArchiveAfter { profile, .. } => profile_id(profile),
             Record::LastSelected { item, .. } => item.clone(),
+            Record::FolderState { item, .. } => item.clone(),
             Record::Space(s) => s.id.clone(),
             Record::Window(window) => window.id.clone(),
             Record::Item(i) => i.id.clone(),
@@ -189,6 +194,7 @@ impl Record {
         match self {
             Record::ArchiveAfter { value, .. } => serde_json::to_string(value),
             Record::LastSelected { at, .. } => serde_json::to_string(at),
+            Record::FolderState { collapsed, .. } => serde_json::to_string(collapsed),
             Record::Space(s) => serde_json::to_string(s),
             Record::Window(window) => serde_json::to_string(window),
             Record::Item(i) => serde_json::to_string(i),
@@ -199,6 +205,7 @@ impl Record {
 
     pub fn parse(kind: Kind, id: &str, body: &str) -> serde_json::Result<Record> {
         Ok(match kind {
+            Kind::FolderState => Record::FolderState { item: id.into(), collapsed: serde_json::from_str(body)? },
             Kind::LastSelected => Record::LastSelected { item: id.into(), at: serde_json::from_str(body)? },
             Kind::ArchiveAfter => Record::ArchiveAfter { profile: serde_json::from_str(id)?, value: serde_json::from_str(body)? },
             Kind::Space => Record::Space(serde_json::from_str(body)?),
@@ -250,12 +257,12 @@ impl Workspace {
                 && (!matches!(item.kind, ItemKind::Split { .. }) || self.has_open_tab(&item.id));
             rows.push((depth, item, visible));
             stack.extend(self.children(&item.id).into_iter().rev()
-                .map(|c| (depth + 1, c, visible && !item.collapsed)));
+                .map(|c| (depth + 1, c, visible && !self.folder_collapsed.get(&item.id).copied().unwrap_or(false))));
         }
         rows
     }
 
-    fn has_open_tab(&self, parent: &str) -> bool {
+    pub(crate) fn has_open_tab(&self, parent: &str) -> bool {
         let mut stack = self.children(parent);
         while let Some(item) = stack.pop() {
             if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue }
@@ -267,6 +274,8 @@ impl Workspace {
 
     pub fn apply(&mut self, op: &Op) {
         match op {
+            Op::Put(Record::FolderState { item, collapsed }) => { self.folder_collapsed.insert(item.clone(), *collapsed); },
+            Op::Delete(Kind::FolderState, id) => { self.folder_collapsed.remove(id); },
             Op::Put(Record::LastSelected { item, at }) => { self.last_selected.insert(item.clone(), *at); },
             Op::Delete(Kind::LastSelected, id) => { self.last_selected.remove(id); },
             Op::Put(Record::ArchiveAfter { profile, value }) => { self.archive_after.insert(profile.clone(), *value); },
@@ -299,7 +308,7 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
+        spaces.chain(favorites).chain(items).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
             .map(Op::Put).collect()
     }
 }

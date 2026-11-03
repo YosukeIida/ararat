@@ -117,7 +117,7 @@ fn collapsed_today_folders_and_unloaded_members_expire_without_archiving_fresh_s
     for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("split-1".into()); }
     ws.items.get_mut("split-1").unwrap().membership.parent = Some("folder-docs".into());
     ws.items.get_mut("folder-docs").unwrap().membership.parent = Some("today-work".into());
-    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
+    ws.folder_collapsed.insert("folder-docs".into(), true);
     ws.items.get_mut("tab-a").unwrap().lifecycle = Lifecycle::Unloaded;
     ws.last_selected.insert("tab-b".into(), ArchiveAfter::Hours12.millis());
     ws.auto_archive(ArchiveAfter::Hours12.millis() + 1).unwrap();

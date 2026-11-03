@@ -153,10 +153,10 @@ fn restoring_in_a_collapsed_folder_expands_ancestors_in_the_replayed_transaction
     let mut ws = workspace();
     ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
     ws.archive_item("tab-a").unwrap();
-    ws.items.get_mut("folder-docs").unwrap().collapsed = true;
+    ws.folder_collapsed.insert("folder-docs".into(), true);
     let mut replay = ws.clone();
     let ops = ws.restore_item("one", "tab-a").unwrap();
-    assert!(!ws.items["folder-docs"].collapsed);
+    assert!(!ws.folder_collapsed["folder-docs"]);
     assert!(ws.is_selectable("tab-a"));
     for op in &ops { replay.apply(op); }
     assert_eq!(replay, ws);

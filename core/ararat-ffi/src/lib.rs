@@ -189,6 +189,54 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn move_item(&self, window_id: String, id: String, container: String, index: u32) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.move_item(&id, &container, index as usize)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn create_folder(&self, window_id: String, id: String, name: String, container: String, index: u32, wrapping: Vec<String>) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.create_folder(&id, &name, &container, index as usize, &wrapping)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn rename_folder(&self, window_id: String, id: String, name: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.rename_folder(&id, &name)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn delete_folder(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.delete_folder(&id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn rename_tab(&self, window_id: String, id: String, title: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.rename_tab(&id, &title)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn set_folder_collapsed(&self, window_id: String, id: String, collapsed: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_folder_collapsed(&id, collapsed)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
         self.store.flush().map_err(Into::into)
     }
@@ -304,7 +352,7 @@ fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
         ItemKind::Tab { url, .. } => Some(ArchiveEntry { id: item.id.clone(), title: item.display_title().into(), url: url.clone(), lifecycle_changed_at: item.lifecycle_changed_at }),
         _ => None,
     }).collect();
-    WorkspaceSnapshot { archive, shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.is_selectable(id) && view.items[*id].lifecycle == Lifecycle::Open).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
+    WorkspaceSnapshot { archive, shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.items.get(*id).is_some_and(|item| item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }))).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
 }
 
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
@@ -347,6 +395,24 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn item_edits_snapshot_titles_and_keep_selection_when_hidden_or_moved_to_another_space() {
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")).unwrap();
+        ws.spaces[1].profile = ararat_core::model::Profile::Default;
+        ws.select_item("one", "tab-spec").unwrap();
+        ws.rename_tab("tab-spec", "Custom").unwrap();
+        let view = snapshot(ws.clone(), "one");
+        assert_eq!(view.spaces[0].pinned.iter().find(|r| r.id == "tab-spec").unwrap().title, "Custom");
+        ws.rename_tab("tab-spec", " ").unwrap();
+        assert_eq!(snapshot(ws.clone(), "one").spaces[0].pinned.iter().find(|r| r.id == "tab-spec").unwrap().title, "Spec");
+        ws.set_folder_collapsed("folder-docs", true).unwrap();
+        assert_eq!(snapshot(ws.clone(), "one").selected_id.as_deref(), Some("tab-spec"));
+        ws.move_item("folder-docs", "pin-home", 0).unwrap();
+        let view = snapshot(ws, "one");
+        assert_eq!(view.shown_space_id.as_deref(), Some("space-work"));
+        assert_eq!(view.selected_id.as_deref(), Some("tab-spec"));
+    }
 
     #[test]
     fn a_cyclic_arc_file_still_gives_a_snapshot() {

@@ -7,7 +7,7 @@ fn workspace() -> Workspace {
         let id = format!("y{i}");
         ws.items.insert(id.clone(), Item {
             id: id.clone(), membership: Membership { parent: Some("today-work".into()), order: format!("{i:03}"), hlc: Default::default(), previous_parent: None },
-            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, collapsed: false,
+            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
         });
     }
     ws
@@ -49,7 +49,7 @@ fn successor_skips_collapsed_unloaded_and_closed_history_entries() {
     let mut ws = workspace();
     for id in ["y0", "y1", "y2", "y3", "y4"] { ws.select_item("one", id).unwrap(); }
     let mut folder = ws.items["folder-docs"].clone();
-    folder.id = "hidden-folder".into(); folder.membership.parent = Some("today-work".into()); folder.collapsed = true;
+    folder.id = "hidden-folder".into(); folder.membership.parent = Some("today-work".into()); ws.folder_collapsed.insert(folder.id.clone(), true);
     ws.items.insert(folder.id.clone(), folder);
     ws.items.get_mut("y1").unwrap().membership.parent = Some("hidden-folder".into());
     ws.items.get_mut("y2").unwrap().lifecycle = Lifecycle::Unloaded;
