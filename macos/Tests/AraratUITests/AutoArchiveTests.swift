@@ -1,0 +1,119 @@
+import AppKit
+import AraratKit
+import Testing
+@testable import AraratUI
+
+@MainActor
+private func archiveValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }
+}
+
+@Test @MainActor
+func archiveSettingsReadWriteSearchAndExternalUpdatesUseTheShownProfile() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "archive-settings")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, completion: $0) }
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {})
+    #expect(model.archiveAfter == .hours12)
+    model.query = "Archive Today"
+    let row = try #require(model.results.first)
+    #expect(row.id == "archive-after" && row.pane == .tabs)
+    #expect(row.subtitle.contains(model.archiveSpace?.profileName ?? "Default"))
+    model.select(row)
+    #expect(model.page == .tabs && model.highlighted == row.id)
+    for value: ArchiveAfter in [.hours24, .days7, .days30, .hours12] {
+        model.setArchiveAfter(value)
+        try await waitUntil { model.archiveAfter == value }
+        let stored = try await archiveValue { adapter.snapshot(completion: $0) }
+        #expect(stored.spaces.first { $0.id == snapshot.shownSpaceId }?.archiveAfter == value)
+    }
+    let id = try #require(model.archiveSpace?.id)
+    let external = try await archiveValue { adapter.setArchiveAfter(spaceID: id, value: .days7, completion: $0) }
+    model.update(snapshot: external)
+    #expect(model.archiveAfter == .days7)
+    _ = try await archiveValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}
+
+@Test @MainActor
+func archiveLaunchAndTimerTickUseInjectedClockAndPublishSidebarAndLibrary() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "archive-timer")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("timer.sqlite").path, json: { json }, completion: $0) }
+    let tabs = snapshot.spaces.flatMap(\.today).filter { $0.kind == .tab }
+    let expiredID = try #require(tabs.first?.id)
+    let sidebar = SidebarView(snapshot: snapshot)
+    var clock = try #require(tabs.first?.lastSelectedAt) + 12 * 3_600_000
+    var received: WorkspaceSnapshot?
+    let archive = AutoArchive(adapter: adapter, now: { clock }) { result in
+        if case .success(let value) = result { received = value; sidebar.applySelection(snapshot: value) }
+    }
+    archive.start()
+    _ = try await archiveValue { adapter.snapshot(completion: $0) }
+    #expect(received == nil)
+    #expect(archive.timer?.timeInterval == 60 && archive.timer?.tolerance == 20)
+    received = nil
+    clock += 1
+    archive.tick()
+    try await waitUntil { received?.archive.contains { $0.id == expiredID } == true }
+    #expect(received?.spaces.flatMap(\.today).contains { $0.id == expiredID } == false)
+    #expect(!sidebar.selectRow(id: expiredID))
+    sidebar.setLibraryOpen(true)
+    #expect(sidebar.libraryOpen)
+    let library = try #require(archiveDescendants(sidebar).compactMap { $0 as? LibraryView }.first)
+    #expect(library.filteredEntries.contains { $0.id == expiredID })
+    received = nil
+    archive.tick()
+    _ = try await archiveValue { adapter.snapshot(completion: $0) }
+    #expect(received == nil)
+    archive.stop()
+    _ = try await archiveValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}
+
+@MainActor
+private func archiveDescendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + archiveDescendants($0) } }
+
+@Test @MainActor
+func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "archive-deferred")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("deferred.sqlite").path, json: { json }, completion: $0) }
+    let tab = try #require(snapshot.spaces.flatMap(\.today).first { $0.kind == .tab })
+    let pin = try #require(snapshot.spaces.flatMap(\.favorites).first { $0.kind == .tab })
+    let clock = try #require(tab.lastSelectedAt) + 12 * 3_600_000 + 1
+    var busy = true
+    var received: WorkspaceSnapshot?
+    let archive = AutoArchive(adapter: adapter, now: { clock }, canPublish: { !busy }) { result in
+        if case .success(let value) = result { received = value }
+    }
+    archive.tick()
+    let skipped = try await archiveValue { adapter.snapshot(completion: $0) }
+    #expect(skipped.archive.isEmpty && received == nil)
+    busy = false
+    archive.tick()
+    busy = true
+    let archived = try await archiveValue { adapter.snapshot(completion: $0) }
+    #expect(archived.archive.contains { $0.id == tab.id })
+    #expect(received == nil)
+    _ = try await archiveValue { adapter.select(id: pin.id, completion: $0) }
+    busy = false
+    archive.tick()
+    try await waitUntil { received != nil }
+    #expect(received?.selectedId == pin.id)
+    #expect(received?.archive.contains { $0.id == tab.id } == true)
+    archive.stop()
+    _ = try await archiveValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}

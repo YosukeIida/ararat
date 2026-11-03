@@ -9,7 +9,7 @@ private func creationDescendants(_ view: NSView) -> [NSView] { view.subviews.fla
 @MainActor
 private func creationSnapshot() -> WorkspaceSnapshot {
     WorkspaceSnapshot(archive: [], shownSpaceId: "space-1", selectedId: nil, spaces: (0..<3).map {
-        SpaceSnapshot(profileName: "Research", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Research", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     })
 }
 
@@ -64,7 +64,7 @@ func newSpaceMenuCancelEscapeAndReturnUseTheCreationPage() throws {
     sidebar.creationFailed("Try again")
     #expect(create.isEnabled && field.isEditable)
     var created = creationSnapshot()
-    created.spaces.append(SpaceSnapshot(profileName: "Research", id: "new", title: "Project Notes", icon: nil, look: nil, favorites: [], pinned: [], today: []))
+    created.spaces.append(SpaceSnapshot(archiveAfter: .hours12, profileName: "Research", id: "new", title: "Project Notes", icon: nil, look: nil, favorites: [], pinned: [], today: []))
     created.shownSpaceId = "new"
     sidebar.applyCreatedSpace(snapshot: created)
     #expect(!sidebar.createSpaceOpen && sidebar.spaceShown == 3)
@@ -75,7 +75,7 @@ func addingSpaceDockButtonsKeepsTheSidebarWidthAndShowsTheSelectedSpace() throws
     _ = NSApplication.shared
     var snapshot = creationSnapshot()
     snapshot.spaces = (0..<12).map {
-        SpaceSnapshot(profileName: "Research", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Research", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     }
     snapshot.shownSpaceId = "space-11"
     let sidebar = SidebarView(snapshot: snapshot)

@@ -11,10 +11,10 @@ private func descendants(of view: NSView) -> [NSView] {
 @Test @MainActor
 func favoritesUseFourTwoOrOneColumns() {
     let favorites = (0..<5).map {
-        Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
+        Row(id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: [favorites[0]], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: [favorites[0]], today: [])
     ])
     for (width, columns) in [(240.0, 4), (228, 4), (227, 2), (118, 2), (117, 1)] {
         let sidebar = SidebarView(snapshot: snapshot)
@@ -39,9 +39,9 @@ func favoritesUseFourTwoOrOneColumns() {
 
 @Test @MainActor
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
-    let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false)
+    let favorite = Row(id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [favorite], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [favorite], pinned: [], today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -58,10 +58,10 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 
 @Test @MainActor
 func selectedHostTracksVisibleSpace() {
-    let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false)
+    let row = Row(id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: []),
-        SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: []),
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     #expect(sidebar.selectRow(id: "tab"))
@@ -82,7 +82,7 @@ func selectedHostTracksVisibleSpace() {
 @Test @MainActor
 func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
     for kind in [RowKind.tab, .folder, .split] {
-        let row = Row(id: "row", title: "Title", url: nil, depth: 0, kind: kind, unloaded: false)
+        let row = Row(id: "row", title: "Title", url: nil, depth: 0, kind: kind, unloaded: false, lastSelectedAt: nil)
         let view = SidebarRowView(row: row, selected: false, action: { _ in })
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first!
         #expect(icon.imageScaling == .scaleNone)
@@ -93,7 +93,7 @@ func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
 @Test @MainActor
 func rowsKeepPitchIndentAndSplitPlaceholder() {
     for title in ["", "First\nSecond"] {
-        let row = Row(id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false)
+        let row = Row(id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false, lastSelectedAt: nil)
         let view = SidebarRowView(row: row, selected: true, action: { _ in })
         view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
         view.layoutSubtreeIfNeeded()
@@ -116,10 +116,10 @@ func rowsKeepPitchIndentAndSplitPlaceholder() {
 @Test @MainActor
 func nestedFillsIndentTheirLeftEdgeOnly() {
     let rows = (0...2).map {
-        Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false)
+        Row(id: "row-\($0)", title: "Title", url: nil, depth: UInt32($0), kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: rows, today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: rows, today: [])
     ]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
     sidebar.layoutSubtreeIfNeeded()
@@ -161,9 +161,9 @@ func sidebarDragPreservesTheGrabOffset() {
 @Test @MainActor
 func rowFocusSurvivesWidthChanges() {
     _ = NSApplication.shared
-    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
+    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [row], pinned: [row], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [row], pinned: [row], today: [])
     ]))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 720), styleMask: [], backing: .buffered, defer: false)
     let content = NSView()

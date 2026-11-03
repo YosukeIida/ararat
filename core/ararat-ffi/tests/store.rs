@@ -27,7 +27,14 @@ fn import_close_and_reopen_preserves_the_snapshot() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     assert!(store.snapshot("test".into()).spaces.is_empty());
     let imported = store.import_arc_sidebar("test".into(), FIXTURE.into()).unwrap();
-    assert_eq!(imported, import_arc_sidebar(FIXTURE.into()).unwrap());
+    let mut preview = import_arc_sidebar(FIXTURE.into()).unwrap();
+    for space in &mut preview.spaces {
+        let actual = imported.spaces.iter().find(|s| s.id == space.id).unwrap();
+        for row in space.favorites.iter_mut().chain(&mut space.pinned).chain(&mut space.today) {
+            row.last_selected_at = actual.favorites.iter().chain(&actual.pinned).chain(&actual.today).find(|r| r.id == row.id).unwrap().last_selected_at;
+        }
+    }
+    assert_eq!(imported, preview);
     assert_eq!(store.last_error(), None);
     drop(store);
     assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("test".into()), imported);
@@ -205,7 +212,7 @@ fn split_close_and_both_member_orders_leave_no_empty_selection_after_reopen() {
 }
 
 #[test]
-fn selecting_rows_persists_locally_without_adding_sync_entries() {
+fn selecting_rows_persists_time_and_history_locally() {
     let path = fresh_db("local-clicks");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     store.import_arc_sidebar("test".into(), split_today_fixture()).unwrap();
@@ -360,7 +367,7 @@ fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone(
     let remaining = store.delete_archive_item("test".into(), "tab-a".into()).unwrap();
     assert_eq!(remaining.archive.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), ["tab-b"]);
     assert!(remaining.archive[0].lifecycle_changed_at > 0);
-    assert_eq!(records(&path), before.into_iter().filter(|(kind, id, _)| kind != "item" || id != "tab-a").collect::<Vec<_>>());
+    assert_eq!(records(&path), before.into_iter().filter(|(kind, id, _)| !matches!(kind.as_str(), "item" | "last_selected") || id != "tab-a").collect::<Vec<_>>());
     assert_eq!(count(), journal + 1);
     assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE id='tab-a' AND body IS NULL", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     let after = records(&path);
@@ -502,4 +509,36 @@ fn snapshot_repairs_live_items_in_deleted_space_roots_without_writing_the_view_b
         store.flush().unwrap(); drop(store); assert_eq!(records(&path), before);
         assert_eq!(Store::open(&path).unwrap().1.items["tab-mail"].membership.parent.as_deref(), Some(root));
     }
+}
+
+#[test]
+fn profile_archive_options_times_and_auto_archive_persist_across_ffi_reopen() {
+    use ararat_ffi::ArchiveAfter;
+    let path = fresh_db("auto-archive");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("test".into(), today_fixture()).unwrap();
+    let row = imported.spaces[0].today.iter().find(|r| r.id == "tab-a").unwrap();
+    let started = row.last_selected_at.unwrap();
+    for value in [ArchiveAfter::Hours12, ArchiveAfter::Hours24, ArchiveAfter::Days7, ArchiveAfter::Days30] {
+        let snapshot = store.set_archive_after("test".into(), "space-work".into(), value).unwrap();
+        assert_eq!(snapshot.spaces[0].archive_after, value);
+    }
+    store.set_archive_after("test".into(), "space-work".into(), ArchiveAfter::Hours12).unwrap();
+    let archived = store.auto_archive("test".into(), started + 12 * 3_600_000 + 1).unwrap().unwrap();
+    assert!(archived.archive.iter().any(|i| i.id == "tab-a"));
+    assert!(!archived.spaces[0].today.iter().any(|i| i.id == "tab-a"));
+    store.flush().unwrap(); drop(store);
+    let reopened = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(reopened.snapshot("test".into()), archived);
+}
+
+#[test]
+fn idle_auto_archive_returns_none_without_publishing_or_writing() {
+    let path = fresh_db("auto-archive-idle");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("test".into(), today_fixture()).unwrap();
+    let now = imported.spaces[0].today.iter().find(|r| r.id == "tab-a").unwrap().last_selected_at.unwrap();
+    let before = records(&path);
+    assert_eq!(store.auto_archive("test".into(), now).unwrap(), None);
+    assert_eq!(records(&path), before);
 }

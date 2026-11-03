@@ -9,6 +9,7 @@ class SidebarScrollView: NSScrollView {
     var clock: () -> CFTimeInterval = CACurrentMediaTime
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var revealTimer: Timer?
+    var isRevealing: Bool { revealTimer != nil }
     private var revealStep: (() -> Void)?
     private var permitsScroller = false
 

@@ -12,7 +12,7 @@ private struct LibraryScrollFixture {
     init(space: Int, floating: Bool) throws {
         _ = NSApplication.shared
         let spaces = (0..<4).map {
-            SpaceSnapshot(profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+            SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space-\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
         }
         sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space-\(space)", selectedId: nil, spaces: spaces))
         let container = SidebarContainerView(sidebar: sidebar, page: NSView())

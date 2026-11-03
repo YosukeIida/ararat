@@ -154,7 +154,8 @@ impl Workspace {
             && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)) {
             return Err(EditError(format!("item {id} is not an archived tab")));
         }
-        let ops = vec![Op::Delete(crate::model::Kind::Item, id.into())];
+        let mut ops = vec![Op::Delete(crate::model::Kind::Item, id.into())];
+        if self.last_selected.contains_key(id) { ops.push(Op::Delete(crate::model::Kind::LastSelected, id.into())); }
         for op in &ops { self.apply(op); }
         Ok(ops)
     }
@@ -197,6 +198,7 @@ impl Workspace {
         }
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
+        ops.extend(self.stamp_selection(id, self.items[id].lifecycle_changed_at));
         Ok(ops)
     }
 
@@ -219,6 +221,10 @@ impl Workspace {
     }
 
     pub fn select_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
+        self.select_item_at(window, id, self.lifecycle_time())
+    }
+
+    pub fn select_item_at(&mut self, window: &str, id: &str, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         if !self.is_selectable(id) { return Err(EditError(format!("item {id} cannot be selected"))); }
         let mut ops = Vec::new();
@@ -231,33 +237,35 @@ impl Workspace {
             if matches!(ancestor.kind, ItemKind::Split { .. }) { loading.push(ancestor.clone()); }
             parent = ancestor.membership.parent.as_ref();
         }
-        let changed_at = self.lifecycle_time();
+        let changed_at = now;
         for mut item in loading {
+            let before = item.clone();
             if item.lifecycle == Lifecycle::Unloaded {
                 item.lifecycle = Lifecycle::Open;
                 item.lifecycle_changed_at = changed_at;
-                ops.push(Op::Put(Record::Item(item)));
             }
+            if item != before { ops.push(Op::Put(Record::Item(item))); }
         }
         let mut state = self.window_state(window);
         state.select(Some(id.into()));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
+        ops.extend(self.stamp_selection(id, now));
         Ok(ops)
     }
 
     pub fn close_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
-        self.finish_item(id, false)
+        self.finish_item(id, false, self.lifecycle_time())
     }
 
     pub fn archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
         if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })) {
             return Err(EditError(format!("item {id} is not a tab")));
         }
-        self.finish_item(id, true)
+        self.finish_item(id, true, self.lifecycle_time())
     }
 
-    fn finish_item(&mut self, id: &str, archive: bool) -> Result<Vec<Op>, EditError> {
+    fn finish_item(&mut self, id: &str, archive: bool, changed_at: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let item = self.items.get(id).ok_or_else(|| EditError(format!("unknown item {id}")))?;
         if !matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }) || !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) {
@@ -282,7 +290,6 @@ impl Workspace {
                 parent = ancestor.membership.parent.as_ref();
             }
         }
-        let changed_at = self.lifecycle_time();
         let mut ops: Vec<_> = outline.iter().filter(|(_, item, _)| changing.contains(&item.id) && (item.lifecycle == Lifecycle::Open || (today && item.lifecycle == Lifecycle::Unloaded)))
             .map(|(_, item, _)| {
                 let mut changed = (*item).clone();
@@ -315,7 +322,13 @@ impl Workspace {
             if today { state.history.retain(|id| !changing.contains(id)); }
             if state != before { ops.push(Op::Put(Record::Window(state))); }
         }
+        let selected: HashSet<_> = ops.iter().filter_map(|op| match op {
+            Op::Put(Record::Window(state)) if state.selected.as_deref() != self.selected(&state.id) => state.selected.clone(), _ => None,
+        }).collect();
         for op in &ops { self.apply(op); }
+        let mut selected: Vec<_> = selected.into_iter().collect();
+        selected.sort();
+        for id in selected { ops.extend(self.stamp_selection(&id, changed_at)); }
         Ok(ops)
     }
 
@@ -350,5 +363,64 @@ impl Workspace {
             item = ancestor;
         }
         Some(id.into())
+    }
+}
+
+impl Workspace {
+    pub fn set_archive_after(&mut self, profile: crate::model::Profile, value: crate::model::ArchiveAfter) -> Vec<Op> {
+        let ops = vec![Op::Put(Record::ArchiveAfter { profile, value })];
+        for op in &ops { self.apply(op); }
+        ops
+    }
+
+    pub fn auto_archive(&mut self, now: u64) -> Result<Vec<Op>, EditError> {
+        let mut next = self.clone();
+        let ops = next.auto_archive_batch(now)?;
+        *self = next;
+        Ok(ops)
+    }
+
+    fn auto_archive_batch(&mut self, now: u64) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let mut protected = HashSet::new();
+        for id in self.windows.values().filter_map(|w| w.selected.as_ref()) {
+            protected.insert(id.clone());
+            if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. })) {
+                protected.extend(self.outline_entries(id).into_iter().map(|(_, i, _)| i.id.clone()));
+            }
+        }
+        let mut expired = Vec::new();
+        let mut ops = Vec::new();
+        for space in &self.spaces {
+            let threshold = self.archive_after.get(&space.profile).copied().unwrap_or_default().millis();
+            for (_, item, _) in self.outline_entries(&space.today) {
+                if matches!(item.kind, ItemKind::Tab { .. }) && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+                {
+                    match self.last_selected.get(&item.id) {
+                        None => ops.push(Op::Put(Record::LastSelected { item: item.id.clone(), at: now })),
+                        Some(at) if !protected.contains(&item.id) && now.saturating_sub(*at) > threshold => expired.push(item.id.clone()),
+                        _ => {},
+                    }
+                }
+            }
+        }
+        for op in &ops { self.apply(op); }
+        for id in expired { ops.extend(self.finish_item(&id, true, now)?); }
+        Ok(ops)
+    }
+}
+
+impl Workspace {
+    pub fn stamp_selection(&mut self, id: &str, now: u64) -> Vec<Op> {
+        let mut ids = vec![id.to_string()];
+        if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. })) {
+            ids.extend(self.outline_entries(id).into_iter().map(|(_, item, _)| item.id.clone()));
+        }
+        let ops: Vec<_> = ids.into_iter().filter(|id| self.items.get(id).is_some_and(|i|
+            matches!(i.kind, ItemKind::Tab { .. }) && matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            && self.last_selected.get(id) != Some(&now))
+            .map(|item| Op::Put(Record::LastSelected { item, at: now })).collect();
+        for op in &ops { self.apply(op); }
+        ops
     }
 }

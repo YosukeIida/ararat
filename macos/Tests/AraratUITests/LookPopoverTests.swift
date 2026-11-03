@@ -270,7 +270,7 @@ func selectedRowCloseKeycapResolvesAgainstTheRealHarnessMenu() throws {
     defer { NSApp.mainMenu = oldMenu }
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "close-keycap"))
     NSApp.mainMenu = harness.makeMenu()
-    let row = SidebarRowView(row: Row(id: "row", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false), selected: true, action: { _ in })
+    let row = SidebarRowView(row: Row(id: "row", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil), selected: true, action: { _ in })
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 200), styleMask: [], backing: .buffered, defer: false)
     window.contentView = row
     defer { window.contentView = nil }
@@ -409,5 +409,29 @@ func settingsTabCountExcludesPinnedRows() async throws {
     let space = try #require(fixture.settings.snapshot.spaces.first)
     #expect(space.pinned.contains { $0.kind == .tab || $0.kind == .split })
     #expect(fixture.settings.tabCount(space) == space.today.filter { $0.kind == .tab || $0.kind == .split }.count)
+    try await fixture.close()
+}
+
+@Test @MainActor
+func submittedLookSurvivesAnOlderPublishUntilTheLatestReply() async throws {
+    let fixture = try await LookFixture(sidebarPreview: true)
+    let old = fixture.settings.snapshot
+    fixture.editor.begin()
+    fixture.editor.setTransparency(20)
+    fixture.editor.end()
+    let first = fixture.editor.look
+    fixture.sidebar?.applySelection(snapshot: old)
+    #expect(fixture.preview.look == first)
+    fixture.editor.change { $0.grain = 0.8 }
+    let latest = fixture.editor.look
+    fixture.sidebar?.applySelection(snapshot: old)
+    #expect(fixture.preview.look == latest)
+    fixture.editor.dismiss()
+    fixture.sidebar?.applySelection(snapshot: old)
+    #expect(fixture.preview.look == latest)
+    _ = try await fixture.stored()
+    #expect(fixture.preview.look == latest)
+    fixture.sidebar?.applySelection(snapshot: old)
+    #expect(fixture.preview.look == nil)
     try await fixture.close()
 }

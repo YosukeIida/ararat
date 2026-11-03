@@ -31,7 +31,7 @@ fn count(path: &PathBuf) -> i64 {
 fn assert_journal_matches_records(path: &PathBuf) {
     let conn = Connection::open(path).unwrap();
     let mut records = BTreeMap::new();
-    let mut stmt = conn.prepare("SELECT kind, id, body FROM records WHERE kind != 'window'").unwrap();
+    let mut stmt = conn.prepare("SELECT kind, id, body FROM records WHERE kind NOT IN ('window', 'last_selected')").unwrap();
     let mut rows = stmt.query([]).unwrap();
     while let Some(r) = rows.next().unwrap() {
         records.insert((r.get::<_, String>(0).unwrap(), r.get::<_, String>(1).unwrap()), r.get::<_, String>(2).unwrap());
@@ -254,7 +254,7 @@ fn killed_process_keeps_every_flushed_batch() {
 }
 
 #[test]
-fn selection_is_local_and_persists_in_existing_records() {
+fn selection_time_and_window_selection_stay_local() {
     let path = fresh_db("local-selection");
     let (store, _) = Store::open(&path).unwrap();
     let mut ws = imported(); store.write(ws.to_ops()); store.flush().unwrap();

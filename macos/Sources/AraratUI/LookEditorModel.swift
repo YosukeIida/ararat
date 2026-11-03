@@ -14,6 +14,7 @@ final class LookEditorModel: ObservableObject {
     private var saved: Look?
     private var gestureStart: Look?
     private var revision = 0
+    private var pendingReplies = 0
 
     init(settings: SettingsModel, space: SpaceSnapshot) {
         self.settings = settings
@@ -73,14 +74,14 @@ final class LookEditorModel: ObservableObject {
         editing = false
         gestureStart = nil
         if changed { commit() }
-        else { settings.previewLook(id: spaceID, look: saved, active: false) }
+        else { settings.previewLook(id: spaceID, look: saved, active: pendingReplies > 0) }
     }
     func dismiss() {
         editing = false
         gestureStart = nil
         look = saved ?? Self.defaultLook
         selected = min(selected, look.colors.count - 1)
-        settings.previewLook(id: spaceID, look: saved, active: false)
+        settings.previewLook(id: spaceID, look: saved, active: pendingReplies > 0)
     }
     func add() {
         guard look.colors.count < 3 else { return }
@@ -117,6 +118,7 @@ final class LookEditorModel: ObservableObject {
     private func write(_ value: Look?, ids: [String]) {
         revision += 1
         let submitted = revision
+        pendingReplies = ids.count
         saved = value
         error = nil
         for id in ids {
@@ -132,10 +134,13 @@ final class LookEditorModel: ObservableObject {
                         }
                     }
                 }
-                settings.previewLook(id: spaceID, look: editing || submitted != revision ? look : saved, active: editing)
+                if submitted == revision {
+                    pendingReplies -= 1
+                    settings.previewLook(id: spaceID, look: editing ? look : saved, active: editing || pendingReplies > 0)
+                }
             }
         }
         if value == nil { look = Self.defaultLook; selected = 0 }
-        settings.previewLook(id: spaceID, look: value, active: editing)
+        settings.previewLook(id: spaceID, look: value, active: true)
     }
 }

@@ -153,9 +153,9 @@ func widthChangesRelayoutACleanContainerWithoutToggling() {
 
 @Test @MainActor
 func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
-    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false)
+    let row = Row(id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)

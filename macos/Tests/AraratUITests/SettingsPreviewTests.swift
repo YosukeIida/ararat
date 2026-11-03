@@ -6,7 +6,7 @@ import Testing
 @Test @MainActor
 func captureSettingsWithoutOrderingWindow() async throws {
     _ = NSApplication.shared
-    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: "🔬", look: nil, favorites: [], pinned: [], today: [])])
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: "🔬", look: nil, favorites: [], pinned: [], today: [])])
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     for name in ["light", "dark"] {

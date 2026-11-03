@@ -47,6 +47,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     var sidebar: SidebarView?
     var resizeHandle: SidebarResizeHandle?
     var sidebarContainer: SidebarContainerView?
+    private var autoArchive: AutoArchive?
     private var settings: SettingsWindowController?
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
@@ -72,7 +73,14 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                         print("\(space.title): favorites \(space.favorites.count), pinned \(space.pinned.count), today \(space.today.count)")
                     }
                     NSApp.terminate(nil)
-                } else { self.build() }
+                } else {
+                    self.build()
+                    let archive = AutoArchive(adapter: self.adapter, canPublish: { [weak self] in self?.sidebar?.canPublishAutoArchive ?? false }) { [weak self] result in
+                        _ = self?.publish(result)
+                    }
+                    self.autoArchive = archive
+                    archive.start()
+                }
             case .failure(let error):
                 FileHandle.standardError.write(Data("\(error)\n".utf8))
                 self.exitStatus = 1
@@ -407,6 +415,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
+        autoArchive?.stop()
         terminating = true
         adapter.shutdown { [weak self] result in
             guard let self else { return }

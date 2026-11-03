@@ -27,7 +27,7 @@ fn selected_middle_uses_next_visible_tab_below() {
     let mut ws = workspace();
     let mut replay = ws.clone();
     let ops = ws.close_item("b").unwrap();
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 3);
     for op in &ops { replay.apply(op); }
     assert_eq!(replay, ws);
     assert_eq!(ws.selected("test"), Some("c"));
@@ -120,7 +120,7 @@ fn closing_a_selected_split_closes_all_members_and_selects_past_it() {
     let mut ws = split_workspace();
     let mut replay = ws.clone();
     let ops = ws.close_item("split").unwrap();
-    assert_eq!(ops.len(), 4);
+    assert_eq!(ops.len(), 5);
     for op in &ops { replay.apply(op); }
     assert_eq!(replay, ws);
     for id in ["split", "b", "c"] { assert_eq!(ws.items[id].lifecycle, Lifecycle::Closed); }

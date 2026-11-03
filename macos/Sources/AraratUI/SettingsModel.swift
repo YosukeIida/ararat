@@ -72,7 +72,7 @@ public final class SettingsModel: ObservableObject {
         switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
     }
     var rows: [Row] {
-        var result = [Row(id: "width", pane: .tabs, title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt.")] + shortcuts
+        var result = [Row(id: "width", pane: .tabs, title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt."), Row(id: "archive-after", pane: .tabs, title: "Archive Today's tabs after", subtitle: archiveSubtitle)] + shortcuts
         for space in snapshot.spaces {
             result.append(Row(id: space.id, pane: .spaces, title: space.title, subtitle: "\(tabCount(space)) tabs · \(space.profileName)"))
             result += [
@@ -108,6 +108,13 @@ public final class SettingsModel: ObservableObject {
         }
     }
     func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
+    var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
+    var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
+    var archiveAfter: ArchiveAfter { archiveSpace?.archiveAfter ?? .hours12 }
+    func setArchiveAfter(_ value: ArchiveAfter) {
+        guard let space = archiveSpace else { return }
+        adapter.setArchiveAfter(spaceID: space.id, value: value, completion: receive)
+    }
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { error = "Enter a space name."; return }

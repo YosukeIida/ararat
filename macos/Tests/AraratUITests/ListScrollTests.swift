@@ -9,14 +9,14 @@ private func listDescendants(_ view: NSView) -> [NSView] {
 }
 
 private func listRow(_ id: String) -> Row {
-    Row(id: id, title: "Tab \(id)", url: "https://example.com/\(id)", depth: 0, kind: .tab, unloaded: false)
+    Row(id: id, title: "Tab \(id)", url: "https://example.com/\(id)", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
 }
 
 private func listSnapshot(_ count: Int = 45, selected: String? = "t0") -> WorkspaceSnapshot {
     WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
                       favorites: [listRow("favorite")], pinned: [listRow("pin")], today: (0..<count).map { listRow("t\($0)") }),
-        SpaceSnapshot(profileName: "Default", id: "home", title: "Home", icon: nil, look: nil,
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil,
                       favorites: [], pinned: [], today: [listRow("home-tab")])
     ])
 }
@@ -240,7 +240,7 @@ func listKeyboardSelectionAndCreatedTabRevealWithoutOrderingWindow() throws {
     sidebar.applySelection(snapshot: snapshot)
     #expect(scroll.contentView.bounds.contains(try frame("new-tab", in: sidebar)))
     sidebar.showCreateSpace()
-    snapshot.spaces.append(SpaceSnapshot(profileName: "Default", id: "created", title: "Created", icon: nil, look: nil, favorites: [], pinned: [], today: []))
+    snapshot.spaces.append(SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "created", title: "Created", icon: nil, look: nil, favorites: [], pinned: [], today: []))
     snapshot.shownSpaceId = "created"
     snapshot.selectedId = nil
     sidebar.applyCreatedSpace(snapshot: snapshot)
@@ -251,7 +251,7 @@ func listKeyboardSelectionAndCreatedTabRevealWithoutOrderingWindow() throws {
 @Test @MainActor
 func listDoesNotRevealASelectedChildOmittedByACollapsedFolder() throws {
     var snapshot = listSnapshot()
-    snapshot.spaces[0].pinned.append(Row(id: "folder", title: "Closed", url: nil, depth: 0, kind: .folder, unloaded: false))
+    snapshot.spaces[0].pinned.append(Row(id: "folder", title: "Closed", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil))
     let (window, sidebar, scroll) = listWindow(snapshot)
     defer { window.contentView = nil }
     let list = try #require(scroll as? SidebarScrollView)

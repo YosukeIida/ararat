@@ -91,11 +91,11 @@ private func adapterDescendants(_ view: NSView) -> [NSView] {
 
 @Test @MainActor
 func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
-    var pinned = Row(id: "p", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false)
-    var favorite = Row(id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false)
-    let today = Row(id: "t", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false)
+    var pinned = Row(id: "p", title: "Pinned", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    var favorite = Row(id: "f", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let today = Row(id: "t", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let snapshot: ([Row], [Row]) -> WorkspaceSnapshot = { pins, favorites in
-        WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "t", spaces: [SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: pins, today: [today])])
+        WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "t", spaces: [SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: pins, today: [today])])
     }
     let sidebar = SidebarView(snapshot: snapshot([pinned], [favorite]))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)

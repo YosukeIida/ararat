@@ -9,9 +9,9 @@ private func interactionRows(_ view: NSView) -> [SidebarRowView] {
 }
 
 private func interactionSnapshot(selected: String? = "pin") -> WorkspaceSnapshot {
-    let row: (String) -> Row = { Row(id: $0, title: String(repeating: $0, count: 60), url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false) }
+    let row: (String) -> Row = { Row(id: $0, title: String(repeating: $0, count: 60), url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
                       favorites: [row("favorite")], pinned: [row("pin"), row("other")], today: [row("a"), row("b")])])
 }
 
@@ -124,8 +124,8 @@ func slightMovementClicksWithoutReorderingAndPressTracksStillPointer() throws {
     #expect(!row.pressed)
     row.mouseDown(with: try rowEvent(.leftMouseDown, point: start))
     sidebar.applyClose(id: "other", snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: "pin", spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [],
-                      today: [Row(id: "a", title: "a", url: nil, depth: 0, kind: .tab, unloaded: false)])]))
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [],
+                      today: [Row(id: "a", title: "a", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)])]))
     row.refreshHover()
     #expect(!row.hovered && !row.pressed)
 }
@@ -175,7 +175,7 @@ func stillPointerRefreshesHoverAfterScrollingWithoutMouseEvents() async throws {
     let (window, sidebar) = interactionWindow()
     defer { window.contentView = nil }
     var snapshot = interactionSnapshot()
-    snapshot.spaces[0].today = (0..<30).map { Row(id: "t\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false) }
+    snapshot.spaces[0].today = (0..<30).map { Row(id: "t\($0)", title: "Tab \($0)", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
     sidebar.update(snapshot: snapshot)
     let row = try #require(interactionRows(sidebar).first { $0.row.id == "t0" })
     let point = row.convert(NSPoint(x: 20, y: 20), to: nil)

@@ -74,15 +74,15 @@ fn fallback_with_no_history_uses_below_then_above() {
 fn pinned_and_favorite_unload_then_reselect_reopens_in_the_same_batch() {
     for id in ["tab-spec", "tab-mail"] {
         let mut ws = workspace();
-        ws.select_item("one", "y4").unwrap(); ws.select_item("one", id).unwrap();
+        ws.select_item_at("one", "y4", 100).unwrap(); ws.select_item_at("one", id, 101).unwrap();
         let ops = ws.close_item(id).unwrap();
-        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.len(), 3);
         assert_eq!(ws.items[id].lifecycle, Lifecycle::Unloaded);
         assert!(ws.is_selectable(id));
         assert_eq!(ws.selected("one"), Some("y4"));
         let mut replay = ws.clone();
         let reopened = ws.select_item("one", id).unwrap();
-        assert_eq!(reopened.len(), 2);
+        assert_eq!(reopened.len(), 3);
         for op in &reopened { replay.apply(op); }
         assert_eq!(replay, ws);
         assert_eq!(ws.items[id].lifecycle, Lifecycle::Open);
@@ -99,8 +99,8 @@ fn history_stays_local_and_reopens_with_lifecycle_changes() {
     let conn = rusqlite::Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = count();
-    for id in ["y4", "y2", "tab-mail"] { store.write(ws.select_item("one", id).unwrap()); }
-    store.write(ws.select_item("two", "y1").unwrap()); store.flush().unwrap();
+    for id in ["y4", "y2", "tab-mail"] { store.write(ws.select_item_at("one", id, 100).unwrap()); }
+    store.write(ws.select_item_at("two", "y1", 100).unwrap()); store.flush().unwrap();
     assert_eq!(count(), before);
     store.write(ws.close_item("tab-mail").unwrap()); store.flush().unwrap();
     assert_eq!(count(), before + 1);

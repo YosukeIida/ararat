@@ -8,10 +8,10 @@ private func reviewAll(_ view: NSView) -> [NSView] { [view] + view.subviews.flat
 
 private func reviewSnapshot(pinned: Bool = false, selected: String = "t0", removing: String? = nil) -> WorkspaceSnapshot {
     let rows = (0..<30).map { "t\($0)" }.filter { $0 != removing }.map {
-        Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false)
+        Row(id: $0, title: $0, url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [],
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [],
                       pinned: pinned ? rows : [], today: pinned ? [] : rows)])
 }
 
@@ -123,7 +123,7 @@ func rowAccessibilityActionsWorkWithoutThePointer() throws {
 
 @Test @MainActor
 func middleClickClosesTodaySplitsButLeavesPinnedSplitsAlone() throws {
-    let row = Row(id: "split", title: "Split", url: nil, depth: 0, kind: .split, unloaded: false)
+    let row = Row(id: "split", title: "Split", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
     let view = SidebarRowView(row: row, selected: false) { _ in }
     var closed = 0
     view.onClose = { _ in closed += 1 }

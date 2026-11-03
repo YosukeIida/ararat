@@ -68,6 +68,8 @@ public final class SidebarView: NSView {
     private weak var gestureScroll: NSScrollView?
     private var scrollPreviews: [SidebarView] = []
     private var showingScrollPages = false
+    private var scrollGestureActive = false
+    public var canPublishAutoArchive: Bool { !scrollGestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing }
     private var scrollGeneration = 0
     private var isScrollPreview = false
     private var laidOutSidebarWidth: CGFloat = 0
@@ -730,6 +732,11 @@ public final class SidebarView: NSView {
 
     private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
         guard !isScrollPreview else { return false }
+        if !event.momentumPhase.isEmpty {
+            scrollGestureActive = !event.momentumPhase.contains(.ended)
+        } else if !event.phase.isEmpty {
+            scrollGestureActive = !event.phase.contains(.ended) && !event.phase.contains(.cancelled)
+        }
         layoutSubtreeIfNeeded()
         let phase: SpaceScrollEvent.Phase
         if event.phase.contains(.began) { phase = .began }

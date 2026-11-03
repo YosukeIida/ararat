@@ -6,9 +6,9 @@ import Testing
 @MainActor
 private func floatingFixture() -> (NSWindow, SidebarView, SidebarContainerView, NSView) {
     _ = NSApplication.shared
-    let row = Row(id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false)
+    let row = Row(id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: "tab", spaces: [
-        SpaceSnapshot(profileName: "Default", id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)

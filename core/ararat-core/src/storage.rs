@@ -213,7 +213,7 @@ fn write_batch(conn: &mut Connection, ops: &[Op]) -> Result<(), StoreError> {
                 Some(body) => put.execute(params![kind.as_str(), id, body])?,
                 None => delete.execute(params![kind.as_str(), id])?,
             };
-            if kind != Kind::Window {
+            if !matches!(kind, Kind::Window | Kind::LastSelected) {
                 journal.execute(params![kind.as_str(), id, body])?;
             }
         }

@@ -31,6 +31,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
+    public func autoArchive(now: UInt64, completion: @escaping Completion<WorkspaceSnapshot?>) {
+        enqueue({ try self.opened().autoArchive(windowId: self.windowID, now: now) }, completion: completion)
+    }
+
+    public func setArchiveAfter(spaceID: String, value: ArchiveAfter, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setArchiveAfter(windowId: self.windowID, spaceId: spaceID, value: value) }, completion: completion)
+    }
+
     public func snapshot(completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().snapshot(windowId: self.windowID) }, completion: completion)
     }

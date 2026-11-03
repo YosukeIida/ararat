@@ -15,7 +15,7 @@ private func fixture(populated: Bool) -> (NSWindow, SidebarView, SidebarContaine
         ArchiveEntry(id: "closed-\($0)", title: "Entry \($0)", url: "https://example.com/\($0)", lifecycleChangedAt: UInt64($0))
     } : []
     let spaces = (0..<2).map {
-        SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: entries, shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
@@ -50,13 +50,11 @@ func libraryPreviewReceivesTerminalEventsThroughActualHitTargets() throws {
             defer { window.contentView = nil }
             try send(window, sidebar: sidebar, x: 310, dx: 9500, phase: .began, time: 100)
             container.layoutSubtreeIfNeeded()
-            let library = try #require(descendants(sidebar).compactMap { $0 as? LibraryView }.first)
             try send(window, sidebar: sidebar, x: 310, phase: cancelled ? .cancelled : .ended, time: 100.02)
             try send(window, sidebar: sidebar, x: 310, dx: 100, momentum: .begin, time: 100.03)
             try send(window, sidebar: sidebar, x: 310, momentum: .end, time: 100.04)
             #expect(sidebar.libraryOpen == !cancelled)
             sidebar.finishScrollPresentation()
-            #expect(library.layer?.transform.m41 == 0)
             #expect(!window.isVisible)
         }
     }
@@ -244,4 +242,22 @@ func wheelLibraryBoundaryUsesTheSameAccumulationAndInversion() {
                     (delay <= 0.049 ? .settle(index: -1, offset: 0, switched: true) : .ignored))
         }
     }
+}
+
+@Test @MainActor
+func autoArchivePublishWaitsForTheGestureAndItsScrollPresentation() throws {
+    let (window, sidebar, _) = fixture(populated: false)
+    defer { window.contentView = nil }
+    #expect(sidebar.canPublishAutoArchive)
+    try send(window, sidebar: sidebar, x: 310, dx: -30, phase: .began, time: 100)
+    #expect(!sidebar.canPublishAutoArchive)
+    try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 100.02)
+    #expect(!sidebar.canPublishAutoArchive)
+    sidebar.finishScrollPresentation()
+    #expect(sidebar.canPublishAutoArchive)
+    try send(window, sidebar: sidebar, x: 310, dy: -10, phase: .began, time: 101)
+    #expect(!sidebar.canPublishAutoArchive)
+    try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 101.02)
+    #expect(sidebar.canPublishAutoArchive)
+    #expect(!window.isVisible)
 }

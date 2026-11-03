@@ -14,7 +14,7 @@ private func settingsValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Com
 func settingsWindowNavigationSearchAndSlidesKeepTheSidebarSpace() throws {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "a", selectedId: nil, spaces: ["a", "b"].map {
-        SpaceSnapshot(profileName: "Default", id: $0, title: $0.uppercased(), icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: $0, title: $0.uppercased(), icon: nil, look: nil, favorites: [], pinned: [], today: [])
     })
     let model = SettingsModel(snapshot: snapshot, adapter: WorkspaceAdapter(windowID: "settings"), publish: { _ in }, resetWidth: {})
     let sidebar = SidebarView(snapshot: snapshot)
@@ -158,7 +158,7 @@ func settingsSearchScrollsTheHostingViewToItsHighlightedRow() async throws {
 @Test @MainActor
 func settingsHarnessMenusReuseLifetimeAndWindowCloseRouting() throws {
     _ = NSApplication.shared
-    let spaces = (0..<10).map { SpaceSnapshot(profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<10).map { SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces)
     var terminations = 0
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "harness-test"), terminate: { terminations += 1 })
@@ -215,7 +215,7 @@ private final class SettingsCloseObserver: NSObject, NSWindowDelegate {
 @Test @MainActor
 func settingsErrorsSearchAndEdgeBounceUseTheirVisibleValues() {
     _ = NSApplication.shared
-    let space = SpaceSnapshot(profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+    let space = SpaceSnapshot(archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [space]), adapter: WorkspaceAdapter(windowID: "values"), publish: { _ in }, resetWidth: {})
     model.receive(.failure(CoreError.Edit(message: "unknown space missing-id")))
     #expect(model.error == "unknown space missing-id")

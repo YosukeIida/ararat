@@ -54,13 +54,35 @@ impl WorkspaceStore {
         Ok(Arc::new(Self { store, workspace: Mutex::new(workspace) }))
     }
 
+    pub fn auto_archive(&self, window_id: String, now: u64) -> Result<Option<WorkspaceSnapshot>, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.auto_archive(now)?;
+        if ops.is_empty() { return Ok(None); }
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(Some(snapshot(workspace.clone(), &window_id)))
+    }
+
+    pub fn set_archive_after(&self, window_id: String, space_id: String, value: ArchiveAfter) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let profile = workspace.spaces.iter().find(|s| s.id == space_id)
+            .ok_or_else(|| CoreError::Edit { message: format!("unknown space {space_id}") })?.profile.clone();
+        let ops = workspace.set_archive_after(profile, value.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn snapshot(&self, window_id: String) -> WorkspaceSnapshot {
         let workspace = self.workspace.lock().unwrap().clone();
         snapshot(workspace, &window_id)
     }
 
     pub fn import_arc_sidebar(&self, window_id: String, json: String) -> Result<WorkspaceSnapshot, CoreError> {
-        let imported = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
+        let mut imported = import::arc_sidebar(&json).map_err(|e| CoreError::Import { message: e.0 })?;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let ids: Vec<_> = imported.items.keys().cloned().collect();
+        for id in ids { imported.stamp_selection(&id, now); }
         let mut workspace = self.workspace.lock().unwrap();
         let ops = imported.to_ops();
         for op in &ops {
@@ -191,6 +213,7 @@ pub struct Row {
     pub depth: u32,
     pub kind: RowKind,
     pub unloaded: bool,
+    pub last_selected_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -242,6 +265,7 @@ impl From<Look> for ararat_core::model::Look {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct SpaceSnapshot {
+    pub archive_after: ArchiveAfter,
     pub profile_name: String,
     pub id: String,
     pub title: String,
@@ -286,10 +310,11 @@ fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
 fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
     let rows = |container: Option<&String>| {
         container.map_or_else(Vec::new, |c| {
-            ws.outline(c).into_iter().filter_map(|(depth, item)| row(depth, item)).collect()
+            ws.outline(c).into_iter().filter_map(|(depth, item)| row(ws, depth, item)).collect()
         })
     };
     SpaceSnapshot {
+        archive_after: ws.archive_after.get(&s.profile).copied().unwrap_or_default().into(),
         profile_name: match &s.profile { ararat_core::model::Profile::Default => "Default".into(), ararat_core::model::Profile::Named(name) => name.clone() },
         id: s.id.clone(),
         title: s.title.clone(),
@@ -301,7 +326,7 @@ fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
     }
 }
 
-fn row(depth: usize, item: &Item) -> Option<Row> {
+fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
     let (kind, url) = match &item.kind {
         ItemKind::Tab { url, .. } => (RowKind::Tab, Some(url.clone())),
         ItemKind::Folder => (RowKind::Folder, None),
@@ -315,6 +340,7 @@ fn row(depth: usize, item: &Item) -> Option<Row> {
         depth: depth as u32,
         kind,
         unloaded: item.lifecycle == Lifecycle::Unloaded,
+        last_selected_at: ws.last_selected.get(&item.id).copied(),
     })
 }
 
@@ -329,5 +355,19 @@ mod tests {
         assert!(json.contains(r#""id": "pin-work", "parentID": "tab-spec""#));
         let snapshot = import_arc_sidebar(json).unwrap();
         assert!(!snapshot.spaces.is_empty());
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ArchiveAfter { Hours12, Hours24, Days7, Days30 }
+impl From<ararat_core::model::ArchiveAfter> for ArchiveAfter {
+    fn from(value: ararat_core::model::ArchiveAfter) -> Self {
+        use ararat_core::model::ArchiveAfter as Core;
+        match value { Core::Hours12 => Self::Hours12, Core::Hours24 => Self::Hours24, Core::Days7 => Self::Days7, Core::Days30 => Self::Days30 }
+    }
+}
+impl From<ArchiveAfter> for ararat_core::model::ArchiveAfter {
+    fn from(value: ArchiveAfter) -> Self {
+        match value { ArchiveAfter::Hours12 => Self::Hours12, ArchiveAfter::Hours24 => Self::Hours24, ArchiveAfter::Days7 => Self::Days7, ArchiveAfter::Days30 => Self::Days30 }
     }
 }

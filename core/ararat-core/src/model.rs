@@ -117,6 +117,8 @@ pub struct WindowState {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
+    pub archive_after: HashMap<Profile, ArchiveAfter>,
+    pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
@@ -129,6 +131,8 @@ pub enum Kind {
     Item,
     Favorites,
     Window,
+    ArchiveAfter,
+    LastSelected,
 }
 
 impl Kind {
@@ -138,16 +142,20 @@ impl Kind {
             Kind::Item => "item",
             Kind::Favorites => "favorites",
             Kind::Window => "window",
+            Kind::ArchiveAfter => "archive_after",
+            Kind::LastSelected => "last_selected",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window].into_iter().find(|k| k.as_str() == s)
+        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected].into_iter().find(|k| k.as_str() == s)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
+    ArchiveAfter { profile: Profile, value: ArchiveAfter },
+    LastSelected { item: Id, at: u64 },
     Space(Space),
     Item(Item),
     Window(WindowState),
@@ -157,6 +165,8 @@ pub enum Record {
 impl Record {
     pub fn kind(&self) -> Kind {
         match self {
+            Record::ArchiveAfter { .. } => Kind::ArchiveAfter,
+            Record::LastSelected { .. } => Kind::LastSelected,
             Record::Space(_) => Kind::Space,
             Record::Window(_) => Kind::Window,
             Record::Item(_) => Kind::Item,
@@ -166,6 +176,8 @@ impl Record {
 
     pub fn id(&self) -> Id {
         match self {
+            Record::ArchiveAfter { profile, .. } => profile_id(profile),
+            Record::LastSelected { item, .. } => item.clone(),
             Record::Space(s) => s.id.clone(),
             Record::Window(window) => window.id.clone(),
             Record::Item(i) => i.id.clone(),
@@ -175,6 +187,8 @@ impl Record {
 
     pub fn body(&self) -> String {
         match self {
+            Record::ArchiveAfter { value, .. } => serde_json::to_string(value),
+            Record::LastSelected { at, .. } => serde_json::to_string(at),
             Record::Space(s) => serde_json::to_string(s),
             Record::Window(window) => serde_json::to_string(window),
             Record::Item(i) => serde_json::to_string(i),
@@ -185,6 +199,8 @@ impl Record {
 
     pub fn parse(kind: Kind, id: &str, body: &str) -> serde_json::Result<Record> {
         Ok(match kind {
+            Kind::LastSelected => Record::LastSelected { item: id.into(), at: serde_json::from_str(body)? },
+            Kind::ArchiveAfter => Record::ArchiveAfter { profile: serde_json::from_str(id)?, value: serde_json::from_str(body)? },
             Kind::Space => Record::Space(serde_json::from_str(body)?),
             Kind::Window => Record::Window(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
@@ -251,6 +267,10 @@ impl Workspace {
 
     pub fn apply(&mut self, op: &Op) {
         match op {
+            Op::Put(Record::LastSelected { item, at }) => { self.last_selected.insert(item.clone(), *at); },
+            Op::Delete(Kind::LastSelected, id) => { self.last_selected.remove(id); },
+            Op::Put(Record::ArchiveAfter { profile, value }) => { self.archive_after.insert(profile.clone(), *value); },
+            Op::Delete(Kind::ArchiveAfter, id) => self.archive_after.retain(|p, _| &profile_id(p) != id),
             Op::Put(Record::Window(window)) => { self.windows.insert(window.id.clone(), window.clone()); },
             Op::Delete(Kind::Window, id) => { self.windows.remove(id); },
             Op::Put(Record::Space(space)) => {
@@ -279,7 +299,7 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).chain(self.windows.values().cloned().map(Record::Window))
+        spaces.chain(favorites).chain(items).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
             .map(Op::Put).collect()
     }
 }
@@ -295,4 +315,12 @@ impl Item {
             _ => "",
         }
     }
+}
+
+// Arc's four choices and default: https://resources.arc.net/hc/en-us/articles/19228855311127
+// Option list: https://browserinc.notion.site/Archive-2813ff2c5e5f4ba8a71f07c39a4892f0
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArchiveAfter { #[default] Hours12, Hours24, Days7, Days30 }
+impl ArchiveAfter {
+    pub fn millis(self) -> u64 { (match self { Self::Hours12 => 12, Self::Hours24 => 24, Self::Days7 => 168, Self::Days30 => 720 }) * 3_600_000 }
 }

@@ -136,6 +136,14 @@ private struct SettingsDetail: View {
                     switch model.page {
                     case .tabs:
                         card("width", title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt.") { Button("Reset to default", action: model.resetWidth) }
+                        card("archive-after", title: "Archive Today's tabs after", subtitle: model.archiveSubtitle) {
+                            Picker("Archive Today's tabs after", selection: Binding(get: { model.archiveAfter }, set: model.setArchiveAfter)) {
+                                Text("12 hours").tag(ArchiveAfter.hours12)
+                                Text("24 hours").tag(ArchiveAfter.hours24)
+                                Text("7 days").tag(ArchiveAfter.days7)
+                                Text("30 days").tag(ArchiveAfter.days30)
+                            }.labelsHidden()
+                        }
                     case .shortcuts:
                         ForEach(model.shortcuts) { row in card(row.id, title: row.title, subtitle: row.subtitle) { SettingsKeycaps(keys: row.keys) } }
                     case .spaces:
