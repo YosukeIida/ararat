@@ -36,6 +36,7 @@ private final class MenuFixture {
                 case let .createFolder(id, container, index): result = try self.store.createFolder(windowId: "menus", id: id, name: "Untitled", container: container, index: UInt32(index), wrapping: [])
                 case let .rename(id, title, folder): result = try folder ? self.store.renameFolder(windowId: "menus", id: id, name: title) : self.store.renameTab(windowId: "menus", id: id, title: title)
                 case let .collapse(id, collapsed): result = try self.store.setFolderCollapsed(windowId: "menus", id: id, collapsed: collapsed)
+                case let .duplicate(id): result = try self.store.duplicateItem(windowId: "menus", id: id)
                 case let .deleteFolder(id): result = try self.store.deleteFolder(windowId: "menus", id: id)
                 }
                 done(result)
@@ -83,17 +84,17 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let favorite = try f.row("tab-mail")
     let folder = try f.row("folder-docs")
     let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
-    let titles = [["Copy Link", "Rename…", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Move to", "Delete"]]
+    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
     for (menu, expected) in zip(menus, titles) {
         #expect(menu.items.map(\.title) == expected)
         #expect(menu.items.allSatisfy { $0.isEnabled })
         #expect(!menu.autoenablesItems)
         #expect(menu.items.allSatisfy { $0.title == "Move to" || ($0.target != nil && $0.action != nil) })
-        #expect(!menu.items.contains { $0.title == "Duplicate" })
+        #expect(menu.items.contains { $0.title == "Duplicate" } == (menu !== menus[2]))
     }
     #expect(menus[2].items[2].keyEquivalent == "w")
     #expect(menus[2].items[2].keyEquivalentModifierMask == .command)
-    #expect(menus[0].items[2].submenu?.items.map(\.title) == ["Other"])
+    #expect(menus[0].items[3].submenu?.items.map(\.title) == ["Other"])
     #expect(f.sidebar.emptyAreaMenu().items.map(\.title) == ["New Folder"])
     #expect(f.sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
     let pasteboard = NSPasteboard(name: NSPasteboard.Name("Ararat-menu-test-\(UUID().uuidString)"))
@@ -107,7 +108,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     #expect(f.sidebar.todayMenu(row: invalid).items[0].isEnabled == false)
     var noTargets = f.snapshot; noTargets.spaces.removeAll { $0.id == "other" }
     f.sidebar.update(snapshot: noTargets)
-    #expect(!f.sidebar.pinnedMenu(row: pin).items[2].isEnabled)
+    #expect(!f.sidebar.pinnedMenu(row: pin).items[3].isEnabled)
     #expect(!f.window.isVisible && !f.window.isKeyWindow)
 }
 
@@ -268,7 +269,7 @@ func rowMenusParticipateInTooltipTrackingWithoutShowingMenus() throws {
     #expect(!f.sidebar.tooltip.menuTracking)
     let row = try f.view("tab-spec")
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Move to", "Remove Pin"])
+    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"])
 }
 
 @Test @MainActor
@@ -464,4 +465,36 @@ func narrowPinnedHintStopsBeforeVisibleCloseButton() throws {
     let hint = try #require(descendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
     #expect(!hint.isHidden && !row.closeButton.isHidden)
     #expect(hint.frame.maxX <= row.closeButton.frame.minX)
+}
+
+@Test @MainActor
+func duplicateMenusCopyAfterOriginalWithoutChangingSelection() throws {
+    for source in ["folder-docs", "tab-spec", "tab-a"] {
+        let f = try MenuFixture(); defer { f.dispose() }
+        let row = try f.row(source)
+        let original = source == "tab-a" ? "split-1" : source
+        let parent = try #require(f.space.pinned.first { $0.id == original }?.parentId)
+        let before = f.space.pinned.filter { $0.parentId == parent }
+        let index = try #require(before.firstIndex { $0.id == original })
+        let menu = row.kind == .folder ? f.sidebar.folderMenu(row: row) : f.sidebar.pinnedMenu(row: row)
+        let selected = f.snapshot.selectedId
+        try invoke(menu, "Duplicate")
+        let after = f.space.pinned.filter { $0.parentId == parent }
+        #expect(after.count == before.count + 1)
+        #expect(after[index].id == original)
+        #expect(!before.contains { $0.id == after[index + 1].id })
+        #expect(after[index + 1].kind == before[index].kind)
+        #expect(f.snapshot.selectedId == selected)
+        #expect(descendants(f.sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.id == after[index + 1].id })
+        #expect(f.edits.count == 1)
+        #expect(!f.window.isVisible && !f.window.isKeyWindow)
+    }
+    let f = try MenuFixture(); defer { f.dispose() }
+    let snapshot = try f.store.moveItem(windowId: "menus", id: "tab-spec", container: "today-work", index: 0, openFolder: false)
+    f.sidebar.update(snapshot: snapshot)
+    let row = try f.row("tab-spec")
+    try invoke(f.sidebar.todayMenu(row: row), "Duplicate")
+    #expect(f.space.today[0].id == "tab-spec")
+    #expect(f.space.today.count == 2)
+    #expect(f.space.today[1].id != "tab-spec")
 }

@@ -19,7 +19,7 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     let rows = views(sidebar).compactMap { $0 as? SidebarRowView }
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     #expect(sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
-    for (id, titles) in [("folder-docs", ["New Nested Folder…", "Rename…", "Move to", "Delete"]), ("tab-spec", ["Copy Link", "Rename…", "Move to", "Remove Pin"]), ("tab-a", ["Copy Link", "Rename…", "Move to", "Archive Tab"])] {
+    for (id, titles) in [("folder-docs", ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]), ("tab-spec", ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"]), ("tab-a", ["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"])] {
         let row = try #require(rows.first { $0.row.id == id })
         #expect(row.menu(for: event)?.items.map(\.title) == titles)
     }

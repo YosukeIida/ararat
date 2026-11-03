@@ -149,3 +149,23 @@ func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
     #expect(!row.row.unloaded && !tile.row.unloaded)
     #expect(icon.alphaValue == 1)
 }
+
+@Test @MainActor
+func adapterDuplicateEditPublishesTheCopyAndPersistsIt() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("duplicate.sqlite").path
+    let adapter = WorkspaceAdapter(windowID: "duplicate")
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    let before = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, completion: $0) }
+    let after = try await adapterValue { adapter.edit(.duplicate(id: "tab-mail"), completion: $0) }
+    let favorites = try #require(after.spaces.first?.favorites)
+    #expect(favorites.count == 2)
+    #expect(favorites[0].id == "tab-mail")
+    #expect(favorites[1].id != "tab-mail" && favorites[1].unloaded)
+    #expect(after.selectedId == before.selectedId)
+    _ = try await adapterValue { adapter.shutdown(completion: $0) }
+    let reopened = try WorkspaceStore.open(path: path).snapshot(windowId: "duplicate")
+    #expect(reopened.spaces.first?.favorites.map(\.id) == favorites.map(\.id))
+}

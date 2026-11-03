@@ -1435,6 +1435,10 @@ extension SidebarView: NSMenuDelegate {
         SidebarMenuItem("Rename…") { [weak self] in self?.beginRename(id: row.id) }
     }
 
+    private func duplicateItem(_ row: Row) -> NSMenuItem {
+        SidebarMenuItem("Duplicate") { [weak self] in self?.performEdit(.duplicate(id: row.id)) }
+    }
+
     private func moveItem(_ row: Row) -> NSMenuItem {
         let item = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
         let targets = snapshot.spaces.filter { $0.profileKey == snapshotSpace?.profileKey && $0.id != snapshotSpace?.id }
@@ -1455,12 +1459,12 @@ extension SidebarView: NSMenuDelegate {
     }
 
     func todayMenu(row: Row) -> NSMenu {
-        itemMenu([copyItem(row), renameItem(row), moveItem(row),
+        itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Archive Tab") { [weak self] in self?.onArchive?(row.id) }])
     }
 
     func pinnedMenu(row: Row) -> NSMenu {
-        itemMenu([copyItem(row), renameItem(row), moveItem(row),
+        itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Remove Pin") { [weak self] in
                       guard let self, let container = self.snapshotSpace?.todayId else { return }
                       self.menuMove(row.id, container: container, index: 0)
@@ -1475,7 +1479,7 @@ extension SidebarView: NSMenuDelegate {
 
     func folderMenu(row: Row) -> NSMenu {
         itemMenu([SidebarMenuItem("New Nested Folder…") { [weak self] in self?.createFolder(in: row.id) },
-                  renameItem(row), moveItem(row),
+                  renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
     }
 

@@ -198,6 +198,14 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn duplicate_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.duplicate_item(&id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn create_folder(&self, window_id: String, id: String, name: String, container: String, index: u32, wrapping: Vec<String>) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.create_folder(&id, &name, &container, index as usize, &wrapping)?;
@@ -452,6 +460,24 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_flushes_and_returns_the_copy_in_snapshot() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-duplicate-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None).unwrap();
+        let snapshot = store.duplicate_item("one".into(), "folder-docs".into()).unwrap();
+        let rows: Vec<_> = snapshot.spaces[0].pinned.iter().filter(|row| row.depth == 0).collect();
+        let position = rows.iter().position(|row| row.id == "folder-docs").unwrap();
+        let copy = rows[position + 1].id.clone();
+        assert_ne!(copy, "folder-docs");
+        assert_eq!(rows[position + 1].kind, RowKind::Folder);
+        let (_, loaded) = Store::open(&path).unwrap();
+        assert!(loaded.items.contains_key(&copy));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
 
     #[test]
     fn drag_snapshot_exposes_membership_roots_indices_profiles_and_fold_state() {

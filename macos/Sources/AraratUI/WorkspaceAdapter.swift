@@ -135,6 +135,7 @@ extension WorkspaceAdapter {
 }
 
 public enum SidebarItemEdit: Sendable {
+    case duplicate(id: String)
     case createFolder(id: String, container: String, index: Int)
     case rename(id: String, title: String, folder: Bool)
     case collapse(id: String, collapsed: Bool)
@@ -146,6 +147,8 @@ extension WorkspaceAdapter {
         enqueue({
             let store = try self.opened()
             switch edit {
+            case let .duplicate(id):
+                return try store.duplicateItem(windowId: self.windowID, id: id)
             case let .createFolder(id, container, index):
                 return try store.createFolder(windowId: self.windowID, id: id, name: "Untitled", container: container, index: UInt32(index), wrapping: [])
             case let .rename(id, title, folder):

@@ -19,6 +19,59 @@ impl WindowState {
 }
 
 impl Workspace {
+    pub fn duplicate_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let original = self.movable_item(id)?;
+        let list_root = self.list_for(&original.id).unwrap().0.to_string();
+        let parent = original.membership.parent.as_deref().ok_or_else(|| EditError("item has no parent".into()))?;
+        let siblings: Vec<_> = self.children(parent).into_iter()
+            .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).collect();
+        let index = siblings.iter().position(|item| item.id == original.id).unwrap() + 1;
+        let (order, mut ops) = self.item_order(parent, index, &HashSet::new())?;
+        let mut originals = vec![original.clone()];
+        let mut index = 0;
+        while index < originals.len() {
+            originals.extend(self.children(&originals[index].id).into_iter()
+                .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).cloned());
+            index += 1;
+        }
+        let mut ids = std::collections::HashMap::new();
+        // Why not Swift ids or uuid: Swift cannot know subtree size; randomized SipHash plus collision checks avoids a new dependency.
+        for item in &originals {
+            use std::hash::BuildHasher;
+            let id = loop {
+                let random = std::collections::hash_map::RandomState::new();
+                let id = format!("{:016x}{:016x}", random.hash_one(0u8), random.hash_one(1u8));
+                if !self.items.contains_key(&id) && !self.spaces.iter().any(|s| s.id == id)
+                    && !ids.values().any(|value| value == &id) { break id; }
+            };
+            ids.insert(item.id.clone(), id);
+        }
+        let now = self.lifecycle_time();
+        for mut item in originals {
+            let old_id = item.id.clone();
+            item.id = ids[&old_id].clone();
+            if old_id == original.id { item.membership.order = order.clone(); }
+            else { item.membership.parent = item.membership.parent.as_ref().map(|parent| ids[parent].clone()); }
+            item.membership.previous_parent = (old_id == original.id).then(|| list_root.clone());
+            item.membership.hlc = Default::default();
+            item.lifecycle = Lifecycle::Unloaded;
+            item.lifecycle_changed_at = now;
+            match &mut item.kind {
+                ItemKind::Tab { .. } => ops.push(Op::Put(Record::LastSelected { item: item.id.clone(), at: now })),
+                ItemKind::Folder => ops.push(Op::Put(Record::FolderState {
+                    item: item.id.clone(), collapsed: self.folder_collapsed.get(&old_id).copied().unwrap_or(false),
+                })),
+                ItemKind::Split { width_factors, .. } => {
+                    *width_factors = width_factors.iter().filter_map(|(id, width)| ids.get(id).map(|id| (id.clone(), *width))).collect();
+                }
+                ItemKind::Container => unreachable!(),
+            }
+            ops.push(Op::Put(Record::Item(item)));
+        }
+        Ok(self.commit_edit(ops))
+    }
+
     fn commit_edit(&mut self, ops: Vec<Op>) -> Vec<Op> {
         for op in &ops { self.apply(op); }
         ops
@@ -171,7 +224,7 @@ impl Workspace {
         let folder = crate::model::Item {
             id: id.into(), title: Some(name.into()), kind: ItemKind::Folder, lifecycle: Lifecycle::Open,
             lifecycle_changed_at: self.lifecycle_time(), membership: crate::model::Membership {
-                parent: Some(container.into()), previous_parent: None, hlc: Default::default(),
+                parent: Some(container.into()), previous_parent: Some(root.into()), hlc: Default::default(),
                 order,
             },
         };
