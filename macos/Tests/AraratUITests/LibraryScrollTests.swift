@@ -248,6 +248,8 @@ func wheelLibraryBoundaryUsesTheSameAccumulationAndInversion() {
 func autoArchivePublishWaitsForTheGestureAndItsScrollPresentation() throws {
     let (window, sidebar, _) = fixture(populated: false)
     defer { window.contentView = nil }
+    var ready = 0
+    sidebar.onAutoArchiveReady = { ready += 1 }
     #expect(sidebar.canPublishAutoArchive)
     try send(window, sidebar: sidebar, x: 310, dx: -30, phase: .began, time: 100)
     #expect(!sidebar.canPublishAutoArchive)
@@ -255,9 +257,11 @@ func autoArchivePublishWaitsForTheGestureAndItsScrollPresentation() throws {
     #expect(!sidebar.canPublishAutoArchive)
     sidebar.finishScrollPresentation()
     #expect(sidebar.canPublishAutoArchive)
+    #expect(ready == 1)
     try send(window, sidebar: sidebar, x: 310, dy: -10, phase: .began, time: 101)
     #expect(!sidebar.canPublishAutoArchive)
     try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 101.02)
     #expect(sidebar.canPublishAutoArchive)
+    #expect(ready == 2)
     #expect(!window.isVisible)
 }

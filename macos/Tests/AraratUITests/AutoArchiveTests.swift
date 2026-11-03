@@ -81,6 +81,55 @@ func archiveLaunchAndTimerTickUseInjectedClockAndPublishSidebarAndLibrary() asyn
 @MainActor
 private func archiveDescendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + archiveDescendants($0) } }
 
+@Test(arguments: ["quiet", "window", "ended", "cancelled"]) @MainActor
+func lostScrollEndDefersOnlyPublishUntilQuietOrWindowMove(recovery: String) async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "archive-lost-end")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
+    let snapshot = try await archiveValue { adapter.open(path: directory.appendingPathComponent("lost-end.sqlite").path, json: { json }, completion: $0) }
+    let tab = try #require(snapshot.spaces.flatMap(\.today).first { $0.kind == .tab })
+    let sidebar = SidebarView(snapshot: snapshot)
+    var gestureClock = 100.0
+    sidebar.pullClock = { gestureClock }
+    let cg = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -10, wheel2: 0, wheel3: 0))
+    cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(CGScrollPhase.began.rawValue))
+    sidebar.scrollWheel(with: try #require(NSEvent(cgEvent: cg)))
+    #expect(!sidebar.canPublishAutoArchive)
+    let clock = try #require(tab.lastSelectedAt) + 12 * 3_600_000 + 1
+    var received: WorkspaceSnapshot?
+    let archive = AutoArchive(adapter: adapter, now: { clock }, canPublish: { sidebar.canPublishAutoArchive }) { result in
+        if case .success(let value) = result { received = value }
+    }
+    sidebar.onAutoArchiveReady = { [weak archive] in archive?.publishDeferred() }
+    archive.tick()
+    let archived = try await archiveValue { adapter.snapshot(completion: $0) }
+    #expect(archived.archive.contains { $0.id == tab.id })
+    #expect(received == nil)
+    gestureClock += 1.99
+    #expect(!sidebar.canPublishAutoArchive)
+    if recovery == "window" { sidebar.viewDidMoveToWindow() }
+    else if recovery == "quiet" {
+        gestureClock += 0.02
+        #expect(sidebar.canPublishAutoArchive)
+        gestureClock -= 0.02
+        #expect(!sidebar.canPublishAutoArchive)
+        gestureClock += 0.02
+    } else {
+        let phase = recovery == "ended" ? CGScrollPhase.ended : .cancelled
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+        sidebar.scrollWheel(with: try #require(NSEvent(cgEvent: cg)))
+    }
+    #expect(sidebar.canPublishAutoArchive)
+    if recovery == "quiet" || recovery == "window" { archive.tick() }
+    try await waitUntil { received != nil }
+    #expect(received?.archive.contains { $0.id == tab.id } == true)
+    _ = try await archiveValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}
+
 @Test @MainActor
 func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() async throws {
     _ = NSApplication.shared
@@ -100,7 +149,7 @@ func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() asyn
     }
     archive.tick()
     let skipped = try await archiveValue { adapter.snapshot(completion: $0) }
-    #expect(skipped.archive.isEmpty && received == nil)
+    #expect(skipped.archive.contains { $0.id == tab.id } && received == nil)
     busy = false
     archive.tick()
     busy = true

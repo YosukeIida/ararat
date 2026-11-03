@@ -204,3 +204,13 @@ fn invalid_tree_leaves_auto_archive_workspace_unchanged() {
     assert!(ws.auto_archive(1_800_000_000_000).is_err());
     assert_eq!(ws, before);
 }
+
+#[test]
+fn idle_auto_archive_has_no_ops_and_keeps_existing_allocations() {
+    let mut ws = workspace();
+    let before = ws.clone();
+    let title = ws.items["tab-a"].id.as_ptr();
+    assert!(ws.auto_archive(1).unwrap().is_empty());
+    assert_eq!(ws, before);
+    assert_eq!(ws.items["tab-a"].id.as_ptr(), title);
+}

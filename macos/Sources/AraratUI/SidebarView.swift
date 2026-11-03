@@ -69,7 +69,15 @@ public final class SidebarView: NSView {
     private var scrollPreviews: [SidebarView] = []
     private var showingScrollPages = false
     private var scrollGestureActive = false
-    public var canPublishAutoArchive: Bool { !scrollGestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing }
+    private var lastScrollEventAt: CFTimeInterval = 0
+    public var onAutoArchiveReady: (() -> Void)?
+    public var canPublishAutoArchive: Bool {
+        let gestureActive = scrollGestureActive && pullClock() - lastScrollEventAt < 2
+        return !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
+    }
+    private func notifyAutoArchiveReady() {
+        if canPublishAutoArchive { onAutoArchiveReady?() }
+    }
     private var scrollGeneration = 0
     private var isScrollPreview = false
     private var laidOutSidebarWidth: CGFloat = 0
@@ -477,6 +485,7 @@ public final class SidebarView: NSView {
 
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        scrollGestureActive = false
         if let clickMonitor { removeClickMonitor(clickMonitor); self.clickMonitor = nil }
         tooltip.dismiss()
         guard window != nil && !isScrollPreview else {
@@ -732,6 +741,12 @@ public final class SidebarView: NSView {
 
     private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
         guard !isScrollPreview else { return false }
+        defer {
+            if event.phase.contains(.ended) || event.phase.contains(.cancelled) || event.momentumPhase.contains(.ended) {
+                notifyAutoArchiveReady()
+            }
+        }
+        lastScrollEventAt = pullClock()
         if !event.momentumPhase.isEmpty {
             scrollGestureActive = !event.momentumPhase.contains(.ended)
         } else if !event.phase.isEmpty {
@@ -937,6 +952,7 @@ public final class SidebarView: NSView {
         clearScrollPresentation()
         libraryDidLand()
         refreshPointer()
+        notifyAutoArchiveReady()
     }
 
     private func clearScrollPresentation() {
@@ -977,7 +993,11 @@ public final class SidebarView: NSView {
             guard let self else { return }
             let elapsed = min(duration, self.pullClock() - start)
             frame(elapsed)
-            if elapsed >= duration { self.stopPullAnimation(); completion() }
+            if elapsed >= duration {
+                self.stopPullAnimation()
+                completion()
+                self.notifyAutoArchiveReady()
+            }
         }
         let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }

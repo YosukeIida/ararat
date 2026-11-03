@@ -374,13 +374,6 @@ impl Workspace {
     }
 
     pub fn auto_archive(&mut self, now: u64) -> Result<Vec<Op>, EditError> {
-        let mut next = self.clone();
-        let ops = next.auto_archive_batch(now)?;
-        *self = next;
-        Ok(ops)
-    }
-
-    fn auto_archive_batch(&mut self, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let mut protected = HashSet::new();
         for id in self.windows.values().filter_map(|w| w.selected.as_ref()) {
@@ -404,8 +397,11 @@ impl Workspace {
                 }
             }
         }
-        for op in &ops { self.apply(op); }
-        for id in expired { ops.extend(self.finish_item(&id, true, now)?); }
+        if ops.is_empty() && expired.is_empty() { return Ok(ops); }
+        let mut next = self.clone();
+        for op in &ops { next.apply(op); }
+        for id in expired { ops.extend(next.finish_item(&id, true, now)?); }
+        *self = next;
         Ok(ops)
     }
 }

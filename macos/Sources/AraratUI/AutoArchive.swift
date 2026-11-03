@@ -25,21 +25,24 @@ public final class AutoArchive {
         timer?.tolerance = 20
     }
     public func tick() {
-        guard canPublish() else { return }
-        if needsPublish {
-            needsPublish = false
-            adapter.snapshot { [weak self] result in self?.deliver(result) }
-        } else {
-            adapter.autoArchive(now: now()) { [weak self] result in
-                switch result {
-                case .success(let snapshot): if let snapshot { self?.deliver(.success(snapshot)) }
-                case .failure(let error): self?.deliver(.failure(error))
-                }
+        adapter.autoArchive(now: now()) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let snapshot):
+                if let snapshot { self.deliver(.success(snapshot)) }
+                else { self.publishDeferred() }
+            case .failure(let error): self.deliver(.failure(error))
             }
         }
     }
+    public func publishDeferred() {
+        guard needsPublish && canPublish() else { return }
+        needsPublish = false
+        adapter.snapshot { [weak self] result in self?.deliver(result) }
+    }
     private func deliver(_ result: Result<WorkspaceSnapshot, Error>) {
         guard canPublish() else { needsPublish = true; return }
+        needsPublish = false
         receive(result)
     }
     public func stop() { timer?.invalidate(); timer = nil }

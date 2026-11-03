@@ -79,6 +79,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                         _ = self?.publish(result)
                     }
                     self.autoArchive = archive
+                    self.sidebar?.onAutoArchiveReady = { [weak archive] in archive?.publishDeferred() }
                     archive.start()
                 }
             case .failure(let error):

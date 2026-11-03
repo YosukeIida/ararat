@@ -45,8 +45,10 @@ private func runHarness(in directory: URL, arguments: [String] = [], commands: S
     let interactive = !arguments.contains("--check")
     var stdout = Data()
     if nullInput {
-        let deadline = Date().addingTimeInterval(1)
-        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        let deadline = Date().addingTimeInterval(8)
+        while process.isRunning && Date() < deadline, try harnessDatabaseFiles(in: directory).isEmpty {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
     } else if interactive {
         try input.fileHandleForWriting.write(contentsOf: Data((commands + "state\n").utf8))
         while !String(decoding: stdout, as: UTF8.self).contains("state space ") {

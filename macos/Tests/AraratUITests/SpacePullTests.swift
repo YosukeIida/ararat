@@ -112,10 +112,13 @@ func wheelPullOpensCreationIgnoresWheelAndPreservesPause() throws {
     defer { window.contentView = nil }
     var now = 0.0
     sidebar.pullClock = { now }
+    var ready = 0
+    sidebar.onAutoArchiveReady = { ready += 1 }
     var switches = 0
     sidebar.onShowSpace = { _ in switches += 1 }
     sidebar.scrollWheel(with: pullEvent(-2, nil, 100))
     #expect(!sidebar.createSpaceOpen)
+    #expect(ready == 0)
     let indicator = try #require(sidebar.subviews.compactMap { $0 as? SpacePullIndicator }.first)
     now = 0.1
     sidebar.stepPull()
@@ -127,6 +130,7 @@ func wheelPullOpensCreationIgnoresWheelAndPreservesPause() throws {
     now = sample.duration
     sidebar.stepPull()
     #expect(sidebar.createSpaceOpen)
+    #expect(ready > 0)
     #expect(sidebar.spaceShown == 2 && switches == 0)
     sidebar.scrollWheel(with: pullEvent(20, nil, 100.249))
     #expect(sidebar.createSpaceOpen)
