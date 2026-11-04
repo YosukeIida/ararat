@@ -157,6 +157,8 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
         defer { window.contentView = nil }
         window.setContentSize(NSSize(width: 1000, height: 300))
         window.contentView?.layoutSubtreeIfNeeded()
+        var now = 250.0
+        sidebar.pullClock = { now }
         var baseline: [Int] = []
         for iteration in 0..<50 {
             let direction: Int32 = iteration.isMultiple(of: 2) ? -5 : 5
@@ -175,6 +177,8 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
         }
         sidebar.scrollWheel(with: polishScroll(-40, .began, 200))
         sidebar.scrollWheel(with: polishScroll(0, .ended, 200.02))
+        now += SidebarMetrics.momentumQuiet
+        sidebar.stepMomentumQuiet()
         #expect(sidebar.spaceShown == 1)
         try await finishPolishScroll(sidebar)
         for row in polishViews(sidebar).compactMap({ $0 as? SidebarRowView }) { row.updateTrackingAreas() }

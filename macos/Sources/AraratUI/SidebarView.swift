@@ -94,13 +94,39 @@ public final class SidebarView: NSView {
     private var showingScrollPages = false
     private var scrollGestureActive = false
     private var lastScrollEventAt: CFTimeInterval = 0
+    private var momentumQuietDeadline: CFTimeInterval = 0
+    private var momentumQuietTimer: Timer?
     public var onAutoArchiveReady: (() -> Void)?
     public var canPublishAutoArchive: Bool {
-        let gestureActive = scrollGestureActive && pullClock() - lastScrollEventAt < 2
+        // A pending momentum quiet blocks deliver like an active gesture: publication is left to
+        // the step that ends the quiet, not to the staleness expiry, whose retry would wait for
+        // the next AutoArchive tick (up to 60 s).
+        let gestureActive = (scrollGestureActive || momentumQuietTimer != nil) && pullClock() - lastScrollEventAt < 2
         return renamingID == nil && !tooltip.menuTracking && drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
     }
     private func notifyAutoArchiveReady() {
         if canPublishAutoArchive { onAutoArchiveReady?() }
+    }
+    // Momentum can follow an ended gesture with no flag from AppKit; a publish at the gesture end
+    // moves rows while momentum is still scrolling.
+    private func armMomentumQuiet() {
+        momentumQuietTimer?.invalidate()
+        momentumQuietDeadline = pullClock() + SidebarMetrics.momentumQuiet
+        let timer = Timer(timeInterval: SidebarMetrics.momentumQuiet, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stepMomentumQuiet() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        momentumQuietTimer = timer
+    }
+    func stepMomentumQuiet() {
+        guard momentumQuietTimer != nil, pullClock() >= momentumQuietDeadline else { return }
+        cancelMomentumQuiet()
+        notifyAutoArchiveReady()
+    }
+    private func cancelMomentumQuiet() {
+        momentumQuietDeadline = 0
+        momentumQuietTimer?.invalidate()
+        momentumQuietTimer = nil
     }
     private var scrollGeneration = 0
     private var isScrollPreview = false
@@ -544,6 +570,7 @@ public final class SidebarView: NSView {
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         scrollGestureActive = false
+        cancelMomentumQuiet()
         if window == nil, drag != nil {
             dragTimer?.invalidate()
             dragTimer = nil
@@ -839,8 +866,20 @@ public final class SidebarView: NSView {
     private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
         guard !isScrollPreview else { return false }
         defer {
-            if event.phase.contains(.ended) || event.phase.contains(.cancelled) || event.momentumPhase.contains(.ended) {
+            if !event.momentumPhase.isEmpty {
+                if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
+                    cancelMomentumQuiet()
+                    notifyAutoArchiveReady()
+                } else {
+                    cancelMomentumQuiet()
+                }
+            } else if event.phase.contains(.ended) {
+                armMomentumQuiet()
+            } else if event.phase.contains(.cancelled) {
+                cancelMomentumQuiet()
                 notifyAutoArchiveReady()
+            } else {
+                cancelMomentumQuiet()
             }
         }
         lastScrollEventAt = pullClock()

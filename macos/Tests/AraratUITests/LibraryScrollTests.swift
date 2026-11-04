@@ -33,7 +33,6 @@ private func send(_ window: NSWindow, sidebar: SidebarView, x: CGFloat, dx: Int3
     let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)!
     let screen = window.convertPoint(toScreen: point)
     event.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
-    if phase == nil && dy != 0 { event.setIntegerValueField(CGEventField(rawValue: 88)!, value: 1) }
     event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase?.rawValue ?? 0))
     event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentum?.rawValue ?? 0))
     event.timestamp = UInt64(time * 1_000_000_000)
@@ -69,6 +68,13 @@ func libraryListKeepsItsAxisAndOriginAcrossHitTargets() async throws {
         container.layoutSubtreeIfNeeded()
         let library = try #require(descendants(sidebar).compactMap { $0 as? LibraryView }.first)
         let scroll = try #require(descendants(library).compactMap { $0 as? NSScrollView }.first)
+        var onScrollAnswers: [Bool] = []
+        let sidebarAnswers = library.onScroll
+        library.onScroll = { event, scrollView in
+            let answer = sidebarAnswers?(event, scrollView) ?? false
+            onScrollAnswers.append(answer)
+            return answer
+        }
         try send(window, sidebar: sidebar, x: 310, dx: -400, dy: -1, phase: .began, time: 100)
         try send(window, sidebar: sidebar, x: 20, dy: -120, phase: .changed, time: 100.01)
         try send(window, sidebar: sidebar, x: 20, phase: .ended, time: 100.02)
@@ -82,26 +88,36 @@ func libraryListKeepsItsAxisAndOriginAcrossHitTargets() async throws {
         document.layoutSubtreeIfNeeded()
         let point = sidebar.convert(NSPoint(x: 310, y: 350), to: nil)
         let hit = try #require(window.contentView?.hitTest(point))
-        print("ARCHIVE-WHEEL before", populated, "hit", String(describing: type(of: hit)), "document", document.frame, "clip", scroll.contentView.bounds)
         if populated {
             #expect(hit === scroll || hit.isDescendant(of: scroll), "Vertical wheel hit \(type(of: hit)) must belong to the archive scroll view")
             #expect(document.frame.height > scroll.contentView.bounds.height, "Archive document height \(document.frame.height) must exceed clip height \(scroll.contentView.bounds.height)")
         } else {
             #expect(scroll.isHidden, "Empty archive scroll view must be hidden; wheel hit is \(type(of: hit))")
         }
+        // The test checks the route a wheel takes below the sidebar, not how far AppKit scrolls
+        // the clip: every vertical wheel over the populated list must be refused by the sidebar
+        // (so `LibraryScrollView.scrollWheel` hands it to `super`), while the pages keep their
+        // origin. The clip's position after AppKit's own wheel delivery is not asserted.
+        if populated { onScrollAnswers = [] }
         try send(window, sidebar: sidebar, x: 310, dy: -120, time: 101.5)
-        print("ARCHIVE-WHEEL after event", populated, scroll.contentView.bounds)
-        try await waitUntil { !populated || scroll.contentView.bounds.minY > 0 }
-        print("ARCHIVE-WHEEL after poll", populated, scroll.contentView.bounds)
-        let wheelPosition = scroll.contentView.bounds.minY
-        if populated { #expect(wheelPosition > 0) }
+        if populated {
+            #expect(onScrollAnswers.contains(false) && !onScrollAnswers.contains(true),
+                    "Vertical wheel over the list must be refused by the sidebar; answers were \(onScrollAnswers)")
+        }
+        #expect(sidebar.libraryOpen && library.layer?.transform.m41 == 0)
         try send(window, sidebar: sidebar, x: 310, dx: -1, dy: -120, phase: .began, time: 102)
+        if populated {
+            #expect(onScrollAnswers.allSatisfy { $0 == false } && onScrollAnswers.contains(false),
+                    "The gesture's first event over the list must keep it refused; answers were \(onScrollAnswers)")
+        }
         try send(window, sidebar: sidebar, x: 310, dy: -120, phase: .changed, time: 102.005)
+        if populated {
+            #expect(onScrollAnswers.contains(false) && !onScrollAnswers.contains(true),
+                    "A continuing vertical gesture over the list must stay refused; answers were \(onScrollAnswers)")
+        }
         try send(window, sidebar: sidebar, x: 20, dx: -400, dy: -120, phase: .changed, time: 102.01)
         try send(window, sidebar: sidebar, x: 20, phase: .ended, time: 102.02)
-        try await waitUntil { !populated || scroll.contentView.bounds.minY > wheelPosition }
         #expect(sidebar.libraryOpen && library.layer?.transform.m41 == 0)
-        if populated { #expect(scroll.contentView.bounds.minY > wheelPosition) }
         try send(window, sidebar: sidebar, x: 20, dx: -20, phase: .began, time: 103)
         #expect(library.layer?.transform.m41 == -10)
         try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 103.02)
@@ -254,6 +270,8 @@ func wheelLibraryBoundaryUsesTheSameAccumulationAndInversion() {
 func autoArchivePublishWaitsForTheGestureAndItsScrollPresentation() throws {
     let (window, sidebar, _) = fixture(populated: false)
     defer { window.contentView = nil }
+    var now = 300.0
+    sidebar.pullClock = { now }
     var ready = 0
     sidebar.onAutoArchiveReady = { ready += 1 }
     #expect(sidebar.canPublishAutoArchive)
@@ -261,13 +279,64 @@ func autoArchivePublishWaitsForTheGestureAndItsScrollPresentation() throws {
     #expect(!sidebar.canPublishAutoArchive)
     try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 100.02)
     #expect(!sidebar.canPublishAutoArchive)
+    now += SidebarMetrics.momentumQuiet
+    sidebar.stepMomentumQuiet()
+    #expect(ready == 0)
+    #expect(!sidebar.canPublishAutoArchive)
+    // The spring settles after the quiet, so the presentation's own ready call has to publish.
     sidebar.finishScrollPresentation()
     #expect(sidebar.canPublishAutoArchive)
     #expect(ready == 1)
     try send(window, sidebar: sidebar, x: 310, dy: -10, phase: .began, time: 101)
     #expect(!sidebar.canPublishAutoArchive)
     try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 101.02)
+    now += SidebarMetrics.momentumQuiet
+    sidebar.stepMomentumQuiet()
     #expect(sidebar.canPublishAutoArchive)
     #expect(ready == 2)
     #expect(!window.isVisible)
+}
+
+@Test @MainActor
+func autoArchiveReadyWaitsForMomentumAfterAnEndedListGesture() throws {
+    let (window, sidebar, container) = fixture(populated: true)
+    defer { window.contentView = nil }
+    sidebar.setLibraryOpen(true)
+    container.layoutSubtreeIfNeeded()
+    var now = 200.0
+    sidebar.pullClock = { now }
+    var ready = 0
+    sidebar.onAutoArchiveReady = { ready += 1 }
+    try send(window, sidebar: sidebar, x: 310, dy: -30, phase: .began, time: now)
+    try send(window, sidebar: sidebar, x: 310, dy: -30, phase: .changed, time: now + 0.01)
+    #expect(ready == 0)
+    try send(window, sidebar: sidebar, x: 310, phase: .ended, time: now + 0.02)
+    #expect(ready == 0)
+    try send(window, sidebar: sidebar, x: 310, dx: 40, momentum: .begin, time: now + 0.03)
+    #expect(ready == 0)
+    try send(window, sidebar: sidebar, x: 310, dx: 80, momentum: .continuous, time: now + 0.04)
+    try send(window, sidebar: sidebar, x: 310, momentum: .end, time: now + 0.05)
+    #expect(ready == 1)
+}
+
+@Test @MainActor
+func autoArchiveReadyWithoutMomentumPublishesOnceAfterTheQuietWindow() throws {
+    let (window, sidebar, container) = fixture(populated: true)
+    defer { window.contentView = nil }
+    sidebar.setLibraryOpen(true)
+    container.layoutSubtreeIfNeeded()
+    var now = 210.0
+    sidebar.pullClock = { now }
+    var ready = 0
+    sidebar.onAutoArchiveReady = { ready += 1 }
+    try send(window, sidebar: sidebar, x: 310, dy: -30, phase: .began, time: now)
+    try send(window, sidebar: sidebar, x: 310, dy: -30, phase: .changed, time: now + 0.01)
+    try send(window, sidebar: sidebar, x: 310, phase: .ended, time: now + 0.02)
+    #expect(ready == 0)
+    now += SidebarMetrics.momentumQuiet
+    sidebar.stepMomentumQuiet()
+    #expect(ready == 1)
+    now += 1
+    sidebar.stepMomentumQuiet()
+    #expect(ready == 1)
 }
