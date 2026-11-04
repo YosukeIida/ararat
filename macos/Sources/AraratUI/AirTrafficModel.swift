@@ -113,7 +113,8 @@ public final class AirTrafficModel: ObservableObject {
     private func receive(_ result: Result<RoutingDecision, Error>, url: String, completion: WorkspaceAdapter.Completion<Void>) {
         switch result {
         case .success(let decision):
-            error = nil
+            // This is a query, not an edit: clearing `error` here would let the test field's
+            // keystrokes hide a refused edit's banner (the pane reads the same `error`).
             testAnswer = TestAnswer(url: url, decision: decision)
             completion(.success(()))
         case .failure(let failure):
@@ -242,10 +243,10 @@ extension AirTrafficModel {
         let rule = decision.ruleId.flatMap { id in rules.first { $0.id == id } }
         let url = answerURL(url)
         if let rule, let text = rule.conditions.map(\.text).first(where: { !$0.isEmpty }) {
-            return "\(url) → rule “\(text)” opens it in \(place)"
+            return "\(url) → route “\(text)” opens it in \(place)"
         }
-        if let rule {
-            return "\(url) → rule \(rule.id) opens it in \(place)"
+        if let rule, let index = rules.firstIndex(where: { $0.id == rule.id }) {
+            return "\(url) → route \(index + 1) opens it in \(place)"
         }
         return "\(url) → the default opens it in \(place)"
     }

@@ -100,7 +100,7 @@ private struct SettingsRail: View {
                             Button { model.navigate(pane) } label: {
                                 Label(title, systemImage: icon).foregroundStyle(SettingsColor.foreground).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 26)
                                     .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.plain).accessibilityLabel(title)
                         }
                     } else {
                         ForEach(panes, id: \.1) { pane, title, icon in
@@ -159,7 +159,7 @@ private struct SettingsDetail: View {
                                         Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
                                         Text(space.title)
                                         Spacer()
-                                        Text("\(model.tabCount(space)) tabs").foregroundStyle(.secondary)
+                                        Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
                                         if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
                                         Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                     }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
@@ -193,7 +193,7 @@ private struct SettingsDetail: View {
             if let space = model.space { Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56) }
             else { Image(systemName: model.page == .tabs ? "square.on.square" : model.page == .shortcuts ? "keyboard" : model.page == .airTraffic ? "paperplane" : "square.grid.2x2").font(.system(size: 48)).frame(height: 56) }
             Text(model.title).font(.title.bold())
-            Text(model.space.map { "\(model.tabCount($0)) tabs · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : model.page == .airTraffic ? SettingsModel.airTrafficSubtitle : "Keep related tabs together.")).foregroundStyle(.secondary)
+            Text(model.space.map { "\(model.tabCountLabel($0)) · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : model.page == .airTraffic ? SettingsModel.airTrafficSubtitle : "Keep related tabs together.")).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity).padding(.vertical, 18).opacity(1 - model.headerProgress).id("header")
     }
     func card<Content: View>(_ id: String, title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
@@ -424,15 +424,15 @@ private struct SettingsAirTrafficSection: View {
     private var ruleList: some View {
         VStack(spacing: 10) {
             HStack {
-                Text("Rules").font(.headline)
+                Text("Routes").font(.headline)
                 Spacer(minLength: 12)
                 Button("New Route") {
                     airTraffic.add(destination: defaultChoice.destination(littleWindowProfile: model.airTrafficLittleWindowProfile) ?? Destination.littleWindow(.`default`))
                 }
             }
             .padding(.vertical, 2)
-            ForEach(rules, id: \.id) { rule in
-                ruleCard(rule)
+            ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                ruleCard(rule, position: index + 1)
             }
             if rules.isEmpty {
                 Text("No routes yet. Links other apps hand over go to the default destination.")
@@ -446,16 +446,16 @@ private struct SettingsAirTrafficSection: View {
         DestinationChoice(airTraffic.routing?.default, spaces: model.snapshot.spaces)
     }
 
-    private func ruleCard(_ rule: Rule) -> some View {
+    private func ruleCard(_ rule: Rule, position: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 matchPicker(rule)
-                urlField(rule)
+                urlField(rule, position: position)
                 Button {
                     airTraffic.delete(rule.id)
                 } label: { Image(systemName: "minus.circle.fill") }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Delete rule \(rule.id)")
+                    .accessibilityLabel(SettingsModel.routeDeleteAccessibilityLabel(position))
                     .help("Delete this route")
             }
             HStack(spacing: 8) {
@@ -485,9 +485,9 @@ private struct SettingsAirTrafficSection: View {
         .frame(width: 120)
     }
 
-    private func urlField(_ rule: Rule) -> some View {
+    private func urlField(_ rule: Rule, position: Int) -> some View {
         SettingsField(value: rule.conditions.first?.text ?? "", label: "URL",
-            accessibility: "URL text of rule \(rule.id)") {
+            accessibility: SettingsModel.routeUrlAccessibilityLabel(position)) {
             airTraffic.editCondition(rule.id, style: rule.conditions.first?.style ?? .contains, text: $0)
         }
     }
@@ -527,7 +527,7 @@ private struct SettingsAirTrafficSection: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Default destination")
-                Text("Where links land when no rule takes them.")
+                Text("Where links land when no route takes them.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
@@ -554,13 +554,21 @@ private struct SettingsAirTrafficSection: View {
             Spacer(minLength: 12)
             TextField("https://…", text: $probe).textFieldStyle(.roundedBorder)
                 .frame(width: 220)
-                .onSubmit { airTraffic.decide(probe) }
+                .onChange(of: probe) { _, probe in ask(probe) }
+                .onSubmit { ask(probe) }
                 .accessibilityLabel("Test link")
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
         .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
         .id("atc-test")
+    }
+
+    private func ask(_ probe: String) {
+        // The empty gate lives here, not in `decide`: the model stays able to say where an
+        // empty link lands, and the pane just never asks it that.
+        guard !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        airTraffic.decide(probe)
     }
 
     private var answer: String {
@@ -570,7 +578,7 @@ private struct SettingsAirTrafficSection: View {
             let rules = routing?.rules ?? []
             return AirTrafficModel.answerLabel(url: answer.url, decision: decision, rules: rules, spaces: model.snapshot.spaces)
         }
-        return "Type a link to see which rule (or the default) takes it."
+        return "Type a link to see which route (or the default) takes it."
     }
 }
 

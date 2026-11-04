@@ -208,3 +208,23 @@ func settingsErrorsSearchAndEdgeBounceUseTheirVisibleValues() {
     #expect(SettingsModel.settingsOffset(-100, index: 0) == -100)
     #expect(SettingsModel.settingsOffset(100, index: 1) == 100)
 }
+
+// The count words go singular only at one: 0 and 2 stay plural, at the helper the header,
+// the Spaces rows and the search results all read (a folder row in Today is not a tab).
+@Test @MainActor
+func theTabCountWordsGoSingularOnlyAtOne() {
+    let tab = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let split = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: "Split", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
+    let folder = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "folder", title: "Folder", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil)
+    func space(_ id: String, today: [Row]) -> SpaceSnapshot {
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: id, title: id, icon: nil, look: nil, favorites: [], pinned: [], today: today)
+    }
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [space("empty", today: []), space("one", today: [tab]), space("two", today: [tab, split, folder])]),
+        adapter: WorkspaceAdapter(windowID: "counts"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "counts-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "counts-atc")))
+    #expect(model.tabCountLabel(model.snapshot.spaces[0]) == "0 tabs")
+    #expect(model.tabCountLabel(model.snapshot.spaces[1]) == "1 tab")
+    #expect(model.tabCountLabel(model.snapshot.spaces[2]) == "2 tabs")
+    // The Spaces row subtitle carries the same words as the helper.
+    #expect(model.rows.first { $0.id == "one" }?.subtitle.hasPrefix("1 tab ·") == true)
+    #expect(model.rows.first { $0.id == "empty" }?.subtitle.hasPrefix("0 tabs ·") == true)
+}

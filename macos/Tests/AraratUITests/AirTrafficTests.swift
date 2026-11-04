@@ -165,7 +165,7 @@ func testAnswersAndChoiceFallbacksUseTheirPlainWords() throws {
     let rules = [Rule(id: "meet", conditions: [UrlCondition(style: .contains, text: "meet.google.com")], destination: .space(.mostRecent))]
     let ruleAnswer = AirTrafficModel.answerLabel(url: "https://www.meet.google.com/x",
         decision: RoutingDecision(ruleId: "meet", destination: .space(.mostRecent)), rules: rules, spaces: [space])
-    #expect(ruleAnswer == "“https://www.meet.google.com/x” → rule “meet.google.com” opens it in the most recent space")
+    #expect(ruleAnswer == "“https://www.meet.google.com/x” → route “meet.google.com” opens it in the most recent space")
     let defaultAnswer = AirTrafficModel.answerLabel(url: "https://other.example.org",
         decision: RoutingDecision(ruleId: nil, destination: .littleWindow(.default)), rules: rules, spaces: [space])
     #expect(defaultAnswer == "“https://other.example.org” → the default opens it in the Little window")
@@ -218,7 +218,7 @@ func theAirTrafficPaneViewsBuildWithoutOrderingAWindow() async throws {
     #expect(airTraffic.testAnswer?.decision.ruleId == id)
     let label = AirTrafficModel.answerLabel(url: "https://www.meet.google.com/x",
         decision: try #require(airTraffic.testAnswer?.decision), rules: airTraffic.routing?.rules ?? [], spaces: snapshot.spaces)
-    #expect(label == "“https://www.meet.google.com/x” → rule “meet.google.com” opens it in space Work")
+    #expect(label == "“https://www.meet.google.com/x” → route “meet.google.com” opens it in space Work")
     #expect(!window.isVisible)
     model.navigate(.tabs)
     #expect(model.highlighted == nil)
@@ -437,4 +437,144 @@ func aDestinationNamingALostSpaceReadsAsTheDeletedSpaceChoice() {
     #expect(DestinationChoice.deletedSpace("space-gone").menuTitle(spaces: [space]) == "Deleted space")
     #expect(DestinationChoice.deletedSpace("space-gone").isDeletedSpace)
     #expect(!DestinationChoice.mostRecent.isDeletedSpace)
+}
+
+// The route rows are labeled by position at the helper the fields carry, so a screen reader
+// reads what the pane reads — "URL text of route 1", "Delete route 2" — and no label ever
+// carries a rule id. The bridged pane does not surface SwiftUI accessibility overrides outside
+// a live AX runtime, so the label texts are pinned where the view reads them from.
+@Test @MainActor
+func theRouteAccessibilityLabelsNameThePositionAndNeverTheRuleId() throws {
+    #expect(SettingsModel.routeUrlAccessibilityLabel(1) == "URL text of route 1")
+    #expect(SettingsModel.routeUrlAccessibilityLabel(2) == "URL text of route 2")
+    #expect(SettingsModel.routeDeleteAccessibilityLabel(1) == "Delete route 1")
+    #expect(SettingsModel.routeDeleteAccessibilityLabel(2) == "Delete route 2")
+    let uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+    for position in [1, 2, 3, 4] {
+        #expect(SettingsModel.routeUrlAccessibilityLabel(position).range(of: uuid, options: .regularExpression) == nil)
+        #expect(SettingsModel.routeDeleteAccessibilityLabel(position).range(of: uuid, options: .regularExpression) == nil)
+    }
+}
+
+// Two named rules read back as two URL fields in the rows' order, and the values follow the
+// rows through a move and a delete: each field carries its rule's text, so what the
+// positional labels stand for is the row order itself, not a rule's founding slot.
+@Test @MainActor
+func theUrlFieldsReadTheirRulesBackInRowOrderThroughAMoveAndADelete() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-rowfields")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("rowfields.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    let controller = SettingsWindowController(model: model)
+    let window = try #require(controller.window)
+    defer { window.contentViewController = nil }
+    model.navigate(.airTraffic)
+    airTraffic.load()
+    try await waitUntil { airTraffic.routing != nil }
+    func urlTexts() -> [String] {
+        window.contentView?.layoutSubtreeIfNeeded()
+        guard let content = window.contentView else { return [] }
+        return airTrafficDescendants(content).compactMap { $0 as? NSTextField }.filter { $0.placeholderString == "URL" }.map(\.stringValue)
+    }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.mostRecent), completion: $0) }
+    let rules = try #require(airTraffic.routing?.rules)
+    #expect(rules.count == 2)
+    let firstId = try #require(rules.first?.id)
+    let secondId = try #require(rules.last?.id)
+    try await atcValue { airTraffic.editCondition(firstId, style: .contains, text: "alpha", completion: $0) }
+    try await atcValue { airTraffic.editCondition(secondId, style: .contains, text: "beta", completion: $0) }
+    // The fields carry the rule texts in the rows' order.
+    try await waitUntil { urlTexts() == ["alpha", "beta"] }
+    #expect(try #require(urlTexts().first) == "alpha")
+    #expect(try #require(urlTexts().last) == "beta")
+    // The row move rebinds what each positional field stands for.
+    try await atcValue { airTraffic.move(secondId, to: 0, completion: $0) }
+    try await waitUntil { urlTexts() == ["beta", "alpha"] }
+    #expect(try #require(urlTexts().first) == "beta")
+    #expect(try #require(urlTexts().last) == "alpha")
+    // The delete takes the field with it and leaves the other rule's row intact.
+    try await atcValue { airTraffic.delete(secondId, completion: $0) }
+    try await waitUntil { urlTexts().count == 1 }
+    #expect(try #require(urlTexts().first) == "alpha")
+    #expect(!window.isVisible)
+    window.contentView = nil
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// The test field asks while the text changes — not only at Return — and an empty or
+// whitespace-only field asks nothing: after both clears, a route round trip queued behind
+// them (the adapter's queue is serial, so a stray ask would have answered first and either
+// replaced the answer with the emptiness or set an error) still finds the older answer
+// standing with no error.
+@Test @MainActor
+func theTestFieldAnswersWhileTheTextChangesAndAnEmptyFieldAsksNothing() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-probe")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("probe.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    let controller = SettingsWindowController(model: model)
+    let window = try #require(controller.window)
+    defer { window.contentViewController = nil }
+    model.navigate(.airTraffic)
+    airTraffic.load()
+    try await waitUntil { airTraffic.routing != nil }
+    let testField = { window.contentView?.layoutSubtreeIfNeeded(); return airTrafficDescendants(window.contentView!).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "https://…" } }
+    try await waitUntil { testField() != nil }
+    let field = try #require(testField())
+    // Typing alone (nothing was submitted) asks, and the stored answer matches the field's url.
+    field.stringValue = "good.example"
+    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+    try await waitUntil { airTraffic.testAnswer?.url == "good.example" }
+    let answer = AirTrafficModel.answerLabel(url: "good.example", decision: try #require(airTraffic.testAnswer?.decision), rules: airTraffic.routing?.rules ?? [], spaces: snapshot.spaces)
+    #expect(answer.hasPrefix("“good.example”"))
+    // Clearing — whitespace only first, then fully — leaves the stored answer untouched.
+    field.stringValue = " "
+    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+    field.stringValue = ""
+    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+    _ = try await atcValue { adapter.route(url: "https://good.example", completion: $0) }
+    #expect(airTraffic.testAnswer?.url == "good.example")
+    #expect(airTraffic.error == nil)
+    #expect(!window.isVisible)
+    window.contentView = nil
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// A route answer is a query, not an edit: answering the test field must not clear the banner
+// a refused edit shows — the pane reads the one `error` for both. An applied edit still
+// clears a stale refusal through the same receive the edits answer on.
+@Test @MainActor
+func aRouteAnswerLeavesARefusedEditsMessageStanding() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-refusal")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    _ = try await atcValue { adapter.open(path: directory.appendingPathComponent("refusal.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { fixture("link-routing-synthetic.json") }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    try await atcValue { airTraffic.load(completion: $0) }
+    #expect(airTraffic.routing?.rules.contains { $0.id == "meet" } == true)
+    // The core refuses an edit whose destination names a space the workspace does not have,
+    // and the refusal sets the banner's message.
+    let refused = try? await atcValue { airTraffic.editDestination("meet", choice: .space("space-gone"), littleWindowProfile: nil, completion: $0) }
+    #expect(refused == nil)
+    let refusal = try #require(airTraffic.error)
+    // Answering the test field (a keystroke's ask routes and lands) answers — and the
+    // refusal keeps standing.
+    try await atcValue { airTraffic.decide("good.example", completion: $0) }
+    #expect(airTraffic.testAnswer?.url == "good.example")
+    #expect(airTraffic.error == refusal)
+    // An applied edit goes through the same receive and clears the stale refusal.
+    try await atcValue { airTraffic.editDestination("meet", choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    #expect(airTraffic.error == nil)
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
 }

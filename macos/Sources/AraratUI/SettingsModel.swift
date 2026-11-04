@@ -82,7 +82,7 @@ public final class SettingsModel: ObservableObject {
         switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .airTraffic: "Air Traffic Control"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
     }
     /// The pane says in plain words that the routing arrives with the engine.
-    static let airTrafficSubtitle = "Links other apps hand to Ararat follow these rules once the browser engine arrives."
+    static let airTrafficSubtitle = "Links other apps hand to Ararat follow these routes once the browser engine arrives."
     /// The id the search result for the Air Traffic Control pane carries, and the id the pane's
     /// default destination card carries: a result scrolls to and fills the same row (§7).
     static let airTrafficCardId = "air-traffic"
@@ -90,7 +90,7 @@ public final class SettingsModel: ObservableObject {
         var result = [Row(id: "width", pane: .tabs, title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt."), Row(id: "archive-after", pane: .tabs, title: "Archive Today's tabs after", subtitle: archiveSubtitle)] + shortcuts
         result.append(Row(id: Self.airTrafficCardId, pane: .airTraffic, title: "Air Traffic Control", subtitle: Self.airTrafficSubtitle))
         for space in snapshot.spaces {
-            result.append(Row(id: space.id, pane: .spaces, title: space.title, subtitle: "\(tabCount(space)) tabs · \(space.profileName)"))
+            result.append(Row(id: space.id, pane: .spaces, title: space.title, subtitle: "\(tabCountLabel(space)) · \(space.profileName)"))
             result += [
                 Row(id: "name", pane: .space(space.id), title: "Name", subtitle: "\(space.title) · This space"),
                 Row(id: "icon", pane: .space(space.id), title: "Icon", subtitle: "Choose one character · \(space.title) · This space"),
@@ -104,6 +104,11 @@ public final class SettingsModel: ObservableObject {
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     func select(_ row: Row) { navigate(row.pane, highlight: row.id) }
     func tabCount(_ space: SpaceSnapshot) -> Int { space.today.filter { $0.kind == .tab || $0.kind == .split }.count }
+    func tabCountLabel(_ space: SpaceSnapshot) -> String {
+        "\(tabCount(space)) tab\(tabCount(space) == 1 ? "" : "s")"
+    }
+    static func routeUrlAccessibilityLabel(_ position: Int) -> String { "URL text of route \(position)" }
+    static func routeDeleteAccessibilityLabel(_ position: Int) -> String { "Delete route \(position)" }
     func resultTitle(_ row: Row) -> String {
         guard case .space(let id) = row.pane, let space = snapshot.spaces.first(where: { $0.id == id }) else { return row.title }
         return row.title + " — " + space.title
