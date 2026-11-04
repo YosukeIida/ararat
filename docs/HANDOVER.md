@@ -77,7 +77,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 3. Open nits: the screen-lock Library test; a vertical scroll's ready signal fires before momentum.
 4. Comment cleanup (queued as unit 31): code comments carry process history (unit, round, review numbers) against the why-not-only rule.
 5. When profiles arrive, Air Traffic Control must stay inside a profile: route()'s fallback for a rule whose space was deleted picks the most recent space of that rule's profile; destination checks cover named profiles and the space's profile; the import's Little window profile comes from the routing file's owner, not the first space; the pane's deleted-space set comes from the core.
-6. Phase 2 (engine): decide the base (Helium or ungoogled-chromium) from a patch inventory and one measured rebase; measure the official build.
+6. Phase 2 (engine): the base is ungoogled-chromium (owner, 2026-11-04); inventory its patches, measure one rebase and the official build.
 
 ## Known loose ends
 

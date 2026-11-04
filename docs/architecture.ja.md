@@ -31,7 +31,7 @@ Ararat は、Arc のワークフロー（space、ピン留めタブと Today タ
 | 領域 | 決定 | 理由 | 節 |
 |---|---|---|---|
 | エンジンの組み込み | Chromium fork とし、独自レイヤー `//ararat/core` を `//chrome:chrome_framework` にリンクする（ArcCore / ArdiaCore の方式）。どの段階でも CEF は使用しない | CEF はウィンドウモデル、タブの生成、run loop と衝突する。Ardia のエンジンパッチの行数の 77% は、Chrome のオブジェクトを CEF 越しに受け渡すためだけに存在した（Ardia ledger 1.1）。Cra は約 30 件の CEF 回避策を必要とした（Cra ledger 3.1） | 4 |
-| エンジンのベース | 暫定: Chromium と Helium のパッチセット。phase 2 で Chromium と ungoogled-chromium の組み合わせと比較して決定する | Helium は脱 Google 化、コーデック、マルチプラットフォームのパッケージングを提供し、GPL-3.0 とも整合するが、保守上の正味の利点は実証されていない（Ardia ledger 1.2 は、Ardia 自身が Helium へ移行した理由を推測と記している） | 4.2 |
+| エンジンのベース | Chromium と ungoogled-chromium のパッチセット（オーナーの選択、2026-11-04） | Helium は ungoogled-chromium の上に作られており、追加の変更の多くは Ararat が外すもの（パスワードマネージャーの削除、キーチェーンの名称変更、Sparkle、オンボーディング、!bangs、Web Store のプロキシ）である。コーデックは GN args で得られ、パッケージングは自前のものに置き換える。Ardia は Helium に移った後、Helium と ungoogled の動作を元に戻すパッチを 18 件持ち、移った理由は記録されていない（Ardia ledger 1.2） | 4.2 |
 | エンジン ↔ アプリの API | framework からエクスポートする、手書きで型付きの Objective-C API を Swift から呼び出す | Swift は生成したグルーコードなしで Objective-C をインポートできる。Dia も Objective-C を Swift に公開しているが、146 個のクラスを mojom から生成している | 4.4 |
 | run loop | Chromium がプロセスとメインループを所有し、AppKit の UI はその内部で起動する | 外部からのポンプに起因するバグを排除する（Ardia ledger 1.1） | 4.5 |
 | ウィンドウモデル | アプリのウィンドウ 1 つにつき、Views を基盤とする `NSWindow` を 1 つ置き、そのウィンドウに表示するプロファイルごとに Chrome の `Browser` を 1 つ保持する。タブのビューは独自のビューツリーに配置する | Chrome の bubble とダイアログはウィンドウに付随する。プロファイルの切り替えはビューの差し替えで済む。オーバーレイは通常のサブビューとして実装できる | 4.6 |
@@ -87,15 +87,15 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 |---|---|---|---|
 | 独自の `BrowserWindow`、`BrowserDelegate`、UI の seam の実装、セッションの永続化、ObjC API | 密結合、ツリー内 | `//ararat/core`、`//chrome/browser/ararat` | 新規ファイルのみとする。Chrome の GN ルールでビルドする |
 | Chrome 自体のファイルへの編集 | 最小限、hook として分離 | `engine/patches/` | 各編集は、1 つの共有ヘッダーで宣言する関数ポインタの hook とする。1 パッチにつき 1 つの関心事とする |
-| ベースのパッチセット（採用した場合は Helium） | 取り込み、ガード付き | `engine/patches/series` | スキップリストとガードにより、スキップしたパッチが含まれないこと、およびスキップによって保護している箇所に何も手が入らないことを検査する |
+| ベースのパッチセット（ungoogled-chromium） | 取り込み、ガード付き | `engine/patches/series` | スキップリストとガードにより、スキップしたパッチが含まれないこと、およびスキップによって保護している箇所に何も手が入らないことを検査する |
 | Rust のコア、同期、インポート | 分離 | `core/` | Chromium の型を使用しない |
 | AppKit の UI | 分離 | `macos/` | エンジンとは `AraratKit` を介してのみ通信する |
 
 ### 4.2 ベースとパッチの管理
 
 - クリーンな Chromium の revision とベースのパッチセットは、`engine/build-inputs.toml` で別々に固定する。
-- Helium は暫定である。phase 2 では、Chromium + Helium と Chromium + ungoogled-chromium のどちらを採るかを、次の 2 点で決定する。1 つは、ベースの全パッチについて、維持・スキップ・対抗パッチのいずれかとセキュリティ上の帰結（たとえば Helium のビルドフラグは Safe Browsing を無効にする）を記した、固定した一覧である。もう 1 つは、1 回のリベースの計測である。
-- Helium を維持する場合は、Ardia に倣い、こちらの選択と衝突するものをスキップする。対象は、パスワードマネージャーの削除、キーチェーンの名称変更、Sparkle の統合、クラッシュダイアログ、オンボーディング、services ページ、!bangs、Web Store のプロキシである（Ardia ledger 1.2）。
+- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。phase 2 では、ungoogled-chromium の全パッチについて、維持・スキップ・対抗パッチのいずれかとセキュリティ上の帰結を記した、固定した一覧を作る（Google の Safe Browsing を外すので、14 の評価の仕組みで置き換える）。また、1 回のリベースを計測する。
+- それまでは Helium を暫定のベースとしていた。一覧やリベースで ungoogled-chromium の手間が見込みより大きいと分かった場合は、Helium を比較の候補とし、Ardia に倣ってこちらの選択と衝突するものをスキップする（Ardia ledger 1.2）。
 - パッチの順序の唯一の正本は `engine/patches/series` である。パッチ名は関心事を表し、順序を示す接頭辞は付けない。
 - `series check` は、固定したベースに対してスクラッチのツリーで series 全体を fuzz なしで適用し、ビルドツリーとバイト単位で比較する。`series check` はエンジンのリリースのたびに事前に実行する。
 - Chrome のファイルへの大きな編集は、新しいクラスと小さな hook に書き直す（Ardia は 1,012 行の PiP パッチをこの方法で書き直した）。
@@ -342,7 +342,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 |---|---|---|
 | 0 | リポジトリ、devshell、調査の取り込み、本文書 | レビュー済みの設計 |
 | 1 | エンジンなしのコアの基礎: 所属のレジスタを持つモデル、ATC、Arc のインポート、クラッシュに対して安全な書き込みを行う SQLite、UniFFI バインディング。harness 上でコアのデータを用いる `AraratUI` の最小限のサイドバー。これと並んで、`morluto/rea` の clone、Yab の利用規約の範囲内での Yab の静的解析（レイアウト、クラス名、設定の構造）、Yab のフローティングサイドバーと設定の観察、仕様の作成を行う | harness が実際の Arc のインポートを表示する。ツリーの不変条件とクラッシュに対して安全な書き込みに関するコアのテストが通る |
-| 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、両方のベース候補の一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series check`、ベースの決定 | 独自のスクリプトによる、選んだベースの標準ビルド。ベースの決定を記録済み |
+| 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、ungoogled-chromium のパッチの一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series check`、1 回のリベースの計測 | 独自のスクリプトによる、選んだベースの標準ビルド |
 | 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
 | 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Arc の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
 | 5 | Little window、既定のハンドラーとしての Air Traffic Control、split view、archive、ダウンロード、セッションの復元 | 日常の使用において Arc のワークフローと同等 |

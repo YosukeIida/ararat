@@ -29,7 +29,7 @@ Constraints, set by the owner:
 | Area | Decision | Why | Section |
 |---|---|---|---|
 | Engine embedding | Chromium fork with our layer `//ararat/core` linked into `//chrome:chrome_framework` (the ArcCore / ArdiaCore model). No CEF at any stage | CEF fights the window model, tab creation and the run loop; 77% of Ardia's engine patch lines existed only to pass Chrome objects through CEF (Ardia ledger 1.1). Cra needed about 30 CEF workarounds (Cra ledger 3.1) | 4 |
-| Engine base | Provisional: Chromium plus the Helium patch set. Decided in phase 2 against Chromium plus ungoogled-chromium | Helium brings de-googling, codecs and multi-platform packaging and matches GPL-3.0, but its net maintenance benefit is unproven (Ardia ledger 1.2 marks the reason for its own move as inferred) | 4.2 |
+| Engine base | Chromium plus the ungoogled-chromium patch set (the owner's choice, 2026-11-04) | Helium builds on ungoogled-chromium and adds mostly what Ararat would skip (password manager removal, keychain renaming, Sparkle, onboarding, !bangs, the Web Store proxy); its codecs come from GN args and its packaging is replaced by ours. Ardia, after moving to Helium, carries 18 patches undoing Helium and ungoogled behaviour, and its reason for the move is not recorded (Ardia ledger 1.2) | 4.2 |
 | Engine ↔ app API | A handwritten, typed Objective-C API exported from the framework, called from Swift | Swift imports Objective-C with no generated glue. Dia also exposes Objective-C to Swift, but generates its 146 classes from mojom | 4.4 |
 | Run loop | Chromium owns the process and the main loop; the AppKit UI starts inside it | Removes the external-pump bugs (Ardia ledger 1.1) | 4.5 |
 | Window model | One Views-backed `NSWindow` per app window, holding one Chrome `Browser` per profile shown in it. Tab views go into our view tree | Chrome's bubbles and dialogs attach to the window; profile switching is a view swap; overlays are ordinary subviews | 4.6 |
@@ -85,15 +85,15 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 |---|---|---|---|
 | Our `BrowserWindow`, `BrowserDelegate`, UI seam implementations, session persistence, ObjC API | Tight, inside the tree | `//ararat/core`, `//chrome/browser/ararat` | New files only. Built with Chrome's GN rules |
 | Edits to Chrome's own files | Minimal, isolated as hooks | `engine/patches/` | Each edit is a function-pointer hook declared in one shared header; one concern per patch |
-| Base patch set (Helium if chosen) | Imported, guarded | `engine/patches/series` | A skip list plus guards check that skipped patches stay out and that nothing touches what the skips protect |
+| Base patch set (ungoogled-chromium) | Imported, guarded | `engine/patches/series` | A skip list plus guards check that skipped patches stay out and that nothing touches what the skips protect |
 | Rust core, sync, import | Isolated | `core/` | No Chromium types |
 | AppKit UI | Isolated | `macos/` | Talks to the engine only through `AraratKit` |
 
 ### 4.2 Base and patch management
 
 - The clean Chromium revision and the base patch set are pinned separately in `engine/build-inputs.toml`.
-- Helium is provisional. Phase 2 decides between Chromium + Helium and Chromium + ungoogled-chromium using: a pinned inventory of every base patch marked kept, skipped or counter-patched, with its security consequence (for example, Helium's build flags disable Safe Browsing); and one measured rebase.
-- If Helium is kept, skip what fights our choices, following Ardia: password manager removal, keychain renaming, Sparkle integration, crash dialog, onboarding, services pages, !bangs, the Web Store proxy (Ardia ledger 1.2).
+- The base is ungoogled-chromium (the owner's choice, 2026-11-04, over Helium; reasons in section 1). Phase 2 still pins an inventory of every ungoogled-chromium patch marked kept, skipped or counter-patched, with its security consequence (it removes Google's Safe Browsing, so the reputation check of 14 replaces it), and measures one rebase.
+- Helium was the provisional base until then. If the inventory or the rebase shows ungoogled-chromium costing more than expected, Helium is the alternative to compare, skipping what fights our choices as Ardia does (Ardia ledger 1.2).
 - `engine/patches/series` is the only source of patch order. Patch names state their concern; no ordering prefixes.
 - `series check` applies the whole series to the pinned base in a scratch tree with no fuzz and compares bytes with the build tree. It runs before every engine release.
 - Large edits to Chrome files are rewritten as a new class plus a small hook (Ardia rewrote a 1,012-line PiP patch this way).
@@ -340,7 +340,7 @@ Each phase ends with a working build and a sandwich review.
 |---|---|---|
 | 0 | Repo, devshell, research imported, this document | Reviewed design |
 | 1 | Core basics without the engine: model with the membership register, ATC, Arc import, SQLite with crash-safe writes, UniFFI bindings; `AraratUI` minimal sidebar on core data in the harness. In parallel: clone `morluto/rea`, analyse Yab statically (layout, class names, settings structure) within its terms, observe Yab's floating sidebar and settings, write the spec | Harness shows a real Arc import; core tests for tree invariants and crash-safe writes pass |
-| 2 | Engine build base on the Mac Studio: Xcode, pinned Chromium, both base candidates inventoried, GN args, lock, measured first and incremental builds, `series check`, base decision | A stock build of the chosen base from our scripts; base decision recorded |
+| 2 | Engine build base on the Mac Studio: Xcode, pinned Chromium, the ungoogled-chromium patches inventoried, GN args, lock, measured first and incremental builds, `series check`, one measured rebase | A stock build of the chosen base from our scripts |
 | 3 | Vertical slice spike: `//ararat/core` with the core's coordinator and the minimal sidebar, in a signed app (bundle id, team, entitlements, helper signing). Acceptance (hidden and visible): two profiles in one window with extension window semantics; popups through every creation path; autofill, passkey and permission prompts including rejection; external protocol confirmation; fullscreen exit; docked DevTools; an MV3 extension with its popup; Chromium owning the run loop with clean and cancelled quit; cross-window page transfer and a two-pane split; compositor measurements and decision; IME and paste after ⌘L; crash and relaunch reconciliation; one practice rebase. The duties matrix (4.6) is complete | All acceptance checks pass; compositor model chosen |
 | 4 | UI build-out: full sidebar, favorites, folders, space paging, floating sidebar with Arc's rule, themes, command bar with Chromium autocomplete | Owner can browse with the Arc layout |
 | 5 | Little window, Air Traffic Control as default handler, split view, archive, downloads, session restore | Arc workflow parity for daily use |
