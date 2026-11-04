@@ -1,7 +1,7 @@
 import AppKit
 import AraratKit
 
-/// The Air Traffic Control pane's model (unit 29 part B): the rules in match order, the default
+/// The Air Traffic Control pane's model: the rules in match order, the default
 /// destination, and the test field's answer. Everything the user changes goes through the core
 /// (the same ops the App's other edits write), so a reopen reads the pane's own state back; the
 /// matcher, order semantics and persistence all live in Rust. The row editing flow (one
@@ -155,7 +155,7 @@ public enum DestinationChoice: Hashable, Sendable {
     case littleWindow
     /// A destination naming a space the workspace no longer has. The menu shows it as one
     /// disabled "Deleted space" item, selected, instead of silently reading Most Recent
-    /// Space (the owner's ruling); picking another destination replaces it. The id stays in
+    /// Space; picking another destination replaces it. The id stays in
     /// the tag so the picker matches the selection, and an untouched row keeps its
     /// destination unrewritten.
     case deletedSpace(String)

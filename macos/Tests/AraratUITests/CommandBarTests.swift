@@ -4,7 +4,7 @@ import Testing
 @testable import AraratUI
 @testable import AraratHarness
 
-// The command bar panel, field, keyboard and commits (unit 30 part B). Views are built
+// The command bar panel, field, keyboard and commits. Views are built
 // unordered and events are fed directly; nothing is posted, no ordered windows, no menus.
 @MainActor
 private func barKeyEvent(_ characters: String, keyCode: UInt16, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
@@ -106,8 +106,7 @@ func commandBarGeometryFollowsTheDesignFormula() throws {
     let rows = view.subviews.filter { $0 is CommandBarRowView && !$0.isHidden }
     #expect(rows.count == 2)
     let frames = rows.map { $0.frame }.sorted { $0.minY < $1.minY }
-    // Indexed with #require, so a regression that drops a row fails instead of trapping
-    // (review 1b nit 5).
+    // Indexed with #require, so a regression that drops a row fails instead of trapping.
     try #require(frames.count == 2)
     #expect(frames[0] == NSRect(x: 10, y: 70, width: 980, height: 50))
     #expect(frames[1] == NSRect(x: 10, y: 122, width: 980, height: 50))
@@ -307,15 +306,15 @@ func returnAndArrowsGoToTheInputMethodWhileTextIsMarked() throws {
     store.results[settled] = CommandBarResult(rows: rows, inlineCompletion: nil)
     controller.update(query: settled, allowCompletion: false)
     editor.keyDown(with: try barKeyEvent("\r", keyCode: 36))
-    // A regression fails here instead of trapping on the index (review 2b, not verified).
+    // A regression fails here instead of trapping on the index.
     try #require(commits.count == 1)
     #expect(commits[0]?.target == .tab(id: "t1", spaceId: nil))
 }
 
 @Test @MainActor
 func theSessionIsBuiltOncePerOpenAndDroppedOnClose() throws {
-    // The store is handed to the controller only, so its weak reference shows the drop
-    // (review 1b nit 5): the test's own strong reference is gone before close() runs.
+    // The store is handed to the controller only, so its weak reference shows the drop: the
+    // test's own strong reference is gone before close() runs.
     var store: FakeCommandBarStore? = FakeCommandBarStore()
     weak var weakStore: FakeCommandBarStore?
     let controller = CommandBarController()
@@ -506,7 +505,7 @@ func thePanelFollowsTheRowCountOnEveryQuery() throws {
 @Test @MainActor
 func commandReturnAppliesTheShownCompletionAsReturnDoes() async throws {
     // Rows as the core returns them for the typed query: the row's target carries the typed URL
-    // until the completion re-queries (review 1b should 2).
+    // until the completion re-queries.
     let store = FakeCommandBarStore()
     store.results["netflix.c"] = CommandBarResult(rows: [barRow("netflix.c", target: .openUrl(url: "https://netflix.c"))], inlineCompletion: "netflix.com")
     store.results["netflix.com"] = CommandBarResult(rows: [barRow("netflix.com", target: .openUrl(url: "https://netflix.com"))], inlineCompletion: nil)
@@ -539,7 +538,7 @@ func commandReturnAppliesTheShownCompletionAsReturnDoes() async throws {
 
 @Test @MainActor
 func keysWithoutCommandGoToTheBarField() throws {
-    // Unit 28's own-field rule holds while the bar's panel is key: a table command rebound
+    // While the bar's panel is key, a table command rebound
     // without Command is typed into the bar's field, not sunk at AppKit's menu pass.
     let panel = CommandBarPanel()
     let controller = CommandBarController()
@@ -626,8 +625,8 @@ func theSessionAppliesWhenItArrivesAndReplaysTheTypedText() throws {
 @Test @MainActor
 func returnBeforeTheSessionArrivesCommitsWhenItLands() throws {
     // Return (and ⌘Return) pressed while the session is still on its way must not drop the
-    // typed text: the bar stays open and the commit happens once when `applyStore` lands
-    // (review 2b nit 1). The gap is one adapter round trip; a paste followed by Return right
+    // typed text: the bar stays open and the commit happens once when `applyStore` lands.
+    // The gap is one adapter round trip; a paste followed by Return right
     // after ⌘T can hit it.
     let store = FakeCommandBarStore()
     store.results["https://a.test"] = CommandBarResult(rows: [barRow("https://a.test", target: .openUrl(url: "https://a.test"))], inlineCompletion: nil)

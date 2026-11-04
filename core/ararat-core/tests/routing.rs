@@ -1,4 +1,4 @@
-// Persisting and importing Air Traffic Control rules (unit 29 part A).
+// Persisting and importing Air Traffic Control rules.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ fn known_spaces() -> HashSet<Id> {
     ["space-work", "space-home"].into_iter().map(String::from).collect()
 }
 
-// The same known ids as a route() argument (round 2): the import checked the fixture's
+// The same known ids a route() argument carries: the import checked the fixture's
 // destinations against exactly these and the order is beside the point, the membership is
 // what route() checks.
 fn known_ids() -> Vec<Id> {
@@ -24,7 +24,7 @@ fn known_ids() -> Vec<Id> {
 }
 
 // The space ids a workspace has now: route() checks a destination's id against these, and a
-// destination naming any other one is answered as the most recent space (unit 29b, round 2).
+// destination naming any other one is answered as the most recent space.
 fn space_ids(workspace: &Workspace) -> Vec<Id> {
     workspace.spaces.iter().map(|space| space.id.clone()).collect()
 }
@@ -49,7 +49,7 @@ fn most_recent() -> Destination {
     Destination::Space(SpaceTarget::MostRecent)
 }
 
-// The spaces a rule's Space(id) destination must name (unit 29b): created with the core's own
+// The spaces a rule's Space(id) destination must name: created with the core's own
 // create_space, so the ids are real ones the edits accept.
 fn with_spaces(workspace: &mut Workspace, ids: &[&str]) {
     for (index, id) in ids.iter().enumerate() {
@@ -339,8 +339,8 @@ fn import_errors_are_import_errors() {
     assert!(matches!(arc_link_routing(json, Profile::Default, &known_spaces()), Err(ImportError(_))));
 }
 
-// Review 1a should 1: two devices editing different rules before they sync. Records merge per
-// rule, so both changes land and both devices end with the same rule order (ties by id).
+// Two devices editing different rules before they sync: records merge per rule, so both
+// changes land and both devices end with the same rule order (ties by id).
 #[test]
 fn two_devices_cross_applying_ops_keeps_both_changes() {
     let base = |ws: &mut Workspace| {
@@ -378,7 +378,7 @@ fn two_devices_cross_applying_ops_keeps_both_changes() {
     assert_eq!(a.routing().rules.iter().find(|r| r.id == "g1").unwrap().destination, most_recent());
 }
 
-// Review 1a nit 3: an edit that changes nothing writes no record.
+// An edit that changes nothing writes no record.
 #[test]
 fn edits_that_change_nothing_write_nothing() {
     let mut ws = Workspace::default();
@@ -390,16 +390,16 @@ fn edits_that_change_nothing_write_nothing() {
     assert_eq!(ws.routing().rules.len(), 1);
 }
 
-// Review 2a nit: a default set back to the built-in one is a reset, not a Put of the value —
-// the tombstone removes the stored record and re-plays the built-in default on any device.
+// A default set back to the built-in one is a reset, not a Put of the value — the tombstone
+// removes the stored record and re-plays the built-in default on any device.
 #[test]
 fn a_default_reset_writes_a_tombstone() {
     let path = fresh_db("routing-tombstone");
     let mut workspace = Workspace::default();
     let changed = workspace.set_default_destination(most_recent()).unwrap();
     assert!(matches!(&changed[0], Op::Put(Record::RoutingDefault { .. })));
-    // The built-in destination is reached by deleting the stored one (unit 28's resets delete
-    // their override), not by writing a Put that holds the built-in value.
+    // The built-in destination is reached by deleting the stored one, not by writing a Put
+    // that holds the built-in value.
     let reset = workspace.set_default_destination(Destination::default()).unwrap();
     assert_eq!(reset.len(), 1);
     assert!(matches!(&reset[0], Op::Delete(Kind::RoutingDefault, id) if id == "workspace"));
@@ -426,8 +426,8 @@ fn a_default_reset_writes_a_tombstone() {
     assert!(reopened.routing_rules.is_empty());
 }
 
-// Review 1a should 2: a workspace whose routing equals the built-in default emits no routing
-// records at all, so a full write cannot reset saved rules (unit 28's defaults rule holds).
+// A workspace whose routing equals the built-in default emits no routing records at all, so
+// a full write cannot reset saved rules.
 #[test]
 fn to_ops_carries_only_changed_routing() {
     assert!(Workspace::default().to_ops().is_empty());
@@ -441,8 +441,8 @@ fn to_ops_carries_only_changed_routing() {
     assert_eq!(ws.to_ops().len(), 1);
 }
 
-// Review 1a nit 1: a repeated rule id would make edit/delete ambiguous; the first wins and
-// the rest are counted like other unreadable entries.
+// A repeated rule id would make edit/delete ambiguous; the first wins and the rest are
+// counted like other unreadable entries.
 #[test]
 fn a_repeated_rule_id_keeps_the_first_and_counts_the_rest() {
     let json = r#"{"version":1,"rules":[
@@ -456,8 +456,8 @@ fn a_repeated_rule_id_keeps_the_first_and_counts_the_rest() {
     assert_eq!(report.malformed_rules, 1);
 }
 
-// Review 1a nit 2: only a space id the sidebar carries is imported; anything else is skipped
-// and counted. The rule destination and the file's default check the same way.
+// Only a space id the sidebar carries is imported; anything else is skipped and counted.
+// The rule destination and the file's default check the same way.
 #[test]
 fn an_unknown_space_id_is_skipped_and_counted() {
     let json = r#"{"version":1,
@@ -469,9 +469,9 @@ fn an_unknown_space_id_is_skipped_and_counted() {
     assert_eq!(routing.default, Routing::default().default);
 }
 
-// Review 1a nit 2: the id string must match a known space id exactly, as Cra checks its
-// string against the sidebar's space ids; a near-match (case differences, a title) is not an
-// id and is skipped and counted.
+// The id string must match a known space id exactly, as Cra checks its string against the
+// sidebar's space ids; a near-match (case differences, a title) is not an id and is skipped
+// and counted.
 #[test]
 fn a_space_destination_id_must_match_a_known_space_exactly() {
     let json = r#"{"version":1,
@@ -495,8 +495,8 @@ fn tied_order_keys_read_in_rule_id_order() {
     assert_eq!(ws.routing().rules.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), ["meet", "zoom"]);
 }
 
-// A move whose neighbours tie is the seam unit 22 re-keys for items: without re-keying the new
-// key would have to fall between two equal keys.
+// A move whose neighbours tie re-keys the tied run: without re-keying the new key would
+// have to fall between two equal keys.
 #[test]
 fn a_move_onto_a_tied_run_rekeys_it() {
     let mut ws = Workspace::default();
@@ -512,7 +512,7 @@ fn a_move_onto_a_tied_run_rekeys_it() {
     assert_eq!(ws.routing().rules.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), ["early", "other", "first", "zoom"]);
 }
 
-// Part B: the routing imports beside the sidebar. The sibling file list mirrors Arc's:
+// The routing imports beside the sidebar. The sibling file list mirrors Arc's:
 // StorableSidebar + StorableWindows + StorableKeyBindings + StorableLinkRouting.
 const SIDEBAR: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
 const WINDOWS: &str = include_str!("fixtures/StorableWindows.json");
@@ -563,9 +563,9 @@ fn missing_malformed_and_non_utf8_routing_files_still_import_the_sidebar() {
     assert_eq!(workspace.spaces.len(), 2);
 }
 
-// Unit 29b, owner's ruling: a rule (or the default) may only name a space the workspace has —
-// the import checks the sidebar's ids the same way. Each op refuses with an EditError and the
-// state stays unchanged.
+// A rule (or the default) may only name a space the workspace has — the import checks the
+// sidebar's ids the same way. Each op refuses with an EditError and the state stays
+// unchanged.
 #[test]
 fn edits_refuse_a_space_destination_the_workspace_does_not_have() {
     let mut workspace = Workspace::default();
@@ -589,10 +589,9 @@ fn edits_refuse_a_space_destination_the_workspace_does_not_have() {
     assert_eq!(workspace, before);
 }
 
-// Unit 29b, round 2, ruling 1: an edit is allowed to keep the rule's current destination
-// even when that space was deleted (a text or style change writes, so the user can still
-// fix the rule); a destination the edit changes to on top is refused like an unknown space,
-// as round 1 pinned.
+// An edit is allowed to keep the rule's current destination even when that space was
+// deleted (a text or style change writes, so the user can still fix the rule); a
+// destination the edit changes to on top is refused like an unknown space.
 #[test]
 fn edit_rule_refuses_only_a_changed_destination_that_names_a_missing_space() {
     let mut workspace = Workspace::default();
@@ -601,7 +600,7 @@ fn edit_rule_refuses_only_a_changed_destination_that_names_a_missing_space() {
     workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     workspace.delete_space("space-work").unwrap();
     let before = workspace.clone();
-    // A destination change on top of the carried one is refused (round 1's ruling).
+    // A destination change on top of the carried one is refused.
     assert_eq!(
         workspace.edit_rule(rule("meet", vec![contains("changed.example")], space("space-gone"))).unwrap_err().0,
         "unknown space space-gone");
@@ -633,11 +632,10 @@ fn most_recent_and_little_window_destinations_pass_without_spaces() {
     assert_eq!(workspace.routing().default, most_recent());
 }
 
-// Unit 29b, round 2, ruling 2 + the still-standing refusal of round 1: a space deleted after
-// a rule was written leaves the rule's destination naming it. route() still matches the rule
-// and its link goes to the most recent space instead of the stale id (ours, Arc's behaviour
-// unobserved); the same applies to the default destination naming a deleted space. The edits
-// only refuse a destination the edit adds: add_rule, an edit_rule destination change, and
+// A space deleted after a rule was written leaves the rule's destination naming it. route()
+// still matches the rule and its link goes to the most recent space instead of the stale
+// id; the same applies to the default destination naming a deleted space. The edits only
+// refuse a destination the edit adds: add_rule, an edit_rule destination change, and
 // set_default_destination refuse the deleted space like an unknown one.
 #[test]
 fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent() {
@@ -651,7 +649,7 @@ fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent(
     let spaces = space_ids(&workspace);
     let before = workspace.clone();
     // The rule and the default keep their destinations: the routing snapshot is not
-    // rewritten, the pane shows the deleted space from it (round 2, ruling 3).
+    // rewritten, the pane shows the deleted space from it.
     assert_eq!(
         workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().destination,
         space("space-work"));
@@ -659,8 +657,8 @@ fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent(
     // route() still matches the rule, and the link goes to the most recent space.
     assert_eq!(workspace.routing().rule_for("https://meet.google.com/abc").unwrap().id, "meet");
     assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces), most_recent());
-    // Refusal of round 1 stands: add_rule, an edit that changes the destination, and
-    // set_default_destination refuse a deleted space like an unknown one, state unchanged.
+    // add_rule, an edit that changes the destination, and set_default_destination refuse a
+    // deleted space like an unknown one, state unchanged.
     assert_eq!(
         workspace.add_rule(rule("again", vec![contains("again.example")], space("space-work"))).unwrap_err().0,
         "unknown space space-work");

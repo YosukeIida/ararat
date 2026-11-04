@@ -354,7 +354,7 @@ impl Workspace {
         let items = self.items.values().map(|i| Record::Item(i.clone()));
         let rules = self.routing_rules.values().map(|s| Record::RoutingRule { order: s.order.clone(), rule: s.rule.clone() });
         // The built-in default is derived, never stored: records carry a change from it only
-        // (Workspace::default().to_ops() stays empty, as unit 28's defaults rule needs).
+        // (Workspace::default().to_ops() stays empty).
         let default = (self.routing_default != crate::routing::Destination::default())
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter())

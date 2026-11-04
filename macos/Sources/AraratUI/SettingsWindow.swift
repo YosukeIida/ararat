@@ -397,7 +397,7 @@ private final class ShortcutMarkerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// The Air Traffic Control pane (unit 29): the rules in order (drag to reorder feeds the
+/// The Air Traffic Control pane: the rules in order (drag to reorder feeds the
 /// model's `move`, tests never drag), each row edited in place with the match style, the URL
 /// text and the destination menu, a New Route button, the default destination card and a test
 /// field answered by the core's `route`. The one-two-line-route row and the destination menu
@@ -503,10 +503,10 @@ private struct SettingsAirTrafficSection: View {
     }
 
     @ViewBuilder private var pickerContext: some View {
-        // Built from `DestinationChoice.menuTags(spaces:deletedSpaceIds:)` (review 2 nit 1): the
-        // tag-coverage test reads this menu through the helper, not a copy of it. A destination
-        // naming a space the workspace lost gets one disabled "Deleted space" item, selected,
-        // ahead of the spaces; only the ids this section's own destinations name appear.
+        // Built from `DestinationChoice.menuTags(spaces:deletedSpaceIds:)`: the tag-coverage
+        // test reads this menu through the helper, not a copy of it. A destination naming a
+        // space the workspace lost gets one disabled "Deleted space" item, selected, ahead of
+        // the spaces; only the ids this section's own destinations name appear.
         let tags = DestinationChoice.menuTags(spaces: model.snapshot.spaces,
             deletedSpaceIds: airTraffic.deletedSpaceIds(spaces: model.snapshot.spaces))
         ForEach(tags.filter(\.isDeletedSpace), id: \.self) { tag in

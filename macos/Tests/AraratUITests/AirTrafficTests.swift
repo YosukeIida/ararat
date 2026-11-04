@@ -17,8 +17,8 @@ private func fixture(_ name: String) -> String {
     try! String(contentsOf: fixturesRoot.appendingPathComponent(name), encoding: .utf8)
 }
 
-// Moved here from `DestinationChoice` (review 2 nit 1): only the tests call the no-profile
-// form, the built-in default answer before any space is shown.
+// Only the tests call the no-profile form, the built-in default answer before any space is
+// shown.
 extension DestinationChoice {
     func destination() -> Destination? { destination(littleWindowProfile: nil) }
 }
@@ -28,7 +28,7 @@ private func airTrafficDescendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + airTrafficDescendants($0) }
 }
 
-// The routing sibling joins the sidebar import (unit 29 part B): with all three siblings set,
+// The routing sibling joins the sidebar import: with all three siblings set,
 // the file's rules land in the same batch and the counters describe them.
 @Test @MainActor
 func routingSiblingImportReachesTheStoreWithItsCounters() async throws {
@@ -226,12 +226,10 @@ func theAirTrafficPaneViewsBuildWithoutOrderingAWindow() async throws {
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// The destination menus offer a tag for every destination a row or the default can carry
-// (review 1b should 1): the payload round 1 kept on the Little-window choice made the
-// built-in default and every imported Little-window rule match no menu item at all. The
-// check reads the menu through `menuTags`, the helper `pickerContext` is built from
-// (review 2 nit 1), so what it covers is what the menus show. A destination naming a lost
-// space is covered by the disabled "Deleted space" item menuTags adds for its id (unit 29b).
+// The destination menus offer a tag for every destination a row or the default can carry.
+// The check reads the menu through `menuTags` — the helper `pickerContext` is built from —
+// so what it covers is what the menus show. A destination naming a lost space is covered by
+// the disabled "Deleted space" item menuTags adds for its id.
 @Test @MainActor
 func theDestinationMenusOfferATagForEveryDestination() {
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
@@ -243,7 +241,7 @@ func theDestinationMenusOfferATagForEveryDestination() {
     }
 }
 
-// Unit 29b, owner's ruling: a rule (or the default) whose space was deleted keeps its
+// A rule (or the default) whose space was deleted keeps its
 // destination, the model names the lost space for the menus, and picking another destination
 // replaces the deleted one. Read through the model and the menu tags; no menu is popped.
 @Test @MainActor
@@ -281,8 +279,8 @@ func theModelNamesTheLostSpaceAndAPickReplacesTheDeletedDestination() async thro
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// Editing keeps every condition a rule came in with (review 1b should 2): the round-1 edit
-// rewrote only the first condition, so one menu pick deleted an imported rule's conditions.
+// Editing keeps every condition a rule came in with: rewriting only the first condition
+// would let one menu pick delete an imported rule's conditions.
 @Test @MainActor
 func editingARuleKeepsEveryConditionItCameInWith() async throws {
     let directory = try testTemporaryDirectory()
@@ -310,9 +308,9 @@ func editingARuleKeepsEveryConditionItCameInWith() async throws {
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// A fresh Little Window pick writes the Little window of the shown space's profile
-// (review 1b nit 2): round 1 always wrote the built-in default profile, which a workspace
-// whose spaces live in a named profile cannot open.
+// A fresh Little Window pick writes the Little window of the shown space's profile, not the
+// built-in default one: a workspace whose spaces live in a named profile cannot open the
+// built-in default.
 @Test @MainActor
 func aFreshLittleWindowPickCarriesTheShownSpacesProfile() async throws {
     #expect(DestinationChoice.littleWindow.destination(littleWindowProfile: .named("Profile 1")) == Destination.littleWindow(.named("Profile 1")))
@@ -342,8 +340,8 @@ func aFreshLittleWindowPickCarriesTheShownSpacesProfile() async throws {
 }
 
 // The pane's fresh Little-window pick names the shown space's own `Profile` from the FFI
-// snapshot (review 2 nit 2): round 2 mapped the display name back, so a named profile called
-// "Default" read as the built-in one.
+// snapshot, not the display name mapped back: a named profile called "Default" would read
+// as the built-in one.
 @Test @MainActor
 func theFreshLittleWindowPickNamesTheShownSpacesOwnProfile() {
     let adapter = WorkspaceAdapter(windowID: "atc-profile")
@@ -353,9 +351,8 @@ func theFreshLittleWindowPickNamesTheShownSpacesOwnProfile() {
     #expect(model.airTrafficLittleWindowProfile == .named("Default"))
 }
 
-// The row's URL field holds its text as a draft and writes once at commit (review 1b
-// should 3): typing drives the field delegate's text-change path, which round 1 wired
-// straight into edit — one synced record per keystroke.
+// The row's URL field holds its text as a draft and writes once at commit: typing must not
+// drive straight into edit — that would write one synced record per keystroke.
 @Test @MainActor
 func ruleUrlFieldWritesOnlyAtCommit() async throws {
     _ = NSApplication.shared
@@ -396,9 +393,8 @@ func ruleUrlFieldWritesOnlyAtCommit() async throws {
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// The test field's answer carries the url it asked about trimmed (review 1b nit 5): round 1
-// stored the raw string, so a trailing space left the placeholder up while the label itself
-// already trimmed.
+// The test field's answer carries the url it asked about trimmed: a raw string with a
+// trailing space would leave the placeholder up while the label itself already trims.
 @Test @MainActor
 func theTestFieldAnswersItsTrimmedUrl() async throws {
     let directory = try testTemporaryDirectory()
@@ -413,8 +409,8 @@ func theTestFieldAnswersItsTrimmedUrl() async throws {
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// The search result for the pane and the card it scrolls to and fills carry the same id
-// (review 1b nit 1): round 1's card was "atc-default", which no search row ever set.
+// The search result for the pane and the card it scrolls to and fills carry the same id: a
+// card id no search row sets would never be filled.
 @Test @MainActor
 func theAirTrafficSearchResultFillsItsRow() throws {
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "space-work", selectedId: nil, spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])])
@@ -426,7 +422,7 @@ func theAirTrafficSearchResultFillsItsRow() throws {
     #expect(row.id == SettingsModel.airTrafficCardId)
 }
 
-// Unit 29b, owner's ruling: a destination naming a lost space reads as the deleted-space
+// A destination naming a lost space reads as the deleted-space
 // choice (the menu shows a disabled "Deleted space" item, selected, not Most Recent Space),
 // the choice writes nothing while it is selected, and the id survives the workspace losing
 // the space so an untouched row is not rewritten (the space coming back reads as it again).

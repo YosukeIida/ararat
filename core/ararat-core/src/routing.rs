@@ -49,9 +49,9 @@ pub struct Rule {
     pub destination: Destination,
 }
 
-// A rule between records carries its fractional order key the way item memberships do
-// (unit 22): the record body stores `{order, conditions, destination}` and the rule id is the
-// record's key, so this form exists to move the three fields around with `Rule`.
+// A rule between records carries its fractional order key the way item memberships do:
+// the record body stores `{order, conditions, destination}` and the rule id is the record's
+// key, so this form exists to move the three fields around with `Rule`.
 #[derive(Serialize, Deserialize)]
 pub struct StoredRuleBody {
     pub order: String,
@@ -87,9 +87,9 @@ impl Routing {
     // The destination a URL from another app lands on: the first rule with a matching
     // condition, else the default. A destination naming a space the workspace no longer has
     // still answers — the rule matches (rule_for) — and the link goes to the most recent
-    // space instead, so the stale id never reaches a window (unit 29b, round 2; ours, Arc's
-    // behaviour unobserved). The stored destinations stay untouched, which the Settings pane
-    // reads for its deleted-space menus; the rewrite is why the answer is an owned value.
+    // space instead, so the stale id never reaches a window. The stored destinations stay
+    // untouched, which the Settings pane reads for its deleted-space menus; the rewrite is
+    // why the answer is an owned value.
     pub fn route(&self, url: &str, spaces: &[Id]) -> Destination {
         let destination = self.rule_for(url).map_or(&self.default, |rule| &rule.destination);
         match destination {

@@ -260,7 +260,7 @@ fn move_destinations_match_current_profile_and_exclude_current_space() {
     let idx = Index::new(&ws, "one", 0);
     let rows = idx.candidates("move tab");
     assert!(rows.iter().any(|s| matches!(&s.target, Target::MoveToSpace { id } if id == "space-other")));
-    // Folders of the tab's own space are offered (review 2 should 1), other same-profile spaces too.
+    // Folders of the tab's own space are offered, other same-profile spaces too.
     assert!(rows.iter().any(|s| matches!(&s.target, Target::MoveToFolder { id, .. } if id == "folder-docs")));
     assert!(rows.iter().any(|s| matches!(&s.target, Target::MoveToFolder { id, .. } if id == "folder-other")));
     assert!(!rows.iter().any(|s| matches!(&s.target, Target::MoveToSpace { id } if id == "space-work" || id == "space-home")));

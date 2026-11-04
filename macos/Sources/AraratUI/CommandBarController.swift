@@ -11,7 +11,7 @@ public enum CommandBarMode: Equatable {
 @MainActor
 public protocol CommandBarStore: AnyObject {
     /// Pure query against the session's index; the ranking and the inline completion come
-    /// from the core, never derived here (part A review 2, nit 1).
+    /// from the core, never derived here.
     func query(_ text: String) -> CommandBarResult
 }
 
@@ -87,7 +87,7 @@ public final class CommandBarController {
     private var store: CommandBarStore?
     /// Return (or ⌘Return) pressed while the store is pending: the bar stays open and the
     /// commit runs when `applyStore` lands, so the typed text is not dropped in the adapter
-    /// round trip (review 2b nit 1). nil when nothing is pending; the last key wins.
+    /// round trip. nil when nothing is pending; the last key wins.
     private var pendingCommitForceNewTab: Bool?
 
     public init() {}
@@ -185,7 +185,7 @@ public final class CommandBarController {
     public func commit(forceNewTab: Bool) {
         guard store != nil else {
             // The session is still on its way, so there is no row to commit yet: keep the bar
-            // open and commit when `applyStore` lands (review 2b nit 1).
+            // open and commit when `applyStore` lands.
             pendingCommitForceNewTab = forceNewTab
             return
         }

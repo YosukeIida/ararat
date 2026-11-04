@@ -17,7 +17,7 @@ public enum WorkspaceCommands {
     /// types there instead. AppKit sinks the matching key equivalent at the menu pass even when
     /// the item is disabled by validation, and `NSMenuDelegate.menuHasKeyEquivalent` never ran
     /// on this macOS to let it through, so our windows return NO from their own
-    /// `performKeyEquivalent` pass and hand the key to the field (probed, B2 part 2 round 2).
+    /// `performKeyEquivalent` pass and hand the key to the field.
     public static func yieldsToOwnField(_ bindings: [KeyBinding], event: NSEvent, in window: NSWindow) -> Bool {
         guard let responder = window.firstResponder, !allowsPageCommand(responder) else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

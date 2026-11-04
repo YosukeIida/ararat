@@ -169,7 +169,7 @@ func recorderTakesTheKeyCharacterFromTheKeyCodeNotFromShift() async throws {
     let (harness, menu, _, recorder) = try mountedHarness(adapter, snapshot: snapshot)
     let library = try #require(commandItems(menu).first { $0.identifier?.rawValue == "toggle_library" })
     harness.keyBindings.toggleRecording("toggle_library")
-    // ⇧ is not part of the key: the event gives "$", the key code gives "4" (part A's contract).
+    // ⇧ is not part of the key: the event gives "$", the key code gives "4".
     let event = try recorderKeyEvent(keyCode: 21, characters: "$", charactersIgnoringModifiers: "4", flags: [.control, .option, .shift])
     #expect(event.characters(byApplyingModifiers: []) == "4")
     recorder.keyDown(with: event)

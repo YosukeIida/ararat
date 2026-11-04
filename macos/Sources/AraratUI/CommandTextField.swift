@@ -148,7 +148,7 @@ public final class CommandTextField {
                 controller.moveSelection(by: -1); return true
             case #selector(NSResponder.insertNewline(_:)):
                 // ⌘Return arrives in the key-equivalent pass (CommandBarView takes it) and
-                // shares the same step; nothing is written twice (review 2b nit 2).
+                // shares the same step; nothing is written twice.
                 commitReturn(forceNewTab: NSApp.currentEvent?.modifierFlags.contains(.command) ?? false)
                 return true
             case #selector(NSResponder.cancelOperation(_:)):

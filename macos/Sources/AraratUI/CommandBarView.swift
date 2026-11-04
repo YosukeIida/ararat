@@ -301,9 +301,9 @@ final class CommandBarRowView: NSView {
 /// Show and hide in a single frame, with no fade [Arc, D:458].
 @MainActor
 public final class CommandBarPanel: NSPanel {
-    /// Unit 28's own-field rule holds for the bar's field too: a table command rebound without
-    /// Command is typed into the field, never sunk at the menu pass while the panel is key. The
-    /// harness sets the effective table on open; empty means nothing yields.
+    /// A table command rebound without Command is typed into the field, never sunk at the
+    /// menu pass while the panel is key. The harness sets the effective table on open; empty
+    /// means nothing yields.
     public var menuCommandBindings: [KeyBinding] = []
 
     public init() {

@@ -127,8 +127,8 @@ impl WorkspaceStore {
         Ok(ImportResult { snapshot: snapshot(view, &window_id), report: report.into() })
     }
 
-    // Air Traffic Control (unit 29 part A). The routing is read as its own snapshot type, so
-    // no full workspace snapshot is needed and the pane can render the rules in order.
+    // Routing crosses as its own snapshot type, not a full workspace snapshot: the pane only
+    // renders the rules in order.
     pub fn routing(&self) -> Routing {
         self.workspace.lock().unwrap().routing().into()
     }
@@ -138,8 +138,7 @@ impl WorkspaceStore {
         let routing = workspace.routing();
         // rule_for and route share the matcher, so the two answers cannot disagree. The
         // space ids the workspace has now ride along: a destination naming a deleted space
-        // is answered as the most recent space, the stale id never reaches a window (unit
-        // 29b, round 2).
+        // is answered as the most recent space, the stale id never reaches a window.
         let spaces: Vec<Id> = workspace.spaces.iter().map(|space| space.id.clone()).collect();
         let rule_id = routing.rule_for(&url).map(|rule| rule.id.clone());
         RoutingDecision { rule_id, destination: routing.route(&url, &spaces).into() }
@@ -492,8 +491,8 @@ pub struct ImportResult {
     pub report: ImportReport,
 }
 
-// Air Traffic Control routing (unit 29). Snapshots cross the boundary instead of the core's
-// types, so Swift cannot come to depend on the core's internal representation.
+// Snapshots cross the FFI boundary instead of the core's types, so Swift cannot come to
+// depend on the core's internal representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MatchStyle { Contains, Equals }
 
@@ -815,7 +814,7 @@ mod tests {
         assert_eq!(decision.rule_id, None);
         assert_eq!(decision.destination, Destination::from(core.default.clone()));
         // A rule whose space is deleted still matches, and its link goes to the most recent
-        // space (unit 29b, round 2): the FFI route answer names a rule, not the stale id.
+        // space: the FFI route answer names a rule, not the stale id.
         store.delete_space(window.clone(), "space-work".into()).unwrap();
         let decision = store.route("https://www.meet.google.com/x".into());
         assert_eq!(decision.rule_id.as_deref(), Some("meet"));
@@ -865,7 +864,7 @@ mod tests {
         assert!(error.to_string().contains("version 9 is not supported"), "{error}");
     }
 
-    // Part B: the routing sibling joins the sidebar import's own store batch (its records, its
+    // The routing sibling joins the sidebar import's own store batch (its records, its
     // counters in the report), so a reopen reads the File's rules without a second flush.
     #[test]
     fn a_routing_file_imports_beside_the_sidebar_into_the_store_batch() {
@@ -905,7 +904,7 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
     }
 
-    // Part B: an unreadable routing sibling never blocks the sidebar (as key_bindings_error
+    // An unreadable routing sibling never blocks the sidebar (as key_bindings_error
     // does not); the report notes it and the saved routing is untouched.
     #[test]
     fn a_broken_routing_file_imports_the_sidebar_and_sets_the_report_field() {

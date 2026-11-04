@@ -114,8 +114,7 @@ fn set_tab_url_flushes_and_reports_a_write_error() {
     store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None).unwrap();
     let blocker = Connection::open(&path).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    // Every other content edit flushes; the edit's write error must reach the caller too
-    // (review 1b nit 4).
+    // Every other content edit flushes; the edit's write error must reach the caller too.
     let result = store.set_tab_url("test".into(), "tab-a".into(), "https://example.org/b".into());
     assert!(matches!(result, Err(CoreError::Store { .. })));
     assert!(store.last_error().is_some());
@@ -762,9 +761,9 @@ fn merged_key_binding_conflicts_cross_ffi_without_writes_and_can_be_taken_over()
     assert_eq!(tables[0], tables[1]);
 }
 
-// The snapshot carries each space's `Profile` itself (review 2 nit 2), so Swift's pane reads
-// the shown space's profile from the field and never maps the display name back: a named
-// profile called "Default" is not the built-in one, though its display name is "Default".
+// The snapshot carries each space's `Profile` itself, so Swift's pane reads the shown
+// space's profile from the field and never maps the display name back: a named profile
+// called "Default" is not the built-in one, though its display name is "Default".
 #[test]
 fn the_snapshot_carries_each_spaces_profile() {
     let snapshot = import_arc_sidebar(FIXTURE.into(), None, None, None).unwrap().snapshot;

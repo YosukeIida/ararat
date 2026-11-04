@@ -33,7 +33,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
-    // Air Traffic Control (unit 29). The edits write one op batch each and flush before the
+    // The edits write one op batch each and flush before the
     // fresh routing is returned, so a pane model always sees what a reopen would read.
     public func routing(completion: @escaping Completion<Routing>) {
         enqueue({ try self.opened().routing() }, completion: completion)

@@ -756,13 +756,14 @@ impl Workspace {
 
 // Air Traffic Control edits. One record per rule, so two devices that add, edit, move or
 // delete different rules before they sync both get applied (architecture 8.3 merges per
-// record). The rule's order key follows the item keys (unit 22): a write lands between its
+// record). The rule's order key follows the item keys: a write lands between its
 // neighbours' keys, and a move onto a tied run re-keys that run, so the same records give
 // every device the same rule order.
 impl Workspace {
     // One new key for a rule joining `others` at `index`: between the neighbours' keys, with
-    // a tied run at that seam re-keyed first (unit 22's item moves, `insertion_keys`), so an
-    // equal key is never the gap a later key must fall between — key_between needs lo < hi.
+    // a tied run at that seam re-keyed first, the way the item moves' `insertion_keys` does,
+    // so an equal key is never the gap a later key must fall between — key_between needs
+    // lo < hi.
     fn rule_join_keys(others: &[&crate::routing::StoredRule], index: usize) -> (String, Vec<Op>) {
         let before = index.checked_sub(1).and_then(|i| others.get(i)).map(|s| s.order.clone());
         let mut after = others.get(index).map(|s| s.order.clone());
@@ -805,7 +806,7 @@ impl Workspace {
         if stored.rule == rule { return Ok(Vec::new()); }
         // Only a destination the edit changes to is checked: one keeping the rule's current
         // destination (a text or style change only) still writes, so a rule whose space was
-        // deleted can still be fixed (unit 29b, round 2).
+        // deleted can still be fixed.
         if stored.rule.destination != rule.destination {
             self.check_space_destination(&rule.destination)?;
         }
@@ -839,11 +840,10 @@ impl Workspace {
     }
 
     // A Space(id) destination names a space of this workspace: the import checks the
-    // sidebar's ids the same way (unit 29's known spaces), and an edit that adds a
-    // destination — a new rule, a changed rule destination, a new default — is refused when
-    // it names a missing one. A destination a deleted space left behind rides along: the
-    // route answer rewrites it and the pane shows it (unit 29b, round 2). MostRecent and the
-    // Little window carry no space id and pass.
+    // sidebar's ids the same way, and an edit that adds a destination — a new rule, a
+    // changed rule destination, a new default — is refused when it names a missing one. A
+    // destination a deleted space left behind rides along: the route answer rewrites it and
+    // the pane shows it. MostRecent and the Little window carry no space id and pass.
     fn check_space_destination(&self, destination: &crate::routing::Destination) -> Result<(), EditError> {
         if let crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(id)) = destination {
             if !self.spaces.iter().any(|space| &space.id == id) {
@@ -859,7 +859,7 @@ impl Workspace {
         if self.routing_default == destination { return Ok(Vec::new()); }
         // The built-in default is derived, never stored (like to_ops emits no record for it):
         // a reset deletes the stored record, so the journal replays it as a delete instead of
-        // holding a row that only restates the built-in value (review 2a).
+        // holding a row that only restates the built-in value.
         let id = "workspace".to_string();
         let op = if destination == crate::routing::Destination::default() {
             Op::Delete(Kind::RoutingDefault, id)

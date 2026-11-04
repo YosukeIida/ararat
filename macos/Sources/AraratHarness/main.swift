@@ -55,7 +55,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
     private var commandBarView: CommandBarView?
-    // Internal for the tests (unit 30 part B round 2).
+    // Internal for the tests.
     var commandBar: CommandBarController?
     var commandPanel: CommandBarPanel?
 
@@ -527,7 +527,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         prepareSettings().open(shownSpaceID: shownSpaceID)
     }
 
-    // MARK: Command bar (unit 30 part B)
+    // MARK: Command bar
 
     @objc func newTabFromCommandBar(_ sender: Any?) { openCommandBar(.newTab) }
 
@@ -699,7 +699,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         sidebar.flatMap { sidebar in snapshot.spaces.indices.contains(sidebar.spaceShown) ? snapshot.spaces[sidebar.spaceShown] : nil }
     }
 
-    /// Runs one command row from the bar (the unit 28 table; the menu actions it mirrors).
+    /// Runs one command row from the bar; the commands mirror the menu actions.
     func perform(command: String) {
         switch command {
         case "settings": openSettings(nil)

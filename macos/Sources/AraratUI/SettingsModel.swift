@@ -81,7 +81,7 @@ public final class SettingsModel: ObservableObject {
     var title: String {
         switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .airTraffic: "Air Traffic Control"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
     }
-    /// The pane says in plain words that the routing arrives with the engine (unit 29).
+    /// The pane says in plain words that the routing arrives with the engine.
     static let airTrafficSubtitle = "Links other apps hand to Ararat follow these rules once the browser engine arrives."
     /// The id the search result for the Air Traffic Control pane carries, and the id the pane's
     /// default destination card carries: a result scrolls to and fills the same row (§7).
@@ -126,10 +126,10 @@ public final class SettingsModel: ObservableObject {
     func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
-    /// The profile the pane's fresh Little-window picks write (nit 2): the shown space's own
+    /// The profile the pane's fresh Little-window picks write: the shown space's own
     /// `Profile` from the FFI snapshot — the way the import takes the first space's when the
-    /// routing file carries no profile. Round 2 mapped the display name back to a profile,
-    /// which a named profile called "Default" would have read as the built-in one.
+    /// routing file carries no profile — not the display name mapped back, which a named
+    /// profile called "Default" would read as the built-in one.
     var airTrafficLittleWindowProfile: Profile? {
         archiveSpace?.profile
     }
