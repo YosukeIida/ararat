@@ -151,7 +151,7 @@ impl Workspace {
         Ok((keys.remove(0), ops))
     }
 
-    fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
+    pub(crate) fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
         let (root, _) = self.list_for(id)?;
         self.spaces.iter().find(|s| s.pinned == root || s.today == root).map(|s| &s.profile)
             .or_else(|| self.favorites.iter().find(|(_, container)| container.as_str() == root).map(|(p, _)| p))
@@ -253,6 +253,50 @@ impl Workspace {
         let mut item = self.items.get(id).filter(|i| matches!(i.kind, ItemKind::Tab { .. })).cloned()
             .ok_or_else(|| EditError(format!("item {id} is not a tab")))?;
         item.title = (!title.trim().is_empty()).then(|| title.trim().into());
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
+    // A new tab from the command bar: a tab at the top of the shown space's Today list, selected.
+    // It is Open like a restored tab (the selection surfaces in snapshots); a browser runtime
+    // loads its URL when the engine lands.
+    pub fn create_tab(&mut self, window: &str, url: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let space_id = self.shown_space(window).ok_or_else(|| EditError("no space to create a tab in".into()))?.to_owned();
+        let today = self.spaces.iter().find(|space| space.id == space_id).map(|space| space.today.clone())
+            .ok_or_else(|| EditError("no space to create a tab in".into()))?;
+        let id = loop {
+            use std::hash::BuildHasher;
+            let random = std::collections::hash_map::RandomState::new();
+            let id = format!("{:016x}{:016x}", random.hash_one(0u8), random.hash_one(1u8));
+            if !self.items.contains_key(&id) && !self.spaces.iter().any(|space| space.id == id) { break id; }
+        };
+        let (order, mut ops) = self.item_order(&today, 0, &HashSet::new())?;
+        let now = self.lifecycle_time();
+        let item = crate::model::Item {
+            id: id.clone(),
+            membership: crate::model::Membership { parent: Some(today), previous_parent: None, hlc: Default::default(), order },
+            title: None,
+            kind: ItemKind::Tab { url: url.into(), saved_title: None },
+            lifecycle: Lifecycle::Open,
+            lifecycle_changed_at: now,
+        };
+        self.check_destination(&item, &item.membership.parent.as_ref().map(String::as_str).unwrap_or_default())?;
+        let mut state = self.window_state(window);
+        state.shown_space = Some(space_id);
+        state.select(Some(id.clone()));
+        ops.push(Op::Put(Record::Item(item)));
+        ops.push(Op::Put(Record::Window(state)));
+        for op in &ops { self.apply(op); }
+        ops.extend(self.stamp_selection(&id, now));
+        Ok(ops)
+    }
+
+    // The ⌘L commit: the current tab navigates to the edited URL.
+    pub fn set_tab_url(&mut self, id: &str, url: &str) -> Result<Vec<Op>, EditError> {
+        let mut item = self.items.get(id).filter(|i| matches!(i.kind, ItemKind::Tab { .. })
+            && matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).cloned()
+            .ok_or_else(|| EditError(format!("item {id} is not an open tab")))?;
+        match &mut item.kind { ItemKind::Tab { url: current, .. } => *current = url.into(), _ => unreachable!() }
         Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
     }
 
@@ -621,7 +665,7 @@ impl Workspace {
         Ok(ops)
     }
 
-    fn list_for(&self, id: &str) -> Option<(&str, bool)> {
+    pub(crate) fn list_for(&self, id: &str) -> Option<(&str, bool)> {
         let mut item = self.items.get(id)?;
         for _ in 0..self.items.len() {
             let Some(parent) = &item.membership.parent else { break };

@@ -10,7 +10,7 @@ fn command(key: &str) -> KeyCombination {
 #[test]
 fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
     let ws = Workspace::default();
-    let expected = [("settings", ","), ("quit", "q"), ("close_tab", "w"), ("toggle_sidebar", "s"), ("pin_tab", "d")];
+    let expected = [("settings", ","), ("quit", "q"), ("close_tab", "w"), ("new_tab", "t"), ("edit_url", "l"), ("toggle_sidebar", "s"), ("pin_tab", "d")];
     for (id, key) in expected { assert_eq!(ws.key_binding(id).unwrap(), Some(command(key))); }
     let mut library = command("l"); library.shift = true;
     assert_eq!(ws.key_binding("toggle_library").unwrap(), Some(library));
@@ -19,7 +19,7 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
         assert_eq!(ws.key_binding(&format!("show_space_{n}")).unwrap(), Some(key));
     }
     assert_eq!(ws.key_binding("reset_sidebar_width").unwrap(), None);
-    assert_eq!(commands().len(), 16);
+    assert_eq!(commands().len(), 18);
     assert!(ws.to_ops().is_empty());
 }
 

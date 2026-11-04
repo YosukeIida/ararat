@@ -1066,3 +1066,88 @@ fn key_bindings(workspace: &Workspace) -> Vec<KeyBinding> {
 pub fn default_key_bindings() -> Vec<KeyBinding> {
     key_bindings(&Workspace::default())
 }
+
+#[derive(uniffi::Object)]
+pub struct CommandBarSession {
+    index: ararat_core::command_bar::Index,
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum SuggestionTarget {
+    Tab { id: String, space_id: Option<String> },
+    Archive { id: String },
+    OpenUrl { url: String },
+    Search { url: String },
+    Command { id: String },
+    Space { id: String },
+    Folder { id: String, space_id: String },
+    MoveToSpace { id: String },
+    MoveToFolder { id: String, space_id: String },
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Suggestion {
+    pub title: String,
+    pub subtitle: String,
+    pub url: Option<String>,
+    pub key: Option<KeyCombination>,
+    pub target: SuggestionTarget,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct CommandBarResult {
+    pub rows: Vec<Suggestion>,
+    pub inline_completion: Option<String>,
+}
+
+#[uniffi::export]
+impl CommandBarSession {
+    pub fn query(&self, text: String) -> CommandBarResult {
+        use ararat_core::command_bar::Target;
+        let result = self.index.query(&text);
+        CommandBarResult {
+            inline_completion: result.inline_completion,
+            rows: result.rows.into_iter().map(|s| Suggestion {
+                title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
+                target: match s.target {
+                    Target::Tab { id, space_id } => SuggestionTarget::Tab { id, space_id },
+                    Target::Archive { id } => SuggestionTarget::Archive { id },
+                    Target::OpenUrl { url } => SuggestionTarget::OpenUrl { url },
+                    Target::Search { url } => SuggestionTarget::Search { url },
+                    Target::Command { id } => SuggestionTarget::Command { id },
+                    Target::Space { id } => SuggestionTarget::Space { id },
+                    Target::Folder { id, space_id } => SuggestionTarget::Folder { id, space_id },
+                    Target::MoveToSpace { id } => SuggestionTarget::MoveToSpace { id },
+                    Target::MoveToFolder { id, space_id } => SuggestionTarget::MoveToFolder { id, space_id },
+                },
+            }).collect(),
+        }
+    }
+}
+
+#[uniffi::export]
+impl WorkspaceStore {
+    pub fn command_bar_session(&self, window_id: String) -> Arc<CommandBarSession> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let mut workspace = self.workspace.lock().unwrap().clone();
+        workspace.repair_tree();
+        Arc::new(CommandBarSession { index: ararat_core::command_bar::Index::new(&workspace, &window_id, now) })
+    }
+
+    pub fn create_tab(&self, window_id: String, url: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.create_tab(&window_id, &url)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn set_tab_url(&self, window_id: String, id: String, url: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_tab_url(&id, &url)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+}

@@ -142,6 +142,19 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ try self.opened().showSpace(windowId: self.windowID, spaceId: id) }, completion: completion)
     }
 
+    /// The command bar's per-open session: the index is built once per open and dropped with it.
+    public func commandBarSession(completion: @escaping Completion<CommandBarSession>) {
+        enqueue({ try self.opened().commandBarSession(windowId: self.windowID) }, completion: completion)
+    }
+
+    public func createTab(url: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().createTab(windowId: self.windowID, url: url) }, completion: completion)
+    }
+
+    public func setTabURL(id: String, url: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setTabUrl(windowId: self.windowID, id: id, url: url) }, completion: completion)
+    }
+
     public func close(id: String, completion: @escaping Completion<Change>) {
         enqueue({ (id, try self.opened().closeItem(windowId: self.windowID, id: id)) }, completion: completion)
     }

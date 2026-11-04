@@ -68,12 +68,16 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Next design work is not chosen yet: candidates are tab motion and the Library / space-creation pages.
 
 - 2026-11-02/03 (units 12–24, orca-agent-team, all on main, not pushed): row polish, dock, floating holds, Library rules, space edits and looks in the core with Arc theme import, sidebar looks, traffic lights on the sidebar, the settings window (Spaces, Tabs, Shortcuts, search, per-space pages, Look popover), auto-archive (local `LastSelected`), item moves and folders in the core (local `FolderState`), sidebar drag and drop, folder controls, rename in place and row menus. Rules and values are in §6.1, §6.2 and §7; Arc's drag measurement in `docs/research/arc-ardia-observed.md` §8. None of units 16b–24 has been checked on screen by the owner.
+- 2026-11-04 (units 25–30, all on main, not pushed): Arc window-state import, count-based test budgets, the owner's sidebar fixes (rename hint after pinning, no focus rings), Duplicate, key bindings with Arc import and the Shortcuts recorder, Air Traffic Control rules with Arc import and their pane, the command bar without the engine. Implementation moved to two seats (Codex Terra high, GLM-5.3-Flash on OpenCode Go; AGENTS.md). First stock Chromium build measured (§4.7). The owner tried the Shortcuts recorder; the rest is unchecked on screen.
 
 ## Next
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
 3. Open nits: the screen-lock Library test; a vertical scroll's ready signal fires before momentum.
+4. Comment cleanup (queued as unit 31): code comments carry process history (unit, round, review numbers) against the why-not-only rule.
+5. When profiles arrive, Air Traffic Control must stay inside a profile: route()'s fallback for a rule whose space was deleted picks the most recent space of that rule's profile; destination checks cover named profiles and the space's profile; the import's Little window profile comes from the routing file's owner, not the first space; the pane's deleted-space set comes from the core.
+6. Phase 2 (engine): decide the base (Helium or ungoogled-chromium) from a patch inventory and one measured rebase; measure the official build.
 
 ## Known loose ends
 

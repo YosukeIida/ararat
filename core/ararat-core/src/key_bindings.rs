@@ -48,6 +48,8 @@ pub fn commands() -> Vec<Command> {
         ("settings", "Settings…", "Ararat", "Open settings for the shown space.", key(",", true, false, false)),
         ("quit", "Quit Ararat Harness", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false)),
         ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false)),
+        ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false)),
+        ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false)),
         ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false)),
         ("toggle_sidebar", "Toggle Sidebar", "View", "Show or hide the sidebar.", key("s", true, false, false)),
         ("toggle_library", "Toggle Library", "View", "Show or hide the Library.", key("l", true, false, true)),

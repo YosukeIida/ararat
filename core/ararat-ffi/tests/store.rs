@@ -107,6 +107,23 @@ fn store_failures_cross_the_ffi_boundary() {
     assert_eq!(store.last_error(), None);
 }
 
+#[test]
+fn set_tab_url_flushes_and_reports_a_write_error() {
+    let path = fresh_db("set-url");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None).unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // Every other content edit flushes; the edit's write error must reach the caller too
+    // (review 1b nit 4).
+    let result = store.set_tab_url("test".into(), "tab-a".into(), "https://example.org/b".into());
+    assert!(matches!(result, Err(CoreError::Store { .. })));
+    assert!(store.last_error().is_some());
+    blocker.execute_batch("ROLLBACK").unwrap();
+    store.flush().unwrap();
+    assert_eq!(store.last_error(), None);
+}
+
 fn today_fixture() -> String {
     FIXTURE.replace("\"parentID\": \"split-1\"", "\"parentID\": \"today-work\"")
         .replace("\"childrenIds\": [\"tab-a\", \"tab-b\"]", "\"childrenIds\": []")
@@ -658,7 +675,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 16);
+    assert_eq!(defaults.len(), 18);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     let key = KeyCombination { key: "s".into(), command: true, control: false, option: false, shift: false };
     let changed = store.set_key_binding("close_tab".into(), Some(key.clone())).unwrap();
@@ -763,4 +780,41 @@ fn the_snapshot_carries_each_spaces_profile() {
     let renamed_home = renamed.spaces.iter().find(|s| s.id == "space-home").unwrap();
     assert_eq!(renamed_home.profile, Profile::Named("Default".into()));
     assert_eq!(renamed_home.profile_name, "Default");
+}
+
+#[test]
+fn command_bar_session_keeps_a_snapshot_and_can_be_dropped() {
+    let store = WorkspaceStore::open(fresh_db("command-bar").display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None).unwrap();
+    let session = store.command_bar_session("test".into());
+    assert!(session.query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings")));
+    store.set_key_binding("settings".into(), None).unwrap();
+    assert!(session.query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_some()));
+    drop(session);
+    assert!(store.command_bar_session("test".into()).query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_none()));
+}
+
+#[test]
+fn command_bar_query_returns_the_inline_completion_and_store_creates_and_edits_tabs() {
+    let store = WorkspaceStore::open(fresh_db("command-bar-actions").display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None).unwrap();
+    store.rename_tab("test".into(), "tab-a".into(), "GitHub".into()).unwrap();
+
+    // The completion comes from the core: the top row's bare host when the query prefixes it.
+    let result = store.command_bar_session("test".into()).query("docs".into());
+    assert!(result.rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Tab { id, .. } if id == "tab-spec")));
+    assert_eq!(result.inline_completion.as_deref(), Some("docs.example.com"));
+    assert_eq!(store.command_bar_session("test".into()).query("settings".into()).inline_completion, None);
+
+    // create_tab puts a selected tab in the shown space's Today; set_tab_url edits it.
+    let before = store.snapshot("test".into());
+    let shown = before.shown_space_id.clone().unwrap_or_else(|| before.spaces[0].id.clone());
+    let created = store.create_tab("test".into(), "https://example.org/from-bar".into()).unwrap();
+    let created_id = created.selected_id.clone().unwrap();
+    let space = created.spaces.iter().find(|space| space.id == shown).unwrap();
+    assert!(space.today.iter().any(|row| row.id == created_id && row.url.as_deref() == Some("https://example.org/from-bar")));
+    let edited = store.set_tab_url("test".into(), created_id.clone(), "https://example.org/edited".into()).unwrap();
+    let space = edited.spaces.iter().find(|space| space.id == shown).unwrap();
+    assert!(space.today.iter().any(|row| row.id == created_id && row.url.as_deref() == Some("https://example.org/edited")));
+    assert!(store.set_tab_url("test".into(), "folder-docs".into(), "https://example.org/".into()).is_err());
 }
