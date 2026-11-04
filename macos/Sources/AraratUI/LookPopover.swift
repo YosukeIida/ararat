@@ -2,6 +2,15 @@ import AppKit
 import AraratKit
 import SwiftUI
 
+enum LookFieldColors {
+    /// Why not a fixed light value with the dark one: light keeps tracking the system control background.
+    static let field = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 42 / 255, green: 42 / 255, blue: 42 / 255, alpha: 1)
+            : NSColor.controlBackgroundColor
+    }
+}
+
 struct LookPopoverButton: NSViewRepresentable {
     let settings: SettingsModel
     let space: SpaceSnapshot
@@ -165,6 +174,6 @@ struct LookPopoverView: View {
                     .accessibilityAction(named: "Lighter") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y - 0.02) } }
                     .accessibilityAction(named: "Darker") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y + 0.02) } }
             }
-        }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height).background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 12))
     }
 }

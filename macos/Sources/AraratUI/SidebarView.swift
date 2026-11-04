@@ -615,7 +615,14 @@ public final class SidebarView: NSView {
             guard let root = window?.contentView else { return nil as NSView? }
             return root.hitTest(root.superview?.convert(point, from: nil) ?? point)
         }
-        tooltip.update(target: tooltip.target(at: hit), point: point)
+        tooltip.update(target: tooltipTarget(for: hit), point: point)
+    }
+
+    func tooltipTarget(for hit: NSView?) -> NSView? {
+        guard let hit else { return nil }
+        let target = tooltip.target(at: hit)
+        guard let id = renamingID else { return target }
+        return target === rowViews[id] || target === favoriteTiles[id] ? nil : target
     }
 
     override public func layout() {
@@ -1339,8 +1346,8 @@ extension SidebarView {
         }
         dropIndicator.removeFromSuperlayer()
         dropIndicator.frame = bounds
-        if case .insert(_, _, let y) = dropTarget {
-            let x = SidebarDragMetrics.lineLeading
+        if case .insert(_, _, let y, let depth) = dropTarget {
+            let x = SidebarDragMetrics.lineLeading + 16 * CGFloat(depth)
             let nativeY = bounds.height - y
             let path = CGMutablePath()
             path.move(to: CGPoint(x: x + SidebarDragMetrics.ringDiameter / 2, y: nativeY))
@@ -1616,6 +1623,7 @@ extension SidebarView: NSMenuDelegate {
             rowViews[old]?.finishRename(commit: true)
             favoriteTiles[old]?.renameField?.finish(commit: true)
         }
+        tooltip.dismiss()
         if let view = rowViews[id] {
             renamingID = id
             view.beginRename()

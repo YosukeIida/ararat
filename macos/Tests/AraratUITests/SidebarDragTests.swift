@@ -33,13 +33,13 @@ private func pureGeometry(_ space: SpaceSnapshot = dragFixture()) -> SidebarDrag
 func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     let g = pureGeometry()
     let a = try #require(g.space.today.first)
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 180), geometry: g, dragged: a) == .insert(container: "ps", index: 0, lineY: 180))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 221), geometry: g, dragged: a) == .insert(container: "ps", index: 1, lineY: 221))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 180), geometry: g, dragged: a) == .insert(container: "ps", index: 0, lineY: 180, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 221), geometry: g, dragged: a) == .insert(container: "ps", index: 1, lineY: 221, depth: 0))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 241), geometry: g, dragged: a) == .folder("folder"))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 282), geometry: g, dragged: a) == .folder("nested"))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 303), geometry: g, dragged: a) == .insert(container: "folder", index: 1, lineY: 303))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 385), geometry: g, dragged: a) == .insert(container: "ts", index: 0, lineY: 385))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 426), geometry: g, dragged: a) == .insert(container: "ts", index: 1, lineY: 426))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 303), geometry: g, dragged: a) == .insert(container: "folder", index: 1, lineY: 303, depth: 1))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 385), geometry: g, dragged: a) == .insert(container: "ts", index: 0, lineY: 385, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 426), geometry: g, dragged: a) == .insert(container: "ts", index: 1, lineY: 426, depth: 0))
     for (x, index) in [(8.0, 0), (90, 1), (231, 2)] {
         #expect(resolveSidebarDrop(position: CGPoint(x: x, y: 100), geometry: g, dragged: a) == .favorites(container: "fdefault", index: index))
     }
@@ -58,11 +58,11 @@ func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     #expect(resolveSidebarDrop(position: CGPoint(x: 50, y: 660), geometry: g, dragged: pin) == .dock(space: "other", container: "pother", index: 0))
     let favorite = try #require(g.space.favorites.first)
     #expect(resolveSidebarDrop(position: CGPoint(x: 230, y: 100), geometry: g, dragged: favorite) == .favorites(container: "fdefault", index: 1))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 330), geometry: g, dragged: a) == .insert(container: "folder", index: 2, lineY: 344))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 261), geometry: g, dragged: a) == .insert(container: "folder", index: 0, lineY: 262))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 40, y: 330), geometry: g, dragged: a) == .insert(container: "folder", index: 2, lineY: 344, depth: 1))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 261), geometry: g, dragged: a) == .insert(container: "folder", index: 0, lineY: 262, depth: 1))
     let empty = pureGeometry(dragSpace())
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 160), geometry: empty, dragged: a) == .insert(container: "ps", index: 0, lineY: 180))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 200), geometry: empty, dragged: a) == .insert(container: "ts", index: 0, lineY: 180))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 160), geometry: empty, dragged: a) == .insert(container: "ps", index: 0, lineY: 180, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 200), geometry: empty, dragged: a) == .insert(container: "ts", index: 0, lineY: 180, depth: 0))
 }
 
 @MainActor
@@ -414,8 +414,8 @@ func folderLowerBandResolvesFirstChildOrAfterClosedEmptyFolder() throws {
             let rect = g.rows[1].frame
             for y in [rect.maxY - SidebarDragMetrics.rowBoundaryInset, rect.maxY - 0.001] {
                 let expected: SidebarDrop = expanded && !empty
-                    ? .insert(container: "folder", index: 0, lineY: rect.maxY)
-                    : .insert(container: "ps", index: 2, lineY: rect.maxY)
+                    ? .insert(container: "folder", index: 0, lineY: rect.maxY, depth: 1)
+                    : .insert(container: "ps", index: 2, lineY: rect.maxY, depth: 0)
                 #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: y), geometry: g, dragged: a) == expected)
             }
             #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: rect.maxY - SidebarDragMetrics.rowBoundaryInset - 0.001), geometry: g, dragged: a) == .folder("folder"))
@@ -487,5 +487,84 @@ func onlySuccessfulSameSpaceTodayDragShowsRenameHint() throws {
             sidebar.showSpace(at: 1)
             #expect(hint.isHidden)
         }
+    }
+}
+
+@Test
+func folderEndBoundaryLevelsFollowThePointerX() throws {
+    let dragged = dragRow("a", "ts")
+    let owner = pureGeometry(dragSpace(pinned: [dragRow("b", "ps"), dragRow("untitled", "ps", 1, kind: .folder),
+                                                dragRow("google", "untitled", 0, depth: 1), dragRow("example", "untitled", 1, depth: 1)],
+                                       today: [dragged]))
+    // Rows: b 180-221, untitled 221-262, google 262-303, example 303-344, a 344-385.
+    let end = owner.rows[3].frame.maxY
+    // Over the child's title the drop stays inside, after the row above.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 338), geometry: owner, dragged: dragged) == .insert(container: "untitled", index: 2, lineY: end, depth: 1))
+    // Left of the child's indent it is the end of pinned, whatever the x is below the band.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 338), geometry: owner, dragged: dragged) == .insert(container: "ps", index: 2, lineY: end, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 8, y: 338), geometry: owner, dragged: dragged) == .insert(container: "ps", index: 2, lineY: end, depth: 0))
+}
+
+@Test
+func nestedFolderEndsReachEveryLevel() throws {
+    let dragged = dragRow("a", "ts")
+    let g = pureGeometry(dragSpace(pinned: [dragRow("pinA", "ps", kind: .folder), dragRow("sub", "pinA", kind: .folder, depth: 1),
+                                            dragRow("leaf", "sub", depth: 2)], today: [dragged]))
+    // Rows: pinA 180-221, sub 221-262, leaf 262-303, a 303-344; the boundary ends all three levels.
+    let end = g.rows[2].frame.maxY
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 290), geometry: g, dragged: dragged) == .insert(container: "sub", index: 1, lineY: end, depth: 2))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 40, y: 290), geometry: g, dragged: dragged) == .insert(container: "pinA", index: 1, lineY: end, depth: 1))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 290), geometry: g, dragged: dragged) == .insert(container: "ps", index: 1, lineY: end, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 8, y: 290), geometry: g, dragged: dragged) == .insert(container: "ps", index: 1, lineY: end, depth: 0))
+}
+
+@Test
+func theRootLevelIsOfferedOnlyWherePinnedEnds() throws {
+    let dragged = dragRow("a", "ts")
+    let g = pureGeometry(dragSpace(pinned: [dragRow("pinA", "ps", kind: .folder), dragRow("sub", "pinA", kind: .folder, depth: 1),
+                                            dragRow("leaf", "sub", depth: 2), dragRow("z", "ps", 1)], today: [dragged]))
+    // Rows: pinA 180-221, sub 221-262, leaf 262-303, z 303-344; pinned continues after leaf, so no root level.
+    let end = g.rows[2].frame.maxY
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 290), geometry: g, dragged: dragged) == .insert(container: "sub", index: 1, lineY: end, depth: 2))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 290), geometry: g, dragged: dragged) == .insert(container: "pinA", index: 1, lineY: end, depth: 1))
+}
+
+@Test
+func pinnedEndBoundsTheDividerGapAndTheTrailingZone() throws {
+    let dragged = dragRow("a", "ts")
+    let space = dragSpace(pinned: [dragRow("b", "ps"), dragRow("untitled", "ps", 1, kind: .folder),
+                                   dragRow("google", "untitled", 0, depth: 1), dragRow("example", "untitled", 1, depth: 1)],
+                          today: [dragged])
+    let g = SidebarDragGeometry(bounds: CGRect(x: 0, y: 0, width: 240, height: 700), list: CGRect(x: 8, y: 180, width: 224, height: 450),
+        pinnedArea: CGRect(x: 8, y: 149, width: 224, height: 31), favorites: CGRect(x: 8, y: 90, width: 224, height: 47),
+        rows: [ .init(row: space.pinned[0], frame: CGRect(x: 8, y: 180, width: 224, height: 41)),
+                .init(row: space.pinned[1], frame: CGRect(x: 8, y: 221, width: 224, height: 41)),
+                .init(row: space.pinned[2], frame: CGRect(x: 8, y: 262, width: 224, height: 41)),
+                .init(row: space.pinned[3], frame: CGRect(x: 8, y: 303, width: 224, height: 41)),
+                .init(row: space.today[0], frame: CGRect(x: 8, y: 385, width: 224, height: 41)) ],
+        dock: [], space: space)
+    // The row's lower band and the gap above the divider mid-point give the same answer.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 338), geometry: g, dragged: dragged) == .insert(container: "ps", index: 2, lineY: 344, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 360), geometry: g, dragged: dragged) == .insert(container: "ps", index: 2, lineY: 344, depth: 0))
+    // Below the mid-point the drop goes before the first Today row.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 370), geometry: g, dragged: dragged) == .insert(container: "ts", index: 0, lineY: 385, depth: 0))
+    // With Today empty the zone below the last pinned row offers the same levels.
+    let emptyToday = SidebarDragGeometry(bounds: g.bounds, list: g.list, pinnedArea: g.pinnedArea, favorites: g.favorites,
+        rows: g.rows.prefix(4).map { $0 }, dock: [], space: dragSpace(profile: "default",
+            pinned: [dragRow("b", "ps"), dragRow("untitled", "ps", 1, kind: .folder),
+                     dragRow("google", "untitled", 0, depth: 1), dragRow("example", "untitled", 1, depth: 1)], today: []))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "ps", index: 2, lineY: 344, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "untitled", index: 2, lineY: 344, depth: 1))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 390), geometry: emptyToday, dragged: dragged) == .insert(container: "ts", index: 0, lineY: 344, depth: 0))
+}
+
+@Test
+func aCollapsedFolderBoundaryDoesNotLevel() throws {
+    let dragged = dragRow("a", "ts")
+    let g = pureGeometry()
+    // The collapsed nested row has no ending ancestor (folder's last visible row is child): the
+    // answer must not depend on x. Rows: nested 262-303.
+    for x in [8.0, 30, 60] {
+        #expect(resolveSidebarDrop(position: CGPoint(x: x, y: 302), geometry: g, dragged: dragged) == .insert(container: "folder", index: 1, lineY: 303, depth: 1))
     }
 }

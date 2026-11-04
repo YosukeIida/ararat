@@ -316,9 +316,15 @@ final class SidebarRowView: NSView {
         let field = SidebarRenameField(title: row.title, save: { [weak self] title, done in
             guard let self, let save = self.onRenameCommit else { done(false); return }
             save(self.row, title, done)
-        }, ended: { [weak self] in self?.renameField = nil; self?.onRenameEnd?() })
+        }, ended: { [weak self] in
+            guard let self else { return }
+            self.renameField = nil
+            self.title.isHidden = false
+            self.onRenameEnd?()
+        })
         renameField = field
         addSubview(field)
+        title.isHidden = true
         needsLayout = true
         layoutSubtreeIfNeeded()
         window?.makeFirstResponder(field)

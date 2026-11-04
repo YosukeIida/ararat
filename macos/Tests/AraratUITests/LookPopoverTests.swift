@@ -463,3 +463,21 @@ func submittedLookSurvivesAnOlderPublishUntilTheLatestReply() async throws {
     #expect(fixture.preview.look == nil)
     try await fixture.close()
 }
+
+@Test
+func lookFieldBackgroundResolvesByAppearance() throws {
+    func sRGB(_ color: NSColor, appearance: NSAppearance) -> NSColor? {
+        var resolved: NSColor?
+        appearance.performAsCurrentDrawingAppearance { resolved = color.usingColorSpace(.sRGB) }
+        return resolved
+    }
+    let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+    let dark = try #require(sRGB(LookFieldColors.field, appearance: darkAppearance))
+    for value in [dark.redComponent, dark.greenComponent, dark.blueComponent] {
+        #expect(abs(value - 42.0 / 255) < 0.0001)
+    }
+    let lightAppearance = try #require(NSAppearance(named: .aqua))
+    let light = try #require(sRGB(LookFieldColors.field, appearance: lightAppearance))
+    let control = try #require(sRGB(.controlBackgroundColor, appearance: lightAppearance))
+    #expect(light.redComponent == control.redComponent && light.greenComponent == control.greenComponent && light.blueComponent == control.blueComponent)
+}

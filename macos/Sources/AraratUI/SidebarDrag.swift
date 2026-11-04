@@ -37,14 +37,14 @@ struct SidebarDragGeometry {
 
 enum SidebarDrop: Equatable {
     case refused
-    case insert(container: String, index: Int, lineY: CGFloat)
+    case insert(container: String, index: Int, lineY: CGFloat, depth: UInt32)
     case folder(String)
     case favorites(container: String, index: Int)
     case dock(space: String, container: String, index: Int)
 
     var move: (container: String, index: Int)? {
         switch self {
-        case let .insert(container, index, _), let .favorites(container, index), let .dock(_, container, index): (container, index)
+        case let .insert(container, index, _, _), let .favorites(container, index), let .dock(_, container, index): (container, index)
         case let .folder(id): (id, 0)
         case .refused: nil
         }
@@ -69,8 +69,9 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
         let inToday = container == g.space.todayId || descendant(container, of: g.space.todayId)
         if dragged.kind == .folder && inToday { return .refused }
         if let parent = byID[container], parent.kind != .folder { return .refused }
+        let depth = container == g.space.pinnedId || container == g.space.todayId ? UInt32(0) : (byID[container]?.depth ?? 0) + 1
         let adjusted = index - (dragged.parentId == container && Int(dragged.siblingIndex) < index ? 1 : 0)
-        return .insert(container: container, index: max(0, adjusted), lineY: lineY)
+        return .insert(container: container, index: max(0, adjusted), lineY: lineY, depth: depth)
     }
     if let cell = g.dock.first(where: { $0.frame.contains(position) }) {
         guard cell.space.profileKey == g.space.profileKey else { return .refused }
@@ -94,6 +95,30 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
     }
     guard g.list.contains(position) else { return .refused }
     let entries = g.rows.sorted { $0.frame.minY < $1.frame.minY }
+    func boundary(above: Row, next: Row?, lineY: CGFloat) -> SidebarDrop? {
+        var candidates: [(container: String, index: Int, depth: UInt32)] = []
+        var folder: Row?
+        var ancestorID = above.parentId
+        while let ending = byID[ancestorID], ending.kind == .folder, !ending.collapsed,
+              entries.last(where: { descendant($0.row.id, of: ending.id) })?.row.id == above.id {
+            let index = folder.map { Int($0.siblingIndex) + 1 } ?? Int(above.siblingIndex) + 1
+            candidates.append((container: ending.id, index: index, depth: ending.depth + 1))
+            folder = ending
+            ancestorID = ending.parentId
+        }
+        var inPinned = false
+        var parentID: String? = above.parentId
+        while let id = parentID {
+            if id == g.space.pinnedId { inPinned = true; break }
+            parentID = byID[id]?.parentId
+        }
+        if inPinned,
+           next == nil || (next?.parentId == g.space.todayId && next?.siblingIndex == 0) {
+            candidates.append((container: g.space.pinnedId, index: Int(g.space.pinnedCount), depth: 0))
+        }
+        guard let chosen = candidates.first(where: { SidebarDragMetrics.lineLeading + 16 * CGFloat($0.depth) <= position.x }) ?? candidates.last else { return nil }
+        return insertion(chosen.container, index: chosen.index, lineY: lineY)
+    }
     if let entry = entries.first(where: { $0.frame.contains(position) }), entry.row.kind == .folder,
        position.y > entry.frame.minY + SidebarDragMetrics.rowBoundaryInset,
        position.y < entry.frame.maxY - SidebarDragMetrics.rowBoundaryInset {
@@ -112,12 +137,17 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
         let end = entry.row.kind == .folder
             ? entries.filter { descendant($0.row.id, of: entry.row.id) }.map(\.frame.maxY).max() ?? entry.frame.maxY
             : entry.frame.maxY
+        if let index = entries.firstIndex(where: { $0.row.id == entry.row.id }),
+           let drop = boundary(above: entry.row, next: index + 1 < entries.count ? entries[index + 1].row : nil, lineY: end) {
+            return drop
+        }
         return insertion(entry.row.parentId, index: Int(entry.row.siblingIndex) + 1, lineY: end)
     }
     if let next = entries.first(where: { position.y < $0.frame.minY }) {
         if next.row.parentId == g.space.todayId, next.row.siblingIndex == 0,
            let lastPin = entries.last(where: { g.space.pinned.contains($0.row) }),
            position.y <= (lastPin.frame.maxY + next.frame.minY) / 2 {
+            if let drop = boundary(above: lastPin.row, next: next.row, lineY: lastPin.frame.maxY) { return drop }
             return insertion(g.space.pinnedId, index: Int(g.space.pinnedCount), lineY: lastPin.frame.maxY)
         }
         return insertion(next.row.parentId, index: Int(next.row.siblingIndex), lineY: next.frame.minY)
@@ -125,6 +155,7 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
     if let last = entries.last {
         if g.space.today.isEmpty {
             if position.y <= last.frame.maxY + 20 {
+                if let drop = boundary(above: last.row, next: nil, lineY: last.frame.maxY) { return drop }
                 return insertion(g.space.pinnedId, index: Int(g.space.pinnedCount), lineY: last.frame.maxY)
             }
             return insertion(g.space.todayId, index: 0, lineY: last.frame.maxY)
