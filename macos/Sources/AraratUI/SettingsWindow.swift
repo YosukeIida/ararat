@@ -31,9 +31,10 @@ public final class SettingsWindowController: NSWindowController {
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    public func refreshShortcuts() { model.readShortcuts() }
     public func modelUpdate(snapshot: WorkspaceSnapshot) { model.update(snapshot: snapshot) }
     public func prepare(shownSpaceID: String?) {
-        model.readShortcuts(NSApp.mainMenu ?? NSMenu())
+        model.readShortcuts()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -145,7 +146,7 @@ private struct SettingsDetail: View {
                             }.labelsHidden()
                         }
                     case .shortcuts:
-                        ForEach(model.shortcuts) { row in card(row.id, title: row.title, subtitle: row.subtitle) { SettingsKeycaps(keys: row.keys) } }
+                        SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
                     case .spaces:
                         VStack(spacing: 0) {
                             ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
@@ -248,6 +249,103 @@ private struct SettingsDetail: View {
     }
 }
 
+/// The Shortcuts pane: a search field over action names and keys, the Customized/Conflicting filter
+/// menu and ⋯ › Reset All like Cra's pane, rows showing the effective key (click it to record,
+/// right-click for Reset/Remove), and the recorder view. Obtained from Cra's MIT
+/// `Sources/Cra/UI/Settings/ShortcutsPane.swift`.
+private struct SettingsShortcutsSection: View {
+    @ObservedObject var model: SettingsModel
+    @ObservedObject var keyBindings: KeyBindingsModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search", text: $model.shortcutQuery).textFieldStyle(.plain).accessibilityLabel("Search shortcuts")
+                }
+                .padding(.horizontal, 10).frame(height: 30).background(SettingsColor.capsule, in: Capsule())
+                filterButton
+                resetAllButton
+            }
+            if let error = keyBindings.error { Text(error).foregroundStyle(.red).help("The last recording was refused") }
+            ForEach(model.filteredShortcuts) { row in rowCard(row) }
+            if model.filteredShortcuts.isEmpty && !model.shortcuts.isEmpty { Text("No matching shortcuts").foregroundStyle(.secondary) }
+        }
+        .background(ShortcutsRecorderBridge(keyBindings: keyBindings).frame(width: 1, height: 1))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var filterButton: some View {
+        Menu {
+            Toggle("Customized Shortcuts", isOn: $model.customizedOnly)
+            Toggle("Conflicting Shortcuts", isOn: $model.conflictingOnly)
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease").font(.system(size: 14, weight: .medium)).frame(width: 30, height: 30)
+        }
+        .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
+        .help("Show customized or conflicting shortcuts")
+    }
+
+    private var resetAllButton: some View {
+        Menu {
+            Button("Reset All Shortcuts") { model.resetAllShortcuts() }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 30, height: 30)
+        }
+        .menuIndicator(.hidden).menuStyle(.borderlessButton).fixedSize()
+        .help("Reset all shortcuts to their defaults")
+    }
+
+    @ViewBuilder
+    private func rowCard(_ row: SettingsModel.Row) -> some View {
+        let recording = recording(on: row)
+        HStack {
+            VStack(alignment: .leading, spacing: 3) { Text(row.title); Text(row.subtitle).font(.caption).foregroundStyle(.secondary) }
+            Spacer(minLength: 12)
+            Button { if let command = row.command { model.toggleRecording(command) } } label: {
+                keyFace(row, recording)
+            }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Record shortcut for \(row.title)")
+                .frame(minWidth: 110)
+        }
+        .padding(.horizontal, 12).frame(minHeight: 54)
+        .background(recording != nil ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .contextMenu {
+            if let command = row.command, let binding = keyBindings.binding(command: command) {
+                Button("Reset to Default") { model.resetShortcut(command) }.disabled(!binding.customized)
+                Button("Remove Shortcut") { model.removeShortcut(command) }.disabled(binding.key == nil && !binding.conflicting)
+            }
+        }
+    }
+
+    private func recording(on row: SettingsModel.Row) -> KeyBindingsModel.Recording? {
+        guard let command = row.command, let state = keyBindings.recording, state.command == command else { return nil }
+        return state
+    }
+
+    @ViewBuilder
+    private func keyFace(_ row: SettingsModel.Row, _ recording: KeyBindingsModel.Recording?) -> some View {
+        if let recording {
+            VStack(spacing: 2) {
+                Text(recording.candidate.map { SidebarTooltip.display(for: $0) } ?? "Press keys…").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.white)
+                if let holder = recording.holder { Text("Held by \(holder) — press again.").font(.caption2).foregroundStyle(.orange) }
+            }
+            .frame(maxWidth: .infinity).frame(height: 30)
+            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else if row.conflicting, !row.keys.isEmpty {
+            // The lost key must not read as a working one: the caption marks what the caps are.
+            SettingsKeycaps(keys: row.keys, caption: "Conflicting")
+        } else if row.keys.isEmpty {
+            Text("None").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).frame(height: 30)
+        } else {
+            SettingsKeycaps(keys: row.keys)
+        }
+    }
+}
+
 struct SettingsField: View {
     let value: String
     let label: String
@@ -272,8 +370,17 @@ struct SettingsField: View {
 }
 
 @MainActor
-final class SettingsWindow: NSWindow {
+final class SettingsWindow: NSWindow, MenuCommandHost {
+    var menuCommandBindings: [KeyBinding] { (windowController as? SettingsWindowController)?.model.keyBindings.bindings ?? [] }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // A recording recorder sees the key first, so a guarded ⌘W is refused instead of closing.
+        if let recorder = firstResponder as? ShortcutsRecorderView, recorder.performKeyEquivalent(with: event) { return true }
+        // A table command rebound without Command yields to one of our text fields (the search):
+        // the key is claimed here and typed into the field instead of reaching the menu pass.
+        if WorkspaceCommands.yieldsToOwnField(menuCommandBindings, event: event, in: self) {
+            firstResponder?.keyDown(with: event)
+            return true
+        }
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command], event.charactersIgnoringModifiers == "w" {
             performClose(nil)
             return true
@@ -284,6 +391,7 @@ final class SettingsWindow: NSWindow {
 
 private struct SettingsKeycaps: NSViewRepresentable {
     let keys: [String]
+    var caption: String? = nil
     func makeNSView(context: Context) -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -300,6 +408,14 @@ private struct SettingsKeycaps: NSViewRepresentable {
             stack.addArrangedSubview(cap)
             cap.widthAnchor.constraint(greaterThanOrEqualToConstant: 18).isActive = true
             cap.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        }
+        if let caption {
+            let label = NSTextField(labelWithString: caption)
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textColor = .secondaryLabelColor
+            label.setAccessibilityLabel(caption)
+            stack.addArrangedSubview(label)
+            label.heightAnchor.constraint(equalToConstant: 18).isActive = true
         }
     }
 }

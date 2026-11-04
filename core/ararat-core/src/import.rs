@@ -15,6 +15,9 @@ pub struct ImportError(pub String);
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ImportReport {
     pub unknown_space_looks: usize,
+    pub missing_key_bindings: bool,
+    pub key_bindings_error: Option<String>,
+    pub skipped_key_bindings: usize,
     pub missing_windows: bool,
     pub windows_error: Option<String>,
     pub differing_folder_states: usize,
@@ -26,7 +29,7 @@ pub struct ImportReport {
 
 type Result<T> = std::result::Result<T, ImportError>;
 
-pub fn arc_sidebar(json: &str, windows_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
+pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     let container = root["sidebar"]["containers"]
         .as_array()
@@ -65,7 +68,7 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>) -> Result<(Workspace,
             }
         }
     }
-    let mut workspace = Workspace { folder_collapsed: HashMap::new(), spaces, favorites, items, windows: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new() };
+    let mut workspace = Workspace { key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), spaces, favorites, items, windows: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
@@ -77,7 +80,21 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>) -> Result<(Workspace,
             }
         }
     }
+    match key_bindings_json {
+        None => report.missing_key_bindings = true,
+        Some(json) => match arc_key_bindings(json) {
+            Ok(count) => report.skipped_key_bindings = count,
+            Err(error) => report.key_bindings_error = Some(error.0),
+        },
+    }
     Ok((workspace, report))
+}
+
+fn arc_key_bindings(json: &str) -> Result<usize> {
+    let root: Value = serde_json::from_str(json).map_err(|e| err(&e.to_string()))?;
+    if root["version"].as_u64() != Some(1) { return Err(err("unsupported key bindings version")); }
+    let overrides = root["userOverrides"].as_array().ok_or_else(|| err("userOverrides must be an array"))?;
+    Ok(overrides.len())
 }
 
 fn window_state(json: &str, workspace: &mut Workspace, report: &mut ImportReport) -> Result<()> {

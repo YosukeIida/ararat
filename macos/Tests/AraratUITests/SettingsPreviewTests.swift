@@ -10,7 +10,8 @@ func captureSettingsWithoutOrderingWindow() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     for name in ["light", "dark"] {
-        let model = SettingsModel(snapshot: snapshot, adapter: WorkspaceAdapter(windowID: "preview"), publish: { _ in }, resetWidth: {})
+        let adapter = WorkspaceAdapter(windowID: "preview")
+        let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter))
         model.page = .space("work")
         let controller = SettingsWindowController(model: model)
         let window = try #require(controller.window)

@@ -116,6 +116,7 @@ pub struct WindowState {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
+    pub key_binding_overrides: HashMap<String, Option<crate::key_bindings::KeyCombination>>,
     pub folder_collapsed: HashMap<Id, bool>,
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
@@ -127,6 +128,7 @@ pub struct Workspace {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
+    KeyBinding,
     Space,
     Item,
     Favorites,
@@ -139,6 +141,7 @@ pub enum Kind {
 impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Kind::KeyBinding => "key_binding",
             Kind::Space => "space",
             Kind::Item => "item",
             Kind::Favorites => "favorites",
@@ -150,12 +153,13 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState].into_iter().find(|k| k.as_str() == s)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
+    KeyBinding { command: String, key: Option<crate::key_bindings::KeyCombination> },
     FolderState { item: Id, collapsed: bool },
     ArchiveAfter { profile: Profile, value: ArchiveAfter },
     LastSelected { item: Id, at: u64 },
@@ -168,6 +172,7 @@ pub enum Record {
 impl Record {
     pub fn kind(&self) -> Kind {
         match self {
+            Record::KeyBinding { .. } => Kind::KeyBinding,
             Record::ArchiveAfter { .. } => Kind::ArchiveAfter,
             Record::LastSelected { .. } => Kind::LastSelected,
             Record::FolderState { .. } => Kind::FolderState,
@@ -180,6 +185,7 @@ impl Record {
 
     pub fn id(&self) -> Id {
         match self {
+            Record::KeyBinding { command, .. } => command.clone(),
             Record::ArchiveAfter { profile, .. } => profile_id(profile),
             Record::LastSelected { item, .. } => item.clone(),
             Record::FolderState { item, .. } => item.clone(),
@@ -192,6 +198,7 @@ impl Record {
 
     pub fn body(&self) -> String {
         match self {
+            Record::KeyBinding { key, .. } => serde_json::to_string(key),
             Record::ArchiveAfter { value, .. } => serde_json::to_string(value),
             Record::LastSelected { at, .. } => serde_json::to_string(at),
             Record::FolderState { collapsed, .. } => serde_json::to_string(collapsed),
@@ -205,6 +212,7 @@ impl Record {
 
     pub fn parse(kind: Kind, id: &str, body: &str) -> serde_json::Result<Record> {
         Ok(match kind {
+            Kind::KeyBinding => Record::KeyBinding { command: id.into(), key: serde_json::from_str(body)? },
             Kind::FolderState => Record::FolderState { item: id.into(), collapsed: serde_json::from_str(body)? },
             Kind::LastSelected => Record::LastSelected { item: id.into(), at: serde_json::from_str(body)? },
             Kind::ArchiveAfter => Record::ArchiveAfter { profile: serde_json::from_str(id)?, value: serde_json::from_str(body)? },
@@ -274,6 +282,8 @@ impl Workspace {
 
     pub fn apply(&mut self, op: &Op) {
         match op {
+            Op::Put(Record::KeyBinding { command, key }) => { self.key_binding_overrides.insert(command.clone(), key.clone()); },
+            Op::Delete(Kind::KeyBinding, id) => { self.key_binding_overrides.remove(id); },
             Op::Put(Record::FolderState { item, collapsed }) => { self.folder_collapsed.insert(item.clone(), *collapsed); },
             Op::Delete(Kind::FolderState, id) => { self.folder_collapsed.remove(id); },
             Op::Put(Record::LastSelected { item, at }) => { self.last_selected.insert(item.clone(), *at); },
@@ -308,7 +318,7 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
             .map(Op::Put).collect()
     }
 }

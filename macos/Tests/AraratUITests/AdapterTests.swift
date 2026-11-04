@@ -47,7 +47,7 @@ func missingAndMalformedWindowsKeepTheSidebarImportAvailable() async throws {
             adapter.open(path: directory.appendingPathComponent("\(malformed).sqlite").path, json: { json }, windowsJSON: {
                 let data = malformed ? Data([0xff]) : (try? Data(contentsOf: missing))
                 return data.map { String(decoding: $0, as: UTF8.self) }
-            }, onImport: { reports.continuation.yield($0) }, completion: $0)
+            }, keyBindingsJSON: { nil }, onImport: { reports.continuation.yield($0) }, completion: $0)
         }
         #expect(snapshot.spaces.count == 2)
         var iterator = reports.stream.makeAsyncIterator()
@@ -68,7 +68,7 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
     let path = directory.appendingPathComponent("workspace.sqlite").path
     let adapter = WorkspaceAdapter(windowID: "test-window")
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["a","b","c"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}},"b",{"id":"b","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}}]}]}}"#
-    _ = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, completion: $0) }
+    _ = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
     let selected = try await adapterValue { adapter.select(id: "a", completion: $0) }
     _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: selected)
@@ -105,7 +105,7 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
     _ = try await adapterValue { adapter.flush(completion: $0) }
     _ = try await adapterValue { adapter.shutdown(completion: $0) }
     let reopened = WorkspaceAdapter(windowID: "test-window")
-    let restored = try await adapterValue { reopened.open(path: path, json: { "invalid" }, windowsJSON: { nil }, completion: $0) }
+    let restored = try await adapterValue { reopened.open(path: path, json: { "invalid" }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
     #expect(restored == results[1].snapshot)
     _ = try await adapterValue { reopened.shutdown(completion: $0) }
 }
@@ -158,7 +158,7 @@ func adapterDuplicateEditPublishesTheCopyAndPersistsIt() async throws {
     let adapter = WorkspaceAdapter(windowID: "duplicate")
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
-    let before = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, completion: $0) }
+    let before = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
     let after = try await adapterValue { adapter.edit(.duplicate(id: "tab-mail"), completion: $0) }
     let favorites = try #require(after.spaces.first?.favorites)
     #expect(favorites.count == 2)
@@ -168,4 +168,30 @@ func adapterDuplicateEditPublishesTheCopyAndPersistsIt() async throws {
     _ = try await adapterValue { adapter.shutdown(completion: $0) }
     let reopened = try WorkspaceStore.open(path: path).snapshot(windowId: "duplicate")
     #expect(reopened.spaces.first?.favorites.map(\.id) == favorites.map(\.id))
+}
+
+@Test @MainActor
+func keyBindingImportReportsSkippedAndMalformedDataWithoutBlockingSidebar() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let sidebar = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    let inputs: [Data?] = [nil, Data(#"{"version":1,"userOverrides":[]}"#.utf8), Data(#"{"version":1,"userOverrides":[{"opaque":true}]}"#.utf8), Data([0xff])]
+    for (index, data) in inputs.enumerated() {
+        let adapter = WorkspaceAdapter(windowID: "key-bindings-import")
+        let reports = AsyncStream<ImportReport>.makeStream()
+        let snapshot = try await adapterValue {
+            adapter.open(path: directory.appendingPathComponent("keys-\(index).sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: {
+                data.map { String(decoding: $0, as: UTF8.self) }
+            }, onImport: { reports.continuation.yield($0) }, completion: $0)
+        }
+        #expect(snapshot.spaces.count == 2)
+        var iterator = reports.stream.makeAsyncIterator()
+        let report = try #require(await iterator.next())
+        #expect(report.missingKeyBindings == (index == 0))
+        #expect(report.skippedKeyBindings == (index == 2 ? 1 : 0))
+        #expect((report.keyBindingsError != nil) == (index == 3))
+        reports.continuation.finish()
+        _ = try await adapterValue { adapter.shutdown(completion: $0) }
+    }
 }

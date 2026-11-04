@@ -54,6 +54,34 @@ impl WorkspaceStore {
         Ok(Arc::new(Self { store, workspace: Mutex::new(workspace) }))
     }
 
+    pub fn key_bindings(&self) -> Vec<KeyBinding> {
+        key_bindings(&self.workspace.lock().unwrap())
+    }
+
+    pub fn set_key_binding(&self, command: String, key: Option<KeyCombination>) -> Result<Vec<KeyBinding>, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_key_binding(&command, key.map(Into::into))?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(key_bindings(&workspace))
+    }
+
+    pub fn reset_key_binding(&self, command: String) -> Result<Vec<KeyBinding>, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.reset_key_binding(&command)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(key_bindings(&workspace))
+    }
+
+    pub fn reset_all_key_bindings(&self) -> Result<Vec<KeyBinding>, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.reset_all_key_bindings();
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(key_bindings(&workspace))
+    }
+
     pub fn auto_archive(&self, window_id: String, now: u64) -> Result<Option<WorkspaceSnapshot>, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.auto_archive(now)?;
@@ -78,8 +106,8 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
-    pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>) -> Result<ImportResult, CoreError> {
-        let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
+    pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>) -> Result<ImportResult, CoreError> {
+        let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         for item in imported.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
             imported.last_selected.entry(item.id.clone()).or_insert(now);
@@ -361,6 +389,9 @@ pub struct WorkspaceSnapshot {
 
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct ImportReport {
+    pub missing_key_bindings: bool,
+    pub key_bindings_error: Option<String>,
+    pub skipped_key_bindings: u64,
     pub unknown_space_looks: u64,
     pub missing_windows: bool,
     pub windows_error: Option<String>,
@@ -373,7 +404,7 @@ pub struct ImportReport {
 
 impl From<import::ImportReport> for ImportReport {
     fn from(report: import::ImportReport) -> Self {
-        Self { unknown_space_looks: report.unknown_space_looks as u64, missing_windows: report.missing_windows,
+        Self { missing_key_bindings: report.missing_key_bindings, key_bindings_error: report.key_bindings_error, skipped_key_bindings: report.skipped_key_bindings as u64, unknown_space_looks: report.unknown_space_looks as u64, missing_windows: report.missing_windows,
             windows_error: report.windows_error, differing_folder_states: report.differing_folder_states as u64,
             skipped_dates: report.skipped_dates as u64, peeked_folders: report.peeked_folders as u64,
             unknown_window_ids: report.unknown_window_ids as u64, malformed_window_entries: report.malformed_window_entries as u64 }
@@ -387,8 +418,8 @@ pub struct ImportResult {
 }
 
 #[uniffi::export]
-pub fn import_arc_sidebar(json: String, windows_json: Option<String>) -> Result<ImportResult, CoreError> {
-    let (ws, report) = import::arc_sidebar(&json, windows_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
+pub fn import_arc_sidebar(json: String, windows_json: Option<String>, key_bindings_json: Option<String>) -> Result<ImportResult, CoreError> {
+    let (ws, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
     Ok(ImportResult { snapshot: snapshot(ws, ""), report: report.into() })
 }
 
@@ -466,7 +497,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ararat-ffi-duplicate-{}.sqlite", std::process::id()));
         assert!(!path.exists());
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
-        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None).unwrap();
         let snapshot = store.duplicate_item("one".into(), "folder-docs".into()).unwrap();
         let rows: Vec<_> = snapshot.spaces[0].pinned.iter().filter(|row| row.depth == 0).collect();
         let position = rows.iter().position(|row| row.id == "folder-docs").unwrap();
@@ -481,7 +512,7 @@ mod tests {
 
     #[test]
     fn drag_snapshot_exposes_membership_roots_indices_profiles_and_fold_state() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
         ws.set_folder_collapsed("folder-docs", true).unwrap();
         let snapshot = snapshot(ws, "drag");
         let space = &snapshot.spaces[0];
@@ -502,7 +533,7 @@ mod tests {
 
     #[test]
     fn item_edits_snapshot_titles_and_keep_selection_when_hidden_or_moved_to_another_space() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
         ws.spaces[1].profile = ararat_core::model::Profile::Default;
         ws.select_item("one", "tab-spec").unwrap();
         ws.rename_tab("tab-spec", "Custom").unwrap();
@@ -523,7 +554,7 @@ mod tests {
         let json = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
             .replace(r#""id": "pin-work", "parentID": null"#, r#""id": "pin-work", "parentID": "tab-spec""#);
         assert!(json.contains(r#""id": "pin-work", "parentID": "tab-spec""#));
-        let snapshot = import_arc_sidebar(json, None).unwrap().snapshot;
+        let snapshot = import_arc_sidebar(json, None, None).unwrap().snapshot;
         assert!(!snapshot.spaces.is_empty());
     }
 }
@@ -540,4 +571,56 @@ impl From<ArchiveAfter> for ararat_core::model::ArchiveAfter {
     fn from(value: ArchiveAfter) -> Self {
         match value { ArchiveAfter::Hours12 => Self::Hours12, ArchiveAfter::Hours24 => Self::Hours24, ArchiveAfter::Days7 => Self::Days7, ArchiveAfter::Days30 => Self::Days30 }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+/// `key` is the character without Shift ("4" for ⇧⌘4, "l" for ⇧⌘L); modifiers are explicit.
+pub struct KeyCombination {
+    pub key: String,
+    pub command: bool,
+    pub control: bool,
+    pub option: bool,
+    pub shift: bool,
+}
+
+impl From<KeyCombination> for ararat_core::key_bindings::KeyCombination {
+    fn from(key: KeyCombination) -> Self {
+        Self { key: key.key, command: key.command, control: key.control, option: key.option, shift: key.shift }
+    }
+}
+
+impl From<ararat_core::key_bindings::KeyCombination> for KeyCombination {
+    fn from(key: ararat_core::key_bindings::KeyCombination) -> Self {
+        Self { key: key.key, command: key.command, control: key.control, option: key.option, shift: key.shift }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KeyBinding {
+    pub command: String,
+    pub title: String,
+    pub menu: String,
+    pub description: String,
+    pub default_key: Option<KeyCombination>,
+    pub key: Option<KeyCombination>,
+    pub customized: bool,
+    pub conflicting: bool,
+    pub assigned_key: Option<KeyCombination>,
+}
+
+fn key_bindings(workspace: &Workspace) -> Vec<KeyBinding> {
+    workspace.key_bindings().into_iter().map(|binding| {
+        let command = binding.command;
+        let assigned_key = workspace.key_binding_overrides.get(&command.id).cloned()
+            .unwrap_or_else(|| command.default_key.clone()).map(Into::into);
+        KeyBinding { customized: workspace.key_binding_overrides.contains_key(&command.id),
+            key: binding.key.map(Into::into), conflicting: binding.conflicting, assigned_key,
+            command: command.id, title: command.title, menu: command.menu, description: command.description,
+            default_key: command.default_key.map(Into::into) }
+    }).collect()
+}
+
+#[uniffi::export]
+pub fn default_key_bindings() -> Vec<KeyBinding> {
+    key_bindings(&Workspace::default())
 }

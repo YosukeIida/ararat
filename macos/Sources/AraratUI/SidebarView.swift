@@ -38,6 +38,11 @@ public final class SidebarView: NSView {
     private var creationLookSpaceID: String?
 
     private var lookPreview: (spaceID: String, look: Look?)?
+    private let shortcutMenus = NSHashTable<NSMenu>.weakObjects()
+    public var keyBindings = defaultKeyBindings() {
+        didSet { for menu in shortcutMenus.allObjects { KeyBindingsModel.apply(keyBindings, to: menu) } }
+    }
+
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     private(set) var drag: SidebarDragState?
@@ -326,9 +331,32 @@ public final class SidebarView: NSView {
     }
 
     @objc public func closeSelectedTab(_ sender: Any?) {
-        guard let id = selectedID,
+        guard pageCommandsAllowed, let id = selectedID,
               snapshot.spaces.contains(where: { ($0.favorites + $0.pinned + $0.today).contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
         onCloseSelected?()
+    }
+
+    public var pageCommandsAllowed: Bool {
+        !createSpaceOpen && renamingID == nil && WorkspaceCommands.allowsPageCommand(window?.firstResponder)
+    }
+
+    public var canPinSelectedTab: Bool {
+        guard pageCommandsAllowed, let space = snapshotSpace, let id = selectedID else { return false }
+        return (space.today + space.pinned).contains { $0.id == id && $0.kind == .tab }
+    }
+
+    @objc public func pinSelectedTab(_ sender: Any?) {
+        guard canPinSelectedTab, let space = snapshotSpace, let id = selectedID, let onMove else { return }
+        let pinning = space.today.contains { $0.id == id }
+        onMove(id, pinning ? space.pinnedId : space.todayId, 0, false) { [weak self] snapshot in
+            guard let self, let snapshot else { return }
+            self.replaceSnapshot(snapshot)
+            if pinning { self.showPinHint(id: id, space: space.id) }
+        }
+    }
+
+    public var selectedTabIsPinned: Bool {
+        snapshotSpace?.pinned.contains { $0.id == selectedID && $0.kind == .tab } == true
     }
 
     public func showSpace(at index: Int) {
@@ -1400,9 +1428,9 @@ extension SidebarView {
 @MainActor
 private final class SidebarMenuItem: NSMenuItem {
     private let perform: () -> Void
-    init(_ title: String, key: String = "", enabled: Bool = true, perform: @escaping () -> Void) {
+    init(_ title: String, enabled: Bool = true, perform: @escaping () -> Void) {
         self.perform = perform
-        super.init(title: title, action: #selector(invoke), keyEquivalent: key)
+        super.init(title: title, action: #selector(invoke), keyEquivalent: "")
         target = self
         isEnabled = enabled
     }
@@ -1420,6 +1448,8 @@ extension SidebarView: NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         items.forEach(menu.addItem)
+        shortcutMenus.add(menu)
+        KeyBindingsModel.apply(keyBindings, to: menu)
         return menu
     }
 
@@ -1472,8 +1502,12 @@ extension SidebarView: NSMenuDelegate {
     }
 
     func favoriteMenu(row: Row) -> NSMenu {
-        itemMenu([copyItem(row), renameItem(row),
-                  SidebarMenuItem("Close Tab", key: "w") { [weak self] in self?.onClose?(row.id) },
+        let close = SidebarMenuItem("Close Tab", enabled: pageCommandsAllowed) { [weak self] in
+            guard self?.pageCommandsAllowed == true else { return }
+            self?.onClose?(row.id)
+        }
+        close.identifier = NSUserInterfaceItemIdentifier("close_tab")
+        return itemMenu([copyItem(row), renameItem(row), close,
                   SidebarMenuItem("Remove Favorite") { [weak self] in self?.onArchive?(row.id) }])
     }
 

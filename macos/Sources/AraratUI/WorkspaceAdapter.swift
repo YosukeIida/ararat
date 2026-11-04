@@ -21,16 +21,32 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
-    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
+    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
             self.store = opened
             let snapshot = opened.snapshot(windowId: self.windowID)
             guard snapshot.spaces.isEmpty else { return snapshot }
-            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON())
+            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON(), keyBindingsJson: keyBindingsJSON())
             onImport(imported.report)
             return imported.snapshot
         }, completion: completion)
+    }
+
+    public func keyBindings(completion: @escaping Completion<[KeyBinding]>) {
+        enqueue({ try self.opened().keyBindings() }, completion: completion)
+    }
+
+    public func setKeyBinding(command: String, key: KeyCombination?, completion: @escaping Completion<[KeyBinding]>) {
+        enqueue({ try self.opened().setKeyBinding(command: command, key: key) }, completion: completion)
+    }
+
+    public func resetKeyBinding(command: String, completion: @escaping Completion<[KeyBinding]>) {
+        enqueue({ try self.opened().resetKeyBinding(command: command) }, completion: completion)
+    }
+
+    public func resetAllKeyBindings(completion: @escaping Completion<[KeyBinding]>) {
+        enqueue({ try self.opened().resetAllKeyBindings() }, completion: completion)
     }
 
     public func autoArchive(now: UInt64, completion: @escaping Completion<WorkspaceSnapshot?>) {

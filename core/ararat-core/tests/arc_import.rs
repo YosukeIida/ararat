@@ -8,7 +8,7 @@ const FIXTURE: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
 
 #[test]
 fn imports_spaces_with_their_containers_and_profiles() {
-    let ws = arc_sidebar(FIXTURE, None).unwrap().0;
+    let ws = arc_sidebar(FIXTURE, None, None).unwrap().0;
     let titles: Vec<_> = ws.spaces.iter().map(|s| s.title.as_str()).collect();
     assert_eq!(titles, ["Work", "Home"]);
     assert_eq!(ws.spaces[0].pinned, "pin-work");
@@ -20,7 +20,7 @@ fn imports_spaces_with_their_containers_and_profiles() {
 
 #[test]
 fn keeps_tree_order_renames_and_splits() {
-    let ws = arc_sidebar(FIXTURE, None).unwrap().0;
+    let ws = arc_sidebar(FIXTURE, None, None).unwrap().0;
     let pinned: Vec<_> = ws.children("pin-work").iter().map(|i| i.id.as_str()).collect();
     assert_eq!(pinned, ["folder-docs", "split-1"]);
 
@@ -37,10 +37,10 @@ fn keeps_tree_order_renames_and_splits() {
 
 #[test]
 fn skips_unmodelled_kinds_and_rejects_broken_input() {
-    let ws = arc_sidebar(FIXTURE, None).unwrap().0;
+    let ws = arc_sidebar(FIXTURE, None, None).unwrap().0;
     assert!(!ws.items.contains_key("easel-1"));
-    assert!(arc_sidebar("{}", None).is_err());
-    assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":["a"]}]}}"#, None).is_err());
+    assert!(arc_sidebar("{}", None, None).is_err());
+    assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":["a"]}]}}"#, None, None).is_err());
 }
 
 fn fixture_with(edit: impl FnOnce(&mut serde_json::Value)) -> String {
@@ -51,11 +51,11 @@ fn fixture_with(edit: impl FnOnce(&mut serde_json::Value)) -> String {
 
 #[test]
 fn rejects_missing_or_mistyped_required_lists() {
-    assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":null}]}}"#, None).is_err());
+    assert!(arc_sidebar(r#"{"sidebar":{"containers":[{"spaces":null}]}}"#, None, None).is_err());
     let no_items = fixture_with(|c| {
         c.as_object_mut().unwrap().remove("items");
     });
-    assert!(arc_sidebar(&no_items, None).is_err());
+    assert!(arc_sidebar(&no_items, None, None).is_err());
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn rejects_a_space_whose_containers_are_not_containers() {
         let spaces = c["spaces"].as_array_mut().unwrap();
         spaces[1]["containerIDs"][1] = "folder-docs".into();
     });
-    assert!(arc_sidebar(&json, None).is_err());
+    assert!(arc_sidebar(&json, None, None).is_err());
 }
 
 #[test]
@@ -74,14 +74,14 @@ fn repairs_a_cycle_in_the_imported_tree() {
         let folder = items.iter().position(|v| v == "folder-docs").unwrap() + 1;
         items[folder]["parentID"] = "tab-spec".into();
     });
-    let ws = arc_sidebar(&json, None).unwrap().0;
+    let ws = arc_sidebar(&json, None, None).unwrap().0;
     assert_eq!(ws.check_tree(), Ok(()));
 }
 
 #[test]
 fn maps_synthetic_single_gradient_and_handle_positions() {
     use ararat_core::model::Appearance;
-    let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, None).unwrap();
+    let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, None, None).unwrap();
     assert_eq!(report.unknown_space_looks, 0);
     let single = ws.spaces[0].look.as_ref().unwrap();
     assert_eq!(single.colors.len(), 1);
@@ -105,13 +105,13 @@ fn clamps_imported_values_and_counts_unknown_or_malformed_shapes() {
             shape["modifiers"]["intensityFactor"] = intensity.into(); shape["modifiers"]["noiseFactor"] = 4.into();
             shape["color"]["red"] = (-1).into(); shape["color"]["blue"] = 2.into();
         });
-        let ws = arc_sidebar(&json, None).unwrap().0; let look = ws.spaces[0].look.as_ref().unwrap();
+        let ws = arc_sidebar(&json, None, None).unwrap().0; let look = ws.spaces[0].look.as_ref().unwrap();
         assert!((look.opacity - expected).abs() < 1e-12); assert_eq!(look.grain, 1.0);
         assert_eq!((look.colors[0].red, look.colors[0].blue), (0.0, 1.0));
     }
     for shape in [serde_json::json!({"futureShape":{"_0":{}}}), serde_json::json!({"blendedSingleColor":{"_0":{"color":{}}}})] {
         let json = fixture_with(|c| c["spaces"][1]["customInfo"]["windowTheme"]["background"]["single"]["_0"]["style"]["color"]["_0"] = shape);
-        let (ws, report) = ararat_core::import::arc_sidebar(&json, None).unwrap();
+        let (ws, report) = ararat_core::import::arc_sidebar(&json, None, None).unwrap();
         assert_eq!(ws.spaces[0].look, None); assert_eq!(report.unknown_space_looks, 1);
     }
 }
@@ -123,22 +123,22 @@ fn appearance_selection_basic_color_and_optional_overlay() {
     let theme = &mut root["sidebar"]["containers"][1]["spaces"][3]["customInfo"]["windowTheme"];
     theme["windowAppearance"] = serde_json::json!({"single":{"_0":"dark"}});
     theme["background"]["appearanceBased"]["dark"] = serde_json::json!({"style":{"color":{"_0":{"basicColor":{"_0":{"color":{"red":0.2,"green":0.2,"blue":0.2}}}}}}});
-    let ws = arc_sidebar(&root.to_string(), None).unwrap().0; let look = ws.spaces[1].look.as_ref().unwrap();
+    let ws = arc_sidebar(&root.to_string(), None, None).unwrap().0; let look = ws.spaces[1].look.as_ref().unwrap();
     assert_eq!(look.appearance, Appearance::Dark); assert_eq!(look.opacity, 1.0); assert_eq!(look.grain, 0.0);
     assert_eq!((look.colors[0].x, look.colors[0].y), (0.0, 0.8));
     for (overlays, count) in [(serde_json::json!([]), 2), (serde_json::json!([{"red":0,"green":1,"blue":0}]), 2)] {
         let json = fixture_with(|c| c["spaces"][3]["customInfo"]["windowTheme"]["background"]["appearanceBased"]["light"]["style"]["color"]["_0"]["blendedGradient"]["_0"]["overlayColors"] = overlays);
-        assert_eq!(arc_sidebar(&json, None).unwrap().0.spaces[1].look.as_ref().unwrap().colors.len(), count);
+        assert_eq!(arc_sidebar(&json, None, None).unwrap().0.spaces[1].look.as_ref().unwrap().colors.len(), count);
     }
     let json = fixture_with(|c| { c["spaces"][1]["customInfo"].as_object_mut().unwrap().remove("windowTheme"); });
-    let (ws, report) = ararat_core::import::arc_sidebar(&json, None).unwrap();
+    let (ws, report) = ararat_core::import::arc_sidebar(&json, None, None).unwrap();
     assert_eq!(ws.spaces[0].look, None); assert_eq!(report.unknown_space_looks, 0);
     let json = fixture_with(|c| {
         let theme = &mut c["spaces"][1]["customInfo"]["windowTheme"];
         theme["windowAppearance"] = serde_json::json!({"appearanceBased":{"light":"light","dark":"dark"}});
         theme["background"]["single"]["_0"]["style"]["color"]["_0"]["blendedSingleColor"]["_0"]["translucencyStyle"] = "dark".into();
     });
-    assert_eq!(arc_sidebar(&json, None).unwrap().0.spaces[0].look.as_ref().unwrap().appearance, Appearance::Auto);
+    assert_eq!(arc_sidebar(&json, None, None).unwrap().0.spaces[0].look.as_ref().unwrap().appearance, Appearance::Auto);
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn missing_window_appearance_defaults_to_auto_instead_of_translucency_style() {
         theme.as_object_mut().unwrap().remove("windowAppearance");
         theme["background"]["single"]["_0"]["style"]["color"]["_0"]["blendedSingleColor"]["_0"]["translucencyStyle"] = "dark".into();
     });
-    assert_eq!(arc_sidebar(&json, None).unwrap().0.spaces[0].look.as_ref().unwrap().appearance, ararat_core::model::Appearance::Auto);
+    assert_eq!(arc_sidebar(&json, None, None).unwrap().0.spaces[0].look.as_ref().unwrap().appearance, ararat_core::model::Appearance::Auto);
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn gradient_keeps_three_explicit_base_colors_without_derived_overlay_colors() {
         let gradient = &mut c["spaces"][3]["customInfo"]["windowTheme"]["background"]["appearanceBased"]["light"]["style"]["color"]["_0"]["blendedGradient"]["_0"];
         gradient["baseColors"].as_array_mut().unwrap().push(serde_json::json!({"red":0.25,"green":0.5,"blue":0.75}));
     });
-    let ws = arc_sidebar(&json, None).unwrap().0; let colors = &ws.spaces[1].look.as_ref().unwrap().colors;
+    let ws = arc_sidebar(&json, None, None).unwrap().0; let colors = &ws.spaces[1].look.as_ref().unwrap().colors;
     assert_eq!(colors.len(), 3); assert_eq!((colors[2].red, colors[2].green, colors[2].blue), (0.25, 0.5, 0.75));
 }
 
@@ -169,7 +169,7 @@ fn window_counters_only_describe_the_selected_window() {
         {"expandedItems":[],"itemLastActiveDates":[]},
         {"expandedItems":["folder-docs",{"peeked":{}},"unknown",{"expanded":{}}]}
     ]}).to_string();
-    let (_, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (_, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert_eq!(report.peeked_folders, 0);
     assert_eq!(report.unknown_window_ids, 0);
 }
@@ -180,7 +180,7 @@ fn duplicate_folder_pairs_are_malformed_and_the_last_state_wins() {
         (serde_json::json!([{"peeked":{}},{"expanded":{}}]), false)] {
         let json = serde_json::json!({"windows":[{"expandedItems":[
             "folder-docs",states[0],"folder-docs",states[1]],"itemLastActiveDates":[]}]}).to_string();
-        let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json)).unwrap();
+        let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json), None).unwrap();
         assert_eq!(ws.folder_collapsed["folder-docs"], collapsed);
         assert_eq!(report.malformed_window_entries, 1);
         assert_eq!(report.peeked_folders, usize::from(collapsed));
@@ -196,7 +196,7 @@ fn expansion_keys_preserve_state_when_payloads_change() {
         (serde_json::json!({"peeked":true}), true, 1, 1),
     ] {
         let json = serde_json::json!({"windows":[{"expandedItems":["folder-docs",state],"itemLastActiveDates":[]}]}).to_string();
-        let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json)).unwrap();
+        let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json), None).unwrap();
         assert_eq!(ws.folder_collapsed["folder-docs"], collapsed);
         assert_eq!(report.malformed_window_entries, malformed);
         assert_eq!(report.peeked_folders, peeked);
@@ -207,7 +207,7 @@ fn expansion_keys_preserve_state_when_payloads_change() {
 fn last_selected_dates_only_seed_tabs() {
     let json = serde_json::json!({"windows":[{"expandedItems":[],"itemLastActiveDates":[
         "folder-docs",0.0,"split-1",0.0,"pin-work",0.0,"tab-a",0.0]}]}).to_string();
-    let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (ws, report) = ararat_core::import::arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert_eq!(ws.last_selected.len(), 1);
     assert_eq!(ws.last_selected["tab-a"], 978_307_200_000);
     assert_eq!(report.skipped_dates, 3);
@@ -223,7 +223,7 @@ fn first_window_seeds_local_state_and_auto_archive_uses_imported_dates() {
             items[index]["parentID"] = "today-work".into();
         }
     });
-    let (mut ws, report) = arc_sidebar(&json, Some(WINDOWS)).unwrap();
+    let (mut ws, report) = arc_sidebar(&json, Some(WINDOWS), None).unwrap();
     assert_eq!(ws.folder_collapsed["folder-docs"], true);
     assert_eq!(report.differing_folder_states, 1);
     assert!(!report.missing_windows);
@@ -242,7 +242,7 @@ fn first_window_seeds_local_state_and_auto_archive_uses_imported_dates() {
     assert_eq!(ws.last_selected["tab-spec"], 1_678_393_600_000);
     let mut windows: serde_json::Value = serde_json::from_str(WINDOWS).unwrap();
     windows["windows"].as_array_mut().unwrap().reverse();
-    let (ws, report) = arc_sidebar(FIXTURE, Some(&windows.to_string())).unwrap();
+    let (ws, report) = arc_sidebar(FIXTURE, Some(&windows.to_string()), None).unwrap();
     assert_eq!(ws.folder_collapsed["folder-docs"], false);
     assert_eq!(report.differing_folder_states, 1);
     assert_eq!(ws.last_selected["tab-a"], 1_678_393_600_000);
@@ -251,10 +251,10 @@ fn first_window_seeds_local_state_and_auto_archive_uses_imported_dates() {
 #[test]
 fn missing_or_malformed_windows_preserve_sidebar_and_report_the_reason() {
     use ararat_core::import::arc_sidebar;
-    let (expected, report) = arc_sidebar(FIXTURE, None).unwrap();
+    let (expected, report) = arc_sidebar(FIXTURE, None, None).unwrap();
     assert!(report.missing_windows);
     for malformed in ["{", "{}", r#"{"windows":[]}"#, r#"{"windows":[1]}"#] {
-        let (actual, report) = arc_sidebar(FIXTURE, Some(malformed)).unwrap();
+        let (actual, report) = arc_sidebar(FIXTURE, Some(malformed), None).unwrap();
         assert_eq!(actual, expected);
         assert!(!report.missing_windows);
         assert!(report.windows_error.is_some());
@@ -266,7 +266,7 @@ fn reference_date_epoch_fractional_seconds_and_invalid_or_future_dates() {
     use ararat_core::import::arc_sidebar;
     let json = serde_json::json!({"windows":[{"expandedItems":[],
         "itemLastActiveDates":["tab-a", 0.0, "tab-b", 0.125]}]}).to_string();
-    let (ws, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (ws, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert_eq!(ws.last_selected["tab-a"], 978_307_200_000);
     assert_eq!(ws.last_selected["tab-b"], 978_307_200_125);
     assert_eq!(report.skipped_dates, 0);
@@ -275,13 +275,13 @@ fn reference_date_epoch_fractional_seconds_and_invalid_or_future_dates() {
     let recent = now - 1_000;
     let json = serde_json::json!({"windows":[{"expandedItems":[],
         "itemLastActiveDates":["tab-a", recent as f64 / 1_000.0 - 978_307_200.0]}]}).to_string();
-    let (ws, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (ws, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert!(ws.last_selected["tab-a"].abs_diff(recent) <= 1);
     assert_eq!(report.skipped_dates, 0);
     let json = serde_json::json!({"windows":[{"expandedItems":[],"itemLastActiveDates":[
         "tab-a", 1e30, "tab-b", "invalid", "tab-spec", 1e300
     ]}]}).to_string();
-    let (ws, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (ws, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert!(ws.last_selected.is_empty());
     assert_eq!(report.skipped_dates, 3);
 }
@@ -293,7 +293,7 @@ fn malformed_pairs_are_counted_and_skipped_without_discarding_valid_state() {
         "expandedItems":[false, {}, "folder-docs", {"expanded":{}}, "trailing"],
         "itemLastActiveDates":[42, 1.0, "tab-a", 0.0, "tab-b", null, "trailing"]
     }]}).to_string();
-    let (ws, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (ws, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert_eq!(ws.folder_collapsed["folder-docs"], false);
     assert_eq!(ws.last_selected["tab-a"], 978_307_200_000);
     assert_eq!(report.malformed_window_entries, 4);
@@ -301,12 +301,12 @@ fn malformed_pairs_are_counted_and_skipped_without_discarding_valid_state() {
     assert_eq!(report.windows_error, None);
     for state in [serde_json::json!({"future":{}}), serde_json::json!({"expanded":{},"peeked":{}})] {
         let json = serde_json::json!({"windows":[{"expandedItems":["folder-docs",state],"itemLastActiveDates":[]}]}).to_string();
-        let (ws, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+        let (ws, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
         assert_eq!(ws.folder_collapsed["folder-docs"], true);
         assert_eq!(report.malformed_window_entries, 1);
     }
     let json = serde_json::json!({"windows":[{"expandedItems":{},"itemLastActiveDates":{}}]}).to_string();
-    let (_, report) = arc_sidebar(FIXTURE, Some(&json)).unwrap();
+    let (_, report) = arc_sidebar(FIXTURE, Some(&json), None).unwrap();
     assert_eq!(report.malformed_window_entries, 2);
 }
 
@@ -314,7 +314,7 @@ fn malformed_pairs_are_counted_and_skipped_without_discarding_valid_state() {
 fn imported_window_state_reopens_locally_without_entering_the_journal() {
     use ararat_core::{import::arc_sidebar, storage::Store};
     let path = std::env::temp_dir().join(format!("import-windows-{}-{}.sqlite", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-    let (ws, _) = arc_sidebar(FIXTURE, Some(WINDOWS)).unwrap();
+    let (ws, _) = arc_sidebar(FIXTURE, Some(WINDOWS), None).unwrap();
     let (store, _) = Store::open(&path).unwrap();
     store.write(ws.to_ops());
     store.flush().unwrap();
@@ -324,4 +324,38 @@ fn imported_window_state_reopens_locally_without_entering_the_journal() {
     let conn = rusqlite::Connection::open(path).unwrap();
     let count: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind IN ('folder_state', 'last_selected')", [], |row| row.get(0)).unwrap();
     assert_eq!(count, 0);
+}
+
+#[test]
+fn key_bindings_empty_and_unknown_overrides_never_change_the_workspace() {
+    let expected = arc_sidebar(FIXTURE, None, None).unwrap().0;
+    for (json, count) in [(r#"{"version":1,"userOverrides":[]}"#, 0),
+        (r#"{"version":1,"userOverrides":[{"unknown":"shape"},null,"opaque"]}"#, 3)] {
+        let (ws, report) = arc_sidebar(FIXTURE, None, Some(json)).unwrap();
+        assert_eq!(ws, expected);
+        assert!(!report.missing_key_bindings);
+        assert_eq!(report.key_bindings_error, None);
+        assert_eq!(report.skipped_key_bindings, count);
+    }
+}
+
+#[test]
+fn missing_or_malformed_key_bindings_do_not_fail_the_sidebar_import() {
+    let (expected, missing) = arc_sidebar(FIXTURE, None, None).unwrap();
+    assert!(missing.missing_key_bindings);
+    for json in ["�", "{}", r#"{"version":1,"userOverrides":{}}"#, r#"{"version":2,"userOverrides":[]}"#] {
+        let (ws, report) = arc_sidebar(FIXTURE, None, Some(json)).unwrap();
+        assert_eq!(ws, expected);
+        assert!(!report.missing_key_bindings);
+        assert!(report.key_bindings_error.is_some());
+        assert_eq!(report.skipped_key_bindings, 0);
+    }
+}
+
+#[test]
+fn key_bindings_version_error_precedes_override_shape_error() {
+    for json in [r#"{"version":2,"userOverrides":{}}"#, r#"{"userOverrides":{}}"#] {
+        let (_, report) = arc_sidebar(FIXTURE, None, Some(json)).unwrap();
+        assert_eq!(report.key_bindings_error.as_deref(), Some("unsupported key bindings version"));
+    }
 }

@@ -28,7 +28,7 @@ private final class LookFixture {
         let directory = try testTemporaryDirectory()
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
         let json = try String(contentsOf: fixture, encoding: .utf8)
-        var snapshot = try await lookValue { adapter.open(path: directory.appendingPathComponent("look.sqlite").path, json: { json }, windowsJSON: { nil }, completion: $0) }
+        var snapshot = try await lookValue { adapter.open(path: directory.appendingPathComponent("look.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
         if snapshot.spaces.count < 2 { snapshot = try await lookValue { adapter.createSpace(name: "Second", completion: $0) } }
         snapshot = try await lookValue { adapter.setSpaceLook(id: snapshot.spaces[0].id, look: nil, completion: $0) }
         let sidebar = sidebarPreview ? SidebarView(snapshot: snapshot) : nil
@@ -41,7 +41,7 @@ private final class LookFixture {
         let settings = SettingsModel(snapshot: snapshot, adapter: adapter, publish: publish, resetWidth: {}, preview: { id, look, active in
             if let sidebar { sidebar.previewLook(spaceID: id, look: look, active: active) }
             else { preview.look = look }
-        })
+        }, keyBindings: KeyBindingsModel(adapter: adapter))
         self.adapter = adapter
         self.directory = directory
         self.settings = settings

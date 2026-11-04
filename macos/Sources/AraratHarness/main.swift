@@ -37,9 +37,11 @@ func sidebarJSON(path: String?) throws -> String {
 }
 
 @MainActor
-final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
+final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation, MenuCommandHost {
     var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
     let adapter: WorkspaceAdapter
+    let keyBindings: KeyBindingsModel
+    private var commandMenu: NSMenu?
     var exitStatus: Int32 = 0
     private var terminating = false
     private var commands: [String] = []
@@ -54,10 +56,19 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
     let options: HarnessOptions
     var terminate: () -> Void
+    /// The table behind the menu bar, for `BrowserWindow`'s own-field key routing.
+    var menuCommandBindings: [KeyBinding] { keyBindings.bindings }
     init(adapter: WorkspaceAdapter, options: HarnessOptions = HarnessOptions(), terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
         self.options = options
         self.adapter = adapter
+        self.keyBindings = KeyBindingsModel(adapter: adapter)
         self.terminate = terminate
+        super.init()
+        keyBindings.onChange = { [weak self] in
+            guard let self else { return }
+            self.sidebar?.keyBindings = self.keyBindings.bindings
+            if let menu = self.commandMenu { self.settings?.refreshShortcuts() }
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -68,9 +79,14 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableWindows.json")
             guard let data = try? Data(contentsOf: url) else { return nil }
             return String(decoding: data, as: UTF8.self)
+        }, keyBindingsJSON: {
+            guard let fixturePath else { return nil }
+            let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableKeyBindings.json")
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return String(decoding: data, as: UTF8.self)
         }, onImport: { report in
-            guard report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
-            let summary = "Arc import: missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
+            guard report.keyBindingsError != nil || report.skippedKeyBindings > 0 || report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
+            let summary = "Arc import: missingKeyBindings=\(report.missingKeyBindings) keyBindingsError=\(report.keyBindingsError?.debugDescription ?? "nil") skippedKeyBindings=\(report.skippedKeyBindings) missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
             FileHandle.standardError.write(Data(summary.utf8))
         }) { [weak self] result in
             guard let self, !self.terminating else { return }
@@ -83,13 +99,23 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                     }
                     NSApp.terminate(nil)
                 } else {
-                    self.build()
-                    let archive = AutoArchive(adapter: self.adapter, canPublish: { [weak self] in self?.sidebar?.canPublishAutoArchive ?? false }) { [weak self] result in
-                        _ = self?.publish(result)
+                    self.keyBindings.load { [weak self] result in
+                        guard let self, !self.terminating else { return }
+                        switch result {
+                        case .success:
+                            self.build()
+                            let archive = AutoArchive(adapter: self.adapter, canPublish: { [weak self] in self?.sidebar?.canPublishAutoArchive ?? false }) { [weak self] result in
+                                _ = self?.publish(result)
+                            }
+                            self.autoArchive = archive
+                            self.sidebar?.onAutoArchiveReady = { [weak archive] in archive?.publishDeferred() }
+                            archive.start()
+                        case .failure(let error):
+                            FileHandle.standardError.write(Data("cannot load shortcuts: \(error)\n".utf8))
+                            self.exitStatus = 1
+                            NSApp.terminate(nil)
+                        }
                     }
-                    self.autoArchive = archive
-                    self.sidebar?.onAutoArchiveReady = { [weak archive] in archive?.publishDeferred() }
-                    archive.start()
                 }
             case .failure(let error):
                 FileHandle.standardError.write(Data("\(error)\n".utf8))
@@ -156,6 +182,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
+        sidebar.keyBindings = keyBindings.bindings
         sidebar.onMove = { [weak self] id, container, index, openFolder, completion in
             guard let self, !self.terminating else { completion(nil); return }
             self.adapter.move(id: id, container: container, index: index, openFolder: openFolder) { [weak self] result in
@@ -246,44 +273,64 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
         let appMenu = NSMenu()
-        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: "")
+        settingsItem.identifier = NSUserInterfaceItemIdentifier("settings")
         settingsItem.target = self
         settingsItem.toolTip = "Open settings for the shown space."
         appMenu.addItem(.separator())
-        let quit = appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = appMenu.addItem(withTitle: "Quit Ararat Harness", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.identifier = NSUserInterfaceItemIdentifier("quit")
         quit.toolTip = "Close all windows and quit Ararat."
         menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = appMenu
         let fileMenu = NSMenu(title: "File")
-        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeSelectedTab(_:)), keyEquivalent: "w")
+        let close = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeSelectedTab(_:)), keyEquivalent: "")
+        close.identifier = NSUserInterfaceItemIdentifier("close_tab")
         close.target = self
         close.toolTip = "Close the selected tab in the browser window."
         menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
+        let tabsMenu = NSMenu(title: "Tabs")
+        let pin = tabsMenu.addItem(withTitle: "Pin Tab", action: #selector(pinSelectedTab(_:)), keyEquivalent: "")
+        pin.identifier = NSUserInterfaceItemIdentifier("pin_tab")
+        pin.target = self
+        pin.toolTip = "Pin or unpin the selected tab."
+        menu.addItem(withTitle: "Tabs", action: nil, keyEquivalent: "").submenu = tabsMenu
         let viewMenu = NSMenu(title: "View")
-        let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "")
+        toggle.identifier = NSUserInterfaceItemIdentifier("toggle_sidebar")
         toggle.target = self
         toggle.toolTip = "Show or hide the sidebar."
-        let library = viewMenu.addItem(withTitle: "Toggle Library", action: #selector(SidebarView.toggleLibrary(_:)), keyEquivalent: "l")
-        library.keyEquivalentModifierMask = [.command, .shift]
+        let library = viewMenu.addItem(withTitle: "Toggle Library", action: #selector(SidebarView.toggleLibrary(_:)), keyEquivalent: "")
+        library.identifier = NSUserInterfaceItemIdentifier("toggle_library")
         library.target = sidebar
         library.toolTip = "Show or hide the Library."
         let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
+        reset.identifier = NSUserInterfaceItemIdentifier("reset_sidebar_width")
         reset.target = self
         viewMenu.addItem(.separator())
         for index in 0..<9 {
-            let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: WorkspaceCommands.showSpace, keyEquivalent: String(index + 1))
-            item.keyEquivalentModifierMask = [.control]
+            let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: WorkspaceCommands.showSpace, keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier("show_space_\(index + 1)")
             item.tag = index
             item.target = self
             item.toolTip = "Show space \(index + 1) in sidebar order."
         }
         menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
+        commandMenu = menu
+        keyBindings.register(menu)
         return menu
     }
 
-    func canCloseTab(keyWindow: NSWindow?) -> Bool { window != nil && keyWindow === window }
+    func canCloseTab(keyWindow: NSWindow?) -> Bool {
+        window != nil && keyWindow === window && WorkspaceCommands.allowsPageCommand(keyWindow?.firstResponder)
+            && sidebar?.pageCommandsAllowed == true
+    }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(closeSelectedTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
+        if menuItem.action == #selector(pinSelectedTab(_:)) {
+            menuItem.title = sidebar?.selectedTabIsPinned == true ? "Unpin Tab" : "Pin Tab"
+            return canCloseTab(keyWindow: NSApp.keyWindow) && sidebar?.canPinSelectedTab == true
+        }
         if menuItem.action == WorkspaceCommands.showSpace { return snapshot.spaces.indices.contains(menuItem.tag) }
         return true
     }
@@ -291,6 +338,13 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     @objc func closeSelectedTab(_ sender: Any?) {
         guard canCloseTab(keyWindow: NSApp.keyWindow) else { return }
         sidebar?.closeSelectedTab(sender)
+    }
+
+    @objc func pinSelectedTab(_ sender: Any?) { pinTab(in: NSApp.keyWindow) }
+
+    func pinTab(in keyWindow: NSWindow?) {
+        guard canCloseTab(keyWindow: keyWindow) else { return }
+        sidebar?.pinSelectedTab(nil)
     }
 
     @objc func showSpace(_ sender: NSMenuItem) {
@@ -444,7 +498,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if settings == nil {
             let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { [weak self] snapshot in
                 _ = self?.publish(.success(snapshot))
-            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) }, preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) })
+            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) }, preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }, keyBindings: keyBindings)
             settings = SettingsWindowController(model: model)
         }
         settings!.prepare(shownSpaceID: shownSpaceID)

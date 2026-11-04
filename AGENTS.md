@@ -11,7 +11,7 @@ Write repository files (README, AGENTS.md, everything under `docs/`, code commen
 Every unit of work is split between Claude and Codex. Codex holds closed logical consistency well; Claude picks signal out of many loosely constrained variables. So Claude sets the scope and reviews, and Codex implements:
 
 1. Scope and design: Claude Opus 5.5 (`claude-opus-5-5`). It writes what to build, the files it touches, the invariants and the edge cases.
-2. Implementation: Codex `gpt-6.1-sol`, effort low (owner's choice, 2026-11-02, to save usage; raise it to medium when it stalls), on the labteam account (`CODEX_HOME=$HOME/.codex-labteam`). Sol, not Terra: OpenAI's Codex model guide recommends Sol for code and positions Terra for writing, visual understanding and computer use.
+2. Implementation: two seats run in parallel on separate worktrees (owner's choice, 2026-11-04): Codex `gpt-6.1-terra`, effort high, on the labteam account (`CODEX_HOME=$HOME/.codex-labteam`), and GLM-5.3-Flash, effort max, on the owner's OpenCode Go subscription. OpenAI's Codex model guide recommends Sol for code and positions Terra for writing, visual understanding and computer use; the owner chose Terra to compare its reviews with Sol's. When labteam runs out, the work goes to the other seat; accounts are never switched.
 3. Review: Claude Opus 5.5. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
 
 For a hard edge-case bug the order is reversed: Codex investigates, Claude gives a second opinion, Codex implements, Claude reviews.

@@ -1,9 +1,19 @@
 import AppKit
+import AraratKit
 
 @MainActor
 public final class BrowserWindow: NSWindow {
     weak var sidebarLights: SidebarWindowButtons?
     private var hidNativeButtons = false
+    override public func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // A table command rebound without Command yields to one of our text fields: the key is
+        // claimed here (AppKit's menu pass would sink or fire it) and typed into the field.
+        if let host = delegate as? MenuCommandHost, WorkspaceCommands.yieldsToOwnField(host.menuCommandBindings, event: event, in: self) {
+            firstResponder?.keyDown(with: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
     override public func update() {
         super.update()
         // Don't rely on layout invalidation: title changes can re-tile during update.

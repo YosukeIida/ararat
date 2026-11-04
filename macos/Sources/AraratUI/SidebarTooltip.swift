@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 @MainActor
 final class SidebarTooltip {
@@ -13,6 +14,15 @@ final class SidebarTooltip {
     private(set) var text: String?
     private let label = TooltipLabel(labelWithString: "")
     var keycaps: [TooltipKeycap] { label.keycaps }
+
+    /// Keycap strings for a core key combination, in the menu order ⌃ ⌥ ⇧ ⌘ and the key glyph.
+    static func caps(for key: KeyCombination) -> [String] {
+        var caps = [(key.control, "⌃"), (key.option, "⌥"), (key.shift, "⇧"), (key.command, "⌘")].filter(\.0).map(\.1)
+        caps.append(keyGlyph(key.key))
+        return caps
+    }
+
+    static func display(for key: KeyCombination) -> String { caps(for: key).joined() }
 
     func flagsChanged(with event: NSEvent) {
         guard text != nil else { return }

@@ -26,8 +26,8 @@ fn import_close_and_reopen_preserves_the_snapshot() {
     let path = fresh_db("reopen").display().to_string();
     let store = WorkspaceStore::open(path.clone()).unwrap();
     assert!(store.snapshot("test".into()).spaces.is_empty());
-    let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot;
-    let mut preview = import_arc_sidebar(FIXTURE.into(), None).unwrap().snapshot;
+    let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot;
+    let mut preview = import_arc_sidebar(FIXTURE.into(), None, None).unwrap().snapshot;
     for space in &mut preview.spaces {
         let actual = imported.spaces.iter().find(|s| s.id == space.id).unwrap();
         for row in space.favorites.iter_mut().chain(&mut space.pinned).chain(&mut space.today) {
@@ -44,8 +44,8 @@ fn import_close_and_reopen_preserves_the_snapshot() {
 fn a_second_import_merges_records_and_matches_reopening() {
     let path = fresh_db("merge").display().to_string();
     let store = WorkspaceStore::open(path.clone()).unwrap();
-    store.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot;
-    let merged = store.import_arc_sidebar("test".into(), FIXTURE.replace("tab-a", "tab-new"), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot;
+    let merged = store.import_arc_sidebar("test".into(), FIXTURE.replace("tab-a", "tab-new"), None, None).unwrap().snapshot;
     let rows = &merged.spaces[0].pinned;
     assert!(rows.iter().any(|r| r.id == "tab-a"));
     assert!(rows.iter().any(|r| r.id == "tab-new"));
@@ -56,7 +56,7 @@ fn a_second_import_merges_records_and_matches_reopening() {
 #[test]
 fn a_stored_cycle_is_repaired_only_in_the_snapshot() {
     let path = fresh_db("cycle");
-    let mut workspace = import::arc_sidebar(FIXTURE, None).unwrap().0;
+    let mut workspace = import::arc_sidebar(FIXTURE, None, None).unwrap().0;
     workspace.items.get_mut("folder-docs").unwrap().membership.parent = Some("tab-spec".into());
     assert!(workspace.check_tree().is_err());
     let (store, _) = Store::open(&path).unwrap();
@@ -80,7 +80,7 @@ fn the_store_can_be_shared_between_two_threads() {
     std::thread::scope(|scope| {
         let writer = Arc::clone(&store);
         let reader = Arc::clone(&store);
-        let imported = scope.spawn(move || writer.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot);
+        let imported = scope.spawn(move || writer.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot);
         let read = scope.spawn(move || {
             reader.snapshot("test".into());
             reader.flush().unwrap();
@@ -94,13 +94,13 @@ fn the_store_can_be_shared_between_two_threads() {
 #[test]
 fn store_failures_cross_the_ffi_boundary() {
     let store = WorkspaceStore::open(fresh_db("errors").display().to_string()).unwrap();
-    assert!(matches!(store.import_arc_sidebar("test".into(), "invalid".into(), None), Err(CoreError::Import { .. })));
+    assert!(matches!(store.import_arc_sidebar("test".into(), "invalid".into(), None, None), Err(CoreError::Import { .. })));
     assert!(store.snapshot("test".into()).spaces.is_empty());
     let path = fresh_db("busy");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     let blocker = Connection::open(&path).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    assert!(matches!(store.import_arc_sidebar("test".into(), FIXTURE.into(), None), Err(CoreError::Store { .. })));
+    assert!(matches!(store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None), Err(CoreError::Store { .. })));
     assert!(store.last_error().is_some());
     blocker.execute_batch("ROLLBACK").unwrap();
     store.flush().unwrap();
@@ -117,7 +117,7 @@ fn today_fixture() -> String {
 fn closing_a_today_tab_persists_lifecycle_and_successor_before_returning() {
     let path = fresh_db("close-today");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     store.select_item("test".into(), "tab-a".into()).unwrap();
     let closed = store.close_item("test".into(), "tab-a".into()).unwrap();
     assert_eq!(closed.selected_id.as_deref(), Some("tab-b"));
@@ -137,7 +137,7 @@ fn closing_a_today_tab_persists_lifecycle_and_successor_before_returning() {
 fn invalid_closes_write_neither_records_nor_journal() {
     let path = fresh_db("invalid-close");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    let original = store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    let original = store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     let before = records(&path);
     let journal_count = || Connection::open(&path).unwrap().query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let count = journal_count();
@@ -154,7 +154,7 @@ fn invalid_closes_write_neither_records_nor_journal() {
 fn a_failed_close_flush_keeps_the_edit_for_retry() {
     let path = fresh_db("close-busy");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     store.select_item("test".into(), "tab-a".into()).unwrap();
     store.flush().unwrap();
     let blocker = Connection::open(&path).unwrap();
@@ -179,7 +179,7 @@ fn split_today_fixture() -> String {
 #[test]
 fn a_surviving_split_with_an_unloaded_member_stays_selected_and_can_be_closed() {
     let path = fresh_db("surviving-split");
-    let mut ws = import::arc_sidebar(&split_today_fixture(), None).unwrap().0;
+    let mut ws = import::arc_sidebar(&split_today_fixture(), None, None).unwrap().0;
     ws.select_item("test", "tab-spec").unwrap();
     ws.select_item("test", "tab-a").unwrap();
     ws.items.get_mut("tab-b").unwrap().lifecycle = ararat_core::model::Lifecycle::Unloaded;
@@ -195,7 +195,7 @@ fn split_close_and_both_member_orders_leave_no_empty_selection_after_reopen() {
     for (index, order) in [vec!["split-1"], vec!["tab-a", "tab-b"], vec!["tab-b", "tab-a"]].into_iter().enumerate() {
         let path = fresh_db(&format!("split-close-{index}"));
         let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-        store.import_arc_sidebar("test".into(), split_today_fixture(), None).unwrap().snapshot;
+        store.import_arc_sidebar("test".into(), split_today_fixture(), None, None).unwrap().snapshot;
         store.select_item("test".into(), "split-1".into()).unwrap();
         for id in order { store.close_item("test".into(), id.into()).unwrap(); }
         let closed = store.snapshot("test".into());
@@ -215,7 +215,7 @@ fn split_close_and_both_member_orders_leave_no_empty_selection_after_reopen() {
 fn selecting_rows_persists_time_and_history_locally() {
     let path = fresh_db("local-clicks");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), split_today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), split_today_fixture(), None, None).unwrap().snapshot;
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = count();
@@ -229,7 +229,7 @@ fn selecting_rows_persists_time_and_history_locally() {
 #[test]
 fn folders_are_rejected_and_selecting_hidden_tabs_persists_local_expansion() {
     let path = fresh_db("hidden-selection");
-    let mut ws = import::arc_sidebar(FIXTURE, None).unwrap().0;
+    let mut ws = import::arc_sidebar(FIXTURE, None, None).unwrap().0;
     ws.folder_collapsed.insert("folder-docs".into(), true);
     let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
@@ -248,7 +248,7 @@ fn folders_are_rejected_and_selecting_hidden_tabs_persists_local_expansion() {
 fn recent_selection_wins_and_unloading_is_visible_and_persistent() {
     let path = fresh_db("mru-unload");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("one".into(), today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("one".into(), today_fixture(), None, None).unwrap().snapshot;
     store.select_item("one".into(), "tab-b".into()).unwrap();
     store.select_item("one".into(), "tab-a".into()).unwrap();
     let closed = store.close_item("one".into(), "tab-a".into()).unwrap();
@@ -277,7 +277,7 @@ fn recent_selection_wins_and_unloading_is_visible_and_persistent() {
 #[test]
 fn shown_space_is_local_persistent_and_limits_successors_after_reopen() {
     let path = fresh_db("shown-space");
-    let mut ws = import::arc_sidebar(&today_fixture(), None).unwrap().0;
+    let mut ws = import::arc_sidebar(&today_fixture(), None, None).unwrap().0;
     for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("today-home".into()); }
     let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
@@ -306,7 +306,7 @@ fn shown_space_is_local_persistent_and_limits_successors_after_reopen() {
 fn archive_and_restore_cross_the_boundary_and_persist() {
     let path = fresh_db("archive-restore");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     store.close_item("test".into(), "tab-a".into()).unwrap();
     let closed = store.close_item("test".into(), "tab-b".into()).unwrap();
     assert_eq!(closed.archive.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["tab-b", "tab-a"]);
@@ -324,7 +324,7 @@ fn archive_and_restore_cross_the_boundary_and_persist() {
 fn creating_a_space_persists_the_snapshot_and_journals_one_complete_change() {
     let path = fresh_db("create-space");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     store.show_space("test".into(), "space-home".into()).unwrap();
     store.flush().unwrap();
     let conn = Connection::open(&path).unwrap();
@@ -345,7 +345,7 @@ fn creating_a_space_persists_the_snapshot_and_journals_one_complete_change() {
 fn rejected_space_names_write_no_records_or_journal() {
     let path = fresh_db("reject-space");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     let before = records(&path);
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
@@ -362,7 +362,7 @@ fn rejected_space_names_write_no_records_or_journal() {
 fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone() {
     let path = fresh_db("archive-delete");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     for id in ["tab-a", "tab-b"] { store.close_item("test".into(), id.into()).unwrap(); }
     let before = records(&path);
     let conn = Connection::open(&path).unwrap();
@@ -389,7 +389,7 @@ fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone(
 fn archive_pinned_tab_survives_reopen() {
     let path = fresh_db("archive-pin").display().to_string();
     let store = WorkspaceStore::open(path.clone()).unwrap();
-    store.import_arc_sidebar("test".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     store.select_item("test".into(), "tab-spec".into()).unwrap();
     let archived = store.archive_item("test".into(), "tab-spec".into()).unwrap();
     assert!(!archived.spaces[0].pinned.iter().any(|row| row.id == "tab-spec"));
@@ -401,7 +401,7 @@ fn archive_pinned_tab_survives_reopen() {
 #[test]
 fn folder_archive_restore_keeps_order_and_survives_reopen() {
     let path = fresh_db("folder-restore");
-    let mut ws = import::arc_sidebar(FIXTURE, None).unwrap().0;
+    let mut ws = import::arc_sidebar(FIXTURE, None, None).unwrap().0;
     ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
     ws.items.get_mut("tab-a").unwrap().membership.order = "A".into();
     ws.items.get_mut("tab-spec").unwrap().membership.order = "B".into();
@@ -424,7 +424,7 @@ fn folder_archive_restore_keeps_order_and_survives_reopen() {
 fn folder_restore_fallbacks_and_missing_neighbours_cross_the_boundary() {
     for situation in ["deleted", "archived", "neighbours gone", "collapsed"] {
         let path = fresh_db(&format!("folder-restore-{situation}"));
-        let mut ws = import::arc_sidebar(FIXTURE, None).unwrap().0;
+        let mut ws = import::arc_sidebar(FIXTURE, None, None).unwrap().0;
         ws.items.get_mut("tab-a").unwrap().membership.parent = Some("folder-docs".into());
         ws.archive_item("tab-a").unwrap();
         match situation {
@@ -453,7 +453,7 @@ fn space_edits_flush_complete_records_and_local_window_changes() {
     use ararat_ffi::{Appearance, Look, LookColor};
     let path = fresh_db("space-look-edits");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("one".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     let view = store.rename_space("one".into(), "space-work".into(), "  Research  ".into()).unwrap();
     assert_eq!(view.spaces[0].title, "Research");
     let view = store.set_space_icon("one".into(), "space-work".into(), Some("👩🏽‍💻".into())).unwrap();
@@ -485,7 +485,7 @@ fn space_edits_flush_complete_records_and_local_window_changes() {
 fn rejected_space_edits_write_neither_records_nor_journal() {
     let path = fresh_db("space-edit-rejections");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    let original = store.import_arc_sidebar("one".into(), FIXTURE.into(), None).unwrap().snapshot;
+    let original = store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     let before = records(&path);
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap(); let journal = count();
@@ -504,7 +504,7 @@ fn rejected_space_edits_write_neither_records_nor_journal() {
 fn snapshot_repairs_live_items_in_deleted_space_roots_without_writing_the_view_back() {
     for root in ["pin-work", "today-work"] {
         let path = fresh_db(&format!("space-delete-concurrent-{root}"));
-        let mut ws = import::arc_sidebar(FIXTURE, None).unwrap().0; ws.delete_space("space-work").unwrap();
+        let mut ws = import::arc_sidebar(FIXTURE, None, None).unwrap().0; ws.delete_space("space-work").unwrap();
         ws.items.get_mut("tab-mail").unwrap().membership.parent = Some(root.into());
         let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
         let before = records(&path);
@@ -520,7 +520,7 @@ fn profile_archive_options_times_and_auto_archive_persist_across_ffi_reopen() {
     use ararat_ffi::ArchiveAfter;
     let path = fresh_db("auto-archive");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    let imported = store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    let imported = store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     let row = imported.spaces[0].today.iter().find(|r| r.id == "tab-a").unwrap();
     let started = row.last_selected_at.unwrap();
     for value in [ArchiveAfter::Hours12, ArchiveAfter::Hours24, ArchiveAfter::Days7, ArchiveAfter::Days30] {
@@ -540,7 +540,7 @@ fn profile_archive_options_times_and_auto_archive_persist_across_ffi_reopen() {
 fn idle_auto_archive_returns_none_without_publishing_or_writing() {
     let path = fresh_db("auto-archive-idle");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    let imported = store.import_arc_sidebar("test".into(), today_fixture(), None).unwrap().snapshot;
+    let imported = store.import_arc_sidebar("test".into(), today_fixture(), None, None).unwrap().snapshot;
     let now = imported.spaces[0].today.iter().find(|r| r.id == "tab-a").unwrap().last_selected_at.unwrap();
     let before = records(&path);
     assert_eq!(store.auto_archive("test".into(), now).unwrap(), None);
@@ -551,7 +551,7 @@ fn idle_auto_archive_returns_none_without_publishing_or_writing() {
 fn item_edit_calls_flush_synced_changes_and_local_folder_state_before_returning() {
     let path = fresh_db("item-edits");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").replace(r#""profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } }"#, r#""profile": { "default": true }"#), None).unwrap().snapshot;
+    store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").replace(r#""profile": { "custom": { "_0": { "directoryBasename": "Profile 1" } } }"#, r#""profile": { "default": true }"#), None, None).unwrap().snapshot;
     store.select_item("one".into(), "tab-spec".into()).unwrap();
     store.create_folder("one".into(), "new".into(), "New".into(), "pin-home".into(), 0, vec![]).unwrap();
     store.move_item("one".into(), "tab-spec".into(), "new".into(), 0, false).unwrap();
@@ -574,7 +574,7 @@ fn item_edit_calls_flush_synced_changes_and_local_folder_state_before_returning(
 #[test]
 fn a_same_position_move_writes_no_records_or_journal_rows() {
     let path = fresh_db("noop-item-move"); let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("one".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     let before = records(&path);
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
@@ -586,7 +586,7 @@ fn a_same_position_move_writes_no_records_or_journal_rows() {
 #[test]
 fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
     let path = fresh_db("unpin-usage");
-    let mut ws = import::arc_sidebar(FIXTURE, None).unwrap().0; ws.stamp_selection("tab-spec", 1_000);
+    let mut ws = import::arc_sidebar(FIXTURE, None, None).unwrap().0; ws.stamp_selection("tab-spec", 1_000);
     let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
@@ -605,7 +605,7 @@ fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
 fn folder_drop_opens_in_the_move_call_and_flushes_both_states() {
     let path = fresh_db("folder-drop");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("drag".into(), FIXTURE.into(), None).unwrap().snapshot;
+    store.import_arc_sidebar("drag".into(), FIXTURE.into(), None, None).unwrap().snapshot;
     store.set_folder_collapsed("drag".into(), "folder-docs".into(), true).unwrap();
     let conn = Connection::open(&path).unwrap();
     let before: i64 = conn.query_row("SELECT max(seq) FROM journal", [], |r| r.get(0)).unwrap();
@@ -623,12 +623,12 @@ fn folder_drop_opens_in_the_move_call_and_flushes_both_states() {
 #[test]
 fn window_import_reports_and_preserves_dates_and_local_state() {
     let windows = include_str!("../../ararat-core/tests/fixtures/StorableWindows.json");
-    let preview = import_arc_sidebar(FIXTURE.into(), Some(windows.into())).unwrap();
+    let preview = import_arc_sidebar(FIXTURE.into(), Some(windows.into()), None).unwrap();
     assert_eq!(preview.report.differing_folder_states, 1);
     assert_eq!(preview.report.skipped_dates, 1);
     let path = fresh_db("import-windows");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), Some(windows.into())).unwrap();
+    let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), Some(windows.into()), None).unwrap();
     assert_eq!(imported.report, preview.report);
     let rows = &imported.snapshot.spaces[0].pinned;
     assert!(rows.iter().find(|r| r.id == "folder-docs").unwrap().collapsed);
@@ -640,13 +640,107 @@ fn window_import_reports_and_preserves_dates_and_local_state() {
     let count: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind IN ('folder_state','last_selected')", [], |r| r.get(0)).unwrap();
     assert_eq!(count, 0);
     for windows in [None, Some("{".into())] {
-        let imported = import_arc_sidebar(FIXTURE.into(), windows.clone()).unwrap();
+        let imported = import_arc_sidebar(FIXTURE.into(), windows.clone(), None).unwrap();
         assert_eq!(imported.report.missing_windows, windows.is_none());
         assert_eq!(imported.report.windows_error.is_some(), windows.is_some());
         assert!(!imported.snapshot.spaces.is_empty());
         let store = WorkspaceStore::open(fresh_db(if windows.is_none() { "missing-windows" } else { "bad-windows" }).display().to_string()).unwrap();
-        let stored = store.import_arc_sidebar("test".into(), FIXTURE.into(), windows).unwrap();
+        let stored = store.import_arc_sidebar("test".into(), FIXTURE.into(), windows, None).unwrap();
         assert_eq!(stored.report, imported.report);
         assert_eq!(stored.snapshot.spaces.len(), imported.snapshot.spaces.len());
     }
+}
+
+#[test]
+fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
+    use ararat_ffi::KeyCombination;
+    let path = fresh_db("key-bindings").display().to_string();
+    let store = WorkspaceStore::open(path.clone()).unwrap();
+    let defaults = store.key_bindings();
+    assert_eq!(defaults, ararat_ffi::default_key_bindings());
+    assert_eq!(defaults.len(), 16);
+    let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
+    let key = KeyCombination { key: "s".into(), command: true, control: false, option: false, shift: false };
+    let changed = store.set_key_binding("close_tab".into(), Some(key.clone())).unwrap();
+    assert_eq!(binding(changed.clone(), "close_tab").key, Some(key));
+    assert!(binding(changed.clone(), "close_tab").customized);
+    assert_eq!(binding(changed.clone(), "toggle_sidebar").key, None);
+    assert!(binding(changed.clone(), "toggle_sidebar").customized);
+    assert_eq!(WorkspaceStore::open(path.clone()).unwrap().key_bindings(), changed);
+    assert!(matches!(store.set_key_binding("unknown".into(), None), Err(CoreError::Edit { .. })));
+    let invalid = KeyCombination { key: "x".into(), command: false, control: false, option: false, shift: false };
+    assert!(matches!(store.set_key_binding("close_tab".into(), Some(invalid)), Err(CoreError::Edit { .. })));
+    assert_eq!(store.key_bindings(), changed);
+    let cleared = store.set_key_binding("close_tab".into(), None).unwrap();
+    assert_eq!(binding(cleared, "close_tab").key, None);
+    let reset = store.reset_key_binding("close_tab".into()).unwrap();
+    assert_eq!(binding(reset, "close_tab"), binding(defaults.clone(), "close_tab"));
+    assert_eq!(store.reset_all_key_bindings().unwrap(), defaults);
+    assert_eq!(WorkspaceStore::open(path).unwrap().key_bindings(), defaults);
+}
+
+#[test]
+fn key_bindings_import_report_crosses_ffi_and_preserves_existing_overrides() {
+    use ararat_ffi::KeyCombination;
+    let path = fresh_db("key-bindings-import").display().to_string();
+    let store = WorkspaceStore::open(path).unwrap();
+    let changed = store.set_key_binding("close_tab".into(), Some(KeyCombination {
+        key: "x".into(), command: true, control: false, option: false, shift: false,
+    })).unwrap();
+    for (json, count) in [(r#"{"version":1,"userOverrides":[]}"#, 0),
+        (r#"{"version":1,"userOverrides":[{"opaque":true}]}"#, 1)] {
+        let preview = import_arc_sidebar(FIXTURE.into(), None, Some(json.into())).unwrap();
+        let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), None, Some(json.into())).unwrap();
+        assert_eq!(preview.report, imported.report);
+        assert_eq!(imported.report.skipped_key_bindings, count);
+        assert!(!imported.report.missing_key_bindings);
+        assert_eq!(imported.report.key_bindings_error, None);
+        assert_eq!(store.key_bindings(), changed);
+    }
+    let imported = store.import_arc_sidebar("test".into(), FIXTURE.into(), None, Some("�".into())).unwrap();
+    assert!(imported.report.key_bindings_error.is_some());
+    assert_eq!(store.key_bindings(), changed);
+}
+
+#[test]
+fn merged_key_binding_conflicts_cross_ffi_without_writes_and_can_be_taken_over() {
+    use ararat_core::{key_bindings::KeyCombination, model::Workspace};
+    let key = KeyCombination { key: "x".into(), command: true, control: false, option: false, shift: false };
+    let a = Workspace::default().set_key_binding("close_tab", Some(key.clone())).unwrap();
+    let b = Workspace::default().set_key_binding("pin_tab", Some(key)).unwrap();
+    let mut tables = Vec::new();
+    for (index, ops) in [a.iter().chain(&b), b.iter().chain(&a)].into_iter().enumerate() {
+        let path = fresh_db(&format!("merged-keys-{index}"));
+        let (disk, _) = Store::open(&path).unwrap();
+        disk.write(ops.cloned().collect());
+        disk.flush().unwrap();
+        drop(disk);
+        let before = records(&path);
+        let journal_count = || Connection::open(&path).unwrap().query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
+        let count = journal_count();
+        let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+        let rows = store.key_bindings();
+        let close = rows.iter().find(|row| row.command == "close_tab").unwrap();
+        let pin = rows.iter().find(|row| row.command == "pin_tab").unwrap();
+        assert_eq!(close.key.as_ref().unwrap().key, "x");
+        assert!(!close.conflicting);
+        assert_eq!(pin.key, None);
+        assert_eq!(pin.assigned_key, close.key);
+        assert_eq!(close.assigned_key, close.key);
+        assert!(pin.conflicting && pin.customized);
+        assert_eq!(records(&path), before);
+        assert_eq!(journal_count(), count);
+        tables.push(rows);
+        let assigned = store.set_key_binding("settings".into(), Some(ararat_ffi::KeyCombination {
+            key: "x".into(), command: true, control: false, option: false, shift: false,
+        })).unwrap();
+        assert!(assigned.iter().all(|row| !row.conflicting));
+        let cleared = store.set_key_binding("settings".into(), None).unwrap();
+        for id in ["close_tab", "pin_tab"] {
+            let row = cleared.iter().find(|row| row.command == id).unwrap();
+            assert_eq!(row.key, None);
+            assert!(!row.conflicting);
+        }
+    }
+    assert_eq!(tables[0], tables[1]);
 }

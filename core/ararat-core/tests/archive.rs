@@ -1,7 +1,7 @@
 use ararat_core::{import::arc_sidebar, model::{Lifecycle, Op, Record}, storage::Store};
 
 fn workspace() -> ararat_core::model::Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
     for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("today-work".into()); }
     ws
 }

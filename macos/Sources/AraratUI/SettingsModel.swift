@@ -5,12 +5,15 @@ import SwiftUI
 @MainActor
 public final class SettingsModel: ObservableObject {
     enum Page: Hashable { case tabs, shortcuts, spaces, space(String) }
-    struct Row: Identifiable {
+    struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
         let title: String
         let subtitle: String
         var keys: [String] = []
+        var command: String? = nil
+        var customized = false
+        var conflicting = false
     }
     @Published var snapshot: WorkspaceSnapshot
     @Published var page: Page = .spaces
@@ -21,16 +24,21 @@ public final class SettingsModel: ObservableObject {
     @Published var headerProgress = 0.0
     @Published private(set) var history: [Page] = [.spaces]
     @Published private(set) var historyIndex = 0
+    @Published var shortcutQuery = ""
+    @Published var customizedOnly = false
+    @Published var conflictingOnly = false
     let adapter: WorkspaceAdapter
+    let keyBindings: KeyBindingsModel
     var preview: (String, Look?, Bool) -> Void
     var publish: (WorkspaceSnapshot) -> Void
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
 
-    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }) {
+    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel) {
         self.snapshot = snapshot
         self.adapter = adapter
+        self.keyBindings = keyBindings
         self.preview = preview
         self.publish = publish
         self.resetWidth = resetWidth
@@ -145,20 +153,58 @@ public final class SettingsModel: ObservableObject {
             } else { self.error = error.localizedDescription }
         }
     }
-    func readShortcuts(_ menu: NSMenu) {
-        spaceKeys = [:]
-        shortcuts = menu.items.flatMap { item -> [Row] in
-            if let submenu = item.submenu { return shortcutRows(submenu) }
-            return []
+    func readShortcuts() {
+        shortcuts = Self.shortcutRows(keyBindings.bindings)
+        spaceKeys = Self.spaceKeys(keyBindings.bindings)
+    }
+
+    /// Rows for the Shortcuts pane built from the effective table: an untouched row shows its description,
+    /// a conflicting row keeps the key it lost and names its holder.
+    /// The display (key caps, "None", right-click Reset/Remove, click-to-record) is reused from Cra's MIT
+    /// `Sources/Cra/UI/Settings/ShortcutsPane.swift`. Internal so tests can build rows from synthesized tables.
+    static func shortcutRows(_ table: [KeyBinding]) -> [Row] {
+        let holder = { (key: KeyCombination, loser: String) -> String? in
+            table.first { $0.key == key && $0.command != loser && $0.conflicting == false }?.title
+        }
+        return table.map { binding in
+            var subtitle = binding.description
+            if binding.conflicting, let assigned = binding.assignedKey, let holder = holder(assigned, binding.command) {
+                subtitle += " Conflicting: \(SidebarTooltip.display(for: assigned)) is held by \(holder)."
+            }
+            return Row(id: "shortcut-\(binding.command)", pane: .shortcuts, title: binding.title, subtitle: subtitle,
+                       keys: binding.key.map { SidebarTooltip.caps(for: $0) } ?? binding.assignedKey.map { SidebarTooltip.caps(for: $0) } ?? [],
+                       command: binding.command, customized: binding.customized, conflicting: binding.conflicting)
         }
     }
-    private func shortcutRows(_ menu: NSMenu) -> [Row] {
-        menu.items.flatMap { item -> [Row] in
-            if let submenu = item.submenu { return shortcutRows(submenu) }
-            guard !item.keyEquivalent.isEmpty else { return [] }
-            let keys = SidebarTooltip.keycaps(for: item).map(\.stringValue)
-            if item.action == WorkspaceCommands.showSpace, item.keyEquivalentModifierMask == [.control] { spaceKeys[item.tag] = keys }
-            return [Row(id: "shortcut-\(item.title)", pane: .shortcuts, title: item.title, subtitle: item.toolTip ?? "Perform this menu command.", keys: keys)]
+
+    static func spaceKeys(_ table: [KeyBinding]) -> [Int: [String]] {
+        var keys: [Int: [String]] = [:]
+        for binding in table {
+            guard binding.command.hasPrefix("show_space_"), let index = Int(binding.command.dropFirst("show_space_".count)) else { continue }
+            if let key = binding.key { keys[index - 1] = SidebarTooltip.caps(for: key) }
+        }
+        return keys
+    }
+
+    /// Pane search matches the action name, its description and the keys (Yab's manual: "finds shortcuts
+    /// by action or by keys"), combined with the Customized and Conflicting toggles.
+    static func shortcutHit(_ row: Row, query: String, customized: Bool, conflicting: Bool, customizedOnly: Bool, conflictingOnly: Bool) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        let matches = query.isEmpty || (row.title + " " + row.subtitle + " " + row.keys.joined()).localizedCaseInsensitiveContains(query)
+        return matches && (!customizedOnly || customized) && (!conflictingOnly || conflicting)
+    }
+
+    var filteredShortcuts: [Row] {
+        shortcuts.filter { row in
+            Self.shortcutHit(row, query: shortcutQuery,
+                             customized: row.customized, conflicting: row.conflicting,
+                             customizedOnly: customizedOnly, conflictingOnly: conflictingOnly)
         }
     }
+
+    func binding(for command: String) -> KeyBinding? { keyBindings.binding(command: command) }
+    func toggleRecording(_ command: String) { keyBindings.toggleRecording(command) }
+    func resetShortcut(_ command: String) { keyBindings.reset(command: command) }
+    func removeShortcut(_ command: String) { keyBindings.set(command: command, key: nil) }
+    func resetAllShortcuts() { keyBindings.resetAll() }
 }
