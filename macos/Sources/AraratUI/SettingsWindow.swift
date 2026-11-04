@@ -268,7 +268,7 @@ private struct SettingsShortcutsSection: View {
                 filterButton
                 resetAllButton
             }
-            if let error = keyBindings.error { Text(error).foregroundStyle(.red).help("The last recording was refused") }
+            if let error = keyBindings.error, keyBindings.errorCommand == nil { Text(error).foregroundStyle(.red).help("The last recording was refused") }
             ForEach(model.filteredShortcuts) { row in rowCard(row) }
             if model.filteredShortcuts.isEmpty && !model.shortcuts.isEmpty { Text("No matching shortcuts").foregroundStyle(.secondary) }
         }
@@ -300,18 +300,28 @@ private struct SettingsShortcutsSection: View {
     @ViewBuilder
     private func rowCard(_ row: SettingsModel.Row) -> some View {
         let recording = recording(on: row)
-        HStack {
-            VStack(alignment: .leading, spacing: 3) { Text(row.title); Text(row.subtitle).font(.caption).foregroundStyle(.secondary) }
-            Spacer(minLength: 12)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.title).lineLimit(1)
+                Text(row.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .background(ShortcutLayoutMarker(id: "description-\(row.id)"))
+                if let holder = recording?.holder {
+                    Text("Held by \(holder) — press again to take it").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .background(ShortcutLayoutMarker(id: "message-\(row.id)"))
+                } else if row.command == keyBindings.errorCommand, let error = keyBindings.error {
+                    ShortcutRefusal(text: error, id: "message-\(row.id)")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
             Button { if let command = row.command { model.toggleRecording(command) } } label: {
-                keyFace(row, recording)
+                keyFace(row, recording).frame(width: 140, alignment: .trailing)
+                    .background(ShortcutLayoutMarker(id: "column-\(row.id)"))
             }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Record shortcut for \(row.title)")
-                .frame(minWidth: 110)
         }
-        .padding(.horizontal, 12).frame(minHeight: 54)
-        .background(recording != nil ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 54)
+        .background(ShortcutLayoutMarker(id: "row-\(row.id)"))
+        .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
         .contextMenu {
             if let command = row.command, let binding = keyBindings.binding(command: command) {
                 Button("Reset to Default") { model.resetShortcut(command) }.disabled(!binding.customized)
@@ -328,22 +338,57 @@ private struct SettingsShortcutsSection: View {
     @ViewBuilder
     private func keyFace(_ row: SettingsModel.Row, _ recording: KeyBindingsModel.Recording?) -> some View {
         if let recording {
-            VStack(spacing: 2) {
-                Text(recording.candidate.map { SidebarTooltip.display(for: $0) } ?? "Press keys…").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.white)
-                if let holder = recording.holder { Text("Held by \(holder) — press again.").font(.caption2).foregroundStyle(.orange) }
-            }
-            .frame(maxWidth: .infinity).frame(height: 30)
-            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(recording.candidate.map { SidebarTooltip.display(for: $0) } ?? "Type shortcut")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(recording.candidate == nil ? Color.secondary : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 8).frame(height: 30)
+                .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 1))
+                .background(ShortcutLayoutMarker(id: "recorder-\(row.id)"))
         } else if row.conflicting, !row.keys.isEmpty {
             // The lost key must not read as a working one: the caption marks what the caps are.
-            SettingsKeycaps(keys: row.keys, caption: "Conflicting")
+            SettingsKeycaps(keys: row.keys, caption: "Conflicting", id: "content-\(row.id)").fixedSize()
+                .background(ShortcutLayoutMarker(id: "face-\(row.id)"))
         } else if row.keys.isEmpty {
             Text("None").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity).frame(height: 30)
+                .background(ShortcutLayoutMarker(id: "content-\(row.id)"))
+                .frame(maxWidth: .infinity, alignment: .trailing).frame(height: 30)
         } else {
-            SettingsKeycaps(keys: row.keys)
+            SettingsKeycaps(keys: row.keys, id: "content-\(row.id)").fixedSize()
         }
     }
+}
+
+private struct ShortcutRefusal: NSViewRepresentable {
+    let text: String
+    let id: String
+    func makeNSView(context: Context) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .systemRed
+        label.identifier = NSUserInterfaceItemIdentifier(id)
+        return label
+    }
+    func updateNSView(_ label: NSTextField, context: Context) { label.stringValue = text }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.intrinsicContentSize.width
+        let height = nsView.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)).height ?? 14
+        return CGSize(width: width, height: height)
+    }
+}
+
+private struct ShortcutLayoutMarker: NSViewRepresentable {
+    let id: String
+    func makeNSView(context: Context) -> ShortcutMarkerView {
+        let view = ShortcutMarkerView()
+        view.identifier = NSUserInterfaceItemIdentifier(id)
+        return view
+    }
+    func updateNSView(_ view: ShortcutMarkerView, context: Context) { view.identifier = NSUserInterfaceItemIdentifier(id) }
+}
+
+private final class ShortcutMarkerView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 struct SettingsField: View {
@@ -392,6 +437,7 @@ final class SettingsWindow: NSWindow, MenuCommandHost {
 private struct SettingsKeycaps: NSViewRepresentable {
     let keys: [String]
     var caption: String? = nil
+    var id: String? = nil
     func makeNSView(context: Context) -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -403,13 +449,21 @@ private struct SettingsKeycaps: NSViewRepresentable {
     func updateNSView(_ stack: NSStackView, context: Context) {
         stack.setAccessibilityLabel("Shortcut " + keys.joined())
         stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
+        stack.orientation = caption == nil ? .horizontal : .vertical
+        stack.alignment = caption == nil ? .centerY : .trailing
+        stack.spacing = caption == nil ? 3 : 2
+        let caps = caption == nil ? stack : NSStackView()
+        caps.orientation = .horizontal
+        caps.spacing = 3
+        caps.identifier = id.map { NSUserInterfaceItemIdentifier($0) }
         for key in keys {
             let cap = TooltipKeycap(key, modifier: [])
-            stack.addArrangedSubview(cap)
+            caps.addArrangedSubview(cap)
             cap.widthAnchor.constraint(greaterThanOrEqualToConstant: 18).isActive = true
             cap.heightAnchor.constraint(equalToConstant: 18).isActive = true
         }
         if let caption {
+            stack.addArrangedSubview(caps)
             let label = NSTextField(labelWithString: caption)
             label.font = .systemFont(ofSize: 11, weight: .medium)
             label.textColor = .secondaryLabelColor

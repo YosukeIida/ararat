@@ -14,6 +14,7 @@ public final class KeyBindingsModel: ObservableObject {
     }
     @Published public private(set) var bindings = defaultKeyBindings()
     @Published public private(set) var error: String?
+    @Published public private(set) var errorCommand: String?
     @Published public private(set) var recording: Recording?
     public var onChange: (() -> Void)?
     private let adapter: WorkspaceAdapter
@@ -46,12 +47,12 @@ public final class KeyBindingsModel: ObservableObject {
 
     public func set(command: String, key: KeyCombination?, completion: @escaping WorkspaceAdapter.Completion<Void> = { _ in }) {
         adapter.setKeyBinding(command: command, key: key) { [weak self] result in
-            self?.receive(result, completion: completion)
+            self?.receive(result, command: command, completion: completion)
         }
     }
 
     public func reset(command: String, completion: @escaping WorkspaceAdapter.Completion<Void> = { _ in }) {
-        adapter.resetKeyBinding(command: command) { [weak self] result in self?.receive(result, completion: completion) }
+        adapter.resetKeyBinding(command: command) { [weak self] result in self?.receive(result, command: command, completion: completion) }
     }
 
     public func resetAll(completion: @escaping WorkspaceAdapter.Completion<Void> = { _ in }) {
@@ -63,6 +64,7 @@ public final class KeyBindingsModel: ObservableObject {
     public func toggleRecording(_ command: String) {
         if recording?.command == command { recording = nil; return }
         error = nil
+        errorCommand = nil
         recording = Recording(command: command, candidate: nil, holder: nil)
     }
 
@@ -87,6 +89,7 @@ public final class KeyBindingsModel: ObservableObject {
         // print 3/4/5 on every layout, so layouts whose characters are " ' ( (AZERTY) cannot slip
         // past the core's character-based reserved list.
         if modifiers.contains(.command), modifiers.contains(.shift), !modifiers.contains(.control), !modifiers.contains(.option), [20, 21, 23].contains(Int(event.keyCode)) {
+            errorCommand = command
             error = "this shortcut is reserved by the system"
             recording = nil
             return true
@@ -107,15 +110,17 @@ public final class KeyBindingsModel: ObservableObject {
         return true
     }
 
-    private func receive(_ result: Result<[KeyBinding], Error>, completion: WorkspaceAdapter.Completion<Void>) {
+    private func receive(_ result: Result<[KeyBinding], Error>, command: String? = nil, completion: WorkspaceAdapter.Completion<Void>) {
         switch result {
         case .success(let bindings):
             error = nil
+            errorCommand = nil
             self.bindings = bindings
             for menu in menus.allObjects { Self.apply(bindings, to: menu) }
             onChange?()
             completion(.success(()))
         case .failure(let error):
+            errorCommand = command
             if let core = error as? CoreError {
                 switch core {
                 case .Edit(let message), .Import(let message), .Store(let message): self.error = message

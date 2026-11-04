@@ -432,3 +432,202 @@ func screenshotKeysAreRefusedByKeyCodeOnAnyLayout() async throws {
 }
 
 
+
+@MainActor
+private func shortcutMarker(_ window: NSWindow, _ id: String) -> NSView? {
+    guard let content = window.contentView else { return nil }
+    content.layoutSubtreeIfNeeded()
+    return bindingDescendants(content).first { $0.identifier?.rawValue == id }
+}
+
+@MainActor
+private func shortcutFrame(_ window: NSWindow, _ id: String) throws -> NSRect {
+    let view = try #require(shortcutMarker(window, id))
+    return view.convert(view.bounds, to: nil)
+}
+
+/// A non-throwing frame height: a row SwiftUI is rebuilding can drop its marker for a pass,
+/// so waits fold presence and size in here instead of measuring straight after a marker wait.
+@MainActor
+private func shortcutHeight(_ window: NSWindow, _ id: String) -> CGFloat? {
+    shortcutMarker(window, id).map { $0.convert($0.bounds, to: nil).height }
+}
+
+@Test @MainActor
+func shortcutRecorderStaysInsideItsColumnInBothAppearances() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    settings.model.readShortcuts()
+    settings.model.navigate(.shortcuts)
+    let window = try #require(settings.window)
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        window.appearance = NSAppearance(named: appearance)
+        settings.model.toggleRecording("toggle_sidebar")
+        try await waitUntil {
+            shortcutMarker(window, "recorder-shortcut-toggle_sidebar") != nil
+                && shortcutMarker(window, "column-shortcut-toggle_sidebar") != nil
+                && shortcutMarker(window, "row-shortcut-toggle_sidebar") != nil
+        }
+        let column = try shortcutFrame(window, "column-shortcut-toggle_sidebar")
+        let recorder = try shortcutFrame(window, "recorder-shortcut-toggle_sidebar")
+        let row = try shortcutFrame(window, "row-shortcut-toggle_sidebar")
+        #expect(abs(column.width - 140) < 1)
+        #expect(column.insetBy(dx: -1, dy: -1).contains(recorder))
+        #expect(abs(row.maxX - column.maxX - 12) < 1)
+        settings.model.toggleRecording("toggle_sidebar")
+    }
+    window.contentViewController = nil
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func shortcutConflictMessageIsBelowDescriptionOutsideRecorder() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    settings.model.readShortcuts()
+    settings.model.navigate(.shortcuts)
+    let window = try #require(settings.window)
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        window.appearance = NSAppearance(named: appearance)
+        try await waitUntil { shortcutMarker(window, "row-shortcut-toggle_sidebar") != nil }
+        let baseline = try shortcutFrame(window, "row-shortcut-toggle_sidebar").height
+        let commandD = try recorderKeyEvent(keyCode: 2, characters: "d", charactersIgnoringModifiers: "d", flags: [.command])
+        let escape = try recorderKeyEvent(keyCode: 53, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", flags: [])
+
+        settings.model.toggleRecording("toggle_sidebar")
+        _ = harness.keyBindings.handle(commandD)
+        try await waitUntil {
+            shortcutMarker(window, "message-shortcut-toggle_sidebar") != nil
+                && (shortcutHeight(window, "row-shortcut-toggle_sidebar") ?? 0) > baseline + 0.5
+        }
+        let description = try shortcutFrame(window, "description-shortcut-toggle_sidebar")
+        let message = try shortcutFrame(window, "message-shortcut-toggle_sidebar")
+        let recorder = try shortcutFrame(window, "recorder-shortcut-toggle_sidebar")
+        #expect(message.maxY <= description.minY + 1)
+        #expect(!message.intersects(recorder))
+        #expect(try shortcutFrame(window, "row-shortcut-toggle_sidebar").height > baseline)
+        _ = harness.keyBindings.handle(escape)
+        try await waitUntil {
+            shortcutMarker(window, "message-shortcut-toggle_sidebar") == nil
+                && abs((shortcutHeight(window, "row-shortcut-toggle_sidebar") ?? 0) - baseline) < 0.5
+        }
+        #expect(abs((try shortcutFrame(window, "row-shortcut-toggle_sidebar").height) - baseline) < 1)
+
+        settings.model.toggleRecording("toggle_sidebar")
+        _ = harness.keyBindings.handle(commandD)
+        try await waitUntil { shortcutMarker(window, "message-shortcut-toggle_sidebar") != nil }
+        _ = harness.keyBindings.handle(commandD)
+        try await waitUntil {
+            harness.keyBindings.binding(command: "toggle_sidebar")?.key == recorderBinding(key: "d", command: true)
+                && shortcutMarker(window, "message-shortcut-toggle_sidebar") == nil
+                && abs((shortcutHeight(window, "row-shortcut-toggle_sidebar") ?? 0) - baseline) < 0.5
+        }
+        #expect(abs((try shortcutFrame(window, "row-shortcut-toggle_sidebar").height) - baseline) < 1)
+        try await bindingValue { harness.keyBindings.resetAll(completion: $0) }
+        settings.model.readShortcuts()
+
+        settings.model.toggleRecording("toggle_sidebar")
+        try await waitUntil { window.firstResponder is ShortcutsRecorderView }
+        _ = harness.keyBindings.handle(commandD)
+        try await waitUntil { shortcutMarker(window, "message-shortcut-toggle_sidebar") != nil }
+        let split = try #require(window.contentViewController as? NSSplitViewController)
+        let search = try #require(bindingDescendants(split.splitViewItems[1].viewController.view).compactMap { $0 as? NSTextField }.first { "\(type(of: $0))" == "AppKitTextField" })
+        window.makeFirstResponder(search)
+        try await waitUntil {
+            harness.keyBindings.recording == nil
+                && shortcutMarker(window, "message-shortcut-toggle_sidebar") == nil
+                && abs((shortcutHeight(window, "row-shortcut-toggle_sidebar") ?? 0) - baseline) < 0.5
+        }
+        #expect(abs((try shortcutFrame(window, "row-shortcut-toggle_sidebar").height) - baseline) < 1)
+
+        settings.model.toggleRecording("toggle_sidebar")
+        try await waitUntil { shortcutMarker(window, "recorder-shortcut-toggle_sidebar") != nil }
+        let refusalRecorder = try shortcutFrame(window, "recorder-shortcut-toggle_sidebar")
+        _ = harness.keyBindings.handle(try recorderKeyEvent(keyCode: 13, characters: "w", charactersIgnoringModifiers: "w", flags: []))
+        try await waitUntil {
+            harness.keyBindings.errorCommand == "toggle_sidebar"
+                && shortcutMarker(window, "message-shortcut-toggle_sidebar") != nil
+                && shortcutMarker(window, "description-shortcut-toggle_sidebar") != nil
+                && shortcutMarker(window, "row-shortcut-toggle_sidebar") != nil
+        }
+        let refusal = try shortcutFrame(window, "message-shortcut-toggle_sidebar")
+        let refusalDescription = try shortcutFrame(window, "description-shortcut-toggle_sidebar")
+        let marker = try #require(shortcutMarker(window, "message-shortcut-toggle_sidebar") as? NSTextField)
+        #expect(harness.keyBindings.error == "a shortcut needs Command, Control or Option")
+        #expect(marker.textColor == NSColor.systemRed)
+        #expect(refusal.maxY <= refusalDescription.minY + 1)
+        #expect(!refusal.intersects(refusalRecorder))
+        settings.model.toggleRecording("toggle_sidebar")
+        settings.model.toggleRecording("toggle_sidebar")
+        try await waitUntil { shortcutMarker(window, "message-shortcut-toggle_sidebar") == nil }
+        #expect(abs((try shortcutFrame(window, "row-shortcut-toggle_sidebar").height) - baseline) < 1)
+    }
+    window.contentViewController = nil
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func shortcutColumnsShareTheirTrailingEdge() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    settings.model.readShortcuts()
+    settings.model.navigate(.shortcuts)
+    let window = try #require(settings.window)
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        window.appearance = NSAppearance(named: appearance)
+        try await waitUntil { shortcutMarker(window, "column-shortcut-close_tab") != nil && shortcutMarker(window, "column-shortcut-toggle_sidebar") != nil }
+        let columns = try settings.model.shortcuts.map { try shortcutFrame(window, "column-\($0.id)") }
+        let trailing = try #require(columns.first?.maxX)
+        #expect(columns.allSatisfy { abs($0.maxX - trailing) < 1 && abs($0.width - 140) < 1 })
+        for row in settings.model.shortcuts {
+            let content = try shortcutFrame(window, "content-\(row.id)")
+            let column = try shortcutFrame(window, "column-\(row.id)")
+            #expect(abs(content.maxX - column.maxX) < 1, "\(row.title)")
+        }
+    }
+    window.contentViewController = nil
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func conflictingLongShortcutFitsItsColumn() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    let key = recorderBinding(key: "x", command: true, control: true, option: true, shift: true)
+    let holder = KeyBinding(command: "toggle_sidebar", title: "Toggle Sidebar", menu: "View", description: "Show or hide the sidebar.", defaultKey: key, key: key, customized: false, conflicting: false, assignedKey: nil)
+    let loser = KeyBinding(command: "toggle_library", title: "Toggle Library", menu: "View", description: "Show or hide the Library.", defaultKey: key, key: nil, customized: false, conflicting: true, assignedKey: key)
+    settings.model.shortcuts = SettingsModel.shortcutRows([holder, loser])
+    settings.model.navigate(.shortcuts)
+    let window = try #require(settings.window)
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        window.appearance = NSAppearance(named: appearance)
+        try await waitUntil { shortcutMarker(window, "face-shortcut-toggle_library") != nil && shortcutMarker(window, "content-shortcut-toggle_library") != nil }
+        let face = try shortcutFrame(window, "face-shortcut-toggle_library")
+        let caps = try shortcutFrame(window, "content-shortcut-toggle_library")
+        let column = try shortcutFrame(window, "column-shortcut-toggle_library")
+        #expect(face.width <= 140)
+        #expect(column.insetBy(dx: -1, dy: -1).contains(face))
+        #expect(abs(caps.maxX - column.maxX) < 1)
+        let caption = try #require(bindingDescendants(window.contentView!).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Conflicting" })
+        let captionFrame = caption.convert(caption.bounds, to: nil)
+        #expect(captionFrame.maxY <= caps.minY + 1)
+    }
+    window.contentViewController = nil
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
