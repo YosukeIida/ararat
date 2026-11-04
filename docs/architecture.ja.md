@@ -94,7 +94,7 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 ### 4.2 ベースとパッチの管理
 
 - クリーンな Chromium の revision とベースのパッチセットは、`engine/build-inputs.toml` で別々に固定する。
-- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。phase 2 では、ungoogled-chromium の全パッチについて、維持・スキップ・対抗パッチのいずれかとセキュリティ上の帰結を記した、固定した一覧を作る（Google の Safe Browsing を外すので、14 の評価の仕組みで置き換える）。また、1 回のリベースを計測する。
+- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。ungoogled-chromium の全パッチを、維持・スキップ・対抗パッチのいずれかに分け、セキュリティ上の帰結を記した一覧は `docs/research/ungoogled-inventory.md` の 8 節にある。phase 2 では、137 本のうち 25 本と、component updater を保つ対抗パッチ 1 本をビルドする（同 8.6 節）。評判のソース（14）をオーナーが決めるまで、Google Safe Browsing をビルドに残すので、9 の拡張の kill switch は有効のままである。ドメインの置き換えとバイナリの削除は行わない（我々の規則、暫定）。また、1 回のリベースを計測する。
 - それまでは Helium を暫定のベースとしていた。一覧やリベースで ungoogled-chromium の手間が見込みより大きいと分かった場合は、Helium を比較の候補とし、Ardia に倣ってこちらの選択と衝突するものをスキップする（Ardia ledger 1.2）。
 - パッチの順序の唯一の正本は `engine/patches/series` である。パッチ名は関心事を表し、順序を示す接頭辞は付けない。
 - `series check` は、固定したベースに対してスクラッチのツリーで series 全体を fuzz なしで適用し、ビルドツリーとバイト単位で比較する。`series check` はエンジンのリリースのたびに事前に実行する。

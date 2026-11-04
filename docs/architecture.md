@@ -92,7 +92,7 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 ### 4.2 Base and patch management
 
 - The clean Chromium revision and the base patch set are pinned separately in `engine/build-inputs.toml`.
-- The base is ungoogled-chromium (the owner's choice, 2026-11-04, over Helium; reasons in section 1). Phase 2 still pins an inventory of every ungoogled-chromium patch marked kept, skipped or counter-patched, with its security consequence (it removes Google's Safe Browsing, so the reputation check of 14 replaces it), and measures one rebase.
+- The base is ungoogled-chromium (the owner's choice, 2026-11-04, over Helium; reasons in section 1). The inventory of every ungoogled-chromium patch, marked kept, skipped or counter-patched with its security consequence, is `docs/research/ungoogled-inventory.md` §8. Phase 2 builds 25 of the 137 patches plus one counter-patch that keeps the component updater (§8.6 there): Google Safe Browsing stays in the build until the owner picks the reputation source (14), so the extension kill switch of 9 holds; no domain substitution and no binary pruning (ours, provisional). Phase 2 also measures one rebase.
 - Helium was the provisional base until then. If the inventory or the rebase shows ungoogled-chromium costing more than expected, Helium is the alternative to compare, skipping what fights our choices as Ardia does (Ardia ledger 1.2).
 - `engine/patches/series` is the only source of patch order. Patch names state their concern; no ordering prefixes.
 - `series check` applies the whole series to the pinned base in a scratch tree with no fuzz and compares bytes with the build tree. It runs before every engine release.
