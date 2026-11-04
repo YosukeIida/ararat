@@ -24,9 +24,9 @@ public final class SettingsModel: ObservableObject {
     @Published var headerProgress = 0.0
     @Published private(set) var history: [Page] = [.spaces]
     @Published private(set) var historyIndex = 0
-    @Published var shortcutQuery = ""
-    @Published var customizedOnly = false
-    @Published var conflictingOnly = false
+    @Published var shortcutQuery = "" { didSet { keyBindings.clearError() } }
+    @Published var customizedOnly = false { didSet { keyBindings.clearError() } }
+    @Published var conflictingOnly = false { didSet { keyBindings.clearError() } }
     let adapter: WorkspaceAdapter
     let keyBindings: KeyBindingsModel
     var preview: (String, Look?, Bool) -> Void

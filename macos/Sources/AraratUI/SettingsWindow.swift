@@ -268,7 +268,10 @@ private struct SettingsShortcutsSection: View {
                 filterButton
                 resetAllButton
             }
-            if let error = keyBindings.error, keyBindings.errorCommand == nil { Text(error).foregroundStyle(.red).help("The last recording was refused") }
+            if let error = keyBindings.error, keyBindings.errorCommand == nil
+                || !model.filteredShortcuts.contains(where: { $0.command == keyBindings.errorCommand }) {
+                ShortcutRefusal(text: error, id: "refusal-pane").help("The last recording was refused")
+            }
             ForEach(model.filteredShortcuts) { row in rowCard(row) }
             if model.filteredShortcuts.isEmpty && !model.shortcuts.isEmpty { Text("No matching shortcuts").foregroundStyle(.secondary) }
         }

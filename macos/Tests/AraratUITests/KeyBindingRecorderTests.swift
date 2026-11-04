@@ -631,3 +631,73 @@ func conflictingLongShortcutFitsItsColumn() async throws {
     window.contentViewController = nil
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }
+
+@Test @MainActor
+func aRefusalOnARowHiddenByTheQueryShowsAtPaneLevel() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    settings.model.readShortcuts()
+    settings.model.navigate(.shortcuts)
+    let window = try #require(settings.window)
+    try await waitUntil { shortcutMarker(window, "row-shortcut-toggle_sidebar") != nil }
+
+    // Recording toggle_sidebar and then hiding its row with the search: the core's refusal for a
+    // modifierless key arrives with the row filtered out, so the reason must show above the list
+    // instead of under a row the pane does not render.
+    settings.model.toggleRecording("toggle_sidebar")
+    settings.model.shortcutQuery = "library"
+    try await waitUntil { shortcutMarker(window, "row-shortcut-toggle_sidebar") == nil }
+    _ = harness.keyBindings.handle(try recorderKeyEvent(keyCode: 13, characters: "w", charactersIgnoringModifiers: "w", flags: []))
+    try await waitUntil {
+        harness.keyBindings.error == "a shortcut needs Command, Control or Option"
+            && shortcutMarker(window, "refusal-pane") != nil
+            && shortcutMarker(window, "message-shortcut-toggle_sidebar") == nil
+            && shortcutMarker(window, "row-shortcut-toggle_sidebar") == nil
+    }
+    try #require(harness.keyBindings.errorCommand == "toggle_sidebar")
+    let refusal = try #require(shortcutMarker(window, "refusal-pane") as? NSTextField)
+    #expect(refusal.stringValue == "a shortcut needs Command, Control or Option")
+    #expect(refusal.textColor == NSColor.systemRed)
+    #expect(refusal.font?.pointSize == 11)
+    window.contentViewController = nil
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func changingTheQueryOrTheFiltersClearsARefusal() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, settings, _) = try mountedHarness(adapter, snapshot: snapshot)
+    try await bindingValue { harness.keyBindings.load(completion: $0) }
+    let model = settings.model
+    model.readShortcuts()
+    let modifierless = try recorderKeyEvent(keyCode: 13, characters: "w", charactersIgnoringModifiers: "w", flags: [])
+
+    // The refusal names one row of the pane, so typing in its search or toggling one of its
+    // filters drops the reason instead of keeping it for a row that may have left the list.
+    model.toggleRecording("toggle_sidebar")
+    _ = harness.keyBindings.handle(modifierless)
+    try await waitUntil { harness.keyBindings.errorCommand == "toggle_sidebar" }
+    #expect(harness.keyBindings.error == "a shortcut needs Command, Control or Option")
+    model.shortcutQuery = "sidebar"
+    #expect(harness.keyBindings.error == nil && harness.keyBindings.errorCommand == nil)
+
+    model.toggleRecording("toggle_sidebar")
+    _ = harness.keyBindings.handle(modifierless)
+    try await waitUntil { harness.keyBindings.errorCommand == "toggle_sidebar" }
+    model.customizedOnly = true
+    #expect(harness.keyBindings.error == nil && harness.keyBindings.errorCommand == nil)
+
+    model.toggleRecording("toggle_sidebar")
+    _ = harness.keyBindings.handle(modifierless)
+    try await waitUntil { harness.keyBindings.errorCommand == "toggle_sidebar" }
+    model.conflictingOnly = true
+    #expect(harness.keyBindings.error == nil && harness.keyBindings.errorCommand == nil)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}

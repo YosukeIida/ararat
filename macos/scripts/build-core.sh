@@ -11,4 +11,5 @@ cargo run -q --release --bin uniffi-bindgen -- generate \
 mkdir -p "$here/Sources/ararat_ffiFFI/include"
 cp "$out/ararat_ffiFFI.h" "$here/Sources/ararat_ffiFFI/include/"
 cp "$out/ararat_ffiFFI.modulemap" "$here/Sources/ararat_ffiFFI/include/module.modulemap"
+mkdir -p "$here/Sources/AraratKit"
 cp "$out/ararat_ffi.swift" "$here/Sources/AraratKit/Generated.swift"

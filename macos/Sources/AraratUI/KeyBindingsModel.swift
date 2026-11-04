@@ -63,12 +63,16 @@ public final class KeyBindingsModel: ObservableObject {
 
     public func toggleRecording(_ command: String) {
         if recording?.command == command { recording = nil; return }
-        error = nil
-        errorCommand = nil
+        clearError()
         recording = Recording(command: command, candidate: nil, holder: nil)
     }
 
     public func cancelRecording() { recording = nil }
+
+    public func clearError() {
+        error = nil
+        errorCommand = nil
+    }
 
     /// Processes one key event for the recording row. Returns true when the event was consumed
     /// (so it neither reaches the menus nor moves on), false when nothing is being recorded.
