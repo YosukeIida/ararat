@@ -2,7 +2,7 @@
 // the core's internal representation.
 
 use ararat_core::import;
-use ararat_core::model::{Item, ItemKind, Lifecycle, Space, Workspace};
+use ararat_core::model::{Id, Item, ItemKind, Lifecycle, Space, Workspace};
 use ararat_core::storage::{Store, StoreError};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -134,10 +134,15 @@ impl WorkspaceStore {
     }
 
     pub fn route(&self, url: String) -> RoutingDecision {
-        let routing = self.workspace.lock().unwrap().routing();
-        // rule_for and route share the matcher, so the two answers cannot disagree.
+        let workspace = self.workspace.lock().unwrap();
+        let routing = workspace.routing();
+        // rule_for and route share the matcher, so the two answers cannot disagree. The
+        // space ids the workspace has now ride along: a destination naming a deleted space
+        // is answered as the most recent space, the stale id never reaches a window (unit
+        // 29b, round 2).
+        let spaces: Vec<Id> = workspace.spaces.iter().map(|space| space.id.clone()).collect();
         let rule_id = routing.rule_for(&url).map(|rule| rule.id.clone());
-        RoutingDecision { rule_id, destination: routing.route(&url).clone().into() }
+        RoutingDecision { rule_id, destination: routing.route(&url, &spaces).into() }
     }
 
     pub fn add_rule(&self, window_id: String, rule: Rule) -> Result<WorkspaceSnapshot, CoreError> {
@@ -174,7 +179,7 @@ impl WorkspaceStore {
 
     pub fn set_default_destination(&self, window_id: String, destination: Destination) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.set_default_destination(destination.into());
+        let ops = workspace.set_default_destination(destination.into())?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(snapshot(workspace.clone(), &window_id))
@@ -732,6 +737,8 @@ mod tests {
         assert!(!path.exists());
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
         let window: String = "one".into();
+        // A rule may only name a space the workspace has, so the space is created first.
+        store.create_space(window.clone(), "Work".into(), "space-work".into()).unwrap();
         // Add a rule, move it, edit it, change the default, then delete it.
         store.add_rule(window.clone(), Rule {
             id: "meet".into(),
@@ -773,6 +780,10 @@ mod tests {
         assert!(!path.exists());
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
         let window: String = "one".into();
+        // A rule may only name a space the workspace has, so the space is created first; the
+        // second space keeps the first deletable (the last space cannot be deleted).
+        store.create_space(window.clone(), "Work".into(), "space-work".into()).unwrap();
+        store.create_space(window.clone(), "Home".into(), "space-home".into()).unwrap();
         store.add_rule(window.clone(), Rule {
             id: "meet".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "meet.google.com".into() }],
@@ -783,11 +794,13 @@ mod tests {
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "  ".into() }],
             destination: Destination::LittleWindow(Profile::Named("Profile 1".into())),
         }).unwrap();
-        // What the FFI answers must be what Routing::route answers for the same routing record.
+        // What the FFI answers must be what Routing::route answers for the same records, over
+        // the spaces the store has (the two created ones).
         let core = ararat_core::routing::Routing::from(store.routing());
+        let spaces = ["space-work".into(), "space-home".into()];
         for url in ["https://www.meet.google.com/abc", "https://docs.example.com/", "https://meet.google.com/?q=1"] {
             let decision = store.route(url.into());
-            assert_eq!(&decision.destination, &Destination::from(core.route(url).clone()), "{url}");
+            assert_eq!(&decision.destination, &Destination::from(core.route(url, &spaces)), "{url}");
             assert_eq!(
                 decision.destination == core.default.clone().into(),
                 core.rule_for(url).is_none(),
@@ -801,6 +814,20 @@ mod tests {
         let decision = store.route("https://nothing.example.org".into());
         assert_eq!(decision.rule_id, None);
         assert_eq!(decision.destination, Destination::from(core.default.clone()));
+        // A rule whose space is deleted still matches, and its link goes to the most recent
+        // space (unit 29b, round 2): the FFI route answer names a rule, not the stale id.
+        store.delete_space(window.clone(), "space-work".into()).unwrap();
+        let decision = store.route("https://www.meet.google.com/x".into());
+        assert_eq!(decision.rule_id.as_deref(), Some("meet"));
+        assert_eq!(decision.destination, Destination::Space(SpaceTarget::MostRecent));
+        let core = ararat_core::routing::Routing::from(store.routing());
+        // The workspace's remaining space is space-home: every destination on these urls
+        // names a space it no longer has, and the two answers agree on the most-recent
+        // rewrite.
+        for url in ["https://www.meet.google.com/abc", "https://docs.example.com/"] {
+            let decision = store.route(url.into());
+            assert_eq!(&decision.destination, &Destination::from(core.route(url, &["space-home".into()])), "{url}");
+        }
         drop(store);
         for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
     }

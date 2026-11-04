@@ -84,8 +84,19 @@ impl Default for Routing {
 // Rules read in their record order, which the workspace derives per record (architecture 8.3):
 // two devices holding the same records read the same rule order, so a link goes the same way.
 impl Routing {
-    pub fn route(&self, url: &str) -> &Destination {
-        self.rule_for(url).map_or(&self.default, |rule| &rule.destination)
+    // The destination a URL from another app lands on: the first rule with a matching
+    // condition, else the default. A destination naming a space the workspace no longer has
+    // still answers — the rule matches (rule_for) — and the link goes to the most recent
+    // space instead, so the stale id never reaches a window (unit 29b, round 2; ours, Arc's
+    // behaviour unobserved). The stored destinations stay untouched, which the Settings pane
+    // reads for its deleted-space menus; the rewrite is why the answer is an owned value.
+    pub fn route(&self, url: &str, spaces: &[Id]) -> Destination {
+        let destination = self.rule_for(url).map_or(&self.default, |rule| &rule.destination);
+        match destination {
+            Destination::Space(SpaceTarget::Space(id)) if !spaces.iter().any(|space| space == id) =>
+                Destination::Space(SpaceTarget::MostRecent),
+            _ => destination.clone(),
+        }
     }
 
     // The rule a URL takes: the first rule with a matching condition. route() is this plus
@@ -147,7 +158,7 @@ mod tests {
     }
 
     fn goes_to_work(r: &Routing, url: &str) -> bool {
-        *r.route(url) == Destination::Space(SpaceTarget::Space("work".into()))
+        r.route(url, &["work".into()]) == Destination::Space(SpaceTarget::Space("work".into()))
     }
 
     #[test]
@@ -157,7 +168,7 @@ mod tests {
         let r = routing(MatchStyle::Equals, "   ");
         assert!(!goes_to_work(&r, "https://example.com/"));
         // A whitespace-only condition falls back to the default on the same call.
-        assert_eq!(r.route("https://example.com"), &r.default);
+        assert_eq!(r.route("https://example.com", &["work".into()]), r.default);
     }
 
     #[test]
@@ -191,6 +202,6 @@ mod tests {
             destination: Destination::Space(SpaceTarget::MostRecent),
         });
         assert!(goes_to_work(&r, "https://example.com"));
-        assert_eq!(*r.route("https://other.org"), Destination::LittleWindow(Profile::Default));
+        assert_eq!(r.route("https://other.org", &["work".into()]), Destination::LittleWindow(Profile::Default));
     }
 }

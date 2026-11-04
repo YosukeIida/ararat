@@ -145,14 +145,20 @@ public final class AirTrafficModel: ObservableObject {
 }
 
 /// What the destination menus can pick: the most recent space, one of the workspace's spaces,
-/// or the Little window. A destination naming a space the workspace no longer has reads as the
-/// most recent space (Cra's pane shows it that way) until the user picks something new. The
-/// Little window carries no payload: the menu item is one tag whatever profile a destination
-/// names, and a pick writes the pane's own Little window (the shown space's profile).
+/// the Little window, and one disabled "Deleted space" item per lost space id a destination
+/// (a rule's or the default's) still names. The Little window carries no payload: the menu
+/// item is one tag whatever profile a destination names, and a pick writes the pane's own
+/// Little window (the shown space's profile).
 public enum DestinationChoice: Hashable, Sendable {
     case mostRecent
     case space(String)
     case littleWindow
+    /// A destination naming a space the workspace no longer has. The menu shows it as one
+    /// disabled "Deleted space" item, selected, instead of silently reading Most Recent
+    /// Space (the owner's ruling); picking another destination replaces it. The id stays in
+    /// the tag so the picker matches the selection, and an untouched row keeps its
+    /// destination unrewritten.
+    case deletedSpace(String)
 
     public static let littleWindowChoice = Self.littleWindow
 
@@ -164,29 +170,38 @@ public enum DestinationChoice: Hashable, Sendable {
         default: self = Self.littleWindowChoice
         }
     }
-    /// A space the menu's spaces list no longer carries displays as the most recent space
-    /// (its id is kept in the model above so an untouched row is not rewritten).
+    /// A space the menu's spaces list no longer carries reads as the deleted-space choice
+    /// (its id is kept in the tag above, so the untouched row is not rewritten).
     public init(_ destination: Destination?, spaces: [SpaceSnapshot]) {
         self.init(destination)
-        if case .space(let id) = self, !spaces.contains(where: { $0.id == id }) { self = .mostRecent }
+        if case .space(let id) = self, !spaces.contains(where: { $0.id == id }) { self = .deletedSpace(id) }
     }
 
     /// The destination a pick writes. A fresh Little-window pick uses the Little window of the
     /// profile handed in (the shown space's, as `AirTrafficModel` documents); without one it
-    /// keeps the built-in default profile.
+    /// keeps the built-in default profile. The deleted-space item is disabled, so a pick never
+    /// carries it; nil reads as "the destination menu answered nothing".
     public func destination(littleWindowProfile: Profile?) -> Destination? {
         switch self {
         case .mostRecent: return .space(.mostRecent)
         case .space(let id): return .space(.space(id))
         case .littleWindow: return littleWindowProfile.map { Destination.littleWindow($0) } ?? Destination.littleWindow(.`default`)
+        case .deletedSpace: return nil
         }
+    }
+    /// Whether the choice is the disabled "Deleted space" item: the menus separate it from
+    /// the pickable tags (`SettingsWindow`'s `pickerContext`).
+    public var isDeletedSpace: Bool {
+        if case .deletedSpace = self { return true }
+        return false
     }
     /// The tags the destination menus offer, in menu order (`SettingsWindow`'s
     /// `pickerContext` is built from this, so the tag-coverage test reads the real menu):
-    /// the most recent space, each workspace space, and the one Little Window entry last,
-    /// after the divider the picker draws.
-    public static func menuTags(spaces: [SpaceSnapshot]) -> [DestinationChoice] {
-        [.mostRecent] + spaces.map { .space($0.id) } + [.littleWindow]
+    /// one disabled "Deleted space" item per lost space id the section's destinations name,
+    /// then the most recent space, each workspace space, and the one Little Window entry
+    /// last, after the divider the picker draws.
+    public static func menuTags(spaces: [SpaceSnapshot], deletedSpaceIds: [String] = []) -> [DestinationChoice] {
+        deletedSpaceIds.map { .deletedSpace($0) } + [.mostRecent] + spaces.map { .space($0.id) } + [.littleWindow]
     }
 
     /// A tag's title in the destination menus: the space's name for a space tag, the plain
@@ -196,7 +211,25 @@ public enum DestinationChoice: Hashable, Sendable {
         case .mostRecent: return "Most Recent Space"
         case .space(let id): return spaces.first { $0.id == id }?.title ?? id
         case .littleWindow: return "Little Window"
+        case .deletedSpace: return "Deleted space"
         }
+    }
+}
+
+extension AirTrafficModel {
+    /// Space ids the routing's destinations (every rule's and the default's) name that the
+    /// workspace does not have: the destination menus build their disabled "Deleted space"
+    /// items from this, so only the ids this pane's own destinations lost appear.
+    public func deletedSpaceIds(spaces: [SpaceSnapshot]) -> [String] {
+        var destinations = routing?.rules.map(\.destination) ?? []
+        if let routing { destinations.append(routing.default) }
+        var ids: [String] = []
+        for destination in destinations {
+            if case .space(.space(let id)) = destination, !spaces.contains(where: { $0.id == id }), !ids.contains(id) {
+                ids.append(id)
+            }
+        }
+        return ids
     }
 }
 

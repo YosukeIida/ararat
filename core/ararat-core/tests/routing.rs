@@ -16,6 +16,19 @@ fn known_spaces() -> HashSet<Id> {
     ["space-work", "space-home"].into_iter().map(String::from).collect()
 }
 
+// The same known ids as a route() argument (round 2): the import checked the fixture's
+// destinations against exactly these and the order is beside the point, the membership is
+// what route() checks.
+fn known_ids() -> Vec<Id> {
+    known_spaces().into_iter().collect()
+}
+
+// The space ids a workspace has now: route() checks a destination's id against these, and a
+// destination naming any other one is answered as the most recent space (unit 29b, round 2).
+fn space_ids(workspace: &Workspace) -> Vec<Id> {
+    workspace.spaces.iter().map(|space| space.id.clone()).collect()
+}
+
 fn contains(text: &str) -> UrlCondition {
     UrlCondition { style: MatchStyle::Contains, text: text.into() }
 }
@@ -34,6 +47,14 @@ fn space(id: &str) -> Destination {
 
 fn most_recent() -> Destination {
     Destination::Space(SpaceTarget::MostRecent)
+}
+
+// The spaces a rule's Space(id) destination must name (unit 29b): created with the core's own
+// create_space, so the ids are real ones the edits accept.
+fn with_spaces(workspace: &mut Workspace, ids: &[&str]) {
+    for (index, id) in ids.iter().enumerate() {
+        workspace.create_space("one", &format!("Space {index}"), id).unwrap();
+    }
 }
 
 fn little_window() -> Destination {
@@ -79,20 +100,21 @@ use rusqlite::OptionalExtension;
 #[test]
 fn add_edit_delete_reorder_and_default_apply_in_order() {
     let mut workspace = Workspace::default();
+    with_spaces(&mut workspace, &["space-work", "space-home"]);
     workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     workspace.add_rule(rule("docs", vec![contains("docs.example.com")], space("space-home"))).unwrap();
     // The first match wins, so the order decides where a URL takes.
-    assert_eq!(*workspace.routing().route("https://meet.google.com/abc"), space("space-work"));
+    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &space_ids(&workspace)), space("space-work"));
 
     workspace.edit_rule(rule("docs", vec![contains("docs.example.com")], little_window())).unwrap();
     workspace.move_rule("docs", 0).unwrap();
     assert_eq!(workspace.routing().rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["docs", "meet"]);
-    assert_eq!(*workspace.routing().route("https://docs.example.com/x"), little_window());
+    assert_eq!(workspace.routing().route("https://docs.example.com/x", &space_ids(&workspace)), little_window());
 
     workspace.delete_rule("meet").unwrap();
     assert_eq!(workspace.routing().rules.len(), 1);
-    workspace.set_default_destination(most_recent());
-    assert_eq!(*workspace.routing().route("https://other.example.org"), most_recent());
+    workspace.set_default_destination(most_recent()).unwrap();
+    assert_eq!(workspace.routing().route("https://other.example.org", &space_ids(&workspace)), most_recent());
 }
 
 #[test]
@@ -134,12 +156,13 @@ fn a_move_that_changes_nothing_writes_nothing() {
 fn edits_journal_one_record_each() {
     let path = fresh_db("routing-journal");
     let mut workspace = Workspace::default();
+    with_spaces(&mut workspace, &["space-work"]);
     let (store, _) = Store::open(&path).unwrap();
     let ops = workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     assert_eq!(ops.len(), 1);
     assert!(matches!(&ops[0], Op::Put(Record::RoutingRule { .. })));
     store.write(ops);
-    let default_ops = workspace.set_default_destination(most_recent());
+    let default_ops = workspace.set_default_destination(most_recent()).unwrap();
     assert_eq!(default_ops.len(), 1);
     assert!(matches!(&default_ops[0], Op::Put(Record::RoutingDefault { .. })));
     store.write(default_ops);
@@ -155,12 +178,13 @@ fn edits_journal_one_record_each() {
 fn reopen_and_journal_replay_give_the_same_routing() {
     let path = fresh_db("routing-replay");
     let mut workspace = Workspace::default();
+    with_spaces(&mut workspace, &["space-work", "space-home"]);
     workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     workspace.add_rule(rule("docs", vec![contains("docs.example.com")], little_window())).unwrap();
     workspace.edit_rule(rule("docs", vec![equals("https://docs.example.com/")], space("space-home"))).unwrap();
     workspace.move_rule("docs", 0).unwrap();
     workspace.delete_rule("meet").unwrap();
-    workspace.set_default_destination(most_recent());
+    workspace.set_default_destination(most_recent()).unwrap();
     {
         let (store, _) = Store::open(&path).unwrap();
         store.write(workspace.to_ops());
@@ -194,15 +218,15 @@ fn contains_maps_to_match_style_contains() {
     // Arc's seeded route is a "contains" rule to the space of most-recent tabs (Cra
     // LinkRouting.swift googleMeet); Meet.Google.Com keeps its case until matching.
     assert_eq!(routing.rules[0], rule("meet", vec![contains("Meet.Google.Com")], most_recent()));
-    assert_eq!(*routing.route("https://www.meet.google.com/abc"), most_recent());
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &known_ids()), most_recent());
 }
 
 #[test]
 fn matches_maps_to_match_style_equals() {
     let (routing, _) = imported();
     assert_eq!(routing.rules[1], rule("github-prs", vec![equals("https://github.com/pulls/")], space("space-work")));
-    assert_eq!(*routing.route("https://github.com/pulls?q=1"), space("space-work"));
-    assert_eq!(*routing.route("https://github.com/pulls/assigned"), Routing::default().default);
+    assert_eq!(routing.route("https://github.com/pulls?q=1", &known_ids()), space("space-work"));
+    assert_eq!(routing.route("https://github.com/pulls/assigned", &known_ids()), Routing::default().default);
 }
 
 #[test]
@@ -220,7 +244,7 @@ fn little_arc_maps_to_little_window_with_the_import_profile() {
     // Little window record carries the profile the import belongs to (this fixture: Default).
     let (routing, _) = imported();
     assert_eq!(routing.rules[2], rule("docs-little", vec![contains("docs.example.com")], little_window()));
-    assert_eq!(*routing.route("https://docs.example.com/spec"), little_window());
+    assert_eq!(routing.route("https://docs.example.com/spec", &known_ids()), little_window());
     // The import's profile is an argument of the import, not file data.
     let json = r#"{"version":1,"rules":[{"id":"meet","sourceComponents":[{"id":"m","componentType":{"urlMatch":{"_0":{"contains":{}},"_1":"meet.google.com"}}}],"destination":{"littleArc":{"_0":{"mostRecent":{}}}}}],"defaultDestination":{"littleArc":{"_0":{"mostRecent":{}}}}}"#;
     let (routing, _) = arc_link_routing(json, Profile::Named("Profile 1".into()), &known_spaces()).unwrap();
@@ -320,6 +344,7 @@ fn import_errors_are_import_errors() {
 #[test]
 fn two_devices_cross_applying_ops_keeps_both_changes() {
     let base = |ws: &mut Workspace| {
+        with_spaces(ws, &["space-work", "space-home"]);
         ws.add_rule(rule("g1", vec![contains("github.com")], space("space-work"))).unwrap();
         ws.add_rule(rule("g2", vec![contains("docs.example.com")], most_recent())).unwrap();
         ws.add_rule(rule("g3", vec![contains("meet.google.com")], little_window())).unwrap();
@@ -333,7 +358,7 @@ fn two_devices_cross_applying_ops_keeps_both_changes() {
         a.edit_rule(rule("g1", vec![contains("github.com")], most_recent())).unwrap(),
         a.add_rule(rule("zoom", vec![contains("zoom.example")], space("space-home"))).unwrap(),
         a.move_rule("g3", 0).unwrap(),
-        a.set_default_destination(space("space-work")),
+        a.set_default_destination(space("space-work")).unwrap(),
     ].concat();
     // Device B adds a rule computed from the same base A's add started from (so the two adds
     // tie on their order key), deletes one, moves one.
@@ -361,7 +386,7 @@ fn edits_that_change_nothing_write_nothing() {
     // The same rule content again: no change, so no record.
     assert!(ws.edit_rule(rule("meet", vec![contains("meet.google.com")], little_window())).unwrap().is_empty());
     // The destination it already has: no record either.
-    assert!(ws.set_default_destination(little_window()).is_empty());
+    assert!(ws.set_default_destination(little_window()).unwrap().is_empty());
     assert_eq!(ws.routing().rules.len(), 1);
 }
 
@@ -371,11 +396,11 @@ fn edits_that_change_nothing_write_nothing() {
 fn a_default_reset_writes_a_tombstone() {
     let path = fresh_db("routing-tombstone");
     let mut workspace = Workspace::default();
-    let changed = workspace.set_default_destination(most_recent());
+    let changed = workspace.set_default_destination(most_recent()).unwrap();
     assert!(matches!(&changed[0], Op::Put(Record::RoutingDefault { .. })));
     // The built-in destination is reached by deleting the stored one (unit 28's resets delete
     // their override), not by writing a Put that holds the built-in value.
-    let reset = workspace.set_default_destination(Destination::default());
+    let reset = workspace.set_default_destination(Destination::default()).unwrap();
     assert_eq!(reset.len(), 1);
     assert!(matches!(&reset[0], Op::Delete(Kind::RoutingDefault, id) if id == "workspace"));
     {
@@ -409,10 +434,10 @@ fn to_ops_carries_only_changed_routing() {
     let mut ws = Workspace::default();
     ws.add_rule(rule("meet", vec![contains("meet.google.com")], little_window())).unwrap();
     assert_eq!(ws.to_ops().len(), 1);
-    ws.set_default_destination(most_recent());
+    ws.set_default_destination(most_recent()).unwrap();
     assert_eq!(ws.to_ops().len(), 2);
     // Back on the built-in default, the default record is unnecessary again.
-    ws.set_default_destination(little_window());
+    ws.set_default_destination(little_window()).unwrap();
     assert_eq!(ws.to_ops().len(), 1);
 }
 
@@ -507,8 +532,8 @@ fn a_fixture_set_of_all_three_siblings_imports_the_routing() {
     assert_eq!(report.malformed_rules, 1);
     let routing = workspace.routing();
     assert_eq!(routing.rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["meet", "github-prs", "docs-little", "double-condition"]);
-    assert_eq!(*routing.route("https://www.meet.google.com/abc"), most_recent());
-    assert_eq!(*routing.route("https://github.com/pulls"), space("space-work"));
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &space_ids(&workspace)), most_recent());
+    assert_eq!(routing.route("https://github.com/pulls", &space_ids(&workspace)), space("space-work"));
     // The file's default (littleArc → The Little window with the import's profile) is the
     // built-in one on this fixture, so the derived default emits no extra record.
     assert_eq!(routing.default, Destination::default());
@@ -536,5 +561,120 @@ fn missing_malformed_and_non_utf8_routing_files_still_import_the_sidebar() {
     assert!(!report.missing_link_routing);
     assert!(report.link_routing_error.is_some());
     assert_eq!(workspace.spaces.len(), 2);
+}
+
+// Unit 29b, owner's ruling: a rule (or the default) may only name a space the workspace has —
+// the import checks the sidebar's ids the same way. Each op refuses with an EditError and the
+// state stays unchanged.
+#[test]
+fn edits_refuse_a_space_destination_the_workspace_does_not_have() {
+    let mut workspace = Workspace::default();
+    workspace.create_space("one", "Work", "space-work").unwrap();
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], little_window())).unwrap();
+    let before = workspace.clone();
+    // add_rule refuses the unknown space and writes nothing.
+    assert_eq!(
+        workspace.add_rule(rule("gone", vec![contains("gone.example")], space("space-gone"))).unwrap_err().0,
+        "unknown space space-gone");
+    assert_eq!(workspace, before);
+    // edit_rule refuses it on an existing rule too.
+    assert_eq!(
+        workspace.edit_rule(rule("meet", vec![contains("meet.google.com")], space("space-gone"))).unwrap_err().0,
+        "unknown space space-gone");
+    assert_eq!(workspace, before);
+    // set_default_destination refuses it as well.
+    assert_eq!(
+        workspace.set_default_destination(space("space-gone")).unwrap_err().0,
+        "unknown space space-gone");
+    assert_eq!(workspace, before);
+}
+
+// Unit 29b, round 2, ruling 1: an edit is allowed to keep the rule's current destination
+// even when that space was deleted (a text or style change writes, so the user can still
+// fix the rule); a destination the edit changes to on top is refused like an unknown space,
+// as round 1 pinned.
+#[test]
+fn edit_rule_refuses_only_a_changed_destination_that_names_a_missing_space() {
+    let mut workspace = Workspace::default();
+    workspace.create_space("one", "Work", "space-work").unwrap();
+    workspace.create_space("one", "Home", "space-home").unwrap();
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
+    workspace.delete_space("space-work").unwrap();
+    let before = workspace.clone();
+    // A destination change on top of the carried one is refused (round 1's ruling).
+    assert_eq!(
+        workspace.edit_rule(rule("meet", vec![contains("changed.example")], space("space-gone"))).unwrap_err().0,
+        "unknown space space-gone");
+    assert_eq!(workspace, before);
+    // An edit keeping the rule's current destination writes: text or style only.
+    workspace.edit_rule(rule("meet", vec![contains("changed.example")], space("space-work"))).unwrap();
+    assert_eq!(
+        workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().conditions,
+        vec![contains("changed.example")]);
+    assert_eq!(
+        workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().destination,
+        space("space-work"));
+    workspace.edit_rule(rule("meet", vec![equals("https://changed.example/")], space("space-work"))).unwrap();
+    assert_eq!(
+        workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().conditions,
+        vec![equals("https://changed.example/")]);
+}
+
+// MostRecent and the Little window carry no space id, so they pass even on a workspace with
+// no spaces at all (the refusal only reaches Space(id) destinations).
+#[test]
+fn most_recent_and_little_window_destinations_pass_without_spaces() {
+    let mut workspace = Workspace::default();
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], most_recent())).unwrap();
+    workspace.add_rule(rule("docs", vec![contains("docs.example.com")], little_window())).unwrap();
+    workspace.edit_rule(rule("docs", vec![equals("https://docs.example.com/")], most_recent())).unwrap();
+    workspace.set_default_destination(most_recent()).unwrap();
+    assert_eq!(workspace.routing().rules.len(), 2);
+    assert_eq!(workspace.routing().default, most_recent());
+}
+
+// Unit 29b, round 2, ruling 2 + the still-standing refusal of round 1: a space deleted after
+// a rule was written leaves the rule's destination naming it. route() still matches the rule
+// and its link goes to the most recent space instead of the stale id (ours, Arc's behaviour
+// unobserved); the same applies to the default destination naming a deleted space. The edits
+// only refuse a destination the edit adds: add_rule, an edit_rule destination change, and
+// set_default_destination refuse the deleted space like an unknown one.
+#[test]
+fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent() {
+    let mut workspace = Workspace::default();
+    workspace.create_space("one", "Work", "space-work").unwrap();
+    workspace.create_space("one", "Home", "space-home").unwrap();
+    workspace.create_space("one", "Again", "space-again").unwrap();
+    workspace.set_default_destination(space("space-home")).unwrap();
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
+    workspace.delete_space("space-work").unwrap();
+    let spaces = space_ids(&workspace);
+    let before = workspace.clone();
+    // The rule and the default keep their destinations: the routing snapshot is not
+    // rewritten, the pane shows the deleted space from it (round 2, ruling 3).
+    assert_eq!(
+        workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().destination,
+        space("space-work"));
+    assert_eq!(workspace.routing().default, space("space-home"));
+    // route() still matches the rule, and the link goes to the most recent space.
+    assert_eq!(workspace.routing().rule_for("https://meet.google.com/abc").unwrap().id, "meet");
+    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces), most_recent());
+    // Refusal of round 1 stands: add_rule, an edit that changes the destination, and
+    // set_default_destination refuse a deleted space like an unknown one, state unchanged.
+    assert_eq!(
+        workspace.add_rule(rule("again", vec![contains("again.example")], space("space-work"))).unwrap_err().0,
+        "unknown space space-work");
+    assert_eq!(
+        workspace.edit_rule(rule("meet", vec![contains("changed.example")], space("space-gone"))).unwrap_err().0,
+        "unknown space space-gone");
+    assert_eq!(
+        workspace.set_default_destination(space("space-work")).unwrap_err().0,
+        "unknown space space-work");
+    assert_eq!(workspace, before);
+    // The same rewrite for the default: the space it names is deleted, a URL no rule matches
+    // goes to the most recent space instead of the stale default.
+    workspace.delete_space("space-home").unwrap();
+    assert_eq!(workspace.routing().default, space("space-home"));
+    assert_eq!(workspace.routing().route("https://other.example.org", &space_ids(&workspace)), most_recent());
 }
 

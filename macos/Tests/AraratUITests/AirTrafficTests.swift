@@ -170,10 +170,11 @@ func testAnswersAndChoiceFallbacksUseTheirPlainWords() throws {
         decision: RoutingDecision(ruleId: nil, destination: .littleWindow(.default)), rules: rules, spaces: [space])
     #expect(defaultAnswer == "“https://other.example.org” → the default opens it in the Little window")
     #expect(AirTrafficModel.answerLabel(url: "  ", decision: RoutingDecision(ruleId: nil, destination: .space(.mostRecent)), rules: rules, spaces: [space]).hasPrefix("An empty link"))
-    // A destination naming a lost space reads as the most recent one in the menu, and writes
-    // the space id again when it comes back in the model (the untouched row is not rewritten).
+    // A destination naming a lost space reads as the deleted-space choice (its menu shows a
+    // disabled "Deleted space" item, selected), and the space coming back reads as it again
+    // in the model (the untouched row is not rewritten).
     let lost = Destination.space(.space("space-gone"))
-    #expect(DestinationChoice(lost, spaces: [space]) == .mostRecent)
+    #expect(DestinationChoice(lost, spaces: [space]) == .deletedSpace("space-gone"))
     #expect(DestinationChoice(lost, spaces: [space, SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-gone", title: "Gone", icon: nil, look: nil, favorites: [], pinned: [], today: [])]) == .space("space-gone"))
     // A Little-window destination reads as the one choice whatever profile it names, and a
     // fresh pick writes the profile handed in (the shown space's); an imported rule keeps its
@@ -229,16 +230,55 @@ func theAirTrafficPaneViewsBuildWithoutOrderingAWindow() async throws {
 // (review 1b should 1): the payload round 1 kept on the Little-window choice made the
 // built-in default and every imported Little-window rule match no menu item at all. The
 // check reads the menu through `menuTags`, the helper `pickerContext` is built from
-// (review 2 nit 1), so what it covers is what the menus show.
+// (review 2 nit 1), so what it covers is what the menus show. A destination naming a lost
+// space is covered by the disabled "Deleted space" item menuTags adds for its id (unit 29b).
 @Test @MainActor
 func theDestinationMenusOfferATagForEveryDestination() {
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
-    let menu = DestinationChoice.menuTags(spaces: [space])
-    let destinations: [Destination?] = [Destination.littleWindow(.`default`), Destination.littleWindow(.named("Profile 1")), Destination.space(.mostRecent), Destination.space(.space("space-work")), nil]
+    let menu = DestinationChoice.menuTags(spaces: [space], deletedSpaceIds: ["space-gone"])
+    let destinations: [Destination?] = [Destination.littleWindow(.`default`), Destination.littleWindow(.named("Profile 1")), Destination.space(.mostRecent), Destination.space(.space("space-work")), Destination.space(.space("space-gone")), nil]
     for destination in destinations {
         let choice = DestinationChoice(destination, spaces: [space])
         #expect(menu.contains(choice), "\(String(describing: destination)) has no menu tag")
     }
+}
+
+// Unit 29b, owner's ruling: a rule (or the default) whose space was deleted keeps its
+// destination, the model names the lost space for the menus, and picking another destination
+// replaces the deleted one. Read through the model and the menu tags; no menu is popped.
+@Test @MainActor
+func theModelNamesTheLostSpaceAndAPickReplacesTheDeletedDestination() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-deleted")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("deleted.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let model = AirTrafficModel(adapter: adapter)
+    model.load()
+    try await waitUntil { model.routing != nil }
+    #expect(model.deletedSpaceIds(spaces: snapshot.spaces).isEmpty)
+    // A rule at one space and the default at the other: nothing is lost yet.
+    try await atcValue { model.add(destination: .space(.space("space-work")), completion: $0) }
+    try await atcValue { model.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
+    #expect(model.deletedSpaceIds(spaces: snapshot.spaces).isEmpty)
+    // The space the rule points at is deleted; the rule keeps its destination and the model
+    // names the lost one (the default still names a living space).
+    try await atcValue { adapter.deleteSpace(id: "space-work", completion: $0) }
+    let after = try await atcValue { adapter.snapshot(completion: $0) }
+    try await atcValue { model.load(completion: $0) }
+    #expect(model.routing?.rules.first?.destination == Destination.space(.space("space-work")))
+    #expect(model.routing?.default == Destination.space(.space("space-home")))
+    #expect(model.deletedSpaceIds(spaces: after.spaces) == ["space-work"])
+    #expect(DestinationChoice(model.routing?.rules.first?.destination, spaces: after.spaces) == .deletedSpace("space-work"))
+    // The menu pickerContext builds carries one disabled item for that id and nothing else.
+    let tags = DestinationChoice.menuTags(spaces: after.spaces, deletedSpaceIds: model.deletedSpaceIds(spaces: after.spaces))
+    #expect(tags.filter(\.isDeletedSpace) == [.deletedSpace("space-work")])
+    // Picking another destination replaces the deleted one, and no id is lost any more.
+    let ruleId = try #require(model.routing?.rules.first?.id)
+    try await atcValue { model.editDestination(ruleId, choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    #expect(model.routing?.rules.first?.destination == Destination.space(.mostRecent))
+    #expect(model.deletedSpaceIds(spaces: after.spaces).isEmpty)
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
 // Editing keeps every condition a rule came in with (review 1b should 2): the round-1 edit
@@ -384,4 +424,21 @@ func theAirTrafficSearchResultFillsItsRow() throws {
     model.select(row)
     #expect(model.highlighted == row.id)
     #expect(row.id == SettingsModel.airTrafficCardId)
+}
+
+// Unit 29b, owner's ruling: a destination naming a lost space reads as the deleted-space
+// choice (the menu shows a disabled "Deleted space" item, selected, not Most Recent Space),
+// the choice writes nothing while it is selected, and the id survives the workspace losing
+// the space so an untouched row is not rewritten (the space coming back reads as it again).
+@Test @MainActor
+func aDestinationNamingALostSpaceReadsAsTheDeletedSpaceChoice() {
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+    let lost = Destination.space(.space("space-gone"))
+    #expect(DestinationChoice(lost, spaces: [space]) == .deletedSpace("space-gone"))
+    #expect(DestinationChoice(lost, spaces: [space, SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-gone", title: "Gone", icon: nil, look: nil, favorites: [], pinned: [], today: [])]) == .space("space-gone"))
+    // The disabled item writes nothing: a pick never carries it, so the menu "answered nothing".
+    #expect(DestinationChoice.deletedSpace("space-gone").destination(littleWindowProfile: nil) == nil)
+    #expect(DestinationChoice.deletedSpace("space-gone").menuTitle(spaces: [space]) == "Deleted space")
+    #expect(DestinationChoice.deletedSpace("space-gone").isDeletedSpace)
+    #expect(!DestinationChoice.mostRecent.isDeletedSpace)
 }

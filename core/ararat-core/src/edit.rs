@@ -744,6 +744,7 @@ impl Workspace {
         if self.routing_rules.contains_key(&rule.id) {
             return Err(EditError(format!("rule {} already exists", rule.id)));
         }
+        self.check_space_destination(&rule.destination)?;
         // New rules join at the end: one key after the last rule in the order now has (the
         // key is independent of how the tied run after it scores, ties fall back to the id).
         let last = self.routing_rules.values().map(|s| s.order.as_str()).max();
@@ -758,6 +759,12 @@ impl Workspace {
         };
         // An edit that changes nothing writes nothing.
         if stored.rule == rule { return Ok(Vec::new()); }
+        // Only a destination the edit changes to is checked: one keeping the rule's current
+        // destination (a text or style change only) still writes, so a rule whose space was
+        // deleted can still be fixed (unit 29b, round 2).
+        if stored.rule.destination != rule.destination {
+            self.check_space_destination(&rule.destination)?;
+        }
         // The order key stays: an edit changes what the rule does, not where it sits.
         let op = Op::Put(Record::RoutingRule { order: stored.order.clone(), rule });
         Ok(self.commit_edit(vec![op]))
@@ -787,9 +794,25 @@ impl Workspace {
         Ok(self.commit_edit(ops))
     }
 
-    pub fn set_default_destination(&mut self, destination: crate::routing::Destination) -> Vec<Op> {
+    // A Space(id) destination names a space of this workspace: the import checks the
+    // sidebar's ids the same way (unit 29's known spaces), and an edit that adds a
+    // destination — a new rule, a changed rule destination, a new default — is refused when
+    // it names a missing one. A destination a deleted space left behind rides along: the
+    // route answer rewrites it and the pane shows it (unit 29b, round 2). MostRecent and the
+    // Little window carry no space id and pass.
+    fn check_space_destination(&self, destination: &crate::routing::Destination) -> Result<(), EditError> {
+        if let crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(id)) = destination {
+            if !self.spaces.iter().any(|space| &space.id == id) {
+                return Err(EditError(format!("unknown space {id}")));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_default_destination(&mut self, destination: crate::routing::Destination) -> Result<Vec<Op>, EditError> {
+        self.check_space_destination(&destination)?;
         // An edit that changes nothing writes nothing.
-        if self.routing_default == destination { return Vec::new(); }
+        if self.routing_default == destination { return Ok(Vec::new()); }
         // The built-in default is derived, never stored (like to_ops emits no record for it):
         // a reset deletes the stored record, so the journal replays it as a delete instead of
         // holding a row that only restates the built-in value (review 2a).
@@ -799,6 +822,6 @@ impl Workspace {
         } else {
             Op::Put(Record::RoutingDefault { destination })
         };
-        self.commit_edit(vec![op])
+        Ok(self.commit_edit(vec![op]))
     }
 }

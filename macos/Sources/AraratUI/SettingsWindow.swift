@@ -503,11 +503,17 @@ private struct SettingsAirTrafficSection: View {
     }
 
     @ViewBuilder private var pickerContext: some View {
-        // Built from `DestinationChoice.menuTags(spaces:)` (review 2 nit 1): the tag-coverage
-        // test reads this menu through the helper, not a copy of it.
-        let tags = DestinationChoice.menuTags(spaces: model.snapshot.spaces)
+        // Built from `DestinationChoice.menuTags(spaces:deletedSpaceIds:)` (review 2 nit 1): the
+        // tag-coverage test reads this menu through the helper, not a copy of it. A destination
+        // naming a space the workspace lost gets one disabled "Deleted space" item, selected,
+        // ahead of the spaces; only the ids this section's own destinations name appear.
+        let tags = DestinationChoice.menuTags(spaces: model.snapshot.spaces,
+            deletedSpaceIds: airTraffic.deletedSpaceIds(spaces: model.snapshot.spaces))
+        ForEach(tags.filter(\.isDeletedSpace), id: \.self) { tag in
+            Text(tag.menuTitle(spaces: model.snapshot.spaces)).tag(tag).disabled(true)
+        }
         Section("Open in Space") {
-            ForEach(tags.filter { $0 != .littleWindow }, id: \.self) { tag in
+            ForEach(tags.filter { !$0.isDeletedSpace && $0 != .littleWindow }, id: \.self) { tag in
                 Text(tag.menuTitle(spaces: model.snapshot.spaces)).tag(tag)
             }
         }
