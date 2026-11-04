@@ -44,6 +44,19 @@ final class LookEditorModel: ObservableObject {
     }
     static func fieldY(_ y: Double) -> Double { clamp((y - 0.05) / 0.9) }
     static func fieldColor(x: Double, y: Double) -> LookColor { color(x: x, y: 0.05 + 0.9 * clamp(y)) }
+    static let fieldInset: CGFloat = 15
+    static let fieldCanvasSize = CGSize(width: 266, height: 197)
+    static let fieldSpan = CGSize(width: fieldCanvasSize.width - fieldInset * 2, height: fieldCanvasSize.height - fieldInset * 2)
+    static func fieldPoint(x: Double, y: Double) -> CGPoint {
+        CGPoint(x: fieldInset + CGFloat(x) * fieldSpan.width, y: fieldInset + CGFloat(y) * fieldSpan.height)
+    }
+    // The reach is between drawn points: against a colour's stored y the grown area sits off
+    // the handle being drawn.
+    static func dotRadius(x: Double, y: Double, around active: LookColor) -> Double {
+        let handle = fieldPoint(x: active.x, y: fieldY(active.y))
+        let point = fieldPoint(x: x, y: y)
+        return 2 + max(0, 1 - hypot(Double(point.x - handle.x), Double(point.y - handle.y)) / 48) * 3
+    }
     static func transparency(opacity: Double) -> Double { (1 - clamp(opacity)) * 100 }
     static func opacity(transparency: Double) -> Double { 1 - clamp(transparency / 100) }
     var transparency: Double { Self.transparency(opacity: look.opacity) }

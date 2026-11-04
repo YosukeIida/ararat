@@ -70,7 +70,7 @@ private struct SettingsToolbar: View {
     }
 }
 
-private enum SettingsColor {
+enum SettingsColor {
     static func grey(_ light: Double, _ dark: Double) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let value = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
@@ -327,7 +327,8 @@ private struct SettingsShortcutsSection: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 54)
         .background(ShortcutLayoutMarker(id: "row-\(row.id)"))
-        .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background(model.highlighted == row.id ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .id(row.id)
         .contextMenu {
             if let command = row.command, let binding = keyBindings.binding(command: command) {
                 Button("Reset to Default") { model.resetShortcut(command) }.disabled(!binding.customized)

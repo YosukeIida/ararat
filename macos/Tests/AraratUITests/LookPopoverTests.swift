@@ -102,6 +102,34 @@ func lookCoordinatesAndTransparencyKeepArcTermsAndRoundForDisplay() {
     #expect(LookEditorModel.color(x: -1, y: 2).y == 1)
 }
 
+// The reach is taken between drawn points around the drawn handle, so a dot 47 pt from a
+// drawn handle centre grows and one 49 pt away does not, with the handle at the top, the
+// middle and the bottom of the field. 236 and 167 are the field's drawn spans and 15 its
+// drawn inset: fieldPoint maps a field position onto the canvas, and the stored-y form of a
+// colour maps back through fieldY. Offsets that leave the field are not drawn dots and are
+// not asserted.
+@Test @MainActor
+func theLookDotReachIsMeasuredFromTheDrawnHandle() {
+    #expect(LookEditorModel.fieldPoint(x: 0, y: 0) == CGPoint(x: 15, y: 15))
+    #expect(LookEditorModel.fieldPoint(x: 1, y: 1) == CGPoint(x: 15 + 236, y: 15 + 167))
+    for fieldY in [0.0, 0.5, 1.0] {
+        let active = LookEditorModel.fieldColor(x: 0.5, y: fieldY)
+        #expect(abs(LookEditorModel.fieldY(active.y) - fieldY) < 0.000001)
+        let handlePoint = LookEditorModel.fieldPoint(x: active.x, y: LookEditorModel.fieldY(active.y))
+        for (sx, sy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            for distance in [47.0, 49.0] {
+                let x = 0.5 + sx * distance / 236, y = fieldY + sy * distance / 167
+                // Dots stop at the field edges: nothing outside is drawn, so nothing outside is asserted.
+                guard (0...1).contains(x), (0...1).contains(y) else { continue }
+                let dotPoint = LookEditorModel.fieldPoint(x: x, y: y)
+                #expect(abs(hypot(Double(dotPoint.x - handlePoint.x), Double(dotPoint.y - handlePoint.y)) - distance) < 0.000001)
+                let radius = LookEditorModel.dotRadius(x: x, y: y, around: active)
+                if distance == 47 { #expect(radius > 2) } else { #expect(radius == 2) }
+            }
+        }
+    }
+}
+
 @Test @MainActor
 func lookDragPreviewsWithoutWritingAndCommitsExactlyOnce() async throws {
     let fixture = try await LookFixture(sidebarPreview: true)

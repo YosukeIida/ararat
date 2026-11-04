@@ -133,14 +133,13 @@ struct LookPopoverView: View {
     static func swatch(_ color: LookColor) -> Color { Color(red: color.red, green: color.green, blue: color.blue) }
     private var field: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { context, size in
+            Canvas { context, _ in
                 let active = model.look.colors[model.selected]
                 for row in 0...14 {
                     for column in 0...20 {
                         let x = Double(column) / 20, y = Double(row) / 14
-                        let point = CGPoint(x: 15 + x * (size.width - 30), y: 15 + y * (size.height - 30))
-                        let distance = hypot((x - active.x) * size.width, (y - active.y) * size.height)
-                        let radius = 2 + max(0, 1 - distance / 48) * 3
+                        let point = LookEditorModel.fieldPoint(x: x, y: y)
+                        let radius = LookEditorModel.dotRadius(x: x, y: y, around: active)
                         context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(Self.swatch(LookEditorModel.fieldColor(x: x, y: y))))
                     }
                 }
@@ -150,10 +149,10 @@ struct LookPopoverView: View {
                 Circle().fill(Self.swatch(color)).overlay(Circle().strokeBorder(.white, lineWidth: 3))
                     .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
                     .frame(width: 30, height: 30)
-                    .position(x: 15 + color.x * 236, y: 15 + LookEditorModel.fieldY(color.y) * 167)
+                    .position(LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
                     .onTapGesture { model.selected = index }
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("lookField")).onChanged { value in
-                        model.moveHandle(index, dx: value.translation.width / 236, dy: value.translation.height / 167)
+                        model.moveHandle(index, dx: value.translation.width / LookEditorModel.fieldSpan.width, dy: value.translation.height / LookEditorModel.fieldSpan.height)
                     }.onEnded { _ in model.end() })
                     .accessibilityElement().accessibilityLabel("Colour handle \(index + 1)")
                     .accessibilityValue("Hue \(Int((color.x * 360).rounded())) degrees, lightness \(Int(((1 - color.y) * 100).rounded())) percent")
@@ -166,6 +165,6 @@ struct LookPopoverView: View {
                     .accessibilityAction(named: "Lighter") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y - 0.02) } }
                     .accessibilityAction(named: "Darker") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y + 0.02) } }
             }
-        }.coordinateSpace(name: "lookField").frame(width: 266, height: 197).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
     }
 }

@@ -11,6 +11,93 @@ private func settingsValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Com
 }
 
 @Test @MainActor
+func aShortcutsSearchResultHighlightsItsRowId() throws {
+    // A Shortcuts search result opens the Shortcuts pane, `highlighted` is the result's own
+    // row id, and that id is the id of a row the pane's list renders, since the rows come from
+    // `shortcutRows` at one place.
+    let sidebar = KeyBinding(command: "toggle_sidebar", title: "Toggle Sidebar", menu: "View", description: "Show or hide the sidebar.", defaultKey: nil, key: nil, customized: false, conflicting: false, assignedKey: nil)
+    let library = KeyBinding(command: "toggle_library", title: "Toggle Library", menu: "View", description: "Show or hide the Library.", defaultKey: nil, key: nil, customized: false, conflicting: false, assignedKey: nil)
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []), adapter: WorkspaceAdapter(windowID: "shortcuts-result"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "shortcuts-result-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "shortcuts-result-atc")))
+    model.shortcuts = SettingsModel.shortcutRows([sidebar, library])
+    model.query = "Toggle Library"
+    let result = try #require(model.results.first)
+    model.select(result)
+    #expect(result.id == "shortcut-toggle_library")
+    #expect(model.page == .shortcuts && model.highlighted == result.id)
+    #expect(model.filteredShortcuts.contains { $0.id == model.highlighted })
+}
+
+// The rendered pane fills the result's row with the selection grey and its neighbours with the
+// card grey, read 6 pt inside each card's left edge off a cached bitmap of the detail view,
+// against the same `SettingsColor` values the pane draws, rendered to a bitmap of its own. The
+// aqua appearance pins the greys, which differ with the appearance.
+@Test @MainActor
+func aShortcutsSearchResultFillsItsRenderedRow() async throws {
+    _ = NSApplication.shared
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []), adapter: WorkspaceAdapter(windowID: "card-fill"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "card-fill-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "card-fill-atc")))
+    model.shortcuts = SettingsModel.shortcutRows((0..<3).map {
+        KeyBinding(command: "command_\($0)", title: "Utility \($0)", menu: "Utilities", description: "Do utility \($0).", defaultKey: nil, key: nil, customized: false, conflicting: false, assignedKey: nil)
+    })
+    model.navigate(.tabs)
+    let controller = SettingsWindowController(model: model)
+    let window = try #require(controller.window)
+    let aqua = try #require(NSAppearance(named: .aqua))
+    window.appearance = aqua
+    let split = try #require(window.contentViewController as? NSSplitViewController)
+    let content = split.splitViewItems[1].viewController.view
+    defer { window.contentViewController = nil }
+    model.query = "Utility 1"
+    let result = try #require(model.results.first)
+    model.select(result)
+    try await waitUntil {
+        content.layoutSubtreeIfNeeded()
+        let ids = Set(settingsDescendants(content).compactMap { $0.identifier?.rawValue })
+        return ["row-shortcut-command_0", "row-shortcut-command_1", "row-shortcut-command_2"].allSatisfy { ids.contains($0) }
+    }
+    let swatches = NSHostingView(rootView: HStack(spacing: 0) {
+        Rectangle().fill(SettingsColor.selected).frame(width: 20)
+        Rectangle().fill(SettingsColor.card).frame(width: 20)
+    }.frame(width: 40, height: 40))
+    let swatchWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [], backing: .buffered, defer: false)
+    swatchWindow.isReleasedWhenClosed = false
+    swatchWindow.appearance = aqua
+    swatchWindow.contentView = swatches
+    defer { swatchWindow.contentView = nil }
+    // The swatch read comes first: the row wait beneath needs the two source greys on hand,
+    // and its one draw reads both values at once.
+    swatchWindow.contentView?.layoutSubtreeIfNeeded()
+    let swatchBitmap = try #require(swatches.bitmapImageRepForCachingDisplay(in: swatches.bounds))
+    swatches.cacheDisplay(in: swatches.bounds, to: swatchBitmap)
+    let selection = try #require(settingsCachedGrey(root: swatches, target: swatches, x: 10, bitmap: swatchBitmap))
+    let card = try #require(settingsCachedGrey(root: swatches, target: swatches, x: 30, bitmap: swatchBitmap))
+    // The row greys wait on their own pixels: every try draws a fresh bitmap and returns once
+    // the highlighted card reads the selection grey and the two neighbours the card grey, so a
+    // loaded machine cannot read a half-laid view.
+    try await waitUntil {
+        content.layoutSubtreeIfNeeded()
+        guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return false }
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let read = (0...2).compactMap { index -> Int? in
+            guard let view = settingsDescendants(content).first(where: { $0.identifier?.rawValue == "row-shortcut-command_\(index)" }) else { return nil }
+            return settingsCachedGrey(root: content, target: view, x: 6, bitmap: bitmap)
+        }
+        return read.count == 3 && abs(read[1] - selection) <= 3 && abs(read[0] - card) <= 3 && abs(read[2] - card) <= 3
+    }
+    let bitmap = try #require(content.bitmapImageRepForCachingDisplay(in: content.bounds))
+    content.cacheDisplay(in: content.bounds, to: bitmap)
+    var greys: [Int] = []
+    for index in 0...2 {
+        let view = try #require(settingsDescendants(content).first { $0.identifier?.rawValue == "row-shortcut-command_\(index)" })
+        greys.append(try #require(settingsCachedGrey(root: content, target: view, x: 6, bitmap: bitmap)))
+    }
+    #expect(abs(selection - card) > 10)
+    #expect(greys[1] != greys[0] && greys[1] != greys[2])
+    #expect(abs(greys[1] - selection) <= 3)
+    #expect(abs(greys[0] - card) <= 3 && abs(greys[2] - card) <= 3)
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
 func settingsWindowNavigationSearchAndSlidesKeepTheSidebarSpace() throws {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "a", selectedId: nil, spaces: ["a", "b"].map {
@@ -111,6 +198,22 @@ private func settingsDescendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + settingsDescendants($0) }
 }
 
+// Reads the grey at the point `x` pt right of `target`'s left edge and level with its middle,
+// off the cached bitmap of `root`; nil means the bitmap or the read failed, and the caller
+// decides — with `#require`, or by retrying inside a `waitUntil`.
+@MainActor
+private func settingsCachedGrey(root: NSView, target: NSView, x: CGFloat, bitmap: NSBitmapImageRep) -> Int? {
+    guard !root.bounds.isEmpty, bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else { return nil }
+    let scale = CGFloat(bitmap.pixelsWide) / max(1, root.bounds.width)
+    let frame = target.convert(target.bounds, to: root)
+    let px = Int((frame.minX + x) * scale)
+    let yTop = root.isFlipped ? frame.midY : root.bounds.height - frame.midY
+    let py = Int(yTop * scale)
+    guard px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh else { return nil }
+    let color = bitmap.colorAt(x: px, y: py)?.usingColorSpace(.deviceGray)
+    return color.map { Int(($0.whiteComponent * 255).rounded()) }
+}
+
 @Test @MainActor
 func settingsSearchScrollsTheHostingViewToItsHighlightedRow() async throws {
     _ = NSApplication.shared
@@ -129,6 +232,35 @@ func settingsSearchScrollsTheHostingViewToItsHighlightedRow() async throws {
     model.select(try #require(model.results.first))
     try await waitUntil { content.layoutSubtreeIfNeeded(); return scroll.contentView.bounds.minY > 500 }
     #expect(model.highlighted == "key-29")
+    #expect(!window.isVisible)
+    model.navigate(.tabs)
+    #expect(model.highlighted == nil)
+}
+
+// The pane's own row ids from `shortcutRows` scroll the running detail view like the hand-set
+// rows the earlier search test uses.
+@Test @MainActor
+func settingsSearchScrollsThePaneRowFromShortcutRows() async throws {
+    _ = NSApplication.shared
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []), adapter: WorkspaceAdapter(windowID: "search-shortcuts"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "search-shortcuts-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "search-shortcuts-atc")))
+    model.shortcuts = SettingsModel.shortcutRows((0..<30).map {
+        KeyBinding(command: "command_\($0)", title: "Utility \($0)", menu: "Utilities", description: "Do utility \($0).", defaultKey: nil, key: nil, customized: false, conflicting: false, assignedKey: nil)
+    })
+    model.navigate(.tabs)
+    let controller = SettingsWindowController(model: model)
+    let window = try #require(controller.window)
+    let split = try #require(window.contentViewController as? NSSplitViewController)
+    let content = split.splitViewItems[1].viewController.view
+    defer { window.contentViewController = nil }
+    window.contentView?.layoutSubtreeIfNeeded()
+    try await waitUntil { content.layoutSubtreeIfNeeded(); return settingsDescendants(content).contains { $0 is NSScrollView } }
+    let scroll = try #require(settingsDescendants(content).compactMap { $0 as? NSScrollView }.first)
+    model.query = "Utility 29"
+    let result = try #require(model.results.first)
+    model.select(result)
+    try await waitUntil { content.layoutSubtreeIfNeeded(); return scroll.contentView.bounds.minY > 500 }
+    #expect(result.id == "shortcut-command_29" && model.highlighted == result.id)
+    #expect(model.filteredShortcuts.contains { $0.id == model.highlighted })
     #expect(!window.isVisible)
     model.navigate(.tabs)
     #expect(model.highlighted == nil)
