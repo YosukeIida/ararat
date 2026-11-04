@@ -42,7 +42,7 @@ private func measuredButtonsWindow(selected: Bool = false) -> NSWindow {
     window.titleVisibility = .hidden
     let content = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 720))
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: selected ? "tab" : nil, spaces: [
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [], today: [
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [], today: [
             Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
         ])
     ]))

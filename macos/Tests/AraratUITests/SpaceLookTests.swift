@@ -160,7 +160,7 @@ func lookGradientHasVerticalEqualStopsAndDeterministicGrain() throws {
 func sidebarLookTracksPagesAndVirtualNeighbors() {
     let first = solidLook(1, 0, 0), last = solidLook(0, 0, 1)
     let spaces = [first, last].enumerated().map { index, look in
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\(index)", title: "Space", icon: nil, look: look, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s\(index)", title: "Space", icon: nil, look: look, favorites: [], pinned: [], today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))
     sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
@@ -216,7 +216,7 @@ func lookSwitchesEffectsAndAppearanceAtHalfPage() {
 func lookSamplingStopsWhenTrackpadInterruptsSettle() throws {
     _ = NSApplication.shared
     let spaces = (0..<2).map { index in
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\(index)", title: "Space", icon: nil,
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s\(index)", title: "Space", icon: nil,
                       look: solidLook(Double(index), 0, 0), favorites: [], pinned: [], today: [])
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces))

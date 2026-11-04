@@ -6,12 +6,12 @@ import Testing
 @Test @MainActor
 func captureSettingsWithoutOrderingWindow() async throws {
     _ = NSApplication.shared
-    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: "🔬", look: nil, favorites: [], pinned: [], today: [])])
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: "🔬", look: nil, favorites: [], pinned: [], today: [])])
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     for name in ["light", "dark"] {
         let adapter = WorkspaceAdapter(windowID: "preview")
-        let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter))
+        let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
         model.page = .space("work")
         let controller = SettingsWindowController(model: model)
         let window = try #require(controller.window)

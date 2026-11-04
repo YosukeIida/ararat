@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case tabs, shortcuts, spaces, space(String) }
+    enum Page: Hashable { case tabs, shortcuts, airTraffic, spaces, space(String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -29,16 +29,18 @@ public final class SettingsModel: ObservableObject {
     @Published var conflictingOnly = false { didSet { keyBindings.clearError() } }
     let adapter: WorkspaceAdapter
     let keyBindings: KeyBindingsModel
+    let airTraffic: AirTrafficModel
     var preview: (String, Look?, Bool) -> Void
     var publish: (WorkspaceSnapshot) -> Void
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
 
-    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel) {
+    public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
         self.adapter = adapter
         self.keyBindings = keyBindings
+        self.airTraffic = airTraffic
         self.preview = preview
         self.publish = publish
         self.resetWidth = resetWidth
@@ -77,10 +79,16 @@ public final class SettingsModel: ObservableObject {
         return snapshot.spaces.first { $0.id == id }
     }
     var title: String {
-        switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
+        switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .airTraffic: "Air Traffic Control"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
     }
+    /// The pane says in plain words that the routing arrives with the engine (unit 29).
+    static let airTrafficSubtitle = "Links other apps hand to Ararat follow these rules once the browser engine arrives."
+    /// The id the search result for the Air Traffic Control pane carries, and the id the pane's
+    /// default destination card carries: a result scrolls to and fills the same row (§7).
+    static let airTrafficCardId = "air-traffic"
     var rows: [Row] {
         var result = [Row(id: "width", pane: .tabs, title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt."), Row(id: "archive-after", pane: .tabs, title: "Archive Today's tabs after", subtitle: archiveSubtitle)] + shortcuts
+        result.append(Row(id: Self.airTrafficCardId, pane: .airTraffic, title: "Air Traffic Control", subtitle: Self.airTrafficSubtitle))
         for space in snapshot.spaces {
             result.append(Row(id: space.id, pane: .spaces, title: space.title, subtitle: "\(tabCount(space)) tabs · \(space.profileName)"))
             result += [
@@ -118,6 +126,13 @@ public final class SettingsModel: ObservableObject {
     func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
+    /// The profile the pane's fresh Little-window picks write (nit 2): the shown space's own
+    /// `Profile` from the FFI snapshot — the way the import takes the first space's when the
+    /// routing file carries no profile. Round 2 mapped the display name back to a profile,
+    /// which a named profile called "Default" would have read as the built-in one.
+    var airTrafficLittleWindowProfile: Profile? {
+        archiveSpace?.profile
+    }
     var archiveAfter: ArchiveAfter { archiveSpace?.archiveAfter ?? .hours12 }
     func setArchiveAfter(_ value: ArchiveAfter) {
         guard let space = archiveSpace else { return }

@@ -10,7 +10,7 @@ private func dragRow(_ id: String, _ parent: String, _ index: UInt32 = 0, kind: 
 
 private func dragSpace(_ id: String = "s", profile: String = "default", pinned: [Row] = [], today: [Row] = [], favorites: [Row] = []) -> SpaceSnapshot {
     SpaceSnapshot(pinnedCount: UInt32(pinned.filter { $0.parentId == "p\(id)" }.count), todayCount: UInt32(today.filter { $0.parentId == "t\(id)" }.count), profileKey: profile, pinnedId: "p\(id)", todayId: "t\(id)", favoritesId: "f\(profile)", archiveAfter: .hours12,
-                  profileName: profile, id: id, title: id, icon: nil, look: nil, favorites: favorites, pinned: pinned, today: today)
+                  profileName: profile, profile: .named(profile), id: id, title: id, icon: nil, look: nil, favorites: favorites, pinned: pinned, today: today)
 }
 
 private func dragFixture() -> SpaceSnapshot {
@@ -247,7 +247,7 @@ func successfulMovePreservesSelectionScrollAndCoreFolderState() throws {
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("drag.sqlite").path)
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
-    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8), windowsJson: nil, keyBindingsJson: nil).snapshot
+    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
     _ = try store.createSpace(windowId: "drag", name: "Other", spaceId: "other")
     try store.showSpace(windowId: "drag", spaceId: "space-work")
     _ = try store.setFolderCollapsed(windowId: "drag", id: "folder-docs", collapsed: true)
@@ -322,7 +322,7 @@ func adapterMoveAndFolderOpenPublishTheCoreResult() async throws {
     func value<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }
     }
-    _ = try await value { adapter.open(path: directory.appendingPathComponent("workspace.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
+    _ = try await value { adapter.open(path: directory.appendingPathComponent("workspace.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     let selected = try await value { adapter.select(id: "tab-mail", completion: $0) }
     let moved = try await value { adapter.move(id: "tab-mail", container: "folder-docs", index: 0, openFolder: true, completion: $0) }
     #expect(moved.selectedId == selected.selectedId)

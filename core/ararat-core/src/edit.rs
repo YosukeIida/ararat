@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::model::{Id, ItemKind, Lifecycle, Op, Record, WindowState, Workspace};
+use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Record, WindowState, Workspace};
 
 pub const HISTORY_LIMIT: usize = 50;
 
@@ -707,5 +707,98 @@ impl Workspace {
             .map(|item| Op::Put(Record::LastSelected { item, at: now })).collect();
         for op in &ops { self.apply(op); }
         ops
+    }
+}
+
+// Air Traffic Control edits. One record per rule, so two devices that add, edit, move or
+// delete different rules before they sync both get applied (architecture 8.3 merges per
+// record). The rule's order key follows the item keys (unit 22): a write lands between its
+// neighbours' keys, and a move onto a tied run re-keys that run, so the same records give
+// every device the same rule order.
+impl Workspace {
+    // One new key for a rule joining `others` at `index`: between the neighbours' keys, with
+    // a tied run at that seam re-keyed first (unit 22's item moves, `insertion_keys`), so an
+    // equal key is never the gap a later key must fall between — key_between needs lo < hi.
+    fn rule_join_keys(others: &[&crate::routing::StoredRule], index: usize) -> (String, Vec<Op>) {
+        let before = index.checked_sub(1).and_then(|i| others.get(i)).map(|s| s.order.clone());
+        let mut after = others.get(index).map(|s| s.order.clone());
+        let mut ops = Vec::new();
+        if before.as_ref().zip(after.as_ref()).is_some_and(|(a, b)| a == b) {
+            let tied: Vec<_> = others[index..].iter().take_while(|s| Some(&s.order) == before.as_ref()).collect();
+            let next = others.get(index + tied.len()).map(|s| s.order.as_str());
+            let mut previous = before.clone();
+            for (position, stored) in tied.into_iter().enumerate() {
+                let mut spaced = (**stored).clone();
+                spaced.order = crate::order::key_between(previous.as_deref(), next);
+                if position == 0 { after = Some(spaced.order.clone()); }
+                previous = Some(spaced.order.clone());
+                ops.push(Op::Put(Record::RoutingRule { order: spaced.order, rule: spaced.rule }));
+            }
+        }
+        let key = crate::order::key_between(before.as_deref(), after.as_deref());
+        (key, ops)
+    }
+
+    pub fn add_rule(&mut self, rule: crate::routing::Rule) -> Result<Vec<Op>, EditError> {
+        if rule.id.trim().is_empty() { return Err(EditError("rule id is empty".into())); }
+        if self.routing_rules.contains_key(&rule.id) {
+            return Err(EditError(format!("rule {} already exists", rule.id)));
+        }
+        // New rules join at the end: one key after the last rule in the order now has (the
+        // key is independent of how the tied run after it scores, ties fall back to the id).
+        let last = self.routing_rules.values().map(|s| s.order.as_str()).max();
+        let order = crate::order::key_between(last, None);
+        Ok(self.commit_edit(vec![Op::Put(Record::RoutingRule { order, rule })]))
+    }
+
+    pub fn edit_rule(&mut self, rule: crate::routing::Rule) -> Result<Vec<Op>, EditError> {
+        if rule.id.trim().is_empty() { return Err(EditError("rule id is empty".into())); }
+        let Some(stored) = self.routing_rules.get(&rule.id) else {
+            return Err(EditError(format!("unknown rule {}", rule.id)));
+        };
+        // An edit that changes nothing writes nothing.
+        if stored.rule == rule { return Ok(Vec::new()); }
+        // The order key stays: an edit changes what the rule does, not where it sits.
+        let op = Op::Put(Record::RoutingRule { order: stored.order.clone(), rule });
+        Ok(self.commit_edit(vec![op]))
+    }
+
+    pub fn delete_rule(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        if !self.routing_rules.contains_key(id) {
+            return Err(EditError(format!("unknown rule {id}")));
+        }
+        let op = Op::Delete(Kind::RoutingRule, id.into());
+        Ok(self.commit_edit(vec![op]))
+    }
+
+    pub fn move_rule(&mut self, id: &str, index: usize) -> Result<Vec<Op>, EditError> {
+        let mut list: Vec<crate::routing::StoredRule> = self.routing_rules.values().cloned().collect();
+        list.sort_by(|a, b| (&a.order, &a.rule.id).cmp(&(&b.order, &b.rule.id)));
+        let others: Vec<&crate::routing::StoredRule> = list.iter().filter(|s| s.rule.id != id).collect();
+        // The range is checked before the id, so a bad index is reported for an unknown one too.
+        if index > others.len() { return Err(EditError("rule index out of range".into())); }
+        let position = list.iter().position(|s| s.rule.id == id)
+            .ok_or_else(|| EditError(format!("unknown rule {id}")))?;
+        // A move to the position the rule already holds changes nothing.
+        if position == index { return Ok(Vec::new()); }
+        let stored = self.routing_rules.get(id).ok_or_else(|| EditError(format!("unknown rule {id}")))?;
+        let (key, mut ops) = Self::rule_join_keys(&others, index);
+        ops.push(Op::Put(Record::RoutingRule { order: key, rule: stored.rule.clone() }));
+        Ok(self.commit_edit(ops))
+    }
+
+    pub fn set_default_destination(&mut self, destination: crate::routing::Destination) -> Vec<Op> {
+        // An edit that changes nothing writes nothing.
+        if self.routing_default == destination { return Vec::new(); }
+        // The built-in default is derived, never stored (like to_ops emits no record for it):
+        // a reset deletes the stored record, so the journal replays it as a delete instead of
+        // holding a row that only restates the built-in value (review 2a).
+        let id = "workspace".to_string();
+        let op = if destination == crate::routing::Destination::default() {
+            Op::Delete(Kind::RoutingDefault, id)
+        } else {
+            Op::Put(Record::RoutingDefault { destination })
+        };
+        self.commit_edit(vec![op])
     }
 }

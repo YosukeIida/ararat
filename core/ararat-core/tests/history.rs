@@ -2,7 +2,7 @@ use ararat_core::import::arc_sidebar;
 use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Workspace};
 
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
     for i in 0..61 {
         let id = format!("y{i}");
         ws.items.insert(id.clone(), Item {

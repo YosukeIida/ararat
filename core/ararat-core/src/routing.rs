@@ -1,56 +1,108 @@
+use serde::{Deserialize, Serialize};
+
 use crate::model::{Id, Profile};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchStyle {
     Contains,
     Equals,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Default for MatchStyle {
+    fn default() -> Self {
+        // Contains is Arc's style on a fresh rule (Cra LinkRouting.swift: match defaults to .contains).
+        MatchStyle::Contains
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UrlCondition {
     pub style: MatchStyle,
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpaceTarget {
     MostRecent,
     Space(Id),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// The default is the Little window with the profile's own tabs, the value Arc's
+// StorableLinkRouting.json carried for the owner's default destination (and Cra imports
+// as .littleWindow); the Settings pane can point it at a space instead.
+impl Default for Destination {
+    fn default() -> Self {
+        Destination::LittleWindow(Profile::Default)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Destination {
     Space(SpaceTarget),
     LittleWindow(Profile),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub id: Id,
     pub conditions: Vec<UrlCondition>,
     pub destination: Destination,
 }
 
+// A rule between records carries its fractional order key the way item memberships do
+// (unit 22): the record body stores `{order, conditions, destination}` and the rule id is the
+// record's key, so this form exists to move the three fields around with `Rule`.
+#[derive(Serialize, Deserialize)]
+pub struct StoredRuleBody {
+    pub order: String,
+    pub conditions: Vec<UrlCondition>,
+    pub destination: Destination,
+}
+
+// A rule as the workspace carries it in memory: the order key beside the rule it positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredRule {
+    pub order: String,
+    pub rule: Rule,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Routing {
     pub rules: Vec<Rule>,
     pub default: Destination,
 }
 
+impl Default for Routing {
+    fn default() -> Self {
+        // Where links from other apps go on a fresh install: the Little window (Arc's default
+        // file and Cra's import default are the Little window; the Settings pane can point
+        // it at a space).
+        Routing { rules: Vec::new(), default: Destination::default() }
+    }
+}
+
+// Rules read in their record order, which the workspace derives per record (architecture 8.3):
+// two devices holding the same records read the same rule order, so a link goes the same way.
 impl Routing {
     pub fn route(&self, url: &str) -> &Destination {
+        self.rule_for(url).map_or(&self.default, |rule| &rule.destination)
+    }
+
+    // The rule a URL takes: the first rule with a matching condition. route() is this plus
+    // its destination, so callers that need the rule id never match a second time.
+    pub fn rule_for(&self, url: &str) -> Option<&Rule> {
         let url = normalize(url);
-        self.rules
-            .iter()
-            // shortcut: a rule matches when any condition matches; Arc's meaning for several conditions is unobserved, recheck once Yab/Arc show a multi-condition rule.
-            .find(|rule| rule.conditions.iter().any(|c| c.matches(&url)))
-            .map_or(&self.default, |rule| &rule.destination)
+        // shortcut: a rule matches when any condition matches; Arc's meaning for several conditions is unobserved, recheck once Yab/Arc show a multi-condition rule.
+        self.rules.iter().find(|rule| rule.conditions.iter().any(|c| c.matches(&url)))
     }
 }
 
 impl UrlCondition {
     fn matches(&self, url: &str) -> bool {
         let text = normalize(&self.text);
+        // Why not match an empty condition: `contains("")` would match every URL; an empty
+        // route matches nothing (Cra LinkRouting.swift, verified on Arc 1.170).
+        if text.is_empty() { return false; }
         match self.style {
             MatchStyle::Contains => url.contains(&text),
             MatchStyle::Equals => host_and_path(url) == host_and_path(&text),
@@ -96,6 +148,16 @@ mod tests {
 
     fn goes_to_work(r: &Routing, url: &str) -> bool {
         *r.route(url) == Destination::Space(SpaceTarget::Space("work".into()))
+    }
+
+    #[test]
+    fn an_empty_condition_matches_nothing() {
+        let r = routing(MatchStyle::Contains, "");
+        assert!(!goes_to_work(&r, "https://example.com/"));
+        let r = routing(MatchStyle::Equals, "   ");
+        assert!(!goes_to_work(&r, "https://example.com/"));
+        // A whitespace-only condition falls back to the default on the same call.
+        assert_eq!(r.route("https://example.com"), &r.default);
     }
 
     #[test]

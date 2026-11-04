@@ -35,6 +35,7 @@ public final class SettingsWindowController: NSWindowController {
     public func modelUpdate(snapshot: WorkspaceSnapshot) { model.update(snapshot: snapshot) }
     public func prepare(shownSpaceID: String?) {
         model.readShortcuts()
+        model.airTraffic.load()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -87,7 +88,7 @@ private enum SettingsColor {
 
 private struct SettingsRail: View {
     @ObservedObject var model: SettingsModel
-    let panes: [(SettingsModel.Page, String, String)] = [(.tabs, "Tabs", "square.on.square"), (.shortcuts, "Shortcuts", "keyboard"), (.spaces, "Spaces", "square.grid.2x2")]
+    let panes: [(SettingsModel.Page, String, String)] = [(.tabs, "Tabs", "square.on.square"), (.shortcuts, "Shortcuts", "keyboard"), (.airTraffic, "Air Traffic Control", "paperplane"), (.spaces, "Spaces", "square.grid.2x2")]
     var body: some View {
         VStack(spacing: 8) {
             HStack { Image(systemName: "magnifyingglass").foregroundStyle(SettingsColor.foreground.opacity(0.6)); TextField("Search", text: $model.query).textFieldStyle(.plain) }
@@ -147,6 +148,8 @@ private struct SettingsDetail: View {
                         }
                     case .shortcuts:
                         SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
+                    case .airTraffic:
+                        SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
                     case .spaces:
                         VStack(spacing: 0) {
                             ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
@@ -188,9 +191,9 @@ private struct SettingsDetail: View {
     var header: some View {
         VStack(spacing: 8) {
             if let space = model.space { Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56) }
-            else { Image(systemName: model.page == .tabs ? "square.on.square" : model.page == .shortcuts ? "keyboard" : "square.grid.2x2").font(.system(size: 48)).frame(height: 56) }
+            else { Image(systemName: model.page == .tabs ? "square.on.square" : model.page == .shortcuts ? "keyboard" : model.page == .airTraffic ? "paperplane" : "square.grid.2x2").font(.system(size: 48)).frame(height: 56) }
             Text(model.title).font(.title.bold())
-            Text(model.space.map { "\(model.tabCount($0)) tabs · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : "Keep related tabs together.")).foregroundStyle(.secondary)
+            Text(model.space.map { "\(model.tabCount($0)) tabs · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : model.page == .airTraffic ? SettingsModel.airTrafficSubtitle : "Keep related tabs together.")).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity).padding(.vertical, 18).opacity(1 - model.headerProgress).id("header")
     }
     func card<Content: View>(_ id: String, title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
@@ -394,16 +397,188 @@ private final class ShortcutMarkerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// The Air Traffic Control pane (unit 29): the rules in order (drag to reorder feeds the
+/// model's `move`, tests never drag), each row edited in place with the match style, the URL
+/// text and the destination menu, a New Route button, the default destination card and a test
+/// field answered by the core's `route`. The one-two-line-route row and the destination menu
+/// (Most Recent Space, the spaces, then Little Arc after a separator) are reused from Cra's
+/// MIT `Sources/Cra/UI/Settings/AirTrafficControlView.swift`; pane shell, card look and drag
+/// behaviour are ours (the Spaces pane's).
+private struct SettingsAirTrafficSection: View {
+    @ObservedObject var model: SettingsModel
+    @ObservedObject var airTraffic: AirTrafficModel
+    @State private var probe = ""
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let error = airTraffic.error { Text(error).foregroundStyle(.red).help("The last change was refused") }
+            ruleList
+            defaultCard
+            testCard
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var rules: [Rule] { airTraffic.routing?.rules ?? [] }
+
+    private var ruleList: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Rules").font(.headline)
+                Spacer(minLength: 12)
+                Button("New Route") {
+                    airTraffic.add(destination: defaultChoice.destination(littleWindowProfile: model.airTrafficLittleWindowProfile) ?? Destination.littleWindow(.`default`))
+                }
+            }
+            .padding(.vertical, 2)
+            ForEach(rules, id: \.id) { rule in
+                ruleCard(rule)
+            }
+            if rules.isEmpty {
+                Text("No routes yet. Links other apps hand over go to the default destination.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var defaultChoice: DestinationChoice {
+        DestinationChoice(airTraffic.routing?.default, spaces: model.snapshot.spaces)
+    }
+
+    private func ruleCard(_ rule: Rule) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                matchPicker(rule)
+                urlField(rule)
+                Button {
+                    airTraffic.delete(rule.id)
+                } label: { Image(systemName: "minus.circle.fill") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Delete rule \(rule.id)")
+                    .help("Delete this route")
+            }
+            HStack(spacing: 8) {
+                Text("Open in").foregroundStyle(.secondary)
+                destinationPicker(rule)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 64)
+        .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .draggable(rule.id)
+        .dropDestination(for: String.self) { ids, _ in
+            guard ids.count == 1, let id = ids.first, id != rule.id else { return false }
+            airTraffic.move(id, to: rules.firstIndex(where: { $0.id == rule.id }) ?? 0)
+            return true
+        }
+    }
+
+    private func matchPicker(_ rule: Rule) -> some View {
+        Picker("Match", selection: Binding(
+            get: { rule.conditions.first?.style ?? .contains },
+            set: { airTraffic.editCondition(rule.id, style: $0, text: rule.conditions.first?.text ?? "") })) {
+            Text("Contains").tag(MatchStyle.contains)
+            Text("Is equal to").tag(MatchStyle.equals)
+        }
+        .labelsHidden()
+        .frame(width: 120)
+    }
+
+    private func urlField(_ rule: Rule) -> some View {
+        SettingsField(value: rule.conditions.first?.text ?? "", label: "URL",
+            accessibility: "URL text of rule \(rule.id)") {
+            airTraffic.editCondition(rule.id, style: rule.conditions.first?.style ?? .contains, text: $0)
+        }
+    }
+
+    private func destinationPicker(_ rule: Rule) -> some View {
+        Picker("Open in", selection: Binding(
+            get: { DestinationChoice(rule.destination, spaces: model.snapshot.spaces) },
+            set: { airTraffic.editDestination(rule.id, choice: $0, littleWindowProfile: model.airTrafficLittleWindowProfile) })) {
+            pickerContext
+        }
+        .labelsHidden()
+        .frame(width: 190)
+    }
+
+    @ViewBuilder private var pickerContext: some View {
+        // Built from `DestinationChoice.menuTags(spaces:)` (review 2 nit 1): the tag-coverage
+        // test reads this menu through the helper, not a copy of it.
+        let tags = DestinationChoice.menuTags(spaces: model.snapshot.spaces)
+        Section("Open in Space") {
+            ForEach(tags.filter { $0 != .littleWindow }, id: \.self) { tag in
+                Text(tag.menuTitle(spaces: model.snapshot.spaces)).tag(tag)
+            }
+        }
+        Divider()
+        ForEach(tags.filter { $0 == .littleWindow }, id: \.self) { tag in
+            Text(tag.menuTitle(spaces: model.snapshot.spaces)).tag(tag)
+        }
+    }
+
+    private var defaultCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Default destination")
+                Text("Where links land when no rule takes them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Picker("Default destination", selection: Binding(
+                get: { defaultChoice },
+                set: { airTraffic.setDefault($0, littleWindowProfile: model.airTrafficLittleWindowProfile) })) {
+                pickerContext
+            }
+            .labelsHidden()
+            .frame(width: 190)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 54)
+        .background(model.highlighted == SettingsModel.airTrafficCardId ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .id(SettingsModel.airTrafficCardId)
+    }
+
+    private var testCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Test a link")
+                Text(answer).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            TextField("https://…", text: $probe).textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+                .onSubmit { airTraffic.decide(probe) }
+                .accessibilityLabel("Test link")
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 54)
+        .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .id("atc-test")
+    }
+
+    private var answer: String {
+        if let answer = airTraffic.testAnswer, answer.url == probe.trimmingCharacters(in: .whitespacesAndNewlines) {
+            let routing = airTraffic.routing
+            let decision = answer.decision
+            let rules = routing?.rules ?? []
+            return AirTrafficModel.answerLabel(url: answer.url, decision: decision, rules: rules, spaces: model.snapshot.spaces)
+        }
+        return "Type a link to see which rule (or the default) takes it."
+    }
+}
+
 struct SettingsField: View {
     let value: String
     let label: String
     var characterPalette = false
+    var accessibility: String? = nil
     let commit: (String) -> Void
     @State private var draft = ""
     @FocusState private var focused: Bool
     var body: some View {
         HStack {
-            TextField(label, text: $draft).textFieldStyle(.roundedBorder).labelsHidden().accessibilityLabel(label).focused($focused)
+            TextField(label, text: $draft).textFieldStyle(.roundedBorder).labelsHidden().accessibilityLabel(accessibility ?? label).focused($focused)
             .onAppear { draft = value }.onChange(of: value) { _, value in if !focused { draft = value } }
             .onChange(of: draft) { _, next in
                 guard characterPalette, next != value else { return }

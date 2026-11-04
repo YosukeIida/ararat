@@ -124,6 +124,11 @@ pub struct Workspace {
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
     pub items: HashMap<Id, Item>,
+    // Where links from other apps go, synced with the workspace (architecture 8.4): one record
+    // per rule (topic.8.3 merges per record), and the default destination when it differs from
+    // the built-in one.
+    pub routing_rules: HashMap<Id, crate::routing::StoredRule>,
+    pub routing_default: crate::routing::Destination,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +141,8 @@ pub enum Kind {
     ArchiveAfter,
     LastSelected,
     FolderState,
+    RoutingRule,
+    RoutingDefault,
 }
 
 impl Kind {
@@ -149,11 +156,13 @@ impl Kind {
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
             Kind::FolderState => "folder_state",
+            Kind::RoutingRule => "routing_rule",
+            Kind::RoutingDefault => "routing_default",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::RoutingRule, Kind::RoutingDefault].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -167,6 +176,8 @@ pub enum Record {
     Item(Item),
     Window(WindowState),
     Favorites { profile: Profile, container: Id },
+    RoutingRule { order: String, rule: crate::routing::Rule },
+    RoutingDefault { destination: crate::routing::Destination },
 }
 
 impl Record {
@@ -180,6 +191,8 @@ impl Record {
             Record::Window(_) => Kind::Window,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
+            Record::RoutingRule { .. } => Kind::RoutingRule,
+            Record::RoutingDefault { .. } => Kind::RoutingDefault,
         }
     }
 
@@ -193,6 +206,8 @@ impl Record {
             Record::Window(window) => window.id.clone(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
+            Record::RoutingRule { rule, .. } => rule.id.clone(),
+            Record::RoutingDefault { .. } => "workspace".into(),
         }
     }
 
@@ -206,6 +221,9 @@ impl Record {
             Record::Window(window) => serde_json::to_string(window),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
+            Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
+                order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone() }),
+            Record::RoutingDefault { destination } => serde_json::to_string(destination),
         }
         .expect("model types serialise")
     }
@@ -223,6 +241,14 @@ impl Record {
                 profile: serde_json::from_str(id)?,
                 container: serde_json::from_str(body)?,
             },
+            Kind::RoutingRule => {
+                let stored: crate::routing::StoredRuleBody = serde_json::from_str(body)?;
+                Record::RoutingRule {
+                    order: stored.order,
+                    rule: crate::routing::Rule { id: id.into(), conditions: stored.conditions, destination: stored.destination },
+                }
+            }
+            Kind::RoutingDefault => Record::RoutingDefault { destination: serde_json::from_str(body)? },
         })
     }
 }
@@ -308,6 +334,14 @@ impl Workspace {
                 self.items.remove(id);
             }
             Op::Delete(Kind::Favorites, id) => self.favorites.retain(|p, _| &profile_id(p) != id),
+            Op::Put(Record::RoutingRule { order, rule }) => {
+                self.routing_rules.insert(rule.id.clone(), crate::routing::StoredRule { order: order.clone(), rule: rule.clone() });
+            },
+            Op::Delete(Kind::RoutingRule, id) => { self.routing_rules.remove(id); },
+            Op::Put(Record::RoutingDefault { destination }) => { self.routing_default = destination.clone(); },
+            // Default records changed since the last sync: a tombstone resets ours to the
+            // built-in default the same way rule deletes remove their rule.
+            Op::Delete(Kind::RoutingDefault, _) => { self.routing_default = crate::routing::Destination::default(); },
         }
     }
 
@@ -318,8 +352,24 @@ impl Workspace {
             .iter()
             .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window))
+        let rules = self.routing_rules.values().map(|s| Record::RoutingRule { order: s.order.clone(), rule: s.rule.clone() });
+        // The built-in default is derived, never stored: records carry a change from it only
+        // (Workspace::default().to_ops() stays empty, as unit 28's defaults rule needs).
+        let default = (self.routing_default != crate::routing::Destination::default())
+            .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter())
             .map(Op::Put).collect()
+    }
+
+    // Rules in the order matching reads them: by order key, ties by id, the same derived order
+    // children() gives items, so the same records give every device the same rule order.
+    pub fn routing(&self) -> crate::routing::Routing {
+        let mut rules: Vec<&crate::routing::StoredRule> = self.routing_rules.values().collect();
+        rules.sort_by(|a, b| (&a.order, &a.rule.id).cmp(&(&b.order, &b.rule.id)));
+        crate::routing::Routing {
+            rules: rules.into_iter().map(|s| s.rule.clone()).collect(),
+            default: self.routing_default.clone(),
+        }
     }
 }
 

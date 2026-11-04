@@ -8,7 +8,7 @@ private func floatingFixture() -> (NSWindow, SidebarView, SidebarContainerView, 
     _ = NSApplication.shared
     let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: "tab", spaces: [
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Space", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)

@@ -13,7 +13,7 @@ private func fixture() -> (NSWindow, SidebarView, SidebarContainerView, NSView) 
     _ = NSApplication.shared
     let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "home", selectedId: "tab", spaces: [
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)
@@ -167,7 +167,7 @@ func restoringIntoFolderRevealsOnlyExpandedRows() throws {
         let rows = (0..<50).map { Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "row-\($0)", title: "Row", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
         let folder = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "folder", title: "Folder", url: nil, depth: 0, kind: .folder, unloaded: false, lastSelectedAt: nil)
         let restored = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "restored", title: "Restored", url: nil, depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
-        let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: rows + [folder] + (collapsed ? [] : [restored]))
+        let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: rows + [folder] + (collapsed ? [] : [restored]))
         let scroll = try #require(descendants(sidebar).compactMap { $0 as? SidebarScrollView }.first)
         var now = 0.0
         scroll.clock = { now }

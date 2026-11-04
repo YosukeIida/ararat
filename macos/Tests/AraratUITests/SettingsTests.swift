@@ -14,9 +14,9 @@ private func settingsValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Com
 func settingsWindowNavigationSearchAndSlidesKeepTheSidebarSpace() throws {
     _ = NSApplication.shared
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "a", selectedId: nil, spaces: ["a", "b"].map {
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: $0, title: $0.uppercased(), icon: nil, look: nil, favorites: [], pinned: [], today: [])
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: $0, title: $0.uppercased(), icon: nil, look: nil, favorites: [], pinned: [], today: [])
     })
-    let model = SettingsModel(snapshot: snapshot, adapter: WorkspaceAdapter(windowID: "settings"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "settings-defaults")))
+    let model = SettingsModel(snapshot: snapshot, adapter: WorkspaceAdapter(windowID: "settings"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "settings-defaults")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "settings-atc")))
     let sidebar = SidebarView(snapshot: snapshot)
     sidebar.showSpace(at: 1)
     let controller = SettingsWindowController(model: model)
@@ -59,10 +59,10 @@ func settingsEditsPublishCoreSnapshotsAndValidateOneGrapheme() async throws {
     let adapter = WorkspaceAdapter(windowID: "settings")
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
     let json = try String(contentsOf: fixture, encoding: .utf8)
-    var snapshot = try await settingsValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0) }
+    var snapshot = try await settingsValue { adapter.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     if snapshot.spaces.count < 2 { snapshot = try await settingsValue { adapter.createSpace(name: "Second", completion: $0) } }
     let sidebar = SidebarView(snapshot: snapshot)
-    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { sidebar.applySelection(snapshot: $0) }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter))
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { sidebar.applySelection(snapshot: $0) }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
     let id = try #require(snapshot.spaces.first?.id)
     model.rename(id, name: "Renamed")
     try await waitUntil { model.snapshot.spaces.first?.title == "Renamed" }
@@ -114,7 +114,7 @@ private func settingsDescendants(_ view: NSView) -> [NSView] {
 @Test @MainActor
 func settingsSearchScrollsTheHostingViewToItsHighlightedRow() async throws {
     _ = NSApplication.shared
-    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []), adapter: WorkspaceAdapter(windowID: "search"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "search-keys")))
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []), adapter: WorkspaceAdapter(windowID: "search"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "search-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "search-atc")))
     model.shortcuts = (0..<30).map { SettingsModel.Row(id: "key-\($0)", pane: .shortcuts, title: "Action \($0)", subtitle: "Perform action \($0)") }
     model.navigate(.tabs)
     let controller = SettingsWindowController(model: model)
@@ -137,7 +137,7 @@ func settingsSearchScrollsTheHostingViewToItsHighlightedRow() async throws {
 @Test @MainActor
 func settingsHarnessMenusReuseLifetimeAndWindowCloseRouting() throws {
     _ = NSApplication.shared
-    let spaces = (0..<10).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
+    let spaces = (0..<10).map { SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s\($0)", title: "Space \($0)", icon: nil, look: nil, favorites: [], pinned: [], today: []) }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "s0", selectedId: nil, spaces: spaces)
     var terminations = 0
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "harness-test"), terminate: { terminations += 1 })
@@ -194,8 +194,8 @@ private final class SettingsCloseObserver: NSObject, NSWindowDelegate {
 @Test @MainActor
 func settingsErrorsSearchAndEdgeBounceUseTheirVisibleValues() {
     _ = NSApplication.shared
-    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
-    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [space]), adapter: WorkspaceAdapter(windowID: "values"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "values-keys")))
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
+    let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [space]), adapter: WorkspaceAdapter(windowID: "values"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "values-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "values-atc")))
     model.receive(.failure(CoreError.Edit(message: "unknown space missing-id")))
     #expect(model.error == "unknown space missing-id")
     model.navigate(.tabs)

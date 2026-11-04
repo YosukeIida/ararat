@@ -21,15 +21,65 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
-    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
+    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, linkRoutingJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
             self.store = opened
             let snapshot = opened.snapshot(windowId: self.windowID)
             guard snapshot.spaces.isEmpty else { return snapshot }
-            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON(), keyBindingsJson: keyBindingsJSON())
+            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON(), keyBindingsJson: keyBindingsJSON(), linkRoutingJson: linkRoutingJSON())
             onImport(imported.report)
             return imported.snapshot
+        }, completion: completion)
+    }
+
+    // Air Traffic Control (unit 29). The edits write one op batch each and flush before the
+    // fresh routing is returned, so a pane model always sees what a reopen would read.
+    public func routing(completion: @escaping Completion<Routing>) {
+        enqueue({ try self.opened().routing() }, completion: completion)
+    }
+
+    public func route(url: String, completion: @escaping Completion<RoutingDecision>) {
+        enqueue({ try self.opened().route(url: url) }, completion: completion)
+    }
+
+    public func addRule(_ rule: Rule, completion: @escaping Completion<Routing>) {
+        enqueue({
+            let store = try self.opened()
+            _ = try store.addRule(windowId: self.windowID, rule: rule)
+            return store.routing()
+        }, completion: completion)
+    }
+
+    public func editRule(_ rule: Rule, completion: @escaping Completion<Routing>) {
+        enqueue({
+            let store = try self.opened()
+            _ = try store.editRule(windowId: self.windowID, rule: rule)
+            return store.routing()
+        }, completion: completion)
+    }
+
+    public func deleteRule(id: String, completion: @escaping Completion<Routing>) {
+        enqueue({
+            let store = try self.opened()
+            _ = try store.deleteRule(windowId: self.windowID, id: id)
+            return store.routing()
+        }, completion: completion)
+    }
+
+    public func moveRule(id: String, to index: Int, completion: @escaping Completion<Routing>) {
+        enqueue({
+            let store = try self.opened()
+            _ = try store.moveRule(windowId: self.windowID, id: id, index: UInt32(index))
+            return store.routing()
+        }, completion: completion)
+    }
+
+    public func setDefaultDestination(_ destination: Destination, completion: @escaping Completion<Routing>) {
+        enqueue({
+            let store = try self.opened()
+            _ = try store.setDefaultDestination(windowId: self.windowID, destination: destination)
+            return store.routing()
         }, completion: completion)
     }
 

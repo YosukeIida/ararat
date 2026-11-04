@@ -7,7 +7,7 @@ fn set_selection(ws: &mut Workspace, id: &str) {
 }
 
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
     for (id, order) in [("a", "a"), ("b", "b"), ("c", "c")] {
         add(&mut ws, id, "today-work", order, ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None });
     }

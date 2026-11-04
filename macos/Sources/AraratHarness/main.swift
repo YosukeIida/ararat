@@ -41,6 +41,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
     let adapter: WorkspaceAdapter
     let keyBindings: KeyBindingsModel
+    let airTraffic: AirTrafficModel
     private var commandMenu: NSMenu?
     var exitStatus: Int32 = 0
     private var terminating = false
@@ -62,6 +63,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         self.options = options
         self.adapter = adapter
         self.keyBindings = KeyBindingsModel(adapter: adapter)
+        self.airTraffic = AirTrafficModel(adapter: adapter)
         self.terminate = terminate
         super.init()
         keyBindings.onChange = { [weak self] in
@@ -84,9 +86,14 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableKeyBindings.json")
             guard let data = try? Data(contentsOf: url) else { return nil }
             return String(decoding: data, as: UTF8.self)
+        }, linkRoutingJSON: {
+            guard let fixturePath else { return nil }
+            let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableLinkRouting.json")
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return String(decoding: data, as: UTF8.self)
         }, onImport: { report in
-            guard report.keyBindingsError != nil || report.skippedKeyBindings > 0 || report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
-            let summary = "Arc import: missingKeyBindings=\(report.missingKeyBindings) keyBindingsError=\(report.keyBindingsError?.debugDescription ?? "nil") skippedKeyBindings=\(report.skippedKeyBindings) missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
+            guard report.linkRoutingError != nil || report.importedRules > 0 || report.skippedProfileDestinations > 0 || report.skippedUnknownDestinations > 0 || report.skippedUnknownStyles > 0 || report.malformedRules > 0 || report.keyBindingsError != nil || report.skippedKeyBindings > 0 || report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
+            let summary = "Arc import: missingLinkRouting=\(report.missingLinkRouting) linkRoutingError=\(report.linkRoutingError?.debugDescription ?? "nil") importedRules=\(report.importedRules) skippedProfileDestinations=\(report.skippedProfileDestinations) skippedUnknownDestinations=\(report.skippedUnknownDestinations) skippedUnknownStyles=\(report.skippedUnknownStyles) malformedRules=\(report.malformedRules) missingKeyBindings=\(report.missingKeyBindings) keyBindingsError=\(report.keyBindingsError?.debugDescription ?? "nil") skippedKeyBindings=\(report.skippedKeyBindings) missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
             FileHandle.standardError.write(Data(summary.utf8))
         }) { [weak self] result in
             guard let self, !self.terminating else { return }
@@ -498,7 +505,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if settings == nil {
             let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { [weak self] snapshot in
                 _ = self?.publish(.success(snapshot))
-            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) }, preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }, keyBindings: keyBindings)
+            }, resetWidth: { [weak self] in self?.resetSidebarWidth(nil) }, preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }, keyBindings: keyBindings, airTraffic: airTraffic)
             settings = SettingsWindowController(model: model)
         }
         settings!.prepare(shownSpaceID: shownSpaceID)

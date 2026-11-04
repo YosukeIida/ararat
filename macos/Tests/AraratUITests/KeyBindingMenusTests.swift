@@ -37,7 +37,7 @@ private func openBindings(_ directory: URL) async throws -> (WorkspaceAdapter, W
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
     let snapshot = try await bindingValue {
-        adapter.open(path: directory.appendingPathComponent("keys.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, completion: $0)
+        adapter.open(path: directory.appendingPathComponent("keys.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
     }
     return (adapter, snapshot)
 }

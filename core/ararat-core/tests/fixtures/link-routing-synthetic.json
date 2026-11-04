@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "rules": [
+    { "id": "meet",
+      "sourceComponents": [
+        { "id": "meet-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "Meet.Google.Com" } } }
+      ],
+      "destination": { "space": { "_0": { "mostRecent": {} } } } },
+    { "id": "github-prs",
+      "sourceComponents": [
+        { "id": "gh-1", "componentType": { "urlMatch": { "_0": { "matches": {} }, "_1": "https://github.com/pulls/" } } }
+      ],
+      "destination": { "space": { "_0": "space-work" } } },
+    { "id": "docs-little",
+      "sourceComponents": [
+        { "id": "docs-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "docs.example.com" } } }
+      ],
+      "destination": { "littleArc": { "_0": { "mostRecent": {} } } } },
+    { "id": "double-condition",
+      "sourceComponents": [
+        { "id": "dc-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "a.example" } } },
+        { "id": "dc-2", "componentType": { "urlMatch": { "_0": { "matches": {} }, "_1": "https://b.example/" } } }
+      ],
+      "destination": { "space": { "_0": "space-home" } } },
+    { "id": "profile-destination",
+      "sourceComponents": [
+        { "id": "pd-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "profile.example.com" } } }
+      ],
+      "destination": { "space": { "_0": { "profile": { "_0": "Profile 1" } } } } },
+    { "id": "unknown-style",
+      "sourceComponents": [
+        { "id": "us-1", "componentType": { "urlMatch": { "_0": { "prefix": {} }, "_1": "https://weird.example.com/" } } }
+      ],
+      "destination": { "space": { "_0": { "mostRecent": {} } } } },
+    { "id": "unknown-destination",
+      "sourceComponents": [
+        { "id": "ud-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "dest.example.com" } } }
+      ],
+      "destination": { "littleWindow": { "_0": { "mostRecent": {} } } } },
+    { "sourceComponents": [
+        { "id": "no-id-1", "componentType": { "urlMatch": { "_0": { "contains": {} }, "_1": "bare.example.com" } } }
+      ],
+      "destination": { "space": { "_0": { "mostRecent": {} } } } }
+  ],
+  "defaultDestination": { "littleArc": { "_0": { "mostRecent": {} } } }
+}

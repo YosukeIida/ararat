@@ -9,7 +9,7 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("base.sqlite").path)
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    _ = try store.importArcSidebar(windowId: "regression", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil).snapshot
+    _ = try store.importArcSidebar(windowId: "regression", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
     let snapshot = try store.moveItem(windowId: "regression", id: "tab-a", container: "today-work", index: 0, openFolder: false)
     _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: snapshot)

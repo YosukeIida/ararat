@@ -11,7 +11,7 @@ private func interactionRows(_ view: NSView) -> [SidebarRowView] {
 private func interactionSnapshot(selected: String? = "pin") -> WorkspaceSnapshot {
     let row: (String) -> Row = { Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: $0, title: String(repeating: $0, count: 60), url: "https://\($0).example", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil) }
     return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil,
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: nil, look: nil,
                       favorites: [row("favorite")], pinned: [row("pin"), row("other")], today: [row("a"), row("b")])])
 }
 
@@ -124,7 +124,7 @@ func slightMovementClicksWithoutReorderingAndPressTracksStillPointer() throws {
     #expect(!row.pressed)
     row.mouseDown(with: try rowEvent(.leftMouseDown, point: start))
     sidebar.applyClose(id: "other", snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: "pin", spaces: [
-        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [],
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [],
                       today: [Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "a", title: "a", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)])]))
     row.refreshHover()
     #expect(!row.hovered && !row.pressed)

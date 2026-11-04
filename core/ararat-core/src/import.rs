@@ -2,18 +2,28 @@
 // Unmodelled kinds (easel, arcDocument, tabGroup) are skipped rather than rejected, so one
 // easel does not fail a whole import.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
 use crate::model::{Appearance, Hlc, Id, Item, ItemKind, Look, LookColor, Membership, Orientation, Profile, Space, Workspace};
 use crate::order::key_between;
+use crate::routing::{Destination, MatchStyle, Rule, Routing, SpaceTarget, UrlCondition};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ImportError(pub String);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ImportReport {
+    pub missing_link_routing: bool,
+    pub link_routing_error: Option<String>,
+    // The counters are the routing import's (LinkRoutingReport, spelled the same way): one
+    // counter per reason a rule was dropped, so the counters describe imported rules.
+    pub imported_rules: usize,
+    pub skipped_profile_destinations: usize,
+    pub skipped_unknown_destinations: usize,
+    pub skipped_unknown_styles: usize,
+    pub malformed_rules: usize,
     pub unknown_space_looks: usize,
     pub missing_key_bindings: bool,
     pub key_bindings_error: Option<String>,
@@ -29,7 +39,7 @@ pub struct ImportReport {
 
 type Result<T> = std::result::Result<T, ImportError>;
 
-pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
+pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Option<&str>, link_routing_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     let container = root["sidebar"]["containers"]
         .as_array()
@@ -68,7 +78,7 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
             }
         }
     }
-    let mut workspace = Workspace { key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), spaces, favorites, items, windows: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new() };
+    let mut workspace = Workspace { key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), spaces, favorites, items, windows: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new(), routing_rules: HashMap::new(), routing_default: crate::routing::Destination::default() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
@@ -87,7 +97,42 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
             Err(error) => report.key_bindings_error = Some(error.0),
         },
     }
+    // The routing reads the spaces this import is about to produce: only destinations naming
+    // one of them can open, and a Little-window destination belongs to the import's profile —
+    // the first space's (the file is profile-relative the way the sidebar is, and the pane can
+    // change either). The routing rides `to_ops()` with the sidebar's records (a sidebar
+    // override never deletes: rules the workspace already had stay), and an unreadable file
+    // never blocks the sidebar, as key_bindings_error does not.
+    let spaces: HashSet<Id> = workspace.spaces.iter().map(|s| s.id.clone()).collect();
+    let profile = workspace.spaces.first().map(|s| s.profile.clone()).unwrap_or(Profile::Default);
+    match link_routing_json {
+        None => report.missing_link_routing = true,
+        Some(json) => match arc_link_routing(json, profile, &spaces) {
+            Ok((routing, counters)) => {
+                report.imported_rules = counters.imported_rules;
+                report.skipped_profile_destinations = counters.skipped_profile_destinations;
+                report.skipped_unknown_destinations = counters.skipped_unknown_destinations;
+                report.skipped_unknown_styles = counters.skipped_unknown_styles;
+                report.malformed_rules = counters.malformed_rules;
+                install_routing(&mut workspace, routing);
+            }
+            Err(error) => report.link_routing_error = Some(error.0),
+        },
+    }
     Ok((workspace, report))
+}
+
+// An imported routing installs in file order (the matching reads by key, ties fall back to the
+// id, so chained keys reproduce the file order); same-id entries overwrite their row, the way
+// an import that repeats itself stays idempotent.
+fn install_routing(workspace: &mut Workspace, routing: Routing) {
+    let mut previous: Option<String> = None;
+    for rule in routing.rules {
+        let order = key_between(previous.as_deref(), None);
+        previous = Some(order.clone());
+        workspace.routing_rules.insert(rule.id.clone(), crate::routing::StoredRule { order, rule });
+    }
+    workspace.routing_default = routing.default;
 }
 
 fn arc_key_bindings(json: &str) -> Result<usize> {
@@ -322,6 +367,163 @@ fn flat_pairs(value: &Value) -> Result<Vec<(&Value, &Value)>> {
 
 fn err(message: &str) -> ImportError {
     ImportError(message.to_string())
+}
+
+// Arc's StorableLinkRouting.json routes links from other apps (Cra LinkRouting.swift: a link
+// is checked against the routes in order, the first match decides, the rest go to the default).
+// Only two shapes refuse the whole file, like the sidebar import: an unreadable version and a
+// `rules` key that is neither an array nor absent. Everything else is per rule: an unknown
+// style, an unknown or profile destination, a malformed entry or a repeated id drops that one
+// rule and is counted, the way unmodelled kinds are counted there.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct LinkRoutingReport {
+    pub imported_rules: usize,
+    pub skipped_profile_destinations: usize,
+    pub skipped_unknown_destinations: usize,
+    pub skipped_unknown_styles: usize,
+    pub malformed_rules: usize,
+}
+
+// `profile` is the profile the import belongs to: a `littleArc` destination opens in that
+// profile's Little window, and the file carries no profile of its own. `spaces` is the set of
+// space ids the sidebar import produced: only a destination naming one of them can open.
+pub fn arc_link_routing(json: &str, profile: Profile, spaces: &HashSet<Id>) -> Result<(Routing, LinkRoutingReport)> {
+    let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
+    // The version gates the whole mapping: shapes may change under a new version, so refuse
+    // rather than mis-read; a missing version is not 1 either.
+    let version = &root["version"];
+    if version.is_null() { return Err(err("StorableLinkRouting has no version")); }
+    let Some(major) = version.as_i64() else {
+        return Err(ImportError(format!("StorableLinkRouting version {version} is not supported")));
+    };
+    if major != 1 {
+        return Err(ImportError(format!("StorableLinkRouting version {major} is not supported")));
+    }
+
+    let mut report = LinkRoutingReport::default();
+    let mut rules = Vec::new();
+    let mut seen_ids = HashSet::new();
+    let none: Vec<Value> = Vec::new();
+    let entries = match root["rules"].as_array() {
+        Some(entries) => entries,
+        None if root["rules"].is_null() => &none,
+        None => return Err(err("rules is not an array")),
+    };
+    'entry: for entry in entries {
+        let Some(obj) = entry.as_object() else { report.malformed_rules += 1; continue };
+        // Rules have Arc's string ids; a rule always has an id, so one without is unreadable.
+        let Some(id) = obj.get("id").and_then(Value::as_str) else { report.malformed_rules += 1; continue };
+        // A repeated id would make edit and delete ambiguous, so the first entry wins and the
+        // rest are counted like other unreadable rules.
+        if !seen_ids.insert(id.to_string()) { report.malformed_rules += 1; continue 'entry; }
+        let Some(components) = obj["sourceComponents"].as_array() else {
+            report.malformed_rules += 1; continue;
+        };
+        let mut conditions = Vec::new();
+        for component in components {
+            match url_condition(component) {
+                Ok(condition) => conditions.push(condition),
+                // The reason a rule is dropped is counted once for the rule, so counters add
+                // up to the rules the import produced.
+                Err(Skip::UnknownStyle) => { report.skipped_unknown_styles += 1; continue 'entry; }
+                Err(Skip::Malformed) => { report.malformed_rules += 1; continue 'entry; }
+            }
+        }
+        match arc_destination(&obj["destination"], &profile, spaces) {
+            DestinationOr::Keep(destination) => {
+                rules.push(Rule { id: id.into(), conditions, destination });
+                report.imported_rules += 1;
+            }
+            // A rule with no destination has nowhere to route.
+            DestinationOr::Absent | DestinationOr::SkipUnknown => report.skipped_unknown_destinations += 1,
+            DestinationOr::SkipProfile => report.skipped_profile_destinations += 1,
+        }
+    }
+
+    let mut routing = Routing { rules, default: Routing::default().default };
+    match arc_destination(&root["defaultDestination"], &profile, spaces) {
+        DestinationOr::Keep(destination) => routing.default = destination,
+        // The file has no default destination: keep ours, and count only what it cannot read.
+        DestinationOr::Absent => {},
+        DestinationOr::SkipUnknown => report.skipped_unknown_destinations += 1,
+        DestinationOr::SkipProfile => report.skipped_profile_destinations += 1,
+    }
+    Ok((routing, report))
+}
+
+enum Skip { UnknownStyle, Malformed }
+
+// One sourceComponent: `componentType.urlMatch` is `{_0: {contains: {}} | {matches: {}}, _1: text}`
+// (Cra Importers.linkRoute). Arc's editor offers only these two styles.
+fn url_condition(component: &Value) -> std::result::Result<UrlCondition, Skip> {
+    let Some(url_match) = component["componentType"]["urlMatch"].as_object() else {
+        return Err(Skip::Malformed);
+    };
+    let Some(style) = url_match.get("_0") else { return Err(Skip::Malformed); };
+    let Some(style) = style.as_object() else { return Err(Skip::Malformed); };
+    let style = if style.contains_key("matches") { MatchStyle::Equals }
+        else if style.contains_key("contains") { MatchStyle::Contains }
+        else { return Err(Skip::UnknownStyle) };
+    let Some(text) = url_match.get("_1").and_then(Value::as_str) else {
+        return Err(Skip::Malformed);
+    };
+    Ok(UrlCondition { style, text: text.to_string() })
+}
+
+enum DestinationOr { Keep(Destination), SkipProfile, SkipUnknown, Absent }
+
+// A ProfileDestination sits in the `_0` slot of a space/littleArc destination: `{"mostRecent": {}}`,
+// `{"profile": ...}` (skipped+counted), or a space id, which may be the string itself or a
+// string anywhere inside (fixture assumption; Cra Importers.linkDestination reads it the same
+// way, "recognised by its id anywhere inside space").
+enum Target { MostRecent, Space(Id), Profile, Unknown }
+
+// A ProfileDestination sits in the `_0` slot of a space/littleArc destination: `{"mostRecent": {}}`,
+// `{"profile": ...}` (skipped+counted), or a space id. The id is taken the way Cra's import
+// (`Importers.linkDestination`) reads its one string out of `space` — the string itself, or one
+// nested inside — and `arc_link_routing` then requires it to be exactly a sidebar space id;
+// the fixture assumption is the same `_0` slot the owner's file carries for most-recent.
+fn destination_target(value: Option<&Value>) -> Target {
+    let Some(value) = value else { return Target::Unknown };
+    if let Some(id) = value.as_str() { return Target::Space(id.into()); }
+    let Some(obj) = value.as_object() else { return Target::Unknown };
+    if obj.contains_key("profile") { return Target::Profile; }
+    if let Some(space) = obj.get("space") {
+        let Some(id) = first_string(space) else { return Target::Unknown };
+        return Target::Space(id);
+    }
+    if obj.contains_key("mostRecent") { return Target::MostRecent; }
+    Target::Unknown
+}
+
+// A LinkDestination is `space(ProfileDestination)` or `littleArc(ProfileDestination)` (Cra
+// LinkRouting.swift). The profile case cannot be imported: count it and leave the rule out.
+fn arc_destination(value: &Value, profile: &Profile, spaces: &HashSet<Id>) -> DestinationOr {
+    if value.is_null() { return DestinationOr::Absent; } // No default in the file at all.
+    let Some(map) = value.as_object() else { return DestinationOr::SkipUnknown };
+    if let Some(body) = map.get("littleArc") {
+        // littleArc ignores the inner target: a Little Arc given a space still opened with
+        // "Open in <most recent space>" (Cra LinkRouting.swift), so everything except a
+        // profile destination becomes the import's profile in the Little window.
+        return match destination_target(body.get("_0")) {
+            Target::Profile => DestinationOr::SkipProfile,
+            Target::Unknown => DestinationOr::SkipUnknown,
+            _ => DestinationOr::Keep(Destination::LittleWindow(profile.clone())),
+        };
+    }
+    if let Some(body) = map.get("space") {
+        return match destination_target(body.get("_0")) {
+            Target::MostRecent => DestinationOr::Keep(Destination::Space(SpaceTarget::MostRecent)),
+            // A rule can only open a space the workspace has, so an id that is not one of the
+            // sidebar's spaces is skipped and counted instead of routing into nothing.
+            Target::Space(id) => if spaces.contains(&id) {
+                DestinationOr::Keep(Destination::Space(SpaceTarget::Space(id)))
+            } else { DestinationOr::SkipUnknown },
+            Target::Profile => DestinationOr::SkipProfile,
+            Target::Unknown => DestinationOr::SkipUnknown,
+        };
+    }
+    DestinationOr::SkipUnknown
 }
 
 #[cfg(test)]

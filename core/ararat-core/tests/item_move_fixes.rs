@@ -1,6 +1,6 @@
 use ararat_core::{import::arc_sidebar, model::{Lifecycle, Op, Profile, Record, Workspace}};
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
     ws.spaces[1].profile = Profile::Default;
     ws
 }
@@ -30,7 +30,7 @@ fn import_repair_ties_allow_a_drop_between_orphans() {
     let json = include_str!("fixtures/arc-sidebar-synthetic.json")
         .replace(r#""id": "tab-mail", "parentID": "fav-default""#, r#""id": "tab-mail", "parentID": "gone-1""#)
         .replace(r#""id": "tab-spec", "parentID": "folder-docs""#, r#""id": "tab-spec", "parentID": "gone-2""#);
-    let mut ws = arc_sidebar(&json, None, None).unwrap().0;
+    let mut ws = arc_sidebar(&json, None, None, None).unwrap().0;
     assert_eq!(ws.items["tab-spec"].membership.order, ws.items["tab-mail"].membership.order);
     replay(&mut ws, |ws| ws.move_item("split-1", "today-work", 1, false).unwrap());
     assert_eq!(ids(&ws, "today-work"), ["tab-mail", "split-1", "tab-spec"]);
@@ -70,7 +70,7 @@ fn selecting_a_hidden_tab_expands_ancestors_locally_and_replays() {
 }
 #[test]
 fn cross_profile_moves_and_wraps_are_atomic_errors() {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
     let mut home = ws.items["tab-mail"].clone(); home.id = "home-tab".into(); home.membership.parent = Some("pin-home".into()); ws.apply(&Op::Put(Record::Item(home)));
     let before = ws.clone();
     for (id, target) in [("tab-spec", "pin-home"), ("tab-spec", "today-home"), ("home-tab", "fav-default"), ("folder-docs", "pin-home"), ("split-1", "pin-home")] {

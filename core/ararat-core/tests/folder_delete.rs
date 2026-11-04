@@ -1,5 +1,5 @@
 use ararat_core::{import::arc_sidebar, model::{ItemKind, Kind, Lifecycle, Op, Record, Workspace}, storage::Store};
-fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None).unwrap().0 }
+fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0 }
 fn synced(ws: &Workspace) -> Workspace {
     let mut result = Workspace::default();
     for op in ws.to_ops().into_iter().filter(|op| matches!(op, Op::Put(r) if !matches!(r.kind(), Kind::Window | Kind::LastSelected | Kind::FolderState))) { result.apply(&op); }
