@@ -133,9 +133,11 @@ macOS repo, `README.md` "Updating": `devutils/update_patches.sh merge` (merges g
 
 Doc-vs-code inconsistency in upstream: `docs/developing.md` says new switches go into `third_party/ungoogled/ungoogled_switches.cc` by editing `resources/patches/ungoogled-chromium/add-third-party-ungoogled.patch`; the tree has no `resources/` directory, and the switches file is created as `components/ungoogled/ungoogled_switches.cc` by `patches/extra/ungoogled-chromium/add-components-ungoogled.patch`.
 
-Their tools assume quilt with fuzz-tolerant refresh; Ararat's `series check` (§4.2) is no-fuzz byte comparison, so ungoogled releases would be imported as refreshed by them and then checked by us.
+Their tools assume quilt with fuzz-tolerant refresh; Ararat's `series-check` (§4.2) is no-fuzz byte comparison, so ungoogled releases would be imported as refreshed by them and then checked by us.
 
 ## 6. Estimates (not measured)
+
+The first estimate below was later measured (2026-11-05, Ararat's phase 2 set of 27, not the full 137): on a git + gclient 157.0.8103.39 tree, 14 of the 25 vendored patches no longer applied from the 156 commits; PR #4032's versions of those 14 applied without fuzz; `disable-crashpad-handler.patch` from the macOS repo needed a hand rebase (crashpad's `InitialStart` gained an `embedder_port` parameter); our two patches applied unchanged. About 8 min from the start of the fetch to the whole series applied, and a full official build of 4,821 s (architecture §4.2, §4.7).
 
 - *Estimate:* applying PR #4032's series to 157.0.8103.39 should need little or no work beyond what .38 needed, because .38 → .39 is a respin on branch 8103. Unverified until a `--check` is run on a full tree including DEPS sub-repos.
 - *Estimate (from the timing table, n=2 and n=2):* the generic repo merges same-milestone respins within a day of stable and milestone bumps in about 2+ days; the macOS repo adds days on top (4 days for 156.0.8078.79). Waiting for the macOS repo would fit §4.9's 7-day limit but not its 48-hour limit for in-the-wild exploits; taking the generic series and carrying the 27 macOS patches ourselves removes the macOS lag.
@@ -144,8 +146,7 @@ Their tools assume quilt with fuzz-tolerant refresh; Ararat's `series check` (§
 
 ## 7. What was not done
 
-- No `git apply --check` (version mismatch: 156.0.8078.79 / 157.0.8103.38 vs 157.0.8103.39).
-- No build, no `gclient`, `~/chromium-build/src` untouched.
+- When this inventory was written: no `git apply --check` (version mismatch: 156.0.8078.79 / 157.0.8103.38 vs 157.0.8103.39), no build, no `gclient`. The phase 2 set was applied and built later; the measured rebase is at the top of section 6.
 - Per-patch decisions are in section 8.
 
 ## 8. Per-patch decisions

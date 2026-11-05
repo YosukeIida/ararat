@@ -2,18 +2,27 @@
 
 `series` is the only source of patch order; paths in it are relative to this
 directory, ungoogled/generic before ungoogled/macos. The 25 vendored patches
-are byte-for-byte copies from the two commits below; the 26th is our
-counter-patch and sits directly after the one hunk it reverses.
+come from the commits below; two are ours: a counter-patch directly after the
+one hunk it reverses, and a ScreenAI fix at the end.
 
 | Source | Commit | Chromium |
 |---|---|---|
-| ungoogled-software/ungoogled-chromium | 28a211ab4ab6b83d919966a4f58a6df23cf4fb29 | 156.0.8078.79 |
+| ungoogled-software/ungoogled-chromium, pull request #4032 (not merged on 2026-11-05) | de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c | 157.0.8103.38 |
 | ungoogled-software/ungoogled-chromium-macos | 31f01756a43d55b2c4211e73ca329bfab4ebfcb2 | 156.0.8078.79 |
+
+The generic patches are byte-for-byte copies of that pull request's head,
+which targets 157.0.8103.38 and applies to our 157.0.8103.39 without fuzz;
+re-vendor them from the merged commit once it lands. Of the two macOS
+patches, `add-local-network-usage-description.patch` is a copy and
+`disable-crashpad-handler.patch` is rebased by hand onto 157 (crashpad's
+`InitialStart` gained an `embedder_port` parameter): it keeps the original's
+effect, `InitialStart` returns an empty send right and `StartHandler` returns
+false.
 
 Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 `ungoogled/generic/LICENSE` and `ungoogled/macos/LICENSE`.
 
-## The 25 plus the counter-patch, in series order
+## The 25 plus our two, in series order
 
 | # | File in `series` | Origin |
 |---|---|---|
@@ -43,13 +52,20 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | 24 | `ungoogled/generic/extra/ungoogled-chromium/disable-ai-search-shortcuts.patch` | generic, extra |
 | 25 | `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
 | 26 | `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
+| 27 | `ararat/remove-screenai-sandbox-parameter.patch` | ours |
 
 ## Why these 25
 
 Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
-## Notes on the counter-patch
+## Notes on our two
+
+`ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
+the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:
+with ScreenAI removed by `disable-ai`, that branch's
+`ScreenAIInstallState::GetInstance()` is an undefined symbol and the link fails.
+
 
 `ararat/restore-component-updater.patch` reverses only `block-requests`'s hunk
 in `components/update_client/update_checker.cc`, so the component updater

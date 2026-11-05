@@ -135,9 +135,11 @@ macOS の repo の `README.md` の "Updating": `devutils/update_patches.sh merge
 
 上流の文書とコードの食い違い: `docs/developing.md` は、新しいスイッチを `resources/patches/ungoogled-chromium/add-third-party-ungoogled.patch` を編集して `third_party/ungoogled/ungoogled_switches.cc` に入れると書いている。しかし tree に `resources/` のディレクトリは無く、スイッチのファイルは `patches/extra/ungoogled-chromium/add-components-ungoogled.patch` によって `components/ungoogled/ungoogled_switches.cc` として作られる。
 
-上流のツールは、fuzz を許す refresh を伴う quilt を前提とする。Ararat の `series check`（§4.2）は fuzz を許さないバイト比較である。したがって、ungoogled のリリースは上流が refresh した状態で取り込み、その後 Ararat 側で確認することになる。
+上流のツールは、fuzz を許す refresh を伴う quilt を前提とする。Ararat の `series-check`（§4.2）は fuzz を許さないバイト比較である。したがって、ungoogled のリリースは上流が refresh した状態で取り込み、その後 Ararat 側で確認することになる。
 
 ## 6. 見積もり（実測していない）
+
+下の 1 つ目の見積もりは、後に実測した（2026-11-05。対象は 137 本すべてではなく、Ararat の phase 2 の 27 本）。git + gclient の 157.0.8103.39 の tree では、取り込んだ 25 本のうち 14 本が 156 のコミットのままでは当たらなかった。その 14 本は PR #4032 の版で fuzz なしに当たった。macOS の repo の `disable-crashpad-handler.patch` は、crashpad の `InitialStart` に `embedder_port` 引数が増えたため、手で当て直す必要があった。こちらの 2 本はそのまま当たった。取得の開始から series 全体の適用までおよそ 8 分、正式なビルドのフルビルドは 4,821 秒であった（architecture の §4.2、§4.7）。
 
 - *見積もり:* PR #4032 の series を 157.0.8103.39 に当てるには、.38 で要した作業以外はほとんど、あるいはまったく要らないはずである。.38 → .39 は branch 8103 の respin だからである。DEPS の sub-repo を含む完全な tree で `--check` を実行するまでは確かめられていない。
 - *見積もり（時間の表から。n=2 と n=2）:* generic の repo は、同じ milestone の respin を stable から 1 日以内に、milestone の bump を約 2 日以上で merge する。macOS の repo はその上にさらに数日を要する（156.0.8078.79 では 4 日）。macOS の repo を待つ方式は §4.9 の 7 日の上限には収まるが、in-the-wild の exploit に対する 48 時間の上限には収まらない。generic の series を取り込み、27 の macOS のパッチを Ararat 側で保持すれば、macOS の遅れは無くなる。
@@ -146,8 +148,7 @@ macOS の repo の `README.md` の "Updating": `devutils/update_patches.sh merge
 
 ## 7. 行わなかったこと
 
-- `git apply --check` は実行していない（バージョンの不一致: 156.0.8078.79 / 157.0.8103.38 と 157.0.8103.39）。
-- ビルドも `gclient` も実行しておらず、`~/chromium-build/src` には触れていない。
+- この一覧を書いた時点では、`git apply --check` を実行しておらず（バージョンの不一致: 156.0.8078.79 / 157.0.8103.38 と 157.0.8103.39）、ビルドも `gclient` も実行していなかった。phase 2 の series は後に適用してビルドした。計測したリベースは第 6 節の冒頭にある。
 - パッチごとの判断は第 8 節にある。
 
 ## 8. パッチごとの判断

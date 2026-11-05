@@ -9,7 +9,7 @@ ARARAT_REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # $HOME unset, so the default stays unset and the commands refuse it
 # (require_tree, lock_take); --help must survive the same sweep, which is why
 # the refusal cannot sit up here
-: "${ARARAT_BUILD_ROOT:=}"
+: "${ARARAT_BUILD_ROOT:=${HOME:+$HOME/chromium-build}}"
 : "${ARARAT_SRC_DIR:=$ARARAT_BUILD_ROOT/src}"
 if [[ -d "$ARARAT_SRC_DIR" ]]; then
   ARARAT_SRC_DIR="$(cd -- "$ARARAT_SRC_DIR" && pwd -P)"

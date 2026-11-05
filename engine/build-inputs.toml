@@ -1,8 +1,8 @@
 # Pins what determines the engine binary (architecture.md §4.7).
 # Scripts read versions from here only.
-chromium_version = "156.0.8078.79"
-chromium_commit = "a21ce95c24ce3964416f09ae1862f53f319eb4d0"
-ungoogled_generic_commit = "28a211ab4ab6b83d919966a4f58a6df23cf4fb29"
+chromium_version = "157.0.8103.39"
+chromium_commit = "9a31f0acec1854d44e49a73fbf8017598151a583"
+ungoogled_generic_commit = "de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c"
 ungoogled_macos_commit = "31f01756a43d55b2c4211e73ca329bfab4ebfcb2"
 gn_args_path = "engine/args.gn"
 gn_args_sha256 = "44c9aff5c44faafa633bc986b520b0a2ec3199aa1d3a42fafa80ec0b93beebce"
