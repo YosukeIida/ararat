@@ -5,6 +5,12 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U6 done: the live-tab coordinator v0 is in the core — `core/ararat-core/src/live.rs`
+  (`open`/`activate`/`close` commands with fresh ids, `apply` of the engine's
+  `{epoch, rev, cause, strips}` transactions with the §5.2 reconcile, `live_tab`/`item_for`
+  queries), exported through UniFFI as `WorkspaceStore.liveOpen/liveActivate/liveClose/
+  liveApply/liveTab/itemForLive`; the map is one to one and the lifecycle change of a close
+  commits in the same storage transaction before the command is returned.
 - Phase 3 U2 done: our bundle runs the stock engine —
   `macos/Sources/Ararat` launcher (dlopen, `ChromeMain`), `macos/scripts/bundle-app.sh`
   (Ararat.app, id `net.iodine2.ararat`, ad-hoc, renderer/GPU helpers carry allow-jit);

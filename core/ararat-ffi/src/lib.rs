@@ -14,6 +14,7 @@ pub enum CoreError {
     Import { message: String },
     Store { message: String },
     Edit { message: String },
+    Live { message: String },
 }
 
 impl std::fmt::Display for CoreError {
@@ -22,6 +23,7 @@ impl std::fmt::Display for CoreError {
             CoreError::Import { message } => write!(f, "import failed: {message}"),
             CoreError::Store { message } => write!(f, "store failed: {message}"),
             CoreError::Edit { message } => write!(f, "edit failed: {message}"),
+            CoreError::Live { message } => write!(f, "live failed: {message}"),
         }
     }
 }
@@ -40,10 +42,17 @@ impl From<ararat_core::edit::EditError> for CoreError {
     }
 }
 
+impl From<ararat_core::live::LiveError> for CoreError {
+    fn from(error: ararat_core::live::LiveError) -> Self {
+        Self::Live { message: error.0 }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct WorkspaceStore {
     store: Store,
     workspace: Mutex<Workspace>,
+    live: Mutex<ararat_core::live::Live>,
 }
 
 #[uniffi::export]
@@ -51,7 +60,7 @@ impl WorkspaceStore {
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, CoreError> {
         let (store, workspace) = Store::open(Path::new(&path))?;
-        Ok(Arc::new(Self { store, workspace: Mutex::new(workspace) }))
+        Ok(Arc::new(Self { store, workspace: Mutex::new(workspace), live: Mutex::new(ararat_core::live::Live::new()) }))
     }
 
     pub fn key_bindings(&self) -> Vec<KeyBinding> {
@@ -348,6 +357,60 @@ impl WorkspaceStore {
 
     pub fn last_error(&self) -> Option<String> {
         self.store.last_error()
+    }
+
+    // The live-tab coordinator (architecture 5.1/5.2). The commands and the transaction
+    // application return the workspace ops they produced; the store writes each batch as
+    // one transaction, and the lifecycle change of a close is flushed before the command
+    // is handed to the engine. The open's map entry and its in-flight marker land only
+    // after that flush succeeded.
+    pub fn live_open(&self, item: String, url: String) -> Result<LiveCommand, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, command) = live.open(&mut workspace, &item, &url)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        live.command_sent(&command);
+        Ok(command.into())
+    }
+
+    pub fn live_activate(&self, item: String) -> Result<LiveCommand, CoreError> {
+        let workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let command = live.activate(&workspace, &item)?;
+        live.command_sent(&command);
+        Ok(command.into())
+    }
+
+    pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, command) = live.close(&mut workspace, &item)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        live.command_sent(&command);
+        Ok(command.into())
+    }
+
+    pub fn live_apply(&self, transaction: LiveTransaction) -> Result<LiveApplyOutcome, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, outcome) = live.apply(&mut workspace, transaction.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(outcome.into())
+    }
+
+    pub fn live_tab(&self, item: String) -> Option<String> {
+        self.live.lock().unwrap().live_tab(&item)
+    }
+
+    pub fn item_for_live(&self, live_id: String) -> Option<String> {
+        self.live.lock().unwrap().item_for(&live_id)
+    }
+
+    pub fn live_dropped(&self) -> u64 {
+        self.live.lock().unwrap().dropped()
     }
 }
 
@@ -656,6 +719,127 @@ impl From<ararat_core::routing::Routing> for Routing {
 impl From<Routing> for ararat_core::routing::Routing {
     fn from(routing: Routing) -> Self {
         Self { rules: routing.rules.into_iter().map(Into::into).collect(), default: routing.default.into() }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LiveCommandKind { Open, Activate, Close }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveCommand {
+    pub id: String,
+    pub kind: LiveCommandKind,
+    pub item: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum LiveCause {
+    /// The engine's reply to the command with this id.
+    Command(String),
+    /// The engine changed something on its own call.
+    Engine,
+    /// Chrome changed something on its own.
+    Chrome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveTab {
+    pub live_id: String,
+    pub item: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveStrip {
+    pub window: String,
+    pub tabs: Vec<LiveTab>,
+    pub active: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveTransaction {
+    pub epoch: u64,
+    pub rev: u64,
+    pub cause: LiveCause,
+    pub strips: Vec<LiveStrip>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LiveAdoptedTab {
+    pub live_id: String,
+    pub item: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LiveApplyOutcome {
+    /// False: the transaction was stale, from an old epoch, or conflicted with the map.
+    pub applied: bool,
+    /// Closes and activates the apply produced beside the workspace ops.
+    pub commands: Vec<LiveCommand>,
+    /// Live tabs the apply adopted, beside the items it created for them.
+    pub adopted: Vec<LiveAdoptedTab>,
+}
+
+impl From<ararat_core::live::Command> for LiveCommand {
+    fn from(command: ararat_core::live::Command) -> Self {
+        Self {
+            id: command.id,
+            kind: match command.kind {
+                ararat_core::live::CommandKind::Open => LiveCommandKind::Open,
+                ararat_core::live::CommandKind::Activate => LiveCommandKind::Activate,
+                ararat_core::live::CommandKind::Close => LiveCommandKind::Close,
+            },
+            item: command.item,
+            url: command.url,
+        }
+    }
+}
+
+impl From<LiveCause> for ararat_core::live::Cause {
+    fn from(cause: LiveCause) -> Self {
+        match cause {
+            LiveCause::Command(id) => ararat_core::live::Cause::Command(id),
+            LiveCause::Engine => ararat_core::live::Cause::Engine,
+            LiveCause::Chrome => ararat_core::live::Cause::Chrome,
+        }
+    }
+}
+
+impl From<LiveTab> for ararat_core::live::LiveTab {
+    fn from(tab: LiveTab) -> Self {
+        Self { live_id: tab.live_id, item: tab.item }
+    }
+}
+
+impl From<LiveStrip> for ararat_core::live::Strip {
+    fn from(strip: LiveStrip) -> Self {
+        Self {
+            window: strip.window,
+            tabs: strip.tabs.into_iter().map(Into::into).collect(),
+            active: strip.active,
+        }
+    }
+}
+
+impl From<LiveTransaction> for ararat_core::live::Transaction {
+    fn from(transaction: LiveTransaction) -> Self {
+        Self {
+            epoch: transaction.epoch,
+            rev: transaction.rev,
+            cause: transaction.cause.into(),
+            strips: transaction.strips.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ararat_core::live::ApplyOutcome> for LiveApplyOutcome {
+    fn from(outcome: ararat_core::live::ApplyOutcome) -> Self {
+        Self {
+            applied: outcome.applied,
+            commands: outcome.commands.into_iter().map(Into::into).collect(),
+            adopted: outcome.adopted.into_iter()
+                .map(|(live_id, item)| LiveAdoptedTab { live_id, item }).collect(),
+        }
     }
 }
 
@@ -990,6 +1174,54 @@ mod tests {
         assert_eq!(rows[position + 1].kind, RowKind::Folder);
         let (_, loaded) = Store::open(&path).unwrap();
         assert!(loaded.items.contains_key(&copy));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    // The live coordinator through the FFI: open and close hand back the commands with
+    // fresh ids, the close's lifecycle change is flushed before the command is returned,
+    // and a Chrome transaction's strips update the map and the window selection.
+    #[test]
+    fn live_open_close_and_apply_commit_and_survive_a_reopen() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-live-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
+        let opened = store.live_open("tab-mail".into(), "https://mail.example.com/".into()).unwrap();
+        assert_eq!(opened.kind, LiveCommandKind::Open);
+        assert_eq!(opened.url.as_deref(), Some("https://mail.example.com/"));
+        assert_eq!(store.live_tab("tab-mail".into()).as_deref(), Some(opened.id.as_str()));
+        assert_eq!(store.item_for_live(opened.id.clone()).as_deref(), Some("tab-mail"));
+
+        // Chrome's strips arrive with the tab live: the epoch's snapshot maps it, and a
+        // Chrome activation moves the window selection.
+        let live_id = opened.id.clone();
+        let outcome = store.live_apply(LiveTransaction {
+            epoch: 1, rev: 0, cause: LiveCause::Engine,
+            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
+        }).unwrap();
+        assert!(outcome.applied);
+        let snapshot = store.snapshot("one".into());
+        assert_eq!(snapshot.selected_id.as_deref(), Some("tab-mail"));
+
+        // The close's lifecycle change is committed before the command is returned.
+        let closed = store.live_close("tab-mail".into()).unwrap();
+        assert_eq!(closed.kind, LiveCommandKind::Close);
+        let snapshot = store.snapshot("one".into());
+        let row = snapshot.spaces[0].favorites.iter().find(|row| row.id == "tab-mail").expect("row kept");
+        assert!(row.unloaded);
+        // A stale rev is dropped and counted on the live coordinator.
+        let outcome = store.live_apply(LiveTransaction {
+            epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![],
+        }).unwrap();
+        assert!(!outcome.applied);
+        assert_eq!(store.live_dropped(), 1);
+        // A reopened store reads the same bytes: the close rode one storage transaction,
+        // and the reopened coordinator starts fresh.
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        let snapshot = store.snapshot("one".into());
+        assert!(snapshot.spaces[0].favorites.iter().find(|row| row.id == "tab-mail").unwrap().unloaded);
+        assert_eq!(store.live_dropped(), 0);
         drop(store);
         for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
     }

@@ -192,7 +192,7 @@ public final class SettingsModel: ObservableObject {
         case .failure(let error):
             if let core = error as? CoreError {
                 switch core {
-                case .Edit(let message), .Import(let message), .Store(let message): self.error = message
+                case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): self.error = message
                 }
             } else { self.error = error.localizedDescription }
         }

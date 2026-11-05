@@ -8,7 +8,7 @@ pub const HISTORY_LIMIT: usize = 50;
 pub struct EditError(pub String);
 
 impl WindowState {
-    fn select(&mut self, id: Option<Id>) {
+    pub(crate) fn select(&mut self, id: Option<Id>) {
         if let Some(id) = &id {
             self.history.retain(|entry| entry != id);
             self.history.insert(0, id.clone());
@@ -462,7 +462,7 @@ impl Workspace {
             .or_else(|| self.spaces.first().map(|space| space.id.as_str()))
     }
 
-    fn lifecycle_time(&self) -> u64 {
+    pub(crate) fn lifecycle_time(&self) -> u64 {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         now.max(self.items.values().map(|item| item.lifecycle_changed_at).max().unwrap_or(0).saturating_add(1))
     }
@@ -561,24 +561,45 @@ impl Workspace {
             return Err(EditError(format!("item {id} cannot be selected")));
         }
         let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
-        let mut loading = vec![self.items[id].clone()];
-        if matches!(self.items[id].kind, ItemKind::Split { .. }) {
+        for op in &ops { self.apply(op); }
+        ops.extend(self.record_active(window, id, now)?);
+        Ok(ops)
+    }
+
+    // The load-side write the selection shares with the coordinator: an active row is
+    // open, and so are its split members and the split ancestors it hangs in.
+    pub(crate) fn flip_active(&mut self, id: &str, now: u64) -> Vec<Op> {
+        let Some(item) = self.items.get(id) else { return Vec::new() };
+        let mut loading = vec![item.clone()];
+        if matches!(item.kind, ItemKind::Split { .. }) {
             loading.extend(self.outline_entries(id).into_iter().map(|(_, item, _)| item.clone()));
         }
-        let mut parent = self.items[id].membership.parent.as_ref();
-        while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
+        let mut parent = item.membership.parent.as_ref();
+        while let Some(ancestor) = parent.and_then(|pid| self.items.get(pid)) {
             if matches!(ancestor.kind, ItemKind::Split { .. }) { loading.push(ancestor.clone()); }
             parent = ancestor.membership.parent.as_ref();
         }
-        let changed_at = now;
+        let mut ops = Vec::new();
         for mut item in loading {
             let before = item.clone();
             if item.lifecycle == Lifecycle::Unloaded {
                 item.lifecycle = Lifecycle::Open;
-                item.lifecycle_changed_at = changed_at;
+                item.lifecycle_changed_at = now;
             }
             if item != before { ops.push(Op::Put(Record::Item(item))); }
         }
+        for op in &ops { self.apply(op); }
+        ops
+    }
+
+    // The one selection write: flip the row active, select it in the window and stamp the
+    // selection history. No visibility checks here — Chrome's own activations are
+    // recorded whatever the outline says.
+    pub(crate) fn record_active(&mut self, window: &str, id: &str, now: u64) -> Result<Vec<Op>, EditError> {
+        if !self.items.contains_key(id) {
+            return Err(EditError(format!("unknown item {id}")));
+        }
+        let mut ops = self.flip_active(id, now);
         let mut state = self.window_state(window);
         state.select(Some(id.into()));
         ops.push(Op::Put(Record::Window(state)));

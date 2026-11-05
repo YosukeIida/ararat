@@ -176,7 +176,7 @@ public final class AirTrafficModel: ObservableObject {
     private static func errorText(_ error: Error) -> String {
         if let core = error as? CoreError {
             switch core {
-            case .Edit(let message), .Import(let message), .Store(let message): return message
+            case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): return message
             }
         }
         return error.localizedDescription
