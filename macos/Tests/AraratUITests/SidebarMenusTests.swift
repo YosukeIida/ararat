@@ -18,7 +18,7 @@ private final class MenuFixture {
         directory = try testTemporaryDirectory()
         store = try WorkspaceStore.open(path: directory.appendingPathComponent("menus.sqlite").path)
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
+        _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
         _ = try store.createSpace(windowId: "menus", name: "Other", spaceId: "other")
         try store.showSpace(windowId: "menus", spaceId: "space-work")
         _ = NSApplication.shared

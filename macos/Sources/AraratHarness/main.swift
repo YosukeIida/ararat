@@ -7,6 +7,7 @@ var arguments = CommandLine.arguments.dropFirst().makeIterator()
 var checkOnly = false
 var headless = false
 var databasePath: String?
+var profile: Profile?
 var path: String?
 while let argument = arguments.next() {
     switch argument {
@@ -18,9 +19,15 @@ while let argument = arguments.next() {
             exit(1)
         }
         databasePath = value
+    case "--profile":
+        guard let value = arguments.next() else {
+            FileHandle.standardError.write(Data("--profile requires default or a name\n".utf8))
+            exit(1)
+        }
+        profile = value == "default" ? Profile.`default` : Profile.named(value)
     default:
         guard !argument.hasPrefix("--"), path == nil else {
-            FileHandle.standardError.write(Data("usage: AraratHarness [--check] [--headless] [--db path] [StorableSidebar.json]\n".utf8))
+            FileHandle.standardError.write(Data("usage: AraratHarness [--check] [--headless] [--db path] [--profile default|<name>] [StorableSidebar.json]\n".utf8))
             exit(1)
         }
         path = argument
@@ -95,7 +102,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             let url = URL(fileURLWithPath: fixturePath).deletingLastPathComponent().appendingPathComponent("StorableLinkRouting.json")
             guard let data = try? Data(contentsOf: url) else { return nil }
             return String(decoding: data, as: UTF8.self)
-        }, onImport: { report in
+        }, ownerProfile: profile, onImport: { report in
             guard report.linkRoutingError != nil || report.importedRules > 0 || report.skippedProfileDestinations > 0 || report.skippedUnknownDestinations > 0 || report.skippedUnknownStyles > 0 || report.malformedRules > 0 || report.keyBindingsError != nil || report.skippedKeyBindings > 0 || report.windowsError != nil || report.unknownSpaceLooks > 0 || report.differingFolderStates > 0 || report.skippedDates > 0 || report.peekedFolders > 0 || report.unknownWindowIds > 0 || report.malformedWindowEntries > 0 else { return }
             let summary = "Arc import: missingLinkRouting=\(report.missingLinkRouting) linkRoutingError=\(report.linkRoutingError?.debugDescription ?? "nil") importedRules=\(report.importedRules) skippedProfileDestinations=\(report.skippedProfileDestinations) skippedUnknownDestinations=\(report.skippedUnknownDestinations) skippedUnknownStyles=\(report.skippedUnknownStyles) malformedRules=\(report.malformedRules) missingKeyBindings=\(report.missingKeyBindings) keyBindingsError=\(report.keyBindingsError?.debugDescription ?? "nil") skippedKeyBindings=\(report.skippedKeyBindings) missingWindows=\(report.missingWindows) windowsError=\(report.windowsError?.debugDescription ?? "nil") unknownSpaceLooks=\(report.unknownSpaceLooks) differingFolderStates=\(report.differingFolderStates) skippedDates=\(report.skippedDates) peekedFolders=\(report.peekedFolders) unknownWindowIds=\(report.unknownWindowIds) malformedWindowEntries=\(report.malformedWindowEntries)\n"
             FileHandle.standardError.write(Data(summary.utf8))

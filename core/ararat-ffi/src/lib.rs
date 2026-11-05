@@ -106,8 +106,8 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
-    pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>) -> Result<ImportResult, CoreError> {
-        let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
+    pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
+        let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref(), owner_profile.map(Into::into)).map_err(|e| CoreError::Import { message: e.0 })?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         for item in imported.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
             imported.last_selected.entry(item.id.clone()).or_insert(now);
@@ -137,11 +137,19 @@ impl WorkspaceStore {
         let workspace = self.workspace.lock().unwrap();
         let routing = workspace.routing();
         // rule_for and route share the matcher, so the two answers cannot disagree. The
-        // space ids the workspace has now ride along: a destination naming a deleted space
-        // is answered as the most recent space, the stale id never reaches a window.
-        let spaces: Vec<Id> = workspace.spaces.iter().map(|space| space.id.clone()).collect();
+        // space view the workspace has now rides along: a destination naming a space the
+        // rule's profile no longer has is answered the way Routing::route spells out (the
+        // profile's own spaces first), and the stale id never reaches a window.
+        let spaces = workspace.routing_spaces();
         let rule_id = routing.rule_for(&url).map(|rule| rule.id.clone());
         RoutingDecision { rule_id, destination: routing.route(&url, &spaces).into() }
+    }
+
+    // The pane's "Deleted space" menus read the core's one answer, not a Swift-side compare.
+    pub fn deleted_space_destinations(&self) -> Vec<DeletedDestination> {
+        self.workspace.lock().unwrap().deleted_space_destinations().into_iter()
+            .map(|lost| DeletedDestination { rule_id: lost.rule_id, space_id: lost.space_id })
+            .collect()
     }
 
     pub fn add_rule(&self, window_id: String, rule: Rule) -> Result<WorkspaceSnapshot, CoreError> {
@@ -519,6 +527,7 @@ pub struct Rule {
     pub id: String,
     pub conditions: Vec<UrlCondition>,
     pub destination: Destination,
+    pub profile: Profile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -532,6 +541,14 @@ pub struct Routing {
 pub struct RoutingDecision {
     pub rule_id: Option<String>,
     pub destination: Destination,
+}
+
+// A destination whose space is gone: the rule beside it (None for the default) and the id
+// the destination still names.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeletedDestination {
+    pub rule_id: Option<String>,
+    pub space_id: String,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]
@@ -622,12 +639,12 @@ impl From<UrlCondition> for ararat_core::routing::UrlCondition {
 
 impl From<ararat_core::routing::Rule> for Rule {
     fn from(rule: ararat_core::routing::Rule) -> Self {
-        Self { id: rule.id, conditions: rule.conditions.into_iter().map(Into::into).collect(), destination: rule.destination.into() }
+        Self { id: rule.id, conditions: rule.conditions.into_iter().map(Into::into).collect(), destination: rule.destination.into(), profile: rule.profile.into() }
     }
 }
 impl From<Rule> for ararat_core::routing::Rule {
     fn from(rule: Rule) -> Self {
-        Self { id: rule.id, conditions: rule.conditions.into_iter().map(Into::into).collect(), destination: rule.destination.into() }
+        Self { id: rule.id, conditions: rule.conditions.into_iter().map(Into::into).collect(), destination: rule.destination.into(), profile: rule.profile.into() }
     }
 }
 
@@ -643,21 +660,29 @@ impl From<Routing> for ararat_core::routing::Routing {
 }
 
 #[uniffi::export]
-pub fn import_arc_sidebar(json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>) -> Result<ImportResult, CoreError> {
-    let (ws, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref()).map_err(|e| CoreError::Import { message: e.0 })?;
+pub fn import_arc_sidebar(json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
+    let (ws, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref(), owner_profile.map(Into::into)).map_err(|e| CoreError::Import { message: e.0 })?;
     Ok(ImportResult { snapshot: snapshot(ws, ""), report: report.into() })
 }
 
 // Arc's StorableLinkRouting.json on its own, for the pane and tests; the sibling import
-// (import_arc_sidebar) calls the core function directly. `spaces` is the set of space ids the
-// sidebar import produced: only destinations naming a known space can open.
+// (import_arc_sidebar) calls the core function directly. `spaces` is the space set the
+// sidebar import produced, each beside the profile it rides in: a destination is judged on
+// both — only a known id of the owner's profile can open, and with no owner named, only the
+// id being known does.
 #[uniffi::export]
-pub fn arc_link_routing(json: String, profile: Option<Profile>, spaces: Vec<String>) -> Result<LinkRoutingImport, CoreError> {
-    let known: std::collections::HashSet<String> = spaces.into_iter().collect();
-    let (routing, report) = import::arc_link_routing(&json,
-        profile.map_or(ararat_core::model::Profile::Default, Into::into), &known)
+pub fn arc_link_routing(json: String, profile: Option<Profile>, spaces: Vec<SpaceProfile>) -> Result<LinkRoutingImport, CoreError> {
+    let known = spaces.into_iter().map(|space| (space.id, space.profile.into())).collect::<Vec<(Id, ararat_core::model::Profile)>>();
+    let (routing, report) = import::arc_link_routing(&json, profile.map(Into::into), &known)
         .map_err(|e| CoreError::Import { message: e.0 })?;
     Ok(LinkRoutingImport { routing: routing.into(), report: report.into() })
+}
+
+// A space the sidebar import produced, beside the profile the file carries for it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceProfile {
+    pub id: String,
+    pub profile: Profile,
 }
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
@@ -743,11 +768,13 @@ mod tests {
             id: "meet".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "meet.google.com".into() }],
             destination: Destination::Space(SpaceTarget::Space("space-work".into())),
+            profile: Profile::Default,
         }).unwrap();
         store.add_rule(window.clone(), Rule {
             id: "docs".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "docs.example.com".into() }],
             destination: Destination::Space(SpaceTarget::MostRecent),
+            profile: Profile::Default,
         }).unwrap();
         let moved = store.move_rule(window.clone(), "docs".into(), 0).unwrap();
         let _ = moved;
@@ -755,6 +782,7 @@ mod tests {
             id: "meet".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Equals, text: "https://meet.google.com/".to_string() }],
             destination: Destination::LittleWindow(Profile::Default),
+            profile: Profile::Default,
         }).unwrap();
         store.set_default_destination(window.clone(), Destination::Space(SpaceTarget::MostRecent)).unwrap();
         let routing = store.routing();
@@ -780,23 +808,29 @@ mod tests {
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
         let window: String = "one".into();
         // A rule may only name a space the workspace has, so the space is created first; the
-        // second space keeps the first deletable (the last space cannot be deleted).
+        // second space keeps the first deletable (the last space cannot be deleted). Both
+        // spaces ride in the default profile (no space is shown yet), as the rule does.
         store.create_space(window.clone(), "Work".into(), "space-work".into()).unwrap();
         store.create_space(window.clone(), "Home".into(), "space-home".into()).unwrap();
         store.add_rule(window.clone(), Rule {
             id: "meet".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "meet.google.com".into() }],
             destination: Destination::Space(SpaceTarget::Space("space-work".into())),
+            profile: Profile::Default,
         }).unwrap();
         store.add_rule(window.clone(), Rule {
             id: "empty".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "  ".into() }],
-            destination: Destination::LittleWindow(Profile::Named("Profile 1".into())),
+            destination: Destination::LittleWindow(Profile::Default),
+            profile: Profile::Default,
         }).unwrap();
         // What the FFI answers must be what Routing::route answers for the same records, over
-        // the spaces the store has (the two created ones).
+        // the spaces the store has (the two created ones, no use recorded so far).
         let core = ararat_core::routing::Routing::from(store.routing());
-        let spaces = ["space-work".into(), "space-home".into()];
+        let spaces = ararat_core::routing::Spaces {
+            entries: ["space-work", "space-home"].into_iter().map(|id| (id.into(), Profile::Default.into())).collect(),
+            recency: ["space-work", "space-home"].into_iter().map(String::from).collect(),
+        };
         for url in ["https://www.meet.google.com/abc", "https://docs.example.com/", "https://meet.google.com/?q=1"] {
             let decision = store.route(url.into());
             assert_eq!(&decision.destination, &Destination::from(core.route(url, &spaces)), "{url}");
@@ -813,20 +847,28 @@ mod tests {
         let decision = store.route("https://nothing.example.org".into());
         assert_eq!(decision.rule_id, None);
         assert_eq!(decision.destination, Destination::from(core.default.clone()));
-        // A rule whose space is deleted still matches, and its link goes to the most recent
-        // space: the FFI route answer names a rule, not the stale id.
+        // A rule whose space is deleted still matches, and its link answers the remaining
+        // space of the rule's own profile, while the FFI answer still names the rule that
+        // held the stale id.
         store.delete_space(window.clone(), "space-work".into()).unwrap();
         let decision = store.route("https://www.meet.google.com/x".into());
         assert_eq!(decision.rule_id.as_deref(), Some("meet"));
-        assert_eq!(decision.destination, Destination::Space(SpaceTarget::MostRecent));
+        assert_eq!(decision.destination, Destination::Space(SpaceTarget::Space("space-home".into())));
         let core = ararat_core::routing::Routing::from(store.routing());
+        let spaces = ararat_core::routing::Spaces {
+            entries: [("space-home", Profile::Default)].into_iter().map(|(id, p)| (id.into(), p.into())).collect(),
+            recency: vec!["space-home".to_string()],
+        };
         // The workspace's remaining space is space-home: every destination on these urls
-        // names a space it no longer has, and the two answers agree on the most-recent
+        // names a space it no longer has, and the two answers agree on the profile's own
         // rewrite.
         for url in ["https://www.meet.google.com/abc", "https://docs.example.com/"] {
             let decision = store.route(url.into());
-            assert_eq!(&decision.destination, &Destination::from(core.route(url, &["space-home".into()])), "{url}");
+            assert_eq!(&decision.destination, &Destination::from(core.route(url, &spaces)), "{url}");
         }
+        // The deleted destination is the one the deleted-space query names.
+        assert_eq!(store.deleted_space_destinations(), vec![DeletedDestination {
+            rule_id: Some("meet".into()), space_id: "space-work".into() }]);
         drop(store);
         for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
     }
@@ -840,8 +882,9 @@ mod tests {
             id: "meet".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "meet.google.com".to_string() }],
             destination: Destination::Space(SpaceTarget::MostRecent),
+            profile: Profile::Default,
         }).unwrap();
-        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
         // The rules survive an Arc import that carried no link-routing file.
         let routing = store.routing();
         assert_eq!(routing.rules.len(), 1);
@@ -873,7 +916,7 @@ mod tests {
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
         let result = store.import_arc_sidebar("one".into(),
             include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None,
-            Some(include_str!("../../ararat-core/tests/fixtures/link-routing-synthetic.json").into())).unwrap();
+            Some(include_str!("../../ararat-core/tests/fixtures/link-routing-synthetic.json").into()), None).unwrap();
         let report = result.report;
         assert!(!report.missing_link_routing);
         assert_eq!(report.link_routing_error, None);
@@ -889,7 +932,7 @@ mod tests {
         // A second import of the same file overwrites its own rows and changes nothing else.
         store.import_arc_sidebar("one".into(),
             include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None,
-            Some(include_str!("../../ararat-core/tests/fixtures/link-routing-synthetic.json").into())).unwrap();
+            Some(include_str!("../../ararat-core/tests/fixtures/link-routing-synthetic.json").into()), None).unwrap();
         assert_eq!(store.routing(), routing);
         // The rules reached the journal: one row per rule, all in the import's one batch.
         drop(store);
@@ -915,10 +958,11 @@ mod tests {
             id: "saved".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "saved.example.com".into() }],
             destination: Destination::Space(SpaceTarget::MostRecent),
+            profile: Profile::Default,
         }).unwrap();
         let result = store.import_arc_sidebar("one".into(),
             include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None,
-            Some("{\"version\":1,\"rules\":}".into())).unwrap();
+            Some("{\"version\":1,\"rules\":}".into()), None).unwrap();
         assert_eq!(result.snapshot.spaces.len(), 2);
         assert!(result.report.link_routing_error.is_some());
         assert!(!result.report.missing_link_routing);
@@ -937,7 +981,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ararat-ffi-duplicate-{}.sqlite", std::process::id()));
         assert!(!path.exists());
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
-        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
         let snapshot = store.duplicate_item("one".into(), "folder-docs".into()).unwrap();
         let rows: Vec<_> = snapshot.spaces[0].pinned.iter().filter(|row| row.depth == 0).collect();
         let position = rows.iter().position(|row| row.id == "folder-docs").unwrap();
@@ -952,7 +996,7 @@ mod tests {
 
     #[test]
     fn drag_snapshot_exposes_membership_roots_indices_profiles_and_fold_state() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
         ws.set_folder_collapsed("folder-docs", true).unwrap();
         let snapshot = snapshot(ws, "drag");
         let space = &snapshot.spaces[0];
@@ -973,7 +1017,7 @@ mod tests {
 
     #[test]
     fn item_edits_snapshot_titles_and_keep_selection_when_hidden_or_moved_to_another_space() {
-        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
+        let mut ws = import::arc_sidebar(include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
         ws.spaces[1].profile = ararat_core::model::Profile::Default;
         ws.select_item("one", "tab-spec").unwrap();
         ws.rename_tab("tab-spec", "Custom").unwrap();
@@ -994,7 +1038,7 @@ mod tests {
         let json = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
             .replace(r#""id": "pin-work", "parentID": null"#, r#""id": "pin-work", "parentID": "tab-spec""#);
         assert!(json.contains(r#""id": "pin-work", "parentID": "tab-spec""#));
-        let snapshot = import_arc_sidebar(json, None, None, None).unwrap().snapshot;
+        let snapshot = import_arc_sidebar(json, None, None, None, None).unwrap().snapshot;
         assert!(!snapshot.spaces.is_empty());
     }
 }

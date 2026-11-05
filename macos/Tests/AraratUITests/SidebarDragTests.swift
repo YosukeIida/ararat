@@ -247,7 +247,7 @@ func successfulMovePreservesSelectionScrollAndCoreFolderState() throws {
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("drag.sqlite").path)
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json")
-    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
+    _ = try store.importArcSidebar(windowId: "drag", json: String(contentsOf: fixture, encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
     _ = try store.createSpace(windowId: "drag", name: "Other", spaceId: "other")
     try store.showSpace(windowId: "drag", spaceId: "space-work")
     _ = try store.setFolderCollapsed(windowId: "drag", id: "folder-docs", collapsed: true)

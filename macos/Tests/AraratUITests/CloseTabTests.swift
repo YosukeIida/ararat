@@ -85,7 +85,7 @@ func swiftStoreCloseSurvivesReopenAndDrivesSidebarSelection() throws {
     let closed: WorkspaceSnapshot
     do {
         let store = try WorkspaceStore.open(path: path)
-        _ = try store.importArcSidebar(windowId: "test", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
+        _ = try store.importArcSidebar(windowId: "test", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
         let selected = try store.selectItem(windowId: "test", id: "a")
         let sidebar = closeSidebar(selected)
         #expect(sidebar.selectedRowID == "a")
@@ -187,7 +187,7 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
     let path = directory.appendingPathComponent("workspace.sqlite").path
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["split","d"],"data":{"itemContainer":{}}},"split",{"id":"split","parentID":"today","childrenIds":["b","c"],"data":{"splitView":{"layoutOrientation":"horizontal"}}},"b",{"id":"b","parentID":"split","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"split","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}},"d",{"id":"d","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://d.example"}}}]}]}}"#
     let store = try WorkspaceStore.open(path: path)
-    _ = try store.importArcSidebar(windowId: "test", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil).snapshot
+    _ = try store.importArcSidebar(windowId: "test", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
     let selected = try store.selectItem(windowId: "test", id: "split")
     let sidebar = closeSidebar(selected)
     let survivor = try #require(closeViews(sidebar).first { $0.row.id == "d" })

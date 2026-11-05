@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Record, WindowState, Workspace};
+use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Profile, Record, WindowState, Workspace};
 
 pub const HISTORY_LIMIT: usize = 50;
 
@@ -789,7 +789,7 @@ impl Workspace {
         if self.routing_rules.contains_key(&rule.id) {
             return Err(EditError(format!("rule {} already exists", rule.id)));
         }
-        self.check_space_destination(&rule.destination)?;
+        self.check_routing_destination(&rule.destination, Some(&rule.profile))?;
         // New rules join at the end: one key after the last rule in the order now has (the
         // key is independent of how the tied run after it scores, ties fall back to the id).
         let last = self.routing_rules.values().map(|s| s.order.as_str()).max();
@@ -802,13 +802,18 @@ impl Workspace {
         let Some(stored) = self.routing_rules.get(&rule.id) else {
             return Err(EditError(format!("unknown rule {}", rule.id)));
         };
+        // A rule's profile is fixed at its start (add or import): the edit answers to the
+        // stored one, not to whatever the caller resent, so a stale row cannot move the
+        // rule into another profile by rewriting it whole.
+        let mut rule = rule;
+        rule.profile = stored.rule.profile.clone();
         // An edit that changes nothing writes nothing.
         if stored.rule == rule { return Ok(Vec::new()); }
         // Only a destination the edit changes to is checked: one keeping the rule's current
         // destination (a text or style change only) still writes, so a rule whose space was
         // deleted can still be fixed.
         if stored.rule.destination != rule.destination {
-            self.check_space_destination(&rule.destination)?;
+            self.check_routing_destination(&rule.destination, Some(&rule.profile))?;
         }
         // The order key stays: an edit changes what the rule does, not where it sits.
         let op = Op::Put(Record::RoutingRule { order: stored.order.clone(), rule });
@@ -839,22 +844,40 @@ impl Workspace {
         Ok(self.commit_edit(ops))
     }
 
-    // A Space(id) destination names a space of this workspace: the import checks the
-    // sidebar's ids the same way, and an edit that adds a destination — a new rule, a
-    // changed rule destination, a new default — is refused when it names a missing one. A
-    // destination a deleted space left behind rides along: the route answer rewrites it and
-    // the pane shows it. MostRecent and the Little window carry no space id and pass.
-    fn check_space_destination(&self, destination: &crate::routing::Destination) -> Result<(), EditError> {
-        if let crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(id)) = destination {
-            if !self.spaces.iter().any(|space| &space.id == id) {
-                return Err(EditError(format!("unknown space {id}")));
+    // The default destination belongs to no rule, so only existence decides its space; a
+    // Little window still names a profile the workspace has.
+    fn check_routing_destination(&self, destination: &crate::routing::Destination, profile: Option<&Profile>) -> Result<(), EditError> {
+        match destination {
+            crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(id)) => {
+                let space = self.spaces.iter().find(|space| &space.id == id)
+                    .ok_or_else(|| EditError(format!("unknown space {id}")))?;
+                if profile.is_some_and(|profile| &space.profile != profile) {
+                    return Err(EditError(format!("space {id} belongs to another profile")));
+                }
             }
+            crate::routing::Destination::LittleWindow(profile) => {
+                if let Profile::Named(name) = profile {
+                    if !self.space_profiles().any(|candidate| candidate == profile) {
+                        return Err(EditError(format!("unknown profile {name}")));
+                    }
+                }
+            }
+            crate::routing::Destination::Space(crate::routing::SpaceTarget::MostRecent) => {},
         }
         Ok(())
     }
 
+    // The named profiles the workspace carries, from every record that is per profile: a
+    // named profile outlives its spaces (favorites and the archive threshold remain), so
+    // the spaces list alone is not the whole answer.
+    fn space_profiles(&self) -> impl Iterator<Item = &Profile> {
+        self.spaces.iter().map(|s| &s.profile)
+            .chain(self.favorites.keys())
+            .chain(self.archive_after.keys())
+    }
+
     pub fn set_default_destination(&mut self, destination: crate::routing::Destination) -> Result<Vec<Op>, EditError> {
-        self.check_space_destination(&destination)?;
+        self.check_routing_destination(&destination, None)?;
         // An edit that changes nothing writes nothing.
         if self.routing_default == destination { return Ok(Vec::new()); }
         // The built-in default is derived, never stored (like to_ops emits no record for it):

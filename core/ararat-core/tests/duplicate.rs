@@ -1,5 +1,5 @@
 use ararat_core::{import::arc_sidebar, model::{ItemKind, Kind, Lifecycle, Op, Record, Workspace}, storage::Store};
-fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0 }
+fn workspace() -> Workspace { arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0 }
 fn duplicate(ws: &mut Workspace, id: &str, parent: &str, root: &str) -> String {
     let before = ws.clone();
     let siblings = ws.children(parent);

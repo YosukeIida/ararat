@@ -21,13 +21,13 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
-    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, linkRoutingJSON: @escaping @Sendable () -> String?, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
+    public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, linkRoutingJSON: @escaping @Sendable () -> String?, ownerProfile: Profile? = nil, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
             self.store = opened
             let snapshot = opened.snapshot(windowId: self.windowID)
             guard snapshot.spaces.isEmpty else { return snapshot }
-            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON(), keyBindingsJson: keyBindingsJSON(), linkRoutingJson: linkRoutingJSON())
+            let imported = try opened.importArcSidebar(windowId: self.windowID, json: json(), windowsJson: windowsJSON(), keyBindingsJson: keyBindingsJSON(), linkRoutingJson: linkRoutingJSON(), ownerProfile: ownerProfile)
             onImport(imported.report)
             return imported.snapshot
         }, completion: completion)
@@ -41,6 +41,11 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 
     public func route(url: String, completion: @escaping Completion<RoutingDecision>) {
         enqueue({ try self.opened().route(url: url) }, completion: completion)
+    }
+
+    // The "Deleted space" menu items read the core's one answer, not a Swift-side compare.
+    public func deletedSpaces(completion: @escaping Completion<[DeletedDestination]>) {
+        enqueue({ try self.opened().deletedSpaceDestinations() }, completion: completion)
     }
 
     public func addRule(_ rule: Rule, completion: @escaping Completion<Routing>) {

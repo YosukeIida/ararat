@@ -39,7 +39,7 @@ pub struct ImportReport {
 
 type Result<T> = std::result::Result<T, ImportError>;
 
-pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Option<&str>, link_routing_json: Option<&str>) -> Result<(Workspace, ImportReport)> {
+pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Option<&str>, link_routing_json: Option<&str>, owner: Option<Profile>) -> Result<(Workspace, ImportReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     let container = root["sidebar"]["containers"]
         .as_array()
@@ -98,16 +98,18 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
         },
     }
     // The routing reads the spaces this import is about to produce: only destinations naming
-    // one of them can open, and a Little-window destination belongs to the import's profile —
-    // the first space's (the file is profile-relative the way the sidebar is, and the pane can
-    // change either). The routing rides `to_ops()` with the sidebar's records (a sidebar
-    // override never deletes: rules the workspace already had stay), and an unreadable file
-    // never blocks the sidebar, as key_bindings_error does not.
-    let spaces: HashSet<Id> = workspace.spaces.iter().map(|s| s.id.clone()).collect();
-    let profile = workspace.spaces.first().map(|s| s.profile.clone()).unwrap_or(Profile::Default);
+    // one of them, in the profile that owns them, can open, and a Little-window destination
+    // belongs to the routing file's owner — the profile the caller vouches for, and with no
+    // owner named, the first space's (the file is profile-relative the way the sidebar is,
+    // and the pane can change either). An unknown owner checks existence only: an owner it
+    // cannot say cannot decide what is another profile's. The routing rides `to_ops()` with
+    // the sidebar's records (a sidebar override never deletes: rules the workspace already
+    // had stay), and an unreadable file never blocks the sidebar, as key_bindings_error
+    // does not.
+    let spaces: Vec<(Id, Profile)> = workspace.spaces.iter().map(|space| (space.id.clone(), space.profile.clone())).collect();
     match link_routing_json {
         None => report.missing_link_routing = true,
-        Some(json) => match arc_link_routing(json, profile, &spaces) {
+        Some(json) => match arc_link_routing(json, owner, &spaces) {
             Ok((routing, counters)) => {
                 report.imported_rules = counters.imported_rules;
                 report.skipped_profile_destinations = counters.skipped_profile_destinations;
@@ -384,10 +386,14 @@ pub struct LinkRoutingReport {
     pub malformed_rules: usize,
 }
 
-// `profile` is the profile the import belongs to: a `littleArc` destination opens in that
-// profile's Little window, and the file carries no profile of its own. `spaces` is the set of
-// space ids the sidebar import produced: only a destination naming one of them can open.
-pub fn arc_link_routing(json: &str, profile: Profile, spaces: &HashSet<Id>) -> Result<(Routing, LinkRoutingReport)> {
+// `owner` is the profile the caller vouches owns this routing file: the rules and Little
+// windows it produces belong to it, and a space destination must name a space that profile
+// carries — a space of another profile is skipped like an unknown one. With no owner named,
+// the first space's profile stands in and existence alone decides; every rule is then
+// stamped with the profile of the space its destination names (the first space's for Most
+// Recent and Little window rules), so no written rule carries a destination that route()
+// would refuse.
+pub fn arc_link_routing(json: &str, owner: Option<Profile>, spaces: &[(Id, Profile)]) -> Result<(Routing, LinkRoutingReport)> {
     let root: Value = serde_json::from_str(json).map_err(|e| ImportError(e.to_string()))?;
     // The version gates the whole mapping: shapes may change under a new version, so refuse
     // rather than mis-read; a missing version is not 1 either.
@@ -399,6 +405,11 @@ pub fn arc_link_routing(json: &str, profile: Profile, spaces: &HashSet<Id>) -> R
     if major != 1 {
         return Err(ImportError(format!("StorableLinkRouting version {major} is not supported")));
     }
+
+    let profile = owner.clone()
+        .or_else(|| spaces.first().map(|(_, profile)| profile.clone()))
+        .unwrap_or(Profile::Default);
+    let known: HashMap<Id, Profile> = spaces.iter().map(|(id, profile)| (id.clone(), profile.clone())).collect();
 
     let mut report = LinkRoutingReport::default();
     let mut rules = Vec::new();
@@ -429,9 +440,18 @@ pub fn arc_link_routing(json: &str, profile: Profile, spaces: &HashSet<Id>) -> R
                 Err(Skip::Malformed) => { report.malformed_rules += 1; continue 'entry; }
             }
         }
-        match arc_destination(&obj["destination"], &profile, spaces) {
+        match arc_destination(&obj["destination"], &profile, &known, owner.is_some()) {
             DestinationOr::Keep(destination) => {
-                rules.push(Rule { id: id.into(), conditions, destination });
+                // A written rule must carry no destination route() would refuse: with an
+                // owner the space kept already rides in it, and with none the space's own
+                // profile has to stand in — keeping the first space's for a cross-profile
+                // space would send the link away from the space the file named.
+                let stamped = match &destination {
+                    Destination::Space(SpaceTarget::Space(id)) =>
+                        known.get(id).cloned().unwrap_or_else(|| profile.clone()),
+                    _ => profile.clone(),
+                };
+                rules.push(Rule { id: id.into(), conditions, destination, profile: stamped });
                 report.imported_rules += 1;
             }
             // A rule with no destination has nowhere to route.
@@ -441,7 +461,7 @@ pub fn arc_link_routing(json: &str, profile: Profile, spaces: &HashSet<Id>) -> R
     }
 
     let mut routing = Routing { rules, default: Routing::default().default };
-    match arc_destination(&root["defaultDestination"], &profile, spaces) {
+    match arc_destination(&root["defaultDestination"], &profile, &known, owner.is_some()) {
         DestinationOr::Keep(destination) => routing.default = destination,
         // The file has no default destination: keep ours, and count only what it cannot read.
         DestinationOr::Absent => {},
@@ -498,7 +518,9 @@ fn destination_target(value: Option<&Value>) -> Target {
 
 // A LinkDestination is `space(ProfileDestination)` or `littleArc(ProfileDestination)` (Cra
 // LinkRouting.swift). The profile case cannot be imported: count it and leave the rule out.
-fn arc_destination(value: &Value, profile: &Profile, spaces: &HashSet<Id>) -> DestinationOr {
+// `spaces` carries the profile each usable id rides in; `profiled` is whether the file's
+// owner is known — without one, only existence decides.
+fn arc_destination(value: &Value, profile: &Profile, spaces: &HashMap<Id, Profile>, profiled: bool) -> DestinationOr {
     if value.is_null() { return DestinationOr::Absent; } // No default in the file at all.
     let Some(map) = value.as_object() else { return DestinationOr::SkipUnknown };
     if let Some(body) = map.get("littleArc") {
@@ -514,11 +536,14 @@ fn arc_destination(value: &Value, profile: &Profile, spaces: &HashSet<Id>) -> De
     if let Some(body) = map.get("space") {
         return match destination_target(body.get("_0")) {
             Target::MostRecent => DestinationOr::Keep(Destination::Space(SpaceTarget::MostRecent)),
-            // A rule can only open a space the workspace has, so an id that is not one of the
-            // sidebar's spaces is skipped and counted instead of routing into nothing.
-            Target::Space(id) => if spaces.contains(&id) {
-                DestinationOr::Keep(Destination::Space(SpaceTarget::Space(id)))
-            } else { DestinationOr::SkipUnknown },
+            // A rule can only open a space the workspace has in the profile its rules ride
+            // in, so an id that is not one of the sidebar's spaces — or one of them in
+            // another profile — is skipped and counted instead of routing into nothing.
+            Target::Space(id) => match spaces.get(&id) {
+                Some(space_profile) if !profiled || space_profile == profile =>
+                    DestinationOr::Keep(Destination::Space(SpaceTarget::Space(id))),
+                _ => DestinationOr::SkipUnknown,
+            },
             Target::Profile => DestinationOr::SkipProfile,
             Target::Unknown => DestinationOr::SkipUnknown,
         };

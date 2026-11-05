@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub type Id = String;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Profile {
+    #[default]
     Default,
     Named(String),
 }
@@ -222,7 +223,8 @@ impl Record {
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
             Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
-                order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone() }),
+                order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone(),
+                profile: rule.profile.clone() }),
             Record::RoutingDefault { destination } => serde_json::to_string(destination),
         }
         .expect("model types serialise")
@@ -245,7 +247,10 @@ impl Record {
                 let stored: crate::routing::StoredRuleBody = serde_json::from_str(body)?;
                 Record::RoutingRule {
                     order: stored.order,
-                    rule: crate::routing::Rule { id: id.into(), conditions: stored.conditions, destination: stored.destination },
+                    rule: crate::routing::Rule {
+                        id: id.into(), conditions: stored.conditions, destination: stored.destination,
+                        profile: stored.profile,
+                    },
                 }
             }
             Kind::RoutingDefault => Record::RoutingDefault { destination: serde_json::from_str(body)? },
@@ -370,6 +375,50 @@ impl Workspace {
             rules: rules.into_iter().map(|s| s.rule.clone()).collect(),
             default: self.routing_default.clone(),
         }
+    }
+
+    // Recency reads the device's own selection record, never a synced time: derived from
+    // the same records, every device reads the same order without the times moving.
+    pub fn routing_spaces(&self) -> crate::routing::Spaces {
+        use crate::routing::Spaces;
+        let mut newest: HashMap<&Id, u64> = HashMap::new();
+        for (id, at) in &self.last_selected {
+            if let Some(space) = self.space_of(id) {
+                let rank = newest.entry(&space.id).or_insert(0);
+                *rank = (*rank).max(*at);
+            }
+        }
+        let mut ranked: Vec<&Space> = self.spaces.iter().collect();
+        ranked.sort_by_key(|space| std::cmp::Reverse(newest.get(&space.id).copied()));
+        Spaces {
+            entries: self.spaces.iter().map(|s| (s.id.clone(), s.profile.clone())).collect(),
+            recency: ranked.into_iter().map(|s| s.id.clone()).collect(),
+        }
+    }
+
+    // Favorites are excluded: they belong to a profile, so no space of their own; the chain
+    // has no cycle the tree checks do not surface.
+    fn space_of(&self, id: &str) -> Option<&Space> {
+        let (root, _) = self.list_for(id)?;
+        self.spaces.iter().find(|space| &space.pinned == root || &space.today == root)
+    }
+
+    // The pane's "Deleted space" menus read the core's one answer, not a Swift-side compare.
+    pub fn deleted_space_destinations(&self) -> Vec<crate::routing::DeletedDestination> {
+        let mut gone = Vec::new();
+        for rule in self.routing().rules {
+            if let crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(ref id)) = rule.destination {
+                if !self.spaces.iter().any(|s| &s.id == id) {
+                    gone.push(crate::routing::DeletedDestination { rule_id: Some(rule.id.clone()), space_id: id.clone() });
+                }
+            }
+        }
+        if let crate::routing::Destination::Space(crate::routing::SpaceTarget::Space(ref id)) = self.routing_default {
+            if !self.spaces.iter().any(|s| &s.id == id) {
+                gone.push(crate::routing::DeletedDestination { rule_id: None, space_id: id.clone() });
+            }
+        }
+        gone
     }
 }
 

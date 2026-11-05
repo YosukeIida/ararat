@@ -47,8 +47,13 @@ public final class SettingsModel: ObservableObject {
     }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        let spaceIds = self.snapshot.spaces.map(\.id)
         self.snapshot = snapshot
         if case .space(let id) = page, !snapshot.spaces.contains(where: { $0.id == id }) { navigate(.spaces) }
+        // A space deleted while the window is open moves its destination into the pane's
+        // "Deleted space" set: the set is the core's answer, so it reloads with the spaces
+        // instead of waiting for the next routing answer the pane triggers.
+        if spaceIds != snapshot.spaces.map(\.id) { airTraffic.reloadDeletedSpaces() }
     }
 
     func navigate(_ target: Page, highlight: String? = nil) {
@@ -131,12 +136,31 @@ public final class SettingsModel: ObservableObject {
     func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
-    /// The profile the pane's fresh Little-window picks write: the shown space's own
-    /// `Profile` from the FFI snapshot — the way the import takes the first space's when the
-    /// routing file carries no profile — not the display name mapped back, which a named
-    /// profile called "Default" would read as the built-in one.
+    /// The profile the default destination's and the New Route's fresh Little-window picks
+    /// write — the only picks that name no rule: the shown space's own `Profile` from the
+    /// FFI snapshot, not the display name mapped back, which a named profile called
+    /// "Default" would read as the built-in one.
     var airTrafficLittleWindowProfile: Profile? {
         archiveSpace?.profile
+    }
+    /// The default destination read as one of the destination menus' choices (a lost space
+    /// id reads as the disabled deleted-space item): the default card selects it and New
+    /// Route starts from it.
+    var defaultChoice: DestinationChoice {
+        DestinationChoice(airTraffic.routing?.default, deletedSpaces: airTraffic.deletedSpaces)
+    }
+    /// Where a New Route rule starts: the default's destination — but when that names a
+    /// space of another profile than the rule would ride in (the shown space's), the most
+    /// recent space instead, and when it names a deleted space, the shown profile's Little
+    /// window. The core refuses a cross-profile space on a rule, while the default itself
+    /// is judged on existence only.
+    func newRouteDestination() -> Destination {
+        let destination = defaultChoice.destination(littleWindowProfile: airTrafficLittleWindowProfile)
+        if case .space(.space(let id))? = destination,
+           snapshot.spaces.first(where: { $0.id == id })?.profile != (airTrafficLittleWindowProfile ?? .`default`) {
+            return .space(.mostRecent)
+        }
+        return destination ?? .littleWindow(airTrafficLittleWindowProfile ?? .`default`)
     }
     var archiveAfter: ArchiveAfter { archiveSpace?.archiveAfter ?? .hours12 }
     func setArchiveAfter(_ value: ArchiveAfter) {

@@ -428,7 +428,7 @@ private struct SettingsAirTrafficSection: View {
                 Text("Routes").font(.headline)
                 Spacer(minLength: 12)
                 Button("New Route") {
-                    airTraffic.add(destination: defaultChoice.destination(littleWindowProfile: model.airTrafficLittleWindowProfile) ?? Destination.littleWindow(.`default`))
+                    airTraffic.add(destination: model.newRouteDestination(), profile: model.airTrafficLittleWindowProfile)
                 }
             }
             .padding(.vertical, 2)
@@ -441,10 +441,6 @@ private struct SettingsAirTrafficSection: View {
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var defaultChoice: DestinationChoice {
-        DestinationChoice(airTraffic.routing?.default, spaces: model.snapshot.spaces)
     }
 
     private func ruleCard(_ rule: Rule, position: Int) -> some View {
@@ -495,8 +491,8 @@ private struct SettingsAirTrafficSection: View {
 
     private func destinationPicker(_ rule: Rule) -> some View {
         Picker("Open in", selection: Binding(
-            get: { DestinationChoice(rule.destination, spaces: model.snapshot.spaces) },
-            set: { airTraffic.editDestination(rule.id, choice: $0, littleWindowProfile: model.airTrafficLittleWindowProfile) })) {
+            get: { DestinationChoice(rule.destination, deletedSpaces: airTraffic.deletedSpaces) },
+            set: { airTraffic.editDestination(rule.id, choice: $0) })) {
             pickerContext
         }
         .labelsHidden()
@@ -506,10 +502,10 @@ private struct SettingsAirTrafficSection: View {
     @ViewBuilder private var pickerContext: some View {
         // Built from `DestinationChoice.menuTags(spaces:deletedSpaceIds:)`: the tag-coverage
         // test reads this menu through the helper, not a copy of it. A destination naming a
-        // space the workspace lost gets one disabled "Deleted space" item, selected, ahead of
-        // the spaces; only the ids this section's own destinations name appear.
+        // space the core flagged as gone gets one disabled "Deleted space" item, selected,
+        // ahead of the spaces; only the ids this section's own destinations lost appear.
         let tags = DestinationChoice.menuTags(spaces: model.snapshot.spaces,
-            deletedSpaceIds: airTraffic.deletedSpaceIds(spaces: model.snapshot.spaces))
+            deletedSpaceIds: airTraffic.deletedSpaceIds)
         ForEach(tags.filter(\.isDeletedSpace), id: \.self) { tag in
             Text(tag.menuTitle(spaces: model.snapshot.spaces)).tag(tag).disabled(true)
         }
@@ -533,7 +529,7 @@ private struct SettingsAirTrafficSection: View {
             }
             Spacer(minLength: 12)
             Picker("Default destination", selection: Binding(
-                get: { defaultChoice },
+                get: { model.defaultChoice },
                 set: { airTraffic.setDefault($0, littleWindowProfile: model.airTrafficLittleWindowProfile) })) {
                 pickerContext
             }

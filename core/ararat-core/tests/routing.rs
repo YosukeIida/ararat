@@ -1,32 +1,29 @@
 // Persisting and importing Air Traffic Control rules.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
-use ararat_core::import::{ImportError, LinkRoutingReport, arc_link_routing};
-use ararat_core::model::{Id, Kind, Op, Profile, Record, Workspace};
-use ararat_core::routing::{Destination, MatchStyle, Rule, Routing, SpaceTarget, UrlCondition};
+use ararat_core::import::{ImportError, LinkRoutingReport, arc_link_routing, arc_sidebar};
+use ararat_core::model::{Id, Kind, Profile, Record, Workspace};
+use ararat_core::routing::{Destination, MatchStyle, Rule, Routing, SpaceTarget, Spaces, UrlCondition};
 use ararat_core::storage::Store;
 use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("fixtures/link-routing-synthetic.json");
 
-// The space ids a sidebar import carries: rules may only route to spaces the workspace has.
-fn known_spaces() -> HashSet<Id> {
-    ["space-work", "space-home"].into_iter().map(String::from).collect()
+// The spaces a sidebar import carries, each beside the profile it rides in (the fixture's
+// work space is the default profile's, home is named "Profile 1"): a destination is judged
+// on both, and the rules land in the profile that owns the file they came from.
+fn imported_spaces() -> Vec<(Id, Profile)> {
+    [("space-work", Profile::Default), ("space-home", Profile::Named("Profile 1".into()))]
+        .into_iter().map(|(id, profile)| (id.to_string(), profile)).collect()
 }
 
-// The same known ids a route() argument carries: the import checked the fixture's
-// destinations against exactly these and the order is beside the point, the membership is
-// what route() checks.
-fn known_ids() -> Vec<Id> {
-    known_spaces().into_iter().collect()
+fn spaces_view() -> Spaces {
+    Spaces { entries: imported_spaces(), recency: ["space-work".to_string(), "space-home".to_string()].to_vec() }
 }
 
-// The space ids a workspace has now: route() checks a destination's id against these, and a
-// destination naming any other one is answered as the most recent space.
-fn space_ids(workspace: &Workspace) -> Vec<Id> {
-    workspace.spaces.iter().map(|space| space.id.clone()).collect()
+fn spaces(workspace: &Workspace) -> Spaces {
+    workspace.routing_spaces()
 }
 
 fn contains(text: &str) -> UrlCondition {
@@ -38,7 +35,7 @@ fn equals(text: &str) -> UrlCondition {
 }
 
 fn rule(id: &str, conditions: Vec<UrlCondition>, destination: Destination) -> Rule {
-    Rule { id: id.into(), conditions, destination }
+    Rule { id: id.into(), conditions, destination, profile: Profile::Default }
 }
 
 fn space(id: &str) -> Destination {
@@ -62,11 +59,11 @@ fn little_window() -> Destination {
 }
 
 fn imported() -> (Routing, LinkRoutingReport) {
-    arc_link_routing(FIXTURE, Profile::Default, &known_spaces()).unwrap()
+    arc_link_routing(FIXTURE, None, &imported_spaces()).unwrap()
 }
 
 fn import_json(json: &str) -> (Routing, LinkRoutingReport) {
-    arc_link_routing(json, Profile::Default, &known_spaces()).unwrap()
+    arc_link_routing(json, None, &imported_spaces()).unwrap()
 }
 
 fn fresh_db(name: &str) -> PathBuf {
@@ -104,17 +101,17 @@ fn add_edit_delete_reorder_and_default_apply_in_order() {
     workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     workspace.add_rule(rule("docs", vec![contains("docs.example.com")], space("space-home"))).unwrap();
     // The first match wins, so the order decides where a URL takes.
-    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &space_ids(&workspace)), space("space-work"));
+    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces(&workspace)), space("space-work"));
 
     workspace.edit_rule(rule("docs", vec![contains("docs.example.com")], little_window())).unwrap();
     workspace.move_rule("docs", 0).unwrap();
     assert_eq!(workspace.routing().rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["docs", "meet"]);
-    assert_eq!(workspace.routing().route("https://docs.example.com/x", &space_ids(&workspace)), little_window());
+    assert_eq!(workspace.routing().route("https://docs.example.com/x", &spaces(&workspace)), little_window());
 
     workspace.delete_rule("meet").unwrap();
     assert_eq!(workspace.routing().rules.len(), 1);
     workspace.set_default_destination(most_recent()).unwrap();
-    assert_eq!(workspace.routing().route("https://other.example.org", &space_ids(&workspace)), most_recent());
+    assert_eq!(workspace.routing().route("https://other.example.org", &spaces(&workspace)), most_recent());
 }
 
 #[test]
@@ -174,6 +171,8 @@ fn edits_journal_one_record_each() {
     assert_journal_record_agree(&path);
 }
 
+use ararat_core::model::Op;
+
 #[test]
 fn reopen_and_journal_replay_give_the_same_routing() {
     let path = fresh_db("routing-replay");
@@ -218,15 +217,15 @@ fn contains_maps_to_match_style_contains() {
     // Arc's seeded route is a "contains" rule to the space of most-recent tabs (Cra
     // LinkRouting.swift googleMeet); Meet.Google.Com keeps its case until matching.
     assert_eq!(routing.rules[0], rule("meet", vec![contains("Meet.Google.Com")], most_recent()));
-    assert_eq!(routing.route("https://www.meet.google.com/abc", &known_ids()), most_recent());
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces_view()), most_recent());
 }
 
 #[test]
 fn matches_maps_to_match_style_equals() {
     let (routing, _) = imported();
     assert_eq!(routing.rules[1], rule("github-prs", vec![equals("https://github.com/pulls/")], space("space-work")));
-    assert_eq!(routing.route("https://github.com/pulls?q=1", &known_ids()), space("space-work"));
-    assert_eq!(routing.route("https://github.com/pulls/assigned", &known_ids()), Routing::default().default);
+    assert_eq!(routing.route("https://github.com/pulls?q=1", &spaces_view()), space("space-work"));
+    assert_eq!(routing.route("https://github.com/pulls/assigned", &spaces_view()), Routing::default().default);
 }
 
 #[test]
@@ -244,10 +243,10 @@ fn little_arc_maps_to_little_window_with_the_import_profile() {
     // Little window record carries the profile the import belongs to (this fixture: Default).
     let (routing, _) = imported();
     assert_eq!(routing.rules[2], rule("docs-little", vec![contains("docs.example.com")], little_window()));
-    assert_eq!(routing.route("https://docs.example.com/spec", &known_ids()), little_window());
-    // The import's profile is an argument of the import, not file data.
+    assert_eq!(routing.route("https://docs.example.com/spec", &spaces_view()), little_window());
+    // The routing file's owner is an argument of the import, not file data.
     let json = r#"{"version":1,"rules":[{"id":"meet","sourceComponents":[{"id":"m","componentType":{"urlMatch":{"_0":{"contains":{}},"_1":"meet.google.com"}}}],"destination":{"littleArc":{"_0":{"mostRecent":{}}}}}],"defaultDestination":{"littleArc":{"_0":{"mostRecent":{}}}}}"#;
-    let (routing, _) = arc_link_routing(json, Profile::Named("Profile 1".into()), &known_spaces()).unwrap();
+    let (routing, _) = arc_link_routing(json, Some(Profile::Named("Profile 1".into())), &imported_spaces()).unwrap();
     assert_eq!(routing.rules[0].destination, Destination::LittleWindow(Profile::Named("Profile 1".into())));
     assert_eq!(routing.default, Destination::LittleWindow(Profile::Named("Profile 1".into())));
 }
@@ -285,7 +284,8 @@ fn a_rule_without_an_id_is_counted_malformed() {
 #[test]
 fn multi_component_rules_import_all_conditions_in_file_order() {
     let (routing, _) = imported();
-    assert_eq!(routing.rules[3], rule("double-condition", vec![contains("a.example"), equals("https://b.example/")], space("space-home")));
+    let double = routing.rules.iter().find(|r| r.id == "double-condition").unwrap();
+    assert_eq!(double.conditions, vec![contains("a.example"), equals("https://b.example/")]);
 }
 
 #[test]
@@ -303,15 +303,15 @@ fn the_default_destination_maps_like_a_rule_destination() {
 #[test]
 fn a_missing_or_unknown_version_is_refused() {
     let json = r#"{"rules":[]}"#;
-    assert_eq!(arc_link_routing(json, Profile::Default, &known_spaces()).map(|_| ()).unwrap_err().0, "StorableLinkRouting has no version");
+    assert_eq!(arc_link_routing(json, None, &imported_spaces()).map(|_| ()).unwrap_err().0, "StorableLinkRouting has no version");
     let json = r#"{"version":2,"rules":[],"defaultDestination":{"littleArc":{"_0":{"mostRecent":{}}}}}"#;
     assert_eq!(
-        arc_link_routing(json, Profile::Default, &known_spaces()).map(|_| ()).unwrap_err().0,
+        arc_link_routing(json, None, &imported_spaces()).map(|_| ()).unwrap_err().0,
         "StorableLinkRouting version 2 is not supported");
     // A string version is not the integer Arc writes, so it is not version 1 either.
     let json = r#"{"version":"1","rules":[]}"#;
     assert_eq!(
-        arc_link_routing(json, Profile::Default, &known_spaces()).map(|_| ()).unwrap_err().0,
+        arc_link_routing(json, None, &imported_spaces()).map(|_| ()).unwrap_err().0,
         "StorableLinkRouting version \"1\" is not supported");
 }
 
@@ -319,7 +319,7 @@ fn a_missing_or_unknown_version_is_refused() {
 fn no_rules_and_no_default_destination_keep_ours() {
     // A version-1 file with the rules list absent, as a partial write could leave it.
     let json = r#"{"version":1}"#;
-    let (routing, report) = arc_link_routing(json, Profile::Default, &known_spaces()).unwrap();
+    let (routing, report) = arc_link_routing(json, None, &imported_spaces()).unwrap();
     assert_eq!(routing, Routing::default());
     assert_eq!(report, LinkRoutingReport::default());
 }
@@ -328,7 +328,7 @@ fn no_rules_and_no_default_destination_keep_ours() {
 fn a_broken_rules_list_is_refused() {
     let json = r#"{"version":1,"rules":"all"}"#;
     assert_eq!(
-        arc_link_routing(json, Profile::Default, &known_spaces()).map(|_| ()).unwrap_err().0,
+        arc_link_routing(json, None, &imported_spaces()).map(|_| ()).unwrap_err().0,
         "rules is not an array");
 }
 
@@ -336,7 +336,7 @@ fn a_broken_rules_list_is_refused() {
 #[test]
 fn import_errors_are_import_errors() {
     let json = "{not json";
-    assert!(matches!(arc_link_routing(json, Profile::Default, &known_spaces()), Err(ImportError(_))));
+    assert!(matches!(arc_link_routing(json, None, &imported_spaces()), Err(ImportError(_))));
 }
 
 // Two devices editing different rules before they sync: records merge per rule, so both
@@ -456,7 +456,7 @@ fn a_repeated_rule_id_keeps_the_first_and_counts_the_rest() {
     assert_eq!(report.malformed_rules, 1);
 }
 
-// Only a space id the sidebar carries is imported; anything else is skipped and counted.
+// Only a space id of the owner's profile is imported; anything else is skipped and counted.
 // The rule destination and the file's default check the same way.
 #[test]
 fn an_unknown_space_id_is_skipped_and_counted() {
@@ -519,10 +519,11 @@ const WINDOWS: &str = include_str!("fixtures/StorableWindows.json");
 const KEY_BINDINGS: &str = r#"{"version":1,"userOverrides":[]}"#;
 
 // The whole sibling set imports in one call: the sidebar's spaces gate the destinations and
-// its profile is the one Little-window destinations belong to.
+// its first space's profile is the one Little-window destinations belong to when no owner is
+// vouched for.
 #[test]
 fn a_fixture_set_of_all_three_siblings_imports_the_routing() {
-    let (workspace, report) = ararat_core::import::arc_sidebar(SIDEBAR, Some(WINDOWS), Some(KEY_BINDINGS), Some(FIXTURE)).unwrap();
+    let (workspace, report) = arc_sidebar(SIDEBAR, Some(WINDOWS), Some(KEY_BINDINGS), Some(FIXTURE), None).unwrap();
     assert!(!report.missing_link_routing);
     assert_eq!(report.link_routing_error, None);
     assert_eq!(report.imported_rules, 4);
@@ -532,8 +533,8 @@ fn a_fixture_set_of_all_three_siblings_imports_the_routing() {
     assert_eq!(report.malformed_rules, 1);
     let routing = workspace.routing();
     assert_eq!(routing.rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["meet", "github-prs", "docs-little", "double-condition"]);
-    assert_eq!(routing.route("https://www.meet.google.com/abc", &space_ids(&workspace)), most_recent());
-    assert_eq!(routing.route("https://github.com/pulls", &space_ids(&workspace)), space("space-work"));
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces(&workspace)), most_recent());
+    assert_eq!(routing.route("https://github.com/pulls", &spaces(&workspace)), space("space-work"));
     // The file's default (littleArc → The Little window with the import's profile) is the
     // built-in one on this fixture, so the derived default emits no extra record.
     assert_eq!(routing.default, Destination::default());
@@ -544,20 +545,20 @@ fn a_fixture_set_of_all_three_siblings_imports_the_routing() {
 // decodes files lossily) still imports the sidebar; only the report notes it.
 #[test]
 fn missing_malformed_and_non_utf8_routing_files_still_import_the_sidebar() {
-    let (workspace, report) = ararat_core::import::arc_sidebar(SIDEBAR, None, None, None).unwrap();
+    let (workspace, report) = arc_sidebar(SIDEBAR, None, None, None, None).unwrap();
     assert!(report.missing_link_routing);
     assert_eq!(report.link_routing_error, None);
     assert_eq!(workspace.spaces.len(), 2);
 
     let json = "{\"version\":1,\"rules\":}";
-    let (workspace, report) = ararat_core::import::arc_sidebar(SIDEBAR, None, None, Some(json)).unwrap();
+    let (workspace, report) = arc_sidebar(SIDEBAR, None, None, Some(json), None).unwrap();
     assert!(!report.missing_link_routing);
     assert!(report.link_routing_error.is_some());
     assert_eq!(workspace.spaces.len(), 2);
     assert!(workspace.routing().rules.is_empty());
 
     let lossy = String::from_utf8_lossy(&[b'{', b'"', 0xff, b'"', b'}']).into_owned();
-    let (workspace, report) = ararat_core::import::arc_sidebar(SIDEBAR, None, None, Some(&lossy)).unwrap();
+    let (workspace, report) = arc_sidebar(SIDEBAR, None, None, Some(&lossy), None).unwrap();
     assert!(!report.missing_link_routing);
     assert!(report.link_routing_error.is_some());
     assert_eq!(workspace.spaces.len(), 2);
@@ -619,8 +620,9 @@ fn edit_rule_refuses_only_a_changed_destination_that_names_a_missing_space() {
         vec![equals("https://changed.example/")]);
 }
 
-// MostRecent and the Little window carry no space id, so they pass even on a workspace with
-// no spaces at all (the refusal only reaches Space(id) destinations).
+// MostRecent and a Little window of a profile the workspace has carry no space id, so they
+// pass even on a workspace with no spaces at all (the refusal only reaches Space(id)
+// destinations and Little windows of unknown profiles).
 #[test]
 fn most_recent_and_little_window_destinations_pass_without_spaces() {
     let mut workspace = Workspace::default();
@@ -633,12 +635,14 @@ fn most_recent_and_little_window_destinations_pass_without_spaces() {
 }
 
 // A space deleted after a rule was written leaves the rule's destination naming it. route()
-// still matches the rule and its link goes to the most recent space instead of the stale
-// id; the same applies to the default destination naming a deleted space. The edits only
-// refuse a destination the edit adds: add_rule, an edit_rule destination change, and
-// set_default_destination refuse the deleted space like an unknown one.
+// still matches the rule and its link answers inside the profile the rule rides in; the same
+// applies to the default destination naming a deleted space, answered through the default
+// profile's own most recent space, and lastly to a workspace with none of those left, which
+// keeps the most-recent answer. The edits only refuse a destination the edit adds: add_rule,
+// an edit_rule destination change, and set_default_destination refuse the deleted space like
+// an unknown one.
 #[test]
-fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent() {
+fn a_deleted_space_still_refuses_new_destinations_and_route_answers_within_its_profile() {
     let mut workspace = Workspace::default();
     workspace.create_space("one", "Work", "space-work").unwrap();
     workspace.create_space("one", "Home", "space-home").unwrap();
@@ -646,7 +650,6 @@ fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent(
     workspace.set_default_destination(space("space-home")).unwrap();
     workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
     workspace.delete_space("space-work").unwrap();
-    let spaces = space_ids(&workspace);
     let before = workspace.clone();
     // The rule and the default keep their destinations: the routing snapshot is not
     // rewritten, the pane shows the deleted space from it.
@@ -654,9 +657,10 @@ fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent(
         workspace.routing().rules.iter().find(|r| r.id == "meet").unwrap().destination,
         space("space-work"));
     assert_eq!(workspace.routing().default, space("space-home"));
-    // route() still matches the rule, and the link goes to the most recent space.
+    // route() still matches the rule, and the link goes to the remaining space of the
+    // profile the rule rides in (the first in workspace order, with no use recorded).
     assert_eq!(workspace.routing().rule_for("https://meet.google.com/abc").unwrap().id, "meet");
-    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces), most_recent());
+    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces(&workspace)), space("space-home"));
     // add_rule, an edit that changes the destination, and set_default_destination refuse a
     // deleted space like an unknown one, state unchanged.
     assert_eq!(
@@ -670,9 +674,248 @@ fn a_deleted_space_still_refuses_new_destinations_and_route_answers_most_recent(
         "unknown space space-work");
     assert_eq!(workspace, before);
     // The same rewrite for the default: the space it names is deleted, a URL no rule matches
-    // goes to the most recent space instead of the stale default.
+    // goes to the remaining space of the default profile (again) instead of the stale
+    // default.
     workspace.delete_space("space-home").unwrap();
     assert_eq!(workspace.routing().default, space("space-home"));
-    assert_eq!(workspace.routing().route("https://other.example.org", &space_ids(&workspace)), most_recent());
+    assert_eq!(workspace.routing().route("https://other.example.org", &spaces(&workspace)), space("space-again"));
+    // With the default profile's spaces gone too (a record delete, since deletion through
+    // the edit refuses to leave none), nothing is left to rank: the answer falls back to the
+    // most recent space, the one callers already knew to resolve.
+    for id in ["space-work", "space-home", "space-again"] {
+        workspace.apply(&Op::Delete(Kind::Space, id.into()));
+    }
+    assert!(workspace.spaces.is_empty());
+    assert_eq!(workspace.routing().route("https://meet.google.com/abc", &spaces(&workspace)), most_recent());
+    assert_eq!(workspace.routing().route("https://other.example.org", &spaces(&workspace)), most_recent());
 }
 
+// The rule's own profile owns its fallback: the most recently used space of the rule's
+// profile, even when another profile's space was used more recently. The ranks the fallback
+// walks are derived from the selection record (LastSelected), so the space whose tab was
+// selected last wins inside the profile.
+#[test]
+fn a_rule_whose_space_was_deleted_answers_its_own_profiles_most_recent_space() {
+    let mut workspace = Workspace::default();
+    put_profiled_spaces(&mut workspace);
+    // Newest use overall (3_000) is the default-profile space; the profile P1's newest is
+    // tab-p1b's space (2_000), then p1a's (1_000).
+    workspace.apply(&Op::Put(Record::RoutingRule { order: "a".into(),
+        rule: Rule { id: "meet".into(), conditions: vec![contains("meet.google.com")],
+            destination: space("space-missing-p1"), profile: Profile::Named("P1".into()) } }));
+    assert_eq!(workspace.routing_spaces().recency, ["space-d", "space-p1b", "space-p1a"]);
+    assert_eq!(workspace.routing().route("https://www.meet.google.com/abc", &spaces(&workspace)), space("space-p1b"));
+
+    // Rank the profile's other space first and the answer follows the ranks, not the
+    // workspace order.
+    workspace.last_selected.insert("tab-p1a".into(), 5_000);
+    assert_eq!(workspace.routing().route("https://www.meet.google.com/abc", &spaces(&workspace)), space("space-p1a"));
+}
+
+// The rule's profile gone entirely: the default destination stands, whatever it is.
+#[test]
+fn a_rule_whose_profile_has_no_space_left_answers_the_default_destination() {
+    let (mut workspace, _) = arc_sidebar(SIDEBAR, None, None, None, None).unwrap();
+    // The rule rides in a profile the workspace has no space of, at a lost destination.
+    workspace.apply(&Op::Put(Record::RoutingRule { order: "a".into(),
+        rule: Rule { id: "meet".into(), conditions: vec![contains("meet.google.com")],
+            destination: space("space-ghost"), profile: Profile::Named("Ghost".into()) } }));
+    // The default destination, the built-in Little window here, answers instead of any
+    // space.
+    assert_eq!(workspace.routing().route("https://www.meet.google.com/abc", &spaces(&workspace)), little_window());
+
+    // A default destination naming a space: that space answers, not the profile fallback.
+    workspace.set_default_destination(space("space-work")).unwrap();
+    assert_eq!(workspace.routing().route("https://www.meet.google.com/abc", &spaces(&workspace)), space("space-work"));
+}
+
+// The default destination naming a lost space: the default profile's most recently used
+// space answers; with none there either, the most recent space, the answer callers already
+// knew to resolve.
+#[test]
+fn a_gone_default_destination_answers_the_default_profiles_most_recent_space() {
+    let mut workspace = Workspace::default();
+    put_profiled_spaces(&mut workspace);
+    // A default destination naming a lost space: put as a record, since an edit carrying it
+    // would be refused like any unknown space.
+    workspace.apply(&Op::Put(Record::RoutingDefault { destination: space("space-gone") }));
+    // The default profile's own newest space leads (space-d, ranked by its newest tab).
+    assert_eq!(workspace.routing().route("https://other.example.org", &spaces(&workspace)), space("space-d"));
+
+    // The default profile out of spaces as well: the most recent space again.
+    for id in ["space-d", "space-p1a", "space-p1b"] {
+        workspace.apply(&Op::Delete(Kind::Space, id.into()));
+    }
+    assert!(workspace.spaces.is_empty());
+    assert_eq!(workspace.routing().route("https://other.example.org", &spaces(&workspace)), most_recent());
+}
+
+// Helpers for the fallback tests: whole spaces with real containers, and tabs to stamp. The
+// container items are what the workspace's chain walks end at, so the selection record
+// ranks the space the tab sits in.
+fn put_profiled_spaces(workspace: &mut Workspace) {
+    use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Space};
+    for (id, order, profile) in [
+        ("space-p1a", "a", Profile::Named("P1".into())),
+        ("space-p1b", "b", Profile::Named("P1".into())),
+        ("space-d", "c", Profile::Default),
+    ] {
+        workspace.apply(&Op::Put(Record::Space(Space {
+            id: id.into(), order: order.into(), title: id.into(), profile, icon: None, look: None,
+            pinned: format!("pin-{id}"), today: format!("today-{id}"),
+        })));
+        for root in [format!("pin-{id}"), format!("today-{id}")] {
+            workspace.apply(&Op::Put(Record::Item(Item {
+                id: root, membership: Membership { parent: None, order: "a".into(), hlc: Default::default(), previous_parent: None },
+                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+            })));
+        }
+    }
+    for (id, parent) in [("tab-p1a", "today-space-p1a"), ("tab-p1b", "today-space-p1b"), ("tab-d", "today-space-d")] {
+        workspace.apply(&Op::Put(Record::Item(Item {
+            id: id.into(), membership: Membership { parent: Some(parent.into()), order: "a".into(), hlc: Default::default(), previous_parent: None },
+            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None },
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+        })));
+    }
+    workspace.last_selected.insert("tab-p1a".into(), 1_000);
+    workspace.last_selected.insert("tab-p1b".into(), 2_000);
+    workspace.last_selected.insert("tab-d".into(), 3_000);
+}
+
+// A rule's destination space must belong to the profile the rule rides in: its add fixed
+// that, so an edit or a new rule naming another profile's space is refused and writes
+// nothing, and the profile that matches passes. The default destination belongs to no rule:
+// only existence decides it.
+#[test]
+fn a_cross_profile_destination_is_refused_on_edit_and_matches_are_kept() {
+    let (mut workspace, _) = arc_sidebar(SIDEBAR, None, None, None, None).unwrap();
+    // space-work rides in the default profile, space-home in the named "Profile 1".
+    let named_rule = Rule { id: "named-by-home".into(), conditions: vec![contains("home.example")],
+        destination: space("space-home"), profile: Profile::Named("Profile 1".into()) };
+    workspace.add_rule(named_rule.clone()).unwrap();
+    let before = workspace.clone();
+    assert_eq!(workspace.routing().rules.iter().find(|r| r.id == "named-by-home").unwrap().profile, Profile::Named("Profile 1".into()));
+    // A default-profile rule cannot point at the named profile's space.
+    assert_eq!(
+        workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-home"))).unwrap_err().0,
+        "space space-home belongs to another profile");
+    assert_eq!(
+        workspace.edit_rule(rule("named-by-home", vec![contains("home.example")], space("space-work"))).unwrap_err().0,
+        "space space-work belongs to another profile");
+    assert_eq!(workspace, before);
+    // The default destination passes even for another profile's space: no rule rides in it.
+    workspace.set_default_destination(space("space-home")).unwrap();
+    assert_eq!(workspace.routing().default, space("space-home"));
+}
+
+// A Little window destination names a profile the workspace has: the built-in one always
+// does, and a named one only while the workspace carries it.
+#[test]
+fn a_little_window_destination_names_a_profile_the_workspace_has() {
+    let (mut workspace, _) = arc_sidebar(SIDEBAR, None, None, None, None).unwrap();
+    let before = workspace.clone();
+    assert_eq!(
+        workspace.add_rule(rule("meet", vec![contains("meet.google.com")], Destination::LittleWindow(Profile::Named("Deserted".into())))).unwrap_err().0,
+        "unknown profile Deserted");
+    assert_eq!(
+        workspace.set_default_destination(Destination::LittleWindow(Profile::Named("Deserted".into()))).unwrap_err().0,
+        "unknown profile Deserted");
+    assert_eq!(workspace, before);
+    // A named profile the workspace carries (and the built-in one) pass.
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], Destination::LittleWindow(Profile::Named("Profile 1".into())))).unwrap();
+    workspace.set_default_destination(Destination::LittleWindow(Profile::Named("Profile 1".into()))).unwrap();
+    assert_eq!(workspace.routing().default, Destination::LittleWindow(Profile::Named("Profile 1".into())));
+}
+
+// The file's owner is the profile its rules and Little windows ride in, named by the
+// caller; the same file answers differently under another owner.
+#[test]
+fn the_owner_profile_owns_the_rules_and_little_windows_it_imports() {
+    let json = r#"{"version":1,
+      "rules":[{"id":"meet","sourceComponents":[{"id":"m","componentType":{"urlMatch":{"_0":{"contains":{}},"_1":"meet.google.com"}}}],"destination":{"littleArc":{"_0":{"mostRecent":{}}}}},
+               {"id":"github","sourceComponents":[{"id":"g","componentType":{"urlMatch":{"_0":{"contains":{}},"_1":"github.com"}}}],"destination":{"space":{"_0":"space-work"}}}],
+      "defaultDestination":{"littleArc":{"_0":{"mostRecent":{}}}}}"#;
+    // Owner "Profile 1": the Little window rides in it, and the default-profile space is
+    // no destination of its rules and is skipped.
+    let (routing, report) = arc_link_routing(json, Some(Profile::Named("Profile 1".into())), &imported_spaces()).unwrap();
+    assert_eq!(routing.rules.iter().map(|r| r.profile.clone()).collect::<Vec<_>>(), [Profile::Named("Profile 1".into())]);
+    assert_eq!(routing.rules[0].destination, Destination::LittleWindow(Profile::Named("Profile 1".into())));
+    assert_eq!(routing.default, Destination::LittleWindow(Profile::Named("Profile 1".into())));
+    assert_eq!(report.imported_rules, 1);
+    assert_eq!(report.skipped_unknown_destinations, 1);
+    // Owner Default: the default-profile space belongs and is kept; the named Little window
+    // flips with it.
+    let (routing, report) = arc_link_routing(json, Some(Profile::Default), &imported_spaces()).unwrap();
+    assert_eq!(routing.rules.iter().map(|r| r.profile.clone()).collect::<Vec<_>>(), [Profile::Default, Profile::Default]);
+    assert_eq!(routing.default, Destination::LittleWindow(Profile::Default));
+    assert_eq!(report.imported_rules, 2);
+    assert_eq!(report.skipped_unknown_destinations, 0);
+}
+
+// The check on imports mirrors the edits: a known id of another profile is no destination.
+#[test]
+fn a_cross_profile_destination_is_skipped_and_counted_on_import() {
+    let json = r#"{"version":1,
+      "rules":[{"id":"meet","sourceComponents":[{"id":"m","componentType":{"urlMatch":{"_0":{"contains":{}},"_1":"meet.google.com"}}}],"destination":{"space":{"_0":"space-home"}}}],
+      "defaultDestination":{"space":{"_0":"space-home"}}}"#;
+    // The owner here is the default profile's; space-home rides in the named one.
+    let (routing, report) = arc_link_routing(json, Some(Profile::Default), &imported_spaces()).unwrap();
+    assert!(routing.rules.is_empty());
+    assert_eq!(routing.default, Routing::default().default);
+    assert_eq!(report.imported_rules, 0);
+    assert_eq!(report.skipped_unknown_destinations, 2);
+    assert_eq!(report.skipped_profile_destinations, 0);
+}
+
+// An unknown owner is vouched by nothing, so existence alone decides which destinations
+// import, and every written rule is stamped with the profile its destination needs: Most
+// Recent and Little window rules with the first space's, space rules with their space's —
+// the router never finds a written rule outside its destination.
+#[test]
+fn an_unknown_owner_checks_existence_only_and_stamps_every_rule_to_be_routable() {
+    let (workspace, report) = arc_sidebar(SIDEBAR, None, None, Some(FIXTURE), None).unwrap();
+    assert_eq!(report.imported_rules, 4);
+    assert_eq!(report.skipped_unknown_destinations, 1);
+    let routing = workspace.routing();
+    // The first space (space-work) rides in the default profile: that is what docs-little
+    // and the Most Recent rule ride in.
+    assert_eq!(routing.rules.iter().find(|r| r.id == "docs-little").unwrap().destination, little_window());
+    assert_eq!(routing.rules.iter().find(|r| r.id == "meet").unwrap().profile, Profile::Default);
+    // The rules still import: with no owner vouched, existence decides.
+    assert!(routing.rules.iter().any(|r| r.id == "double-condition"));
+    // Every rule the import wrote routes to its own destination, the named space included.
+    assert_eq!(routing.rules.iter().find(|r| r.id == "double-condition").unwrap().profile, Profile::Named("Profile 1".into()));
+    assert_eq!(routing.route("https://a.example/", &spaces(&workspace)), space("space-home"));
+    // The living space of the file's first profile keeps its rule too.
+    assert_eq!(routing.route("https://github.com/pulls/", &spaces(&workspace)), space("space-work"));
+}
+
+// The deleted-space query: the rule ids (and the default's) whose destination names a space
+// the workspace no longer has, and nothing else.
+#[test]
+fn the_deleted_space_query_names_the_rule_and_default_destinations() {
+    let mut workspace = Workspace::default();
+    workspace.create_space("one", "Work", "space-work").unwrap();
+    workspace.create_space("one", "Home", "space-home").unwrap();
+    workspace.add_rule(rule("meet", vec![contains("meet.google.com")], space("space-work"))).unwrap();
+    workspace.add_rule(rule("docs", vec![contains("docs.example.com")], most_recent())).unwrap();
+    workspace.set_default_destination(space("space-home")).unwrap();
+    assert!(workspace.deleted_space_destinations().is_empty());
+    workspace.apply(&Op::Delete(Kind::Space, "space-work".into()));
+    // Only the affected destinations: the rule at the lost space and the default, matched
+    // in rule order, nothing for the rule at the living destination.
+    assert_eq!(workspace.deleted_space_destinations(), vec![
+        ararat_core::routing::DeletedDestination { rule_id: Some("meet".into()), space_id: "space-work".into() },
+    ]);
+    workspace.apply(&Op::Delete(Kind::Space, "space-home".into()));
+    assert_eq!(workspace.deleted_space_destinations(), vec![
+        ararat_core::routing::DeletedDestination { rule_id: Some("meet".into()), space_id: "space-work".into() },
+        ararat_core::routing::DeletedDestination { rule_id: None, space_id: "space-home".into() },
+    ]);
+    // Fixing a destination takes it out of the set again.
+    workspace.edit_rule(rule("meet", vec![contains("meet.google.com")], most_recent())).unwrap();
+    assert_eq!(workspace.deleted_space_destinations(), vec![
+        ararat_core::routing::DeletedDestination { rule_id: None, space_id: "space-home".into() },
+    ]);
+}

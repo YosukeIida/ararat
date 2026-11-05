@@ -19,7 +19,7 @@ fn fresh_db(name: &str) -> PathBuf {
 }
 
 fn imported() -> Workspace {
-    arc_sidebar(FIXTURE, None, None, None).unwrap().0
+    arc_sidebar(FIXTURE, None, None, None, None).unwrap().0
 }
 
 fn count(path: &PathBuf) -> i64 {

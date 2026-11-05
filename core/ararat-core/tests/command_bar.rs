@@ -35,7 +35,7 @@ fn extra_source_is_ranked_deduplicated_and_typed_row_is_placed() {
 }
 #[test]
 fn index_covers_sources_and_excludes_the_current_tab() {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0;
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
     ws.items.get_mut("tab-a").unwrap().membership.parent = Some("today-work".into());
     ws.items.get_mut("tab-b").unwrap().membership.parent = Some("today-work".into());
     ws.items.get_mut("tab-a").unwrap().title = Some("Unique Alpha".into());
@@ -62,7 +62,7 @@ fn index_covers_sources_and_excludes_the_current_tab() {
 }
 
 fn fixture() -> ararat_core::model::Workspace {
-    arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None).unwrap().0
+    arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0
 }
 
 #[test]

@@ -42,13 +42,6 @@ pub enum Destination {
     LittleWindow(Profile),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rule {
-    pub id: Id,
-    pub conditions: Vec<UrlCondition>,
-    pub destination: Destination,
-}
-
 // A rule between records carries its fractional order key the way item memberships do:
 // the record body stores `{order, conditions, destination}` and the rule id is the record's
 // key, so this form exists to move the three fields around with `Rule`.
@@ -57,6 +50,18 @@ pub struct StoredRuleBody {
     pub order: String,
     pub conditions: Vec<UrlCondition>,
     pub destination: Destination,
+    // The rule's profile rides its record the way spaces ride theirs: a rule added on one
+    // device stays its profile's after a merge.
+    #[serde(default)]
+    pub profile: Profile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rule {
+    pub id: Id,
+    pub conditions: Vec<UrlCondition>,
+    pub destination: Destination,
+    pub profile: Profile,
 }
 
 // A rule as the workspace carries it in memory: the order key beside the rule it positions.
@@ -81,21 +86,59 @@ impl Default for Routing {
     }
 }
 
-// Rules read in their record order, which the workspace derives per record (architecture 8.3):
-// two devices holding the same records read the same rule order, so a link goes the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletedDestination {
+    pub rule_id: Option<Id>,
+    pub space_id: Id,
+}
+
+// The spaces a route() answer may still land on, as the caller reports them. Why not one
+// slice of structs: the two orders differ, and neither carries data the other needs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Spaces {
+    pub entries: Vec<(Id, Profile)>,
+    pub recency: Vec<Id>,
+}
+
+impl Spaces {
+    fn usable(&self, id: &str, profile: Option<&Profile>) -> bool {
+        self.entries.iter().any(|(entry, entry_profile)| entry == id && profile.is_none_or(|profile| entry_profile == profile))
+    }
+
+    fn most_recent(&self, profile: &Profile) -> Option<Id> {
+        self.recency.iter().find(|id| self.entries.iter().any(|(entry, p)| entry == *id && p == profile)).cloned()
+    }
+}
+
 impl Routing {
     // The destination a URL from another app lands on: the first rule with a matching
-    // condition, else the default. A destination naming a space the workspace no longer has
-    // still answers — the rule matches (rule_for) — and the link goes to the most recent
-    // space instead, so the stale id never reaches a window. The stored destinations stay
-    // untouched, which the Settings pane reads for its deleted-space menus; the rewrite is
-    // why the answer is an owned value.
-    pub fn route(&self, url: &str, spaces: &[Id]) -> Destination {
-        let destination = self.rule_for(url).map_or(&self.default, |rule| &rule.destination);
-        match destination {
-            Destination::Space(SpaceTarget::Space(id)) if !spaces.iter().any(|space| space == id) =>
-                Destination::Space(SpaceTarget::MostRecent),
-            _ => destination.clone(),
+    // condition, else the default. The stored destinations stay untouched, which the
+    // deleted-space query reads; the rewrite is why the answer is an owned value.
+    pub fn route(&self, url: &str, spaces: &Spaces) -> Destination {
+        let rule = self.rule_for(url);
+        let destination = match rule {
+            Some(rule) => rule.destination.clone(),
+            None => self.default.clone(),
+        };
+        self.answer(rule.map(|rule| &rule.profile), destination, spaces)
+    }
+
+    // Why a cross-profile space is a lost answer for a rule but not for the default: the
+    // edit checks (edit.rs) and the stamping on imports and loads keep every written rule
+    // inside its own profile, so a destination outside it can only be one whose space is
+    // gone, while the default belongs to no rule and is judged on existence alone.
+    fn answer(&self, rule_profile: Option<&Profile>, destination: Destination, spaces: &Spaces) -> Destination {
+        // Only a Space(id) destination can be lost; the Little window and the most recent
+        // space answer as they stand.
+        let lost = matches!(&destination, Destination::Space(SpaceTarget::Space(id)) if !spaces.usable(id, rule_profile));
+        if !lost { return destination; }
+        match rule_profile {
+            Some(profile) => spaces.most_recent(profile)
+                .map(|id| Destination::Space(SpaceTarget::Space(id)))
+                .unwrap_or_else(|| self.answer(None, self.default.clone(), spaces)),
+            None => spaces.most_recent(&Profile::Default)
+                .map(|id| Destination::Space(SpaceTarget::Space(id)))
+                .unwrap_or(Destination::Space(SpaceTarget::MostRecent)),
         }
     }
 
@@ -152,13 +195,18 @@ mod tests {
                 id: "r".into(),
                 conditions: vec![UrlCondition { style, text: text.into() }],
                 destination: Destination::Space(SpaceTarget::Space("work".into())),
+                profile: Profile::Default,
             }],
             default: Destination::LittleWindow(Profile::Default),
         }
     }
 
+    fn only_work_spaces() -> Spaces {
+        Spaces { entries: vec![("work".into(), Profile::Default)], recency: vec!["work".into()] }
+    }
+
     fn goes_to_work(r: &Routing, url: &str) -> bool {
-        r.route(url, &["work".into()]) == Destination::Space(SpaceTarget::Space("work".into()))
+        r.route(url, &only_work_spaces()) == Destination::Space(SpaceTarget::Space("work".into()))
     }
 
     #[test]
@@ -168,7 +216,7 @@ mod tests {
         let r = routing(MatchStyle::Equals, "   ");
         assert!(!goes_to_work(&r, "https://example.com/"));
         // A whitespace-only condition falls back to the default on the same call.
-        assert_eq!(r.route("https://example.com", &["work".into()]), r.default);
+        assert_eq!(r.route("https://example.com", &only_work_spaces()), r.default);
     }
 
     #[test]
@@ -200,8 +248,9 @@ mod tests {
             id: "later".into(),
             conditions: vec![UrlCondition { style: MatchStyle::Contains, text: "example".into() }],
             destination: Destination::Space(SpaceTarget::MostRecent),
+            profile: Profile::Default,
         });
         assert!(goes_to_work(&r, "https://example.com"));
-        assert_eq!(r.route("https://other.org", &["work".into()]), Destination::LittleWindow(Profile::Default));
+        assert_eq!(r.route("https://other.org", &only_work_spaces()), Destination::LittleWindow(Profile::Default));
     }
 }

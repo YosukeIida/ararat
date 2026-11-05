@@ -104,8 +104,8 @@ func thePaneModelWritesItsWayThroughTheCoreAndSurvivesAReopen() async throws {
     try await waitUntil { model.routing != nil }
     #expect(model.routing?.rules.isEmpty == true)
 
-    try await atcValue { model.add(destination: .space(.space("space-work")), completion: $0) }
-    try await atcValue { model.add(destination: .littleWindow(.default), completion: $0) }
+    try await atcValue { model.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
+    try await atcValue { model.add(destination: .littleWindow(.default), profile: .`default`, completion: $0) }
     var rules = try #require(model.routing?.rules)
     let a = rules[0].id
     let b = rules[1].id
@@ -113,7 +113,7 @@ func thePaneModelWritesItsWayThroughTheCoreAndSurvivesAReopen() async throws {
 
     // Edit: the condition text and destination are what the core stores back.
     try await atcValue { model.editCondition(a, style: .contains, text: "meet.google.com", completion: $0) }
-    try await atcValue { model.editDestination(a, choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    try await atcValue { model.editDestination(a, choice: .mostRecent, completion: $0) }
     rules = try #require(model.routing?.rules)
     #expect(rules[0].id == a && rules[0].conditions == [UrlCondition(style: .contains, text: "meet.google.com")])
     #expect(rules[0].destination == Destination.space(.mostRecent))
@@ -162,7 +162,7 @@ func thePaneModelWritesItsWayThroughTheCoreAndSurvivesAReopen() async throws {
 @Test @MainActor
 func testAnswersAndChoiceFallbacksUseTheirPlainWords() throws {
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
-    let rules = [Rule(id: "meet", conditions: [UrlCondition(style: .contains, text: "meet.google.com")], destination: .space(.mostRecent))]
+    let rules = [Rule(id: "meet", conditions: [UrlCondition(style: .contains, text: "meet.google.com")], destination: .space(.mostRecent), profile: .`default`)]
     let ruleAnswer = AirTrafficModel.answerLabel(url: "https://www.meet.google.com/x",
         decision: RoutingDecision(ruleId: "meet", destination: .space(.mostRecent)), rules: rules, spaces: [space])
     #expect(ruleAnswer == "“https://www.meet.google.com/x” → route “meet.google.com” opens it in the most recent space")
@@ -170,15 +170,16 @@ func testAnswersAndChoiceFallbacksUseTheirPlainWords() throws {
         decision: RoutingDecision(ruleId: nil, destination: .littleWindow(.default)), rules: rules, spaces: [space])
     #expect(defaultAnswer == "“https://other.example.org” → the default opens it in the Little window")
     #expect(AirTrafficModel.answerLabel(url: "  ", decision: RoutingDecision(ruleId: nil, destination: .space(.mostRecent)), rules: rules, spaces: [space]).hasPrefix("An empty link"))
-    // A destination naming a lost space reads as the deleted-space choice (its menu shows a
-    // disabled "Deleted space" item, selected), and the space coming back reads as it again
-    // in the model (the untouched row is not rewritten).
+    // A destination the core answered as lost reads as the deleted-space choice (its menu
+    // shows a disabled "Deleted space" item, selected), and the space coming back reads as
+    // it again once the core's set follows (the untouched row is not rewritten).
     let lost = Destination.space(.space("space-gone"))
-    #expect(DestinationChoice(lost, spaces: [space]) == .deletedSpace("space-gone"))
-    #expect(DestinationChoice(lost, spaces: [space, SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-gone", title: "Gone", icon: nil, look: nil, favorites: [], pinned: [], today: [])]) == .space("space-gone"))
+    #expect(DestinationChoice(lost, deletedSpaces: ["space-gone"]) == .deletedSpace("space-gone"))
+    #expect(DestinationChoice(lost, deletedSpaces: []) == .space("space-gone"))
     // A Little-window destination reads as the one choice whatever profile it names, and a
-    // fresh pick writes the profile handed in (the shown space's); an imported rule keeps its
-    // own profile through the model's editDestination.
+    // fresh pick rides the profile handed in — a rule edit hands the rule's own, the shown
+    // space's covers the default and New Route; a rule already at a Little window keeps its
+    // imported profile through the model's editDestination.
     #expect(DestinationChoice(Destination.littleWindow(.named("Profile 1"))) == .littleWindow)
     #expect(DestinationChoice.littleWindow.destination(littleWindowProfile: .named("Profile 1")) == Destination.littleWindow(.named("Profile 1")))
     #expect(DestinationChoice.littleWindowChoice.destination() == Destination.littleWindow(.default))
@@ -206,7 +207,7 @@ func theAirTrafficPaneViewsBuildWithoutOrderingAWindow() async throws {
     #expect(model.title == "Air Traffic Control")
     airTraffic.load()
     try await waitUntil { airTraffic.routing != nil }
-    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
     let id = try #require(airTraffic.routing?.rules.first?.id)
     try await atcValue { airTraffic.editCondition(id, style: .contains, text: "meet.google.com", completion: $0) }
     window.contentView?.layoutSubtreeIfNeeded()
@@ -236,7 +237,7 @@ func theDestinationMenusOfferATagForEveryDestination() {
     let menu = DestinationChoice.menuTags(spaces: [space], deletedSpaceIds: ["space-gone"])
     let destinations: [Destination?] = [Destination.littleWindow(.`default`), Destination.littleWindow(.named("Profile 1")), Destination.space(.mostRecent), Destination.space(.space("space-work")), Destination.space(.space("space-gone")), nil]
     for destination in destinations {
-        let choice = DestinationChoice(destination, spaces: [space])
+        let choice = DestinationChoice(destination, deletedSpaces: ["space-gone"])
         #expect(menu.contains(choice), "\(String(describing: destination)) has no menu tag")
     }
 }
@@ -252,30 +253,31 @@ func theModelNamesTheLostSpaceAndAPickReplacesTheDeletedDestination() async thro
     let sidebar = fixture("arc-sidebar-synthetic.json")
     let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("deleted.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     let model = AirTrafficModel(adapter: adapter)
-    model.load()
-    try await waitUntil { model.routing != nil }
-    #expect(model.deletedSpaceIds(spaces: snapshot.spaces).isEmpty)
-    // A rule at one space and the default at the other: nothing is lost yet.
-    try await atcValue { model.add(destination: .space(.space("space-work")), completion: $0) }
+    // The pane reads the core's deleted-space answer: nothing is lost yet.
+    try await atcValue { model.load(completion: $0) }
+    #expect(model.deletedSpaces.isEmpty)
+    // A rule at one space and the default at the other: nothing is lost yet after the edits.
+    try await atcValue { model.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
     try await atcValue { model.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
-    #expect(model.deletedSpaceIds(spaces: snapshot.spaces).isEmpty)
-    // The space the rule points at is deleted; the rule keeps its destination and the model
-    // names the lost one (the default still names a living space).
+    #expect(model.deletedSpaces.isEmpty)
+    // The space the rule points at is deleted; the rule keeps its destination and the core
+    // answers the lost one (the default still names a living space).
     try await atcValue { adapter.deleteSpace(id: "space-work", completion: $0) }
     let after = try await atcValue { adapter.snapshot(completion: $0) }
     try await atcValue { model.load(completion: $0) }
     #expect(model.routing?.rules.first?.destination == Destination.space(.space("space-work")))
     #expect(model.routing?.default == Destination.space(.space("space-home")))
-    #expect(model.deletedSpaceIds(spaces: after.spaces) == ["space-work"])
-    #expect(DestinationChoice(model.routing?.rules.first?.destination, spaces: after.spaces) == .deletedSpace("space-work"))
-    // The menu pickerContext builds carries one disabled item for that id and nothing else.
-    let tags = DestinationChoice.menuTags(spaces: after.spaces, deletedSpaceIds: model.deletedSpaceIds(spaces: after.spaces))
+    #expect(model.deletedSpaceIds == ["space-work"])
+    #expect(DestinationChoice(model.routing?.rules.first?.destination, deletedSpaces: model.deletedSpaces) == .deletedSpace("space-work"))
+    // The menu the pane builds carries one disabled item for that id and nothing else.
+    let tags = DestinationChoice.menuTags(spaces: after.spaces, deletedSpaceIds: model.deletedSpaceIds)
     #expect(tags.filter(\.isDeletedSpace) == [.deletedSpace("space-work")])
-    // Picking another destination replaces the deleted one, and no id is lost any more.
+    // Picking another destination replaces the deleted one, and no id is lost any more: the
+    // core's answer follows the edit, not the old routing snapshot.
     let ruleId = try #require(model.routing?.rules.first?.id)
-    try await atcValue { model.editDestination(ruleId, choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    try await atcValue { model.editDestination(ruleId, choice: .mostRecent, completion: $0) }
     #expect(model.routing?.rules.first?.destination == Destination.space(.mostRecent))
-    #expect(model.deletedSpaceIds(spaces: after.spaces).isEmpty)
+    #expect(model.deletedSpaces.isEmpty)
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
@@ -294,7 +296,7 @@ func editingARuleKeepsEveryConditionItCameInWith() async throws {
     let imported = try #require(model.routing?.rules.first { $0.id == "double-condition" })
     #expect(imported.conditions == [UrlCondition(style: .contains, text: "a.example"), UrlCondition(style: .equals, text: "https://b.example/")])
     // A destination change keeps every condition and the imported rule's shape.
-    try await atcValue { model.editDestination(imported.id, choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    try await atcValue { model.editDestination(imported.id, choice: .mostRecent, completion: $0) }
     var rules = try #require(model.routing?.rules)
     var edited = try #require(rules.first { $0.id == imported.id })
     #expect(edited.conditions == imported.conditions)
@@ -308,11 +310,11 @@ func editingARuleKeepsEveryConditionItCameInWith() async throws {
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// A fresh Little Window pick writes the Little window of the shown space's profile, not the
-// built-in default one: a workspace whose spaces live in a named profile cannot open the
-// built-in default.
+// A Little Window pick rides the profile of what receives it: the default card takes the
+// shown space's (the built-in default one cannot open a workspace whose spaces live in a
+// named profile), while a rule's own pick — fresh or re-picked — stays the rule's own.
 @Test @MainActor
-func aFreshLittleWindowPickCarriesTheShownSpacesProfile() async throws {
+func aLittleWindowPickRidesTheProfileOfWhatReceivesIt() async throws {
     #expect(DestinationChoice.littleWindow.destination(littleWindowProfile: .named("Profile 1")) == Destination.littleWindow(.named("Profile 1")))
     #expect(DestinationChoice.littleWindowChoice.destination() == Destination.littleWindow(.default))
     let directory = try testTemporaryDirectory()
@@ -324,26 +326,34 @@ func aFreshLittleWindowPickCarriesTheShownSpacesProfile() async throws {
     model.load()
     try await waitUntil { model.routing != nil }
     // The default card's pick writes the shown profile, and it is in the store (not only in
-    // memory); the imported Little-window rule keeps its own profile when re-picked.
+    // memory); a rule already opening a Little window keeps its own profile when re-picked.
     try await atcValue { model.setDefault(.littleWindow, littleWindowProfile: .named("Profile 1"), completion: $0) }
     #expect(model.routing?.default == Destination.littleWindow(.named("Profile 1")))
     let imported = try #require(model.routing?.rules.first { $0.id == "docs-little" })
     #expect(imported.destination == Destination.littleWindow(.default))
-    try await atcValue { model.editDestination(imported.id, choice: .littleWindow, littleWindowProfile: .named("Profile 1"), completion: $0) }
+    try await atcValue { model.editDestination(imported.id, choice: .littleWindow, completion: $0) }
     var rules = try #require(model.routing?.rules)
     #expect(rules.first { $0.id == imported.id }?.destination == Destination.littleWindow(.default))
-    // A fresh pick on a rule from another destination writes the shown profile.
-    try await atcValue { model.editDestination("meet", choice: .littleWindow, littleWindowProfile: .named("Profile 1"), completion: $0) }
+    // A fresh pick on a rule writes the rule's own profile, not the shown space's: `meet`
+    // rides in the first space's (the built-in one), whatever profile the pane shows.
+    try await atcValue { model.editDestination("meet", choice: .littleWindow, completion: $0) }
     rules = try #require(model.routing?.rules)
-    #expect(rules.first { $0.id == "meet" }?.destination == Destination.littleWindow(.named("Profile 1")))
+    #expect(rules.first { $0.id == "meet" }?.destination == Destination.littleWindow(.`default`))
+    // And a rule of the named profile keeps it on a fresh pick, while the pane shows the
+    // built-in profile's space: the shown one never reaches a rule's pick.
+    try await atcValue { model.add(destination: .space(.space("space-home")), profile: .named("Profile 1"), completion: $0) }
+    let named = try #require(model.routing?.rules.first { $0.profile == .named("Profile 1") })
+    try await atcValue { model.editDestination(named.id, choice: .littleWindow, completion: $0) }
+    rules = try #require(model.routing?.rules)
+    #expect(rules.first { $0.id == named.id }?.destination == Destination.littleWindow(.named("Profile 1")))
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
-// The pane's fresh Little-window pick names the shown space's own `Profile` from the FFI
-// snapshot, not the display name mapped back: a named profile called "Default" would read
-// as the built-in one.
+// The default's and New Route's Little-window picks name the shown space's own `Profile`
+// from the FFI snapshot, not the display name mapped back: a named profile called "Default"
+// would read as the built-in one.
 @Test @MainActor
-func theFreshLittleWindowPickNamesTheShownSpacesOwnProfile() {
+func theShownSpacesOwnProfileCoversTheDefaultAndNewRoutePicks() {
     let adapter = WorkspaceAdapter(windowID: "atc-profile")
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: #"Named("Default")"#, pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .named("Default"), id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space-work", selectedId: nil, spaces: [space]),
@@ -370,7 +380,7 @@ func ruleUrlFieldWritesOnlyAtCommit() async throws {
     model.navigate(.airTraffic)
     airTraffic.load()
     try await waitUntil { airTraffic.routing != nil }
-    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
     let id = try #require(airTraffic.routing?.rules.first?.id)
     // The row's URL field is the one the URL placeholder tags (the bridge shows placeholders,
     // not accessibility overrides).
@@ -422,16 +432,16 @@ func theAirTrafficSearchResultFillsItsRow() throws {
     #expect(row.id == SettingsModel.airTrafficCardId)
 }
 
-// A destination naming a lost space reads as the deleted-space
+// A destination the core answers as lost reads as the deleted-space
 // choice (the menu shows a disabled "Deleted space" item, selected, not Most Recent Space),
-// the choice writes nothing while it is selected, and the id survives the workspace losing
-// the space so an untouched row is not rewritten (the space coming back reads as it again).
+// the choice writes nothing while it is selected, and the id keeps its tag so an untouched
+// row is not rewritten (a space the core no longer flags reads as it again).
 @Test @MainActor
 func aDestinationNamingALostSpaceReadsAsTheDeletedSpaceChoice() {
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let lost = Destination.space(.space("space-gone"))
-    #expect(DestinationChoice(lost, spaces: [space]) == .deletedSpace("space-gone"))
-    #expect(DestinationChoice(lost, spaces: [space, SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space-gone", title: "Gone", icon: nil, look: nil, favorites: [], pinned: [], today: [])]) == .space("space-gone"))
+    #expect(DestinationChoice(lost, deletedSpaces: ["space-gone"]) == .deletedSpace("space-gone"))
+    #expect(DestinationChoice(lost, deletedSpaces: []) == .space("space-gone"))
     // The disabled item writes nothing: a pick never carries it, so the menu "answered nothing".
     #expect(DestinationChoice.deletedSpace("space-gone").destination(littleWindowProfile: nil) == nil)
     #expect(DestinationChoice.deletedSpace("space-gone").menuTitle(spaces: [space]) == "Deleted space")
@@ -480,8 +490,8 @@ func theUrlFieldsReadTheirRulesBackInRowOrderThroughAMoveAndADelete() async thro
         guard let content = window.contentView else { return [] }
         return airTrafficDescendants(content).compactMap { $0 as? NSTextField }.filter { $0.placeholderString == "URL" }.map(\.stringValue)
     }
-    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), completion: $0) }
-    try await atcValue { airTraffic.add(destination: .space(.mostRecent), completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.mostRecent), profile: .`default`, completion: $0) }
     let rules = try #require(airTraffic.routing?.rules)
     #expect(rules.count == 2)
     let firstId = try #require(rules.first?.id)
@@ -565,7 +575,7 @@ func aRouteAnswerLeavesARefusedEditsMessageStanding() async throws {
     #expect(airTraffic.routing?.rules.contains { $0.id == "meet" } == true)
     // The core refuses an edit whose destination names a space the workspace does not have,
     // and the refusal sets the banner's message.
-    let refused = try? await atcValue { airTraffic.editDestination("meet", choice: .space("space-gone"), littleWindowProfile: nil, completion: $0) }
+    let refused = try? await atcValue { airTraffic.editDestination("meet", choice: .space("space-gone"), completion: $0) }
     #expect(refused == nil)
     let refusal = try #require(airTraffic.error)
     // Answering the test field (a keystroke's ask routes and lands) answers — and the
@@ -574,7 +584,157 @@ func aRouteAnswerLeavesARefusedEditsMessageStanding() async throws {
     #expect(airTraffic.testAnswer?.url == "good.example")
     #expect(airTraffic.error == refusal)
     // An applied edit goes through the same receive and clears the stale refusal.
-    try await atcValue { airTraffic.editDestination("meet", choice: .mostRecent, littleWindowProfile: nil, completion: $0) }
+    try await atcValue { airTraffic.editDestination("meet", choice: .mostRecent, completion: $0) }
     #expect(airTraffic.error == nil)
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// The core refuses a destination the pane's own profile does not carry, and the refusal is
+// the message the pane shows: the rule's row keeps its destination and the banner names the
+// pane's profile as the reason.
+@Test @MainActor
+func aCrossProfileDestinationEditRefusalShowsItsReasonInThePane() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-cross-profile")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("cross.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    // The pane's context is the shown space's profile (space-work, the default one).
+    #expect(model.airTrafficLittleWindowProfile == .`default`)
+    try await atcValue { airTraffic.load(completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: model.airTrafficLittleWindowProfile, completion: $0) }
+    let id = try #require(airTraffic.routing?.rules.first?.id)
+    // space-home rides in the named "Profile 1": the pick is refused and the banner says so.
+    let refused = try? await atcValue { airTraffic.editDestination(id, choice: .space("space-home"), completion: $0) }
+    #expect(refused == nil)
+    let reason = try #require(airTraffic.error)
+    #expect(reason.contains("another profile"))
+    #expect(airTraffic.routing?.rules.first?.destination == Destination.space(.space("space-work")))
+    // The refused banner clears with an applied edit (most recent) through the same receive.
+    try await atcValue { airTraffic.editDestination(id, choice: .mostRecent, completion: $0) }
+    #expect(airTraffic.error == nil)
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// The pane's deleted-space set is the core's one answer covering every destination (a rule's
+// and the default's), not a Swift-side compare against the shown spaces.
+@Test @MainActor
+func thePaneReadsTheCoreSDeletedSpaceSet() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-core-set")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("coreset.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { fixture("link-routing-synthetic.json") }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    try await atcValue { airTraffic.load(completion: $0) }
+    #expect(airTraffic.deletedSpaces.isEmpty)
+    // A rule rides at space-work (github-prs) and the default lands at space-home; a third
+    // space keeps the deletions above the last-space refusal.
+    _ = try await atcValue { adapter.createSpace(name: "Spare", completion: $0) }
+    try await atcValue { airTraffic.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
+    try await atcValue { adapter.deleteSpace(id: "space-work", completion: $0) }
+    try await atcValue { adapter.deleteSpace(id: "space-home", completion: $0) }
+    let after = try await atcValue { adapter.snapshot(completion: $0) }
+    try await atcValue { airTraffic.load(completion: $0) }
+    // The core's answer covers the rule and the default: the pane reads it, sorted as the
+    // menus show it.
+    #expect(airTraffic.deletedSpaceIds == ["space-home", "space-work"])
+    #expect(airTraffic.routing?.default == Destination.space(.space("space-home")))
+    // The tags the menus carry: the two disabled items for the core's answer and the living
+    // space's tag, nothing else.
+    let tags = DestinationChoice.menuTags(spaces: after.spaces, deletedSpaceIds: airTraffic.deletedSpaceIds)
+    #expect(tags.filter(\.isDeletedSpace) == [.deletedSpace("space-home"), .deletedSpace("space-work")])
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// A space deleted while the window is open moves its destination into the pane's set
+// through the snapshot the deletion returns: the set follows the spaces without another
+// `load`, so the picker matches the selection instead of showing none.
+@Test @MainActor
+func deletingASpaceWithThePaneLoadedMovesItsDestinationIntoTheSetWithoutAReload() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-refresh")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("refresh.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { fixture("link-routing-synthetic.json") }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    try await atcValue { airTraffic.load(completion: $0) }
+    #expect(airTraffic.deletedSpaces.isEmpty)
+    // A third space keeps the deletion above the last-space refusal; the rule rides at
+    // space-work (github-prs).
+    _ = try await atcValue { adapter.createSpace(name: "Spare", completion: $0) }
+    model.requestDelete("space-work")
+    model.confirmDelete()
+    try await waitUntil { airTraffic.deletedSpaceIds == ["space-work"] }
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// New Route does not ask for a destination the core refuses: the default destination is
+// judged on existence only, so it may name another profile's space — a rule cannot — and
+// such a New Route starts at the most recent space of the rule's profile instead.
+@Test @MainActor
+func aNewRouteWithADefaultOfAnotherProfileStartsAtAUsableDestination() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-newroute")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue { adapter.open(path: directory.appendingPathComponent("newroute.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    try await atcValue { airTraffic.load(completion: $0) }
+    // The default lands at space-home, which rides in the named profile; the pane shows
+    // space-work, the built-in profile's space.
+    try await atcValue { airTraffic.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
+    #expect(model.defaultChoice == .space("space-home"))
+    // A default of the pane's own profile starts the rule there unchanged.
+    try await atcValue { airTraffic.setDefault(.space("space-work"), littleWindowProfile: nil, completion: $0) }
+    #expect(model.newRouteDestination() == Destination.space(.space("space-work")))
+    // Another profile's default starts the rule at the most recent space instead, and the
+    // rule the button adds is accepted (the banner stays empty).
+    try await atcValue { airTraffic.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
+    #expect(model.defaultChoice == .space("space-home"))
+    let destination = model.newRouteDestination()
+    #expect(destination == .space(.mostRecent))
+    try await atcValue { airTraffic.add(destination: destination, profile: model.airTrafficLittleWindowProfile, completion: $0) }
+    #expect(airTraffic.error == nil)
+    #expect(airTraffic.routing?.rules.first?.destination == .space(.mostRecent))
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+// A default that names a deleted space answers nil as a destination choice: New Route still
+// starts somewhere usable — the shown profile's Little window, so the rule's Little window
+// stays inside the profile the rule rides in.
+@Test @MainActor
+func aNewRouteWithADeletedSpaceDefaultStartsAtTheShownProfilesLittleWindow() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-newroute-deleted")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let opened = try await atcValue { adapter.open(path: directory.appendingPathComponent("newroute-deleted.sqlite").path, json: { sidebar }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    // The pane shows the named profile's space: the rule the button adds rides in it.
+    let shown = WorkspaceSnapshot(archive: opened.archive, shownSpaceId: "space-home", selectedId: opened.selectedId, spaces: opened.spaces)
+    let model = SettingsModel(snapshot: shown, adapter: adapter, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    try await atcValue { airTraffic.load(completion: $0) }
+    #expect(model.airTrafficLittleWindowProfile == .named("Profile 1"))
+    // The default names space-work, which is then deleted under the open pane.
+    try await atcValue { airTraffic.setDefault(.space("space-work"), littleWindowProfile: nil, completion: $0) }
+    model.requestDelete("space-work")
+    model.confirmDelete()
+    try await waitUntil { airTraffic.deletedSpaceIds == ["space-work"] }
+    #expect(model.defaultChoice.isDeletedSpace)
+    #expect(model.newRouteDestination() == Destination.littleWindow(.named("Profile 1")))
+    // The rule the button adds is accepted and its Little window keeps the rule's profile.
+    try await atcValue { airTraffic.add(destination: model.newRouteDestination(), profile: model.airTrafficLittleWindowProfile, completion: $0) }
+    #expect(airTraffic.error == nil)
+    #expect(airTraffic.routing?.rules.first?.destination == Destination.littleWindow(.named("Profile 1")))
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
