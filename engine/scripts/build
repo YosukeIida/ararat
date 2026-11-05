@@ -4,26 +4,38 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: build
+usage: build [--dev]
 
 Runs the read-only series check; when it fails, build stops and says to run
 apply without touching the tree (it never resets or re-applies anything).
-Then it takes the engine lock, runs autoninja -C out/Ararat chrome with its
-local jobs capped at 95 % of the CPUs, prints the elapsed time and step
-count, and appends a one-line JSON record to
-$ARARAT_BUILD_ROOT/build-times.jsonl.
+Then it refuses when the args.gn's ararat_engine_version stamp is older than
+the current tree, saying to run gen. Otherwise it takes the engine lock, runs
+autoninja -C out/Ararat chrome with its local jobs capped at 95 % of the
+CPUs, prints the elapsed time and step count, and appends a one-line JSON
+record to $ARARAT_BUILD_ROOT/build-times.jsonl. --dev builds out/Dev instead,
+the daily-work directory gen --dev writes.
 USAGE
 }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  "") ;;
+  "") out_name="Ararat"; target_rec="chrome" ;;
+  --dev) out_name="Dev"; target_rec="chrome (out/Dev)" ;;
   *) die "unknown argument: $1" ;;
 esac
 
 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/series-check"
 
-[[ -d "$ARARAT_SRC_DIR/out/Ararat" ]] || die "gen has not run: no $ARARAT_SRC_DIR/out/Ararat"
+[[ -d "$ARARAT_SRC_DIR/out/$out_name" ]] || die "gen has not run: no $ARARAT_SRC_DIR/out/$out_name"
+
+# The stamp is fixed at gen time: an apply after gen changes the tree without
+# moving the args, so the build would carry a stale version. Refusing here is
+# the same pattern series-check follows.
+stamp="$(awk -F'"' '/^ararat_engine_version=/{print $2; exit}' "$ARARAT_SRC_DIR/out/$out_name/args.gn" 2>/dev/null || true)"
+want="$(engine_version_value)"
+if [[ "$stamp" != "$want" ]]; then
+  die "ararat_engine_version in out/$out_name/args.gn does not match the tree: run gen"
+fi
 
 lock_take
 
@@ -38,7 +50,7 @@ mkdir -p "$ARARAT_BUILD_ROOT"
 # -local_jobs, not -j: siso refuses -j
 jobs=$(( $(sysctl -n hw.ncpu) * 95 / 100 ))
 set -m
-autoninja -C "$ARARAT_SRC_DIR/out/Ararat" chrome -local_jobs "$jobs" >"$log" 2>&1 &
+autoninja -C "$ARARAT_SRC_DIR/out/$out_name" chrome -local_jobs "$jobs" >"$log" 2>&1 &
 child=$!
 set +m
 _signal_child="$child"
@@ -58,6 +70,6 @@ step_line="$(grep -oE '^\[[0-9,]+(/[0-9,]+)?\]' "$log" | tail -n1 || true)"
 steps="${step_line#[}"
 steps="${steps%%[,/]*}"
 steps="$(printf '%s' "$steps" | tr -d ',')"
-printf '{"ts":%s,"target":"chrome","steps":%s,"elapsed_sec":%s}\n' \
-  "$(date +%s)" "${steps:-null}" "$((t1 - t0))" >>"$ARARAT_BUILD_ROOT/build-times.jsonl"
+printf '{"ts":%s,"target":"%s","steps":%s,"elapsed_sec":%s}\n' \
+  "$(date +%s)" "$target_rec" "${steps:-null}" "$((t1 - t0))" >>"$ARARAT_BUILD_ROOT/build-times.jsonl"
 msg "build: chrome ${steps:-?} steps in $((t1 - t0))s (recorded in $ARARAT_BUILD_ROOT/build-times.jsonl)"

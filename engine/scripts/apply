@@ -10,10 +10,12 @@ Brings $ARARAT_SRC_DIR and every DEPS repository the series touches to the
 bytes the series produces. If the tree already matches the manifest recorded
 by the last good apply and the series has not changed (same fingerprint),
 nothing is written and every mtime is left alone. Otherwise the tree is
-reset to pristine, the series is applied in order (git apply, no fuzz), and
-the manifest is written. On the first failure it names the patch and the
-file and leaves the tree reset, not half-patched. apply is the only command
-that resets the tree or applies patches.
+reset to pristine, the series is applied in order (git apply, no fuzz), the
+layer directories (engine/ararat, engine/chrome when present) are rsynced
+into the tree, and the manifest is written over both. On the first failure
+it names the patch and the file and leaves the tree reset, not
+half-patched. apply is the only command that resets the tree or applies
+patches.
 USAGE
 }
 
@@ -24,6 +26,7 @@ case "${1:-}" in
 esac
 
 require_tree
+check_layer_exports
 lock_take
 t0="$(date +%s)"
 
@@ -77,6 +80,8 @@ if [[ "$n_snap" != "0" ]]; then
     fi
   done <"$scratch/kept"
 fi
+
+copy_layer
 
 manifest_record || die "apply: could not record the manifest"
 

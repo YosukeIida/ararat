@@ -1,0 +1,19 @@
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -1323,6 +1323,7 @@
+     ]
+ 
+     deps = [
++      "//ararat/core",
+       ":dependencies",
+       "//build:chromeos_buildflags",
+       "//chrome/app:command_ids",
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -31,3 +31,6 @@
+ 
+ # _ChromeMain must be listed last.  That's the whole point of this file.
+ _ChromeMain
++
++# Ararat
++_AraratEngineVersion

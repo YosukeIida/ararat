@@ -1,0 +1,24 @@
+# Our in-tree layer. engine/scripts/apply copies this directory to
+# //ararat/core; the exports config rides all_dependent_configs so the target
+# that links the layer (chrome_dll, see patches/ararat/link-ararat-layer.patch)
+# exports our symbols on the same link line as chrome's framework.exports.
+
+declare_args() {
+  # Written by engine/scripts/gen; empty means gen has not run for this tree.
+  ararat_engine_version = ""
+}
+
+config("ararat_exports") {
+  ldflags = [
+    "-Wl,-exported_symbols_list",
+    "-Wl," + rebase_path("ararat.exports", root_build_dir),
+  ]
+  inputs = [ "ararat.exports" ]
+}
+
+source_set("core") {
+  sources = [ "ararat_version.cc" ]
+  deps = [ "//base" ]
+  defines = [ "ARARAT_ENGINE_VERSION=\"$ararat_engine_version\"" ]
+  all_dependent_configs = [ ":ararat_exports" ]
+}

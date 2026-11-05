@@ -126,6 +126,100 @@ touched_repos() {
   done < <(touched_paths) | LC_ALL=C sort -u
 }
 
+# The layer pairs as engine directory and src-tree destination.
+layer_pairs() {
+  printf '%s\t%s\n' engine/ararat ararat/core
+  if [[ -d "$ARARAT_REPO_ROOT/engine/chrome" ]]; then
+    printf '%s\t%s\n' engine/chrome chrome/browser/ararat
+  fi
+}
+
+# The layer directories as their src-tree paths, the engine directory being
+# the source of truth, so a file deleted from it leaves the manifest too.
+# -type f keeps symlinks out of the manifest; copy_layer refuses them, so the
+# copy and the manifest stay consistent.
+layer_paths() {
+  local src dst
+  {
+    while IFS=$'\t' read -r src dst; do
+      (cd "$ARARAT_REPO_ROOT/$src" && find . -type f | sed "s|^\\./|$dst/|")
+    done < <(layer_pairs)
+  } | LC_ALL=C sort -u
+}
+
+# The files actually under the copied layer directories, src-tree relative:
+# the complement against layer_paths is a stray the manifest never sees.
+layer_strays() {
+  local src dst
+  {
+    while IFS=$'\t' read -r src dst; do
+      [[ -d "$ARARAT_SRC_DIR/$dst" ]] || continue
+      (cd "$ARARAT_SRC_DIR/$dst" && find . -type f | sed "s|^\\./|$dst/|")
+    done < <(layer_pairs)
+  } | LC_ALL=C sort -u
+}
+
+# The stamp gen writes into the args.gn it produces and build rechecks: the
+# built Chromium version and the manifest hash, so the value moves with the
+# series, the patches and the layer together.
+engine_version_value() {
+  local version hash
+  [[ -r "$ARARAT_MANIFEST" ]] || die "no manifest ($ARARAT_MANIFEST): run apply"
+  [[ -r "$ARARAT_SRC_DIR/chrome/VERSION" ]] || die "no Chromium VERSION: $ARARAT_SRC_DIR/chrome/VERSION"
+  version="$(awk -F= 'NF == 2 { printf "%s%s", sep, $2; sep = "." }' "$ARARAT_SRC_DIR/chrome/VERSION")"
+  hash="$(shasum -a 256 -- "$ARARAT_MANIFEST" | awk '{print substr($1, 1, 12)}')"
+  printf '%s (ararat %s)' "$version" "$hash"
+}
+
+# rsync, not cp: --delete drops a layer file removed from the engine directory
+# and --checksum leaves the mtimes of files whose bytes did not change, so
+# ninja does not recompile them; why -t is not kept — a file restored with an
+# old mtime would arrive with new bytes ninja would not rebuild. Symlinks are
+# refused: rsync -l would copy one that the manifest (-type f) never sees.
+# The exported names must match in the two places they are listed: ararat.exports
+# (the linker's -exported_symbols_list) and the "# Ararat" block the link patch
+# appends to chrome/app/framework.order (verify_order.py refuses any export the
+# order file does not list). Both sides parse comments and blanks away, and the
+# comparison is by set: a name in one file only fails apply and series-check.
+check_layer_exports() {
+  local exports="$ARARAT_REPO_ROOT/engine/ararat/ararat.exports"
+  local patch="$ARARAT_PATCHES/ararat/link-ararat-layer.patch"
+  local a b only_a only_b
+  [[ -r "$exports" ]] || die "no layer exports file: $exports"
+  [[ -r "$patch" ]] || die "no link patch: $patch"
+  a="$(awk '{ line = $0; sub(/#.*/, "", line); gsub(/[[:space:]]/, "", line); if (line != "") print line }' "$exports" | LC_ALL=C sort -u)"
+  b="$(awk '
+    /^\+\+\+ / { infw = ($2 ~ /framework\.order$/); next }
+    !infw { next }
+    /^\+# Ararat/ { inblock = 1; next }
+    inblock && !/^\+/ { inblock = 0; next }
+    inblock {
+      line = substr($0, 2)
+      sub(/#.*/, "", line)
+      gsub(/[[:space:]]/, "", line)
+      if (line != "") print line
+    }
+  ' "$patch" | LC_ALL=C sort -u)"
+  only_a="$(comm -23 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | sed '/^$/d')"
+  only_b="$(comm -13 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | sed '/^$/d')"
+  if [[ -n "$only_a" || -n "$only_b" ]]; then
+    die "ararat.exports and the link patch's framework.order block disagree (only in ararat.exports: $(printf '%s' "$only_a" | tr '\n' ' '); only in the order block: $(printf '%s' "$only_b" | tr '\n' ' ')): list every exported name in both"
+  fi
+}
+
+copy_layer() {
+  local src dst link
+  while IFS=$'\t' read -r src dst; do
+    link="$(cd "$ARARAT_REPO_ROOT/$src" && find . -type l | head -n1)" || return 1
+    if [[ -n "$link" ]]; then
+      die "symlinks are not supported in the layer: $ARARAT_REPO_ROOT/$src/${link#./}"
+    fi
+  done < <(layer_pairs)
+  while IFS=$'\t' read -r src dst; do
+    rsync -rl --delete --checksum "$ARARAT_REPO_ROOT/$src/" "$ARARAT_SRC_DIR/$dst/"
+  done < <(layer_pairs)
+}
+
 _engine_lock_owned=0
 _signal_child=
 _engine_scratch=
@@ -278,8 +372,11 @@ reset_tree() {
     fi
     git -C "$r" reset -q --hard
     # /out anchors the exemption at the repository root, where the src
-    # checkout keeps its build products
-    git -C "$r" clean -qfd -e /out
+    # checkout keeps its build products; /ararat/ and /chrome/browser/ararat/
+    # exempt the copied layer, which the copy step maintains — why the layer is
+    # not cleaned: a cleaned copy would be recreated with fresh mtimes and push
+    # ninja into recompiling unchanged files
+    git -C "$r" clean -qfd -e /out -e /ararat/ -e /chrome/browser/ararat/
   done < <({
     touched_repos
     if [[ -r "$ARARAT_MANIFEST" ]]; then
@@ -324,7 +421,7 @@ manifest_actual() {
       else
         printf -- '-  %s\n' "$rel"
       fi
-    done < <(touched_paths)
+    done < <({ touched_paths; layer_paths; })
   }
 }
 
@@ -356,6 +453,12 @@ manifest_check() {
   if [[ $rc -ne 0 ]]; then
     printf '%s\n' "$out" | sed 's/^/        /'
     die "the series does not reproduce the recorded bytes ('-' recorded, '+' tree): run apply"
+  fi
+  local strays
+  strays="$(comm -13 <(layer_paths) <(layer_strays))"
+  if [[ -n "$strays" ]]; then
+    printf '%s\n' "$strays" | sed 's/^/        /'
+    die "files in the copied layer are not the engine's: run apply"
   fi
   n="$(wc -l <"$ARARAT_MANIFEST" | tr -d ' ')"
   n=$((n - 1))
@@ -446,6 +549,17 @@ apply_would_write_nothing() {
       }
     ' || return 1
   done < <(LC_ALL=C cut -f1 -- "$map" | LC_ALL=C sort -u)
+  # The manifest hashes the copied bytes, not the engine-side sources, so an
+  # edited engine/ararat file leaves the comparison above green; only the
+  # dry-run rsync sees it. Why not copy_layer before the check: the copy would
+  # write src on an apply that must stay read-only and push a layer-only change
+  # through the full reset path.
+  local lsrc ldst itemize
+  while IFS=$'\t' read -r lsrc ldst; do
+    itemize="$(rsync -rl --delete --checksum --dry-run --itemize-changes \
+      "$ARARAT_REPO_ROOT/$lsrc/" "$ARARAT_SRC_DIR/$ldst/" 2>&1)"
+    if [[ -n "$itemize" ]]; then return 1; fi
+  done < <(layer_pairs)
 }
 
 

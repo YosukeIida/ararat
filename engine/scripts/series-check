@@ -6,12 +6,14 @@ usage() {
   cat <<'USAGE'
 usage: series-check
 
-Read-only: compares every file the series touches in $ARARAT_SRC_DIR against
-the bytes recorded in the manifest that apply writes after a good apply
-($ARARAT_MANIFEST). Exits non-zero when anything drifted, and also when the
-manifest was recorded for a different series. It resets nothing and applies
-nothing; build runs this before its own work and, on failure, stops and says
-to run apply.
+Read-only: compares every file the series touches in $ARARAT_SRC_DIR, and the
+layer files apply copies into src/ararat/core (and src/chrome/browser/ararat),
+against the bytes recorded in the manifest that apply writes after a good
+apply ($ARARAT_MANIFEST). A stray file in the copied layer directories is
+refused too. Exits non-zero when anything drifted, and also when the manifest
+was recorded for a different series. It resets nothing and applies nothing;
+build runs this before its own work and, on failure, stops and says to run
+apply.
 USAGE
 }
 
@@ -22,4 +24,5 @@ case "${1:-}" in
 esac
 
 require_tree
+check_layer_exports
 manifest_check

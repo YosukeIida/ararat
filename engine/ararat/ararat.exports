@@ -1,0 +1,4 @@
+# One exported symbol per line, no wildcards; the same set the link patch's
+# "# Ararat" block appends to chrome/app/framework.order — engine/scripts
+# refuses a difference between the two.
+_AraratEngineVersion

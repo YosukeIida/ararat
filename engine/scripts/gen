@@ -4,17 +4,22 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: gen
+usage: gen [--dev]
 
 Copies engine/args.gn into $ARARAT_SRC_DIR/out/Ararat/args.gn after checking
-its hash against the copy recorded in engine/build-inputs.toml, then runs
-gn gen for that output directory.
+its hash against the copy recorded in engine/build-inputs.toml, appends the
+ararat_engine_version stamp (the built Chromium version and the engine tree
+hash from the manifest), and runs gn gen for that output directory. --dev
+writes out/Dev/args.gn instead (engine/args.gn followed by the dev-build
+lines and the stamp) and runs gn gen for out/Dev, the daily-work directory;
+the release identity stays out/Ararat.
 USAGE
 }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  "") ;;
+  "") dev=0 ;;
+  --dev) dev=1 ;;
   *) die "unknown argument: $1" ;;
 esac
 
@@ -35,10 +40,30 @@ fi
 # running build, so gen holds the engine lock like fetch and apply
 lock_take
 
-out="$ARARAT_SRC_DIR/out/Ararat"
+out_name="Ararat"
+if [[ $dev == 1 ]]; then
+  out_name="Dev"
+fi
+
+out="$ARARAT_SRC_DIR/out/$out_name"
 mkdir -p "$out"
 # a copy, not a symlink: edits to engine/args.gn afterwards would otherwise
 # reach a build that already started
 cp -- "$args_file" "$out/args.gn"
-(cd "$ARARAT_SRC_DIR" && gn gen out/Ararat)
+if [[ $dev == 1 ]]; then
+  cat >>"$out/args.gn" <<'DEV_ARGS'
+
+is_official_build=false
+use_thin_lto=false
+symbol_level=0
+blink_symbol_level=0
+dcheck_always_on=false
+# base's precompile.h is compiled as a module interface unit under this toolchain and fails
+enable_precompiled_headers=false
+DEV_ARGS
+fi
+# The stamp build's staleness check compares against; appended last for both
+# directories, so a layer edit regenerates the build and relinks the framework.
+printf 'ararat_engine_version="%s"\n' "$(engine_version_value)" >>"$out/args.gn"
+(cd "$ARARAT_SRC_DIR" && gn gen "out/$out_name")
 msg "gen: $out/args.gn written, gn gen done"
