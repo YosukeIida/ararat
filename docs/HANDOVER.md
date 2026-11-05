@@ -96,7 +96,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` units U1–U7 (kept with the design session's envelopes): U1 our in-tree layer (`//ararat/core`, `gen --dev`/`build --dev`), U2 the ad-hoc signed bundle `net.iodine2.ararat`, U3 entry and main delegate, U4 our BrowserWindow, U5 tabs in the page card, U6 the core's live-tab coordinator, U7 the slice wiring; then the compositor measured on screen. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1, U2, U3 and U6 are done. Left, in order: U4 our BrowserWindow and window host (started; two untracked files in the `ararat-42` worktree, branch `feat/window-host`), U5 tabs in the page card, U7 the slice wiring in one window; then the compositor measured on screen (U8) and recorded in §4. Both implementation seats are at their usage limits until 2026-11-09 (Codex labteam 06:45, GLM 09:00). Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 
