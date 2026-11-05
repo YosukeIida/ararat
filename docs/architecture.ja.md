@@ -59,7 +59,8 @@ ararat/
     Sources/AraratUI/       AppKit + SwiftUI components (library)
     Sources/AraratHarness/  UI harness: real components on real core data, a placeholder where the page goes
     scripts/build-core.sh   builds the core and regenerates the bindings
-    App/                    the browser app (Xcode project, from phase 3)
+    Sources/Ararat/         アプリの起動実行体: framework を読み込み、ChromeMain を呼ぶ
+    scripts/bundle-app.sh   エンジンの Chromium.app を Ararat.app に組み、ad-hoc で署名する
   docs/
 ```
 
@@ -122,7 +123,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 ### 4.5 プロセスと run loop
 
-- `main` は独自のエントリポイントを呼び出し、エントリポイントは独自の `ChromeMainDelegate` サブクラスを渡して `ChromeMain` を呼び出す。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する。
+- バンドルの起動実行体（`Sources/Ararat`）が framework を読み込み、`ChromeMain` を呼ぶ。U3 でこれを `AraratMain` に置き換える。`AraratMain` は独自の `ChromeMainDelegate` サブクラスを渡して `ChromeMain` を呼ぶ。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する。
 - Chrome の `AppController` は、終了、Dock、ログアウトのイベントを所有する独自のオブジェクトに置き換える。このオブジェクトは、キャンセル可能なクローズと終了（beforeunload、ダウンロードの確認）と、ウィンドウが 1 つも開いていないときの keep-alive を実装する（Ardia ledger 1.1）。
 
 ### 4.6 ウィンドウ、タブ、および Chrome の UI から引き継ぐ責務
@@ -332,6 +333,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 - Developer ID による署名と notarization。Sparkle 2 と EdDSA 署名付きの appcast、stable と nightly のチャネル（macOS）。
 - bundle id、team id、entitlement（passkey 用のキーチェーンのアクセスグループ、Bluetooth の使用）、ヘルパーの署名は、資格情報の保存がこれらに依存するため、phase 3 の spike で確定する。
+- phase 3 のバンドルは ad-hoc で、内側から署名する（`bundle-app.sh`）: framework の dylib、裸のヘルパー実行体、各ヘルパー app、framework、最後に app。Renderer と GPU のヘルパーはエンジンの allow-jit entitlement を、app はエンジンのデバイス系 entitlement を持つ。team を必要とするもの（`keychain-access-groups`、`com.apple.application-identifier`、`com.apple.developer.associated-domains*`、`com.apple.developer.web-browser.public-key-credential`、値に team の接頭辞を含むものすべて）は、スクリプトの stderr に名前を出して落とす。値が team の接頭辞を持ち、ad-hoc の署名には team がないからである。ad-hoc の下では hardened runtime を使わない。bundle id は `net.iodine2.ararat` で、製品名とヘルパー名は Chromium のままとする。バンドルの実行はすべて `CFFIXED_USER_HOME` を使い捨ての home に置き、bundle id が作る `NSUserDefaults` のドメインの書き込みが `~/Library` に届かないようにする（我々の規則）。
 - CI では署名のフェーズをビルドのフェーズから分離する。action はコミットの SHA で固定する。
 - すべてのリリースに Corresponding Source を付ける（4.7）。
 - Windows と Linux のアップデーターは、それぞれの phase で決定する。

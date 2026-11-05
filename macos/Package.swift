@@ -13,6 +13,7 @@ let package = Package(
     products: [
         .library(name: "AraratUI", targets: ["AraratUI"]),
         .executable(name: "AraratHarness", targets: ["AraratHarness"]),
+        .executable(name: "Ararat", targets: ["Ararat"]),
     ],
     targets: [
         .target(
@@ -33,5 +34,8 @@ let package = Package(
             dependencies: ["AraratUI", "AraratKit"],
             resources: [.copy("Fixtures")]
         ),
+        // The bundle's launcher: only Darwin, so the process reaches ChromeMain
+        // before any AppKit or core state exists.
+        .executableTarget(name: "Ararat"),
     ]
 )

@@ -5,6 +5,10 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U2 done: our bundle runs the stock engine —
+  `macos/Sources/Ararat` launcher (dlopen, `ChromeMain`), `macos/scripts/bundle-app.sh`
+  (Ararat.app, id `net.iodine2.ararat`, ad-hoc, renderer/GPU helpers carry allow-jit);
+  headless dump-dom and `--version` pass from the bundle.
 - Phase 0 (design) done: `docs/architecture.md` draft 2, all Codex round-1 findings judged
   (`docs/reviews/2026-10-30-architecture-draft1-judgement.md`).
 - Phase 1 in progress. Done: Rust core model (membership register + fractional order keys),
@@ -81,6 +85,8 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Known loose ends
 
+- `macos/scripts/build-core.sh` exits non-zero in a checkout whose path contains spaces
+  (uniffi step, "No such file or directory"); not fixed yet.
 - `macos/Generated/` is a stale leftover (gitignored); delete when allowed.
 - Synthetic fixture exists twice (`core/ararat-core/tests/fixtures/`, `macos/Sources/AraratHarness/Fixtures/`).
 - Fresh clone must run `macos/scripts/build-core.sh` before `swift build`.

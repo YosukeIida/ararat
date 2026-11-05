@@ -57,7 +57,8 @@ ararat/
     Sources/AraratUI/       AppKit + SwiftUI components (library)
     Sources/AraratHarness/  UI harness: real components on real core data, a placeholder where the page goes
     scripts/build-core.sh   builds the core and regenerates the bindings
-    App/                    the browser app (Xcode project, from phase 3)
+    Sources/Ararat/         the app's launcher executable: loads the framework, calls ChromeMain
+    scripts/bundle-app.sh   stages the engine's Chromium.app as Ararat.app and signs it ad-hoc
   docs/
 ```
 
@@ -120,7 +121,7 @@ Hooks are `g_ararat_*` function pointers declared in `ararat_hooks.h`, included 
 
 ### 4.5 Process and run loop
 
-- `main` calls our entry point, which calls `ChromeMain` with our `ChromeMainDelegate` subclass. `NSApp` is Chrome's `BrowserCrApplication`. Nothing touches `NSApp` before Chromium starts, and the AppKit UI is created from a Chromium startup callback.
+- The bundle's launcher executable (`Sources/Ararat`) loads the framework and calls `ChromeMain`; U3 replaces it with `AraratMain`, which calls `ChromeMain` with our `ChromeMainDelegate` subclass. `NSApp` is Chrome's `BrowserCrApplication`. Nothing touches `NSApp` before Chromium starts, and the AppKit UI is created from a Chromium startup callback.
 - We replace Chrome's `AppController` with our own owner of quit, Dock and logout events, implementing cancellable close and quit (beforeunload, download confirmation) and a keep-alive when no window is open (Ardia ledger 1.1).
 
 ### 4.6 Windows, tabs and the duties we take over from Chrome's UI
@@ -330,6 +331,7 @@ A small Rust service: blob put/get/list per group, device-key verification, rate
 
 - Developer ID signing and notarization; Sparkle 2 with EdDSA-signed appcasts, stable and nightly channels (macOS).
 - Bundle id, team id, entitlements (keychain access group for passkeys, Bluetooth usage) and helper signing are settled in the phase-3 spike, because credential storage depends on them.
+- The phase-3 bundle signs ad-hoc, inside out (`bundle-app.sh`): the framework's dylibs, the bare helper executables, each helper app, the framework, then the app. Renderer and GPU helpers carry the engine's allow-jit entitlement, the app the engine's device entitlements; the team-bound ones are dropped and named on the script's stderr — `keychain-access-groups`, `com.apple.application-identifier`, `com.apple.developer.associated-domains*`, `com.apple.developer.web-browser.public-key-credential`, and any entitlement whose value carries a team prefix — because their values hold the team prefix ad-hoc signing has no team for. No hardened runtime under ad-hoc. The bundle id is `net.iodine2.ararat`; the product name and the helper names stay Chromium. Every run of the bundle sets `CFFIXED_USER_HOME` to a scratch home, so Chrome's own preference writes (the `NSUserDefaults` domain the bundle id creates) land there and not in `~/Library` (ours).
 - The signing phase is isolated from the build phase in CI; actions are pinned by commit SHA.
 - Every release carries its Corresponding Source (4.7).
 - Windows and Linux updaters are decided in their phases.
