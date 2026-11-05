@@ -11,6 +11,15 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   queries), exported through UniFFI as `WorkspaceStore.liveOpen/liveActivate/liveClose/
   liveApply/liveTab/itemForLive`; the map is one to one and the lifecycle change of a close
   commits in the same storage transaction before the command is returned.
+- Phase 3 U3 done: the launcher runs our entry through one hook —
+  `engine/ararat/public/AraratEngine.h` (`AraratMain`, `AraratCallbacks`, `AraratQuit`),
+  `engine/ararat/ararat_main.mm` (the guards, the callbacks and the extra parts that fire
+  `started`/`will_shut_down`), three targets (`hooks`/`core`/`entry` in
+  `engine/ararat/BUILD.gn`, `gn check` clean), and `extra-parts-hook.patch`
+  (`chrome_content_browser_client.cc` hands its browser main parts to
+  `g_ararat_add_browser_main_extra_parts` when the launcher set it; helpers stay stock).
+  The `--ararat-check=started` run (a scratch `--user-data-dir`, `--use-mock-keychain`)
+  prints one JSON line and quits via `AraratQuit`; anything else exits 2.
 - Phase 3 U2 done: our bundle runs the stock engine —
   `macos/Sources/Ararat` launcher (dlopen, `ChromeMain`), `macos/scripts/bundle-app.sh`
   (Ararat.app, id `net.iodine2.ararat`, ad-hoc, renderer/GPU helpers carry allow-jit);

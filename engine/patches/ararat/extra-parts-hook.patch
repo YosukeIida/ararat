@@ -1,0 +1,40 @@
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/chrome_content_browser_client.h"
+ 
++#include "ararat/core/ararat_hooks.h"
++
+ #include <algorithm>
+ #include <iterator>
+ #include <map>
+@@ -832,6 +834,11 @@
+ 
+ #include "base/win/windows_h_disallowed.h"
+ 
++// The extra-parts hook the embedder sets (architecture 4.3). Unset means
++// stock: the client creates its parts and nothing else joins them.
++void (*g_ararat_add_browser_main_extra_parts)(
++    ChromeBrowserMainParts* parts) = nullptr;
++
+ using blink::mojom::EffectiveConnectionType;
+ using blink::web_pref::WebPreferences;
+ using content::BrowserThread;
+@@ -1793,10 +1800,15 @@
+ 
+ std::unique_ptr<content::BrowserMainParts>
+ ChromeContentBrowserClient::CreateBrowserMainParts(bool is_integration_test) {
+-  return ChromeBrowserMainParts::Create(
++  auto parts = ChromeBrowserMainParts::Create(
+       is_integration_test, &startup_data_,
+       base::BindOnce(&ChromeContentBrowserClient::InitOnUIThread,
+                      weak_factory_.GetWeakPtr()));
++  if (g_ararat_add_browser_main_extra_parts) {
++    g_ararat_add_browser_main_extra_parts(
++        static_cast<ChromeBrowserMainParts*>(parts.get()));
++  }
++  return parts;
+ }
+ 
+ void ChromeContentBrowserClient::PostAfterStartupTask(

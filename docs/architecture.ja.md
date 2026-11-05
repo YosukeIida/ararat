@@ -112,7 +112,7 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 
 ### 4.3 Hook
 
-hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタであり、`ararat_hooks.h` はパッチを当てた Chrome のファイルと独自レイヤーの両方からインクルードする。hook が未設定のとき、Chrome は標準どおりに動作する。シグネチャの変更はコンパイル時にエラーとなる。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に付け加える「`# Ararat`」ブロックの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断る（我々の規則）。
+hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタであり、`ararat_hooks.h` はパッチを当てた Chrome のファイルと独自レイヤーの両方からインクルードする。hook が未設定のとき、Chrome は標準どおりに動作する。シグネチャの変更はコンパイル時にエラーとなる。今日の一覧: `chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に付け加える「`# Ararat`」ブロックの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
 
 ### 4.4 エンジン ↔ アプリの API
 
@@ -123,7 +123,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 ### 4.5 プロセスと run loop
 
-- バンドルの起動実行体（`Sources/Ararat`）が framework を読み込み、`ChromeMain` を呼ぶ。U3 でこれを `AraratMain` に置き換える。`AraratMain` は独自の `ChromeMainDelegate` サブクラスを渡して `ChromeMain` を呼ぶ。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する。
+- バンドルの起動実行体（`Sources/Ararat`）が framework を読み込む。ブラウザプロセスは独自の `AraratMain` を呼ぶ（ランチャーのコールバックを保存し、extra-parts の hook を設定して `ChromeMain` を呼ぶ）。ヘルパーは標準の `ChromeMain` を呼ぶ。hook は標準の client のパーツに独自の `ChromeBrowserMainExtraParts` を加え、それらが `PostBrowserStart` でランチャーの `started` コールバックを、`PostMainMessageLoopRun` で `will_shut_down` を呼ぶ。`started` は `PreMainMessageLoopRun` の中で、起動ブラウザが開いた後、メインループが回る前に発火する。ハンドラはループが回っていると見なしてはならない。`AraratQuit` はどこからでも呼べる。ループが近づく前の要求は、started の段階で叶う。`--ararat-check=<name>` は、`--user-data-dir` が `$TMPDIR` の下にあり `--use-mock-keychain` があるときだけ実行され、そうでなければ 2 で終わる。`started` は 1 行の JSON `{"check":"started","ok":true,"browsers":N}` を出して終了する。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する（我々の規則）。
 - Chrome の `AppController` は、終了、Dock、ログアウトのイベントを所有する独自のオブジェクトに置き換える。このオブジェクトは、キャンセル可能なクローズと終了（beforeunload、ダウンロードの確認）と、ウィンドウが 1 つも開いていないときの keep-alive を実装する（Ardia ledger 1.1）。
 
 ### 4.6 ウィンドウ、タブ、および Chrome の UI から引き継ぐ責務
@@ -173,7 +173,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 - `fetch` は shallow にタグを取得して `gclient sync -D --no-history --shallow -j 4 --force` を行い、工程ごとに所要時間を出力する。
 - `gen` は `engine/args.gn`（ハッシュを `engine/build-inputs.toml` の記録と照合する）を `out/Ararat/args.gn` に書き、`ararat_engine_version` のスタンプ（ビルドした Chromium のバージョンと、series・パッチ・レイヤーを合わせたマニフェストのハッシュ）を付け加え、`gn gen` を実行する。すべてエンジンのロックのもとで行う（ビルド中に args を書き換えたり `gn gen` を実行したりすると、実行中のビルドの下で ninja が再生成を行う）。スタンプはレイヤーの編集のたびに変わるので、レイヤーの編集は配布用の args を変え、次の `out/Ararat` のビルドは再生成と再リンクを行う。args.gn のスタンプがツリーより古いとき、`build` は「`gen` を実行せよ」と言って止まる（我々の規則）。
 - `build` はまず読み取り専用の series-check を実行し、ツリーが記録されたバイトを再現しなければ、ツリーに触れずに「`apply` を実行せよ」と言って止まる（リセットも再適用もしない）。通ればロックを取り、`autoninja -C out/Ararat chrome` を上の CPU の上限のもとで行い、所要時間と手順数を出力し、`~/chromium-build/build-times.jsonl` に 1 行の JSON 記録を書く。
-- `smoke` はビルドしたアプリを、`$TMPDIR` の使い捨て profile で `--headless=new --dump-dom`（data: URL）と `--version` の 2 回で実行する。どちらかでも失敗すれば 0 以外で終わる。
+- `smoke` はビルドしたアプリを、`$TMPDIR` の使い捨て profile と `--use-mock-keychain` で `--headless=new --dump-dom`（data: URL）と `--version` の 2 回で実行する。どちらかでも失敗すれば 0 以外で終わる。実の login keychain を使うと、out/Dev のビルドは DOM を出した後に「Teardown watchdog expired」で終了コード 2 になり、keychain に「Chromium Safe Storage」の項目が作られる（我々の規則）。
 - GN args は 1 つのファイルに置く: official build、ThinLTO、PGO、DCHECK なし、シンボルの除去、`proprietary_codecs=true`、`ffmpeg_branding="Chrome"`、独自のブランディング。phase 2 の実装（`engine/args.gn`）は ungoogled の `flags.gn` と `flags.macos.gn` にこちらの入力 `target_cpu="arm64"` を加えた形で、`chrome_pgo_phase` は暫定で 0 とし、独占の API キーは設定しない。ブランディングは phase 3 に回す。
 - `engine/build-inputs.toml` は、バイナリを決定するすべての要素を固定する: Chromium のコミット、ベースのパッチセットのタグ、解決済みの DEPS のハッシュ、GN args、Xcode と SDK のバージョン、アーキテクチャ。エンジンの成果物のキーは、このマニフェストのハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
 - CI ではエンジンをビルドしない。エンジンはローカルでビルドし、このキーのもとで prerelease として公開する。
@@ -366,7 +366,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 | 0 | リポジトリ、devshell、調査の取り込み、本文書 | レビュー済みの設計 |
 | 1 | エンジンなしのコアの基礎: 所属のレジスタを持つモデル、ATC、Arc のインポート、クラッシュに対して安全な書き込みを行う SQLite、UniFFI バインディング。harness 上でコアのデータを用いる `AraratUI` の最小限のサイドバー。これと並んで、`morluto/rea` の clone、Yab の利用規約の範囲内での Yab の静的解析（レイアウト、クラス名、設定の構造）、Yab のフローティングサイドバーと設定の観察、仕様の作成を行う | harness が実際の Arc のインポートを表示する。ツリーの不変条件とクラッシュに対して安全な書き込みに関するコアのテストが通る |
 | 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、ungoogled-chromium のパッチの一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series-check`、1 回のリベースの計測 | 独自のスクリプトによる、選んだベースの標準ビルド |
-| 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
+| 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる。U3 から実行可能: エンジン起動の検査（`--ararat-check=started`）、スクラッチ profile の拒否、独自バンドルの標準デリゲートのヘルパー（我々の規則） | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
 | 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Arc の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
 | 5 | Little window、既定のハンドラーとしての Air Traffic Control、split view、archive、ダウンロード、セッションの復元 | 日常の使用において Arc のワークフローと同等 |
 | 6 | 配布とセキュリティの関門: Developer ID、notarization、Sparkle、CI での署名、Corresponding Source、4.9 の保守のジョブ、評判の検査。DRM を決定し、ページの API を凍結する | 自己更新する署名済みのビルド。オーナーが日常的な使用を開始する |

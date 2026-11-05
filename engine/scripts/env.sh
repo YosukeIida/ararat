@@ -205,6 +205,23 @@ check_layer_exports() {
   if [[ -n "$only_a" || -n "$only_b" ]]; then
     die "ararat.exports and the link patch's framework.order block disagree (only in ararat.exports: $(printf '%s' "$only_a" | tr '\n' ' '); only in the order block: $(printf '%s' "$only_b" | tr '\n' ' ')): list every exported name in both"
   fi
+  # Every export must be defined in the layer: a text match on the C name without
+  # the leading underscore, an @implementation for ObjC class names. Why not nm:
+  # there is no build output at apply time.
+  local name def
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    case "$name" in
+      _OBJC_CLASS_\$_*|_OBJC_METACLASS_\$_*)
+        def="${name#_OBJC_CLASS_\$_}"; def="${def%_}"
+        grep -rq --include="*.mm" --include="*.cc" -- "@implementation $def" "$ARARAT_REPO_ROOT/engine/ararat" \
+          || die "ararat.exports names $name but engine/ararat has no @implementation $def" ;;
+      *)
+        def="${name#_}"
+        grep -rq --include="*.mm" --include="*.cc" -- "$def" "$ARARAT_REPO_ROOT/engine/ararat" \
+          || die "ararat.exports names $name but engine/ararat defines no $def" ;;
+    esac
+  done <<<"$a"
 }
 
 copy_layer() {

@@ -2,8 +2,9 @@
 
 `series` is the only source of patch order; paths in it are relative to this
 directory, ungoogled/generic before ungoogled/macos. The 25 vendored patches
-come from the commits below; two are ours: a counter-patch directly after the
-one hunk it reverses, and a ScreenAI fix at the end.
+come from the commits below; four are ours: a counter-patch directly after the
+one hunk it reverses, a ScreenAI fix, and at the end the two that join our
+layer to Chrome (the link into the framework and the extra-parts hook).
 
 | Source | Commit | Chromium |
 |---|---|---|
@@ -22,7 +23,7 @@ false.
 Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 `ungoogled/generic/LICENSE` and `ungoogled/macos/LICENSE`.
 
-## The 25 plus our two, in series order
+## The 25 plus our four, in series order
 
 | # | File in `series` | Origin |
 |---|---|---|
@@ -53,13 +54,15 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | 25 | `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
 | 26 | `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
 | 27 | `ararat/remove-screenai-sandbox-parameter.patch` | ours |
+| 28 | `ararat/link-ararat-layer.patch` | ours |
+| 29 | `ararat/extra-parts-hook.patch` | ours |
 
 ## Why these 25
 
 Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
-## Notes on our two
+## Notes on our four
 
 `ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
 the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:
@@ -73,3 +76,10 @@ performs its network update checks again; every other hunk of that patch stays
 in force. Google Safe Browsing likewise stays in the build:
 `fix-building-without-safebrowsing` is not vendored and `engine/args.gn` does
 not set `safe_browsing_mode=0` (no API key is set either way).
+
+`ararat/link-ararat-layer.patch` adds `//ararat/core` to the framework's deps,
+passes `ararat.exports` to the linker and appends the `# Ararat` block to
+`chrome/app/framework.order`. `ararat/extra-parts-hook.patch` calls
+`g_ararat_add_browser_main_extra_parts` at the end of
+`ChromeContentBrowserClient::CreateBrowserMainParts` when it is set; unset,
+Chrome runs stock. architecture §4.3 lists the hooks.

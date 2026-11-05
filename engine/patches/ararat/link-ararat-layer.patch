@@ -1,19 +1,34 @@
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
-@@ -1323,6 +1323,7 @@
+@@ -1323,6 +1323,8 @@
      ]
  
      deps = [
-+      "//ararat/core",
++      "//ararat/core:core",
++      "//ararat/core:entry",
        ":dependencies",
        "//build:chromeos_buildflags",
        "//chrome/app:command_ids",
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1087,6 +1087,7 @@
+     ":startup_data",
+     ":unexpire_flags",
+     ":universal_web_contents_observers",
++    "//ararat/core:hooks",
+     "//base/allocator:buildflags",
+     "//build/config/linux/dbus:buildflags",
+     "//chrome/browser/accessibility",
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -31,3 +31,6 @@
+@@ -29,5 +29,10 @@
+ # Entry point for the web app shortcut copier.
+ _ChromeWebAppShortcutCopierMain
  
- # _ChromeMain must be listed last.  That's the whole point of this file.
- _ChromeMain
-+
 +# Ararat
 +_AraratEngineVersion
++_AraratMain
++_AraratQuit
++
+ # _ChromeMain must be listed last.  That's the whole point of this file.
+ _ChromeMain

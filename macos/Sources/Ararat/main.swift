@@ -36,10 +36,29 @@ guard FileManager.default.fileExists(atPath: frameworkPath) else {
 guard let handle = dlopen(frameworkPath, RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST) else {
   fail("cannot load \(frameworkPath): \(String(cString: dlerror()))")
 }
-guard let symbol = dlsym(handle, "ChromeMain") else {
-  fail("cannot find ChromeMain: \(String(cString: dlerror()))")
-}
-typealias ChromeMain = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
-let chromeMain = unsafeBitCast(symbol, to: ChromeMain.self)
 
-exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
+// The browser process runs our entry (which stores the callbacks, sets the
+// extra-parts hook and calls ChromeMain); the helpers keep running the stock
+// ChromeMain — their engine behaviour is stock by design.
+let isHelper = CommandLine.arguments.contains { $0.hasPrefix("--type=") }
+let symbolName = isHelper ? "ChromeMain" : "AraratMain"
+guard let symbol = dlsym(handle, symbolName) else {
+  fail("cannot find \(symbolName): \(String(cString: dlerror()))")
+}
+
+if isHelper {
+  typealias ChromeMain = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
+  let chromeMain = unsafeBitCast(symbol, to: ChromeMain.self)
+  exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
+}
+
+// No callbacks yet: the engine's own stages run stock and the check switch
+// drives the quit. Why not pass real callbacks: nothing consumes them until the
+// store and the window host exist.
+typealias AraratMain = @convention(c) (
+  Int32,
+  UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+  UnsafeRawPointer?
+) -> Int32
+let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
+exit(araratMain(CommandLine.argc, CommandLine.unsafeArgv, nil))

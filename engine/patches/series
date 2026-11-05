@@ -26,3 +26,4 @@ ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch
 ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch
 ararat/remove-screenai-sandbox-parameter.patch
 ararat/link-ararat-layer.patch
+ararat/extra-parts-hook.patch

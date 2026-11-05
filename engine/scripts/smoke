@@ -4,21 +4,24 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: smoke
+usage: smoke [--dev]
 
-Runs the built engine binary twice with no window and a scratch user-data-dir
-under $TMPDIR: --headless=new --dump-dom on a data: URL, and --version. Exits
-non-zero if either check fails.
+Runs the built engine binary twice with no window, a scratch user-data-dir
+under $TMPDIR and the mock keychain: --headless=new --dump-dom on a data: URL,
+and --version. Exits
+non-zero if either check fails. --dev runs the app from out/Dev, the
+daily-work directory gen --dev writes; the release identity stays out/Ararat.
 USAGE
 }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  "") ;;
+  "") out_name="Ararat" ;;
+  --dev) out_name="Dev" ;;
   *) die "unknown argument: $1" ;;
 esac
 
-app="$ARARAT_SRC_DIR/out/Ararat/Chromium.app/Contents/MacOS/Chromium"
+app="$ARARAT_SRC_DIR/out/$out_name/Chromium.app/Contents/MacOS/Chromium"
 [[ -x "$app" ]] || die "no built app: $app"
 
 scratch="$(mktemp -d "${TMPDIR%/}/ararat-smoke.XXXXXX")"
@@ -26,8 +29,10 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 # both commands keep their stderr on disk for the failure report: an exit
 # alone says nothing about why the check failed
+# --use-mock-keychain: the real login keychain would gain a Chromium Safe
+# Storage item, and an out/Dev build then hits the teardown watchdog (exit 2)
 dom_rc=0
-dom="$("$app" --headless=new --user-data-dir="$scratch/profile" --no-first-run \
+dom="$("$app" --headless=new --user-data-dir="$scratch/profile" --no-first-run --use-mock-keychain \
   --dump-dom 'data:text/html,<title>ararat</title><p>ararat-smoke</p>' \
   2>"$scratch/dom.err")" || dom_rc=$?
 ver_rc=0
