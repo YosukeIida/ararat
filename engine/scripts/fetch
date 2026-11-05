@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: fetch
+
+Brings $ARARAT_SRC_DIR to the Chromium tag pinned in engine/build-inputs.toml
+(shallow) and syncs the dependency repositories around it. Prints the time of
+each step.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+version="$(toml_get chromium_version)"
+[[ -n "$version" ]] || die "chromium_version missing in $ARARAT_BUILD_INPUTS"
+require_tree
+
+lock_take
+t0="$(date +%s)"
+msg "1/2 fetching tag $version"
+git -C "$ARARAT_SRC_DIR" fetch --depth=1 --quiet --force origin "refs/tags/$version:refs/tags/$version"
+git -C "$ARARAT_SRC_DIR" checkout --quiet --force --detach "refs/tags/$version"
+t1="$(date +%s)"
+msg "tag fetch took $((t1 - t0))s"
+msg "2/2 gclient sync"
+(cd "$ARARAT_SRC_DIR" && gclient sync -D --no-history --shallow -j "$ARARAT_GCLIENT_JOBS" --force)
+t2="$(date +%s)"
+msg "gclient sync took $((t2 - t1))s"

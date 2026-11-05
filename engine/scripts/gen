@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: gen
+
+Copies engine/args.gn into $ARARAT_SRC_DIR/out/Ararat/args.gn after checking
+its hash against the copy recorded in engine/build-inputs.toml, then runs
+gn gen for that output directory.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+[[ -f "$ARARAT_SRC_DIR/BUILD.gn" ]] || die "no Chromium tree to configure: $ARARAT_SRC_DIR"
+args_path="$(toml_get gn_args_path)"
+[[ -n "$args_path" ]] || args_path="engine/args.gn"
+args_file="$ARARAT_REPO_ROOT/$args_path"
+[[ -r "$args_file" ]] || die "no args file: $args_file"
+sha="$(shasum -a 256 -- "$args_file" | awk '{print $1}')"
+expected="$(toml_get gn_args_sha256)"
+if [[ -z "$expected" ]]; then
+  msg "no gn_args_sha256 recorded, skipping the args check"
+elif [[ "$expected" != "$sha" ]]; then
+  die "engine/args.gn's bytes no longer match gn_args_sha256 in $ARARAT_BUILD_INPUTS"
+fi
+
+# an args rewrite or gn gen during a build makes ninja regenerate under the
+# running build, so gen holds the engine lock like fetch and apply
+lock_take
+
+out="$ARARAT_SRC_DIR/out/Ararat"
+mkdir -p "$out"
+# a copy, not a symlink: edits to engine/args.gn afterwards would otherwise
+# reach a build that already started
+cp -- "$args_file" "$out/args.gn"
+(cd "$ARARAT_SRC_DIR" && gn gen out/Ararat)
+msg "gen: $out/args.gn written, gn gen done"

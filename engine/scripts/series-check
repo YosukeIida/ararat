@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: series-check
+
+Read-only: compares every file the series touches in $ARARAT_SRC_DIR against
+the bytes recorded in the manifest that apply writes after a good apply
+($ARARAT_MANIFEST). Exits non-zero when anything drifted, and also when the
+manifest was recorded for a different series. It resets nothing and applies
+nothing; build runs this before its own work and, on failure, stops and says
+to run apply.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+require_tree
+manifest_check

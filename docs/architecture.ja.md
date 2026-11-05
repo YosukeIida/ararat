@@ -94,10 +94,17 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 ### 4.2 ベースとパッチの管理
 
 - クリーンな Chromium の revision とベースのパッチセットは、`engine/build-inputs.toml` で別々に固定する。
-- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。ungoogled-chromium の全パッチを、維持・スキップ・対抗パッチのいずれかに分け、セキュリティ上の帰結を記した一覧は `docs/research/ungoogled-inventory.md` の 8 節にある。phase 2 では、137 本のうち 25 本と、component updater を保つ対抗パッチ 1 本をビルドする（同 8.6 節）。評判のソース（14）をオーナーが決めるまで、Google Safe Browsing をビルドに残すので、9 の拡張の kill switch は有効のままである。ドメインの置き換えとバイナリの削除は行わない（我々の規則、暫定）。また、1 回のリベースを計測する。
+- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。ungoogled-chromium の全パッチを、維持・スキップ・対抗パッチのいずれかに分け、セキュリティ上の帰結を記した一覧は `docs/research/ungoogled-inventory.md` の 8 節にある。phase 2 では、137 本のうち 25 本と、こちらの 2 本（component updater を保つ対抗パッチは同 8.6 節、もう一方は ScreenAI の sandbox パラメータを除く `ararat/remove-screenai-sandbox-parameter.patch`）をビルドする。評判のソース（14）をオーナーが決めるまで、Google Safe Browsing をビルドに残すので、9 の拡張の kill switch は有効のままである。ドメインの置き換えとバイナリの削除は行わない（我々の規則、暫定）。また、1 回のリベースを計測する。
 - それまでは Helium を暫定のベースとしていた。一覧やリベースで ungoogled-chromium の手間が見込みより大きいと分かった場合は、Helium を比較の候補とし、Ardia に倣ってこちらの選択と衝突するものをスキップする（Ardia ledger 1.2）。
 - パッチの順序の唯一の正本は `engine/patches/series` である。パッチ名は関心事を表し、順序を示す接頭辞は付けない。
-- `series check` は、固定したベースに対してスクラッチのツリーで series 全体を fuzz なしで適用し、ビルドツリーとバイト単位で比較する。`series check` はエンジンのリリースのたびに事前に実行する。
+- パッチの実体は `engine/patches/ungoogled/{generic,macos}/` に、両プロジェクトの指定コミットからバイト単位で同一のまま取り込む（各プロジェクトの LICENSE も合わせて`engine/patches/ungoogled/generic/`と`.../macos/`に置く）。`engine/patches/ararat/` はこちらの対抗パッチを置く場所である（我々の規則）。
+- `series` 全体を適用・検証するのは `engine/scripts/` の bash スクリプト群である: `env.sh` が共通の環境とユーティリティを担い、`fetch` がタグの取得と DEPS 同期、`apply` がリセットと no fuzz の系列適用、`series-check` がバイト検証、`gen` が args と GN の生成、`build` がロックと autoninja、`smoke` が headless 確認（我々の規則）。
+- `series-check` は、系列が触る全ファイルの SHA-256 を、前回の正常な apply で記録したマニフェスト（`engine/patch-state.sha256`, `engine/` にコミットする）と、読み取り専用で比較する。リセットも適用もせず、マニフェストが別の series のために記録されたものであるときも拒否する。エンジンのビルドの前に毎回実行する。`build` は自身の前にこれを実行し、1 バイトでも違えば、ツリーに触れずに「`apply` を実行せよ」と言って止まる。`build` はリセットも再適用もしない（我々の規則）。
+- `apply` は、パッチ済みのファイルをディスク上のバイトと違うときにだけ書く。ツリーが前回の正常な apply のバイトに一致し、series も変わっていなければ何も書かず、mtime をすべてそのままにする。そうでなければツリーを pristine にリセットし（src と系列が触るすべての DEPS リポジトリ）、series を順に fuzz なしで適用し、マニフェストを書き直す。最初の失敗でパッチ名とファイル名を出して止まり、ツリーを半適用ではなくリセット済みで残す（我々の規則）。
+- phase 2 の series は、取り入れた 25 パッチとこちらの 2 パッチからなる（我々の規則）。対抗パッチの `ararat/restore-component-updater.patch` は、`block-requests` の `components/update_client/update_checker.cc` の 1 hunk だけを打ち消すので、apply の後にはこのファイルが素の 156 とバイト単位で同一に戻る（確認済み）。もう一方の `ararat/remove-screenai-sandbox-parameter.patch` は、ScreenAI サービスの sandbox パラメータ（コンポーネントのバイナリのパスを渡す branch）を `chrome/browser/chrome_content_browser_client.cc` から除く。
+- ソースは tarball でなく、固定タグの git + gclient と Chromium 固有の固定ツールチェーンから取り、ungoogled の pruning.list は実行しない（gclient が置くプリビルドのツールチェーンを消すから）（我々の規則）。
+- PGO: 156 の固定の `chrome/build/mac-arm.pgo.txt` が指す mac-arm のプロファイル（約 88.9 MB）は公開の optimization-profiles バケットにあり、gclient のフックが取得できる。ただし `.gclient` で `checkout_pgo_profiles` を立てたときだけで、`chrome_pgo_phase=2` のままでは `gn gen` が拒否する。phase 2 は `chrome_pgo_phase=0` で走り、プロファイルは取得していない。約 89 MB の取得を払うかどうかは design の判断である（我々の規則）。
+- series の適用は 156 のツリーで 11 秒だった（2026-11-05、リセット込み。計測は 26 本のときの値で、現在の series は 27 本）。mtime を保つ再適用は何も書かず、約 10 秒、すべて検証の時間である。
 - Chrome のファイルへの大きな編集は、新しいクラスと小さな hook に書き直す（Ardia は 1,012 行の PiP パッチをこの方法で書き直した）。
 - 指標はパッチの数ではなく、Chrome のファイル内の hunk の数とする。
 
@@ -156,8 +163,13 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 - ビルドはリポジトリ外の `~/chromium-build` に置く。通常の作業中はインクリメンタルビルドのみを行う。
 - Ardia の数値: M5 Pro で初回ビルドに約 2〜2.5 時間、インクリメンタルビルドに約 7 分（コンパイルと ThinLTO の再リンク）、ディスクは約 45 GB。こちらの数値（2026-11-04、Mac Studio M3 Ultra、28 コア。素の Chromium 157.0.8103.39 の Release で `symbol_level=0` とプロプライエタリのコーデックを有効にし、ThinLTO と PGO は使わない。テストの席と CPU を分け合っていた）: 浅いソースの取得に 9.5 分、依存の取得に約 9 分（gclient の既定の並列数では googlesource が 429 を返し、`-j 4` で通った）、初回ビルドに 1 時間 16 分（57,508 手順）、`chrome/browser/ui/browser.cc` を変えた後のインクリメンタルビルドに 36 秒、ディスクは 39 GB。エンジンのビルドは nix の devshell の外で行う。devshell の `MACOSX_DEPLOYMENT_TARGET` が Chromium の rustc に渡り、ビルド用のツールのリンクを壊すからである。正式なビルドの時間はまだ計測していない。
-- エンジンのビルドはロックのもとで一度に 1 つだけ実行する。
-- GN args は 1 つのファイルに置く: official build、ThinLTO、PGO、DCHECK なし、シンボルの除去、`proprietary_codecs=true`、`ffmpeg_branding="Chrome"`、独自のブランディング。
+- エンジンのビルドはロックのもとで一度に 1 つだけ実行する。ロックは `~/chromium-build/.engine.lock` の mkdir(2) ロック（持ち主の pid を `pid` ファイルに置き、exit と INT/TERM で外す）である。`fetch`、`apply`、`gen`、`build` が取り、取れないときは断る。pid が空または読めないロックは奪わずに断り、エンジンコマンドが動いていないのを確かめてから `rmdir "$ARARAT_ENGINE_LOCK"` で手で外す。持ち主が死んでいるロックはアトミックに奪い直す。手でロックを持ちたいときは、ディレクトリを作って `pid` に生きている pid を書く（我々の規則）。
+- エンジンの環境は `engine/scripts/env.sh` が整える: `MACOSX_DEPLOYMENT_TARGET` と `SDKROOT` を外し、`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` を置き、`DEPOT_TOOLS_UPDATE=0` を置き、PATH を depot_tools と `/usr/bin:/bin:/usr/sbin:/sbin` に限定する。`/nix` からも呼び出し元の PATH からも何も流さない。nix の xcbuild の `xcrun` は MobileAsset の Metal ツールチェーンを見つけられず、引き継いだ PATH のままでは ANGLE のシェーダーのアクションが "missing Metal Toolchain" で失敗するからである。gclient は `-j 4`（既定の並列数では googlesource が 429 を返す）（我々の規則）。
+- `fetch` は shallow にタグを取得して `gclient sync -D --no-history --shallow -j 4 --force` を行い、工程ごとに所要時間を出力する。
+- `gen` は `engine/args.gn`（ハッシュを `engine/build-inputs.toml` の記録と照合する）を `out/Ararat/args.gn` に書き、`gn gen` を実行する。すべてエンジンのロックのもとで行う（ビルド中に args を書き換えたり `gn gen` を実行したりすると、実行中のビルドの下で ninja が再生成を行う）。
+- `build` はまず読み取り専用の series-check を実行し、ツリーが記録されたバイトを再現しなければ、ツリーに触れずに「`apply` を実行せよ」と言って止まる（リセットも再適用もしない）。通ればロックを取り、`autoninja -C out/Ararat chrome` を行い、所要時間と手順数を出力し、`~/chromium-build/build-times.jsonl` に 1 行の JSON 記録を書く。
+- `smoke` はビルドしたアプリを、`$TMPDIR` の使い捨て profile で `--headless=new --dump-dom`（data: URL）と `--version` の 2 回で実行する。どちらかでも失敗すれば 0 以外で終わる。
+- GN args は 1 つのファイルに置く: official build、ThinLTO、PGO、DCHECK なし、シンボルの除去、`proprietary_codecs=true`、`ffmpeg_branding="Chrome"`、独自のブランディング。phase 2 の実装（`engine/args.gn`）は ungoogled の `flags.gn` と `flags.macos.gn` にこちらの入力 `target_cpu="arm64"` を加えた形で、`chrome_pgo_phase` は暫定で 0 とし、独占の API キーは設定しない。ブランディングは phase 3 に回す。
 - `engine/build-inputs.toml` は、バイナリを決定するすべての要素を固定する: Chromium のコミット、ベースのパッチセットのタグ、解決済みの DEPS のハッシュ、GN args、Xcode と SDK のバージョン、アーキテクチャ。エンジンの成果物のキーは、このマニフェストのハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
 - CI ではエンジンをビルドしない。エンジンはローカルでビルドし、このキーのもとで prerelease として公開する。
 - 各リリースの Corresponding Source（GPL が定める対応ソース）は、タグ、`build-inputs.toml`、パッチの series、および固定した upstream を取得してツリーを再現するスクリプトである。
@@ -342,7 +354,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 |---|---|---|
 | 0 | リポジトリ、devshell、調査の取り込み、本文書 | レビュー済みの設計 |
 | 1 | エンジンなしのコアの基礎: 所属のレジスタを持つモデル、ATC、Arc のインポート、クラッシュに対して安全な書き込みを行う SQLite、UniFFI バインディング。harness 上でコアのデータを用いる `AraratUI` の最小限のサイドバー。これと並んで、`morluto/rea` の clone、Yab の利用規約の範囲内での Yab の静的解析（レイアウト、クラス名、設定の構造）、Yab のフローティングサイドバーと設定の観察、仕様の作成を行う | harness が実際の Arc のインポートを表示する。ツリーの不変条件とクラッシュに対して安全な書き込みに関するコアのテストが通る |
-| 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、ungoogled-chromium のパッチの一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series check`、1 回のリベースの計測 | 独自のスクリプトによる、選んだベースの標準ビルド |
+| 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、ungoogled-chromium のパッチの一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series-check`、1 回のリベースの計測 | 独自のスクリプトによる、選んだベースの標準ビルド |
 | 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
 | 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Arc の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
 | 5 | Little window、既定のハンドラーとしての Air Traffic Control、split view、archive、ダウンロード、セッションの復元 | 日常の使用において Arc のワークフローと同等 |

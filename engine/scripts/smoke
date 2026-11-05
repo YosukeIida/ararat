@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: smoke
+
+Runs the built engine binary twice with no window and a scratch user-data-dir
+under $TMPDIR: --headless=new --dump-dom on a data: URL, and --version. Exits
+non-zero if either check fails.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+app="$ARARAT_SRC_DIR/out/Ararat/Chromium.app/Contents/MacOS/Chromium"
+[[ -x "$app" ]] || die "no built app: $app"
+
+scratch="$(mktemp -d "${TMPDIR%/}/ararat-smoke.XXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
+
+# both commands keep their stderr on disk for the failure report: an exit
+# alone says nothing about why the check failed
+dom_rc=0
+dom="$("$app" --headless=new --user-data-dir="$scratch/profile" --no-first-run \
+  --dump-dom 'data:text/html,<title>ararat</title><p>ararat-smoke</p>' \
+  2>"$scratch/dom.err")" || dom_rc=$?
+ver_rc=0
+ver="$("$app" --user-data-dir="$scratch/profile" --version \
+  2>"$scratch/ver.err")" || ver_rc=$?
+
+if [[ $dom_rc -ne 0 || $ver_rc -ne 0 || -z "$dom" || -z "$ver" ]]; then
+  msg "smoke: dump-dom exit $dom_rc, --version exit $ver_rc; stderr tails:"
+  tail -n 10 -- "$scratch/dom.err" | sed 's/^/        /'
+  tail -n 10 -- "$scratch/ver.err" | sed 's/^/        /'
+  die "smoke: failed (dump-dom exit $dom_rc, ${#dom} bytes; --version exit $ver_rc${ver:+, '$ver'})"
+fi
+msg "smoke: dump-dom ${#dom} bytes, version $ver"

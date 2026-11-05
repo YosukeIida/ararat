@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: build
+
+Runs the read-only series check; when it fails, build stops and says to run
+apply without touching the tree (it never resets or re-applies anything).
+Then it takes the engine lock, runs autoninja -C out/Ararat chrome, prints
+the elapsed time and step count, and appends a one-line JSON record to
+$ARARAT_BUILD_ROOT/build-times.jsonl.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+"$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/series-check"
+
+[[ -d "$ARARAT_SRC_DIR/out/Ararat" ]] || die "gen has not run: no $ARARAT_SRC_DIR/out/Ararat"
+
+lock_take
+
+t0="$(date +%s)"
+log="$ARARAT_BUILD_ROOT/last-build.log"
+mkdir -p "$ARARAT_BUILD_ROOT"
+# background plus a polling wait: the trap set for INT/TERM only executes at
+# the next command boundary, so a foreground child holds the lock past its own
+# kill; a plain `wait` can do the same; and -m gives its own process group to
+# the job, so a TERM reaches autoninja's own children, which a TERM to the
+# wrapper alone would leave building
+set -m
+autoninja -C "$ARARAT_SRC_DIR/out/Ararat" chrome >"$log" 2>&1 &
+child=$!
+set +m
+_signal_child="$child"
+rc=0
+while kill -0 "$child" 2>/dev/null; do
+  sleep 0.5
+done
+wait "$child" || rc=$?
+_signal_child=
+t1="$(date +%s)"
+if [[ $rc -ne 0 ]]; then
+  tail -n 20 "$log" | sed 's/^/        /'
+  die "autoninja failed (exit $rc); log at $log"
+fi
+
+step_line="$(grep -oE '^\[[0-9,]+(/[0-9,]+)?\]' "$log" | tail -n1 || true)"
+steps="${step_line#[}"
+steps="${steps%%[,/]*}"
+steps="$(printf '%s' "$steps" | tr -d ',')"
+printf '{"ts":%s,"target":"chrome","steps":%s,"elapsed_sec":%s}\n' \
+  "$(date +%s)" "${steps:-null}" "$((t1 - t0))" >>"$ARARAT_BUILD_ROOT/build-times.jsonl"
+msg "build: chrome ${steps:-?} steps in $((t1 - t0))s (recorded in $ARARAT_BUILD_ROOT/build-times.jsonl)"

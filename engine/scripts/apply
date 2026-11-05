@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+
+usage() {
+  cat <<'USAGE'
+usage: apply
+
+Brings $ARARAT_SRC_DIR and every DEPS repository the series touches to the
+bytes the series produces. If the tree already matches the manifest recorded
+by the last good apply and the series has not changed (same fingerprint),
+nothing is written and every mtime is left alone. Otherwise the tree is
+reset to pristine, the series is applied in order (git apply, no fuzz), and
+the manifest is written. On the first failure it names the patch and the
+file and leaves the tree reset, not half-patched. apply is the only command
+that resets the tree or applies patches.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+require_tree
+lock_take
+t0="$(date +%s)"
+
+scratch="$(mktemp -d "${TMPDIR%/}/ararat-apply.XXXXXX")"
+_engine_scratch="$scratch"
+map="$scratch/map"
+manifest_repo_map >"$map" || true
+
+if [[ -r "$ARARAT_MANIFEST" ]] && apply_would_write_nothing "$map" "$scratch/expected"; then
+  msg "apply: already at the last good apply's bytes; nothing written ($(( $(date +%s) - t0 ))s)"
+  exit 0
+fi
+
+# Files that already carry the target bytes would survive reset and re-apply
+# byte-identically but with fresh mtimes, which alone pushes ninja into
+# recompiling them; their saved bytes are laid back over the applied result
+# so the old mtime is what survives. Only the current series' own manifest
+# states the target, so the snapshot is skipped when it was recorded for a
+# different series.
+n_snap=0
+if [[ -r "$ARARAT_MANIFEST" ]]; then
+  rec="$(awk '$1 == "series" { print $2; exit }' "$ARARAT_MANIFEST")"
+  if [[ "$rec" == "$(series_fingerprint)" ]]; then
+    while read -r sha path; do
+      [[ "$sha" == "-" ]] && continue
+      f="$ARARAT_SRC_DIR/$path"
+      [[ -f "$f" ]] || continue
+      h="$(shasum -a 256 -- "$f" | awk '{print $1}')"
+      if [[ "$h" == "$sha" ]]; then
+        mkdir -p "$scratch/snap/$(dirname -- "$path")"
+        cp -p -- "$f" "$scratch/snap/$path"
+        printf '%s\n' "$path" >>"$scratch/kept"
+      fi
+    done < <(manifest_data_lines)
+    if [[ -f "$scratch/kept" ]]; then
+      n_snap="$(wc -l <"$scratch/kept" | tr -d ' ')"
+    fi
+  fi
+fi
+
+reset_start="$(date +%s)"
+reset_tree
+msg "reset to pristine took $(( $(date +%s) - reset_start ))s"
+apply_series
+
+if [[ "$n_snap" != "0" ]]; then
+  while read -r path; do
+    f="$ARARAT_SRC_DIR/$path"
+    if cmp -s -- "$f" "$scratch/snap/$path"; then
+      cp -p -- "$scratch/snap/$path" "$f"
+    fi
+  done <"$scratch/kept"
+fi
+
+manifest_record || die "apply: could not record the manifest"
+
+t1="$(date +%s)"
+detail=""
+if [[ "$n_snap" != "0" ]]; then
+  detail=" ($n_snap files kept their mtime)"
+fi
+msg "apply: $(series_lines | wc -l | tr -d ' ') patches in $((t1 - t0))s$detail"
