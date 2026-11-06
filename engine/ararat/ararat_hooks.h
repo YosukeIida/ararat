@@ -12,6 +12,7 @@ class BrowserWindowInterface;
 class BrowserWindow;
 extern BrowserWindow* (*g_ararat_create_browser_window)(
     BrowserWindowInterface*);
+extern bool (*g_ararat_is_window)(BrowserWindowInterface*);
 
 // chrome/browser/chrome_content_browser_client.cc hands the browser main parts
 // it created to this hook, and our layer adds its own extra parts through it.

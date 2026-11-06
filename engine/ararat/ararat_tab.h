@@ -1,0 +1,29 @@
+#ifndef ARARAT_ARARAT_TAB_H_
+#define ARARAT_ARARAT_TAB_H_
+
+#import "ararat/core/public/ARTab.h"
+#import "ararat/core/public/ARWindowHost.h"
+
+namespace content {
+class WebContents;
+}
+@class ARWindowHost;
+
+@interface ARTab ()
+- (instancetype)initWithContents:(content::WebContents*)contents
+                          liveId:(NSString*)liveId
+                            host:(ARWindowHost*)host;
+- (content::WebContents*)contents;
+- (void)refresh;
+- (void)invalidate;
+- (void)replaceContents:(content::WebContents*)contents;
+@end
+
+@interface ARWindowHost (ARTabCommands)
+- (void)activateTab:(ARTab*)tab commandId:(NSString*)commandId;
+- (void)closeTab:(ARTab*)tab commandId:(NSString*)commandId;
+- (void)setItemId:(NSString*)itemId forTab:(ARTab*)tab;
+- (BOOL)isActiveTab:(ARTab*)tab;
+@end
+
+#endif  // ARARAT_ARARAT_TAB_H_

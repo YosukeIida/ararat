@@ -19,7 +19,7 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
                                          AraratWindowHostCore* host)
     : browser_(browser), host_(host) {}
 AraratBrowserWindow::~AraratBrowserWindow() {
-  host_->OnWindowDestroyed();
+  host_->OnWindowDestroyed(browser_);
 }
 void AraratBrowserWindow::RequestClose() {
   UnloadController::From(browser_)->OnWindowClosing();

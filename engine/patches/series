@@ -28,3 +28,4 @@ ararat/remove-screenai-sandbox-parameter.patch
 ararat/link-ararat-layer.patch
 ararat/extra-parts-hook.patch
 ararat/browser-window-factory.patch
+ararat/viewless-read-anything.patch

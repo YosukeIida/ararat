@@ -47,7 +47,7 @@ bool AraratWindowCheckPassed() {
 
 void AraratCheckWindow() {
   g_check_view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
-  g_check_host = [[ARWindowHost alloc] initWithContentView:g_check_view];
+  g_check_host = [[ARWindowHost alloc] initWithContentView:g_check_view windowId:@"window-1"];
   [g_check_host makePending];
   Profile* profile = ProfileManager::GetLastUsedProfileIfLoaded();
   BrowserWindowInterface* browser =

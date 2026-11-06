@@ -14,6 +14,7 @@ class AraratBrowserWindow : public BrowserWindow {
                       AraratWindowHostCore* host);
   ~AraratBrowserWindow() override;
   void RequestClose();
+  BrowserWindowInterface* browser() const { return browser_; }
   gfx::NativeWindow GetNativeWindow() const override;
   bool IsOnCurrentWorkspace() const override;
   bool IsVisibleOnScreen() const override;

@@ -2,9 +2,7 @@
 
 `series` is the only source of patch order; paths in it are relative to this
 directory, ungoogled/generic before ungoogled/macos. The 25 vendored patches
-come from the commits below; five are ours: a counter-patch directly after the
-hunk it reverses, a ScreenAI fix, and three patches at the end that link our
-layer to the framework and add the extra-parts and browser-window hooks.
+come from the commits below; six are ours: a counter-patch, a ScreenAI fix, three layer and hook patches, and a viewless-window fix.
 
 | Source | Commit | Chromium |
 |---|---|---|
@@ -23,7 +21,7 @@ false.
 Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 `ungoogled/generic/LICENSE` and `ungoogled/macos/LICENSE`.
 
-## The 25 plus our five, in series order
+## The 25 plus our six, in series order
 
 | # | File in `series` | Origin |
 |---|---|---|
@@ -57,13 +55,14 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | 28 | `ararat/link-ararat-layer.patch` | ours |
 | 29 | `ararat/extra-parts-hook.patch` | ours |
 | 30 | `ararat/browser-window-factory.patch` | ours |
+| 31 | `ararat/viewless-read-anything.patch` | ours |
 
 ## Why these 25
 
 Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
-## Notes on our five
+## Notes on our six
 
 `ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
 the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:
@@ -85,4 +84,6 @@ passes `ararat.exports` to the linker and adds our symbols to
 `ChromeContentBrowserClient::CreateBrowserMainParts` when it is set; unset,
 Chrome runs stock. `ararat/browser-window-factory.patch` calls our window
 factory in the `Browser` constructor when it is set; if unset or it returns
-null, Chrome creates the stock window. architecture §4.3 lists the hooks.
+null, Chrome creates the stock window. It also skips saving location-bar state when a window has no location bar. architecture §4.3 lists the hooks.
+
+`ararat/viewless-read-anything.patch` skips side-panel cleanup for our viewless windows when there is no side panel.

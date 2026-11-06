@@ -32,6 +32,7 @@ AraratCallbacks g_ararat_callbacks = {};
 // executor exists; the request is honoured at the started stage when it is.
 std::atomic<bool> g_quit_requested{false};
 std::atomic<bool> g_ui_ready{false};
+bool g_check_tabs = false;
 
 // The engine's own browser main extra parts: the two callbacks fire at the
 // engine's own stages, and the check run prints its one JSON line and quits.
@@ -66,6 +67,10 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
     auto* command_line = base::CommandLine::ForCurrentProcess();
     if (command_line->GetSwitchValueASCII("ararat-check") == "window") {
       AraratCheckWindow();
+      return;
+    }
+    if (command_line->GetSwitchValueASCII("ararat-check") == "tabs") {
+      AraratCheckTabs();
       return;
     }
     if (command_line->GetSwitchValueASCII("ararat-check") != "started") {
@@ -103,8 +108,10 @@ void CheckGuards(int argc, const char** argv) {
       bare_check = true;
     } else if (strncmp(arg, "--ararat-check=", 15) == 0) {
       has_check = true;
+      g_check_tabs = std::string_view(arg + 15) == "tabs";
       check_started = std::string_view(arg + 15) == "started" ||
-                      std::string_view(arg + 15) == "window";
+                      std::string_view(arg + 15) == "window" ||
+                      std::string_view(arg + 15) == "tabs";
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
@@ -134,7 +141,7 @@ void CheckGuards(int argc, const char** argv) {
     refuse("the mock keychain is missing");
   }
   if (!check_started) {
-    refuse("the check name must be started or window");
+    refuse("the check name must be started, window or tabs");
   }
 }
 
@@ -149,7 +156,7 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
   int result = ChromeMain(argc, argv);
-  return result == 0 && !AraratWindowCheckPassed() ? 1 : result;
+  return result == 0 && (!AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed())) ? 1 : result;
 }
 
 __attribute__((visibility("default"))) void AraratQuit(void) {

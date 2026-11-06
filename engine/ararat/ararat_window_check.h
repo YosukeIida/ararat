@@ -3,5 +3,7 @@
 
 void AraratCheckWindow();
 bool AraratWindowCheckPassed();
+void AraratCheckTabs();
+bool AraratTabsCheckPassed();
 
 #endif  // ARARAT_ARARAT_WINDOW_CHECK_H_

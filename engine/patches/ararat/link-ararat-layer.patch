@@ -21,7 +21,7 @@
      "//chrome/browser/accessibility",
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -29,5 +29,12 @@
+@@ -29,5 +29,14 @@
  # Entry point for the web app shortcut copier.
  _ChromeWebAppShortcutCopierMain
  
@@ -33,7 +33,9 @@
 -# _ChromeMain must be listed last.  That's the whole point of this file.
 +# _ChromeMain must be listed last among text symbols.
  _ChromeMain
++_OBJC_CLASS_$_ARTab
 +_OBJC_CLASS_$_ARWindowHost
++_OBJC_METACLASS_$_ARTab
 +_OBJC_METACLASS_$_ARWindowHost
 --- a/chrome/browser/ui/BUILD.gn	2026-11-06 16:07:49
 +++ b/chrome/browser/ui/BUILD.gn	2026-11-06 16:07:49

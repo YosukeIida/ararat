@@ -112,12 +112,15 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 
 ### 4.3 Hook
 
-hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタであり、`ararat_hooks.h` はパッチを当てた Chrome のファイルと独自レイヤーの両方からインクルードする。hook が未設定のとき、Chrome は標準どおりに動作する。シグネチャの変更はコンパイル時にエラーとなる。今日の一覧: `chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は `ARWindowHost` が pending の間だけ設定し、それ以外は標準ウィンドウを生成する。hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
+hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタである。パッチを当てた Chrome のファイルはこのヘッダーをインクルードするが、`g_ararat_is_window` は例外であり、`chrome/browser/ui/read_anything/read_anything_side_panel_controller.cc` でヘッダーを使わずに定義するため、宣言とのシグネチャの違いはコンパイル時に検査されない。hook が未設定のとき、Chrome は標準どおりに動作する。今日の一覧: `g_ararat_is_window` は read-anything の viewless 経路で独自ウィンドウを識別する。`chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は `ARWindowHost` が pending の間だけ設定し、それ以外は標準ウィンドウを生成する。hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
 
 ### 4.4 エンジン ↔ アプリの API
 
 - framework は `//ararat/core` から手書きの Objective-C クラスをエクスポートする（たとえば `ARWindowHost`、`ARTab`、`ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はこれらを framework の module map を介してインポートする。
-- すべてのクラスに共通の契約は次のとおりである。メインスレッドに固定する（他のスレッドからの呼び出しはプログラミングエラーであり、debug ビルドでは abort する）。Chrome のオブジェクトをラップするオブジェクトは、Chrome のオブジェクトが破棄された時点で無効化し、無効化したオブジェクトへの呼び出しはすべて何もせずにエラーを返す。コールバックはキャンセルトークンを持ち、無効化の後には発火しない。ラッパーは Swift が所有し、Chrome のオブジェクトはエンジンが所有する。
+- タブ API は coordinator の ID を受け取る。アプリは `initWithContentView:windowId:` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
+- `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
+- feed はエンジンのプロセスごとに、起動時刻に基づく epoch と 1 つの revision を持つ。最初の host に delegate を設定すると、cause が `Engine` の空の rev 0 スナップショットを同期的に報告する。その最初の delegate が設定されるまで、タブコマンドは何もせず、`openURL:` は `NO` を返す。その後の変更ごとに revision を増やす。閉じたウィンドウは空の strip で報告し、省いたウィンドウは変更なしと扱う（我々の規則）。
+- すべてのクラスをメインスレッドに固定する（他のスレッドからの呼び出しはプログラミングエラーであり、debug ビルドでは abort する）。Chrome のオブジェクトをラップするオブジェクトは、Chrome のオブジェクトが破棄された時点で無効化する。ラッパーは Swift が所有し、Chrome のオブジェクトはエンジンが所有する。無効化された `ARTab` へのコマンドは何もせず、エラーを返さない。初回のスナップショット以降、delegate への通知は host を弱参照し、メインキューに post する（我々の規則）。
 - UI が必要とするサービス（パスワード、autofill、拡張、ズーム、検索エンジン、履歴、ブックマーク、ダウンロード）は、独自レイヤーから Chrome のサービスを直接呼び出す。`chrome://` の WebUI ページをスクリプトで操作することはしない（Ardia ledger 1.4）。
 - アプリとエンジンは同時に出荷する。互換性のための分岐は設けない。起動時に API のバージョンを 1 回検査し、不一致の場合は abort する。
 
@@ -139,6 +142,8 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 **タブ。**
 
+- アクティブなタブの `WebContentsViewCocoa` を page card の唯一の subview にする。非アクティブなビューはツリーから外し、対応する `WebContents` を hidden にする。最後のタブを閉じると Browser は破棄されるが host は残り、次の open で同じ epoch の Browser を作る（我々の規則）。
+
 - タブの `WebContentsViewCocoa` は独自のビューツリーに配置する。これらのビューをどの compositor（描画の合成を担う機構）が所有するか（タブのビューごと、プロファイルごと、ウィンドウごとの共有）は spike で決定する。Ardia は、ビューごとの compositor がタブの切り替えのたびに 1〜2 回のリフレッシュ分の遅延を生むこと、および後から変更すると描画の書き直しを要することを見出したためである（Ardia ledger 1.3、1.6）。spike では、各候補について、切り替え時の最初のフレームまでの遅延、バックグラウンドのページの活動、オクルージョン、リサイズ、分割ペイン、ディスプレイの変更を計測する。
 - 新しいコンテンツ: renderer が生成したウィンドウは、既存の `WebContents` と保留中のナビゲーションの状態を保持したまま、`AddNewContents` を経由して独自レイヤーに届く。修飾キー付きのクリックやフォームの target は別の経路（`OpenURLFromTab`）を通る場合がある。固定した revision 上のすべての生成経路を列挙し、それぞれ個別にテストする。対象は、POST の target、features 指定の有無それぞれの `window.open`、⌘ クリック、shift クリック、opener の関係、ブロックされたポップアップである。Chrome が自ら生成するウィンドウ（`chrome.windows.create`、シークレット、ドッキングしていない DevTools）は、`Browser` のコンストラクタ内の hook によって独自レイヤーへ回す。
 - 1 つのページは 1 か所にだけ表示する。live のページは、ちょうど 1 つのペインにだけ表示する。2 つ目のウィンドウやペインが同じ workspace のタブを選択した場合、key になったウィンドウがページを取得し、もう一方のウィンドウは再び key になるまで、ぼかしたスナップショットのプレースホルダーを表示する（Arc の挙動、Cra ledger 19）。1 つのウィンドウの中では、フォーカスを取ったペインがページを取得し、もう一方のペインはプレースホルダーを表示する。分割ペインの spike でこれを確かめる。ウィンドウを閉じるときは、別のウィンドウがまだ表示しているページを再読み込みせずに移動する（Cra ledger 20）。
@@ -154,7 +159,8 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 | download bubble controller | download UI の実装時（現在は null で、deep scan のプロンプトでクラッシュする） |
 | modal dialog host と autofill bubble handler | U12（現在は null で、ダイアログの位置指定や住所の bubble でクラッシュし得る） |
 | accelerator provider と pinned toolbar actions | accelerator は U16、pinned actions は toolbar の実装時（現在は null で、呼び出し側がクラッシュし得る） |
-| read-anything と pinned tab の close における `BrowserView` CHECK（`browser_commands.cc:1521`） | U5 |
+| read-anything の viewless ウィンドウでの close | U5 |
+| pinned tab の close における `BrowserView` CHECK（`browser_commands.cc:1521`） | 後続の unit。未修正 |
 | 権限のプロンプトとその拒否 | seam の実装（ホスト側の UI） |
 | 外部プロトコルの確認 | seam の実装 |
 | デバイスの chooser（USB、HID、Bluetooth、シリアル）、Cast | seam の実装 |
@@ -217,7 +223,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 | 履歴、ブックマーク、favicon、閉じたタブ、ズーム、ダウンロード、パスワード、autofill | Chrome のサービス | コアには複製しない |
 
 - 読み込まれていない workspace のタブは `WebContents` を持たない。
-- コアの coordinator は id を付けて live タブのコマンドを発行する。エンジンはトランザクション `{epoch, rev, cause, strips}` で応答する。`epoch` はエンジンの起動のたびに変わる。`rev` は 1 つの epoch の中で単調に増加する。`cause` は、独自のコマンドの id、独自のエンジン呼び出し、Chrome 自身のいずれかである。1 つのトランザクションに複数の cause を混在させない。エコーを抑制する時間窓や、「自分が起こした変更か」を示すフラグは設けない。コマンドは、発行されてから、その id を名指すトランザクションが届くまで飛行中にあり、飛行中のコマンドは新しい epoch の始まりで消去され、飛行中のコマンドを名指さない完了は落とす（我々の規則）。
+- コアの coordinator は id を付けて live タブのコマンドを発行する。エンジンはトランザクション `{epoch, rev, cause, strips}` で応答する。`epoch` はエンジンの起動時に変わる。`rev` は 1 つの epoch の中で単調に増加する。`cause` は、独自のコマンドの id、独自のエンジン呼び出し、Chrome 自身のいずれかである。1 つのトランザクションに複数の cause を混在させない。エコーを抑制する時間窓や、「自分が起こした変更か」を示すフラグは設けない。コマンドは、発行されてから、その id を名指すトランザクションが届くまで飛行中にあり、飛行中のコマンドは新しい epoch の始まりで消去され、飛行中のコマンドを名指さない完了は落とす（我々の規則）。
 - Chrome が自ら行う変更（拡張によるタブの移動、クローズ後の後継タブ）は差分を取り、コアの規則によって workspace に適用する。後継タブは、Chrome の選択ではなくコアの規則（split の連続性、折りたたんだタブと読み込まれていないタブのスキップ）に従う。後継は、Arc と同じく、そのウィンドウで表示している space のタブのうち、最も最近に選んだもので、まだ開いていて表示されているものとする（閉じる操作でサイドバーを別の space へ移さない。Arc で計測した）（2026-11-01 に ⌘W と AppleScript で計測した。閉じると選択の履歴をさかのぼり、隣のタブには移らなかった。`docs/research/arc-ardia-observed.ja.md` の 7 節）。該当するタブが無ければ、同じ一覧で閉じたタブより下にある最も近い表示中の開いたタブ、無ければ上、それも無ければ何も選ばない（我々の規則）。split の中のタブの後継はその split とし、split は最後に開いていたタブを閉じると一緒に閉じる。pinned のタブと favorites で ⌘W を押すと、そのタブを読み込んでいない状態にし、行は残し、同じ規則で後継へ移る。選択の履歴はウィンドウごとにローカルに持ち、同期しない。
 - トランザクションの strips は、運ぶウィンドウを名指し、coordinator の gone パスはそのウィンドウだけを見る。トランザクションが名指さないウィンドウから消えたタブはそのままにする（我々の規則）。閉じたウィンドウは空の strip として届くので、そのタブは消えたものとして見える。
 - strips の active タブは、トランザクションの cause にかかわらずウィンドウごとの選択を更新する。エンジンが確認したコマンドは、Chrome 自身の切り替えと同じように記録される（我々の規則）。Chrome による close でウィンドウの選択が変わったときは、そのウィンドウの strips の active タブは記録せず、規則が選んだ後継を残す（我々の規則）。
@@ -375,7 +381,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 | 0 | リポジトリ、devshell、調査の取り込み、本文書 | レビュー済みの設計 |
 | 1 | エンジンなしのコアの基礎: 所属のレジスタを持つモデル、ATC、Arc のインポート、クラッシュに対して安全な書き込みを行う SQLite、UniFFI バインディング。harness 上でコアのデータを用いる `AraratUI` の最小限のサイドバー。これと並んで、`morluto/rea` の clone、Yab の利用規約の範囲内での Yab の静的解析（レイアウト、クラス名、設定の構造）、Yab のフローティングサイドバーと設定の観察、仕様の作成を行う | harness が実際の Arc のインポートを表示する。ツリーの不変条件とクラッシュに対して安全な書き込みに関するコアのテストが通る |
 | 2 | Mac Studio 上のエンジンのビルド基盤: Xcode、固定した Chromium、ungoogled-chromium のパッチの一覧作成、GN args、ロック、初回ビルドとインクリメンタルビルドの計測、`series-check`、1 回のリベースの計測 | 独自のスクリプトによる、選んだベースの標準ビルド |
-| 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる。U3 から実行可能: エンジン起動の検査（`--ararat-check=started`）、スクラッチ profile の拒否、独自バンドルの標準デリゲートのヘルパー。U4: `--ararat-check=window` で非表示の host、native window の一致、hit test を検査し、Browser の破棄を待つ（我々の規則） | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
+| 3 | 縦断スライスの spike: コアの coordinator と最小限のサイドバーを備えた `//ararat/core` を、署名済みのアプリ（bundle id、team、entitlement、ヘルパーの署名）で動かす。受け入れ条件（非表示と表示あり）: 1 つのウィンドウ内の 2 つのプロファイルと拡張から見たウィンドウの意味論、すべての生成経路によるポップアップ、拒否を含む autofill・passkey・権限のプロンプト、外部プロトコルの確認、フルスクリーンの解除、ドッキングした DevTools、ポップアップ付きの MV3 拡張、Chromium が run loop を所有した状態での正常な終了とキャンセルされた終了、ウィンドウ間のページの移動と 2 ペインの split、compositor の計測と決定、⌘L の後の IME と貼り付け、クラッシュと再起動の照合、1 回の練習のリベース。責務の表（4.6）を完成させる。U3 から実行可能: エンジン起動の検査（`--ararat-check=started`）、スクラッチ profile の拒否、独自バンドルの標準デリゲートのヘルパー。U4: `--ararat-check=window` で非表示の host、native window の一致、hit test を検査し、Browser の破棄を待つ。U5: `--ararat-check=tabs` で transaction feed と page card を検査する（我々の規則） | すべての受け入れ条件の検査が通る。compositor のモデルを選定済み |
 | 4 | UI の構築: 完全なサイドバー、favorites、フォルダ、space のページング、Arc の規則によるフローティングサイドバー、テーマ、Chromium の autocomplete を用いた command bar | オーナーが Arc のレイアウトでブラウジングできる |
 | 5 | Little window、既定のハンドラーとしての Air Traffic Control、split view、archive、ダウンロード、セッションの復元 | 日常の使用において Arc のワークフローと同等 |
 | 6 | 配布とセキュリティの関門: Developer ID、notarization、Sparkle、CI での署名、Corresponding Source、4.9 の保守のジョブ、評判の検査。DRM を決定し、ページの API を凍結する | 自己更新する署名済みのビルド。オーナーが日常的な使用を開始する |
