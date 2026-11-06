@@ -146,7 +146,22 @@ The current `AraratBrowserWindow` delegates window visibility, activation, bound
 - Which compositor owns a tab's `WebContentsViewCocoa` (per tab view, per profile, or shared per window) is a spike decision, because Ardia found that per-view compositors cost 1–2 refreshes on every tab switch and that changing later means a rendering rewrite (Ardia ledger 1.3, 1.6). The spike measures first-frame latency on switch, background-page activity, occlusion, resize, split panes and display changes for the candidates.
   `--ararat-compositor=c1` (the default) puts the active tab view in the page card; `--ararat-compositor=c2` hosts it in the window's Views compositor, positioned by the page card.
   Under C2, the page's layers sit below the app's NSView tree and show only where the app's views are transparent, so the first on-screen check is whether the page is visible at all.
-  `--ararat-measure=switch|background|occlusion|resize|display` runs each scenario ten times in the shown window and prints one JSON line per run. Measurement deferred: the screen was locked when the tooling was ready (2026-11-07); C1 stays the default until the numbers are in. Only one display (3440×1440 at 165 Hz) is attached, so the display-change scenario is recorded as skipped; split panes wait for U18.
+  `--ararat-measure=switch|background|occlusion|resize|display` runs each scenario ten times in the shown window and prints one JSON line per run.
+
+  Measured 2026-11-07 on the official build (out/Ararat, 157.0.8103.39), Mac Studio, one display at 3440×1440 and 165 Hz (one refresh 6.1 ms; the condition's 120 Hz refresh is 8.3 ms). Median / worst of each scenario's runs:
+
+  | Scenario | C1 (tab view in the page card) | C2 (window's Views compositor) | Condition |
+  |---|---|---|---|
+  | Tab switch to a loaded tab (`TotalSwitchDuration3`, 5 runs) | 2 / 3 ms | 15 / 15 ms | ≤ 8.3 ms |
+  | Tab switch to a tab hidden 30 s (5 runs) | 2 / 2 ms | 15 / 20 ms | ≤ 8.3 ms |
+  | Occlusion: rAF while fully covered for 10 s | 184 / 185 | 184 / 186 | 0 |
+  | Occlusion: first rAF after uncover | 6.3 / 15.9 ms | 8.3 / 62.5 ms | within one refresh |
+  | Live resize 5 s: dropped frames of ~826 | 0 / 24 | 0 / 2 | — |
+  | Background: hidden tabs' rAF in 30 s | never ran | never ran | 0 |
+  | Display change | skipped: one display | skipped: one display | — |
+  | Split panes | not measured: waits for U18 | not measured | — |
+
+  Choice: **C1** stays (ours). Only C1 meets the tab-switch condition; C2 costs about two refreshes per switch, which matches Ardia's finding for the shared path. C3 is not measured, because C1 meets the first condition. Neither candidate stops painting while covered: rAF drops to about 18 per second instead of 0 (an uncovered window runs 165), so occlusion is a gap of both, not a reason to choose; it goes to the unit that wires window occlusion. Background: the eight hidden tabs' counters were never written (`null`), which means their rAF never ran; the CPU samples read 0.0 %, but the `ps` pattern was not checked against the helper names, so CPU stays unverified. The first resize run under C1 dropped 24 frames and the other nine none; the cause is not known.
 - New contents: renderer-created windows reach us through `AddNewContents` with an existing `WebContents` and its pending navigation state preserved; modified clicks and form targets may take other paths (`OpenURLFromTab`). Every creation path on the pinned revision is enumerated and tested separately: POST targets, `window.open` with and without features, ⌘-click, shift-click, opener relationships, blocked popups. Windows Chrome creates on its own (`chrome.windows.create`, incognito, undocked DevTools) are routed to us through a hook in the `Browser` constructor.
 - One page, one place. A live page is shown in exactly one pane. When a second window or pane selects the same workspace tab, the window that becomes key takes the page and the other shows a blurred snapshot placeholder until it becomes key again (Arc's behaviour, Cra ledger 19). Within one window, the pane that takes focus takes the page and the other pane shows the placeholder; the split-pane spike covers this. Closing a window moves pages that another window still shows instead of reloading them (Cra ledger 20).
 - Split panes: each pane hosts one tab; the focused pane's tab is Chrome's active tab for its `Browser`; other panes are visible but inactive. During a divider drag, page sizes are frozen and resized once on release (Cra ledger 21).

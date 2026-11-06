@@ -5,16 +5,17 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
-- Phase 3 U8 tooling done, measurement **deferred: screen locked (2026-11-07 01:50)**. `--ararat-compositor=c1|c2`
-  (c2 through `views::NativeViewHost` → `ViewsHostableAttach`, no patch; other values exit 2) and
-  `--ararat-measure=switch|background|occlusion|resize|display` (`engine/ararat/ararat_measure.mm`; rAF count
-  read through `ExecuteJavaScriptInIsolatedWorld`, switch time from Chrome's own
-  `Browser.Tabs.TotalSwitchDuration3`). To measure: unlocked screen, official build, the loop in
-  `~/.config/herdr-agent-team/ararat/reports/compositormeasure-impl-1.md` ("Commands for design"), then the §4.6
-  table. Read first: under c2 the page sits below the app's views (check it is visible at all); the
-  measurement tabs carry item ids the workspace lacks, so a mid-run `timeout: loading` means the core closed
-  them; `first_frame_after_ms` mixes renderer and browser clocks (about one frame). Unknown: whether
-  `TotalSwitchDuration3` is recorded for our viewless window (empty `switch_ms` means no).
+- Phase 3 U8 done, so the vertical slice (U1–U8) is complete. The compositor was measured on screen
+  (§4.6 table) and **C1 stays**: tab switch 2 ms median vs 15 ms for C2. The tooling is
+  `--ararat-compositor=c1|c2` and `--ararat-measure=switch|background|occlusion|resize|display`
+  (`engine/ararat/ararat_measure.mm`).
+  - Open, from the measurement:
+    - Covered windows keep painting at about 18 rAF/s instead of stopping, under both C1 and C2. Window
+      occlusion is not wired yet.
+    - Background CPU is unverified, because the `ps` pattern was not checked against the helper names.
+    - The display change was skipped, because only one display is attached.
+    - Split panes wait for U18.
+    - The first C1 resize run dropped 24 frames; the cause is unknown.
 
 - Phase 3 U7 done: the app drives the engine in one window — `engine/ararat/public/AraratHostAPI.h`
   (`AraratWindowHostCreate(NSView*, windowId)`, exported), `macos/Sources/AraratKit/EngineAdapter.swift`
@@ -131,7 +132,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U7 and the U8 tooling are done. Left: the U8 measurement on an unlocked screen, recorded in §4.6 (see the U8 State line). The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U8 are done (C1 chosen, §4.6). Next phase 3 work is not chosen yet; candidates are the open points in the U8 State line. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 
