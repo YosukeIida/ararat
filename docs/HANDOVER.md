@@ -5,6 +5,23 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U9 done (hidden checks): Chrome's `AppController` stays the app delegate and owns quit, logout,
+  the downloads prompt and the keep-alive (§4.5; architecture said it would be replaced, now corrected).
+  `engine/patches/ararat/app-controller-hooks.patch` hands Dock reopen, the Dock menu (empty) and the
+  downloads-wait case with no Browser to our layer; `AraratCallbacks.reopen` lets the app rebuild or front
+  its window. `AraratMain` adds `--no-startup-window`. Quit and window close leave workspace rows as they
+  were (the host stops reporting on `OnClosingAllBrowsers(true)` and resends on `false`); the core stamps
+  `LastSelected` on the outgoing tab instead of on every strip (§6). The engine window is titled and
+  full-size with the sidebar's traffic lights (shared with the harness `BrowserWindow`). ⌘ key equivalents
+  from a focused page go to the main menu. Checks `quit`, `quit-cancel`, `close` pass; `started` runs
+  without `--no-startup-window`.
+  - Open: `--ararat-screen=quit` (⌘Q from the page, the real beforeunload `NSAlert`, sidebar top-row
+    clicks under the titlebar, AppKit lights hidden after resize and full screen) not yet run: the screen
+    was locked at the exit.
+  - Recorded for later units: window close with a download running crashes
+    (`ararat_browser_window.cc` `ConfirmBrowserCloseWithPendingDownloads`, phase 5);
+    `OnClosingAllBrowsers(false)` is a broadcast (multi-window); the quit-with-apps path never resets
+    `closing_all_` (U10/U11).
 - Phase 3 U8 done, so the vertical slice (U1–U8) is complete. The compositor was measured on screen
   (§4.6 table) and **C1 stays**: tab switch 2 ms median vs 15 ms for C2. The tooling is
   `--ararat-compositor=c1|c2` and `--ararat-measure=switch|background|occlusion|resize|display`
@@ -132,7 +149,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U8 are done (C1 chosen, §4.6). Next phase 3 work is not chosen yet; candidates are the open points in the U8 State line. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U9 are done (C1 chosen, §4.6). Next: U10 (Chrome-created Browsers and popups, spec `chrome-browsers-47.md`), then U11–U19 in plan order. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 
