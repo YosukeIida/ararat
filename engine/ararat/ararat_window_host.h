@@ -42,6 +42,7 @@ class AraratWindowHostCore {
 
   void SetWindow(AraratBrowserWindow* window);
   void OnWindowDestroyed(BrowserWindowInterface* browser);
+  void OnCloseCancelled();
 
  private:
   std::unique_ptr<views::WidgetDelegate> delegate_;
@@ -55,6 +56,8 @@ class AraratWindowHostCore {
 };
 
 bool AraratUsesSharedCompositor();
+bool AraratHandleMenuKey(gfx::NativeEvent event);
+unsigned long AraratStockBrowserCount();
 
 #ifdef __OBJC__
 #import "ararat/core/public/ARWindowHost.h"
@@ -62,6 +65,8 @@ bool AraratUsesSharedCompositor();
 - (BOOL)hasBrowser;
 - (void)browserCreated:(BrowserWindowInterface*)browser;
 - (void)browserDestroyed:(BrowserWindowInterface*)browser;
+- (void)closeCancelled;
+- (void)beginClosing;
 @end
 #endif  // __OBJC__
 

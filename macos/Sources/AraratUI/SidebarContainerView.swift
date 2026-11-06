@@ -25,6 +25,14 @@ public final class SidebarContainerView: NSView {
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
     public var sidebarState: String { state.mode.rawValue }
+    public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }
+    public var hasSidebarLights: Bool { windowButtons?.subviews.count == 3 }
+    public var appKitLightsHidden: Bool {
+        guard let window else { return false }
+        return [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].allSatisfy {
+            window.standardWindowButton($0)?.isHidden == true
+        }
+    }
     override public var isFlipped: Bool { true }
 
     public init(sidebar: SidebarView, page: NSView) {
@@ -141,6 +149,7 @@ public final class SidebarContainerView: NSView {
         panel.setAccessibilityHidden(state.mode == .hidden)
         windowButtons?.sidebarHidden = state.mode == .hidden && !moving
         windowButtons?.isHidden = window?.styleMask.contains(.fullScreen) == true || windowButtons?.sidebarHidden == true
+        if let window { WindowChrome.layout(window: window, lights: windowButtons) }
         updateBorder()
     }
 
@@ -238,19 +247,17 @@ public final class SidebarContainerView: NSView {
         super.viewDidMoveToWindow()
         stopMonitoring()
         NotificationCenter.default.removeObserver(self)
-        let previousWindow = windowButtons?.browserWindow as? BrowserWindow
+        let previousWindow = windowButtons?.browserWindow
         windowButtons?.removeFromSuperview()
         windowButtons = nil
-        previousWindow?.sidebarLights = nil
-        previousWindow?.layoutIfNeeded()
+        (previousWindow as? BrowserWindow)?.sidebarLights = nil
+        if let previousWindow { WindowChrome.layout(window: previousWindow, lights: nil) }
         guard let window else { return }
-        if let window = window as? BrowserWindow {
-            let buttons = SidebarWindowButtons(window: window)
-            windowButtons = buttons
-            panel.addSubview(buttons)
-            window.sidebarLights = buttons
-            window.layoutIfNeeded()
-        }
+        let buttons = SidebarWindowButtons(window: window)
+        windowButtons = buttons
+        panel.addSubview(buttons)
+        (window as? BrowserWindow)?.sidebarLights = buttons
+        WindowChrome.layout(window: window, lights: buttons)
         window.acceptsMouseMovedEvents = true
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: nil)
@@ -258,11 +265,18 @@ public final class SidebarContainerView: NSView {
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didMoveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: window)
         }
+        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(chromeChanged), name: name, object: window)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(windowClosed), name: NSWindow.willCloseNotification, object: window)
         for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: nil)
         }
         processPointer()
+    }
+
+    @objc private func chromeChanged() {
+        if let window { WindowChrome.layout(window: window, lights: windowButtons) }
     }
 
     @objc private func menuChanged(_ notification: Notification) {

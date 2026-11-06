@@ -33,7 +33,7 @@ fn restoring_reopens_at_the_top_of_its_today_and_persists_synced_and_local_chang
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
     let before = count();
     let ops = ws.restore_item("one", "tab-a").unwrap();
-    assert_eq!(ops.len(), 3);
+    assert!(ops.iter().any(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "tab-b")));
     assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Open);
     assert!(ws.items["tab-a"].lifecycle_changed_at > closed_at);
     assert_eq!(ws.outline("today-work")[0].1.id, "tab-a");

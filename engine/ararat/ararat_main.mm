@@ -6,12 +6,14 @@
 
 #include <atomic>
 #include <iostream>
+#include <vector>
 
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_window_check.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/scoped_observation.h"
 #include "base/path_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
@@ -19,6 +21,7 @@
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection.h"
+#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
@@ -39,11 +42,23 @@ bool g_check_tabs = false;
 bool g_check_slice = false;
 bool g_slice_passed = false;
 bool g_shared_compositor = false;
+unsigned long g_stock_browsers = 0;
+
+class StockBrowserObserver : public BrowserCollectionObserver {
+ public:
+  void OnBrowserCreated(BrowserWindowInterface* browser) override {
+    if (!g_ararat_is_window || !g_ararat_is_window(browser)) ++g_stock_browsers;
+  }
+};
 
 // The engine's own browser main extra parts: the two callbacks fire at the
 // engine's own stages, and the check run prints its one JSON line and quits.
 class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
  public:
+  void PreBrowserStart() override {
+    ChromeBrowserMainExtraParts::PreBrowserStart();
+    observation_.Observe(GlobalBrowserCollection::GetInstance());
+  }
   void PostBrowserStart() override {
     ChromeBrowserMainExtraParts::PostBrowserStart();
     g_ui_ready.store(true, std::memory_order_release);
@@ -60,6 +75,7 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
   }
 
   void PostMainMessageLoopRun() override {
+    observation_.Reset();
     ChromeBrowserMainExtraParts::PostMainMessageLoopRun();
     if (g_ararat_callbacks.will_shut_down) {
       g_ararat_callbacks.will_shut_down(g_ararat_callbacks.ctx);
@@ -67,6 +83,9 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
   }
 
  private:
+  StockBrowserObserver stock_observer_;
+  base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver>
+      observation_{&stock_observer_};
   // The guards ran in AraratMain before the engine started, so reaching here
   // means the run is a scratch one and the JSON line is the whole contract.
   void RunCheck() {
@@ -110,6 +129,8 @@ void CheckGuards(int argc, const char** argv) {
   bool db_under_temp = false;
   bool has_measure = false;
   bool valid_measure = false;
+  bool has_screen = false;
+  bool valid_screen = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
     if (strncmp(arg, "--ararat-compositor=", 20) == 0) {
@@ -132,6 +153,12 @@ void CheckGuards(int argc, const char** argv) {
       has_measure = true;
       valid_measure = false;
     }
+    if (strncmp(arg, "--ararat-screen=", 16) == 0) {
+      has_screen = true;
+      valid_screen = std::string_view(arg + 16) == "quit";
+    } else if (strcmp(arg, "--ararat-screen") == 0) {
+      has_screen = true;
+    }
     if (strcmp(arg, "--ararat-check") == 0) {
       // Chrome would read the switch as empty and open "started" as a URL in
       // the given profile, so the bare form is refused outright.
@@ -144,7 +171,13 @@ void CheckGuards(int argc, const char** argv) {
       check_started = std::string_view(arg + 15) == "started" ||
                       std::string_view(arg + 15) == "window" ||
                       std::string_view(arg + 15) == "tabs" ||
-                      std::string_view(arg + 15) == "slice";
+                      std::string_view(arg + 15) == "slice" ||
+                      std::string_view(arg + 15) == "quit" ||
+                      std::string_view(arg + 15) == "quit-cancel" ||
+                      std::string_view(arg + 15) == "close";
+      check_slice = check_slice || std::string_view(arg + 15) == "quit" ||
+                    std::string_view(arg + 15) == "quit-cancel" ||
+                    std::string_view(arg + 15) == "close";
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
@@ -169,6 +202,11 @@ void CheckGuards(int argc, const char** argv) {
     std::cerr << "engine: --ararat-measure requires a scenario, scratch profile and mock keychain" << std::endl;
     exit(2);
   }
+  if (has_screen && (!valid_screen || has_check || has_measure || temp_dir.empty() ||
+                     !under_temp || !mock_keychain || !db_under_temp)) {
+    std::cerr << "engine: --ararat-screen requires a scenario, scratch profile and database, and mock keychain" << std::endl;
+    exit(2);
+  }
   if (!has_check) {
     return;
   }
@@ -185,23 +223,43 @@ void CheckGuards(int argc, const char** argv) {
     refuse("the slice database is not under $TMPDIR");
   }
   if (!check_started) {
-    refuse("the check name must be started, window, tabs or slice");
+    refuse("the check name must be started, window, tabs, slice, quit, quit-cancel or close");
   }
 }
 
 }  // namespace
 
 bool AraratUsesSharedCompositor() { return g_shared_compositor; }
+unsigned long AraratStockBrowserCount() { return g_stock_browsers; }
 
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
+  g_ararat_reopen = [](bool has_visible_windows) {
+    return g_ararat_callbacks.reopen &&
+           g_ararat_callbacks.reopen(g_ararat_callbacks.ctx, has_visible_windows);
+  };
+  g_ararat_dock_menu = []() -> NSMenu* { return nil; };
   // The hook is what the browser process adds; from here Chrome runs its own
   // path and our extra parts ride the stock client.
   g_ararat_add_browser_main_extra_parts = [](ChromeBrowserMainParts* parts) {
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
-  int result = ChromeMain(argc, argv);
+  std::vector<const char*> browser_args(argv, argv + argc);
+  bool has_no_startup_window = false;
+  for (const char* arg : browser_args) {
+    if (arg && strcmp(arg, "--") == 0) break;
+    if (arg && (strcmp(arg, "--no-startup-window") == 0 ||
+                strncmp(arg, "--no-startup-window=", 20) == 0)) {
+      has_no_startup_window = true;
+      break;
+    }
+  }
+  if (!has_no_startup_window)
+    browser_args.insert(browser_args.begin() + 1, "--no-startup-window");
+  int browser_argc = static_cast<int>(browser_args.size());
+  browser_args.push_back(nullptr);
+  int result = ChromeMain(browser_argc, browser_args.data());
   return result == 0 && (!AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) ||
                          (g_check_slice && !g_slice_passed)) ? 1 : result;
 }

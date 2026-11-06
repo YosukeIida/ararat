@@ -4,13 +4,17 @@
 #import <AppKit/AppKit.h>
 
 #include <utility>
+#include <cstdio>
 #include <set>
+#include <string>
 
 #include "ararat/core/ararat_browser_window.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_tab.h"
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
+#include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
 #include "base/process/process.h"
 #include "base/supports_user_data.h"
@@ -19,6 +23,10 @@
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -27,20 +35,121 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "content/public/browser/web_contents.h"
+#include "components/javascript_dialogs/app_modal_dialog_controller.h"
+#include "components/javascript_dialogs/app_modal_dialog_manager.h"
+#include "components/javascript_dialogs/app_modal_dialog_view.h"
+#include "components/prefs/pref_service.h"
+#include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
+#include "chrome/common/pref_names.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/views/window/client_view.h"
 #include "url/gurl.h"
 
+bool AraratHandleMenuKey(gfx::NativeEvent event) {
+  NSEvent* native_event = event.Get();
+  return native_event && native_event.type == NSEventTypeKeyDown &&
+         (native_event.modifierFlags & NSEventModifierFlagCommand) &&
+         [[NSApp mainMenu] performKeyEquivalent:native_event];
+}
+
 namespace {
+
+bool IsCloseCheck() {
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+             "ararat-check") == "close";
+}
+
+class HostNativeWidgetMac : public views::NativeWidgetMac {
+ public:
+  explicit HostNativeWidgetMac(views::Widget* widget) : NativeWidgetMac(widget) {}
+
+ protected:
+  void PopulateCreateWindowParams(
+      const views::Widget::InitParams& widget_params,
+      remote_cocoa::mojom::CreateWindowParams* params) override {
+    params->style_mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                         NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                         NSWindowStyleMaskFullSizeContentView;
+    params->titlebar_appears_transparent = true;
+    params->window_title_hidden = true;
+  }
+};
+
+NSUInteger g_check_dialog_count = 0;
+
+class CheckDialog : public javascript_dialogs::AppModalDialogView {
+ public:
+  explicit CheckDialog(std::unique_ptr<javascript_dialogs::AppModalDialogController> controller)
+      : controller_(std::move(controller)) {}
+  void ShowAppModalDialog() override {
+    if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: dialog-shown\n");
+    ++g_check_dialog_count;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&CheckDialog::Respond, weak_factory_.GetWeakPtr()));
+  }
+  void ActivateAppModalDialog() override {}
+  void CloseAppModalDialog() override {
+    auto weak = weak_factory_.GetWeakPtr();
+    controller_->OnClose();
+    if (weak) delete this;
+  }
+  void AcceptAppModalDialog() override {
+    auto weak = weak_factory_.GetWeakPtr();
+    controller_->OnAccept(u"", false);
+    if (weak) delete this;
+  }
+  void CancelAppModalDialog() override {
+    auto weak = weak_factory_.GetWeakPtr();
+    chrome_browser_application_mac::CancelTerminate();
+    controller_->OnCancel(false);
+    if (weak) delete this;
+  }
+  bool IsShowing() const override { return true; }
+ private:
+  void Respond() {
+    if (g_check_dialog_count == 1) CancelAppModalDialog();
+    else AcceptAppModalDialog();
+  }
+  std::unique_ptr<javascript_dialogs::AppModalDialogController> controller_;
+  base::WeakPtrFactory<CheckDialog> weak_factory_{this};
+};
 
 BrowserWindow* AraratCreateBrowserWindowForPendingHost(
     BrowserWindowInterface* browser);
 
 AraratWindowHostCore* g_pending_window_host = nullptr;
+class HostClientView : public views::ClientView {
+ public:
+  HostClientView(views::Widget* widget, views::View* contents,
+                 AraratWindowHostCore* host)
+      : views::ClientView(widget, contents), host_(host) {}
+  views::CloseRequestResult OnWindowCloseRequested() override {
+    if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: close-requested\n");
+    if (!host_->window()) return views::CloseRequestResult::kCanClose;
+    host_->Close();
+    return views::CloseRequestResult::kCannotClose;
+  }
+ private:
+  raw_ptr<AraratWindowHostCore> host_;
+};
+
+class HostWidgetDelegate : public views::WidgetDelegate {
+ public:
+  explicit HostWidgetDelegate(AraratWindowHostCore* host) : host_(host) {}
+  bool OnCloseRequested(views::Widget::ClosedReason) override {
+    if (!host_->window()) return true;
+    host_->Close();
+    return false;
+  }
+ private:
+  raw_ptr<AraratWindowHostCore> host_;
+};
 std::set<BrowserWindowInterface*>& AraratWindows() {
   static base::NoDestructor<std::set<BrowserWindowInterface*>> windows;
   return *windows;
@@ -79,7 +188,12 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
 AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
                                            void* owner)
     : owner_(owner) {
-  delegate_ = std::make_unique<views::WidgetDelegate>();
+  delegate_ = std::make_unique<HostWidgetDelegate>(this);
+  delegate_->SetClientViewFactory(base::BindOnce(
+      [](AraratWindowHostCore* host, views::Widget* widget, views::View* contents)
+          -> std::unique_ptr<views::ClientView> {
+        return std::make_unique<HostClientView>(widget, contents, host);
+      }, base::Unretained(this)));
   delegate_->SetCanResize(true);
   delegate_->SetCanMaximize(true);
   auto contents = std::make_unique<views::View>();
@@ -97,6 +211,7 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   params.name = "AraratWindowHost";
   params.bounds = gfx::Rect(0, 0, 800, 600);
   params.remove_standard_frame = true;
+  params.native_widget = new HostNativeWidgetMac(widget_.get());
   widget_->Init(std::move(params));
   native_host->Attach(app_content_view);
   widget_->LayoutRootViewIfNecessary();
@@ -130,17 +245,27 @@ void AraratWindowHostCore::PositionPage(const gfx::Rect& rect) {
 
 void AraratWindowHostCore::Close() {
   if (window_) {
+    if (closing_) return;
     closing_ = true;
+    [(__bridge ARWindowHost*)owner_ beginClosing];
     close_cancelled_ = window_->browser()->RegisterBrowserCloseCancelled(
         base::BindRepeating(
             [](AraratWindowHostCore* host, BrowserWindowInterface*,
-               BrowserWindowInterface::ClosingStatus) { host->closing_ = false; },
+               BrowserWindowInterface::ClosingStatus status) {
+              if (status == BrowserWindowInterface::ClosingStatus::kDeniedByPolicy)
+                host->OnCloseCancelled();
+            },
             base::Unretained(this)));
     window_->RequestClose();
   } else {
     closed_ = true;
     widget_->Close();
   }
+}
+
+void AraratWindowHostCore::OnCloseCancelled() {
+  closing_ = false;
+  [(__bridge ARWindowHost*)owner_ closeCancelled];
 }
 
 void AraratWindowHostCore::SetPending() {
@@ -160,11 +285,13 @@ void AraratWindowHostCore::SetWindow(AraratBrowserWindow* window) {
 }
 
 void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
+  if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-destroyed closing=%d\n", closing_);
   [(__bridge ARWindowHost*)owner_ browserDestroyed:browser];
   AraratWindows().erase(browser);
   window_ = nullptr;
   close_cancelled_ = {};
   if (closing_) {
+    if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: widget-close\n");
     closed_ = true;
     widget_->Close();
   }
@@ -205,11 +332,12 @@ class StripObserver : public TabStripModelObserver {
 - (NSDictionary*)stripSnapshot;
 - (void)emitCause:(id)cause;
 - (void)emitOpenFailure:(NSString*)commandId;
-- (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported;
+- (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost;
 - (void)syncTabs;
 - (void)closeCancelled:(const tabs::TabInterface*)tab;
 - (void)drainPendingOpens;
 - (void)discardPendingOpens;
+- (void)profileLoaded:(BOOL)loaded;
 - (void)positionPage;
 @end
 
@@ -260,8 +388,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSString* command_id_;
   NSString* opening_item_;
   BOOL draining_opens_;
+  BOOL loading_profile_;
   BOOL emitted_change_;
   BOOL empty_reported_;
+  BOOL closing_all_;
+  BOOL closing_window_;
+  NSMutableArray<NSNumber*>* check_closing_events_;
+  base::CallbackListSubscription closing_all_subscription_;
   ARPagePositionView* page_position_view_;
 }
 
@@ -277,7 +410,27 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     tabs_ = [NSMutableDictionary dictionary];
     pending_closes_ = [NSMutableDictionary dictionary];
     pending_opens_ = [NSMutableArray array];
+    auto* command_line = base::CommandLine::ForCurrentProcess();
+    std::string check = command_line->GetSwitchValueASCII("ararat-check");
+    if (check == "quit" || check == "quit-cancel" || check == "close" ||
+        command_line->HasSwitch("ararat-screen"))
+      check_closing_events_ = [NSMutableArray array];
     window_id_ = [windowId copy];
+    __weak ARWindowHost* host = self;
+    closing_all_subscription_ = chrome::AddClosingAllBrowsersCallback(
+        base::BindRepeating(^(bool closing) {
+          ARWindowHost* strong_host = host;
+          if (!strong_host) return;
+          [strong_host->check_closing_events_ addObject:@(closing)];
+          BOOL was_closing = strong_host->closing_all_;
+          strong_host->closing_all_ = closing;
+          if (!closing) {
+            if (strong_host->closing_window_)
+              strong_host->core_->OnCloseCancelled();
+            else if (was_closing)
+              [strong_host emitCause:@"Chrome"];
+          }
+        }));
   }
   return self;
 }
@@ -304,8 +457,37 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)close {
   DCHECK([NSThread isMainThread]);
   // Why not release here: a cancelled close must keep the keep-alive.
-  if (!core_->window()) profile_keep_alive_.reset();
+  if (!core_->window()) {
+    [self discardPendingOpens];
+    profile_keep_alive_.reset();
+  }
   core_->Close();
+}
+
+- (void)beginClosing {
+  closing_window_ = YES;
+}
+
+- (void)installCheckDialogFactory {
+  g_check_dialog_count = 0;
+  javascript_dialogs::AppModalDialogManager::GetInstance()->SetNativeDialogFactory(
+      base::BindRepeating([](std::unique_ptr<javascript_dialogs::AppModalDialogController> controller)
+          -> javascript_dialogs::AppModalDialogView* {
+        return new CheckDialog(std::move(controller));
+      }));
+}
+
+- (NSUInteger)checkDialogCount { return g_check_dialog_count; }
+- (NSArray<NSNumber*>*)checkClosingEvents { return [check_closing_events_ copy] ?: @[]; }
+- (BOOL)checkTryingToQuit { return browser_shutdown::IsTryingToQuit(); }
+- (NSUInteger)checkStockBrowsers { return AraratStockBrowserCount(); }
+- (void)disableCheckConfirmQuit {
+  g_browser_process->local_state()->SetBoolean(prefs::kConfirmToQuitEnabled, false);
+}
+
+- (void)closeCancelled {
+  closing_window_ = NO;
+  if (!closing_all_) [self emitCause:@"Chrome"];
 }
 
 - (void)makePending {
@@ -339,9 +521,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     [tabs_ removeAllObjects];
     if (core_->closing() || core_->closed()) {
       profile_keep_alive_.reset();
-      if (pending_opens_.count) [self discardPendingOpens];
+      if (pending_opens_.count) {
+        if (!closing_all_) closing_window_ = NO;
+        [self discardPendingOpens];
+        if (!closing_all_) closing_window_ = YES;
+      }
     }
-    if (!empty_reported_) [self emitCause:@"Chrome"];
+    if (closing_window_ && !closing_all_) {
+      closing_window_ = NO;
+      [self transactionWithCause:@"Engine" setEmptyReported:YES retainHost:YES];
+      closing_window_ = YES;
+    } else if (!empty_reported_) {
+      [self emitCause:@"Chrome"];
+    }
     empty_reported_ = NO;
   }
   if (pending_opens_.count) {
@@ -365,7 +557,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId {
   DCHECK([NSThread isMainThread]);
-  if (core_->closed() || !g_epoch || !url || !commandId || !itemId) return NO;
+  if (core_->closing() || core_->closed() || closing_all_ || !g_epoch ||
+      !url || !commandId || !itemId) return NO;
   GURL parsed_url(url.UTF8String);
   if (!parsed_url.is_valid()) return NO;
   BrowserWindowInterface* closing_browser = core_->window() ? core_->window()->browser() : nullptr;
@@ -375,12 +568,25 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     return YES;
   }
   BOOL new_browser = !core_->window();
+  Profile* profile = new_browser ? ProfileManager::GetLastUsedProfileIfLoaded() : nullptr;
+  if (new_browser && !profile) {
+    [pending_opens_ addObject:@{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy] }];
+    if (!loading_profile_) {
+      loading_profile_ = YES;
+      __weak ARWindowHost* host = self;
+      if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: profile-load\n");
+      g_browser_process->profile_manager()->LoadProfile(
+          ProfileManager::GetLastUsedProfileBaseName(), false,
+          base::BindOnce(^(Profile* loaded) { [host profileLoaded:loaded != nullptr]; }));
+    }
+    return YES;
+  }
   command_id_ = commandId;
   opening_item_ = itemId;
   emitted_change_ = NO;
   if (new_browser) {
-    Profile* profile = ProfileManager::GetLastUsedProfileIfLoaded();
-    if (!profile || GetBrowserWindowCreationStatusForProfile(*profile) != BrowserWindowInterface::CreationStatus::kOk) {
+    if (GetBrowserWindowCreationStatusForProfile(*profile) != BrowserWindowInterface::CreationStatus::kOk) {
+      if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-create-denied\n");
       command_id_ = nil; opening_item_ = nil;
       [self emitOpenFailure:commandId];
       return YES;
@@ -388,6 +594,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     core_->SetPending();
     BrowserWindowInterface* browser = CreateBrowserWindow(BrowserWindowCreateParams(profile, true));
     if (!browser || !core_->window()) {
+      if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-create-failed\n");
       core_->ClearPending();
       command_id_ = nil; opening_item_ = nil;
       [self emitOpenFailure:commandId];
@@ -422,13 +629,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (core_->closed()) { [self discardPendingOpens]; return; }
   draining_opens_ = YES;
   while (pending_opens_.count && !core_->closed()) {
-    if (browser_ && browser_->IsDeleteScheduled()) break;
+    if (loading_profile_ || (browser_ && browser_->IsDeleteScheduled())) break;
     NSDictionary* open = pending_opens_.firstObject;
     [pending_opens_ removeObjectAtIndex:0];
     [self openURL:open[@"url"] commandId:open[@"command"] itemId:open[@"item"]];
   }
   draining_opens_ = NO;
   if (core_->closed()) [self discardPendingOpens];
+}
+
+- (void)profileLoaded:(BOOL)loaded {
+  loading_profile_ = NO;
+  if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: profile-loaded=%d\n", loaded);
+  if (loaded && !core_->closed()) [self drainPendingOpens];
+  else [self discardPendingOpens];
 }
 
 - (void)discardPendingOpens {
@@ -592,24 +806,26 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)emitCause:(id)cause {
-  [self transactionWithCause:cause setEmptyReported:YES];
+  [self transactionWithCause:cause setEmptyReported:YES retainHost:NO];
 }
 
 // Why not set empty_reported_: a discard must not suppress the empty strip of
 // a Browser destroyed with tabs.
 - (void)emitOpenFailure:(NSString*)commandId {
-  [self transactionWithCause:@{ @"Command": commandId } setEmptyReported:NO];
+  [self transactionWithCause:@{ @"Command": commandId } setEmptyReported:NO retainHost:NO];
 }
 
-- (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported {
-  if (!g_epoch) return;
+- (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost {
+  if (!g_epoch || closing_all_ || closing_window_) return;
   NSArray* strips = @[ [self stripSnapshot] ];
   if (setEmptyReported)
     empty_reported_ = !browser_ || browser_->GetTabStripModel()->empty();
   __weak ARWindowHost* host = self;
+  ARWindowHost* retained_host = retainHost ? self : nil;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(^{
-        ARWindowHost* strong_host = host;
+        ARWindowHost* strong_host = retained_host ?: host;
+        if (retainHost && IsCloseCheck()) std::fprintf(stderr, "ararat-trace: empty-strip-delivered=%d\n", strong_host.delegate != nil);
         id<ARWindowHostDelegate> delegate = strong_host.delegate;
         if (!strong_host || !delegate) return;
         NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"strips": strips };

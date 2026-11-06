@@ -281,6 +281,7 @@ impl Workspace {
             lifecycle_changed_at: now,
         };
         self.check_destination(&item, &item.membership.parent.as_ref().map(String::as_str).unwrap_or_default())?;
+        ops.extend(self.stamp_outgoing(window, Some(&id), now));
         let mut state = self.window_state(window);
         state.shown_space = Some(space_id);
         state.select(Some(id.clone()));
@@ -425,11 +426,12 @@ impl Workspace {
             id: id.into(), order: crate::order::key_between(self.spaces.last().map(|space| space.order.as_str()), None),
             title: name.into(), profile, icon: None, look: None, pinned: pinned.clone(), today: today.clone(),
         };
+        let changed_at = self.lifecycle_time();
+        let mut ops = self.stamp_outgoing(window, None, changed_at);
         let mut state = self.window_state(window);
         state.shown_space = Some(id.into());
         state.select(None);
-        let changed_at = self.lifecycle_time();
-        let mut ops = vec![Op::Put(Record::Space(space))];
+        ops.push(Op::Put(Record::Space(space)));
         for id in [pinned, today] {
             ops.push(Op::Put(Record::Item(crate::model::Item {
                 id, membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
@@ -507,10 +509,12 @@ impl Workspace {
         }
         item.lifecycle = Lifecycle::Open;
         item.lifecycle_changed_at = self.lifecycle_time();
-        let mut state = self.window_state(window);
-        state.shown_space = Some(space.id.clone());
-        state.select(Some(id.into()));
+        let space_id = space.id.clone();
         let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
+        ops.extend(self.stamp_outgoing(window, Some(id), item.lifecycle_changed_at));
+        let mut state = self.window_state(window);
+        state.shown_space = Some(space_id);
+        state.select(Some(id.into()));
         ops.push(Op::Put(Record::Item(item)));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
@@ -599,13 +603,19 @@ impl Workspace {
         if !self.items.contains_key(id) {
             return Err(EditError(format!("unknown item {id}")));
         }
-        let mut ops = self.flip_active(id, now);
+        let mut ops = self.stamp_outgoing(window, Some(id), now);
+        ops.extend(self.flip_active(id, now));
         let mut state = self.window_state(window);
         state.select(Some(id.into()));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         ops.extend(self.stamp_selection(id, now));
         Ok(ops)
+    }
+
+    fn stamp_outgoing(&mut self, window: &str, new: Option<&str>, now: u64) -> Vec<Op> {
+        let outgoing = self.selected(window).filter(|selected| Some(*selected) != new).map(str::to_string);
+        outgoing.map_or_else(Vec::new, |selected| self.stamp_selection(&selected, now))
     }
 
     pub fn close_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {

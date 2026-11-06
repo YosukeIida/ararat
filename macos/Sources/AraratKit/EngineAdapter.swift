@@ -14,7 +14,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -22,14 +22,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         try queue.sync {
             let opened = try WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
-            if seedCheck && !empty {
+            if (seedCheck || seedSingleCheck) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if empty {
                 _ = try opened.createSpace(windowId: windowID, name: "Space", spaceId: UUID().uuidString)
             }
-            if seedCheck {
-                for name in ["One", "Two", "Three"] {
+            if seedCheck || seedSingleCheck {
+                for name in seedSingleCheck ? ["One"] : ["One", "Two", "Three"] {
                     _ = try opened.createTab(windowId: windowID, url: "data:text/html,<title>Ararat \(name)</title>")
                 }
             }
@@ -48,7 +48,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         queue.async {
             do {
                 guard let store = self.store else { return }
-                let command = try store.liveTab(item: id) == nil
+                let needsOpen = store.liveTab(item: id) == nil
+                if CommandLine.arguments.contains("--ararat-check=close") {
+                    FileHandle.standardError.write(Data("ararat-trace: select-open=\(needsOpen)\n".utf8))
+                }
+                let command = try needsOpen
                     ? store.liveOpen(item: id, url: url)
                     : store.liveActivate(item: id)
                 DispatchQueue.main.async { self.execute(command) }

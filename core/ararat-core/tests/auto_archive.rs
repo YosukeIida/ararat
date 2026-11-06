@@ -8,6 +8,29 @@ fn workspace() -> Workspace {
 }
 
 #[test]
+fn creating_or_restoring_a_selection_preserves_the_recently_viewed_tab() {
+    for action in ["tab", "space", "restore"] {
+        let mut ws = workspace();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        ws.select_item_at("one", "tab-a", now - 13 * 3_600_000).unwrap();
+        if action == "restore" { ws.items.get_mut("tab-b").unwrap().lifecycle = Lifecycle::Archived; }
+        let mut replay = ws.clone();
+        let ops = match action {
+            "tab" => ws.create_tab("one", "https://new.example").unwrap(),
+            "space" => ws.create_space("one", "New", "new-space").unwrap(),
+            "restore" => ws.restore_item("one", "tab-b").unwrap(),
+            _ => unreachable!(),
+        };
+        for op in &ops { replay.apply(op); }
+        assert_eq!(replay, ws, "{action}");
+        let left_at = ws.last_selected["tab-a"];
+        assert!(left_at >= now, "{action}");
+        ws.auto_archive(left_at + 60_000).unwrap();
+        assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Open, "{action}");
+    }
+}
+
+#[test]
 fn threshold_is_strict_and_all_four_options_are_profile_scoped() {
     for (option, hours) in [(ArchiveAfter::Hours12, 12), (ArchiveAfter::Hours24, 24), (ArchiveAfter::Days7, 168), (ArchiveAfter::Days30, 720)] {
         assert_eq!(option.millis(), hours * 3_600_000);

@@ -261,7 +261,7 @@ AraratBrowserWindow::PreHandleKeyboardEvent(
 
 bool AraratBrowserWindow::HandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
-  return false;
+  return AraratHandleMenuKey(event.os_event);
 }
 
 std::unique_ptr<FindBar> AraratBrowserWindow::CreateFindBar() {

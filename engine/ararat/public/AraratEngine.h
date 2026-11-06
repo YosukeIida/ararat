@@ -1,6 +1,8 @@
 #ifndef ARARAT_PUBLIC_ARARAT_ENGINE_H_
 #define ARARAT_PUBLIC_ARARAT_ENGINE_H_
 
+#include <stdbool.h>
+
 // The engine's C entry points, for launchers outside the engine tree. The
 // exported definitions carry default visibility in ararat_main.mm; the names
 // are listed in both ararat.exports and the link patch's framework.order additions.
@@ -13,6 +15,7 @@ extern "C" {
 typedef struct AraratCallbacks {
   void (*started)(void* ctx);
   void (*will_shut_down)(void* ctx);
+  bool (*reopen)(void* ctx, bool has_visible_windows);
   void* ctx;
 } AraratCallbacks;
 

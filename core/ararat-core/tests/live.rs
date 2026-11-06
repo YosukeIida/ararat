@@ -2,7 +2,7 @@
 // P3, P4, P5, P7 and P8 are review 1's probe cases.
 
 use ararat_core::live::{Cause, CommandKind, Live, LiveTab, Strip, Transaction};
-use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Workspace};
+use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Op, Record, Workspace};
 use ararat_core::storage::Store;
 
 fn tab(ws: &mut Workspace, id: &str, parent: &str, url: &str) {
@@ -38,6 +38,106 @@ fn strip(live: &Live, tabs: &[&str], active: Option<&str>) -> Strip {
 
 fn strip_empty(window: &str) -> Strip {
     Strip { window: window.into(), tabs: vec![], active: None }
+}
+
+#[test]
+fn replaying_the_same_active_strip_preserves_workspace_rows() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let (_, command) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&command);
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
+    let before = ws.clone();
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a"], Some("a"))],
+    });
+    assert!(outcome.applied);
+    assert!(ops.is_empty());
+    assert_eq!(ws, before);
+}
+
+#[test]
+fn leaving_a_tab_after_thirteen_hours_keeps_it_out_of_the_next_archive_tick() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    ws.last_selected.insert("a".into(), now - 13 * 3_600_000);
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "b"], Some("b"))],
+    });
+    assert!(outcome.applied);
+    let left_at = ws.last_selected["a"];
+    assert!(left_at >= now);
+    assert_eq!(ops.iter().filter(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "a")).count(), 1);
+    ws.auto_archive(left_at + 60_000).unwrap();
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
+}
+
+#[test]
+fn background_open_and_reorder_do_not_restamp_the_active_tab() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let (_, first) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&first);
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
+    ws.last_selected.insert("a".into(), 100);
+    let (_, second) = live.open(&mut ws, "b", "u").unwrap();
+    live.command_sent(&second);
+    let (opened, _) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(second.id),
+        strips: vec![strip(&live, &["a", "b"], Some("a"))],
+    });
+    let (reordered, _) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["b", "a"], Some("a"))],
+    });
+    assert_eq!(ws.last_selected["a"], 100);
+    assert!(!opened.iter().chain(&reordered).any(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "a")));
+}
+
+#[test]
+fn a_selection_recorded_before_the_strip_stamps_the_outgoing_tab_only_once() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let selection = ws.select_item_at("one", "b", 123).unwrap();
+    assert_eq!(ws.last_selected["a"], 123);
+    assert_eq!(selection.iter().filter(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "a")).count(), 1);
+    let before = ws.clone();
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "b"], Some("b"))],
+    });
+    assert!(outcome.applied);
+    assert!(ops.is_empty());
+    assert_eq!(ws, before);
+}
+
+#[test]
+fn reporting_a_selected_unloaded_tab_as_live_marks_it_open() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let (_, command) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&command);
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
+    ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Unloaded;
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a"], Some("a"))],
+    });
+    assert!(outcome.applied);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
 }
 
 #[test]
@@ -637,6 +737,28 @@ fn a_closed_window_arrives_as_an_empty_strip() {
     assert_eq!(ws.items["home"].lifecycle, Lifecycle::Closed);
     assert!(live.live_tab("home").is_none());
     assert_eq!(live.live_tab("a").as_deref(), Some("La"));
+}
+
+#[test]
+fn closing_a_window_keeps_rows_and_allows_the_selected_tab_to_reopen() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 0, cause: Cause::Engine,
+        strips: vec![Strip { window: "one".into(), tabs: vec![LiveTab {
+            live_id: "La".into(), item: Some("a".into()),
+        }], active: Some("La".into()) }],
+    });
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Engine,
+        strips: vec![Strip { window: "one".into(), tabs: vec![], active: None }],
+    });
+    assert!(outcome.applied);
+    assert!(ops.is_empty());
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
+    assert!(live.live_tab("a").is_none());
+    let (_, command) = live.open(&mut ws, "a", "https://a.example/").unwrap();
+    assert_eq!(command.kind, CommandKind::Open);
 }
 
 #[test]

@@ -8,6 +8,12 @@
 
 #ifdef __cplusplus
 
+#ifdef __OBJC__
+@class NSMenu;
+extern bool (*g_ararat_reopen)(bool has_visible_windows);
+extern NSMenu* (*g_ararat_dock_menu)();
+#endif
+
 class BrowserWindowInterface;
 class BrowserWindow;
 extern BrowserWindow* (*g_ararat_create_browser_window)(

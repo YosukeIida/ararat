@@ -4,8 +4,11 @@
 
 #include "ararat/core/public/ARWindowHost.h"
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
 
@@ -74,6 +77,21 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (!view) return NO;
   [view mouseMoved:event];
   return YES;
+}
+
+- (void)prepareCheckBeforeUnload {
+  if (!contents_) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"window.addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = ''; });",
+      base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (BOOL)checkHasBeforeUnload {
+  return contents_ && contents_->NeedToFireBeforeUnloadOrUnloadEvents();
+}
+
+- (void)focusCheckPage {
+  if (contents_) contents_->Focus();
 }
 
 - (void)navigationFinished {

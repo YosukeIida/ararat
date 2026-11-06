@@ -491,8 +491,11 @@ impl Live {
             if changed_windows.contains(&strip.window) { continue; }
             if let Some(active) = &strip.active {
                 if let Some(item) = next_reverse.get(active).cloned() {
-                    if let Ok(mut selection_ops) = next.record_active(&strip.window, &item, next.lifecycle_time()) {
-                        ops.append(&mut selection_ops);
+                    if next.selected(&strip.window) != Some(item.as_str())
+                        || next.items.get(&item).is_some_and(|item| item.lifecycle == Lifecycle::Unloaded) {
+                        if let Ok(mut selection_ops) = next.record_active(&strip.window, &item, next.lifecycle_time()) {
+                            ops.append(&mut selection_ops);
+                        }
                     }
                 }
             }

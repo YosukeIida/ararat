@@ -97,6 +97,20 @@ func windowButtonsStayMeasuredAfterEveryNativeRetile() throws {
 }
 
 @Test @MainActor
+func sidebarInstallsButtonsOnAnOrdinaryWindow() throws {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                          backing: .buffered, defer: false)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    window.contentView = container
+    defer { window.contentView = nil }
+    #expect(container.hasSidebarLights)
+    #expect(container.sidebarCloseButton != nil)
+    #expect(container.appKitLightsHidden)
+}
+
+@Test @MainActor
 func windowButtonHitsCoverTheirFullFramesAndLeaveContentUnobstructed() throws {
     let window = measuredButtonsWindow()
     defer { window.contentView = nil }

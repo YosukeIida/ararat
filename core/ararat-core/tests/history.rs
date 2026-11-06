@@ -1,5 +1,5 @@
 use ararat_core::import::arc_sidebar;
-use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Workspace};
+use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Op, Record, Workspace};
 
 fn workspace() -> Workspace {
     let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
@@ -82,7 +82,7 @@ fn pinned_and_favorite_unload_then_reselect_reopens_in_the_same_batch() {
         assert_eq!(ws.selected("one"), Some("y4"));
         let mut replay = ws.clone();
         let reopened = ws.select_item("one", id).unwrap();
-        assert_eq!(reopened.len(), 3);
+        assert!(reopened.iter().any(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "y4")));
         for op in &reopened { replay.apply(op); }
         assert_eq!(replay, ws);
         assert_eq!(ws.items[id].lifecycle, Lifecycle::Open);

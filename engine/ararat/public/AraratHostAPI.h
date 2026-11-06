@@ -16,6 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
 - (BOOL)sendCheckMouseMoved:(NSEvent*)event;
+- (void)prepareCheckBeforeUnload;
+- (BOOL)checkHasBeforeUnload;
+- (void)focusCheckPage;
 @end
 
 @protocol ARWindowHostAPI;
@@ -31,6 +34,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId;
 - (NSArray*)tabs;
 - (void)close;
+- (void)installCheckDialogFactory;
+- (NSUInteger)checkDialogCount;
+- (NSArray<NSNumber*>*)checkClosingEvents;
+- (BOOL)checkTryingToQuit;
+- (NSUInteger)checkStockBrowsers;
+- (void)disableCheckConfirmQuit;
 @end
 
 #ifdef __cplusplus
