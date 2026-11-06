@@ -5,6 +5,15 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U7 done: the app drives the engine in one window — `engine/ararat/public/AraratHostAPI.h`
+  (`AraratWindowHostCreate(NSView*, windowId)`, exported), `macos/Sources/AraratKit/EngineAdapter.swift`
+  (core commands to `ARTab`/`ARWindowHost`, transactions to `liveApply` unchanged or not at all,
+  `liveCancel` for a rejected open), the sidebar wiring shared with the harness
+  (`AraratUI/SidebarActions.swift`), the store under the engine's user-data dir (`--ararat-db` overrides),
+  hosts released at `will_shut_down`. Core: a failed or cancelled open leaves the map and `pending`; closes
+  returned by `apply` are registered; one transaction per command (§4.4). Our window has an
+  `ExclusiveAccessContext`. `--ararat-check=slice` passes, including a mouse event that reaches
+  `ContentsMouseEvent` (`exclusive_input_seen`). Not seen on screen yet: that is U8.
 - Phase 3 U5 done: tabs in the page card — `ARTab` (`engine/ararat/ararat_tab.{h,mm}`, `public/ARTab.h`),
   `-[ARWindowHost initWithContentView:windowId:]`, `-openURL:commandId:itemId:` (BOOL accepted) and the
   transaction feed in `live.rs`'s shape (§4.4: one epoch per engine process, opened by an empty `Engine`
@@ -111,7 +120,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U6 are done. Left, in order: U7 the slice wiring in one window (with an `ExclusiveAccessContext` for our window); then the compositor measured on screen (U8) and recorded in §4. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U7 are done. Left: the compositor measured on screen (U8) and recorded in §4. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 

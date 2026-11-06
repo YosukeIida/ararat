@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/path_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
@@ -19,7 +20,9 @@
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
+#import "ararat/core/public/AraratHostAPI.h"
 
 // 157 declares ChromeMain file-locally (chrome/app/chrome_main.cc:89-93) and
 // exports no header for it, so the entry file declares what it calls.
@@ -33,6 +36,8 @@ AraratCallbacks g_ararat_callbacks = {};
 std::atomic<bool> g_quit_requested{false};
 std::atomic<bool> g_ui_ready{false};
 bool g_check_tabs = false;
+bool g_check_slice = false;
+bool g_slice_passed = false;
 
 // The engine's own browser main extra parts: the two callbacks fire at the
 // engine's own stages, and the check run prints its one JSON line and quits.
@@ -100,6 +105,8 @@ void CheckGuards(int argc, const char** argv) {
   bool check_started = false;
   bool under_temp = false;
   bool mock_keychain = false;
+  bool check_slice = false;
+  bool db_under_temp = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
     if (strcmp(arg, "--ararat-check") == 0) {
@@ -109,15 +116,22 @@ void CheckGuards(int argc, const char** argv) {
     } else if (strncmp(arg, "--ararat-check=", 15) == 0) {
       has_check = true;
       g_check_tabs = std::string_view(arg + 15) == "tabs";
+      check_slice = std::string_view(arg + 15) == "slice";
+      g_check_slice = check_slice;
       check_started = std::string_view(arg + 15) == "started" ||
                       std::string_view(arg + 15) == "window" ||
-                      std::string_view(arg + 15) == "tabs";
+                      std::string_view(arg + 15) == "tabs" ||
+                      std::string_view(arg + 15) == "slice";
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
           && base::FilePath(temp_dir).IsParent(dir);
     } else if (std::string_view(arg) == "--use-mock-keychain") {
       mock_keychain = true;
+    } else if (strncmp(arg, "--ararat-db=", 12) == 0) {
+      base::FilePath db(std::string(arg + 12));
+      db_under_temp = !temp_dir.empty() && !db.empty() &&
+                      !db.ReferencesParent() && base::FilePath(temp_dir).IsParent(db);
     }
   }
   auto refuse = [](const char* reason) {
@@ -140,8 +154,11 @@ void CheckGuards(int argc, const char** argv) {
   if (!mock_keychain) {
     refuse("the mock keychain is missing");
   }
+  if (check_slice && !db_under_temp) {
+    refuse("the slice database is not under $TMPDIR");
+  }
   if (!check_started) {
-    refuse("the check name must be started, window or tabs");
+    refuse("the check name must be started, window, tabs or slice");
   }
 }
 
@@ -156,7 +173,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
   int result = ChromeMain(argc, argv);
-  return result == 0 && (!AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed())) ? 1 : result;
+  return result == 0 && (!AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) ||
+                         (g_check_slice && !g_slice_passed)) ? 1 : result;
 }
 
 __attribute__((visibility("default"))) void AraratQuit(void) {
@@ -169,4 +187,20 @@ __attribute__((visibility("default"))) void AraratQuit(void) {
   }
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&chrome::AttemptExit));
+}
+
+__attribute__((visibility("default"))) NSString* AraratUserDataDirectory(void) {
+  base::FilePath path;
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &path))
+    return nil;
+  return [NSString stringWithUTF8String:path.value().c_str()];
+}
+
+__attribute__((visibility("default"))) NSUInteger AraratBrowserCount(void) {
+  return GlobalBrowserCollection::GetInstance()->GetSize();
+}
+
+__attribute__((visibility("default"))) void AraratFinishSliceCheck(BOOL passed) {
+  g_slice_passed = passed;
+  AraratQuit();
 }

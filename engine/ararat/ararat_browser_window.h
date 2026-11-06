@@ -4,6 +4,7 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/unload_controller.h"
+#include <memory>
 
 class BrowserWindowInterface;
 class AraratWindowHostCore;
@@ -143,6 +144,7 @@ class AraratBrowserWindow : public BrowserWindow {
  private:
   raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<AraratWindowHostCore> host_;
+  std::unique_ptr<ExclusiveAccessContext> exclusive_access_;
   bool tab_strip_editable_ = true;
 };
 #endif

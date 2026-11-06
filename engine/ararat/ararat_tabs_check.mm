@@ -54,8 +54,8 @@ void ScheduleTick() {
 @synthesize phase = _phase;
 @synthesize attempts = _attempts;
 
-- (NSView*)pageCardForWindowHost:(ARWindowHost*)host { return self.card; }
-- (void)windowHost:(ARWindowHost*)host didReceiveTransaction:(NSDictionary*)transaction {
+- (NSView*)pageCardForWindowHost:(id<ARWindowHostAPI>)host { return self.card; }
+- (void)windowHost:(id<ARWindowHostAPI>)host didReceiveTransaction:(NSDictionary*)transaction {
   NSMutableArray<NSString*>* strips = [NSMutableArray array];
   for (NSDictionary* strip in transaction[@"strips"]) {
     NSMutableArray<NSString*>* liveIds = [NSMutableArray array];

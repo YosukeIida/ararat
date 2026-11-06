@@ -21,14 +21,19 @@
      "//chrome/browser/accessibility",
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -29,5 +29,14 @@
+@@ -29,5 +29,19 @@
  # Entry point for the web app shortcut copier.
  _ChromeWebAppShortcutCopierMain
  
 +# Ararat
++_AraratBrowserCount
 +_AraratEngineVersion
++_AraratExclusiveInputCount
++_AraratFinishSliceCheck
 +_AraratMain
 +_AraratQuit
++_AraratUserDataDirectory
++_AraratWindowHostCreate
 +
 -# _ChromeMain must be listed last.  That's the whole point of this file.
 +# _ChromeMain must be listed last among text symbols.

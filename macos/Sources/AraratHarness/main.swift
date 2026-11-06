@@ -198,32 +198,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     /// sidebar without a window.
     func connectSidebar() {
         guard let sidebar else { return }
-        sidebar.onItemEdit = { [weak self] edit, completion in
-            guard let self, !self.terminating else { completion(nil); return }
-            self.adapter.edit(edit) { [weak self] result in
-                switch result {
-                case .success(let snapshot):
-                    self?.snapshot = snapshot
-                    completion(snapshot)
-                    self?.showSelection()
-                case .failure(let error):
-                    FileHandle.standardError.write(Data("cannot edit item: \(error)\n".utf8))
-                    completion(nil)
-                }
-            }
-        }
-        sidebar.confirmFolderDeletion = { [weak self] row, completion in
-            guard let window = self?.window else { completion(false); return }
-            let alert = NSAlert()
-            alert.messageText = "Delete your “\(row.title)” folder?"
-            alert.informativeText = "Deleting this folder will archive the tabs inside it."
-            let delete = alert.addButton(withTitle: "Delete Folder")
-            delete.keyEquivalent = "\r"
-            delete.hasDestructiveAction = true
-            alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
-            alert.beginSheetModal(for: window) { response in completion(response == .alertFirstButtonReturn) }
-        }
-        sidebar.onSelect = { [weak self] row in
+        let actions = SidebarActions()
+        actions.configureEditing(adapter: adapter, isActive: { [weak self] in self.map { !$0.terminating } ?? false }, window: { [weak self] in self?.window }, show: { [weak self] snapshot in
+            self?.snapshot = snapshot
+            self?.showSelection()
+        }, record: { [weak self] snapshot in self?.snapshot = snapshot })
+        actions.onSelect = { [weak self] row in
             guard let self, !self.terminating else { return }
             self.adapter.select(id: row.id) { [weak self] result in
                 if let error = self?.publish(result) {
@@ -232,32 +212,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             }
         }
         sidebar.keyBindings = keyBindings.bindings
-        sidebar.onMove = { [weak self] id, container, index, openFolder, completion in
-            guard let self, !self.terminating else { completion(nil); return }
-            self.adapter.move(id: id, container: container, index: index, openFolder: openFolder) { [weak self] result in
-                switch result {
-                case .success(let snapshot):
-                    self?.snapshot = snapshot
-                    completion(snapshot)
-                    self?.showSelection()
-                case .failure(let error):
-                    FileHandle.standardError.write(Data("cannot move item: \(error)\n".utf8))
-                    completion(nil)
-                }
-            }
-        }
-        sidebar.onOpenFolder = { [weak self] id, completion in
-            guard let self, !self.terminating else { completion(nil); return }
-            self.adapter.openFolder(id: id) { [weak self] result in
-                switch result {
-                case .success(let snapshot): self?.snapshot = snapshot; completion(snapshot)
-                case .failure(let error):
-                    FileHandle.standardError.write(Data("cannot open folder: \(error)\n".utf8))
-                    completion(nil)
-                }
-            }
-        }
-        sidebar.onClose = { [weak self] id in
+        actions.onClose = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.close(id: id) { [weak self] result in
                 if let error = self?.publishChange(result) {
@@ -265,7 +220,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
-        sidebar.onCloseSelected = { [weak self] in
+        actions.onCloseSelected = { [weak self] in
             guard let self, !self.terminating else { return }
             self.adapter.closeSelected { [weak self] result in
                 if let error = self?.publishChange(result) {
@@ -273,7 +228,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
-        sidebar.onArchive = { [weak self] id in
+        actions.onArchive = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.archive(id: id) { [weak self] result in
                 if let error = self?.publishChange(result) {
@@ -281,7 +236,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
-        sidebar.onShowSpace = { [weak self] id in
+        actions.onShowSpace = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.showSpace(id: id) { result in
                 if case .failure(let error) = result {
@@ -289,10 +244,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
-        sidebar.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
-        sidebar.onArchiveDelete = { [weak self] id in self?.deleteArchive(id: id) { _ in } }
-        sidebar.onCreateSpace = { [weak self] name in self?.createSpace(name: name) { _ in } }
-        sidebar.onCreatePageChanged = { [weak self] in self?.showSelection() }
+        actions.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
+        actions.onArchiveDelete = { [weak self] id in self?.deleteArchive(id: id) { _ in } }
+        actions.onCreateSpace = { [weak self] name in self?.createSpace(name: name) { _ in } }
+        actions.onCreatePageChanged = { [weak self] in self?.showSelection() }
+        actions.bind(to: sidebar)
     }
 
     func makeMenu() -> NSMenu {

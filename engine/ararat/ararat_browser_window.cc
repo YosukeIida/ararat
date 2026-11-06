@@ -6,7 +6,10 @@
 #include "base/functional/callback.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
@@ -15,9 +18,49 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
+namespace {
+unsigned long g_exclusive_input_count = 0;
+class AraratExclusiveAccessContext : public ExclusiveAccessContext {
+ public:
+  AraratExclusiveAccessContext(BrowserWindowInterface* browser,
+                               AraratWindowHostCore* host)
+      : browser_(browser), host_(host) {}
+  Profile* GetProfile() override { return browser_->GetProfile(); }
+  bool IsFullscreen() const override { return host_->widget()->IsFullscreen(); }
+  void EnterFullscreen(const url::Origin&, ExclusiveAccessBubbleType,
+                       FullscreenTabParams) override {
+    host_->widget()->SetFullscreen(true);
+  }
+  void ExitFullscreen() override { host_->widget()->SetFullscreen(false); }
+  void UpdateExclusiveAccessBubble(
+      const ExclusiveAccessBubbleParams&,
+      ExclusiveAccessBubbleHideCallback callback) override {
+    if (callback)
+      std::move(callback).Run(ExclusiveAccessBubbleHideReason::kNotShown);
+  }
+  bool IsExclusiveAccessBubbleDisplayed() const override { return false; }
+  void OnExclusiveAccessUserInput() override { ++g_exclusive_input_count; }
+  content::WebContents* GetWebContentsForExclusiveAccess() override {
+    return browser_->GetTabStripModel()->GetActiveWebContents();
+  }
+  bool CanUserEnterFullscreen() const override { return true; }
+  bool CanUserExitFullscreen() const override { return true; }
+
+ private:
+  raw_ptr<BrowserWindowInterface> browser_;
+  raw_ptr<AraratWindowHostCore> host_;
+};
+}  // namespace
+
+extern "C" __attribute__((visibility("default")))
+unsigned long AraratExclusiveInputCount() {
+  return g_exclusive_input_count;
+}
+
 AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
                                          AraratWindowHostCore* host)
-    : browser_(browser), host_(host) {}
+    : browser_(browser), host_(host),
+      exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)) {}
 AraratBrowserWindow::~AraratBrowserWindow() {
   host_->OnWindowDestroyed(browser_);
 }
@@ -210,6 +253,9 @@ void AraratBrowserWindow::HandleDragEnded() {}
 content::KeyboardEventProcessingResult
 AraratBrowserWindow::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
+  if (event.windows_key_code == 'F' &&
+      (event.GetModifiers() & blink::WebInputEvent::kMetaKey))
+    return content::KeyboardEventProcessingResult::HANDLED;
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
@@ -252,8 +298,7 @@ void AraratBrowserWindow::ShowHatsDialog(
 }
 
 ExclusiveAccessContext* AraratBrowserWindow::GetExclusiveAccessContext() {
-  // Why not implement it yet: page input crashes on null; U7 must provide it.
-  return nullptr;
+  return exclusive_access_.get();
 }
 
 std::string AraratBrowserWindow::GetWorkspace() const {

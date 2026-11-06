@@ -209,6 +209,11 @@ void StripObserver::OnTabCloseCancelled(const tabs::TabInterface* tab) {
   [host_ closeCancelled:tab];
 }
 
+__attribute__((visibility("default"))) id<ARWindowHostAPI>
+AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
+  return [[ARWindowHost alloc] initWithContentView:contentView windowId:windowId];
+}
+
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<StripObserver> strip_observer_;
@@ -424,6 +429,12 @@ void StripObserver::OnTabCloseCancelled(const tabs::TabInterface* tab) {
   if (!g_epoch || !tab.contents) return;
   auto* identity = static_cast<TabIdentity*>(tab.contents->GetUserData(kTabIdentityKey));
   if (identity) identity->item_id = [itemId copy];
+}
+
+- (NSString*)itemIdForTab:(ARTab*)tab {
+  if (!tab.contents) return nil;
+  auto* identity = static_cast<TabIdentity*>(tab.contents->GetUserData(kTabIdentityKey));
+  return identity ? identity->item_id : nil;
 }
 
 - (BOOL)isActiveTab:(ARTab*)tab {

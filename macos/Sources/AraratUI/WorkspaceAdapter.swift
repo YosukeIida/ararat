@@ -5,11 +5,18 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     public typealias Completion<T> = @MainActor @Sendable (Result<T, Error>) -> Void
     public typealias Change = (id: String?, snapshot: WorkspaceSnapshot)
 
-    private let queue = DispatchQueue(label: "Ararat.workspace")
+    private let session: WorkspaceSession
+    private var queue: DispatchQueue { session.queue }
     private let windowID: String
-    private var store: WorkspaceStore?
+    private var store: WorkspaceStore? {
+        get { session.store }
+        set { session.store = newValue }
+    }
 
-    public init(windowID: String) { self.windowID = windowID }
+    public init(windowID: String, session: WorkspaceSession = WorkspaceSession()) {
+        self.windowID = windowID
+        self.session = session
+    }
 
     func enqueue<T: Sendable>(_ operation: @escaping @Sendable () throws -> T, completion: @escaping Completion<T>) {
         queue.async {

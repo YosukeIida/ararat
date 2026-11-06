@@ -15,6 +15,7 @@ class WebContents;
                             host:(ARWindowHost*)host;
 - (content::WebContents*)contents;
 - (void)refresh;
+- (void)navigationFinished;
 - (void)invalidate;
 - (void)replaceContents:(content::WebContents*)contents;
 @end
@@ -23,6 +24,7 @@ class WebContents;
 - (void)activateTab:(ARTab*)tab commandId:(NSString*)commandId;
 - (void)closeTab:(ARTab*)tab commandId:(NSString*)commandId;
 - (void)setItemId:(NSString*)itemId forTab:(ARTab*)tab;
+- (NSString*)itemIdForTab:(ARTab*)tab;
 - (BOOL)isActiveTab:(ARTab*)tab;
 @end
 

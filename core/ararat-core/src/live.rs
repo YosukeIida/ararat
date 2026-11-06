@@ -170,6 +170,32 @@ impl Live {
         self.pending.insert(command.id.clone(), (command.kind, command.item.clone()));
     }
 
+    pub fn cancel(&mut self, command_id: &str) -> bool {
+        Self::cancel_open(command_id, &mut self.map, &mut self.reverse,
+                          &mut self.windows, &mut self.pending)
+    }
+
+    fn cancel_open(
+        command_id: &str,
+        map: &mut HashMap<Id, Id>,
+        reverse: &mut HashMap<Id, Id>,
+        windows: &mut HashMap<Id, Id>,
+        pending: &mut HashMap<Id, (CommandKind, Id)>,
+    ) -> bool {
+        let Some((CommandKind::Open, item)) = pending.get(command_id).cloned() else {
+            return false;
+        };
+        pending.remove(command_id);
+        if map.get(&item).is_some_and(|live| live == command_id) {
+            map.remove(&item);
+        }
+        if reverse.get(command_id) == Some(&item) {
+            reverse.remove(command_id);
+        }
+        windows.remove(command_id);
+        true
+    }
+
     /// Activates a live tab. The selection is recorded when the engine's transaction
     /// confirms it, not here: the strips are the one report of which tab is active.
     pub fn activate(&mut self, workspace: &Workspace, item: &str) -> Result<Command, LiveError> {
@@ -182,8 +208,16 @@ impl Live {
     /// selected by the selection history — and is committed before the command is
     /// returned (§5.2).
     pub fn close(&mut self, workspace: &mut Workspace, item: &str) -> Result<(Vec<Op>, Command), LiveError> {
+        self.finish(workspace, item, false)
+    }
+
+    pub fn archive(&mut self, workspace: &mut Workspace, item: &str) -> Result<(Vec<Op>, Command), LiveError> {
+        self.finish(workspace, item, true)
+    }
+
+    fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {
         let live = self.map.get(item).cloned().ok_or_else(|| LiveError(format!("item {item} has no live tab")))?;
-        let ops = workspace.close_item(item)?;
+        let ops = if archive { workspace.archive_item(item)? } else { workspace.close_item(item)? };
         self.map.remove(item);
         self.reverse.remove(&live);
         self.windows.remove(&live);
@@ -270,10 +304,12 @@ impl Live {
                             }
                             _ => {
                                 if close_seen.insert(item.clone()) {
-                                    outcome.commands.push(Command {
+                                    let command = Command {
                                         id: self.fresh_command_id(&next), kind: CommandKind::Close,
                                         item: item.clone(), url: None,
-                                    });
+                                    };
+                                    next_pending.insert(command.id.clone(), (command.kind, command.item.clone()));
+                                    outcome.commands.push(command);
                                 }
                             }
                         }
@@ -342,6 +378,14 @@ impl Live {
         let carried: HashSet<&Id> = transaction.strips.iter().map(|strip| &strip.window).collect();
         let reported: HashSet<&Id> = transaction.strips.iter()
             .flat_map(|strip| strip.tabs.iter().map(|tab| &tab.live_id)).collect();
+        if let Cause::Command(id) = &transaction.cause {
+            if !reported.contains(id) && next_pending.get(id).is_some_and(|(kind, _)| *kind == CommandKind::Open) {
+                Self::cancel_open(id, &mut next_map, &mut next_reverse,
+                                  &mut next_windows, &mut next_pending);
+            } else {
+                next_pending.remove(id);
+            }
+        }
         let claimed_items: HashSet<&Id> = transaction.strips.iter()
             .flat_map(|strip| strip.tabs.iter().filter_map(|tab| tab.item.as_ref())).collect();
         let pending_opens: HashSet<&Id> = self.pending.iter()
@@ -416,10 +460,12 @@ impl Live {
                         && matches!(existing.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) => {}
                     _ => {
                         if !outcome.commands.iter().any(|c| c.kind == CommandKind::Close && c.item == *item) {
-                            outcome.commands.push(Command {
+                            let command = Command {
                                 id: self.fresh_command_id(&next), kind: CommandKind::Close,
                                 item: item.clone(), url: None,
-                            });
+                            };
+                            next_pending.insert(command.id.clone(), (command.kind, command.item.clone()));
+                            outcome.commands.push(command);
                         }
                         continue;
                     }

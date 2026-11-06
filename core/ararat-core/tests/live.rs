@@ -40,6 +40,151 @@ fn strip_empty(window: &str) -> Strip {
     Strip { window: window.into(), tabs: vec![], active: None }
 }
 
+#[test]
+fn snapshot_close_for_archived_tab_accepts_its_completion() {
+    let mut ws = workspace();
+    ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Archived;
+    let mut live = Live::new();
+    let (_, snapshot) = live.apply(&mut ws, snapshot_tx(vec![Strip {
+        window: "one".into(),
+        tabs: vec![LiveTab { live_id: "engine-a".into(), item: Some("a".into()) }],
+        active: None,
+    }]));
+    assert!(snapshot.applied);
+    assert_eq!(snapshot.commands.len(), 1);
+    assert_eq!(snapshot.commands[0].kind, CommandKind::Close);
+    let (_, completion) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(snapshot.commands[0].id.clone()),
+        strips: vec![strip_empty("one")],
+    });
+    assert!(completion.applied);
+}
+
+#[test]
+fn within_epoch_close_for_archived_tab_accepts_its_completion() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Archived;
+    let (_, changed) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Engine,
+        strips: vec![Strip {
+            window: "one".into(),
+            tabs: vec![LiveTab { live_id: "engine-a".into(), item: Some("a".into()) }],
+            active: None,
+        }],
+    });
+    assert_eq!(changed.commands.len(), 1);
+    assert_eq!(changed.commands[0].kind, CommandKind::Close);
+    let (_, completion) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(changed.commands[0].id.clone()),
+        strips: vec![strip_empty("one")],
+    });
+    assert!(completion.applied);
+}
+
+#[test]
+fn completed_open_and_close_allow_reopening() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    let (_, open) = live.open(&mut ws, "pinned", "u").unwrap();
+    live.command_sent(&open);
+    let (_, opened) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(open.id.clone()),
+        strips: vec![strip(&live, &["pinned"], Some("pinned"))],
+    });
+    assert!(opened.applied);
+    let (_, close) = live.close(&mut ws, "pinned").unwrap();
+    live.command_sent(&close);
+    let (_, closed) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(close.id),
+        strips: vec![strip_empty("one")],
+    });
+    assert!(closed.applied);
+    assert!(live.open(&mut ws, "pinned", "u").is_ok());
+}
+
+#[test]
+fn failed_open_clears_its_mapping_and_can_be_retried() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    let (_, command) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&command);
+    let lifecycle = ws.items["a"].lifecycle.clone();
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(command.id.clone()),
+        strips: vec![strip_empty("one")],
+    });
+    assert!(outcome.applied);
+    assert!(ops.is_empty());
+    assert_eq!(live.live_tab("a"), None);
+    assert_eq!(live.item_for(&command.id), None);
+    assert_eq!(ws.items["a"].lifecycle, lifecycle);
+    assert!(live.open(&mut ws, "a", "u").is_ok());
+    let (_, duplicate) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(command.id), strips: vec![],
+    });
+    assert!(!duplicate.applied);
+}
+
+#[test]
+fn rejected_open_can_be_cancelled_without_changing_lifecycle() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    let (_, command) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&command);
+    let lifecycle = ws.items["a"].lifecycle.clone();
+    assert!(!live.cancel("unknown"));
+    assert_eq!(live.live_tab("a").as_deref(), Some(command.id.as_str()));
+    assert_eq!(live.item_for(&command.id).as_deref(), Some("a"));
+    assert_eq!(ws.items["a"].lifecycle, lifecycle);
+    assert!(live.cancel(&command.id));
+    assert!(!live.cancel(&command.id));
+    assert_eq!(live.live_tab("a"), None);
+    assert_eq!(live.item_for(&command.id), None);
+    assert_eq!(ws.items["a"].lifecycle, lifecycle);
+    assert!(live.open(&mut ws, "a", "u").is_ok());
+}
+
+#[test]
+fn cancelling_a_pending_activation_leaves_it_in_flight() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    let (_, open) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&open);
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(open.id.clone()),
+        strips: vec![strip(&live, &["a"], Some("a"))],
+    });
+    assert!(outcome.applied);
+    let activate = live.activate(&ws, "a").unwrap();
+    live.command_sent(&activate);
+    assert!(!live.cancel(&activate.id));
+    assert_eq!(live.live_tab("a").as_deref(), Some(open.id.as_str()));
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(activate.id),
+        strips: vec![strip(&live, &["a"], Some("a"))],
+    });
+    assert!(outcome.applied);
+}
+
+#[test]
+fn archiving_a_live_tab_returns_a_close_and_keeps_the_row_archived() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![]));
+    let (_, open) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&open);
+    let (_, close) = live.archive(&mut ws, "a").unwrap();
+    assert_eq!(close.kind, CommandKind::Close);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Archived);
+    assert_eq!(live.live_tab("a"), None);
+}
+
 fn snapshot_tx(strips: Vec<Strip>) -> Transaction {
     Transaction { epoch: 1, rev: 0, cause: Cause::Engine, strips }
 }

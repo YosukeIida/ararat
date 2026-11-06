@@ -16,6 +16,7 @@ let package = Package(
         .executable(name: "Ararat", targets: ["Ararat"]),
     ],
     targets: [
+        .target(name: "AraratEngineAPI"),
         .target(
             name: "ararat_ffiFFI",
             // Why not -lararat_ffi: the linker prefers the dylib next to the archive and the
@@ -24,7 +25,7 @@ let package = Package(
         ),
         .target(
             name: "AraratKit",
-            dependencies: ["ararat_ffiFFI"],
+            dependencies: ["ararat_ffiFFI", "AraratEngineAPI"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(name: "AraratUI", dependencies: ["AraratKit"]),
@@ -34,8 +35,7 @@ let package = Package(
             dependencies: ["AraratUI", "AraratKit"],
             resources: [.copy("Fixtures")]
         ),
-        // The bundle's launcher: only Darwin, so the process reaches ChromeMain
-        // before any AppKit or core state exists.
-        .executableTarget(name: "Ararat"),
+        // Why not NSApplicationMain: Chromium must create the first NSApplication.
+        .executableTarget(name: "Ararat", dependencies: ["AraratEngineAPI", "AraratKit", "AraratUI"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

@@ -2,19 +2,22 @@
 #define ARARAT_PUBLIC_AR_TAB_H_
 
 #import <AppKit/AppKit.h>
+#import "AraratHostAPI.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 __attribute__((visibility("default")))
-@interface ARTab : NSObject
+@interface ARTab : NSObject <ARTabAPI>
 @property(nonatomic, readonly, copy) NSString* liveId;
+@property(nonatomic, copy, nullable) NSString* itemId;
 @property(nonatomic, readonly, copy) NSString* title;
 @property(nonatomic, readonly, copy) NSString* url;
 @property(nonatomic, readonly) BOOL isLoading;
+@property(nonatomic, readonly) NSUInteger navigationCount;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
-- (void)setItemId:(nullable NSString*)itemId;
+- (BOOL)sendCheckMouseMoved:(NSEvent*)event;
 @end
 
 NS_ASSUME_NONNULL_END

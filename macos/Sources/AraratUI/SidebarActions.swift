@@ -1,0 +1,88 @@
+import AppKit
+import AraratKit
+
+@MainActor
+public final class SidebarActions {
+    public var onItemEdit: ((SidebarItemEdit, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
+    public var onSelect: ((Row) -> Void)?
+    public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var onClose: ((String) -> Void)?
+    public var onCloseSelected: (() -> Void)?
+    public var onArchive: ((String) -> Void)?
+    public var onShowSpace: ((String) -> Void)?
+    public var onRestore: ((String) -> Void)?
+    public var onArchiveDelete: ((String) -> Void)?
+    public var onCreateSpace: ((String) -> Void)?
+    public var onCreatePageChanged: (() -> Void)?
+
+    public init() {}
+
+    public func configureEditing(adapter: WorkspaceAdapter,
+                                 isActive: @escaping () -> Bool,
+                                 window: @escaping () -> NSWindow?,
+                                 show: @escaping (WorkspaceSnapshot) -> Void,
+                                 record: @escaping (WorkspaceSnapshot) -> Void) {
+        onItemEdit = { edit, completion in
+            guard isActive() else { completion(nil); return }
+            adapter.edit(edit) { result in
+                switch result {
+                case .success(let snapshot): record(snapshot); completion(snapshot); show(snapshot)
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot edit item: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
+        confirmFolderDeletion = { row, completion in
+            guard let window = window() else { completion(false); return }
+            let alert = NSAlert()
+            alert.messageText = "Delete your “\(row.title)” folder?"
+            alert.informativeText = "Deleting this folder will archive the tabs inside it."
+            let delete = alert.addButton(withTitle: "Delete Folder")
+            delete.keyEquivalent = "\r"
+            delete.hasDestructiveAction = true
+            alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+            alert.beginSheetModal(for: window) { completion($0 == .alertFirstButtonReturn) }
+        }
+        onMove = { id, container, index, openFolder, completion in
+            guard isActive() else { completion(nil); return }
+            adapter.move(id: id, container: container, index: index, openFolder: openFolder) { result in
+                switch result {
+                case .success(let snapshot): record(snapshot); completion(snapshot); show(snapshot)
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot move item: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
+        onOpenFolder = { id, completion in
+            guard isActive() else { completion(nil); return }
+            adapter.openFolder(id: id) { result in
+                switch result {
+                case .success(let snapshot): record(snapshot); completion(snapshot)
+                case .failure(let error):
+                    FileHandle.standardError.write(Data("cannot open folder: \(error)\n".utf8))
+                    completion(nil)
+                }
+            }
+        }
+    }
+
+    public func bind(to sidebar: SidebarView) {
+        sidebar.onItemEdit = onItemEdit
+        sidebar.confirmFolderDeletion = confirmFolderDeletion
+        sidebar.onSelect = onSelect
+        sidebar.onMove = onMove
+        sidebar.onOpenFolder = onOpenFolder
+        sidebar.onClose = onClose
+        sidebar.onCloseSelected = onCloseSelected
+        sidebar.onArchive = onArchive
+        sidebar.onShowSpace = onShowSpace
+        sidebar.onRestore = onRestore
+        sidebar.onArchiveDelete = onArchiveDelete
+        sidebar.onCreateSpace = onCreateSpace
+        sidebar.onCreatePageChanged = onCreatePageChanged
+    }
+}

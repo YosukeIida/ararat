@@ -15,7 +15,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   TabContentsObserver(content::WebContents* contents, ARTab* tab)
       : tab_(tab) { Observe(contents); }
   void Stop() { Observe(nullptr); }
-  void DidFinishNavigation(content::NavigationHandle*) override { [tab_ refresh]; }
+  void DidFinishNavigation(content::NavigationHandle*) override { [tab_ navigationFinished]; }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
   void TitleWasSet(content::NavigationEntry*) override { [tab_ refresh]; }
@@ -34,6 +34,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSString* title_;
   NSString* url_;
   BOOL loading_;
+  NSUInteger navigation_count_;
 }
 
 - (instancetype)initWithContents:(content::WebContents*)contents
@@ -53,9 +54,11 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 
 - (NSString*)liveId { DCHECK([NSThread isMainThread]); return live_id_; }
+- (NSString*)itemId { DCHECK([NSThread isMainThread]); return [host_ itemIdForTab:self]; }
 - (NSString*)title { DCHECK([NSThread isMainThread]); return title_; }
 - (NSString*)url { DCHECK([NSThread isMainThread]); return url_; }
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
+- (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
 - (content::WebContents*)contents { return contents_; }
 
 - (NSView*)view {
@@ -63,6 +66,19 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (!contents_ || ![host_ isActiveTab:self]) return nil;
   NSView* view = contents_->GetNativeView().GetNativeNSView();
   return view.superview ? view : nil;
+}
+
+- (BOOL)sendCheckMouseMoved:(NSEvent*)event {
+  DCHECK([NSThread isMainThread]);
+  NSView* view = self.view;
+  if (!view) return NO;
+  [view mouseMoved:event];
+  return YES;
+}
+
+- (void)navigationFinished {
+  ++navigation_count_;
+  [self refresh];
 }
 
 - (void)refresh {

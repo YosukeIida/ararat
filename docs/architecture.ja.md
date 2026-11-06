@@ -116,16 +116,18 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 ### 4.4 エンジン ↔ アプリの API
 
-- framework は `//ararat/core` から手書きの Objective-C クラスをエクスポートする（たとえば `ARWindowHost`、`ARTab`、`ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はこれらを framework の module map を介してインポートする。
-- タブ API は coordinator の ID を受け取る。アプリは `initWithContentView:windowId:` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
+- framework は `//ararat/core` に Objective-C クラスを実装する（たとえば `ARWindowHost`、`ARTab`、および予定している `ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はアプリ向け protocol を SwiftPM 経由でインポートし、読み込んだ framework から `AraratWindowHostCreate(contentView, windowId)` を `dlsym` で取得する。host とタブは protocol を通して操作する（我々の規則）。
+- タブ API は coordinator の ID を受け取る。アプリは `AraratWindowHostCreate` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
 - `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
 - feed はエンジンのプロセスごとに、起動時刻に基づく epoch と 1 つの revision を持つ。最初の host に delegate を設定すると、cause が `Engine` の空の rev 0 スナップショットを同期的に報告する。その最初の delegate が設定されるまで、タブコマンドは何もせず、`openURL:` は `NO` を返す。その後の変更ごとに revision を増やす。閉じたウィンドウは空の strip で報告し、省いたウィンドウは変更なしと扱う（我々の規則）。
+- 各コマンドは、その cause を持つ transaction をちょうど 1 つ生成する。2 つ目は捨てる（我々の規則）。
 - すべてのクラスをメインスレッドに固定する（他のスレッドからの呼び出しはプログラミングエラーであり、debug ビルドでは abort する）。Chrome のオブジェクトをラップするオブジェクトは、Chrome のオブジェクトが破棄された時点で無効化する。ラッパーは Swift が所有し、Chrome のオブジェクトはエンジンが所有する。無効化された `ARTab` へのコマンドは何もせず、エラーを返さない。初回のスナップショット以降、delegate への通知は host を弱参照し、メインキューに post する（我々の規則）。
 - UI が必要とするサービス（パスワード、autofill、拡張、ズーム、検索エンジン、履歴、ブックマーク、ダウンロード）は、独自レイヤーから Chrome のサービスを直接呼び出す。`chrome://` の WebUI ページをスクリプトで操作することはしない（Ardia ledger 1.4）。
 - アプリとエンジンは同時に出荷する。互換性のための分岐は設けない。起動時に API のバージョンを 1 回検査し、不一致の場合は abort する。
 
 ### 4.5 プロセスと run loop
 
+- `started` でアプリは workspace を開き、sidebar と page card を `SidebarContainerView` に組み立て、host を生成して engine adapter を接続する。`will_shut_down` で adapter を切り離し、host をメインスレッドで解放する（我々の規則）。
 - バンドルの起動実行体（`Sources/Ararat`）が framework を読み込む。ブラウザプロセスは独自の `AraratMain` を呼ぶ（ランチャーのコールバックを保存し、extra-parts の hook を設定して `ChromeMain` を呼ぶ）。ヘルパーは標準の `ChromeMain` を呼ぶ。hook は標準の client のパーツに独自の `ChromeBrowserMainExtraParts` を加え、それらが `PostBrowserStart` でランチャーの `started` コールバックを、`PostMainMessageLoopRun` で `will_shut_down` を呼ぶ。`started` は `PreMainMessageLoopRun` の中で、起動ブラウザが開いた後、メインループが回る前に発火する。ハンドラはループが回っていると見なしてはならない。`AraratQuit` はどこからでも呼べる。ループが近づく前の要求は、started の段階で叶う。`--ararat-check=<name>` は、`--user-data-dir` が `$TMPDIR` の下にあり `--use-mock-keychain` があるときだけ実行され、そうでなければ 2 で終わる。`started` は 1 行の JSON `{"check":"started","ok":true,"browsers":N}` を出して終了する。`window` は非表示の host、native window、hit test を検査し、Browser の破棄を待つ。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する（我々の規則）。
 - Chrome の `AppController` は、終了、Dock、ログアウトのイベントを所有する独自のオブジェクトに置き換える。このオブジェクトは、キャンセル可能なクローズと終了（beforeunload、ダウンロードの確認）と、ウィンドウが 1 つも開いていないときの keep-alive を実装する（Ardia ledger 1.1）。
 
@@ -212,6 +214,8 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 - オーナーを含め、誰かが日常的に使用するには、次の 2 点が必要である: 機能する更新の経路（Sparkle）と、URL とダウンロードの評判の検査（Safe Browsing、または選定した同等のもの、14）。
 
 ## 5. 状態の所有
+
+workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエンジンから取得した Chrome の user data directory 内の `Ararat/workspace.sqlite` に置く。store の呼び出しは単一の serial queue、エンジンの呼び出しはメインスレッドで行う（我々の規則）。
 
 ### 5.1 誰が何を書くか
 
@@ -375,6 +379,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 ## 15. ロードマップ
 
 各 phase は、動作するビルドとサンドイッチ型のレビューで終える。
+
+slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-db`、一時的な user data directory、mock keychain を使う。3 行のうち 2 行を開き、2 行目を選び直す。画面上の検査は U8 で行う（我々の規則）。
 
 | Phase | 内容 | 完了の条件 |
 |---|---|---|

@@ -382,10 +382,24 @@ impl WorkspaceStore {
         Ok(command.into())
     }
 
+    pub fn live_cancel(&self, command_id: String) -> bool {
+        self.live.lock().unwrap().cancel(&command_id)
+    }
+
     pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, command) = live.close(&mut workspace, &item)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        live.command_sent(&command);
+        Ok(command.into())
+    }
+
+    pub fn live_archive(&self, item: String) -> Result<LiveCommand, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, command) = live.archive(&mut workspace, &item)?;
         self.store.write(ops);
         self.store.flush()?;
         live.command_sent(&command);

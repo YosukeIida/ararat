@@ -114,16 +114,18 @@ Hooks are `g_ararat_*` function pointers declared in `ararat_hooks.h`. Chrome's 
 
 ### 4.4 Engine ↔ app API
 
-- The framework exports handwritten Objective-C classes from `//ararat/core` (for example `ARWindowHost`, `ARTab`, `ARProfile`, `ARExtensions`, `ARDownloads`, `ARAutocomplete`, `ARPasswords`). Swift imports them through the framework's module map.
-- The tab API takes the coordinator's IDs: the app supplies the workspace window ID to `initWithContentView:windowId:`, and `openURL:commandId:itemId:` returns whether the open was accepted (done or queued); the app finds the opened tab through `-tabs` by its live ID, which is the command ID, and `activateWithCommandId:`, `closeWithCommandId:` and `setItemId:` act on it. An open during Browser destruction is queued in FIFO order. An open whose completion transaction lacks its live ID failed: a failed accepted open is reported as a transaction — the next revision, cause `Command(<the open's id>)`, carrying the window's strip as it is now, or an empty strip when the window has no Browser — and a rejected open (closed host, no epoch, invalid URL and so on) returns `NO` and emits nothing. A tab created by Chrome receives a `chrome-` UUID and no item ID. `ARWindowHost` obtains the page card from its delegate and reports `{epoch, rev, cause, strips}` through it (ours).
+- The framework implements Objective-C classes in `//ararat/core` (for example `ARWindowHost`, `ARTab`, and the planned `ARProfile`, `ARExtensions`, `ARDownloads`, `ARAutocomplete` and `ARPasswords`). Swift imports the app-facing protocols through SwiftPM and resolves `AraratWindowHostCreate(contentView, windowId)` from the loaded framework with `dlsym`; it calls the resulting host and tabs through those protocols (ours).
+- The tab API takes the coordinator's IDs: the app supplies the workspace window ID to `AraratWindowHostCreate`, and `openURL:commandId:itemId:` returns whether the open was accepted (done or queued); the app finds the opened tab through `-tabs` by its live ID, which is the command ID, and `activateWithCommandId:`, `closeWithCommandId:` and `setItemId:` act on it. An open during Browser destruction is queued in FIFO order. An open whose completion transaction lacks its live ID failed: a failed accepted open is reported as a transaction — the next revision, cause `Command(<the open's id>)`, carrying the window's strip as it is now, or an empty strip when the window has no Browser — and a rejected open (closed host, no epoch, invalid URL and so on) returns `NO` and emits nothing. A tab created by Chrome receives a `chrome-` UUID and no item ID. `ARWindowHost` obtains the page card from its delegate and reports `{epoch, rev, cause, strips}` through it (ours).
 - `pageCardForWindowHost:` must be a plain getter, and KVO observers must dispatch tab commands asynchronously (ours).
 - The feed has one epoch per engine process, based on its start time, and one revision counter. Setting the first host's delegate synchronously reports an empty rev-0 snapshot with cause `Engine`; until that first delegate is set, tab commands do nothing and `openURL:` returns `NO`. Subsequent changes increment the revision. A closed window is reported with an empty strip: omitting the window leaves it unchanged (ours).
+- Each command produces exactly one transaction carrying its cause; a second one is dropped (ours).
 - Contract for every class: main-thread affinity (calls from other threads are a programming error and abort in debug builds); objects that wrap Chrome objects are invalidated when the Chrome object dies; Swift owns wrappers, the engine owns Chrome objects. Invalidated `ARTab` command calls are silent no-ops, and delegate delivery holds the host weakly and is posted to the main queue after the initial snapshot (ours).
 - Services the UI needs (passwords, autofill, extensions, zoom, search engines, history, bookmarks, downloads) are called directly on Chrome's services from our layer. We never script `chrome://` WebUI pages (Ardia ledger 1.4).
 - App and engine ship together. There are no compatibility branches: one API version check at startup, a mismatch aborts.
 
 ### 4.5 Process and run loop
 
+- On `started`, the app opens the workspace, builds the sidebar and page card inside `SidebarContainerView`, creates the host and attaches the engine adapter. On `will_shut_down`, it detaches the adapter and releases the host on the main thread (ours).
 - The bundle's launcher executable (`Sources/Ararat`) loads the framework; the browser process calls our `AraratMain` (which stores the launcher's callbacks, sets the extra-parts hook and calls `ChromeMain`), the helpers call `ChromeMain` stock. The hook adds our `ChromeBrowserMainExtraParts` to the stock client's parts, and they call the launcher's `started` callback at `PostBrowserStart` and `will_shut_down` at `PostMainMessageLoopRun`: `started` fires inside `PreMainMessageLoopRun`, after the startup browsers open and before the main loop runs, so a handler must not assume the loop is running. `AraratQuit` is callable from anywhere; before the loop is near, the request waits for the started stage. `--ararat-check=<name>` runs only with a `--user-data-dir` under `$TMPDIR` and `--use-mock-keychain`, else it exits 2; `started` prints one JSON line `{"check":"started","ok":true,"browsers":N}` and quits; `window` checks a hidden host, its native window and hit test, then waits for Browser destruction. `NSApp` is Chrome's `BrowserCrApplication`. Nothing touches `NSApp` before Chromium starts, and the AppKit UI is created from a Chromium startup callback (ours).
 - We replace Chrome's `AppController` with our own owner of quit, Dock and logout events, implementing cancellable close and quit (beforeunload, download confirmation) and a keep-alive when no window is open (Ardia ledger 1.1).
 
@@ -209,6 +211,8 @@ The current `AraratBrowserWindow` delegates window visibility, activation, bound
 - Daily use by anyone, including the owner, requires: a working update path (Sparkle) and a URL and download reputation check (Safe Browsing or a chosen equivalent, 14).
 
 ## 5. State ownership
+
+The workspace store is `--ararat-db=<path>` when supplied; otherwise it is `Ararat/workspace.sqlite` under Chrome's user data directory, obtained from the engine. Store calls run on one serial queue; engine calls run on the main thread (ours).
 
 ### 5.1 Who writes what
 
@@ -372,6 +376,8 @@ Each unit of work: Opus 5.5 sets the scope → two implementation seats run in p
 ## 15. Roadmap
 
 Each phase ends with a working build and a sandwich review.
+
+The slice check uses `--ararat-check=slice`, a fresh `--ararat-db` under `$TMPDIR`, a scratch user data directory and the mock keychain. It opens two of three rows and reselects the second. The on-screen check remains in U8 (ours).
 
 | Phase | Content | Exit criteria |
 |---|---|---|
