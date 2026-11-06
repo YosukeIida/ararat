@@ -6,6 +6,7 @@ _AraratExclusiveInputCount
 _AraratFinishSliceCheck
 _AraratMain
 _AraratQuit
+_AraratStartMeasure
 _AraratUserDataDirectory
 _AraratWindowHostCreate
 _OBJC_CLASS_$_ARTab

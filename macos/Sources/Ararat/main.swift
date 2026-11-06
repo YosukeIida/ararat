@@ -185,6 +185,15 @@ final class Runtime {
     actions.onCreatePageChanged = { [weak self] in self?.container?.selectionChanged() }
     actions.bind(to: sidebar)
     adapter.attach(host)
+    if let argument = arguments.first(where: { $0.hasPrefix("--ararat-measure=") }) {
+      guard let symbol = dlsym(Launcher.handle, "AraratStartMeasure") else {
+        throw NSError(domain: "Ararat.measure", code: 1)
+      }
+      typealias StartMeasure = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void
+      let scenario = String(argument.dropFirst(17)) as NSString
+      unsafeBitCast(symbol, to: StartMeasure.self)(Unmanaged.passUnretained(host as AnyObject).toOpaque(), Unmanaged.passUnretained(scenario).toOpaque())
+      return
+    }
     if check {
       sliceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
         MainActor.assumeIsolated { self?.sliceTick(card: card) }
@@ -305,7 +314,20 @@ var callbacks = AraratCallbacks(
         Launcher.runtime = value
       } catch {
         FileHandle.standardError.write(Data("engine: startup failed: \(error)\n".utf8))
-        if CommandLine.arguments.contains("--ararat-check=slice") {
+        if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-measure=") }) {
+          let scenario = String(argument.dropFirst(17))
+          let compositor = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+          for run in 1...10 {
+            let result: [String: Any] = ["measure": scenario, "compositor": compositor, "run": run, "timeout": "startup"]
+            if let data = try? JSONSerialization.data(withJSONObject: result), let line = String(data: data, encoding: .utf8) {
+              print(line)
+              fflush(stdout)
+            }
+          }
+          if let symbol = dlsym(Launcher.handle, "AraratQuit") {
+            unsafeBitCast(symbol, to: (@convention(c) () -> Void).self)()
+          }
+        } else if CommandLine.arguments.contains("--ararat-check=slice") {
           value.finishSlice(ok: false)
         } else if let symbol = dlsym(Launcher.handle, "AraratQuit") {
           unsafeBitCast(symbol, to: (@convention(c) () -> Void).self)()

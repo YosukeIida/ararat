@@ -86,6 +86,9 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   contents->SetLayoutManager(std::make_unique<views::FillLayout>());
   auto* native_host =
       contents->AddChildView(std::make_unique<views::NativeViewHost>());
+  if (AraratUsesSharedCompositor()) {
+    page_host_ = native_host->AddChildView(std::make_unique<views::NativeViewHost>());
+  }
   delegate_->SetContentsView(std::move(contents));
   widget_ = std::make_unique<views::Widget>();
   views::Widget::InitParams params(
@@ -113,6 +116,16 @@ gfx::NativeWindow AraratWindowHostCore::GetNativeWindow() const {
 
 void AraratWindowHostCore::SetTitle(const std::u16string& title) {
   delegate_->SetTitle(title);
+}
+
+void AraratWindowHostCore::AttachPage(gfx::NativeView view) {
+  if (!page_host_ || page_host_->native_view() == view) return;
+  page_host_->Detach();
+  if (view) page_host_->Attach(view);
+}
+
+void AraratWindowHostCore::PositionPage(const gfx::Rect& rect) {
+  if (page_host_) page_host_->SetBoundsRect(rect);
 }
 
 void AraratWindowHostCore::Close() {
@@ -197,6 +210,27 @@ class StripObserver : public TabStripModelObserver {
 - (void)closeCancelled:(const tabs::TabInterface*)tab;
 - (void)drainPendingOpens;
 - (void)discardPendingOpens;
+- (void)positionPage;
+@end
+
+@interface ARPagePositionView : NSView
+@property(nonatomic, weak) ARWindowHost* host;
+@end
+
+@implementation ARPagePositionView
+@synthesize host = _host;
+- (void)setFrameSize:(NSSize)size {
+  [super setFrameSize:size];
+  [self.host positionPage];
+}
+- (void)setFrameOrigin:(NSPoint)origin {
+  [super setFrameOrigin:origin];
+  [self.host positionPage];
+}
+- (void)viewDidMoveToWindow {
+  [super viewDidMoveToWindow];
+  [self.host positionPage];
+}
 @end
 
 void StripObserver::OnTabStripModelChanged(TabStripModel*,
@@ -228,6 +262,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   BOOL draining_opens_;
   BOOL emitted_change_;
   BOOL empty_reported_;
+  ARPagePositionView* page_position_view_;
 }
 
 @synthesize delegate = _delegate;
@@ -480,6 +515,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   TabStripModel* strip = browser_->GetTabStripModel();
   content::WebContents* active = strip->GetActiveWebContents();
   NSView* card = [self.delegate pageCardForWindowHost:self];
+  if (AraratUsesSharedCompositor()) {
+    if (page_position_view_.superview != card) {
+      [page_position_view_ removeFromSuperview];
+      page_position_view_ = nil;
+      if (card) {
+        page_position_view_ = [[ARPagePositionView alloc] initWithFrame:card.bounds];
+        page_position_view_.host = self;
+        page_position_view_.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        [card addSubview:page_position_view_];
+      }
+    }
+    core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
+    [self positionPage];
+  }
   NSMutableSet<NSValue*>* present = [NSMutableSet set];
   for (int i = 0; i < strip->count(); ++i) {
     content::WebContents* contents = strip->GetWebContentsAt(i);
@@ -495,7 +544,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     }
     if (!tabs_[key]) tabs_[key] = [[ARTab alloc] initWithContents:contents liveId:identity->live_id host:self];
     NSView* view = contents->GetNativeView().GetNativeNSView();
-    if (contents == active && card) {
+    if (AraratUsesSharedCompositor()) {
+      if (contents == active && card) contents->WasShown();
+      else contents->WasHidden();
+    } else if (contents == active && card) {
       for (NSView* child in [card.subviews copy]) if (child != view) [child removeFromSuperview];
       if (view.superview != card) [card addSubview:view];
       view.frame = card.bounds;
@@ -512,7 +564,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [tabs_ removeObjectForKey:key];
     }
   }
-  if (!active) for (NSView* child in [card.subviews copy]) [child removeFromSuperview];
+  if (!active && !AraratUsesSharedCompositor()) for (NSView* child in [card.subviews copy]) [child removeFromSuperview];
+}
+
+- (void)positionPage {
+  NSView* card = page_position_view_.superview;
+  NSView* root = core_->GetNativeWindow().GetNativeNSWindow().contentView;
+  if (!card || !root || card.window != root.window) return;
+  NSRect rect = [card convertRect:card.bounds toView:root];
+  if (!root.isFlipped) rect.origin.y = NSHeight(root.bounds) - NSMaxY(rect);
+  core_->PositionPage(gfx::Rect(static_cast<int>(NSMinX(rect)),
+                                static_cast<int>(NSMinY(rect)),
+                                static_cast<int>(NSWidth(rect)),
+                                static_cast<int>(NSHeight(rect))));
 }
 
 - (NSDictionary*)stripSnapshot {

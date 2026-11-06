@@ -39,6 +39,8 @@ extern "C" {
 __attribute__((visibility("default")))
 id<ARWindowHostAPI> AraratWindowHostCreate(NSView* contentView, NSString* windowId);
 __attribute__((visibility("default")))
+void AraratStartMeasure(id<ARWindowHostAPI> host, NSString* scenario);
+__attribute__((visibility("default")))
 NSString* _Nullable AraratUserDataDirectory(void);
 __attribute__((visibility("default")))
 NSUInteger AraratBrowserCount(void);

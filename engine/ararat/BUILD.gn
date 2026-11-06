@@ -33,7 +33,7 @@ source_set("core") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h" ]
+  sources = [ "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
     ":core",
@@ -60,12 +60,14 @@ source_set("entry") {
     "//chrome/browser/ui/browser_window:browser_window",
     "//chrome/browser/ui/browser_window:create_browser_window",
     "//chrome/browser/ui/window_metadata",
+    "//chrome/common",
     "//chrome/common:constants",
     "//components/input",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip",
     "//chrome/browser/ui/tabs:tab_strip_model_observer",
     "//content/public/browser",
+    "//content/public/common",
     "//url",
   ]
 }

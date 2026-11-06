@@ -38,6 +38,7 @@ std::atomic<bool> g_ui_ready{false};
 bool g_check_tabs = false;
 bool g_check_slice = false;
 bool g_slice_passed = false;
+bool g_shared_compositor = false;
 
 // The engine's own browser main extra parts: the two callbacks fire at the
 // engine's own stages, and the check run prints its one JSON line and quits.
@@ -107,8 +108,30 @@ void CheckGuards(int argc, const char** argv) {
   bool mock_keychain = false;
   bool check_slice = false;
   bool db_under_temp = false;
+  bool has_measure = false;
+  bool valid_measure = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
+    if (strncmp(arg, "--ararat-compositor=", 20) == 0) {
+      std::string_view compositor(arg + 20);
+      if (compositor != "c1" && compositor != "c2") {
+        std::cerr << "engine: --ararat-compositor must be c1 or c2" << std::endl;
+        exit(2);
+      }
+      g_shared_compositor = compositor == "c2";
+    } else if (strcmp(arg, "--ararat-compositor") == 0) {
+      std::cerr << "engine: --ararat-compositor must be c1 or c2" << std::endl;
+      exit(2);
+    }
+    if (strncmp(arg, "--ararat-measure=", 17) == 0) {
+      has_measure = true;
+      std::string_view name(arg + 17);
+      valid_measure = name == "switch" || name == "background" ||
+                      name == "occlusion" || name == "resize" || name == "display";
+    } else if (strcmp(arg, "--ararat-measure") == 0) {
+      has_measure = true;
+      valid_measure = false;
+    }
     if (strcmp(arg, "--ararat-check") == 0) {
       // Chrome would read the switch as empty and open "started" as a URL in
       // the given profile, so the bare form is refused outright.
@@ -142,6 +165,10 @@ void CheckGuards(int argc, const char** argv) {
   if (bare_check) {
     refuse("the switch needs a =name");
   }
+  if (has_measure && (!valid_measure || has_check || temp_dir.empty() || !under_temp || !mock_keychain)) {
+    std::cerr << "engine: --ararat-measure requires a scenario, scratch profile and mock keychain" << std::endl;
+    exit(2);
+  }
   if (!has_check) {
     return;
   }
@@ -163,6 +190,8 @@ void CheckGuards(int argc, const char** argv) {
 }
 
 }  // namespace
+
+bool AraratUsesSharedCompositor() { return g_shared_compositor; }
 
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
