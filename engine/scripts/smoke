@@ -36,7 +36,7 @@ dom="$("$app" --headless=new --user-data-dir="$scratch/profile" --no-first-run -
   --dump-dom 'data:text/html,<title>ararat</title><p>ararat-smoke</p>' \
   2>"$scratch/dom.err")" || dom_rc=$?
 ver_rc=0
-ver="$("$app" --user-data-dir="$scratch/profile" --version \
+ver="$("$app" --user-data-dir="$scratch/profile" --use-mock-keychain --no-startup-window --version \
   2>"$scratch/ver.err")" || ver_rc=$?
 
 if [[ $dom_rc -ne 0 || $ver_rc -ne 0 || -z "$dom" || -z "$ver" ]]; then

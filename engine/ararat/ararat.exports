@@ -1,6 +1,7 @@
-# One exported symbol per line, no wildcards; the same set the link patch's
-# "# Ararat" block appends to chrome/app/framework.order — engine/scripts
-# refuses a difference between the two.
+# One exported symbol per line, no wildcards; the same set the link patch adds
+# to chrome/app/framework.order — engine/scripts refuses a difference.
 _AraratEngineVersion
 _AraratMain
 _AraratQuit
+_OBJC_CLASS_$_ARWindowHost
+_OBJC_METACLASS_$_ARWindowHost

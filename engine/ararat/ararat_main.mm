@@ -8,6 +8,7 @@
 #include <iostream>
 
 #include "ararat/core/ararat_hooks.h"
+#include "ararat/core/ararat_window_check.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -63,6 +64,10 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
   // means the run is a scratch one and the JSON line is the whole contract.
   void RunCheck() {
     auto* command_line = base::CommandLine::ForCurrentProcess();
+    if (command_line->GetSwitchValueASCII("ararat-check") == "window") {
+      AraratCheckWindow();
+      return;
+    }
     if (command_line->GetSwitchValueASCII("ararat-check") != "started") {
       return;
     }
@@ -98,7 +103,8 @@ void CheckGuards(int argc, const char** argv) {
       bare_check = true;
     } else if (strncmp(arg, "--ararat-check=", 15) == 0) {
       has_check = true;
-      check_started = std::string_view(arg + 15) == "started";
+      check_started = std::string_view(arg + 15) == "started" ||
+                      std::string_view(arg + 15) == "window";
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
@@ -128,7 +134,7 @@ void CheckGuards(int argc, const char** argv) {
     refuse("the mock keychain is missing");
   }
   if (!check_started) {
-    refuse("the only check name is started");
+    refuse("the check name must be started or window");
   }
 }
 
@@ -142,7 +148,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   g_ararat_add_browser_main_extra_parts = [](ChromeBrowserMainParts* parts) {
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
-  return ChromeMain(argc, argv);
+  int result = ChromeMain(argc, argv);
+  return result == 0 && !AraratWindowCheckPassed() ? 1 : result;
 }
 
 __attribute__((visibility("default"))) void AraratQuit(void) {

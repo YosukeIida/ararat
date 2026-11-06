@@ -177,9 +177,9 @@ engine_version_value() {
 # old mtime would arrive with new bytes ninja would not rebuild. Symlinks are
 # refused: rsync -l would copy one that the manifest (-type f) never sees.
 # The exported names must match in the two places they are listed: ararat.exports
-# (the linker's -exported_symbols_list) and the "# Ararat" block the link patch
-# appends to chrome/app/framework.order (verify_order.py refuses any export the
-# order file does not list). Both sides parse comments and blanks away, and the
+# (the linker's -exported_symbols_list) and the symbols the link patch adds to
+# chrome/app/framework.order (verify_order.py refuses an unlisted export).
+# Both sides parse comments and blanks away, and the
 # comparison is by set: a name in one file only fails apply and series-check.
 check_layer_exports() {
   local exports="$ARARAT_REPO_ROOT/engine/ararat/ararat.exports"
@@ -191,9 +191,7 @@ check_layer_exports() {
   b="$(awk '
     /^\+\+\+ / { infw = ($2 ~ /framework\.order$/); next }
     !infw { next }
-    /^\+# Ararat/ { inblock = 1; next }
-    inblock && !/^\+/ { inblock = 0; next }
-    inblock {
+    /^\+_/ {
       line = substr($0, 2)
       sub(/#.*/, "", line)
       gsub(/[[:space:]]/, "", line)
@@ -203,7 +201,7 @@ check_layer_exports() {
   only_a="$(comm -23 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | sed '/^$/d')"
   only_b="$(comm -13 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | sed '/^$/d')"
   if [[ -n "$only_a" || -n "$only_b" ]]; then
-    die "ararat.exports and the link patch's framework.order block disagree (only in ararat.exports: $(printf '%s' "$only_a" | tr '\n' ' '); only in the order block: $(printf '%s' "$only_b" | tr '\n' ' ')): list every exported name in both"
+    die "ararat.exports and the link patch's framework.order additions disagree (only in ararat.exports: $(printf '%s' "$only_a" | tr '\n' ' '); only in the order additions: $(printf '%s' "$only_b" | tr '\n' ' ')): list every exported name in both"
   fi
   # Every export must be defined in the layer: a text match on the C name without
   # the leading underscore, an @implementation for ObjC class names. Why not nm:
@@ -213,7 +211,7 @@ check_layer_exports() {
     [[ -n "$name" ]] || continue
     case "$name" in
       _OBJC_CLASS_\$_*|_OBJC_METACLASS_\$_*)
-        def="${name#_OBJC_CLASS_\$_}"; def="${def%_}"
+        def="${name#_OBJC_CLASS_\$_}"; def="${def#_OBJC_METACLASS_\$_}"
         grep -rq --include="*.mm" --include="*.cc" -- "@implementation $def" "$ARARAT_REPO_ROOT/engine/ararat" \
           || die "ararat.exports names $name but engine/ararat has no @implementation $def" ;;
       *)

@@ -3,8 +3,7 @@
 
 // The engine's C entry points, for launchers outside the engine tree. The
 // exported definitions carry default visibility in ararat_main.mm; the names
-// are listed in both ararat.exports and the framework.order block the link
-// patch appends.
+// are listed in both ararat.exports and the link patch's framework.order additions.
 
 #ifdef __cplusplus
 extern "C" {
