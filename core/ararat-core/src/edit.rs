@@ -151,7 +151,7 @@ impl Workspace {
         Ok((keys.remove(0), ops))
     }
 
-    pub(crate) fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
+    pub fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
         let (root, _) = self.list_for(id)?;
         self.spaces.iter().find(|s| s.pinned == root || s.today == root).map(|s| &s.profile)
             .or_else(|| self.favorites.iter().find(|(_, container)| container.as_str() == root).map(|(p, _)| p))
@@ -434,6 +434,7 @@ impl Workspace {
         let mut ops = self.stamp_outgoing(window, None, changed_at);
         let mut state = self.window_state(window);
         state.shown_space = Some(id.into());
+        state.space_history.insert(0, id.into());
         state.select(None);
         ops.push(Op::Put(Record::Space(space)));
         for id in [pinned, today] {
@@ -450,14 +451,21 @@ impl Workspace {
 
     fn window_state(&self, window: &str) -> WindowState {
         self.windows.get(window).cloned().unwrap_or_else(|| WindowState {
-            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(), changed_at: 0,
+            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(), space_history: Vec::new(), changed_at: 0,
         })
     }
 
     pub fn show_space(&mut self, window: &str, space: &str) -> Result<Vec<Op>, EditError> {
         if !self.spaces.iter().any(|entry| entry.id == space) { return Err(EditError(format!("unknown space {space}"))); }
         let mut state = self.window_state(window);
+        if let Some(previous) = &state.shown_space {
+            if !state.space_history.contains(previous) {
+                state.space_history.push(previous.clone());
+            }
+        }
         state.shown_space = Some(space.into());
+        state.space_history.retain(|id| id != space);
+        state.space_history.insert(0, space.into());
         state.changed_at = self.lifecycle_time();
         let ops = vec![Op::Put(Record::Window(state))];
         for op in &ops { self.apply(op); }
@@ -475,6 +483,13 @@ impl Workspace {
         self.windows.get(window).and_then(|state| state.shown_space.as_deref())
             .filter(|id| self.spaces.iter().any(|space| space.id == *id))
             .or_else(|| self.spaces.first().map(|space| space.id.as_str()))
+    }
+
+    pub fn recent_space_for_profile(&self, window: &str, profile: &crate::model::Profile) -> Option<&str> {
+        let matching = |id: &str| self.spaces.iter().any(|space| space.id == id && &space.profile == profile);
+        self.shown_space(window).filter(|id| matching(id))
+            .or_else(|| self.windows.get(window)?.space_history.iter().find(|id| matching(id)).map(String::as_str))
+            .or_else(|| self.spaces.iter().find(|space| &space.profile == profile).map(|space| space.id.as_str()))
     }
 
     pub(crate) fn lifecycle_time(&self) -> u64 {

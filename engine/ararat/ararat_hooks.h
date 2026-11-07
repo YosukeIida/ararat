@@ -12,9 +12,13 @@
 @class NSMenu;
 @class NSURL;
 @class NSArray<ObjectType>;
+@class NSWindow;
+class BrowserWindowInterface;
+class Profile;
 extern bool (*g_ararat_reopen)(bool has_visible_windows);
 extern NSMenu* (*g_ararat_dock_menu)();
-extern void (*g_ararat_open_urls)(NSArray* urls);
+extern void (*g_ararat_open_urls)(NSArray* urls, Profile* profile);
+extern BrowserWindowInterface* (*g_ararat_shown_browser)(NSWindow*, bool*);
 #endif
 
 class BrowserWindowInterface;

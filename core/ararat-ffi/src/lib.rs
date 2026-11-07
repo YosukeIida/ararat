@@ -215,6 +215,14 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn recent_space_for_profile(&self, window_id: String, profile: Profile) -> Option<String> {
+        self.workspace.lock().unwrap().recent_space_for_profile(&window_id, &profile.into()).map(str::to_owned)
+    }
+
+    pub fn item_profile(&self, item_id: String) -> Option<Profile> {
+        self.workspace.lock().unwrap().item_profile(&item_id).cloned().map(Into::into)
+    }
+
     pub fn close_window(&self, window_id: String, quitting: bool) -> Result<(), CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.close_window(&window_id, quitting);
@@ -779,6 +787,7 @@ pub enum LiveCause {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveTab {
+    pub profile: Profile,
     pub live_id: String,
     pub item: Option<String>,
     pub opener: Option<String>,
@@ -845,7 +854,7 @@ impl From<LiveCause> for ararat_core::live::Cause {
 
 impl From<LiveTab> for ararat_core::live::LiveTab {
     fn from(tab: LiveTab) -> Self {
-        Self { live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
+        Self { profile: tab.profile.into(), live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
     }
 }
 
@@ -1220,6 +1229,21 @@ mod tests {
     // fresh ids, the close's lifecycle change is flushed before the command is returned,
     // and a Chrome transaction's strips update the map and the window selection.
     #[test]
+    fn item_profile_stays_with_the_item_when_the_window_changes_space() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-item-profile-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
+        store.show_space("one".into(), "space-home".into()).unwrap();
+        let snapshot = store.create_tab("one".into(), "about:blank".into()).unwrap();
+        let item = snapshot.selected_id.unwrap();
+        store.show_space("one".into(), "space-work".into()).unwrap();
+        assert_eq!(store.item_profile(item), Some(Profile::Named("Profile 1".into())));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    #[test]
     fn live_open_close_and_apply_commit_and_survive_a_reopen() {
         let path = std::env::temp_dir().join(format!("ararat-ffi-live-{}.sqlite", std::process::id()));
         assert!(!path.exists());
@@ -1236,7 +1260,7 @@ mod tests {
         let live_id = opened.id.clone();
         let outcome = store.live_apply(LiveTransaction {
             epoch: 1, rev: 0, cause: LiveCause::Engine,
-            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
+            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { profile: Profile::Default, opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
         }).unwrap();
         assert!(outcome.applied);
         let snapshot = store.snapshot("one".into());

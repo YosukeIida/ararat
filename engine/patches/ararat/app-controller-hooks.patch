@@ -1,5 +1,3 @@
-diff --git a/chrome/browser/app_controller_mac.mm b/chrome/browser/app_controller_mac.mm
-index ead883e..2ea81cc 100644
 --- a/chrome/browser/app_controller_mac.mm
 +++ b/chrome/browser/app_controller_mac.mm
 @@ -12,6 +12,7 @@
@@ -10,18 +8,35 @@ index ead883e..2ea81cc 100644
  #include "base/apple/bridging.h"
  #include "base/apple/foundation_util.h"
  #include "base/apple/scoped_cftyperef.h"
-@@ -153,6 +154,10 @@
+@@ -152,6 +153,11 @@
+ #include "ui/menus/cocoa/menu_controller.h"
  #include "ui/native_theme/native_theme.h"
  #include "url/gurl.h"
- 
++
 +bool (*g_ararat_reopen)(bool) = nullptr;
 +NSMenu* (*g_ararat_dock_menu)() = nullptr;
-+void (*g_ararat_open_urls)(NSArray*) = nullptr;
-+
++void (*g_ararat_open_urls)(NSArray*, Profile*) = nullptr;
++BrowserWindowInterface* (*g_ararat_shown_browser)(NSWindow*, bool*) = nullptr;
+ 
  namespace {
  
- // True while AppController is calling chrome::NewEmptyWindow(). We need a
-@@ -1495,6 +1500,10 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer,
+@@ -1123,9 +1129,12 @@
+ }
+ 
+ - (void)windowDidBecomeMain:(NSNotification*)notify {
+-  BrowserWindowInterface* browser =
+-      GlobalBrowserCollection::GetInstance()->FindBrowserWithWindow(
+-          gfx::NativeWindow([notify object]));
++  bool ararat_window = false;
++  BrowserWindowInterface* browser = g_ararat_shown_browser
++      ? g_ararat_shown_browser([notify object], &ararat_window) : nullptr;
++  if (!ararat_window)
++    browser = GlobalBrowserCollection::GetInstance()->FindBrowserWithWindow(
++        gfx::NativeWindow([notify object]));
+   if (!browser)
+     return;
+ 
+@@ -1495,6 +1504,10 @@
          ProfileBrowserCollection::GetForProfile(profile.get())
              ->GetLastActiveBrowser();
      if (!browser) {
@@ -32,7 +47,7 @@ index ead883e..2ea81cc 100644
        browser = CreateBrowserWindow(
            BrowserWindowCreateParams(profile.get(), /*user_gesture=*/true));
        browser->GetWindow()->Show();
-@@ -1856,6 +1865,8 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer,
+@@ -1856,6 +1869,8 @@
    // to prevent AppKit from doing anything.
    if (browser_shutdown::IsTryingToQuit())
      return NO;
@@ -41,7 +56,7 @@ index ead883e..2ea81cc 100644
  
    // Bring all browser windows to the front. Specifically, this brings them in
    // front of any app windows. FocusWindowSet will also unminimize the most
-@@ -2079,6 +2090,15 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer,
+@@ -2079,6 +2094,18 @@
    }
  
    if (!startupTabs.empty()) {
@@ -51,13 +66,16 @@ index ead883e..2ea81cc 100644
 +        NSURL* url = [NSURL URLWithString:base::SysUTF8ToNSString(tab.url.spec())];
 +        if (url) [accepted addObject:@{ @"url": url, @"untrusted": @(tab.is_untrusted_launch) }];
 +      }
-+      g_ararat_open_urls(accepted);
++      app_controller_mac::RunInLastProfileSafely(
++          base::BindOnce(^(Profile* profile) {
++            if (profile && g_ararat_open_urls) g_ararat_open_urls(accepted, profile);
++          }), app_controller_mac::kShowProfilePickerOnFailure);
 +      return;
 +    }
      [self openStartupTabsReplacingNTP:std::move(startupTabs)];
    }
  }
-@@ -2142,6 +2162,8 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer,
+@@ -2142,6 +2169,8 @@
  }
  
  - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
@@ -66,12 +84,16 @@ index ead883e..2ea81cc 100644
    NSMenu* dockMenu = [[NSMenu alloc] initWithTitle:@""];
  
    BOOL profilesAdded = [_profileMenuController insertItemsIntoMenu:dockMenu
-@@ -2492,6 +2514,10 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer,
+@@ -2492,6 +2521,14 @@
      return NO;
  
    GURL gurl(base::SysNSStringToUTF8([url absoluteString]));
 +  if (g_ararat_open_urls) {
-+    g_ararat_open_urls(@[@{ @"url": url, @"untrusted": @YES }]);
++    app_controller_mac::RunInLastProfileSafely(
++        base::BindOnce(^(Profile* profile) {
++          if (profile && g_ararat_open_urls)
++            g_ararat_open_urls(@[@{ @"url": url, @"untrusted": @YES }], profile);
++        }), app_controller_mac::kShowProfilePickerOnFailure);
 +    return YES;
 +  }
    StartupTabs tabs;

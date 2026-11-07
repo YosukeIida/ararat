@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{Id, Item, ItemKind, Lifecycle, Membership, Op, Record, Workspace};
+use crate::model::{Id, Item, ItemKind, Lifecycle, Membership, Op, Profile, Record, Workspace};
 
 /// A command the engine must carry out. The fresh id doubles as the live tab's id in the
 /// map, so an opened tab comes to life under the id the command already carries.
@@ -36,6 +36,7 @@ pub enum Cause {
 /// its per-tab session data carries, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveTab {
+    pub profile: Profile,
     pub live_id: Id,
     pub item: Option<Id>,
     pub opener: Option<Id>,
@@ -262,6 +263,15 @@ impl Live {
         self.last_rev = transaction.rev;
         outcome.applied = true;
 
+        if transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| {
+            tab.item.as_deref().and_then(|id| workspace.item_profile(id))
+                .is_some_and(|profile| profile != &tab.profile)
+        }) {
+            self.dropped += 1;
+            outcome.applied = false;
+            return (Vec::new(), outcome);
+        }
+
         // Validate and compute on clones; the workspace and the maps commit only when the
         // transaction is accepted (the way auto_archive commits) — a dropped one leaves
         // both exactly as they were.
@@ -319,7 +329,7 @@ impl Live {
                         }
                         None => {
                             if claimed_lives.contains(&tab.live_id) { continue; }
-                            if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window) {
+                            if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile) {
                                 ops.append(&mut adopt_ops);
                                 outcome.adopted.push((tab.live_id.clone(), id.clone()));
                                 adopted_for.insert(tab.live_id.clone(), id.clone());
@@ -448,7 +458,7 @@ impl Live {
             for tab in &strip.tabs {
                 let Some(item) = &tab.item else {
                     if next_reverse.contains_key(&tab.live_id) { continue; }
-                    if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window) {
+                    if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile) {
                         ops.append(&mut adopt_ops);
                         next_map.insert(id.clone(), tab.live_id.clone());
                         next_reverse.insert(tab.live_id.clone(), id.clone());
@@ -542,8 +552,8 @@ impl Live {
     /// Adopts an itemless engine tab: one open row at the end of the shown space's Today,
     /// membership in the same transaction (§5.2). The engine owns the tab's url until
     /// Chrome reports a navigation, so the core's copy stays empty.
-    fn adopt(workspace: &mut Workspace, window: &str) -> Option<(Vec<Op>, Id)> {
-        let space_id = workspace.shown_space(window)?.to_string();
+    fn adopt(workspace: &mut Workspace, window: &str, profile: &Profile) -> Option<(Vec<Op>, Id)> {
+        let space_id = workspace.recent_space_for_profile(window, profile)?.to_string();
         let today = workspace.spaces.iter().find(|space| space.id == space_id).map(|space| space.today.clone())?;
         let id = Self::fresh_item_id(workspace);
         let order = crate::order::key_between(

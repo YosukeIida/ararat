@@ -1,6 +1,7 @@
 #include "ararat/core/ararat_tab.h"
 
 #include <memory>
+#include <cstdio>
 
 #include "ararat/core/public/ARWindowHost.h"
 #include "base/check.h"
@@ -10,6 +11,7 @@
 #include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -128,6 +130,44 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") return;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
       u"window.close()", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkFocusExtensionWindow {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "ext-windows" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "profiles")) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"location.hash = 'focus'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkPrepareExtensionFocus {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "ext-windows" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "profiles")) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"location.hash = 'prepare-focus'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkPrepareExtensionWindows {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "ext-windows") return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"location.hash = 'prepare-hidden'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkReportExtensionWindow {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "ext-windows" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "profiles")) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"location.hash = location.hash === '#report' ? 'report2' : 'report'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkReloadExtensionWindow {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "ext-windows" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "profiles")) return;
+  std::fprintf(stderr, "ararat-trace: extension-probe reload\n");
+  contents_->GetController().Reload(content::ReloadType::NORMAL, false);
 }
 
 - (void)navigationFinished {

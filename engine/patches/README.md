@@ -86,4 +86,8 @@ Chrome runs stock. `ararat/browser-window-factory.patch` calls our window
 factory in the `Browser` constructor when it is set; if unset or it returns
 null, Chrome creates the stock window. It also skips saving location-bar state when a window has no location bar. architecture §4.3 lists the hooks.
 
+When the factory hook is set, the patch disables Chrome session restore before
+`BrowserInitState` captures its flags, including for Browsers using stock windows.
+Ararat restores its own workspace from the core in U17.
+
 `ararat/viewless-read-anything.patch` skips side-panel cleanup for our viewless windows when there is no side panel.

@@ -89,6 +89,43 @@ func checkRecords(_ path: String) -> [[String]]? {
   }
 }
 
+func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
+  guard let before, let after else { return [["kind": "missing", "id": "", "fields": ["$snapshot"]]] }
+  func indexed(_ rows: [[String]]) -> [String: [String]] {
+    Dictionary(rows.filter { $0.count == 3 }.map { ("\($0[0])\u{0}\($0[1])", $0) }, uniquingKeysWith: { first, _ in first })
+  }
+  func object(_ value: String) -> NSDictionary? {
+    guard let data = value.data(using: .utf8) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? NSDictionary
+  }
+  let old = indexed(before), new = indexed(after)
+  return Set(old.keys).union(new.keys).sorted().compactMap { key in
+    let a = old[key], b = new[key]
+    guard a != b else { return nil }
+    let row = a ?? b!
+    var fields = ["$record"]
+    if let a, let b {
+      fields = ["$value"]
+      if let left = object(a[2]), let right = object(b[2]) {
+        let keys = Set(left.allKeys.compactMap { $0 as? String }).union(right.allKeys.compactMap { $0 as? String })
+        fields = keys.sorted().filter { name in
+          let lhs = left[name] as? NSObject, rhs = right[name] as? NSObject
+          if lhs == nil || rhs == nil { return (lhs == nil) != (rhs == nil) }
+          return !lhs!.isEqual(rhs)
+        }
+      }
+    }
+    return ["kind": row[0], "id": row[1], "fields": fields]
+  }
+}
+
+func checkWindowSelection(_ rows: [[String]]?, windowID: String) -> String? {
+  guard let row = rows?.first(where: { $0.count == 3 && $0[0] == "window" && $0[1] == windowID }),
+        let data = row[2].data(using: .utf8),
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+  return body["selected"] as? String
+}
+
 @MainActor
 final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   let card = NSView()
@@ -98,6 +135,8 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   deinit { if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) } }
   func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
   func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction transaction: [String: Any]) {}
+  func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {}
+  func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {}
 
   func create(bounds: NSRect) -> Bool {
     guard let symbol = dlsym(Launcher.handle, "AraratWindowHostCreate") else { return false }
@@ -150,7 +189,7 @@ final class Runtime {
   }
   func createHost(popup: Bool, profile: String, bounds: NSRect) -> UnsafeMutableRawPointer? {
     func fallback(_ reason: String) -> UnsafeMutableRawPointer? {
-      if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") || $0 == "--ararat-screen=links" }) {
+      if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
         FileHandle.standardError.write(Data("ararat-trace: browser-factory fallback=\(reason)\n".utf8))
       }
       return nil
@@ -175,14 +214,12 @@ final class Runtime {
     let windows = [self] + children
     let matching = windows.filter { $0.hasUsableHost && $0.host?.profileDirectory() == profile }
     let key = matching.first { $0.host?.window().isKeyWindow == true } ?? matching.first ?? self
-    if matching.contains(where: { $0 === key }), key.hasUsableHost, let host = key.host, !host.hasBrowser() {
+    if matching.contains(where: { $0 === key }), key.hasUsableHost, let host = key.host, !host.hasBrowser(forProfile: profile) {
       return Unmanaged.passUnretained(host as AnyObject).toOpaque()
     }
     guard let session = key.adapter?.session else { return fallback("no-session") }
     let shownSpace = session.queue.sync {
-      guard let snapshot = session.store?.snapshot(windowId: key.windowID) else { return nil as String? }
-      if let current = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }), current.profileName == profile { return current.id }
-      return snapshot.spaces.first(where: { $0.profileName == profile })?.id
+      session.store?.recentSpaceForProfile(windowId: key.windowID, profile: profile == "Default" ? .default : .named(profile))
     }
     let child = Runtime(windowID: UUID().uuidString)
     child.root = self
@@ -221,6 +258,9 @@ final class Runtime {
   var quitMode: String?
   var quitPath: String?
   var quitBefore: [[String]]?
+  var quitOriginal: [[String]]?
+  var quitDuringProfileSwitch: [[String]]?
+  var quitCancelPrevious: [[String]]?
   var quitPhase = 0
   var quitAttempts = 0
   var quitTimer: Timer?
@@ -239,6 +279,16 @@ final class Runtime {
   var screenAppKitLightsHidden = false
   var screenClosingOffset = 0
   var browserCheckMode: String?
+  var profileCheckStates: [[String: Any]] = []
+  var extensionFocusProbe: [String: Any] = [:]
+  var extensionSwitchedAway = false
+  var profileCheckLoadedAfterClose = false
+  var profileCheckPointer: String?
+  var profileCloseBefore: [[String]]?
+  var profileCloseCancelled: [String: Any] = [:]
+  var profileCloseFinal: [String: Any] = [:]
+  var profileCheckResult: [String: Any] = [:]
+  var profileCheckPassed = false
   var browserCheckTimer: Timer?
   var browserCheckPhase = 0
   var browserCheckAttempts = 0
@@ -250,6 +300,12 @@ final class Runtime {
   var browserCheckPopupOpenerAlive = false
   var browserCheckStyleMask: UInt = 0
   var browserCheckStock: UInt = 0
+  var emptyProbe: [String: Any] = [:]
+  var emptyMenuCount: UInt = 0
+  var emptyMenuEnabled: [NSNumber] = []
+  var emptyRestore: [String: Any] = [:]
+  var emptyRestorePassed = false
+  var emptyRowsBefore: Set<String> = []
   var linkMenuObserver: NSObjectProtocol?
   var linkMenuChosen = false
 
@@ -257,11 +313,12 @@ final class Runtime {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "deferred"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "deferred"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito"].contains(checkName ?? "") { browserCheckMode = checkName }
       if screenName == "links" { browserCheckMode = "screen-links" }
+      if screenName == "profiles" { browserCheckMode = "screen-profiles" }
     }
     guard let createSymbol = dlsym(Launcher.handle, "AraratWindowHostCreate"),
           let pathSymbol = dlsym(Launcher.handle, "AraratUserDataDirectory") else {
@@ -298,9 +355,12 @@ final class Runtime {
     }
     let card = NSView()
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let singleCheck = browserCheckMode != nil || (quitMode != nil && quitMode != "quit")
+    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let singleCheck = (browserCheckMode != nil && !profileCheck) || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, session: running)
+    let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
+      ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, profileCheckURL: profileURL, session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -330,6 +390,9 @@ final class Runtime {
     self.container = container
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
       self?.snapshot = snapshot
+      if self?.host?.isClosingAll() != true, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
+        _ = self?.host?.setProfileDirectory(space.profileName)
+      }
       sidebar?.update(snapshot: snapshot)
       container?.selectionChanged()
       if check {
@@ -349,6 +412,7 @@ final class Runtime {
       }
     }
     adapter.onWorkspaceChange = { [weak self] in self?.refreshOtherWindows() }
+    adapter.onQuitProfileSwitch = { [weak self] in self?.quitDuringProfileSwitch = self?.captureCheckRows() }
     let actions = SidebarActions()
     actions.onSelect = { [weak adapter] row in
       if let url = row.url { adapter?.select(id: row.id, url: url) }
@@ -391,7 +455,7 @@ final class Runtime {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" {
         NSApp.activate(ignoringOtherApps: true)
         host.window().makeKeyAndOrderFront(nil)
       }
@@ -446,6 +510,7 @@ final class Runtime {
     if browserCheckMode != nil {
       browserCheckStyleMask = host.window().styleMask.rawValue
       browserCheckStock = host.checkStockBrowsers()
+      if browserCheckMode == "profiles" { profileCloseFinal = host.checkProfileCloseState() }
     }
     guard quitMode != nil else { return }
     quitEvents = host.checkClosingEvents()
@@ -558,6 +623,46 @@ final class Runtime {
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if ["profiles", "ext-windows", "incognito", "screen-profiles"].contains(mode), let host {
+      let profileState = host.checkProfileState()
+      timeoutValues["profile_state"] = profileState
+      if mode == "ext-windows" || mode == "screen-profiles" {
+        let browsers = profileState["browsers"] as? [[String: Any]] ?? []
+        for (profile, label) in [("Default", "default"), ("Profile 1", "profile1")] {
+          let browser = browsers.first { $0["profile"] as? String == profile }
+          let title = ((browser?["tabs"] as? [[String: Any]])?.first?["title"] as? String)
+          let data = title?.data(using: .utf8)
+          timeoutValues["report_\(label)_ok"] = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } != nil
+          timeoutValues["report_\(label)_title_length"] = title?.count ?? 0
+          timeoutValues["report_\(label)_present"] = title != nil
+        }
+      }
+      timeoutValues["cookie_state"] = host.checkCookieState()
+      timeoutValues["snapshot_spaces"] = snapshot.spaces.count
+      timeoutValues["shown_profile"] = host.profileDirectory()
+      timeoutValues["host_tab_count"] = host.tabs().count
+      timeoutValues["selected_item"] = snapshot.selectedId ?? ""
+      timeoutValues["default_rows"] = snapshot.spaces.first(where: { $0.id == "default" })?.today.count ?? 0
+      timeoutValues["named_rows"] = snapshot.spaces.first(where: { $0.id == "named" })?.today.count ?? 0
+      timeoutValues["application_active"] = NSApp.isActive
+      timeoutValues["window_key"] = host.window().isKeyWindow
+      timeoutValues["popup_hosts"] = popups.count
+      timeoutValues["popup_states"] = popups.compactMap { $0.host?.checkProfileState() }
+      timeoutValues["popup_titles"] = popups.flatMap { ($0.host?.tabs() as? [any ARTabAPI])?.map(\.title) ?? [] }
+      timeoutValues["observed_profiles"] = profileCheckStates.count
+      timeoutValues["switched_away"] = extensionSwitchedAway
+      timeoutValues["close_state"] = host.checkProfileCloseState()
+      timeoutValues["cancel_run"] = profileCloseCancelled
+      timeoutValues["close_run"] = profileCloseFinal
+    }
+    if mode == "empty" {
+      timeoutValues["empty_windows_probe"] = emptyProbe
+      timeoutValues["menu_items_validated"] = emptyMenuCount
+      timeoutValues["enabled_command_ids"] = emptyMenuEnabled
+      timeoutValues["session_restore"] = emptyRestore
+      timeoutValues["host_has_browser"] = host?.hasBrowser() ?? false
+      timeoutValues["host_tab_count"] = host?.tabs().count ?? 0
+    }
     if mode == "popup" {
       let popup = popups.first
       let popupHost = popup?.host
@@ -579,7 +684,31 @@ final class Runtime {
                            "browser_count": count as Any? ?? NSNull()]) { _, new in new }
     }
     if browserCheckAttempts > 300 { finishBrowserCheck(ok: false, values: timeoutValues); return }
+    if mode == "profiles", browserCheckPhase == 8, host == nil,
+       let symbol = dlsym(Launcher.handle, "AraratBrowserCount"),
+       unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)() == 0 {
+      let after = captureCheckRows()
+      let unchanged = profileCloseBefore != nil && after != nil &&
+        profileCloseBefore?.filter { $0.first != "window" } == after?.filter { $0.first != "window" }
+      let removed = profileCloseBefore?.contains(where: { $0.first == "window" }) == true &&
+        after?.contains(where: { $0.first == "window" }) == false
+      let closed = profileCloseFinal["closed"] as? Bool == true &&
+        profileCloseFinal["browsers"] as? Int == 0 && profileCloseFinal["dialogs"] as? Int == 2 &&
+        profileCloseFinal["close_cancelled"] as? Int == 1 &&
+        profileCloseFinal["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"]
+      profileCheckResult.merge(["cancel_run": profileCloseCancelled, "close_run": profileCloseFinal,
+        "rows_before_close": profileCloseBefore ?? [], "rows_after_close": after ?? [],
+        "rows_unchanged_after_close": unchanged, "window_removed": removed,
+        "widget_closed": true, "stock_browsers": browserCheckStock]) { _, new in new }
+      finishBrowserCheck(ok: profileCheckPassed && closed && unchanged && removed && browserCheckStock == 1,
+                         values: profileCheckResult)
+      return
+    }
     guard let host else { return }
+    if mode == "empty" { emptyCheckTick(host); return }
+    if mode == "profiles" { profileCheckTick(host); return }
+    if mode == "incognito" { incognitoCheckTick(host); return }
+    if mode == "ext-windows" || mode == "screen-profiles" { extensionCheckTick(host, screen: mode == "screen-profiles"); return }
     browserCheckStyleMask = host.window().styleMask.rawValue
     browserCheckStock = host.checkStockBrowsers()
     if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
@@ -646,6 +775,10 @@ final class Runtime {
       browserCheckPhase = 4
       host.checkMenuCommand(false)
     } else if mode == "menu", browserCheckPhase == 4, host.tabs().count >= 4 {
+      guard host.checkFocusSearch() else {
+        finishBrowserCheck(ok: false, values: ["focus_search_unchanged": false])
+        return
+      }
       browserCheckPhase = 5
       host.checkMenuCommand(true)
     } else if mode == "menu", browserCheckPhase == 5, let child = children.first, let childHost = child.host {
@@ -673,7 +806,7 @@ final class Runtime {
               children.allSatisfy({ $0.host == nil }) {
       let stock = host.checkStockBrowsers()
       finishBrowserCheck(ok: stock == 0, values: ["urls_added": browserCheckRows.count,
-        "last_selected": true, "ntp_preserved": true, "reused_empty_host": true,
+        "last_selected": true, "ntp_preserved": true, "reused_empty_host": true, "focus_search_unchanged": true,
         "stock_browsers": stock])
     } else if mode == "popup", browserCheckPhase == 2,
               let popup = popups.first?.host,
@@ -717,6 +850,334 @@ final class Runtime {
     }
   }
 
+  func emptyCheckTick(_ host: any ARWindowHostAPI) {
+    if browserCheckPhase == 0, let tab = (host.tabs() as? [any ARTabAPI])?.first,
+       let data = tab.title.data(using: .utf8),
+       let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+       report["windows"] as? Int == 1, report["tabs"] as? Int == 0 {
+      emptyProbe = report
+      browserCheckPhase = 1
+      host.checkCloseAllTabs()
+    } else if browserCheckPhase == 1, !host.hasBrowser() {
+      emptyRestore = host.checkEmptySessionRestore()
+      browserCheckPhase = 10
+    } else if browserCheckPhase == 10,
+              let symbol = dlsym(Launcher.handle, "AraratBrowserCount") {
+      let count = unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)()
+      let stock = host.checkStockBrowsers()
+      emptyRestore["browsers_after_wait"] = count
+      emptyRestore["stock_after_wait"] = stock
+      emptyRestorePassed = emptyRestore["service_available"] as? Bool == true &&
+        emptyRestore["restore_eligible"] as? Bool == true && emptyRestore["startup_default"] as? Bool == true &&
+        emptyRestore["startup_urls_preserved"] as? Bool == true &&
+        emptyRestore["restore_requested"] as? Bool == false && emptyRestore["browsers_before"] as? Int == 0 &&
+        emptyRestore["browsers_after"] as? Int == 0 && count == 0 &&
+        emptyRestore["stock_before"] as? Int == 0 && emptyRestore["stock_after"] as? Int == 0 && stock == 0
+      if count != 0 {
+        finishBrowserCheck(ok: false, values: ["session_restore": emptyRestore, "stock_browsers": stock])
+        return
+      }
+      host.checkEnsureEmptyBrowser()
+      browserCheckPhase = 2
+    } else if browserCheckPhase == 2, host.hasBrowser(), host.tabs().isEmpty {
+      let menu = host.checkEmptyMenuValidation()
+      emptyMenuCount = (menu["validated"] as? NSNumber)?.uintValue ?? 0
+      emptyMenuEnabled = menu["enabled_command_ids"] as? [NSNumber] ?? []
+      emptyRowsBefore = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
+      browserCheckPhase = 3
+      host.checkMenuCommand(false)
+    } else if browserCheckPhase == 3, host.hasBrowser(),
+              let tab = (host.tabs() as? [any ARTabAPI])?.first,
+              let id = tab.itemId, !emptyRowsBefore.contains(id),
+              snapshot.spaces.flatMap({ $0.today + $0.pinned + $0.favorites }).contains(where: { $0.id == id }) {
+      let stock = host.checkStockBrowsers()
+      finishBrowserCheck(ok: stock == 0 && emptyMenuCount > 0 && emptyRestorePassed, values: ["empty_windows_probe": emptyProbe,
+        "menu_items_validated": emptyMenuCount, "enabled_command_ids": emptyMenuEnabled,
+        "session_restore": emptyRestore, "new_tab": true, "new_tab_row_id": id,
+        "command_bar_available": false, "stock_browsers": stock])
+    }
+  }
+
+  func extensionCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    func tab(_ profile: String) -> (any ARTabAPI)? {
+      let space = profile == "Default" ? "default" : "named"
+      guard let id = snapshot.spaces.first(where: { $0.id == space })?.today.first?.id else { return nil }
+      return (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })
+    }
+    func screenStateValid(_ shown: String) -> Bool {
+      let state = host.checkProfileState()
+      guard state["shown"] as? String == shown, state["chrome_last"] as? String == shown,
+            state["app_last"] as? String == shown, let rows = state["browsers"] as? [[String: Any]],
+            let visible = rows.first(where: { $0["profile"] as? String == shown }),
+            let hidden = rows.first(where: { $0["profile"] as? String != shown }) else { return false }
+      return visible["visible"] as? Bool == true && visible["active"] as? Bool == true &&
+        hidden["visible"] as? Bool == false && hidden["active"] as? Bool == false && hidden["minimized"] as? Bool == false
+    }
+    func report(_ profile: String) -> [String: Any]? {
+      guard let rows = host.checkProfileState()["browsers"] as? [[String: Any]],
+            let browser = rows.first(where: { $0["profile"] as? String == profile }),
+            let tab = (browser["tabs"] as? [[String: Any]])?.first,
+            let title = tab["title"] as? String, let data = title.data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+      return value
+    }
+    func valid(_ report: [String: Any]) -> Bool {
+      guard let windows = report["windows"] as? [[String: Any]], windows.count == 1,
+            let id = windows.first?["id"] as? Int,
+            let windowTabs = windows.first?["tabs"] as? [[String: Any]], windowTabs.count == 1,
+            let last = report["last"] as? [String: Any], last["id"] as? Int == id,
+            let tabs = report["tabs"] as? [[String: Any]], tabs.count == 1,
+            tabs.first?["windowId"] as? Int == id, let tabID = tabs.first?["id"] as? Int,
+            let windowTabID = windowTabs.first?["id"] as? Int, tabID == windowTabID else { return false }
+      return true
+    }
+    if browserCheckAttempts % 10 == 0 && browserCheckPhase <= 2 {
+      for profile in ["Default", "Profile 1"] where report(profile) == nil {
+        tab(profile)?.checkReloadExtensionWindow()
+      }
+    }
+    if browserCheckPhase == 0,
+       let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first, let url = row.url {
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 1
+    } else if browserCheckPhase == 1, report("Default") != nil {
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, let url = row.url else { return }
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 2
+    } else if browserCheckPhase == 2, report("Default") != nil, report("Profile 1") != nil {
+      FileHandle.standardError.write(Data("ararat-trace: extension-report request profiles=Default,Profile 1 next_phase=20\n".utf8))
+      tab("Default")?.checkReportExtensionWindow()
+      tab("Profile 1")?.checkReportExtensionWindow()
+      browserCheckPhase = 20
+    } else if browserCheckPhase == 20, let first = report("Default"), let second = report("Profile 1"),
+              first["hash"] as? String == "#report", second["hash"] as? String == "#report", valid(first), valid(second),
+              let firstWindows = first["windows"] as? [[String: Any]], let secondWindows = second["windows"] as? [[String: Any]],
+              let firstID = firstWindows.first?["id"] as? Int, let secondID = secondWindows.first?["id"] as? Int, firstID != secondID {
+      if screen && !screenStateValid("Profile 1") { return }
+      FileHandle.standardError.write(Data("ararat-trace: extension-report ready default=\(firstID) profile1=\(secondID) screen=\(screen)\n".utf8))
+      profileCheckStates = [first, second]
+      guard let probe = tab("Profile 1") else { return }
+      if screen {
+        probe.checkPrepareExtensionFocus()
+        browserCheckPhase = 22
+      } else {
+        probe.checkPrepareExtensionWindows()
+        browserCheckPhase = 25
+      }
+    } else if !screen, browserCheckPhase == 25, let named = report("Profile 1"),
+              named["hash"] as? String == "#prepare-hidden",
+              let target = named["targetId"] as? Int, let other = named["otherId"] as? Int,
+              target != other, named["focusBefore"] as? Int == other,
+              let windows = named["windows"] as? [[String: Any]], windows.count == 2,
+              children.count == 1 {
+      extensionFocusProbe = named
+      adapter?.windowHost(host, showProfile: "Default")
+      guard host.profileDirectory() == "Default" else {
+        finishBrowserCheck(ok: false, values: ["failed_predicate": "switched_away",
+          "switched_away": false, "shown_profile": host.profileDirectory(),
+          "profile_windows": extensionFocusProbe, "stock_browsers": host.checkStockBrowsers()])
+        return
+      }
+      extensionSwitchedAway = true
+      tab("Profile 1")?.checkFocusExtensionWindow()
+      browserCheckPhase = 26
+    } else if !screen, browserCheckPhase == 26, let named = report("Profile 1"),
+              named["hash"] as? String == "#focus", named["focusResult"] as? Bool == true,
+              host.profileDirectory() == "Profile 1", let target = named["targetId"] as? Int,
+              let other = named["otherId"] as? Int, target != other,
+              let windows = named["windows"] as? [[String: Any]], windows.count == 2,
+              let last = named["last"] as? [String: Any], last["id"] as? Int == target,
+              let current = named["current"] as? [String: Any], current["id"] as? Int == target,
+              let byID = named["byId"] as? [String: Any], byID["id"] as? Int == target,
+              byID["type"] as? String == "normal",
+              windows.allSatisfy({ $0["type"] as? String == "normal" }),
+              let byIDTabs = byID["tabs"] as? [[String: Any]], byIDTabs.count == 1,
+              host.checkProfileState()["chrome_last"] as? String == "Profile 1",
+              host.checkProfileState()["app_last"] as? String == "Profile 1" {
+      extensionFocusProbe = named
+      children.first?.host?.close()
+      browserCheckPhase = 27
+    } else if !screen, browserCheckPhase == 27, children.isEmpty {
+      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
+        "profile_windows": extensionFocusProbe, "switched_away": extensionSwitchedAway,
+        "chrome_last": "Profile 1", "app_last": "Profile 1",
+        "stock_browsers": host.checkStockBrowsers()])
+    } else if browserCheckPhase == 22, let named = report("Profile 1"),
+              let before = named["focusBefore"] as? Int, let other = named["otherId"] as? Int,
+              let target = named["targetId"] as? Int, target != other, before == other,
+              children.count == 1 {
+      extensionFocusProbe = named
+      adapter?.windowHost(host, showProfile: "Default")
+      if screen { host.window().makeKeyAndOrderFront(nil) }
+      browserCheckPhase = 21
+    } else if browserCheckPhase == 21 {
+      if screen && !screenStateValid("Default") { return }
+      guard let named = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
+            let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == named.id }) else { return }
+      tab.checkFocusExtensionWindow()
+      browserCheckPhase = 3
+    } else if browserCheckPhase == 3, host.profileDirectory() == "Profile 1",
+              let named = report("Profile 1"), named["focusResult"] as? Bool == true,
+              named["targetId"] as? Int == extensionFocusProbe["targetId"] as? Int,
+              named["otherId"] as? Int == extensionFocusProbe["otherId"] as? Int {
+      if screen && !screenStateValid("Profile 1") { return }
+      extensionFocusProbe = named
+      children.first?.host?.close()
+      browserCheckPhase = 23
+    } else if browserCheckPhase == 23, children.isEmpty {
+      if !screen {
+        finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
+          "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "stock_browsers": host.checkStockBrowsers()])
+      } else {
+        NSApp.deactivate()
+        browserCheckPhase = 4
+      }
+    } else if screen, browserCheckPhase == 4, let named = report("Profile 1"),
+              let events = named["focusEvents"] as? [Int], events.contains(-1),
+              let windows = named["windows"] as? [[String: Any]],
+              let id = windows.first?["id"] as? Int, events.contains(id) {
+      NSApp.activate(ignoringOtherApps: true)
+      host.window().makeKeyAndOrderFront(nil)
+      browserCheckPhase = 5
+    } else if screen, browserCheckPhase == 5, host.window().isKeyWindow {
+      if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: host.window().windowNumber,
+          context: nil, characters: "N", charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45) {
+        NSApp.sendEvent(event)
+      }
+      browserCheckPhase = 6
+    } else if screen, browserCheckPhase == 6, let popup = popups.first?.host,
+              (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
+        "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
+    }
+  }
+
+  func incognitoCheckTick(_ host: any ARWindowHostAPI) {
+    if browserCheckPhase == 0,
+       let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
+       let url = row.url {
+      browserCheckSeedID = row.id
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 1
+    } else if browserCheckPhase == 1, sliceActive == browserCheckSeedID, !host.tabs().isEmpty {
+      browserCheckBefore = snapshot
+      guard let rows = captureCheckRows() else { return }
+      quitBefore = rows
+      host.checkCreateIncognito()
+      browserCheckPhase = 2
+    } else if browserCheckPhase == 2, let popup = popups.first?.host,
+              (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      host.checkNavigateOffTheRecord()
+      browserCheckPhase = 3
+    } else if browserCheckPhase == 3, popups.contains(where: { popup in
+      (popup.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.title == "ararat-otr-navigation" }) == true
+    }) {
+      let stock = host.checkStockBrowsers()
+      let after = captureCheckRows()
+      let rowsUnchanged = snapshot == browserCheckBefore && quitBefore != nil && after == quitBefore
+      finishBrowserCheck(ok: rowsUnchanged && stock == 0, values: ["off_the_record": true,
+        "off_the_record_navigation": true, "rows_unchanged": rowsUnchanged,
+        "rows_before": quitBefore ?? [], "rows_after": after ?? [], "stock_browsers": stock])
+    }
+  }
+
+  func profileCheckTick(_ host: any ARWindowHostAPI) {
+    func select(_ space: String) -> Bool {
+      guard let row = snapshot.spaces.first(where: { $0.id == space })?.today.first, let url = row.url else { return false }
+      adapter?.select(id: row.id, url: url)
+      return true
+    }
+    let state = host.checkProfileState()
+    let browsers = state["browsers"] as? [[String: Any]] ?? []
+    let stock = host.checkStockBrowsers()
+    if browserCheckPhase == 0 {
+      if select("default") { browserCheckPhase = 1 }
+    } else if browserCheckPhase == 1, browsers.count == 1, !host.tabs().isEmpty {
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      if select("named") { browserCheckPhase = 2 }
+    } else if browserCheckPhase == 2, browsers.count == 2, host.tabs().count == 2 {
+      host.checkCreateRestoreBrowser()
+      host.checkActivateShownProfile()
+      profileCheckStates.append(host.checkProfileState())
+      host.checkCookieIsolation()
+      adapter?.windowHost(host, showProfile: "Default")
+      host.checkActivateShownProfile()
+      browserCheckPhase = 3
+    } else if browserCheckPhase == 3, state["shown"] as? String == "Default" {
+      profileCheckStates.append(state)
+      profileCheckPointer = browsers.first(where: { $0["profile"] as? String == "Profile 1" })?["profile_pointer"] as? String
+      host.checkCloseTabs(forProfile: "Profile 1")
+      browserCheckPhase = 4
+    } else if browserCheckPhase == 4, browsers.count == 1,
+              let loaded = state["loaded_profiles"] as? [String], loaded.contains("Profile 1"),
+              (host.checkCookieState()["done"] as? Bool) == true {
+      profileCheckLoadedAfterClose = true
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      guard let adapter else { return }
+      let row: Row? = adapter.session.queue.sync {
+        guard let store = adapter.session.store,
+              let current = try? store.createTab(windowId: windowID, url: "about:blank"),
+              let selected = current.selectedId else { return nil }
+        return current.spaces.flatMap(\.today).first { $0.id == selected }
+      }
+      if let row, let url = row.url {
+        adapter.select(id: row.id, url: url)
+        browserCheckPhase = 5
+      }
+    } else if browserCheckPhase == 5, browsers.count == 2,
+              state["devtools_destroyed"] as? Bool == true,
+              let named = browsers.first(where: { $0["profile"] as? String == "Profile 1" }),
+              let namedTabs = named["tabs"] as? [[String: Any]], !namedTabs.isEmpty {
+      host.checkActivateShownProfile()
+      let state = host.checkProfileState()
+      let cookies = host.checkCookieState()
+      let names = Set(browsers.compactMap { $0["profile"] as? String })
+      let hidden = browsers.first { $0["profile"] as? String == "Default" }
+      let switchesOK = profileCheckStates.count == 2 && profileCheckStates.allSatisfy { state in
+        guard let shown = state["shown"] as? String,
+              state["chrome_last"] as? String == shown, state["app_last"] as? String == shown,
+              let windows = state["browsers"] as? [[String: Any]], windows.count == 2,
+              let hidden = windows.first(where: { $0["profile"] as? String != shown }) else { return false }
+        return hidden["visible"] as? Bool == false && hidden["minimized"] as? Bool == false
+      }
+      let correct = names == Set(["Default", "Profile 1"]) &&
+        (hidden?["visible"] as? Bool) == false && (hidden?["minimized"] as? Bool) == false &&
+        (state["chrome_last"] as? String) == "Profile 1" && (state["app_last"] as? String) == "Profile 1" &&
+        (cookies["set"] as? Bool) == true && (cookies["isolated"] as? Bool) == true && switchesOK && stock == 1 &&
+        profileCheckPointer != nil && profileCheckPointer == named["profile_pointer"] as? String &&
+        state["restore_omitted"] as? Bool == true && state["devtools_destroyed"] as? Bool == true
+      guard let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 2,
+            tabs.allSatisfy({ !$0.isLoading }) else { return }
+      profileCheckStates.append(state)
+      profileCheckPassed = correct
+      profileCheckResult = ["states": profileCheckStates, "cookie": cookies,
+        "loaded_after_hidden_close": profileCheckLoadedAfterClose, "profile_pointer_before": profileCheckPointer ?? "", "restore_omitted": state["restore_omitted"] ?? false, "devtools_destroyed": state["devtools_destroyed"] ?? false, "stock_browsers": stock, "reopened": true]
+      for tab in tabs { tab.prepareCheckBeforeUnload() }
+      browserCheckPhase = 6
+    } else if browserCheckPhase == 6, let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 2,
+              tabs.allSatisfy({ $0.checkHasBeforeUnload() }), let rows = captureCheckRows() {
+      profileCloseBefore = rows
+      host.configureProfileCloseCheck(2)
+      browserCheckPhase = 7
+      host.close()
+    } else if browserCheckPhase == 7 {
+      let closeState = host.checkProfileCloseState()
+      guard closeState["dialogs"] as? Int == 2, closeState["closing"] as? Bool == false else { return }
+      let after = captureCheckRows()
+      let rowsKept = after?.filter { $0.first != "window" } == profileCloseBefore?.filter { $0.first != "window" } && after != nil
+      let valid = closeState["browsers"] as? Int == 2 && closeState["closed"] as? Bool == false &&
+        closeState["close_cancelled"] as? Int == 1 &&
+        closeState["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"] && rowsKept
+      profileCloseCancelled = closeState.merging(["rows_unchanged": rowsKept, "host_open": true]) { _, new in new }
+      profileCheckPassed = profileCheckPassed && valid
+      host.configureProfileCloseCheck(0)
+      browserCheckPhase = 8
+      host.close()
+    }
+  }
+
   func finishBrowserCheck(ok: Bool, values: [String: Any]) {
     browserCheckTimer?.invalidate()
     browserCheckTimer = nil
@@ -725,8 +1186,9 @@ final class Runtime {
     Launcher.startupWatchdog?.cancel()
     Launcher.browserCheckFinished = true
     var result = values
-    result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode ?? "unknown")
+    result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode ?? "unknown"))
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
+    if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     result["ok"] = ok
     result["exit"] = ok ? 0 : 1
     if result["stock_browsers"] == nil { result["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock }
@@ -762,6 +1224,46 @@ final class Runtime {
       exit(1)
     }
     let host = self.host
+    if mode == "quit-cancel", let host {
+      if quitPhase == 0, let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
+         let url = row.url {
+        quitPhase = 10
+        adapter?.select(id: row.id, url: url)
+        return
+      }
+      if quitPhase == 10, let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
+         (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == row.id && !$0.isLoading }) == true,
+         let named = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, let url = named.url {
+        adapter?.windowHost(host, showProfile: "Profile 1")
+        adapter?.select(id: named.id, url: url)
+        quitPhase = 11
+        return
+      }
+      if quitPhase == 11, let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
+         let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == row.id }),
+         !tab.isLoading {
+        tab.prepareCheckBeforeUnload()
+        quitPhase = 12
+        return
+      }
+      if quitPhase == 12, let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
+         (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == row.id })?.checkHasBeforeUnload() == true {
+        adapter?.windowHost(host, showProfile: "Default")
+        quitBefore = nil
+        quitPhase = 13
+        return
+      }
+      if quitPhase == 13, host.profileDirectory() == "Default",
+         let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
+         snapshot.selectedId == row.id, let rows = captureCheckRows() {
+        guard quitBefore == rows else { quitBefore = rows; return }
+        quitOriginal = rows
+        quitStyleMask = host.window().styleMask.rawValue
+        quitPhase = 3
+        NSApp.terminate(nil)
+        return
+      }
+    }
     if quitPhase == 0, host != nil, !sliceRows.isEmpty {
       quitPhase = 1
       let row = sliceRows[0]
@@ -817,16 +1319,46 @@ final class Runtime {
     if quitPhase == 3, let host, mode != "quit" {
       if mode == "screen-quit", screenDialogs == 0 { _ = clickScreenDialog(stay: true); return }
       let seen = mode == "screen-quit" ? screenDialogs : Int(host.checkDialogCount())
-      guard seen >= 1, !host.checkTryingToQuit(), host.tabs().count == 1,
+      let expectedBrowsers = mode == "quit-cancel" ? 2 : 1
+      guard seen >= 1, !host.checkTryingToQuit(), host.tabs().count == expectedBrowsers,
             let symbol = dlsym(Launcher.handle, "AraratBrowserCount") else { return }
       let closing = host.checkClosingEvents().map(\.boolValue)
       guard closing.last == false else { return }
       let browsers = unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)()
-      guard browsers == 1 else { return }
-      let rows = captureCheckRows()
+      guard browsers == UInt(expectedBrowsers) else { return }
+      guard let rows = captureCheckRows() else { return }
+      let activeItem = host.activeItemId()
+      let selectedMatches = activeItem != nil && snapshot.selectedId == activeItem &&
+        checkWindowSelection(rows, windowID: windowID) == activeItem
+      if mode == "quit-cancel" {
+        guard selectedMatches else { quitCancelPrevious = nil; return }
+        guard quitCancelPrevious == rows else { quitCancelPrevious = rows; return }
+      }
+      let cancelDiff = checkRecordDiff(quitBefore, rows)
+      let duringDiff = checkRecordDiff(quitBefore, quitDuringProfileSwitch)
+      let outgoingItem = checkWindowSelection(quitBefore, windowID: windowID)
+      let allowedWindowFields: Set<String> = ["shown_space", "space_history", "changed_at", "selected", "history"]
+      let allowedSelections = Set([outgoingItem, activeItem].compactMap { $0 })
+      let windowRecordsChanged = cancelDiff.filter { $0["kind"] as? String == "window" }.count
+      let onlyWindowSpaceChanged = outgoingItem != nil && activeItem != nil && windowRecordsChanged == 1 &&
+        cancelDiff.contains { ($0["fields"] as? [String] ?? []).contains("shown_space") } && cancelDiff.allSatisfy { entry in
+        if entry["kind"] as? String == "window" && entry["id"] as? String == windowID {
+          return Set(entry["fields"] as? [String] ?? []).isSubset(of: allowedWindowFields)
+        }
+        guard entry["kind"] as? String == "last_selected", let id = entry["id"] as? String,
+              allowedSelections.contains(id) else { return false }
+        return rows.contains { $0.count == 3 && $0[0] == "last_selected" && $0[1] == id }
+      }
       quitFirst = ["trying_to_quit": host.checkTryingToQuit(), "browsers": browsers,
                    "host_alive": true, "tabs": host.tabs().count,
-                   "rows_unchanged": rows != nil && rows == quitBefore]
+                   "rows_unchanged": mode == "quit-cancel" ? onlyWindowSpaceChanged && selectedMatches : rows == quitBefore,
+                   "hidden_profile_shown": mode == "quit-cancel" && host.profileDirectory() == "Profile 1",
+                   "rows_unchanged_during_switch": mode == "quit-cancel" && quitDuringProfileSwitch != nil && duringDiff.isEmpty,
+                   "window_written_after_cancel": mode == "quit-cancel" && onlyWindowSpaceChanged,
+                   "outgoing_item": outgoingItem ?? "", "active_item": activeItem ?? "",
+                   "window_records_changed": windowRecordsChanged, "selected_matches_active": selectedMatches,
+                   "during_diff": duringDiff, "cancel_diff": cancelDiff]
+      if mode == "quit-cancel" { quitBefore = rows }
       quitEvents = host.checkClosingEvents()
       quitPhase = 4
       if mode == "close" { container?.sidebarCloseButton?.performClick(nil) }
@@ -871,12 +1403,14 @@ final class Runtime {
     let windowRemoved = quitBefore?.contains(where: { $0.first == "window" }) == true && quitClosedRows?.contains(where: { $0.first == "window" }) == false
     let dialogSeen = mode == "screen-quit" ? screenDialogs : Int(quitDialogCount)
     let firstPassed = (quitFirst["rows_unchanged"] as? Bool) == true &&
-      (quitFirst["trying_to_quit"] as? Bool) == false && (quitFirst["browsers"] as? UInt) == 1
+      (quitFirst["trying_to_quit"] as? Bool) == false && (quitFirst["browsers"] as? UInt) == (mode == "quit-cancel" ? 2 : 1)
     let events = quitEvents.map(\.boolValue)
     let modePassed: Bool
     switch mode {
     case "quit": modePassed = unchanged && events == [true]
-    case "quit-cancel": modePassed = unchanged && firstPassed && dialogSeen == 2 && events == [true, false, true]
+    case "quit-cancel": modePassed = unchanged && firstPassed && dialogSeen == 2 && events == [true, false, true] &&
+      quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["rows_unchanged_during_switch"] as? Bool == true &&
+      quitFirst["window_written_after_cancel"] as? Bool == true
     case "close": modePassed = firstPassed && closedRowsUnchanged && windowRemoved && quitReopened && quitDockEmpty && dialogSeen == 2
     case "screen-quit": modePassed = unchanged && firstPassed && dialogSeen == 2 && Array(events.dropFirst(screenClosingOffset)) == [true, false, true] && screenSidebarLights && screenAppKitLightsHidden
     default: modePassed = false
@@ -893,6 +1427,7 @@ final class Runtime {
       result["appkit_lights_hidden"] = screenAppKitLightsHidden
     }
     if mode == "quit-cancel" || mode == "close" || mode == "screen-quit" { result["after_stay"] = quitFirst }
+    if mode == "quit-cancel" { result["rows_before_first_quit"] = quitOriginal ?? [] }
     if mode == "close" {
       result["rows_after_close"] = quitClosedRows ?? []
       result["rows_unchanged_after_close"] = closedRowsUnchanged
@@ -1105,7 +1640,7 @@ let checksPassed = MainActor.assumeIsolated {
   if Launcher.browserCheckFinished { return true }
   if let runtime = Launcher.runtime { return runtime.finishQuitCheck(exitCode: result) }
   if let argument = CommandLine.arguments.first(where: {
-    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=deferred", "--ararat-screen=quit", "--ararat-screen=links"].contains($0)
+    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=incognito", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles"].contains($0)
   }) {
     Launcher.startupWatchdog?.cancel()
     let screen = argument.hasPrefix("--ararat-screen=")

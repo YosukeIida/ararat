@@ -14,8 +14,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction) -> Void)?
     public var onWorkspaceChange: (@MainActor () -> Void)?
+    public var onQuitProfileSwitch: (@MainActor () -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, profileCheckURL: String = "about:blank", session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -23,10 +24,20 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         try queue.sync {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
-            if (seedCheck || seedSingleCheck || seedLinkCheck) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
-            if empty {
+            if seedProfiles {
+                let json = """
+                {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
+                """
+                _ = try opened.importArcSidebar(windowId: windowID, json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+                for space in ["default", "named"] {
+                    try opened.showSpace(windowId: windowID, spaceId: space)
+                    _ = try opened.createTab(windowId: windowID, url: profileCheckURL)
+                }
+                try opened.showSpace(windowId: windowID, spaceId: "default")
+            } else if empty {
                 _ = try opened.createSpace(windowId: windowID, name: "Space", spaceId: UUID().uuidString)
             }
             if seedCheck || seedSingleCheck {
@@ -45,8 +56,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         precondition(Thread.isMainThread)
         self.host = host
         let profile = queue.sync { self.shownProfileDirectory() }
-        if let profile { _ = host.setProfileDirectory(profile) }
         host.delegate = self
+        if let profile { _ = host.setProfileDirectory(profile) }
         publish()
     }
 
@@ -108,6 +119,30 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
 
+    public func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {
+        if host.isClosingAll() {
+            _ = host.setProfileDirectory(profile)
+            MainActor.assumeIsolated { onQuitProfileSwitch?() }
+            return
+        }
+        let snapshot: WorkspaceSnapshot? = queue.sync {
+            do {
+                guard let store = self.store,
+                      let space = store.recentSpaceForProfile(windowId: self.windowID, profile: profile == "Default" ? .default : .named(profile)) else { return nil }
+                try store.showSpace(windowId: self.windowID, spaceId: space)
+                return store.snapshot(windowId: self.windowID)
+            } catch { self.report(error); return nil }
+        }
+        guard let snapshot, host.setProfileDirectory(profile) else { return }
+        MainActor.assumeIsolated { onSnapshot?(snapshot) }
+    }
+
+    public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {
+        let profile = host.profileDirectory()
+        guard queue.sync(execute: { shownProfileDirectory() }) != profile else { return }
+        windowHost(host, showProfile: profile)
+    }
+
     public func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction value: [String: Any]) {
         guard let epoch = value["epoch"] as? NSNumber, let rev = value["rev"] as? NSNumber,
               let raw = value["strips"] as? [[String: Any]] else {
@@ -136,7 +171,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             }
             var parsedTabs: [LiveTab] = []
             for tab in tabs {
-                guard let live = tab["live_id"] as? String, let item = tab["item"],
+                guard let profile = tab["profile"] as? String, let live = tab["live_id"] as? String, let item = tab["item"],
                       let opener = tab["opener"], let url = tab["url"], let title = tab["title"],
                       let navigated = tab["navigated"] as? Bool,
                       item is NSNull || item is String,
@@ -145,7 +180,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     invalidTransaction()
                     return
                 }
-                parsedTabs.append(LiveTab(liveId: live, item: item as? String,
+                parsedTabs.append(LiveTab(profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
@@ -208,14 +243,17 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         switch command.kind {
         case .open:
-            let profile = queue.sync { self.shownProfileDirectory() }
-            guard let profile, host.setProfileDirectory(profile) else {
+            let profile: String? = queue.sync {
+                guard let profile = self.store?.itemProfile(itemId: command.item) else { return nil }
+                switch profile { case .default: return "Default"; case .named(let name): return name }
+            }
+            guard let profile else {
                 queue.async { _ = self.store?.liveCancel(commandId: command.id); self.publish() }
                 return
             }
             if let url = command.url {
-                let accepted = external.map { host.openExternalURL(url, commandId: command.id, itemId: command.item, untrusted: $0) }
-                    ?? host.openURL(url, commandId: command.id, itemId: command.item)
+                let accepted = host.openURL(url, commandId: command.id, itemId: command.item, profile: profile,
+                                            external: external != nil, untrusted: external ?? false)
                 if accepted { return }
             }
             queue.async {

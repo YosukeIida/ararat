@@ -41,6 +41,7 @@ void ScheduleTick() {
 }  // namespace
 
 @implementation ARTabsCheck
+- (void)windowHostClosingAllCancelled:(id<ARWindowHostAPI>)host {}
 @synthesize host = _host;
 @synthesize card = _card;
 @synthesize transactions = _transactions;
@@ -55,6 +56,7 @@ void ScheduleTick() {
 @synthesize attempts = _attempts;
 
 - (NSView*)pageCardForWindowHost:(id<ARWindowHostAPI>)host { return self.card; }
+- (void)windowHost:(id<ARWindowHostAPI>)host showProfile:(NSString*)profile {}
 - (void)windowHost:(id<ARWindowHostAPI>)host didReceiveTransaction:(NSDictionary*)transaction {
   NSMutableArray<NSString*>* strips = [NSMutableArray array];
   for (NSDictionary* strip in transaction[@"strips"]) {

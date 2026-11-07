@@ -1,5 +1,5 @@
---- a/chrome/browser/ui/browser.cc	2026-11-06 16:05:45
-+++ b/chrome/browser/ui/browser.cc	2026-11-06 16:05:45
+--- a/chrome/browser/ui/browser.cc
++++ b/chrome/browser/ui/browser.cc
 @@ -12,6 +12,7 @@
  #include <string>
  #include <utility>
@@ -8,16 +8,28 @@
  #include "base/base_paths.h"
  #include "base/check_deref.h"
  #include "base/command_line.h"
-@@ -262,6 +263,8 @@
-       ->AddBrowserForTesting(browser.get());
+@@ -263,6 +264,8 @@
    return browser;
  }
-+
-+BrowserWindow* (*g_ararat_create_browser_window)(BrowserWindowInterface*) = nullptr;
  
++BrowserWindow* (*g_ararat_create_browser_window)(BrowserWindowInterface*) = nullptr;
++
  Browser::Browser(BrowserWindowCreateParams params)
      : type_(params.type),
-@@ -308,11 +311,17 @@
+       profile_(&*params.profile),
+@@ -283,6 +286,11 @@
+   const bool user_gesture = params.from_user_gesture;
+   const bool in_tab_dragging = params.in_tab_dragging;
+   BrowserWindow* const custom_window = params.window;
++
++  if (g_ararat_create_browser_window) {
++    params.omit_from_session_restore = true;
++    params.should_trigger_session_restore = false;
++  }
+ 
+   // Constructed first so that downstream features and window setup (e.g.
+   // BrowserWindowFeatures and the window sizer) can query the creation and
+@@ -308,11 +316,17 @@
    if (custom_window) {
      CHECK_IS_TEST() << "BrowserWindowCreateParams::window is a test-only param";
    }
@@ -40,7 +52,8 @@
  
    if (auto* const app_browser_controller =
            web_app::AppBrowserController::From(this)) {
-@@ -749,4 +758,6 @@
+@@ -748,7 +762,9 @@
+ 
    // Save what the user's currently typing, so it can be restored when we
    // switch back to this tab.
 -  window_->GetLocationBar()->SaveStateToContents(contents);
@@ -48,3 +61,5 @@
 +    location_bar->SaveStateToContents(contents);
 +  }
  }
+ 
+ void Browser::OnActiveTabChanged(const TabStripModelChange& change,

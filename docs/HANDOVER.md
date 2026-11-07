@@ -5,6 +5,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U11 done (hidden checks): two profiles share one window; showing a space loads its profile and
+  creates that profile's Browser in the host (one Browser per profile per host), extension windows APIs see
+  each profile's own windows, off-the-record Browsers are hosted, Chrome's session restore is off for every
+  Browser and the startup pref is pinned to Chrome's default. Quit and close ask every hosted profile's
+  beforeunload; a cancel that switched the shown profile writes that switch like a normal one. Our window's
+  command handler forwards every command to AppController (validation too), except New Tab on an empty
+  Browser (`chrome::NewTab`) and Search the Web (dropped until U16). `--ararat-screen=profiles`, `quit` and
+  `links` have not been run (screen locked).
 - Phase 3 U10 done (hidden checks): the Browser-constructor factory is always on. Default-profile
   (the shown space's profile) TYPE_NORMAL Browsers get a second app window, TYPE_POPUP a page-only popup
   host with no rows; DevTools, app/extension windows, PiP, off-the-record and other profiles stay stock and

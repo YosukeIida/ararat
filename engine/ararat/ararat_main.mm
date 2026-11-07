@@ -22,9 +22,11 @@
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/startup/startup_tab_provider.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
@@ -46,6 +48,7 @@ bool g_check_slice = false;
 bool g_slice_passed = false;
 bool g_shared_compositor = false;
 unsigned long g_stock_browsers = 0;
+bool g_check_devtools_destroyed = false;
 
 void DispatchCommandLineURLs(Profile* profile) {
   if (!profile || !g_ararat_open_urls) return;
@@ -57,13 +60,18 @@ void DispatchCommandLineURLs(Profile* profile) {
     NSURL* url = [NSURL URLWithString:[NSString stringWithUTF8String:tab.url.spec().c_str()]];
     if (url) [urls addObject:@{ @"url": url, @"untrusted": @(tab.is_untrusted_launch) }];
   }
-  if (urls.count) g_ararat_open_urls(urls);
+  if (urls.count) g_ararat_open_urls(urls, ProfileManager::MaybeForceOffTheRecordMode(profile));
 }
 
 class StockBrowserObserver : public BrowserCollectionObserver {
  public:
   void OnBrowserCreated(BrowserWindowInterface* browser) override {
     if (!g_ararat_is_window || !g_ararat_is_window(browser)) ++g_stock_browsers;
+  }
+  void OnBrowserClosed(BrowserWindowInterface* browser) override {
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "profiles" &&
+        browser->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS)
+      g_check_devtools_destroyed = true;
   }
 };
 
@@ -180,8 +188,8 @@ void CheckGuards(int argc, const char** argv) {
     }
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links";
-      if (std::string_view(arg + 16) == "links") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -193,7 +201,8 @@ void CheckGuards(int argc, const char** argv) {
       has_check = true;
       std::string_view name(arg + 15);
       bool browser_check = name == "newtab" || name == "popup" ||
-                           name == "menu" || name == "deferred";
+                           name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
+                           name == "ext-windows" || name == "incognito";
       g_check_tabs = name == "tabs";
       check_slice = name == "slice";
       g_check_slice = check_slice;
@@ -256,6 +265,7 @@ void CheckGuards(int argc, const char** argv) {
 
 bool AraratUsesSharedCompositor() { return g_shared_compositor; }
 unsigned long AraratStockBrowserCount() { return g_stock_browsers; }
+bool AraratCheckDevToolsDestroyed() { return g_check_devtools_destroyed; }
 bool AraratHasHostCallback() { return g_ararat_callbacks.create_host != nullptr; }
 void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect& bounds) {
   return g_ararat_callbacks.create_host
@@ -273,7 +283,11 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
            g_ararat_callbacks.reopen(g_ararat_callbacks.ctx, has_visible_windows);
   };
   g_ararat_dock_menu = []() -> NSMenu* { return nil; };
-  g_ararat_open_urls = [](NSArray* urls) {
+  g_ararat_open_urls = [](NSArray* urls, Profile* profile) {
+    if (profile && profile->IsOffTheRecord()) {
+      AraratOpenOffTheRecordURLs(profile, urls);
+      return;
+    }
     if (g_ararat_callbacks.open_urls)
       g_ararat_callbacks.open_urls(g_ararat_callbacks.ctx, (__bridge void*)urls);
   };

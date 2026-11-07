@@ -113,6 +113,8 @@ pub struct WindowState {
     pub shown_space: Option<Id>,
     pub selected: Option<Id>,
     pub history: Vec<Id>,
+    #[serde(default)]
+    pub space_history: Vec<Id>,
     // Why the field: the kept-records query orders launch and reopen adoption by it, so
     // every write of the record stamps its instant (shown-space change, selection,
     // creation). `default` reads records stored before the field existed.

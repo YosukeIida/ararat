@@ -1,9 +1,9 @@
 use ararat_core::import::arc_sidebar;
-use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Orientation, WindowState, Workspace};
+use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Orientation, Profile, WindowState, Workspace};
 use ararat_core::storage::Store;
 
 fn set_selection(ws: &mut Workspace, id: &str) {
-    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], changed_at: 0 });
+    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], space_history: vec![], changed_at: 0 });
 }
 
 fn workspace() -> Workspace {
@@ -13,6 +13,23 @@ fn workspace() -> Workspace {
     }
     set_selection(&mut ws, "b");
     ws
+}
+
+#[test]
+fn quit_keeps_window_until_cancel_commits_the_hidden_profiles_space() {
+    let mut ws = workspace();
+    ws.show_space("test", "space-home").unwrap();
+    ws.show_space("test", "space-work").unwrap();
+    let before = ws.windows["test"].clone();
+    let hidden = ws.recent_space_for_profile("test", &Profile::Named("Profile 1".into())).unwrap().to_owned();
+    assert_eq!(hidden, "space-home");
+    assert!(ws.close_window("test", true).is_empty());
+    assert_eq!(ws.windows["test"], before);
+    let ops = ws.show_space("test", &hidden).unwrap();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ws.shown_space("test"), Some("space-home"));
+    assert!(ws.close_window("test", true).is_empty());
+    assert_eq!(ws.shown_space("test"), Some("space-home"));
 }
 
 fn add(ws: &mut Workspace, id: &str, parent: &str, order: &str, kind: ItemKind) {

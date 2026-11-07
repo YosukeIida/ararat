@@ -6,6 +6,7 @@
 #include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
@@ -79,7 +80,7 @@ bool AraratBrowserWindow::IsOnCurrentWorkspace() const {
 }
 
 bool AraratBrowserWindow::IsVisibleOnScreen() const {
-  return host_->widget()->IsVisible();
+  return host_->window() == this && host_->widget()->IsVisibleOnScreen();
 }
 
 void AraratBrowserWindow::SetTopControlsShownRatio(
@@ -354,21 +355,23 @@ BrowserView* AraratBrowserWindow::AsBrowserView() {
 }
 
 void AraratBrowserWindow::Show() {
+  if (host_->closed() || host_->closing()) return;
+  host_->ShowBrowserProfile(browser_);
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
-  host_->widget()->Show();
+  if (host_->window() == this) host_->widget()->Show();
 }
 
 void AraratBrowserWindow::ShowInactive() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
-  host_->widget()->ShowInactive();
+  if (host_->window() == this) host_->widget()->ShowInactive();
 }
 
 void AraratBrowserWindow::Hide() {
-  host_->widget()->Hide();
+  if (host_->window() == this) host_->widget()->Hide();
 }
 
 bool AraratBrowserWindow::IsVisible() const {
-  return host_->widget()->IsVisible();
+  return host_->window() == this && host_->widget()->IsVisible();
 }
 
 void AraratBrowserWindow::SetBounds(const gfx::Rect& bounds) {
@@ -380,15 +383,22 @@ void AraratBrowserWindow::Close() {
 }
 
 void AraratBrowserWindow::Activate() {
+  if (host_->closed() || host_->closing()) return;
+  host_->ShowBrowserProfile(browser_);
+  if (host_->window() == this) {
+    if (auto* manager = BrowserActiveStateManager::From(browser_))
+      manager->DidBecomeActive();
+  }
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
   host_->widget()->Activate();
 }
 
 void AraratBrowserWindow::Deactivate() {
-  host_->widget()->Deactivate();
+  if (host_->window() == this) host_->widget()->Deactivate();
 }
 
 bool AraratBrowserWindow::IsActive() const {
-  return host_->widget()->IsActive();
+  return host_->window() == this && host_->widget()->IsActive();
 }
 
 gfx::Rect AraratBrowserWindow::GetBounds() const {
@@ -400,7 +410,7 @@ bool AraratBrowserWindow::IsMaximized() const {
 }
 
 bool AraratBrowserWindow::IsMinimized() const {
-  return host_->widget()->IsMinimized();
+  return host_->window() == this && host_->widget()->IsMinimized();
 }
 
 bool AraratBrowserWindow::IsFullscreen() const {

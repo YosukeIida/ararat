@@ -60,3 +60,5 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 `ararat/link-ararat-layer.patch` は `//ararat/core` を framework の依存に追加し、`ararat.exports` をリンカに渡し、独自のシンボルを `chrome/app/framework.order` に追加する。`ararat/extra-parts-hook.patch` は `ChromeContentBrowserClient::CreateBrowserMainParts` の末尾で `g_ararat_add_browser_main_extra_parts` が設定されていれば呼び出す。未設定の場合、Chrome は標準どおりに動作する。`ararat/browser-window-factory.patch` は `Browser` のコンストラクタで独自の window factory が設定されていれば呼び出す。未設定の場合と null が返った場合は、Chrome が標準ウィンドウを生成する。location bar がないウィンドウでは、その状態の保存も省く。hook の一覧は architecture §4.3 にある。
 
 `ararat/viewless-read-anything.patch` は、side panel のない独自の viewless ウィンドウで side panel の後処理を省く。
+
+factory hook の設定時、このパッチは `BrowserInitState` がフラグを取り込む前に Chrome のセッション復元を無効にする。標準ウィンドウを使う Browser も対象である。Ararat 自身の workspace の復元は U17 で core から行う。
