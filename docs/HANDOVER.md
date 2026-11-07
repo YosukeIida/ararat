@@ -5,6 +5,13 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U14 done: extension actions are listed in the sidebar header and open Chrome's real
+  action popup; `chrome.action.openPopup()` uses the same host and anchor. Extension-created app
+  popups use our page-only host. Hidden extension checks and the wide floating-menu screen check
+  pass; the API-opened popup's own on-screen placement remains unverified. `screen-quit` and
+  `screen-links` also passed on U13. A separate `screenfix` worktree holds reviewed fixes for
+  `screen-prompts` (passed, including WebAuthn cancellation without registration) and the still
+  failing `screen-profiles`; neither fix is on main yet.
 - Phase 3 U13 done: docked DevTools in the page card under C1 and C2; undocked DevTools uses a
   page-only host, including when only a popup remains. Hidden and screen DevTools checks pass for
   both compositors, including resize and redock; `screen-links` also passes through process exit.
@@ -185,7 +192,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U13 are done (C1 chosen, §4.6). Next: U14–U19 in plan order (specs `extension-popup-51` … `practice-rebase-56`). The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U14 are done (C1 chosen, §4.6). Next: U15–U19 in plan order (specs `fullscreen-52` … `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 

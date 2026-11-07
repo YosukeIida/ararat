@@ -16,7 +16,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onWorkspaceChange: (@MainActor () -> Void)?
     public var onQuitProfileSwitch: (@MainActor () -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, profileCheckURL: String = "about:blank", session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -42,7 +42,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             }
             if seedCheck || seedSingleCheck {
                 for name in seedSingleCheck ? ["One"] : ["One", "Two", "Three"] {
-                    _ = try opened.createTab(windowId: windowID, url: "data:text/html,<title>Ararat \(name)</title>")
+                    _ = try opened.createTab(windowId: windowID, url: singleCheckURL ?? "data:text/html,<title>Ararat \(name)</title>")
                 }
             }
             if seedLinkCheck {

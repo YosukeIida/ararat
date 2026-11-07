@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ararat/core/ararat_browser_window.h"
+#include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_tab.h"
 #include "base/check.h"
@@ -22,6 +23,7 @@
 #include "base/observer_list.h"
 #include "base/process/process.h"
 #include "base/scoped_observation.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/supports_user_data.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -46,6 +48,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/extensions/extension_action_view_model.h"
 #include "chrome/browser/ui/unload_controller.h"
 #include "chrome/browser/ui/browser_init_state.h"
 #include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
@@ -58,6 +61,9 @@
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
+#include "chrome/browser/ui/views/extensions/extension_popup.h"
+#include "chrome/browser/web_applications/web_app_helpers.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/visibility.h"
@@ -76,17 +82,22 @@
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_host_registry.h"
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/image/image.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #import "ui/base/cocoa/command_dispatcher.h"
 #import "ui/base/cocoa/user_interface_item_command_handler.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -116,6 +127,32 @@ bool IsDevToolsCheck() {
   return command->GetSwitchValueASCII("ararat-check") == "devtools" ||
          command->GetSwitchValueASCII("ararat-screen") == "devtools";
 }
+
+class ExtensionPopupCheck : public extensions::ExtensionHostRegistry::Observer {
+ public:
+  explicit ExtensionPopupCheck(Profile* profile) {
+    observation_.Observe(extensions::ExtensionHostRegistry::Get(profile));
+  }
+  void OnExtensionHostCompletedFirstLoad(content::BrowserContext*, extensions::ExtensionHost* host) override {
+    if (host->extension_host_type() == extensions::mojom::ViewType::kExtensionPopup) {
+      current = host;
+      ++loaded;
+    }
+  }
+  void OnExtensionHostDestroyed(content::BrowserContext*, extensions::ExtensionHost* host) override {
+    if (current == host) { current = nullptr; ++destroyed; }
+  }
+  void OnExtensionHostRegistryShutdown(extensions::ExtensionHostRegistry*) override {
+    current = nullptr;
+    observation_.Reset();
+  }
+  raw_ptr<extensions::ExtensionHost> current = nullptr;
+  int loaded = 0;
+  int destroyed = 0;
+  bool api_callback = false;
+ private:
+  base::ScopedObservation<extensions::ExtensionHostRegistry, extensions::ExtensionHostRegistry::Observer> observation_{this};
+};
 
 bool IsCloseCheck() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -298,6 +335,12 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
   if (!core) {
     Profile* profile = browser->GetProfile();
     auto type = browser->GetType();
+    auto* state = BrowserInitState::From(browser);
+    auto* registry = extensions::ExtensionRegistry::Get(profile);
+    const bool extension_popup = type == BrowserWindowInterface::TYPE_APP_POPUP &&
+        state && registry && registry->GetExtensionById(
+            web_app::GetAppIdFromApplicationName(state->create_params().app_name),
+            extensions::ExtensionRegistry::ENABLED);
     const auto name = profile->GetPath().BaseName().value();
     bool hosted = std::any_of(AraratHosts().begin(), AraratHosts().end(),
                               [&name, profile, type](AraratWindowHostCore* host) {
@@ -309,11 +352,11 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
                               });
     if (type != BrowserWindowInterface::TYPE_NORMAL &&
         type != BrowserWindowInterface::TYPE_POPUP &&
-        type != BrowserWindowInterface::TYPE_DEVTOOLS) {
+        type != BrowserWindowInterface::TYPE_DEVTOOLS && !extension_popup) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=type\n");
       return nullptr;
     }
-    if (!hosted && !profile->IsOffTheRecord()) {
+    if (!hosted && (extension_popup || !profile->IsOffTheRecord())) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=profile-mismatch\n");
       return nullptr;
     }
@@ -321,7 +364,6 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=callback-null\n");
       return nullptr;
     }
-    auto* state = BrowserInitState::From(browser);
     gfx::Rect bounds = state->create_params().initial_bounds;
     if (type == BrowserWindowInterface::TYPE_DEVTOOLS) {
       const auto* placement = profile->GetPrefs()->GetDict(prefs::kAppWindowPlacement).FindDict(DevToolsWindow::kDevToolsApp);
@@ -333,7 +375,7 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
         bounds = gfx::Rect(left, top, std::max(0, right - left), std::max(0, bottom - top));
       }
     }
-    void* owner = AraratRequestHost(type == BrowserWindowInterface::TYPE_POPUP || type == BrowserWindowInterface::TYPE_DEVTOOLS || profile->IsOffTheRecord(), name, bounds);
+    void* owner = AraratRequestHost(type == BrowserWindowInterface::TYPE_POPUP || type == BrowserWindowInterface::TYPE_DEVTOOLS || extension_popup || profile->IsOffTheRecord(), name, bounds);
     if (!owner) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=host-unavailable\n");
       return nullptr;
@@ -479,6 +521,9 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   contents->SetLayoutManager(std::make_unique<views::FillLayout>());
   auto* native_host =
       contents->AddChildView(std::make_unique<views::NativeViewHost>());
+  extension_anchor_ = contents->AddChildView(std::make_unique<views::View>());
+  extension_anchor_->SetProperty(views::kViewIgnoredByLayoutKey, true);
+  extension_anchor_->SetCanProcessEventsWithinSubtree(false);
   if (AraratUsesSharedCompositor()) {
     page_host_ = native_host->AddChildView(std::make_unique<views::NativeViewHost>());
   }
@@ -540,6 +585,10 @@ void AraratWindowHostCore::PositionPage(const gfx::Rect& rect) {
   page_rect_ = rect;
   modal_dialog_host_->NotifyPositionRequiresUpdate();
   if (page_host_) page_host_->SetBoundsRect(rect);
+}
+
+void AraratWindowHostCore::SetExtensionAnchor(const gfx::Rect& bounds) {
+  extension_anchor_->SetBoundsRect(bounds);
 }
 
 void AraratWindowHostCore::ShowBrowserProfile(BrowserWindowInterface* browser) {
@@ -631,6 +680,7 @@ void AraratWindowHostCore::SetWindow(AraratBrowserWindow* window) {
   windows_[window->browser()->GetProfile()->GetPath().BaseName().value()] = window;
   devtools_ = window->browser()->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS;
   popup_ = devtools_ || window->browser()->GetType() == BrowserWindowInterface::TYPE_POPUP ||
+           window->browser()->GetType() == BrowserWindowInterface::TYPE_APP_POPUP ||
            window->browser()->GetProfile()->IsOffTheRecord();
   if (devtools_) {
     NSWindow* native_window = GetNativeWindow().GetNativeNSWindow();
@@ -808,6 +858,96 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSUInteger devtools_hook_count_;
   id became_key_observer_;
   id resigned_key_observer_;
+  std::unique_ptr<ExtensionPopupCheck> extension_popup_check_;
+  NSString* extension_popup_storage_;
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActions {
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  if (!container) return @[];
+  NSMutableArray* result = [NSMutableArray array];
+  for (const auto& [id, action] : container->actions()) {
+    auto image = action->GetIcon(container->GetActiveWebContents(), gfx::Size(20, 20))
+                     .Rasterize(core_->widget()->GetColorProvider());
+    NSImage* icon = gfx::Image(image).ToNSImage();
+    const auto action_name = action->GetActionName();
+    NSString* name = [[NSString alloc] initWithCharacters:
+        reinterpret_cast<const unichar*>(action_name.data()) length:action_name.size()];
+    [result addObject:@{ @"id": [NSString stringWithUTF8String:id.c_str()],
+                         @"name": name, @"icon": icon ?: [NSImage new] }];
+  }
+  return result;
+}
+
+- (void)setExtensionAnchor:(NSRect)rect {
+  NSView* root = self.window.contentView;
+  if (!root.isFlipped) rect.origin.y = NSHeight(root.bounds) - NSMaxY(rect);
+  core_->SetExtensionAnchor(gfx::Rect(NSMinX(rect), NSMinY(rect), NSWidth(rect), NSHeight(rect)));
+}
+
+- (void)runExtensionAction:(NSString*)identifier {
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  auto* action = container ? container->GetActionForId(identifier.UTF8String) : nullptr;
+  if (action) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
+}
+
+- (BOOL)checkIsExtensionAppPopup {
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "ext-windows-popup" &&
+      browser_ && browser_->GetType() == BrowserWindowInterface::TYPE_APP_POPUP;
+}
+
+- (void)checkExtensionAction:(NSInteger)command {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  if (flags->GetSwitchValueASCII("ararat-check") != "ext-popup" && flags->GetSwitchValueASCII("ararat-screen") != "extensions") return;
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  if (!container || !browser_) return;
+  const std::string id = "kmgaadhbnkendcanjninlfmfgehagggl";
+  auto* action = container->GetActionForId(id);
+  if (!action) return;
+  if (command == 0 || command == 5) {
+    extension_popup_check_ = std::make_unique<ExtensionPopupCheck>(browser_->GetProfile());
+    if (command == 0) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
+  } else if (command == 1) {
+    container->HideActivePopup();
+  } else if (command == 2) {
+    action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
+  } else if (command == 3 && extension_popup_check_ && extension_popup_check_->current) {
+    extension_popup_check_->current->host_contents()->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+        u"window.close()", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+  } else if (command == 4 && extension_popup_check_) {
+    __weak ARWindowHost* host = self;
+    container->ShowToolbarActionPopupForAPICall(id, base::BindOnce(^(extensions::ExtensionHost* popup) {
+      ARWindowHost* strong = host;
+      if (strong && strong->extension_popup_check_) strong->extension_popup_check_->api_callback = popup != nullptr;
+    }));
+  }
+}
+
+- (NSDictionary<NSString*, id>*)checkExtensionActionState {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  if (flags->GetSwitchValueASCII("ararat-check") != "ext-popup" && flags->GetSwitchValueASCII("ararat-screen") != "extensions") return @{};
+  auto* check = extension_popup_check_.get();
+  if (!check) return @{};
+  auto* popup = ExtensionPopup::last_popup_for_testing();
+  auto* contents = check->current ? check->current->host_contents() : nullptr;
+  if (contents && !extension_popup_storage_) {
+    __weak ARWindowHost* host = self;
+    contents->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+        u"document.body.dataset.stored || ''", base::BindOnce(^(base::Value result) {
+          ARWindowHost* strong = host;
+          if (strong && result.is_string() && !result.GetString().empty())
+            strong->extension_popup_storage_ = [NSString stringWithUTF8String:result.GetString().c_str()];
+        }), content::ISOLATED_WORLD_ID_GLOBAL);
+  }
+  NSWindow* popup_window = popup && popup->GetWidget() ? popup->GetWidget()->GetNativeWindow().GetNativeNSWindow() : nil;
+  return @{ @"loaded": @(check->loaded), @"destroyed": @(check->destroyed),
+            @"title": contents ? (base::SysUTF16ToNSString(contents->GetTitle()) ?: @"") : @"",
+            @"storage": extension_popup_storage_ ?: @"",
+            @"anchor": @(popup && popup->anchor_widget() == core_->widget()),
+            @"api_callback": @(check->api_callback), @"window": popup_window ?: (id)NSNull.null };
 }
 
 - (AraratWindowHostCore*)hostCore { return core_.get(); }

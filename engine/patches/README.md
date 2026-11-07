@@ -103,3 +103,5 @@ When the factory hook is set, the patch disables Chrome session restore before
 Ararat restores its own workspace from the core in U17.
 
 `ararat/viewless-read-anything.patch` skips side-panel cleanup for our viewless windows when there is no side panel.
+
+U14's extension action container and popup anchor are in our layer and add no Chromium patch. The external-install error dialog still assumes a `BrowserView`; supporting external installs requires a guard or patch (ours).

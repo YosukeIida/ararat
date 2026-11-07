@@ -8,17 +8,17 @@ Write repository files (README, AGENTS.md, everything under `docs/`, code commen
 
 ## How work is done (the sandwich)
 
-Every unit of work is split between Claude and Codex. Codex holds closed logical consistency well; Claude picks signal out of many loosely constrained variables. So Claude sets the scope and reviews, and Codex implements:
+Every unit of work is split between design, orchestrator, implementation and review seats:
 
-1. Scope and design: Claude Opus 5.5 (`claude-opus-5-5`). It writes what to build, the files it touches, the invariants and the edge cases.
-2. Implementation: two seats run in parallel on separate worktrees: Codex `gpt-6.1-terra`, effort high, on the personal account (`CODEX_HOME=$HOME/.codex-personal`, owner's choice 2026-11-08, replacing labteam), and GLM-5.3-Flash, effort max, on OpenCode Go (`opencode-go/glm-5.3-flash`), using `opencode/glm-5.3-flash-free` only when Go is out. OpenAI's Codex model guide recommends Sol for code and positions Terra for writing, visual understanding and computer use; the owner chose Terra to compare its reviews with Sol's. When one seat's limit runs out, the work goes to the other seat; ararat never uses labteam.
-3. Review: Claude Opus 5.5. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
+1. Scope and design: Codex `gpt-6.1-terra`, effort high, on the personal account. It writes what to build, the files it touches, the invariants and the edge cases. The orchestrator uses the same model, effort and account.
+2. Implementation: two seats run in parallel on separate worktrees: Codex `gpt-6.1-terra`, effort high, on the personal account, and GLM-5.3-Flash, effort max, on OpenCode Go (`opencode-go/glm-5.3-flash`), using `opencode/glm-5.3-flash-free` only when Go quota is exhausted. When the personal Codex weekly quota is exhausted, continue only work GLM can do and wait for the quota to reset. Codex uses `CODEX_HOME=$HOME/.codex-personal`; Ararat never uses labteam.
+3. Review: Codex `gpt-6.1-sol`, effort high, on the personal account. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
 
-For a hard edge-case bug the order is reversed: Codex investigates, Claude gives a second opinion, Codex implements, Claude reviews.
+For a hard edge-case bug the order is reversed: implementation investigates, design gives a second opinion, implementation fixes it, and review checks it.
 
 Measurement and design-stage work (research notes, `docs/architecture.md`) needs no review unless the owner asks for one.
 
-The seats run on orca-agent-team (one Orca tab per role) from a Claude session inside Orca, or on herdr-agent-team from one inside herdr. Agents get the devshell from dotfiles' agent-switch shims, which load direnv when `claude` or `codex` starts in the repo. If `command -v cargo` does not point into `/nix/store`, restart the agent from the repo instead of building with another toolchain: a second toolchain writes into the same `target/`.
+The seats run on orca-agent-team (one Orca tab per role) from a Codex session inside Orca, or on herdr-agent-team from one inside herdr. Agents get the devshell from dotfiles' agent-switch shims, which load direnv when `claude` or `codex` starts in the repo. If `command -v cargo` does not point into `/nix/store`, restart the agent from the repo instead of building with another toolchain: a second toolchain writes into the same `target/`.
 
 ## Prior art
 

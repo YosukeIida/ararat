@@ -408,6 +408,19 @@ class TabContentsObserver : public content::WebContentsObserver {
   contents_->GetController().Reload(content::ReloadType::NORMAL, false);
 }
 
+- (void)checkExtensionPopupWindow:(BOOL)remove {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "ext-windows-popup") return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      remove ? u"location.hash = 'remove-popup'" : u"location.hash = 'popup'",
+      base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkOpenActionPopup {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "extensions") return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"location.hash = 'action-popup'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
 - (void)navigationFinished {
   ++navigation_count_;
   navigation_pending_ = YES;

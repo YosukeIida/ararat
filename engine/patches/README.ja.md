@@ -74,3 +74,4 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 `ararat/viewless-read-anything.patch` は、side panel のない独自の viewless ウィンドウで side panel の後処理を省く。
 
 factory hook の設定時、このパッチは `BrowserInitState` がフラグを取り込む前に Chrome のセッション復元を無効にする。標準ウィンドウを使う Browser も対象である。Ararat 自身の workspace の復元は U17 で core から行う。
+U14 の拡張 action container と popup anchor は独自レイヤーにあり、Chromium のパッチを追加しない。外部インストールのエラーダイアログは `BrowserView` を前提としているため、外部インストールをサポートするにはガードまたはパッチが必要である（我々の規則）。

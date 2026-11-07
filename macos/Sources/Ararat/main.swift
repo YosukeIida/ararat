@@ -376,16 +376,17 @@ final class Runtime {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
-      if checkName == "popup" { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
+      if ["popup", "ext-popup", "ext-windows-popup"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if screenName == "links" { browserCheckMode = "screen-links" }
       if screenName == "profiles" { browserCheckMode = "screen-profiles" }
       if screenName == "prompts" { browserCheckMode = "screen-prompts" }
       if screenName == "devtools" { browserCheckMode = "screen-devtools" }
+      if screenName == "extensions" { browserCheckMode = "screen-extensions" }
       if ["permissions", "dialogs", "protocol", "autofill"].contains(checkName ?? "") || screenName == "prompts" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -442,7 +443,8 @@ final class Runtime {
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, profileCheckURL: profileURL, session: running)
+    let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -470,6 +472,9 @@ final class Runtime {
     }
     self.sidebar = sidebar
     self.container = container
+    container.extensionActions = { [weak host] in host?.extensionActions() ?? [] }
+    container.onExtensionAnchor = { [weak host] rect in host?.setExtensionAnchor(rect) }
+    container.onExtensionAction = { [weak host] id in host?.runExtensionAction(id) }
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
       self?.snapshot = snapshot
       if self?.host?.isClosingAll() != true, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
@@ -483,6 +488,7 @@ final class Runtime {
           rows.first { $0.url == "data:text/html,<title>Ararat \(name)</title>" }
         }
         if linkCheck { self?.sliceRows = rows.filter { $0.url?.contains("Open link") == true } }
+        if extensionPopupCheck { self?.sliceRows = rows.filter { $0.url?.contains("/probe.html") == true } }
       }
     }
     adapter.onTransaction = { [weak self] transaction in
@@ -537,7 +543,7 @@ final class Runtime {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" {
         NSApp.activate(ignoringOtherApps: true)
         host.window().makeKeyAndOrderFront(nil)
       }
@@ -899,9 +905,13 @@ final class Runtime {
         timeoutValues["screenshot"] = path
       }
     }
-    if mode == "popup" {
+    if mode == "screen-extensions" {
+      timeoutValues.merge(devtoolsResults) { _, new in new }
+      timeoutValues["sidebar_state"] = container?.sidebarState ?? "missing"
+    }
+    if ["popup", "ext-popup", "ext-windows-popup"].contains(mode) {
       let front = commandOutput("/usr/bin/lsappinfo", ["front"])
-      let visible = (host?.window().isVisible ?? false) || popups.contains { $0.host?.window().isVisible == true }
+      let visible = NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
       popupWindowsHidden = popupWindowsHidden && !visible
       if popupFrontChange == nil, let before = popupFrontBefore, let front, before != front {
         let app = NSWorkspace.shared.frontmostApplication
@@ -991,6 +1001,9 @@ final class Runtime {
     if mode == "profiles" { profileCheckTick(host); return }
     if mode == "incognito" { incognitoCheckTick(host); return }
     if mode == "ext-windows" || mode == "screen-profiles" { extensionCheckTick(host, screen: mode == "screen-profiles"); return }
+    if mode == "ext-windows-popup" { extensionPopupWindowCheckTick(host); return }
+    if mode == "ext-popup" { extensionActionCheckTick(host); return }
+    if mode == "screen-extensions" { extensionScreenTick(host); return }
     browserCheckStyleMask = host.window().styleMask.rawValue
     browserCheckStock = host.checkStockBrowsers()
     if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
@@ -2221,7 +2234,181 @@ final class Runtime {
     }
   }
 
+  func extensionScreenTick(_ host: any ARWindowHostAPI) {
+    if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
+      browserCheckPhase = 1
+      adapter?.select(id: row.id, url: url)
+      return
+    }
+    guard let tab = (host.tabs() as? [any ARTabAPI])?.first, !tab.isLoading,
+          tab.navigationCount > 0, let button = container?.sidebarExtensionsButton else { return }
+    let state = host.checkExtensionActionState()
+    if browserCheckPhase == 1, host.window().isKeyWindow,
+       host.extensionActions().contains(where: { $0["id"] as? String == "kmgaadhbnkendcanjninlfmfgehagggl" }) {
+      guard let container, let screen = NSScreen.screens.first else { return }
+      let window = host.window()
+      let edge = NSPoint(x: window.frame.minX + 2, y: window.frame.midY)
+      guard CGWarpMouseCursorPosition(CGPoint(x: edge.x, y: screen.frame.maxY - edge.y)) == .success else { return }
+      container.toggleSidebar()
+      if let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: edge), modifierFlags: [],
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+          eventNumber: 0, clickCount: 0, pressure: 0) { NSApp.sendEvent(event) }
+      browserCheckPhase = 5
+    } else if browserCheckPhase == 5, container?.sidebarState == "floating" {
+      guard let container else { return }
+      let buttonFrame = host.window().convertToScreen(button.convert(button.bounds, to: nil))
+      devtoolsResults["button_frame"] = rectFields(buttonFrame)
+      guard let browserScreenshot = promptScreenScreenshot(host.window(), name: "extensions-floating", withoutShadow: true) else { return }
+      devtoolsResults["floating_screenshot"] = browserScreenshot
+      devtoolsResults["sidebar_state_at_invocation"] = container.sidebarState
+      devtoolsResults["stay_right"] = host.window().frame.minX + 5 + container.resizeHandle.sidebarWidth + 72
+      host.checkExtensionAction(5)
+      linkMenuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] notification in
+        guard let menu = notification.object as? NSMenu,
+              menu.items.count == 1, menu.items[0].representedObject as? String == "kmgaadhbnkendcanjninlfmfgehagggl" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+          guard let self else { return }
+          if let menuWindow = NSApp.windows.first(where: {
+            $0.isVisible && $0 !== self.host?.window() && NSStringFromClass(type(of: $0)).localizedCaseInsensitiveContains("menu")
+          }), let path = self.promptScreenScreenshot(menuWindow, name: "extensions-menu", withoutShadow: true),
+             let image = NSImage(contentsOfFile: path), image.size.width > 0, image.size.height > 0 {
+            self.devtoolsResults["menu_screenshot"] = path
+            self.devtoolsResults["menu_window_id"] = menuWindow.windowNumber
+            self.devtoolsResults["menu_frame"] = self.rectFields(menuWindow.frame)
+            guard let stayRight = self.devtoolsResults["stay_right"] as? CGFloat,
+                  let screen = NSScreen.screens.first else { return }
+            let point = NSPoint(x: menuWindow.frame.maxX - 20, y: menuWindow.frame.midY)
+            guard point.x > stayRight, menuWindow.frame.contains(point),
+                  CGWarpMouseCursorPosition(CGPoint(x: point.x, y: screen.frame.maxY - point.y)) == .success else { return }
+            self.devtoolsResults["selection_point"] = ["x": point.x, "y": point.y]
+            self.devtoolsResults["sidebar_state_during_menu"] = self.container?.sidebarState ?? "missing"
+            self.linkMenuChosen = true
+            for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+              if let event = NSEvent.mouseEvent(with: type, location: menuWindow.convertPoint(fromScreen: point), modifierFlags: [],
+                  timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: menuWindow.windowNumber, context: nil,
+                  eventNumber: 0, clickCount: type == .mouseMoved ? 0 : 1, pressure: type == .mouseMoved ? 0 : 1) {
+                NSApp.postEvent(event, atStart: false)
+              }
+            }
+          }
+        }
+      }
+      browserCheckPhase = 2
+      let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+      for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+        if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+          windowNumber: host.window().windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.sendEvent(event) }
+      }
+    } else if browserCheckPhase == 2, linkMenuChosen, state["loaded"] as? Int == 1,
+              let popup = state["window"] as? NSWindow, popup.isVisible,
+              let screenshot = promptScreenScreenshot(popup, name: "extensions-popup", withoutShadow: true) {
+      guard let fields = devtoolsResults["button_frame"] as? [String: Double],
+            let x = fields["x"], let y = fields["y"], let width = fields["width"], let height = fields["height"] else { return }
+      let buttonFrame = NSRect(x: x, y: y, width: width, height: height)
+      let popupFrame = popup.frame
+      devtoolsResults["popup_frame"] = rectFields(popupFrame)
+      devtoolsResults["menu_shown"] = linkMenuChosen
+      devtoolsResults["popup_screenshot"] = screenshot
+      devtoolsResults["placed_below"] = popupFrame.maxY <= buttonFrame.minY + 8
+      devtoolsResults["anchor_gap"] = buttonFrame.minY - popupFrame.maxY
+      devtoolsResults["aligned_with_button"] = popupFrame.minX <= buttonFrame.midX && popupFrame.maxX >= buttonFrame.midX
+      devtoolsResults["sidebar_state_after_selection"] = container?.sidebarState ?? "missing"
+      browserCheckPhase = 3
+      host.checkExtensionAction(1)
+    } else if browserCheckPhase == 3, state["destroyed"] as? Int == 1 {
+      browserCheckPhase = 4
+      tab.checkOpenActionPopup()
+    } else if browserCheckPhase == 4, state["loaded"] as? Int == 2 {
+      let stock = host.checkStockBrowsers()
+      devtoolsResults["api_popup"] = true
+      devtoolsResults["stock_browsers"] = stock
+      finishBrowserCheck(ok: stock == 0 && devtoolsResults["placed_below"] as? Bool == true && (devtoolsResults["anchor_gap"] as? CGFloat ?? .infinity) <= 24 && devtoolsResults["aligned_with_button"] as? Bool == true && devtoolsResults["menu_screenshot"] != nil && devtoolsResults["floating_screenshot"] != nil && devtoolsResults["sidebar_state_at_invocation"] as? String == "floating" && devtoolsResults["sidebar_state_during_menu"] as? String == "floating" && devtoolsResults["sidebar_state_after_selection"] as? String == "hidden", values: devtoolsResults)
+    }
+  }
+
+  func extensionActionCheckTick(_ host: any ARWindowHostAPI) {
+    if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
+      browserCheckPhase = 1
+      adapter?.select(id: row.id, url: url)
+      return
+    }
+    guard let tab = (host.tabs() as? [any ARTabAPI])?.first, !tab.isLoading,
+          tab.navigationCount > 0 else { return }
+    let state = host.checkExtensionActionState()
+    let loaded = state["loaded"] as? Int ?? 0
+    let destroyed = state["destroyed"] as? Int ?? 0
+    if browserCheckPhase == 1 {
+      guard let action = host.extensionActions().first(where: { $0["id"] as? String == "kmgaadhbnkendcanjninlfmfgehagggl" }),
+            action["name"] as? String == "Ararat windows check with a wide extension menu entry for floating sidebar selection",
+            let icon = action["icon"] as? NSImage, icon.isValid else { return }
+      browserCheckPhase = 2
+      host.checkExtensionAction(0)
+    } else if browserCheckPhase == 2, loaded == 1,
+              state["title"] as? String == "Ararat extension popup",
+              state["storage"] as? String == "Ararat extension popup",
+              state["anchor"] as? Bool == true {
+      browserCheckPhase = 3
+      host.checkExtensionAction(1)
+    } else if browserCheckPhase == 3, destroyed == 1 {
+      browserCheckPhase = 4
+      host.checkExtensionAction(2)
+    } else if browserCheckPhase == 4, loaded == 2 {
+      browserCheckPhase = 5
+      host.checkExtensionAction(3)
+    } else if browserCheckPhase == 5, destroyed == 2 {
+      browserCheckPhase = 6
+      host.checkExtensionAction(4)
+    } else if browserCheckPhase == 6, loaded == 3, state["api_callback"] as? Bool == true {
+      let stock = host.checkStockBrowsers()
+      host.checkExtensionAction(1)
+      finishBrowserCheck(ok: stock == 0 && hiddenPopupSafe(), values: ["action_listed": true, "loaded": loaded,
+        "hidden_closed": true, "window_close": true, "api_callback": true,
+        "anchor": true, "storage": true, "stock_browsers": stock])
+    }
+  }
+
+  func extensionPopupWindowCheckTick(_ host: any ARWindowHostAPI) {
+    if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
+      browserCheckSeedID = row.id
+      browserCheckPhase = 1
+      adapter?.select(id: row.id, url: url)
+      return
+    }
+    guard let tab = (host.tabs() as? [any ARTabAPI])?.first, !tab.isLoading,
+          tab.navigationCount > 0 else { return }
+    if browserCheckPhase == 1, tab.title.data(using: .utf8).flatMap({ try? JSONSerialization.jsonObject(with: $0) }) != nil {
+      browserCheckBefore = snapshot
+      browserCheckPhase = 2
+      tab.checkExtensionPopupWindow(false)
+    } else if browserCheckPhase == 2, popups.count == 1,
+              let popup = popups.first?.host, popup.checkIsExtensionAppPopup(),
+              let data = tab.title.data(using: .utf8),
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let result = report["popupResult"] as? [String: Any], result["type"] as? String == "popup" {
+      browserCheckPhase = 3
+      tab.checkExtensionPopupWindow(true)
+    } else if browserCheckPhase == 3, popups.isEmpty,
+              let data = tab.title.data(using: .utf8),
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let result = report["popupResult"] as? [String: Any], result["removed"] as? Bool == true {
+      let before = browserCheckBefore?.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
+      let after = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
+      let stock = host.checkStockBrowsers()
+      let unchanged = before == after
+      finishBrowserCheck(ok: unchanged && stock == 0 && hiddenPopupSafe(),
+        values: ["app_popup": true, "windows_type": "popup", "popup_removed": true,
+                 "rows_unchanged": unchanged, "stock_browsers": stock])
+    }
+  }
+
+  func hiddenPopupSafe() -> Bool {
+    let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+    return popupWindowsHidden && !NSApp.windows.contains { $0.isVisible || $0.isKeyWindow } &&
+      !(popupFrontBefore ?? "").isEmpty && front == popupFrontBefore && popupFrontChange == nil
+  }
+
   func finishBrowserCheck(ok: Bool, values: [String: Any]) {
+
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)
       promptScreenSeeded = false
@@ -2237,11 +2424,19 @@ final class Runtime {
     Launcher.startupWatchdog?.cancel()
     Launcher.browserCheckFinished = true
     var result = values
+    if ["ext-popup", "ext-windows-popup"].contains(browserCheckMode ?? "") {
+      result["windows_hidden"] = popupWindowsHidden && !NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
+      result["front_before"] = popupFrontBefore ?? ""
+      result["front_after"] = commandOutput("/usr/bin/lsappinfo", ["front"]) ?? ""
+      result["front_unchanged"] = !(popupFrontBefore ?? "").isEmpty && result["front_after"] as? String == popupFrontBefore && popupFrontChange == nil
+      result["front_change"] = popupFrontChange ?? [:]
+    }
     result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode == "screen-prompts" ? "prompts" : (browserCheckMode == "screen-devtools" ? "devtools" : (browserCheckMode ?? "unknown"))))
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
     if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }
     if browserCheckMode == "screen-devtools" { result["screen"] = "devtools" }
+    if browserCheckMode == "screen-extensions" { result["check"] = "extensions"; result["screen"] = "extensions" }
     result["ok"] = ok
     result["exit"] = ok ? 0 : 1
     if result["stock_browsers"] == nil { result["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock }
@@ -2722,7 +2917,7 @@ let checksPassed = MainActor.assumeIsolated {
     return runtime.finishQuitCheck(exitCode: result)
   }
   if let argument = CommandLine.arguments.first(where: {
-    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=devtools"].contains($0)
+    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=ext-popup", "--ararat-check=ext-windows-popup", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=devtools", "--ararat-screen=extensions"].contains($0)
   }) {
     Launcher.startupWatchdog?.cancel()
     let screen = argument.hasPrefix("--ararat-screen=")

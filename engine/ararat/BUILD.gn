@@ -34,7 +34,7 @@ source_set("core") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_measure.mm" ]
+  sources = [ "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
     ":core",
@@ -79,6 +79,19 @@ source_set("entry") {
     "//chrome/browser/ui:unload_controller",
     "//chrome/browser/ui/find_bar",
     "//chrome/browser/ui/exclusive_access",
+    "//chrome/browser/ui/extensions",
+    "//chrome/browser/ui/extensions:impl",
+    "//chrome/browser/ui/toolbar",
+    "//chrome/browser/ui/toolbar:impl",
+    "//chrome/browser/ui/views/extensions:extension_action_delegate_desktop",
+    "//chrome/browser/ui/views/extensions:extension_action_delegate_desktop_impl",
+    "//chrome/browser/ui/views/extensions:extension_popup",
+    "//chrome/browser/ui/views/extensions:extension_popup_impl",
+    "//chrome/browser/ui/views/extensions:extension_view_utils",
+    "//chrome/browser/ui/views/extensions:extension_view_utils_impl",
+    "//chrome/browser/ui/views/extensions:extensions_container_views",
+    "//chrome/browser/ui/views/extensions:extensions_menu_coordinator",
+    "//chrome/browser/ui/views/extensions:extensions_menu_view",
     "//ui/base",
     "//ui/base/interaction",
     "//ui/base/mojom:ui_base_types",
@@ -89,6 +102,7 @@ source_set("entry") {
     "//chrome/browser/ui/browser_window:browser_window",
     "//chrome/browser/ui/browser_window:create_browser_window",
     "//chrome/browser/ui/window_metadata",
+    "//chrome/browser/web_applications",
     "//chrome/common",
     "//chrome/common:constants",
     "//components/autofill/core/browser",
@@ -106,6 +120,8 @@ source_set("entry") {
     "//chrome/browser/ui/tabs:tab_strip_model_observer",
     "//content/public/browser",
     "//content/public/common",
+    "//extensions/browser",
+    "//extensions/common:extension_features",
     "//net",
     "//services/network/public/mojom:cookies_mojom",
     "//url",

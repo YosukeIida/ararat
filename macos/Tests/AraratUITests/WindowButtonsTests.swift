@@ -32,6 +32,23 @@ private final class FlippedTitlebar: NSView {
     override var isFlipped: Bool { true }
 }
 
+@Test @MainActor
+func extensionsButtonTracksItsAnchorWhenResized() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    #expect(container.sidebarExtensionsButton.isHidden)
+    container.extensionActions = { [] }
+    var anchor = NSRect.zero
+    container.onExtensionAnchor = { anchor = $0 }
+    container.layout()
+    #expect(!container.sidebarExtensionsButton.isHidden)
+    #expect(anchor == container.sidebarExtensionsButton.convert(container.sidebarExtensionsButton.bounds, to: nil))
+    container.frame.size.height = 700
+    container.layout()
+    #expect(anchor == container.sidebarExtensionsButton.convert(container.sidebarExtensionsButton.bounds, to: nil))
+}
+
 @MainActor
 private func measuredButtonsWindow(selected: Bool = false) -> NSWindow {
     _ = NSApplication.shared
@@ -54,6 +71,70 @@ private func measuredButtonsWindow(selected: Bool = false) -> NSWindow {
     container.selectionChanged()
     window.layoutIfNeeded()
     return window
+}
+
+@Test @MainActor
+func extensionMenuKeepsFloatingSidebarAndAnchorInPlace() throws {
+    let window = measuredButtonsWindow(selected: true)
+    defer { window.contentView = nil }
+    let container = try #require(window.contentView?.subviews.first as? SidebarContainerView)
+    container.extensionActions = { [["id": "extension", "name": String(repeating: "Wide extension ", count: 8)]] }
+    container.layoutSubtreeIfNeeded()
+    let button = container.sidebarExtensionsButton
+    let centre = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: container.superview)
+    let hit = container.hitTest(centre)
+    #expect(hit === button || hit?.isDescendant(of: button) == true)
+    var now = 0.0
+    var pointer = NSPoint(x: window.frame.minX + 100, y: window.frame.midY)
+    container.clock = { now }
+    container.pointerLocation = { pointer }
+    container.applicationActive = { true }
+    container.windowKey = { true }
+    container.pressedButtons = { 0 }
+    container.toggleSidebar()
+    container.finishMotion()
+    pointer.x = window.frame.minX
+    container.processPointer()
+    now = 0.150
+    container.processPointer()
+    container.finishMotion()
+    #expect(container.sidebarState == "floating")
+    let anchor = button.convert(button.bounds, to: nil)
+    var published = NSRect.zero
+    container.onExtensionAnchor = { published = $0 }
+    container.layout()
+    let menu = container.makeExtensionsMenu()
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    pointer.x = window.frame.maxX + 100
+    container.processPointer()
+    #expect(container.sidebarState == "floating")
+    #expect(button.convert(button.bounds, to: nil) == anchor)
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+    #expect(container.sidebarState == "hidden")
+    #expect(published == anchor)
+    let item = try #require(menu.items.first)
+    var dispatched: String?
+    var actionAnchor = NSRect.zero
+    container.onExtensionAction = { id in
+        dispatched = id
+        actionAnchor = published
+    }
+    #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+    container.finishMotion()
+    #expect(dispatched == "extension")
+    #expect(actionAnchor == anchor)
+    #expect(published == anchor)
+    pointer.x = window.frame.minX
+    now += 1
+    container.processPointer()
+    now += 0.150
+    container.processPointer()
+    container.finishMotion()
+    #expect(container.sidebarState == "floating")
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    pointer.x = window.frame.maxX + 100
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+    #expect(container.sidebarState == "hidden")
 }
 
 @MainActor

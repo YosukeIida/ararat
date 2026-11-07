@@ -10,17 +10,17 @@ repo の中のファイル（README、AGENTS.md、`docs/` の下すべて、コ�
 
 ## 作業の進め方（サンドイッチ）
 
-作業の 1 単位ごとに、Claude と Codex で分担する。Codex は閉じた論理の一貫性を保つのが得意で、Claude は緩く制約された多くの変数から信号を拾うのが得意である。そのため、Claude が範囲を決めてレビューし、Codex が実装する。
+作業の 1 単位ごとに、design、orchestrator、implementation、review の席で分担する。
 
-1. 範囲と設計: Claude Opus 5.5（`claude-opus-5-5`）。作るもの、触るファイル、不変条件、境界の場合を書く。
-2. 実装: 2 つの席を別々の worktree で並べて動かす。1 つは Codex の `gpt-6.1-terra`、effort high で、personal アカウント（`CODEX_HOME=$HOME/.codex-personal`）で動かす。labteam からの変更は 2026-11-08 のオーナーの選択である。もう 1 つは GLM-5.3-Flash、effort max で OpenCode Go（`opencode-go/glm-5.3-flash`）を使い、Go の残量がないときだけ `opencode/glm-5.3-flash-free` を使う。OpenAI の Codex のモデルの案内は、コードには Sol を勧め、Terra を文章、画像の理解、コンピュータ操作向けとしている。オーナーは、review の結果を Sol と比べるために Terra を選んだ。一方の席の残量が切れたときは、もう一方の席に仕事を回す。ararat では labteam を使わない。
-3. レビュー: Claude Opus 5.5。指摘ごとに、直すか直さないかとその理由を決め、直すものを 2 に戻す。
+1. 範囲と設計: Codex の `gpt-6.1-terra`、effort high、personal アカウントを使う。作るもの、触るファイル、不変条件、境界の場合を書く。orchestrator も同じモデル、effort、アカウントを使う。
+2. 実装: 2 つの席を別々の worktree で並べて動かす。1 つは Codex の `gpt-6.1-terra`、effort high、personal アカウント、もう 1 つは GLM-5.3-Flash、effort max、OpenCode Go（`opencode-go/glm-5.3-flash`）を使う。Go の quota が尽きたときだけ `opencode/glm-5.3-flash-free` を使う。personal の Codex の週枠が尽きたときは、GLM でできる作業だけを続け、枠の復帰を待つ。Codex は `CODEX_HOME=$HOME/.codex-personal` を使い、Ararat では labteam を使わない。
+3. レビュー: Codex の `gpt-6.1-sol`、effort high、personal アカウントを使う。指摘ごとに、直すか直さないかとその理由を決め、直すものを 2 に戻す。
 
-際どい境界の不具合では順序を逆にする。Codex が調べ、Claude がセカンドオピニオンを出し、Codex が実装し、Claude がレビューする。
+際どい境界の不具合では順序を逆にする。implementation が調べ、design がセカンドオピニオンを出し、implementation が修正し、review が確認する。
 
 計測と設計の段階の作業（研究ノート、`docs/architecture.md`）は、オーナーが頼まない限りレビューを要しない。
 
-席は、Orca の中の Claude のセッションからは orca-agent-team（役割ごとに Orca のタブ 1 つ）で、herdr の中のセッションからは herdr-agent-team で動かす。agent は、dotfiles の agent-switch の shim から devshell を得る。shim は、repo で `claude` か `codex` が起動するときに direnv を読み込む。`command -v cargo` が `/nix/store` を指さないときは、別のツールチェーンでビルドせず、repo から agent を起動し直す。2 つ目のツールチェーンは同じ `target/` に書き込むためである。
+席は、Orca の中の Codex のセッションからは orca-agent-team（役割ごとに Orca のタブ 1 つ）で、herdr の中のセッションからは herdr-agent-team で動かす。agent は、dotfiles の agent-switch の shim から devshell を得る。shim は、repo で `claude` か `codex` が起動するときに direnv を読み込む。`command -v cargo` が `/nix/store` を指さないときは、別のツールチェーンでビルドせず、repo から agent を起動し直す。2 つ目のツールチェーンは同じ `target/` に書き込むためである。
 
 ## 先行実装
 

@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ararat windows check",
+  "name": "Ararat windows check with a wide extension menu entry for floating sidebar selection",
   "version": "1.0",
-  "permissions": ["tabs"],
+  "permissions": ["tabs", "storage"],
+  "action": {"default_popup": "popup.html"},
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2kvH37ip/K5DtoG/HiMFwgarjbE0Gfb65MeIy6UU1gDIWqu3oAlFj3l94HNIcIcvzIIrsyhAQiE/1HnKEkTdjnwoh6TXN6fTbLx+0BqewHsWcOlpm1uLQMzwkZCrcztFRFgrSbdyOQ1yn7MINKjABabTJfLPULI5lMvuEqk47fSVrn5haVf/5h/1CYYgFYL6alELgzlg/eVPmRGyfkhUdXtbWrN5UgiJpwRO89uCyctfwKBXqsMwItxsHUE1Iwt6WQsrLRwwD0w+ODeaUUHLzmhRvmNep7MtDbyXNHIlRM+D6reRWnWQJc9qASGAo4mlqUiSIoQvqtTCfjs6FkynHQIDAQAB"
 }

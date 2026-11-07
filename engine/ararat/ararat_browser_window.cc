@@ -4,9 +4,12 @@
 
 #include "ararat/core/ararat_window_host.h"
 #include "ararat/core/ararat_autofill_bubble_handler.h"
+#include "ararat/core/ararat_extensions_container.h"
+#include "base/functional/bind.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "chrome/browser/devtools/devtools_ui_controller.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -71,8 +74,19 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
       exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)),
       autofill_handler_(std::make_unique<AraratAutofillBubbleHandler>()),
       autofill_registration_(std::make_unique<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>>(
-          browser->GetUnownedUserDataHost(), *autofill_handler_)) {}
+          browser->GetUnownedUserDataHost(), *autofill_handler_)) {
+  if (browser->GetType() == BrowserWindowInterface::TYPE_NORMAL && !browser->GetProfile()->IsOffTheRecord()) {
+    extensions_ = std::make_unique<ararat::AraratExtensionsContainer>(
+        browser, nullptr, base::BindRepeating([](AraratWindowHostCore* host) {
+          return views::BubbleAnchor(host->extension_anchor());
+        }, base::Unretained(host)));
+    extensions_registration_ = std::make_unique<ui::ScopedUnownedUserData<ExtensionsContainer>>(
+        browser->GetUnownedUserDataHost(), *extensions_);
+  }
+}
 AraratBrowserWindow::~AraratBrowserWindow() {
+  extensions_registration_.reset();
+  extensions_.reset();
   devtools_controller_.reset();
   autofill_registration_.reset();
   host_->OnWindowDestroyed(browser_);
@@ -137,7 +151,9 @@ void AraratBrowserWindow::UpdateLoadingAnimations(bool is_visible) {}
 void AraratBrowserWindow::OnActiveTabChanged(content::WebContents* old_contents,
                                              content::WebContents* new_contents,
                                              int index,
-                                             int reason) {}
+                                             int reason) {
+  if (extensions_) extensions_->SetWebContents(new_contents);
+}
 
 void AraratBrowserWindow::OnTabDetached(content::WebContents* contents,
                                         bool was_active) {}
@@ -206,7 +222,7 @@ void AraratBrowserWindow::DisableTabStripEditingForTesting() {
 }
 
 bool AraratBrowserWindow::IsToolbarVisible() const {
-  return false;
+  return extensions_ != nullptr;
 }
 
 bool AraratBrowserWindow::IsToolbarShowing() const {

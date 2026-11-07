@@ -9,6 +9,8 @@
 class BrowserWindowInterface;
 class AraratWindowHostCore;
 class DevtoolsUIController;
+namespace ararat { class AraratExtensionsContainer; }
+class ExtensionsContainer;
 
 namespace ui { template <class T> class ScopedUnownedUserData; }
 
@@ -19,6 +21,7 @@ class AraratBrowserWindow : public BrowserWindow {
   ~AraratBrowserWindow() override;
   void RequestClose();
   BrowserWindowInterface* browser() const { return browser_; }
+  ararat::AraratExtensionsContainer* extensions() const { return extensions_.get(); }
   gfx::NativeWindow GetNativeWindow() const override;
   bool IsOnCurrentWorkspace() const override;
   bool IsVisibleOnScreen() const override;
@@ -151,6 +154,8 @@ class AraratBrowserWindow : public BrowserWindow {
   std::unique_ptr<ExclusiveAccessContext> exclusive_access_;
   std::unique_ptr<autofill::AutofillBubbleHandler> autofill_handler_;
   std::unique_ptr<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>> autofill_registration_;
+  std::unique_ptr<ararat::AraratExtensionsContainer> extensions_;
+  std::unique_ptr<ui::ScopedUnownedUserData<ExtensionsContainer>> extensions_registration_;
   bool tab_strip_editable_ = true;
 };
 #endif

@@ -28,6 +28,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkPrepareExtensionWindows;
 - (void)checkReportExtensionWindow;
 - (void)checkReloadExtensionWindow;
+- (void)checkExtensionPopupWindow:(BOOL)remove;
+- (void)checkOpenActionPopup;
 - (BOOL)checkIsDialogActive;
 - (BOOL)checkDialogHostIsOurs;
 - (BOOL)checkAcceptJavaScriptDialog:(NSString*)text;
@@ -61,6 +63,12 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol ARWindowHostAPI <NSObject>
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;
+- (void)setExtensionAnchor:(NSRect)rect;
+- (void)runExtensionAction:(NSString*)identifier;
+- (BOOL)checkIsExtensionAppPopup;
+- (void)checkExtensionAction:(NSInteger)command;
+- (NSDictionary<NSString*, id>*)checkExtensionActionState;
 - (void)checkOpenDevTools;
 - (void)checkCloseDevTools;
 - (NSDictionary<NSString*, id>*)checkDevToolsState;

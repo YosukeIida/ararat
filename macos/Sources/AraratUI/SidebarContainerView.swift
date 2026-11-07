@@ -18,6 +18,12 @@ public final class SidebarContainerView: NSView {
     private var motionGeneration = 0
     private var moving = false
     private var windowButtons: SidebarWindowButtons?
+    private let extensionsButton = NSButton()
+    public var extensionActions: (() -> [[String: Any]])? {
+        didSet { extensionsButton.isHidden = extensionActions == nil }
+    }
+    public var onExtensionAction: ((String) -> Void)?
+    public var onExtensionAnchor: ((NSRect) -> Void)?
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
@@ -26,6 +32,7 @@ public final class SidebarContainerView: NSView {
 
     public var sidebarState: String { state.mode.rawValue }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }
+    public var sidebarExtensionsButton: NSButton { extensionsButton }
     public var hasSidebarLights: Bool { windowButtons?.subviews.count == 3 }
     public var appKitLightsHidden: Bool {
         guard let window else { return false }
@@ -50,10 +57,16 @@ public final class SidebarContainerView: NSView {
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
         addSubview(panel)
+        extensionsButton.image = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: "Extensions")
+        extensionsButton.isBordered = false
+        extensionsButton.isHidden = true
+        extensionsButton.target = self
+        extensionsButton.action = #selector(showExtensions)
         for view in [sidebar, resizeHandle] {
             view.translatesAutoresizingMaskIntoConstraints = false
             panel.addSubview(view)
         }
+        panel.addSubview(extensionsButton)
         NSLayoutConstraint.activate([
             width,
             sidebar.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
@@ -134,6 +147,10 @@ public final class SidebarContainerView: NSView {
         let inset: CGFloat = docked ? 0 : SidebarMetrics.floatingInset
         panel.frame = NSRect(x: x, y: inset, width: width, height: max(0, bounds.height - inset * 2))
         windowButtons?.frame.origin = NSPoint(x: 12.5, y: panel.bounds.height - 30.5)
+        extensionsButton.frame = NSRect(x: 90, y: panel.bounds.height - 34, width: 24, height: 24)
+        if state.mode != .hidden {
+            onExtensionAnchor?(extensionsButton.convert(extensionsButton.bounds, to: nil))
+        }
         let pageX: CGFloat = docked ? width : SidebarMetrics.cardInset
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
@@ -151,6 +168,30 @@ public final class SidebarContainerView: NSView {
         windowButtons?.isHidden = window?.styleMask.contains(.fullScreen) == true || windowButtons?.sidebarHidden == true
         if let window { WindowChrome.layout(window: window, lights: windowButtons) }
         updateBorder()
+    }
+
+    @objc private func showExtensions() {
+        onExtensionAnchor?(extensionsButton.convert(extensionsButton.bounds, to: nil))
+        let menu = makeExtensionsMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: extensionsButton.bounds.minY), in: extensionsButton)
+    }
+
+    func makeExtensionsMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = sidebar
+        for action in extensionActions?() ?? [] {
+            guard let id = action["id"] as? String, let name = action["name"] as? String else { continue }
+            let item = NSMenuItem(title: name, action: #selector(runExtension(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.image = action["icon"] as? NSImage
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func runExtension(_ item: NSMenuItem) {
+        if let id = item.representedObject as? String { onExtensionAction?(id) }
     }
 
     override public func viewDidChangeEffectiveAppearance() {

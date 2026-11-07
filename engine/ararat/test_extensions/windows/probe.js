@@ -16,12 +16,13 @@ async function report() {
   document.title = JSON.stringify({windows: windows.map(windowSummary), last: windowSummary(last),
     tabs: tabs.map(tabSummary), current: windowSummary(current), byId: windowSummary(byId),
     focusEvents, hash: location.hash, focusResult,
-    focusBefore, targetId, otherId, probeError});
+    focusBefore, targetId, otherId, popupResult, probeError});
 }
 let focusResult = null;
 let focusBefore = null;
 let targetId = null;
 let otherId = null;
+let popupResult = null;
 let probeError = null;
 chrome.windows.onFocusChanged.addListener(id => { focusEvents.push(id); report(); });
 window.addEventListener('hashchange', async () => {
@@ -43,6 +44,17 @@ window.addEventListener('hashchange', async () => {
     if (location.hash === '#focus') {
       await chrome.windows.update(targetId, {focused: true});
       focusResult = (await chrome.windows.getLastFocused()).id === targetId;
+    }
+    if (location.hash === '#popup') {
+      const popup = await chrome.windows.create({type: 'popup', url: 'popup.html'});
+      popupResult = windowSummary(await chrome.windows.get(popup.id));
+    }
+    if (location.hash === '#remove-popup' && popupResult) {
+      await chrome.windows.remove(popupResult.id);
+      popupResult.removed = true;
+    }
+    if (location.hash === '#action-popup') {
+      await chrome.action.openPopup();
     }
   } catch (error) {
     probeError = String(error);

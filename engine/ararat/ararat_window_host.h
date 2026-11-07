@@ -25,6 +25,7 @@ class WebContentsModalDialogHost;
 
 namespace views {
 class NativeViewHost;
+class View;
 class Widget;
 class WidgetDelegate;
 }  // namespace views
@@ -43,6 +44,8 @@ class AraratWindowHostCore {
   bool HasProfile(const std::string& name) const;
   const std::map<std::string, raw_ptr<AraratBrowserWindow>>& windows() const { return windows_; }
   views::Widget* widget() const { return widget_.get(); }
+  views::View* extension_anchor() const { return extension_anchor_; }
+  void SetExtensionAnchor(const gfx::Rect& bounds);
   bool closing() const { return closing_; }
   bool closed() const { return closed_; }
   bool popup() const { return popup_; }
@@ -72,6 +75,7 @@ class AraratWindowHostCore {
   std::unique_ptr<views::WidgetDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   raw_ptr<views::NativeViewHost> page_host_ = nullptr;
+  raw_ptr<views::View> extension_anchor_ = nullptr;
   gfx::Rect page_rect_;
   std::unique_ptr<AraratModalDialogHost> modal_dialog_host_;
   std::map<std::string, raw_ptr<AraratBrowserWindow>> windows_;
