@@ -13,16 +13,17 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private weak var host: (any ARWindowHostAPI)?
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction) -> Void)?
+    public var onWorkspaceChange: (@MainActor () -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
         super.init()
         try queue.sync {
-            let opened = try WorkspaceStore.open(path: path)
+            let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
-            if (seedCheck || seedSingleCheck) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if empty {
@@ -33,6 +34,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     _ = try opened.createTab(windowId: windowID, url: "data:text/html,<title>Ararat \(name)</title>")
                 }
             }
+            if seedLinkCheck {
+                _ = try opened.createTab(windowId: windowID, url: "data:text/html,<a href='https://example.test/link' style='position:absolute;left:50px;top:50px;width:200px;height:60px'>Open link</a>")
+            }
             store = opened
         }
     }
@@ -40,6 +44,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func attach(_ host: any ARWindowHostAPI) {
         precondition(Thread.isMainThread)
         self.host = host
+        let profile = queue.sync { self.shownProfileDirectory() }
+        if let profile { _ = host.setProfileDirectory(profile) }
         host.delegate = self
         publish()
     }
@@ -59,6 +65,27 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             } catch {
                 self.report(error)
             }
+        }
+    }
+
+    public func openExternalURLs(_ urls: [(url: String, untrusted: Bool)]) {
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                var commands: [(LiveCommand, Bool)] = []
+                var snapshot: WorkspaceSnapshot?
+                for entry in urls {
+                    let current = try store.createTab(windowId: self.windowID, url: entry.url)
+                    if let id = current.selectedId {
+                        commands.append((try store.liveOpen(item: id, url: entry.url), entry.untrusted))
+                    }
+                    snapshot = current
+                }
+                DispatchQueue.main.async {
+                    for (command, untrusted) in commands { self.execute(command, external: untrusted) }
+                    if let snapshot { self.onSnapshot?(snapshot) }
+                }
+            } catch { self.report(error) }
         }
     }
 
@@ -110,11 +137,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             var parsedTabs: [LiveTab] = []
             for tab in tabs {
                 guard let live = tab["live_id"] as? String, let item = tab["item"],
-                      item is NSNull || item is String else {
+                      let opener = tab["opener"], let url = tab["url"], let title = tab["title"],
+                      let navigated = tab["navigated"] as? Bool,
+                      item is NSNull || item is String,
+                      opener is NSNull || opener is String, url is NSNull || url is String,
+                      title is NSNull || title is String else {
                     invalidTransaction()
                     return
                 }
-                parsedTabs.append(LiveTab(liveId: live, item: item as? String))
+                parsedTabs.append(LiveTab(liveId: live, item: item as? String,
+                                          opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
@@ -131,6 +163,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     for command in outcome.commands { self.execute(command) }
                     self.onSnapshot?(snapshot)
                     self.onTransaction?(transaction)
+                    if outcome.applied { self.onWorkspaceChange?() }
                 }
             } catch { self.report(error) }
         }
@@ -142,7 +175,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         host = nil
         queue.sync {
             do { try store?.flush() } catch { report(error) }
-            store = nil
+        }
+    }
+
+    public func closeWindow(quitting: Bool) {
+        queue.async {
+            do { try self.store?.closeWindow(windowId: self.windowID, quitting: quitting) }
+            catch { self.report(error) }
         }
     }
 
@@ -153,16 +192,32 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
     }
 
+    public func refresh() { publish() }
+
     private func tab(_ id: String) -> (any ARTabAPI)? {
         (host?.tabs() as? [any ARTabAPI])?.first { $0.liveId == id }
     }
 
-    private func execute(_ command: LiveCommand) {
+    private func execute(_ command: LiveCommand, external: Bool? = nil) {
         precondition(Thread.isMainThread)
-        guard let host else { return }
+        guard let host else {
+            if command.kind == .open {
+                queue.async { _ = self.store?.liveCancel(commandId: command.id); self.publish() }
+            }
+            return
+        }
         switch command.kind {
         case .open:
-            if let url = command.url, host.openURL(url, commandId: command.id, itemId: command.item) { return }
+            let profile = queue.sync { self.shownProfileDirectory() }
+            guard let profile, host.setProfileDirectory(profile) else {
+                queue.async { _ = self.store?.liveCancel(commandId: command.id); self.publish() }
+                return
+            }
+            if let url = command.url {
+                let accepted = external.map { host.openExternalURL(url, commandId: command.id, itemId: command.item, untrusted: $0) }
+                    ?? host.openURL(url, commandId: command.id, itemId: command.item)
+                if accepted { return }
+            }
             queue.async {
                 _ = self.store?.liveCancel(commandId: command.id)
                 self.publish()
@@ -180,6 +235,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     else { self.tab(id)?.close(withCommandId: command.id) }
                 }
             }
+        }
+    }
+
+    private func shownProfileDirectory() -> String? {
+        guard let snapshot = store?.snapshot(windowId: windowID),
+              let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) else { return nil }
+        switch space.profile {
+        case .default: return "Default"
+        case .named(let name): return name
         }
     }
 

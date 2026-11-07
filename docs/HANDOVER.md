@@ -5,6 +5,21 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U10 done (hidden checks): the Browser-constructor factory is always on. Default-profile
+  (the shown space's profile) TYPE_NORMAL Browsers get a second app window, TYPE_POPUP a page-only popup
+  host with no rows; DevTools, app/extension windows, PiP, off-the-record and other profiles stay stock and
+  counted (U11/U13/U14). Hosts report activation (`BrowserActiveStateManager`). openURLs and Handoff go to
+  the app through `app-controller-hooks.patch` (new rows in the key window's Today; ATC is phase 5).
+  Adopted Today rows get url and title from the engine (pinned and favorites keep theirs); background
+  adoption leaves the selection alone. Window records carry `changed_at`: close deletes, quit keeps, launch
+  and reopen adopt the newest kept one. `GetThemeProvider` now returns the profile's (the NTP crashed).
+  Checks `newtab`, `popup`, `menu`, `deferred` pass with every earlier check.
+  - Open: `--ararat-screen=links` and `--ararat-screen=quit` not yet run (screen locked); the popup check
+    loads `about:blank` (renderer-initiated `data:` popups are blocked by Chrome), so a real page loading in
+    a popup host is shown only on screen.
+  - Recorded: second-launch URL arguments are dropped under `--no-startup-window` (phase 5); openURLs
+    bypasses `safeProfileForNewWindows` (U11); a navigation flag can be lost if the core drops a
+    transaction.
 - Phase 3 U9 done (hidden checks): Chrome's `AppController` stays the app delegate and owns quit, logout,
   the downloads prompt and the keep-alive (§4.5; architecture said it would be replaced, now corrected).
   `engine/patches/ararat/app-controller-hooks.patch` hands Dock reopen, the Dock menu (empty) and the
@@ -149,7 +164,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U9 are done (C1 chosen, §4.6). Next: U10 (Chrome-created Browsers and popups, spec `chrome-browsers-47.md`), then U11–U19 in plan order. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U10 are done (C1 chosen, §4.6). Next: U11 (two profiles in one window, extension windows, off-the-record; spec `profiles-48.md`), then U12–U19 in plan order. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 

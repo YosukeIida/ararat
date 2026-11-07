@@ -10,8 +10,11 @@
 
 #ifdef __OBJC__
 @class NSMenu;
+@class NSURL;
+@class NSArray<ObjectType>;
 extern bool (*g_ararat_reopen)(bool has_visible_windows);
 extern NSMenu* (*g_ararat_dock_menu)();
+extern void (*g_ararat_open_urls)(NSArray* urls);
 #endif
 
 class BrowserWindowInterface;

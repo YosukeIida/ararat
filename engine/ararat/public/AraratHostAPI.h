@@ -19,6 +19,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)prepareCheckBeforeUnload;
 - (BOOL)checkHasBeforeUnload;
 - (void)focusCheckPage;
+- (void)openCheckPopup;
+- (void)probeCheckOpener;
+- (BOOL)checkOpenerAlive;
+- (void)closeCheckPopup;
 @end
 
 @protocol ARWindowHostAPI;
@@ -31,7 +35,13 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol ARWindowHostAPI <NSObject>
 @property(nonatomic, weak, nullable) id<ARWindowHostDelegate> delegate;
 - (NSWindow*)window;
+- (BOOL)hasBrowser;
+- (BOOL)isClosing;
+- (BOOL)setProfileDirectory:(NSString*)directory;
+- (NSString*)profileDirectory;
+- (BOOL)isClosingAll;
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId;
+- (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted;
 - (NSArray*)tabs;
 - (void)close;
 - (void)installCheckDialogFactory;
@@ -40,6 +50,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)checkTryingToQuit;
 - (NSUInteger)checkStockBrowsers;
 - (void)disableCheckConfirmQuit;
+- (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition;
+- (void)checkCreateDeferredBrowsers;
+- (void)checkMenuCommand:(BOOL)newWindow;
+- (void)checkCloseAllTabs;
+- (void)checkOpenURLs;
+- (NSString*)checkOpenLinkNewWindowTitle;
 @end
 
 #ifdef __cplusplus

@@ -215,6 +215,20 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn close_window(&self, window_id: String, quitting: bool) -> Result<(), CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.close_window(&window_id, quitting);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(())
+    }
+
+    pub fn kept_windows(&self) -> Vec<KeptWindow> {
+        let workspace = self.workspace.lock().unwrap();
+        workspace.kept_windows().into_iter()
+            .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at }).collect()
+    }
+
     pub fn close_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.close_item(&id)?;
@@ -534,6 +548,12 @@ pub struct WorkspaceSnapshot {
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]
+pub struct KeptWindow {
+    pub id: String,
+    pub changed_at: u64,
+}
+
+#[derive(Debug, PartialEq, uniffi::Record)]
 pub struct ImportReport {
     pub missing_link_routing: bool,
     pub link_routing_error: Option<String>,
@@ -761,6 +781,10 @@ pub enum LiveCause {
 pub struct LiveTab {
     pub live_id: String,
     pub item: Option<String>,
+    pub opener: Option<String>,
+    pub navigated: bool,
+    pub url: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -821,7 +845,7 @@ impl From<LiveCause> for ararat_core::live::Cause {
 
 impl From<LiveTab> for ararat_core::live::LiveTab {
     fn from(tab: LiveTab) -> Self {
-        Self { live_id: tab.live_id, item: tab.item }
+        Self { live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
     }
 }
 
@@ -1212,7 +1236,7 @@ mod tests {
         let live_id = opened.id.clone();
         let outcome = store.live_apply(LiveTransaction {
             epoch: 1, rev: 0, cause: LiveCause::Engine,
-            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
+            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
         }).unwrap();
         assert!(outcome.applied);
         let snapshot = store.snapshot("one".into());

@@ -16,6 +16,7 @@ class WebContents;
 - (content::WebContents*)contents;
 - (void)refresh;
 - (void)navigationFinished;
+- (BOOL)takePendingNavigation;
 - (void)invalidate;
 - (void)replaceContents:(content::WebContents*)contents;
 @end
@@ -26,6 +27,7 @@ class WebContents;
 - (void)setItemId:(NSString*)itemId forTab:(ARTab*)tab;
 - (NSString*)itemIdForTab:(ARTab*)tab;
 - (BOOL)isActiveTab:(ARTab*)tab;
+- (void)tabMetadataChanged;
 @end
 
 #endif  // ARARAT_ARARAT_TAB_H_

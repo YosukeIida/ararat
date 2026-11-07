@@ -16,6 +16,8 @@ typedef struct AraratCallbacks {
   void (*started)(void* ctx);
   void (*will_shut_down)(void* ctx);
   bool (*reopen)(void* ctx, bool has_visible_windows);
+  void* (*create_host)(void* ctx, bool popup, const char* profile, int x, int y, int width, int height);
+  void (*open_urls)(void* ctx, void* urls);
   void* ctx;
 } AraratCallbacks;
 

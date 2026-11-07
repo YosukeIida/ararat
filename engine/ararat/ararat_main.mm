@@ -10,6 +10,7 @@
 
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_window_check.h"
+#include "ararat/core/ararat_window_host.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -20,6 +21,8 @@
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/startup/startup_tab_provider.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
@@ -43,6 +46,19 @@ bool g_check_slice = false;
 bool g_slice_passed = false;
 bool g_shared_compositor = false;
 unsigned long g_stock_browsers = 0;
+
+void DispatchCommandLineURLs(Profile* profile) {
+  if (!profile || !g_ararat_open_urls) return;
+  StartupTabProviderImpl provider;
+  auto tabs = provider.GetCommandLineTabs(*base::CommandLine::ForCurrentProcess(),
+                                          base::FilePath(), profile);
+  NSMutableArray* urls = [NSMutableArray array];
+  for (const auto& tab : tabs) {
+    NSURL* url = [NSURL URLWithString:[NSString stringWithUTF8String:tab.url.spec().c_str()]];
+    if (url) [urls addObject:@{ @"url": url, @"untrusted": @(tab.is_untrusted_launch) }];
+  }
+  if (urls.count) g_ararat_open_urls(urls);
+}
 
 class StockBrowserObserver : public BrowserCollectionObserver {
  public:
@@ -70,6 +86,15 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
     }
     if (g_ararat_callbacks.started) {
       g_ararat_callbacks.started(g_ararat_callbacks.ctx);
+    }
+    if (!base::CommandLine::ForCurrentProcess()->GetArgs().empty()) {
+      if (Profile* profile = ProfileManager::GetLastUsedProfileIfLoaded()) {
+        DispatchCommandLineURLs(profile);
+      } else {
+        g_browser_process->profile_manager()->LoadProfile(
+            ProfileManager::GetLastUsedProfileBaseName(), false,
+            base::BindOnce(&DispatchCommandLineURLs));
+      }
     }
     RunCheck();
   }
@@ -155,7 +180,8 @@ void CheckGuards(int argc, const char** argv) {
     }
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
-      valid_screen = std::string_view(arg + 16) == "quit";
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links";
+      if (std::string_view(arg + 16) == "links") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -165,19 +191,18 @@ void CheckGuards(int argc, const char** argv) {
       bare_check = true;
     } else if (strncmp(arg, "--ararat-check=", 15) == 0) {
       has_check = true;
-      g_check_tabs = std::string_view(arg + 15) == "tabs";
-      check_slice = std::string_view(arg + 15) == "slice";
+      std::string_view name(arg + 15);
+      bool browser_check = name == "newtab" || name == "popup" ||
+                           name == "menu" || name == "deferred";
+      g_check_tabs = name == "tabs";
+      check_slice = name == "slice";
       g_check_slice = check_slice;
-      check_started = std::string_view(arg + 15) == "started" ||
-                      std::string_view(arg + 15) == "window" ||
-                      std::string_view(arg + 15) == "tabs" ||
-                      std::string_view(arg + 15) == "slice" ||
-                      std::string_view(arg + 15) == "quit" ||
-                      std::string_view(arg + 15) == "quit-cancel" ||
-                      std::string_view(arg + 15) == "close";
-      check_slice = check_slice || std::string_view(arg + 15) == "quit" ||
-                    std::string_view(arg + 15) == "quit-cancel" ||
-                    std::string_view(arg + 15) == "close";
+      check_started = name == "started" || name == "window" || name == "tabs" ||
+                      name == "slice" || name == "quit" || name == "quit-cancel" ||
+                      name == "close" || browser_check;
+      check_slice = check_slice || name == "quit" || name == "quit-cancel" ||
+                    name == "close" || browser_check;
+      g_check_slice = g_check_slice || browser_check;
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
@@ -223,7 +248,7 @@ void CheckGuards(int argc, const char** argv) {
     refuse("the slice database is not under $TMPDIR");
   }
   if (!check_started) {
-    refuse("the check name must be started, window, tabs, slice, quit, quit-cancel or close");
+    refuse("the check name must be started, window, tabs, slice, quit, quit-cancel, close or a browser check");
   }
 }
 
@@ -231,15 +256,27 @@ void CheckGuards(int argc, const char** argv) {
 
 bool AraratUsesSharedCompositor() { return g_shared_compositor; }
 unsigned long AraratStockBrowserCount() { return g_stock_browsers; }
+bool AraratHasHostCallback() { return g_ararat_callbacks.create_host != nullptr; }
+void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect& bounds) {
+  return g_ararat_callbacks.create_host
+      ? g_ararat_callbacks.create_host(g_ararat_callbacks.ctx, popup, profile.c_str(), bounds.x(),
+                                       bounds.y(), bounds.width(), bounds.height())
+      : nullptr;
+}
 
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
+  AraratInstallWindowFactory();
   g_ararat_reopen = [](bool has_visible_windows) {
     return g_ararat_callbacks.reopen &&
            g_ararat_callbacks.reopen(g_ararat_callbacks.ctx, has_visible_windows);
   };
   g_ararat_dock_menu = []() -> NSMenu* { return nil; };
+  g_ararat_open_urls = [](NSArray* urls) {
+    if (g_ararat_callbacks.open_urls)
+      g_ararat_callbacks.open_urls(g_ararat_callbacks.ctx, (__bridge void*)urls);
+  };
   // The hook is what the browser process adds; from here Chrome runs its own
   // path and our extra parts ride the stock client.
   g_ararat_add_browser_main_extra_parts = [](ChromeBrowserMainParts* parts) {

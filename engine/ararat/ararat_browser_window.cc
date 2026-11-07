@@ -3,7 +3,9 @@
 #include <utility>
 
 #include "ararat/core/ararat_window_host.h"
+#include "base/command_line.h"
 #include "base/functional/callback.h"
+#include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
@@ -94,7 +96,7 @@ ui::NativeTheme* AraratBrowserWindow::GetNativeTheme() {
 }
 
 const ui::ThemeProvider* AraratBrowserWindow::GetThemeProvider() const {
-  return host_->widget()->GetThemeProvider();
+  return &ThemeService::GetThemeProviderForProfile(browser_->GetProfile());
 }
 
 int AraratBrowserWindow::GetTopControlsHeight() const {
@@ -352,10 +354,12 @@ BrowserView* AraratBrowserWindow::AsBrowserView() {
 }
 
 void AraratBrowserWindow::Show() {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
   host_->widget()->Show();
 }
 
 void AraratBrowserWindow::ShowInactive() {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
   host_->widget()->ShowInactive();
 }
 

@@ -45,6 +45,11 @@ fn deleting_a_selected_folder_tab_uses_the_archive_successor_and_history() {
     ws.select_item_at("one", "tab-mail", 10).unwrap(); ws.select_item_at("one", "tab-spec", 20).unwrap();
     let mut expected = ws.clone(); expected.archive_item("tab-spec").unwrap();
     ws.delete_folder("folder-docs").unwrap();
+    // The two paths stamp their Window records with each call's own wall-clock instant,
+    // so the equality holds on the fields the test is about, not on the stamp.
+    for windows in [&mut ws.windows, &mut expected.windows] {
+        for state in windows.values_mut() { state.changed_at = 0; }
+    }
     assert_eq!(ws.selected("one"), expected.selected("one")); assert_eq!(ws.windows, expected.windows);
     assert_eq!(ws.selected("one"), Some("tab-mail")); assert!(!ws.windows["one"].history.iter().any(|id| id == "tab-spec"));
 }

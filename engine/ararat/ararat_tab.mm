@@ -4,12 +4,16 @@
 
 #include "ararat/core/public/ARWindowHost.h"
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/functional/callback.h"
+#include "base/functional/bind.h"
+#include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/navigation_handle.h"
 #include "url/gurl.h"
 
 namespace {
@@ -18,7 +22,9 @@ class TabContentsObserver : public content::WebContentsObserver {
   TabContentsObserver(content::WebContents* contents, ARTab* tab)
       : tab_(tab) { Observe(contents); }
   void Stop() { Observe(nullptr); }
-  void DidFinishNavigation(content::NavigationHandle*) override { [tab_ navigationFinished]; }
+  void DidFinishNavigation(content::NavigationHandle* navigation) override {
+    if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) [tab_ navigationFinished];
+  }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
   void TitleWasSet(content::NavigationEntry*) override { [tab_ refresh]; }
@@ -38,6 +44,8 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSString* url_;
   BOOL loading_;
   NSUInteger navigation_count_;
+  BOOL navigation_pending_;
+  BOOL check_opener_alive_;
 }
 
 - (instancetype)initWithContents:(content::WebContents*)contents
@@ -94,9 +102,45 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (contents_) contents_->Focus();
 }
 
+- (void)openCheckPopup {
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command_line->GetSwitchValueASCII("ararat-check") != "popup" &&
+                     command_line->GetSwitchValueASCII("ararat-screen") != "links")) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"const popup = window.open('', '', 'popup,width=400,height=300'); if (popup) popup.document.title = 'Popup';",
+      base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)probeCheckOpener {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") return;
+  __weak ARTab* tab = self;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"!!window.opener && !window.opener.closed",
+      base::BindOnce(^(base::Value result) {
+        ARTab* strong_tab = tab;
+        if (strong_tab) strong_tab->check_opener_alive_ = result.is_bool() && result.GetBool();
+      }), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (BOOL)checkOpenerAlive { return check_opener_alive_; }
+
+- (void)closeCheckPopup {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"window.close()", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
 - (void)navigationFinished {
   ++navigation_count_;
+  navigation_pending_ = YES;
   [self refresh];
+  [host_ tabMetadataChanged];
+}
+
+- (BOOL)takePendingNavigation {
+  BOOL pending = navigation_pending_;
+  navigation_pending_ = NO;
+  return pending;
 }
 
 - (void)refresh {
@@ -108,6 +152,7 @@ class TabContentsObserver : public content::WebContentsObserver {
     [self willChangeValueForKey:@"title"];
     title_ = title;
     [self didChangeValueForKey:@"title"];
+    [host_ tabMetadataChanged];
   }
   if (![url_ isEqualToString:url]) {
     [self willChangeValueForKey:@"url"];

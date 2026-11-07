@@ -38,6 +38,10 @@ pub enum Cause {
 pub struct LiveTab {
     pub live_id: Id,
     pub item: Option<Id>,
+    pub opener: Option<Id>,
+    pub navigated: bool,
+    pub url: Option<String>,
+    pub title: Option<String>,
 }
 
 /// The live tabs of one window, with the active tab.
@@ -351,6 +355,7 @@ impl Live {
                 }
             }
             for op in &ops { next.apply(op); }
+            Self::update_metadata(&mut next, &transaction.strips, &next_reverse, &mut ops);
             // The strips' active tab is Chrome's report of the selection; recorded for the
             // mapped rows of each window.
             for strip in &transaction.strips {
@@ -501,6 +506,8 @@ impl Live {
             }
         }
 
+        Self::update_metadata(&mut next, &transaction.strips, &next_reverse, &mut ops);
+
         // Commit: the workspace and the maps take the accepted transaction in one step.
         *workspace = next;
         self.map = next_map;
@@ -508,6 +515,28 @@ impl Live {
         self.windows = next_windows;
         self.pending = next_pending;
         (ops, outcome)
+    }
+
+    fn update_metadata(workspace: &mut Workspace, strips: &[Strip], reverse: &HashMap<Id, Id>, ops: &mut Vec<Op>) {
+        for tab in strips.iter().flat_map(|strip| &strip.tabs) {
+            let Some(id) = reverse.get(&tab.live_id) else { continue };
+            if !workspace.list_for(id).is_some_and(|(_, today)| today) { continue; }
+            let Some(mut item) = workspace.items.get(id).cloned() else { continue };
+            let ItemKind::Tab { url, saved_title } = &mut item.kind else { continue };
+            let mut changed = false;
+            if let Some(next) = tab.url.as_ref().filter(|next| !next.is_empty()) {
+                if (url.is_empty() || tab.navigated) && *url != *next { *url = next.clone(); changed = true; }
+            }
+            if let Some(next) = tab.title.as_ref().filter(|_| tab.url.as_ref() == Some(url)) {
+                let next = (!next.is_empty()).then(|| next.clone());
+                if *saved_title != next { *saved_title = next; changed = true; }
+            }
+            if changed {
+                let op = Op::Put(Record::Item(item));
+                workspace.apply(&op);
+                ops.push(op);
+            }
+        }
     }
 
     /// Adopts an itemless engine tab: one open row at the end of the shown space's Today,
@@ -529,8 +558,6 @@ impl Live {
         };
         let op = Op::Put(Record::Item(item));
         workspace.apply(&op);
-        let mut ops = vec![op];
-        ops.extend(workspace.stamp_selection(&id, workspace.lifecycle_time()));
-        Some((ops, id))
+        Some((vec![op], id))
     }
 }

@@ -119,6 +119,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 - framework は `//ararat/core` に Objective-C クラスを実装する（たとえば `ARWindowHost`、`ARTab`、および予定している `ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はアプリ向け protocol を SwiftPM 経由でインポートし、読み込んだ framework から `AraratWindowHostCreate(contentView, windowId)` を `dlsym` で取得する。host とタブは protocol を通して操作する（我々の規則）。
 - タブ API は coordinator の ID を受け取る。アプリは `AraratWindowHostCreate` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
 - `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
+- Browser の factory は `create_host` で同期的に host を要求する。openURLs と Handoff は `open_urls` を使う。外部からの open は Chrome の untrusted launch フラグを運び、エンジンは opaque initiator を維持する。strip は opener の live ID、commit 済みの URL とページタイトル、および新たなナビゲーションが commit されたかを運ぶ。タイトルとナビゲーションの変更時にも transaction を送る（我々の規則）。
 - feed はエンジンのプロセスごとに、起動時刻に基づく epoch と 1 つの revision を持つ。最初の host に delegate を設定すると、cause が `Engine` の空の rev 0 スナップショットを同期的に報告する。その最初の delegate が設定されるまで、タブコマンドは何もせず、`openURL:` は `NO` を返す。その後の変更ごとに revision を増やす。閉じたウィンドウは cause を `Engine` とする空の strip で報告し、workspace の行を閉じずに live の対応を解除する。省いたウィンドウは変更なしと扱う（我々の規則）。
 - 各コマンドは、その cause を持つ transaction をちょうど 1 つ生成する。2 つ目は捨てる（我々の規則）。
 - すべてのクラスをメインスレッドに固定する（他のスレッドからの呼び出しはプログラミングエラーであり、debug ビルドでは abort する）。Chrome のオブジェクトをラップするオブジェクトは、Chrome のオブジェクトが破棄された時点で無効化する。ラッパーは Swift が所有し、Chrome のオブジェクトはエンジンが所有する。無効化された `ARTab` へのコマンドは何もせず、エラーを返さない。初回のスナップショット以降、delegate への通知は host を弱参照し、メインキューに post する（我々の規則）。
@@ -129,7 +130,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 - `started` でアプリは workspace を開き、sidebar と page card を `SidebarContainerView` に組み立て、host を生成して engine adapter を接続する。`will_shut_down` で adapter を切り離し、host をメインスレッドで解放する（我々の規則）。
 - バンドルの起動実行体（`Sources/Ararat`）が framework を読み込む。ブラウザプロセスは独自の `AraratMain` を呼ぶ（ランチャーのコールバックを保存し、extra-parts の hook を設定して `ChromeMain` を呼ぶ）。ヘルパーは標準の `ChromeMain` を呼ぶ。hook は標準の client のパーツに独自の `ChromeBrowserMainExtraParts` を加え、それらが `PostBrowserStart` でランチャーの `started` コールバックを、`PostMainMessageLoopRun` で `will_shut_down` を呼ぶ。`started` は `PreMainMessageLoopRun` の中で、起動ブラウザが開いた後、メインループが回る前に発火する。ハンドラはループが回っていると見なしてはならない。`AraratQuit` はどこからでも呼べる。ループが近づく前の要求は、started の段階で叶う。`--ararat-check=<name>` は、`--user-data-dir` が `$TMPDIR` の下にあり `--use-mock-keychain` があるときだけ実行され、そうでなければ 2 で終わる。`started` は 1 行の JSON `{"check":"started","ok":true,"browsers":N}` を出して終了する。`window` は非表示の host、native window、hit test を検査し、Browser の破棄を待つ。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する（我々の規則）。
-- Chrome の `AppController` を application delegate として維持し、終了、ログアウト、ダウンロードの確認、ウィンドウがないときの keep-alive を任せる。独自レイヤーは Dock からの再オープンと Dock メニュー、および Browser がないときにダウンロードの待機を選んだ場合を処理する。`AraratMain` は Chrome を呼ぶ前に `--no-startup-window` を追加し、再オープンはアプリの callback が処理する。起動時に渡された URL は U10 で扱う。終了とウィンドウの close は workspace の行を変更せず、close をキャンセルすると host と Browser が残る（我々の規則）。
+- Chrome の `AppController` を application delegate として維持し、終了、ログアウト、ダウンロードの確認、ウィンドウがないときの keep-alive を任せる。独自レイヤーは Dock からの再オープンと Dock メニュー、および Browser がないときにダウンロードの待機を選んだ場合を処理する。`AraratMain` は Chrome を呼ぶ前に `--no-startup-window` を追加し、再オープンはアプリの callback が処理する。openURLs、Handoff、コマンドラインの URL はキーウィンドウの Today に行を作り、最後の行を選ぶ。`open -a` とそのほかの Launch Services は `application:openURLs:` を通るので対象である。URL 引数つきの別の起動は、`--no-startup-window` が設定されたままで ProcessSingleton を経由し、その URL は捨てられる（未確認）。これは U10 ではなく、phase 5 の既定ハンドラの仕事と一緒に扱う。外部リンクの Air Traffic Control も phase 5 で扱う。起動時、最初のウィンドウは、保存されている `Window` レコードのうち最も新しいものを採用し、そのレコードが記録していた表示中の space が戻る。保存されているものが無いときだけ、UUID で新しいレコードを作る。再オープンは、開いているウィンドウが使っていない保存レコードのうち最も新しいものを採用し、無ければ UUID で新しいレコードを作る。レコードは、書かれるたびに時刻を記録し（表示中 space の変更、選択、生成）、この時刻が採用の順序を決める。複数のウィンドウの保存レコードは、その復元とともに phase 5 の仕事として残る。ユーザーが閉じたウィンドウはその `Window` レコードを削除し、終了はすべての `Window` レコードを残す（unit 46 の行の規則と同じで、id は再利用しない）。終了とウィンドウの close は workspace のタブの行を変更せず、close をキャンセルすると host と Browser が残る（我々の規則）。
 
 ### 4.6 ウィンドウ、タブ、および Chrome の UI から引き継ぐ責務
 
@@ -166,7 +167,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
   | 分割ペイン | 未計測：U18 を待つ | 未計測 | — |
 
   選択：**C1** を維持する（我々の規則）。タブの切り替えの条件を満たすのは C1 だけである。C2 は切り替えのたびに約 2 回のリフレッシュ分を要し、共有の経路についての Ardia の知見と一致する。C1 が最初の条件を満たすため、C3 は計測しない。覆われているあいだに描画を止める候補はない。rAF は 0 ではなく毎秒約 18 回に下がる（覆われていないウィンドウでは 165 回）。したがってオクルージョンは両方に共通の不足であり、選択の理由にはならない。ウィンドウのオクルージョンを接続する unit で扱う。バックグラウンドでは、隠した 8 つのタブのカウンタが一度も書かれなかった（`null`）。これは rAF が一度も実行されなかったことを意味する。CPU の標本は 0.0 % であったが、`ps` のパターンを helper の名前と照合していないため、CPU は未確認とする。C1 のリサイズの 1 回目では 24 フレームが欠落し、残りの 9 回では欠落がなかった。原因は分かっていない。
-- 新しいコンテンツ: renderer が生成したウィンドウは、既存の `WebContents` と保留中のナビゲーションの状態を保持したまま、`AddNewContents` を経由して独自レイヤーに届く。修飾キー付きのクリックやフォームの target は別の経路（`OpenURLFromTab`）を通る場合がある。固定した revision 上のすべての生成経路を列挙し、それぞれ個別にテストする。対象は、POST の target、features 指定の有無それぞれの `window.open`、⌘ クリック、shift クリック、opener の関係、ブロックされたポップアップである。Chrome が自ら生成するウィンドウ（`chrome.windows.create`、シークレット、ドッキングしていない DevTools）は、`Browser` のコンストラクタ内の hook によって独自レイヤーへ回す。
+- 新しいコンテンツ: renderer が生成したウィンドウは、既存の `WebContents` と保留中のナビゲーションの状態を保持したまま、`AddNewContents` を経由して独自レイヤーに届く。修飾キー付きのクリックやフォームの target は別の経路（`OpenURLFromTab`）を通る場合がある。常時有効な Browser コンストラクタの hook は、通常ウィンドウと popup を独自 host に渡す。host は表示中の space が名指す profile（`Space.profile`、現在は `Default`）で開き、こちらの host がその profile を開いているときだけ要求を受け取り、そのほかの profile と off-the-record は U11 まで標準のまま数える。Runtime がないとき（`started` の前、起動に失敗した後、`will_shut_down` の後）は factory は nullptr を返す。Browser は標準のウィンドウを受け取り数えられ、検査の実行のときは `ararat-trace:` を 1 行 stderr に出す。その他は下表のとおり標準のままにする。POST の target、ブロックされた popup、残りの経路は個別の検査が必要である（我々の規則）。
 - 1 つのページは 1 か所にだけ表示する。live のページは、ちょうど 1 つのペインにだけ表示する。2 つ目のウィンドウやペインが同じ workspace のタブを選択した場合、key になったウィンドウがページを取得し、もう一方のウィンドウは再び key になるまで、ぼかしたスナップショットのプレースホルダーを表示する（Arc の挙動、Cra ledger 19）。1 つのウィンドウの中では、フォーカスを取ったペインがページを取得し、もう一方のペインはプレースホルダーを表示する。分割ペインの spike でこれを確かめる。ウィンドウを閉じるときは、別のウィンドウがまだ表示しているページを再読み込みせずに移動する（Cra ledger 20）。
 - 分割ペイン: 各ペインは 1 つのタブを保持する。フォーカスのあるペインのタブが、その `Browser` における Chrome の active タブである。他のペインは表示されているが非 active である。区切り線のドラッグ中はページのサイズを固定し、ドラッグを離したときに 1 回だけリサイズする（Cra ledger 21）。
 
@@ -175,9 +176,17 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 | 責務 | 所有者 |
 |---|---|
 | 終了、ログアウト、ダウンロードの確認 | Chrome の AppController（`app_controller_mac.mm:937–987, 1483–1507`）。host は終了中の transaction を抑止する（我々の規則） |
-| ウィンドウの close | host が Browser の close を要求し、破棄を待つ。workspace の行は維持する（我々の規則） |
+| ウィンドウの close | host が Browser の close を要求し、破棄を待つ。workspace のタブの行は維持する。ユーザーの close はそのウィンドウの `Window` レコードを削除し、終了では残す（§4.5）（我々の規則） |
 | Dock からの再オープンと Dock メニュー | アプリの callback と AppController の hook（`app_controller_mac.mm:1853–1930, 2144–2197`）。Dock メニューは空とする（我々の規則） |
-| URL を開く操作、handoff、新規 window・tab・incognito・復元、履歴・ブックマーク、profile メニュー | U10/U11。現在は Chrome（`app_controller_mac.mm:1673–1770, 1933–1973, 2060, 2201–2324, 2481`） |
+| openURLs、Handoff、コマンドラインの URL | アプリの callback が表示中の space の Today に追加する（U10、我々の規則）。Chrome の `safeProfileForNewWindows` の検査（強制 incognito の policy、ロックされた profile）を迂回する。U11 |
+| 新規タブ、target blank、features の無い window.open、修飾キー付きクリック | Chrome が host Browser に追加し、コアが採用する（U10、我々の規則） |
+| 新規ウィンドウ、shift クリック、復元、ブックマーク、拡張の通常ウィンドウ | Browser のコンストラクタの hook が表示中の space の profile の app host を作る（U10、我々の規則） |
+| popup の window.open（TYPE_POPUP） | Browser のコンストラクタの hook が表示中の space の profile のページだけの popup host を作る（U10、我々の規則） |
+| DevTools | 標準 Browser のまま数える。U13 |
+| app と app popup | 標準 Browser のまま数える。U11/U14 |
+| picture-in-picture | 標準 Browser のまま数える。後続 unit |
+| incognito と、こちらの host の開いていない profile | 標準 Browser のまま数える。U11 |
+| 履歴と profile メニュー | Chrome。U11 |
 | exclusive-access context | ページ入力向けに実装済み。fullscreen の動作は U15 |
 | find bar | U16（現在は null で、検索コマンドでクラッシュする） |
 | location bar | U16（現在は null で、bubble anchor の取得時にクラッシュする） |
@@ -253,14 +262,15 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 - コアの coordinator は id を付けて live タブのコマンドを発行する。エンジンはトランザクション `{epoch, rev, cause, strips}` で応答する。`epoch` はエンジンの起動時に変わる。`rev` は 1 つの epoch の中で単調に増加する。`cause` は、独自のコマンドの id、独自のエンジン呼び出し、Chrome 自身のいずれかである。1 つのトランザクションに複数の cause を混在させない。エコーを抑制する時間窓や、「自分が起こした変更か」を示すフラグは設けない。コマンドは、発行されてから、その id を名指すトランザクションが届くまで飛行中にあり、飛行中のコマンドは新しい epoch の始まりで消去され、飛行中のコマンドを名指さない完了は落とす（我々の規則）。
 - Chrome が自ら行う変更（拡張によるタブの移動、クローズ後の後継タブ）は差分を取り、コアの規則によって workspace に適用する。後継タブは、Chrome の選択ではなくコアの規則（split の連続性、折りたたんだタブと読み込まれていないタブのスキップ）に従う。後継は、Arc と同じく、そのウィンドウで表示している space のタブのうち、最も最近に選んだもので、まだ開いていて表示されているものとする（閉じる操作でサイドバーを別の space へ移さない。Arc で計測した）（2026-11-01 に ⌘W と AppleScript で計測した。閉じると選択の履歴をさかのぼり、隣のタブには移らなかった。`docs/research/arc-ardia-observed.ja.md` の 7 節）。該当するタブが無ければ、同じ一覧で閉じたタブより下にある最も近い表示中の開いたタブ、無ければ上、それも無ければ何も選ばない（我々の規則）。split の中のタブの後継はその split とし、split は最後に開いていたタブを閉じると一緒に閉じる。pinned のタブと favorites で ⌘W を押すと、そのタブを読み込んでいない状態にし、行は残し、同じ規則で後継へ移る。選択の履歴はウィンドウごとにローカルに持ち、同期しない。
 - トランザクションの strips は、運ぶウィンドウを名指し、coordinator の gone パスはそのウィンドウだけを見る。トランザクションが名指さないウィンドウから消えたタブはそのままにする（我々の規則）。閉じたウィンドウは空の strip として届くので、そのタブは消えたものとして見える。
+- 採用したタブは表示中の space の Today の末尾に置く。リンクから開いたタブの Arc での位置は未確認である。active な採用タブは選択し、background のタブには選択時刻と後継の履歴を付けない。コアは報告された URL とページタイトルを保存し、ユーザーが付けたタイトルを保持する。ただし URL とタイトルが動くのは Today の行だけである。pinned と favorite の行は保存した URL とタイトルを保つ。Arc が pinned タブの URL を保つのと同じで、「pinned URL へ戻る」は後の unit の仕事である。opener の ID は strip で運ぶが、配置にはまだ使わない（我々の規則）。
 - strips の active タブは、トランザクションの cause にかかわらずウィンドウごとの選択を更新する。エンジンが確認したコマンドは、Chrome 自身の切り替えと同じように記録される（我々の規則）。Chrome による close でウィンドウの選択が変わったときは、そのウィンドウの strips の active タブは記録せず、規則が選んだ後継を残す（我々の規則）。
 - タブの切り替えでは、まずネイティブにページを表示する。表示の経路に UI の状態を経由する往復は含めない。
 - Air Traffic Control は規則自身のプロファイルの内側に保つ: 規則は、その routing ファイルの持ち主のプロファイル（呼び出し側が渡す。持ち主を知らないときは、space を名指す行き先はその space のプロファイルを、それ以外の行き先は最初の space のプロファイルを、規則ごとに載せる）に属し、space の行き先はそのプロファイルの space でなければならず、Little window の行き先は workspace が持つプロファイル（組み込みのもの、または帳簿に載っている名前のあるもの）を名指しし、これらを破る編集は断られ、取り込みはその規則を飛ばす。space を消された規則はそれでも当てはまり、まず自分のプロファイルの、最も最近使われた space —— 選択の記録の中で最も新しいタブが順位をつける —— に続き、既定の行き先、既定のプロファイルの最も最近使われた space の順で答え、それも無ければ最も最近の space に送る（我々の規則）。
 
 ### 5.2 クラッシュ時の一貫性
 
-- すべての live タブはコアの安定した項目 id を持ち、それをエンジンのタブごとのセッションデータに保存する。これにより、対応関係は再起動後も保たれる。
-- 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。正とするのは workspace である。各項目は、ライフサイクルの状態（開いている、読み込まれていない、閉じた、アーカイブした）を、変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。workspace が開いている、または読み込まれていないと記録していてエンジンが知らないタブは、復元するか、読み込まれていない状態として記録する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。項目が存在しないエンジンのタブ（クラッシュの前の、commit されていない最後の 1 秒に生成されたもの）は Today に取り込む。epoch の途中で届いた item の無いタブ（⌘ クリック、タブへの `window.open`）も、同じ transaction の中で、スナップショットと同じやり方で取り込む。表示中の space の Today の末尾に空の url の open の行として入る。タブの url はエンジンが所有し、Chrome がナビゲーションを報告するまで core 側は空のままとする。採用は、作った項目とともに live タブを名指すので、エンジンはタブのセッションデータに項目の id を保存できる。エンジンが live として報告した読み込まれていない行は open に変わる。どのタブが存在するかはエンジンが所有するからである（我々の規則）。
+- すべての live タブはコアの項目 id を持つが、その id はタブのそばの WebContents の user data（`kTabIdentityKey`）に置かれ、再起動後も残らない。live id の対応もそれと一緒に消える。そのため再起動のあとは、エンジンのタブは項目 id を持たない。項目 id のないタブは新しい行として取り込まれ、エンジンが報告しない行は読み込まれていない状態として記録される。どちらも下の §5.2 の場合分けによる（我々の規則）。タブを既存の行に url や順序で結びつける処理は存在しない。クラッシュと再起動に耐えるタブごとの同一性は U17（crash and relaunch reconciliation）の仕事である（我々の規則）。
+- 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。正とするのは workspace である。各項目は、ライフサイクルの状態（開いている、読み込まれていない、閉じた、アーカイブした）を、変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。workspace が開いている、または読み込まれていないと記録していてエンジンが知らないタブは、復元するか、読み込まれていない状態として記録する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。項目が存在しないエンジンのタブ（クラッシュの前の、commit されていない最後の 1 秒に生成されたもの）は Today に取り込む。epoch の途中で届いた item の無いタブ（⌘ クリック、タブへの `window.open`）も、同じ transaction の中で、スナップショットと同じやり方で取り込む。表示中の space の Today の末尾に open の行として入る。URL は commit 済みのナビゲーションが報告されるまで空とし、すでに報告されていれば採用時に URL とタイトルを保存する。採用は、作った項目とともに live タブを名指し、エンジンはその組を WebContents の user data として持つ（上のタブの同一性。再起動から復元できる形でタブのセッションデータに項目 id を保存するのは U17 の仕事である）。エンジンが live として報告した読み込まれていない行は open に変わる。どのタブが存在するかはエンジンが所有するからである（我々の規則）。
 - 落とされたトランザクションは rev を消費する。同じ rev の後のトランザクションは、再送ではなくエンジンのバグである（我々の規則）。
 - コマンドの完了は発行時の epoch を持ち、現在の epoch でなければ捨てる。
 - クラッシュ時に失われうる範囲: workspace の変更は、その SQLite トランザクションがコミットされた時点で永続化され、コミットは、ストレージが動いている間はイベントから最大 1 秒後である（メインスレッド外でバッチ処理する）。書き込みが失敗している間（次の項目）は、再試行が成功するまでこの範囲が広がる。クラッシュで失われうるのは、最大でその直近 1 秒分の workspace の変更である。workspace と送信用の同期ログは同じトランザクションで書き込むため、クラッシュによって両者が不整合になることはない。
@@ -406,6 +416,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-db`、一時的な user data directory、mock keychain を使う。3 行のうち 2 行を開き、2 行目を選び直す。画面上の検査は U8 で行う（我々の規則）。
 
 U9 の検査も一時的な profile、database、mock keychain を使う。`--ararat-check=quit` は終了前後の保存済み行を比較する。`--ararat-check=quit-cancel` は beforeunload で Stay と Leave を選ぶ。`--ararat-check=close` はウィンドウの close、再オープン、Dock メニューを検査する。`--ararat-screen=quit` はウィンドウを表示し、⌘Q と Cocoa の beforeunload ダイアログを検査する（我々の規則）。
+
+U10 の検査も同じ一時 profile・database・mock keychain を使う。`--ararat-check=newtab|popup|menu|deferred` は Chrome が作るタブ、popup、メニューと外部 URL、後続 unit に残す Browser の種別を検査する。`--ararat-screen=links` はウィンドウを表示し、リンクの入力と popup の配置を検査する（我々の規則）。
 
 | Phase | 内容 | 完了の条件 |
 |---|---|---|

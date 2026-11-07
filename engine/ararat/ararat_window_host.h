@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
@@ -31,6 +32,8 @@ class AraratWindowHostCore {
   views::Widget* widget() const { return widget_.get(); }
   bool closing() const { return closing_; }
   bool closed() const { return closed_; }
+  const std::string& profile_name() const { return profile_name_; }
+  void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
   void AttachPage(gfx::NativeView view);
   void PositionPage(const gfx::Rect& rect);
@@ -51,6 +54,8 @@ class AraratWindowHostCore {
   raw_ptr<AraratBrowserWindow> window_;
   bool closing_ = false;
   bool closed_ = false;
+  bool popup_ = false;
+  std::string profile_name_ = "Default";
   base::CallbackListSubscription close_cancelled_;
   void* owner_;
 };
@@ -58,11 +63,15 @@ class AraratWindowHostCore {
 bool AraratUsesSharedCompositor();
 bool AraratHandleMenuKey(gfx::NativeEvent event);
 unsigned long AraratStockBrowserCount();
+void AraratInstallWindowFactory();
+bool AraratHasHostCallback();
+void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect& bounds);
 
 #ifdef __OBJC__
 #import "ararat/core/public/ARWindowHost.h"
 @interface ARWindowHost ()
 - (BOOL)hasBrowser;
+- (AraratWindowHostCore*)hostCore;
 - (void)browserCreated:(BrowserWindowInterface*)browser;
 - (void)browserDestroyed:(BrowserWindowInterface*)browser;
 - (void)closeCancelled;

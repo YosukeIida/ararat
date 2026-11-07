@@ -286,6 +286,7 @@ impl Workspace {
         state.shown_space = Some(space_id);
         state.select(Some(id.clone()));
         ops.push(Op::Put(Record::Item(item)));
+        state.changed_at = now;
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         ops.extend(self.stamp_selection(&id, now));
@@ -405,7 +406,10 @@ impl Workspace {
             if self.shown_space(&state.id) == Some(id) { state.shown_space = Some(neighbour.clone()); }
             if state.selected.as_ref().is_some_and(|id| changing.contains(id)) { state.selected = None; }
             state.history.retain(|id| !changing.contains(id));
-            if state != before { ops.push(Op::Put(Record::Window(state))); }
+            if state != before {
+                state.changed_at = changed_at;
+                ops.push(Op::Put(Record::Window(state)));
+            }
         }
         ops.push(Op::Delete(crate::model::Kind::Space, id.into()));
         for op in &ops { self.apply(op); }
@@ -438,6 +442,7 @@ impl Workspace {
                 title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at,
             })));
         }
+        state.changed_at = changed_at;
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         Ok(ops)
@@ -445,7 +450,7 @@ impl Workspace {
 
     fn window_state(&self, window: &str) -> WindowState {
         self.windows.get(window).cloned().unwrap_or_else(|| WindowState {
-            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(),
+            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(), changed_at: 0,
         })
     }
 
@@ -453,9 +458,17 @@ impl Workspace {
         if !self.spaces.iter().any(|entry| entry.id == space) { return Err(EditError(format!("unknown space {space}"))); }
         let mut state = self.window_state(window);
         state.shown_space = Some(space.into());
+        state.changed_at = self.lifecycle_time();
         let ops = vec![Op::Put(Record::Window(state))];
         for op in &ops { self.apply(op); }
         Ok(ops)
+    }
+
+    pub fn close_window(&mut self, window: &str, quitting: bool) -> Vec<Op> {
+        if quitting || !self.windows.contains_key(window) { return Vec::new(); }
+        let op = Op::Delete(crate::model::Kind::Window, window.into());
+        self.apply(&op);
+        vec![op]
     }
 
     pub fn shown_space(&self, window: &str) -> Option<&str> {
@@ -474,6 +487,14 @@ impl Workspace {
             && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).collect();
         items.sort_by(|a, b| b.lifecycle_changed_at.cmp(&a.lifecycle_changed_at).then_with(|| a.id.cmp(&b.id)));
         items
+    }
+
+    // The kept Window records, newest first: launch and reopen adopt the first record
+    // (design (c)), the others wait for phase 5. Ties break on the id for a stable order.
+    pub fn kept_windows(&self) -> Vec<WindowState> {
+        let mut windows: Vec<WindowState> = self.windows.values().cloned().collect();
+        windows.sort_unstable_by(|a, b| b.changed_at.cmp(&a.changed_at).then_with(|| a.id.cmp(&b.id)));
+        windows
     }
 
     pub fn delete_archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
@@ -515,6 +536,7 @@ impl Workspace {
         let mut state = self.window_state(window);
         state.shown_space = Some(space_id);
         state.select(Some(id.into()));
+        state.changed_at = item.lifecycle_changed_at;
         ops.push(Op::Put(Record::Item(item)));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
@@ -607,6 +629,7 @@ impl Workspace {
         ops.extend(self.flip_active(id, now));
         let mut state = self.window_state(window);
         state.select(Some(id.into()));
+        state.changed_at = now;
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
         ops.extend(self.stamp_selection(id, now));
@@ -684,7 +707,10 @@ impl Workspace {
                 state.select(successor);
             }
             if today { state.history.retain(|id| !changing.contains(id)); }
-            if state != before { ops.push(Op::Put(Record::Window(state))); }
+            if state != before {
+                state.changed_at = changed_at;
+                ops.push(Op::Put(Record::Window(state)));
+            }
         }
         let selected: HashSet<_> = ops.iter().filter_map(|op| match op {
             Op::Put(Record::Window(state)) if state.selected.as_deref() != self.selected(&state.id) => state.selected.clone(), _ => None,
