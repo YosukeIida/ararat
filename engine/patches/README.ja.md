@@ -45,6 +45,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/link-ararat-layer.patch` | 独自 |
 | `ararat/extra-parts-hook.patch` | 独自 |
 | `ararat/permission-prompt-hook.patch` | 独自 |
+| `ararat/devtools-hook.patch` | `mantrakp04/ardia`（GPL-3.0） |
 | `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia`（GPL-3.0） |
 | `ararat/app-controller-hooks.patch` | 独自 |
 | `ararat/browser-window-factory.patch` | 独自 |
@@ -57,6 +58,8 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 ## 独自パッチに関する注記
 
 `ararat/permission-prompt-hook.patch` は `ChromePermissionsClient::CreatePrompt` から独自 hook を呼ぶ。hook が未設定か null を返す場合は Chrome 標準のプロンプトを使う。`link-ararat-layer.patch` は permissions のビルドターゲットに `//ararat/core:hooks` を追加する。
+
+`ararat/devtools-hook.patch` は `mantrakp04/ardia` の `engine/patches/chromium-window-docked-devtools.patch`（GPL-3.0）を元にする。`DevtoolsUIController::UpdateDevtools` を任意の hook に通知し、hook が未設定なら Chrome の動作を維持する。`link-ararat-layer.patch` は DevTools のビルドターゲットに `//ararat/core:hooks` を追加する。
 
 `ararat/autofill-address-bubble.patch` は `mantrakp04/ardia` の `engine/patches/chromium-autofill-address-bubble-window.patch`（GPL-3.0）を元にする。Browser の unowned user data から Autofill handler を取得し、住所プロモーションの `AsBrowserView()` 呼び出しをガードし、カード controller の 2 つの検査を早期 return に変える。
 

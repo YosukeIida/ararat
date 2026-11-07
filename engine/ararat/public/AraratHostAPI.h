@@ -61,6 +61,15 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol ARWindowHostAPI <NSObject>
+- (void)checkOpenDevTools;
+- (void)checkCloseDevTools;
+- (NSDictionary<NSString*, id>*)checkDevToolsState;
+- (NSDictionary<NSString*, id>*)checkDevToolsTabState:(NSString*)liveId;
+- (BOOL)checkSetDevToolsDocked:(BOOL)docked;
+- (NSUInteger)checkDevToolsHostCount;
+- (BOOL)checkInspectElement;
+- (BOOL)checkFocusDevTools;
+- (void)checkDevToolsFrontend:(void (^)(NSString*))completion;
 @property(nonatomic, weak, nullable) id<ARWindowHostDelegate> delegate;
 - (NSWindow*)window;
 - (BOOL)hasBrowser;

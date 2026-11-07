@@ -353,18 +353,39 @@ final class Runtime {
   var emptyRowsBefore: Set<String> = []
   var linkMenuObserver: NSObjectProtocol?
   var linkMenuChosen = false
+  var linkMenuTitle = ""
+  var linkMenuItems: [String] = []
+  var linkMenuNotifications = 0
+  var linkMenuTargetEnabled = false
+  var linkMenuTargetIndex = -1
+  var linkMenuDownKeys = 0
+  var linkMouseDiagnostics: [String: Any] = [:]
+  var devtoolsFrontBefore: String?
+  var devtoolsFirstLive = ""
+  var devtoolsSecondLive = ""
+  var devtoolsInitialHosts = 0
+  var devtoolsResults: [String: Any] = [:]
+  var popupFrontBefore: String?
+  var popupFrontChange: [String: Any]?
+  var popupWindowsHidden = true
+  var devtoolsScreenFrontend: [String: Bool] = [:]
+  var devtoolsScreenReading = false
+  var devtoolsScreenOriginalSize = NSSize.zero
 
   func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false) throws {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
+      if checkName == "popup" { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if screenName == "links" { browserCheckMode = "screen-links" }
       if screenName == "profiles" { browserCheckMode = "screen-profiles" }
       if screenName == "prompts" { browserCheckMode = "screen-prompts" }
+      if screenName == "devtools" { browserCheckMode = "screen-devtools" }
       if ["permissions", "dialogs", "protocol", "autofill"].contains(checkName ?? "") || screenName == "prompts" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -516,7 +537,7 @@ final class Runtime {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" {
         NSApp.activate(ignoringOtherApps: true)
         host.window().makeKeyAndOrderFront(nil)
       }
@@ -647,9 +668,26 @@ final class Runtime {
   }
 
   func sendLinkClick(_ tab: any ARTabAPI, right: Bool, command: Bool) {
-    guard let view = tab.view, let window = view.window else { return }
+    let name = right ? "right" : "command"
+    guard let view = tab.view, let window = view.window else {
+      linkMouseDiagnostics[name] = ["view_attached": false]
+      return
+    }
     let local = NSPoint(x: 70, y: view.isFlipped ? 70 : view.bounds.height - 70)
     let location = view.convert(local, to: nil)
+    let root = window.contentView
+    let point = root?.superview?.convert(location, from: nil) ?? location
+    let hit = root?.hitTest(point)
+    var chain: [String] = []
+    var ancestor = hit
+    while let current = ancestor {
+      chain.append(NSStringFromClass(type(of: current)))
+      ancestor = current.superview
+    }
+    linkMouseDiagnostics[name] = ["view_attached": true, "local": NSStringFromPoint(local),
+      "window_point": NSStringFromPoint(location), "view_bounds": NSStringFromRect(view.bounds),
+      "window_key": window.isKeyWindow, "window_visible": window.isVisible, "app_active": NSApp.isActive,
+      "hit_in_view": hit?.isDescendant(of: view) ?? false, "hit_chain": chain]
     let flags: NSEvent.ModifierFlags = command ? .command : []
     for type in right ? [NSEvent.EventType.rightMouseDown, .rightMouseUp] : [.leftMouseDown, .leftMouseUp] {
       if let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: flags,
@@ -660,13 +698,23 @@ final class Runtime {
 
   func watchLinkMenu() {
     guard let title = host?.checkOpenLinkNewWindowTitle(), !title.isEmpty else { return }
+    linkMenuTitle = title
     linkMenuObserver = NotificationCenter.default.addObserver(
       forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
     ) { [weak self] notification in
-      guard let menu = notification.object as? NSMenu,
-            let target = menu.items.firstIndex(where: { $0.title == title }) else { return }
+      guard let menu = notification.object as? NSMenu else { return }
+      MainActor.assumeIsolated {
+        self?.linkMenuNotifications += 1
+        self?.linkMenuItems = menu.items.map { $0.title }
+      }
+      guard let target = menu.items.firstIndex(where: { $0.title == title }) else { return }
       let count = menu.items[...target].filter { !$0.isHidden && $0.isEnabled && !$0.isSeparatorItem }.count
-      MainActor.assumeIsolated { self?.linkMenuChosen = true }
+      MainActor.assumeIsolated {
+        self?.linkMenuChosen = true
+        self?.linkMenuTargetEnabled = menu.items[target].isEnabled && !menu.items[target].isHidden
+        self?.linkMenuTargetIndex = target
+        self?.linkMenuDownKeys = count
+      }
       for key in Array(repeating: UInt16(125), count: count) + [UInt16(36)] {
         if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
@@ -723,6 +771,32 @@ final class Runtime {
       timeoutValues["session_restore"] = emptyRestore
       timeoutValues["host_has_browser"] = host?.hasBrowser() ?? false
       timeoutValues["host_tab_count"] = host?.tabs().count ?? 0
+    }
+    if mode == "devtools" {
+      timeoutValues["devtools_state"] = host?.checkDevToolsState() ?? [:]
+      timeoutValues["first_tab_state"] = host?.checkDevToolsTabState(devtoolsFirstLive) ?? [:]
+      timeoutValues["tab_count"] = host?.tabs().count ?? 0
+      timeoutValues["active_item"] = host?.activeItemId() ?? ""
+      timeoutValues["devtools_hosts"] = host?.checkDevToolsHostCount() ?? 0
+      timeoutValues["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock
+      timeoutValues["host_present"] = host != nil
+      timeoutValues["host_count"] = children.count + popups.count
+      timeoutValues["initial_host_count"] = devtoolsInitialHosts
+      timeoutValues["front_before"] = devtoolsFrontBefore ?? ""
+      timeoutValues["front_now"] = commandOutput("/usr/bin/lsappinfo", ["front"]) ?? ""
+      timeoutValues["completed"] = devtoolsResults
+      for key in ["initial_docked", "background_hidden", "tab_restored", "undocked_host", "redocked", "closed_full_page", "inspected_tab_closed", "inspect_docked", "open_at_quit"] {
+        timeoutValues[key] = devtoolsResults[key] as? Bool ?? false
+      }
+    }
+    if mode == "screen-devtools" {
+      timeoutValues["devtools_state"] = host?.checkDevToolsState() ?? [:]
+      timeoutValues["frontend"] = devtoolsScreenFrontend
+      timeoutValues["completed"] = devtoolsResults
+      if browserCheckAttempts > 300, let window = host?.window(),
+         let path = promptScreenScreenshot(window, name: "devtools-timeout", withoutShadow: true) {
+        timeoutValues["screenshot"] = path
+      }
     }
     if mode == "permissions" {
       let tab = (host?.tabs() as? [any ARTabAPI])?.first
@@ -811,7 +885,30 @@ final class Runtime {
       }
       if let error = promptFixtureError { finishBrowserCheck(ok: false, values: timeoutValues.merging(["error": error]) { _, new in new }); return }
     }
+    if mode == "screen-links" {
+      let seed = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID })
+      timeoutValues.merge(["mouse": linkMouseDiagnostics, "menu_observer": linkMenuObserver != nil,
+        "menu_expected_title": linkMenuTitle, "menu_notifications": linkMenuNotifications,
+        "menu_items": linkMenuItems, "menu_target_found": linkMenuChosen,
+        "menu_target_enabled": linkMenuTargetEnabled, "menu_target_index": linkMenuTargetIndex,
+        "menu_down_keys": linkMenuDownKeys, "child_hosts": children.filter { $0.host != nil }.count,
+        "seed_tab_present": seed != nil, "seed_view_attached": seed?.view?.window != nil,
+        "active_item": host?.activeItemId() ?? "", "selected_item": snapshot.selectedId ?? ""]) { _, new in new }
+      if browserCheckAttempts > 300, let window = host?.window(),
+         let path = promptScreenScreenshot(window, name: "links-timeout", withoutShadow: true) {
+        timeoutValues["screenshot"] = path
+      }
+    }
     if mode == "popup" {
+      let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+      let visible = (host?.window().isVisible ?? false) || popups.contains { $0.host?.window().isVisible == true }
+      popupWindowsHidden = popupWindowsHidden && !visible
+      if popupFrontChange == nil, let before = popupFrontBefore, let front, before != front {
+        let app = NSWorkspace.shared.frontmostApplication
+        popupFrontChange = ["phase": browserCheckPhase, "front": front,
+                            "app": app?.localizedName ?? "", "bundle_id": app?.bundleIdentifier ?? "",
+                            "pid": app?.processIdentifier ?? 0, "ararat_window_visible": visible]
+      }
       let popup = popups.first
       let popupHost = popup?.host
       let popupTab = (popupHost?.tabs() as? [any ARTabAPI])?.first
@@ -829,7 +926,11 @@ final class Runtime {
                            "popup_navigation_count": popupTab.map { $0.navigationCount } as Any? ?? NSNull(),
                            "popup_url": popupTab?.url as Any? ?? NSNull(),
                            "popup_title": popupTab?.title as Any? ?? NSNull(),
-                           "browser_count": count as Any? ?? NSNull()]) { _, new in new }
+                           "devtools_hosts": popupHost?.checkDevToolsHostCount() ?? 0,
+                           "stock_browsers": popupHost?.checkStockBrowsers() ?? browserCheckStock,
+                           "browser_count": count as Any? ?? NSNull(), "front_before": popupFrontBefore ?? "",
+                           "front_now": front ?? "", "front_change": popupFrontChange ?? [:],
+                           "windows_hidden": popupWindowsHidden]) { _, new in new }
     }
     if browserCheckAttempts > 300 { finishBrowserCheck(ok: false, values: timeoutValues); return }
     if mode == "profiles", browserCheckPhase == 8, host == nil,
@@ -848,11 +949,39 @@ final class Runtime {
         "rows_before_close": profileCloseBefore ?? [], "rows_after_close": after ?? [],
         "rows_unchanged_after_close": unchanged, "window_removed": removed,
         "widget_closed": true, "stock_browsers": browserCheckStock]) { _, new in new }
-      finishBrowserCheck(ok: profileCheckPassed && closed && unchanged && removed && browserCheckStock == 1,
+      finishBrowserCheck(ok: profileCheckPassed && closed && unchanged && removed && browserCheckStock == 0,
                          values: profileCheckResult)
       return
     }
+    if mode == "popup", browserCheckPhase >= 6 {
+      guard let popup = popups.first?.host else { return }
+      if browserCheckPhase == 6, host == nil, popups.count == 1,
+         let symbol = dlsym(Launcher.handle, "AraratBrowserCount"),
+         unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)() == 1 {
+        browserCheckPhase = 7
+        popup.checkOpenDevTools()
+      } else if browserCheckPhase == 7, popups.count == 2, popup.checkDevToolsHostCount() == 1,
+                popup.checkStockBrowsers() == 0 {
+        devtoolsResults["popup_only_devtools_host"] = true
+        browserCheckPhase = 8
+        popup.checkCloseDevTools()
+      } else if browserCheckPhase == 8, popups.count == 1, popup.checkDevToolsHostCount() == 0 {
+        devtoolsResults["popup_only_devtools_closed"] = true
+        devtoolsResults["stock_browsers"] = popup.checkStockBrowsers()
+        let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+        let frontUnchanged = !(popupFrontBefore ?? "").isEmpty && !(front ?? "").isEmpty && popupFrontBefore == front && popupFrontChange == nil
+        devtoolsResults["front_before"] = popupFrontBefore ?? ""
+        devtoolsResults["front_after"] = front ?? ""
+        devtoolsResults["front_unchanged"] = frontUnchanged
+        devtoolsResults["front_change"] = popupFrontChange ?? [:]
+        devtoolsResults["windows_hidden"] = popupWindowsHidden
+        finishBrowserCheck(ok: popup.checkStockBrowsers() == 0 && frontUnchanged && popupWindowsHidden, values: devtoolsResults)
+      }
+      return
+    }
     guard let host else { return }
+    if mode == "devtools" { devtoolsCheckTick(host); return }
+    if mode == "screen-devtools" { devtoolsScreenTick(host); return }
     if mode == "permissions" { permissionCheckTick(host); return }
     if mode == "dialogs" { dialogCheckTick(host); return }
     if mode == "protocol" { protocolCheckTick(host); return }
@@ -909,9 +1038,9 @@ final class Runtime {
       finishBrowserCheck(ok: placed && stock == 0,
         values: ["command_click": true, "context_menu": true, "popup_placed": placed,
                  "popup_x": frame.origin.x, "popup_y": frame.origin.y, "stock_browsers": stock])
-    } else if mode == "deferred", browserCheckPhase == 2, host.checkStockBrowsers() >= 2 {
+    } else if mode == "deferred", browserCheckPhase == 2, host.checkStockBrowsers() >= 1, popups.isEmpty {
       let stock = host.checkStockBrowsers()
-      finishBrowserCheck(ok: stock == 2 && children.isEmpty && popups.isEmpty,
+      finishBrowserCheck(ok: stock == 1 && children.isEmpty && popups.isEmpty,
                          values: ["stock_browsers": stock, "app_windows": children.count, "popup_hosts": popups.count])
     } else if mode == "menu", browserCheckPhase == 2,
               let tab = (host.tabs() as? [any ARTabAPI])?.first, !tab.isLoading, tab.url.hasPrefix("chrome://newtab") {
@@ -980,9 +1109,19 @@ final class Runtime {
       let stock = host.checkStockBrowsers()
       let rowsUnchanged = snapshot == browserCheckBefore
       let sizeOK = abs(browserCheckPopupSize.width - 400) <= 20 && abs(browserCheckPopupSize.height - 300) <= 40
-      finishBrowserCheck(ok: rowsUnchanged && sizeOK && stock == 0,
-        values: ["opener_alive": true, "popup_closed": true, "rows_unchanged": rowsUnchanged,
-                 "width": browserCheckPopupSize.width, "height": browserCheckPopupSize.height, "stock_browsers": stock])
+      devtoolsResults = ["opener_alive": true, "popup_closed": true, "rows_unchanged": rowsUnchanged,
+                         "width": browserCheckPopupSize.width, "height": browserCheckPopupSize.height, "stock_browsers": stock]
+      guard rowsUnchanged && sizeOK && stock == 0,
+            let tab = (host.tabs() as? [any ARTabAPI])?.first else {
+        finishBrowserCheck(ok: false, values: devtoolsResults); return
+      }
+      browserCheckPhase = 5
+      tab.openCheckPopup()
+    } else if mode == "popup", browserCheckPhase == 5, popups.count == 1,
+              let popup = popups.first?.host,
+              let tab = (popup.tabs() as? [any ARTabAPI])?.first, !tab.isLoading, tab.title == "Popup" {
+      browserCheckPhase = 6
+      host.close()
     } else if mode == "newtab", browserCheckPhase == 2 {
       let rows = snapshot.spaces.flatMap { $0.today }
       let matches = ["background", "split", "foreground"].compactMap { name in
@@ -1048,6 +1187,230 @@ final class Runtime {
         "menu_items_validated": emptyMenuCount, "enabled_command_ids": emptyMenuEnabled,
         "session_restore": emptyRestore, "new_tab": true, "new_tab_row_id": id,
         "command_bar_available": false, "stock_browsers": stock])
+    }
+  }
+
+  func devtoolsScreenPixels(_ host: any ARWindowHostAPI, state: [String: Any], name: String) -> String? {
+    let card = NSRectFromString(state["card_frame"] as? String ?? "")
+    let page = NSRectFromString(state["page_frame"] as? String ?? "")
+    guard card.width > page.width + 40, page.width > 40,
+          abs(card.minX - page.minX) < 2, abs(card.minY - page.minY) < 2, abs(card.height - page.height) < 2,
+          let path = promptScreenScreenshot(host.window(), name: "devtools-\(name)", withoutShadow: true),
+          let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let image = NSBitmapImageRep(data: data) else { return nil }
+    let window = host.window()
+    let scaleX = CGFloat(image.pixelsWide) / window.frame.width
+    let scaleY = CGFloat(image.pixelsHigh) / window.frame.height
+    func colors(_ rect: NSRect) -> (Set<String>, Int) {
+      var result = Set<String>()
+      var white = 0
+      for x in 1...20 {
+        for y in 1...20 {
+          let px = Int((rect.minX + rect.width * CGFloat(x) / 21) * scaleX)
+          let py = Int((window.frame.height - rect.minY - rect.height * CGFloat(y) / 21) * scaleY)
+          guard px >= 0, py >= 0, px < image.pixelsWide, py < image.pixelsHigh,
+                let color = image.colorAt(x: px, y: py)?.usingColorSpace(.deviceRGB) else { continue }
+          result.insert("\(Int(color.redComponent * 15)),\(Int(color.greenComponent * 15)),\(Int(color.blueComponent * 15))")
+          if color.redComponent > 0.9 && color.greenComponent > 0.9 && color.blueComponent > 0.9 { white += 1 }
+        }
+      }
+      return (result, white)
+    }
+    let tools = NSRect(x: page.maxX, y: card.minY, width: card.maxX - page.maxX, height: card.height)
+    guard tools.width > 40, colors(page.insetBy(dx: 10, dy: 10)).1 >= 300,
+          colors(tools.insetBy(dx: 10, dy: 10)).0.count >= 4 else { return nil }
+    return path
+  }
+
+  func devtoolsScreenTick(_ host: any ARWindowHostAPI) {
+    let state = host.checkDevToolsState()
+    let window = host.window()
+    let card = NSRectFromString(state["card_frame"] as? String ?? "")
+    let page = NSRectFromString(state["page_frame"] as? String ?? "")
+    let expected = NSRectFromString(state["strategy_page_frame"] as? String ?? "")
+    let tools = NSRectFromString(state["devtools_frame"] as? String ?? "")
+    let shared = CommandLine.arguments.contains("--ararat-compositor=c2")
+    let docked = state["docked"] as? Bool == true && state["devtools_attached"] as? Bool == true &&
+      card.width > 0 && tools == card && page == expected && page.width < card.width && state["page_above"] as? Bool == true &&
+      (!shared || (state["page_hit"] as? Bool == true && state["devtools_hit"] as? Bool == true))
+    if browserCheckPhase >= 2 && browserCheckPhase <= 5 && !devtoolsScreenReading {
+      devtoolsScreenReading = true
+      let requestedPhase = browserCheckPhase
+      host.checkDevToolsFrontend { [weak self] json in
+        MainActor.assumeIsolated {
+          guard let self else { return }
+          self.devtoolsScreenReading = false
+          guard self.browserCheckPhase == requestedPhase else { return }
+          if let data = json.data(using: .utf8), let values = try? JSONDecoder().decode([String: Bool].self, from: data) {
+            self.devtoolsScreenFrontend = values
+          }
+        }
+      }
+    }
+    func key(_ text: String, code: UInt16, flags: NSEvent.ModifierFlags = []) {
+      if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+        characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code) { NSApp.sendEvent(event) }
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard let row = sliceRows.first, let url = row.url else { return }
+      browserCheckSeedID = row.id
+      browserCheckPhase = 1
+      adapter?.select(id: row.id, url: url)
+    case 1:
+      guard sliceActive == browserCheckSeedID, let tab = (host.tabs() as? [any ARTabAPI])?.first,
+            !tab.isLoading, tab.navigationCount > 0, window.isKeyWindow else { return }
+      browserCheckPhase = 2
+      host.checkOpenDevTools()
+    case 2:
+      guard docked, devtoolsScreenFrontend["drawer"] == false, devtoolsScreenFrontend["search"] == false,
+            let path = devtoolsScreenPixels(host, state: state, name: "initial"), host.checkFocusDevTools() else { return }
+      devtoolsResults["initial_screenshot"] = path
+      devtoolsResults["focused"] = true
+      devtoolsScreenFrontend = [:]
+      browserCheckPhase = 3
+      key("\u{1b}", code: 53)
+    case 3:
+      guard devtoolsScreenFrontend["drawer"] == true else { return }
+      devtoolsResults["escape_drawer"] = true
+      devtoolsScreenFrontend = [:]
+      browserCheckPhase = 4
+      key("\u{1b}", code: 53)
+    case 4:
+      guard devtoolsScreenFrontend["drawer"] == false, host.checkFocusDevTools() else { return }
+      devtoolsScreenFrontend = [:]
+      browserCheckPhase = 5
+      key("f", code: 3, flags: .command)
+    case 5:
+      guard devtoolsScreenFrontend["search"] == true else { return }
+      devtoolsResults["command_f_search"] = true
+      devtoolsScreenOriginalSize = card.size
+      browserCheckPhase = 6
+      window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: window.frame.width + 100, height: window.frame.height + 80), display: true)
+    case 6:
+      guard docked, card.size != devtoolsScreenOriginalSize,
+            let path = devtoolsScreenPixels(host, state: state, name: "resized") else { return }
+      devtoolsResults["resize_screenshot"] = path
+      guard host.checkSetDevToolsDocked(false) else { finishBrowserCheck(ok: false, values: ["undock_request": false]); return }
+      browserCheckPhase = 7
+    case 7:
+      guard state["docked"] as? Bool == false, host.checkDevToolsHostCount() == 1 else { return }
+      guard host.checkSetDevToolsDocked(true) else { finishBrowserCheck(ok: false, values: ["redock_request": false]); return }
+      browserCheckPhase = 8
+    case 8:
+      guard docked, host.checkDevToolsHostCount() == 0,
+            let path = devtoolsScreenPixels(host, state: state, name: "redocked") else { return }
+      devtoolsResults["redock_screenshot"] = path
+      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: devtoolsResults)
+    default: break
+    }
+  }
+
+  func devtoolsCheckTick(_ host: any ARWindowHostAPI) {
+    let state = host.checkDevToolsState()
+    let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
+    let card = NSRectFromString(state["card_frame"] as? String ?? "")
+    let page = NSRectFromString(state["page_frame"] as? String ?? "")
+    let tools = NSRectFromString(state["devtools_frame"] as? String ?? "")
+    let expected = NSRectFromString(state["strategy_page_frame"] as? String ?? "")
+    let docked = state["docked"] as? Bool == true && state["devtools_attached"] as? Bool == true &&
+      ((state["hook_count"] as? NSNumber)?.intValue ?? 0) >= 1 && card.width > 0 && card.height > 0 &&
+      tools == card && page == expected && page.width < card.width && state["page_above"] as? Bool == true
+    let fullPage = card.width > 0 && page == card && state["devtools_attached"] as? Bool == false
+    let hidden = !host.window().isVisible && popups.allSatisfy { $0.host?.window().isVisible == false }
+    let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+    guard let initialFront = devtoolsFrontBefore, !initialFront.isEmpty, let front, !front.isEmpty else {
+      finishBrowserCheck(ok: false, values: ["front_unavailable": true]); return
+    }
+    if !hidden || front != initialFront || host.checkStockBrowsers() != 0 {
+      finishBrowserCheck(ok: false, values: ["hidden": hidden, "front_unchanged": front == initialFront,
+                                             "stock_browsers": host.checkStockBrowsers()]); return
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard let row = sliceRows.first, let url = row.url else { return }
+      browserCheckSeedID = row.id
+      devtoolsInitialHosts = children.count + popups.count
+      browserCheckPhase = 1
+      adapter?.select(id: row.id, url: url)
+    case 1:
+      guard sliceActive == browserCheckSeedID, let tab = tabs.first(where: { $0.itemId == browserCheckSeedID }),
+            !tab.isLoading, tab.navigationCount > 0 else { return }
+      devtoolsFirstLive = tab.liveId
+      browserCheckPhase = 2
+      host.checkOpenDevTools()
+    case 2:
+      guard docked, host.checkDevToolsHostCount() == 0, children.count + popups.count == devtoolsInitialHosts else { return }
+      devtoolsResults.merge(state) { _, new in new }
+      devtoolsResults["initial_docked"] = true
+      devtoolsResults["host_count_unchanged"] = true
+      browserCheckPhase = 3
+      host.checkNavigate("about:blank", disposition: "foreground")
+    case 3:
+      guard let second = tabs.first(where: { $0.liveId != devtoolsFirstLive }), let item = second.itemId,
+            host.activeItemId() == item, fullPage else { return }
+      let firstState = host.checkDevToolsTabState(devtoolsFirstLive)
+      guard firstState["exists"] as? Bool == true, firstState["hidden"] as? Bool == true,
+            firstState["in_card"] as? Bool == false else { return }
+      devtoolsSecondLive = second.liveId
+      devtoolsResults["background_hidden"] = true
+      browserCheckPhase = 4
+      if let first = tabs.first(where: { $0.liveId == devtoolsFirstLive }), let item = first.itemId {
+        adapter?.select(id: item, url: first.url)
+      }
+    case 4:
+      guard host.activeItemId() == browserCheckSeedID, docked else { return }
+      devtoolsResults["tab_restored"] = true
+      guard host.checkSetDevToolsDocked(false) else { finishBrowserCheck(ok: false, values: ["undock_request": false]); return }
+      browserCheckPhase = 5
+    case 5:
+      guard state["docked"] as? Bool == false, host.checkDevToolsHostCount() == 1,
+            children.count + popups.count == devtoolsInitialHosts + 1 else { return }
+      devtoolsResults["undocked_host"] = true
+      guard host.checkSetDevToolsDocked(true) else { finishBrowserCheck(ok: false, values: ["redock_request": false]); return }
+      browserCheckPhase = 6
+    case 6:
+      guard host.checkDevToolsHostCount() == 0, children.count + popups.count == devtoolsInitialHosts, docked else { return }
+      devtoolsResults["redocked"] = true
+      browserCheckPhase = 7
+      host.checkCloseDevTools()
+    case 7:
+      guard fullPage, state["docked"] as? Bool == false else { return }
+      devtoolsResults["closed_full_page"] = true
+      browserCheckPhase = 8
+      host.checkOpenDevTools()
+    case 8:
+      guard docked, let first = tabs.first(where: { $0.liveId == devtoolsFirstLive }), let item = first.itemId else { return }
+      browserCheckPhase = 9
+      adapter?.close(id: item)
+    case 9:
+      guard !tabs.contains(where: { $0.liveId == devtoolsFirstLive }),
+            tabs.contains(where: { $0.liveId == devtoolsSecondLive }), fullPage,
+            host.checkDevToolsHostCount() == 0 else { return }
+      devtoolsResults["inspected_tab_closed"] = true
+      guard host.checkInspectElement() else { finishBrowserCheck(ok: false, values: ["inspect_request": false]); return }
+      browserCheckPhase = 10
+    case 10:
+      guard docked else { return }
+      devtoolsResults["inspect_docked"] = true
+      browserCheckPhase = 11
+      host.checkCloseDevTools()
+    case 11:
+      guard fullPage, state["docked"] as? Bool == false else { return }
+      browserCheckPhase = 12
+      host.checkOpenDevTools()
+    case 12:
+      guard docked, let rows = captureCheckRows() else { return }
+      guard quitBefore == rows else { quitBefore = rows; return }
+      devtoolsResults["open_at_quit"] = true
+      quitStyleMask = host.window().styleMask.rawValue
+      quitMode = "devtools"
+      quitPhase = 3
+      browserCheckPhase = 13
+      FileHandle.standardError.write(Data("ararat-trace: devtools terminate with frontend open\n".utf8))
+      NSApp.terminate(nil)
+    default: break
     }
   }
 
@@ -1181,12 +1544,12 @@ final class Runtime {
     }
   }
 
-  func promptScreenScreenshot(_ window: NSWindow, name: String) -> String? {
+  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false) -> String? {
     guard let temporary = ProcessInfo.processInfo.environment["TMPDIR"] else { return nil }
     let path = (temporary as NSString).appendingPathComponent("ararat-prompts-\(name)-\(UUID().uuidString).png")
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    task.arguments = ["-x", "-l\(window.windowNumber)", path]
+    task.arguments = ["-x"] + (withoutShadow ? ["-o"] : []) + ["-l\(window.windowNumber)", path]
     do { try task.run(); task.waitUntilExit() } catch { return nil }
     return task.terminationStatus == 0 && FileManager.default.fileExists(atPath: path) ? path : nil
   }
@@ -1825,7 +2188,7 @@ final class Runtime {
       let correct = names == Set(["Default", "Profile 1"]) &&
         (hidden?["visible"] as? Bool) == false && (hidden?["minimized"] as? Bool) == false &&
         (state["chrome_last"] as? String) == "Profile 1" && (state["app_last"] as? String) == "Profile 1" &&
-        (cookies["set"] as? Bool) == true && (cookies["isolated"] as? Bool) == true && switchesOK && stock == 1 &&
+        (cookies["set"] as? Bool) == true && (cookies["isolated"] as? Bool) == true && switchesOK && stock == 0 &&
         profileCheckPointer != nil && profileCheckPointer == named["profile_pointer"] as? String &&
         state["restore_omitted"] as? Bool == true && state["devtools_destroyed"] as? Bool == true
       guard let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 2,
@@ -1874,10 +2237,11 @@ final class Runtime {
     Launcher.startupWatchdog?.cancel()
     Launcher.browserCheckFinished = true
     var result = values
-    result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode == "screen-prompts" ? "prompts" : (browserCheckMode ?? "unknown")))
+    result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode == "screen-prompts" ? "prompts" : (browserCheckMode == "screen-devtools" ? "devtools" : (browserCheckMode ?? "unknown"))))
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
     if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }
+    if browserCheckMode == "screen-devtools" { result["screen"] = "devtools" }
     result["ok"] = ok
     result["exit"] = ok ? 0 : 1
     if result["stock_browsers"] == nil { result["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock }
@@ -2097,6 +2461,13 @@ final class Runtime {
     let modePassed: Bool
     switch mode {
     case "quit": modePassed = unchanged && events == [true]
+    case "devtools":
+      let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+      let frontUnchanged = devtoolsFrontBefore != nil && front != nil && front == devtoolsFrontBefore
+      devtoolsResults["front_unchanged"] = frontUnchanged
+      devtoolsResults["hidden"] = true
+      modePassed = unchanged && events == [true] && frontUnchanged &&
+        ["initial_docked", "background_hidden", "tab_restored", "undocked_host", "redocked", "closed_full_page", "inspected_tab_closed", "inspect_docked", "open_at_quit"].allSatisfy { devtoolsResults[$0] as? Bool == true }
     case "quit-cancel": modePassed = unchanged && firstPassed && dialogSeen == 2 && events == [true, false, true] &&
       quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["rows_unchanged_during_switch"] as? Bool == true &&
       quitFirst["window_written_after_cancel"] as? Bool == true
@@ -2110,6 +2481,13 @@ final class Runtime {
       "stock_browsers": quitStock, "rows_before": quitBefore ?? [], "rows_after": after ?? [],
       "rows_unchanged": unchanged, "dialog_seen": dialogSeen, "exit": ok ? 0 : 1, "ok": ok,
       "timeout": quitTimedOut, "phase": quitPhase, "attempts": quitAttempts, "style_mask": quitStyleMask]
+    if mode == "devtools" {
+      result.merge(devtoolsResults) { _, new in new }
+      result["phase"] = browserCheckPhase
+      result["attempts"] = browserCheckAttempts
+      result["engine_exit_code"] = exitCode
+      result["mode_passed"] = modePassed
+    }
     if mode == "screen-quit" {
       result["screen"] = "quit"
       result["sidebar_lights"] = screenSidebarLights
@@ -2335,9 +2713,16 @@ let result = withUnsafePointer(to: &callbacks) {
 }
 let checksPassed = MainActor.assumeIsolated {
   if Launcher.browserCheckFinished { return true }
-  if let runtime = Launcher.runtime { return runtime.finishQuitCheck(exitCode: result) }
+  if let runtime = Launcher.runtime {
+    if runtime.browserCheckMode == "devtools" && runtime.quitMode == nil {
+      let failure: [String: Any] = ["check": "devtools", "ok": false, "error": "engine exited before quit", "exit": 1, "phase": runtime.browserCheckPhase]
+      if let data = try? JSONSerialization.data(withJSONObject: failure), let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+      return false
+    }
+    return runtime.finishQuitCheck(exitCode: result)
+  }
   if let argument = CommandLine.arguments.first(where: {
-    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts"].contains($0)
+    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=devtools"].contains($0)
   }) {
     Launcher.startupWatchdog?.cancel()
     let screen = argument.hasPrefix("--ararat-screen=")

@@ -6,6 +6,7 @@
 #include "ararat/core/ararat_autofill_bubble_handler.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
+#include "chrome/browser/devtools/devtools_ui_controller.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -17,6 +18,7 @@
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -65,11 +67,13 @@ unsigned long AraratExclusiveInputCount() {
 AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
                                          AraratWindowHostCore* host)
     : browser_(browser), host_(host),
+      devtools_controller_(std::make_unique<DevtoolsUIController>(browser, std::vector<raw_ptr<ContentsContainerView, DanglingUntriaged>>{})),
       exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)),
       autofill_handler_(std::make_unique<AraratAutofillBubbleHandler>()),
       autofill_registration_(std::make_unique<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>>(
           browser->GetUnownedUserDataHost(), *autofill_handler_)) {}
 AraratBrowserWindow::~AraratBrowserWindow() {
+  devtools_controller_.reset();
   autofill_registration_.reset();
   host_->OnWindowDestroyed(browser_);
 }
@@ -118,6 +122,11 @@ std::vector<StatusBubble*> AraratBrowserWindow::GetStatusBubbles() {
 }
 
 void AraratBrowserWindow::UpdateTitleBar() {
+  if (browser_->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS) {
+    auto* contents = browser_->GetTabStripModel()->GetActiveWebContents();
+    host_->SetTitle(contents ? contents->GetTitle() : std::u16string());
+    return;
+  }
   host_->SetTitle(
       WindowMetadataController::From(browser_)->GetWindowTitleForCurrentTab(
           true));
@@ -262,7 +271,8 @@ content::KeyboardEventProcessingResult
 AraratBrowserWindow::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
   if (event.windows_key_code == 'F' &&
-      (event.GetModifiers() & blink::WebInputEvent::kMetaKey))
+      (event.GetModifiers() & blink::WebInputEvent::kMetaKey) &&
+      !AraratKeyEventFromDevTools(event.os_event))
     return content::KeyboardEventProcessingResult::HANDLED;
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
@@ -386,8 +396,9 @@ void AraratBrowserWindow::Close() {
 }
 
 void AraratBrowserWindow::Activate() {
-  if (host_->closed() || host_->closing()) return;
+  if (host_->closed() || host_->closing() || browser_->IsDeleteScheduled()) return;
   host_->ShowBrowserProfile(browser_);
+  if (host_->closed() || host_->closing() || browser_->IsDeleteScheduled()) return;
   if (host_->window() == this) {
     if (auto* manager = BrowserActiveStateManager::From(browser_))
       manager->DidBecomeActive();

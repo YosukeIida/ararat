@@ -120,6 +120,7 @@ open コマンドは項目のプロファイルを運ぶ。エンジンに届く
 
 - framework は `//ararat/core` に Objective-C クラスを実装する（たとえば `ARWindowHost`、`ARTab`、および予定している `ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はアプリ向け protocol を SwiftPM 経由でインポートし、読み込んだ framework から `AraratWindowHostCreate(contentView, windowId)` を `dlsym` で取得する。host とタブは protocol を通して操作する（我々の規則）。
 - 独自レイヤーは page card 上に配置する modal dialog host を提供する。既定の c1 compositor では card にアクティブなページの view と modal host の位置を追う view を置く。後続の unit では他の subview も追加する。c2 ではページに共有 compositor を使う。`g_ararat_create_permission_prompt` は独自の tab-modal `PermissionPrompt` sheet を設定する。この sheet は phase 4 で Swift UI に置き換える。各 Browser は住所とカードの保存プロンプト用の Autofill bubble handler を unowned user data に登録する（我々の規則）。
+- 独自の `DevtoolsUIController` は空の container list を持ち、`devtools-hook.patch` が `DevtoolsUIController::UpdateDevtools` から `g_ararat_devtools_changed` を呼ぶ。ドッキング時のレイアウトはエンジンのレイヤーが担う。DevTools の view は全面の大きさを保ち、ページは y 軸を反転した strategy の矩形に配置する。c2 ではページがアプリの view より下の共有 compositor にあるため、DevTools の view からページの矩形をクリップする。リサイズ時と hook の呼び出しごとに再配置する。`AraratHostAPI.h` の検査用エントリは DevTools の開閉、状態とタブの状態の取得、undock と redock、host 数の取得、Inspect Element の実行を行う（我々の規則）。
 - タブ API は coordinator の ID を受け取る。アプリは `AraratWindowHostCreate` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
 - `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
 - Browser の factory は `create_host` で同期的に host を要求する。openURLs と Handoff は `open_urls` を使う。外部からの open は Chrome の untrusted launch フラグを運び、エンジンは opaque initiator を維持する。strip は opener の live ID、commit 済みの URL とページタイトル、および新たなナビゲーションが commit されたかを運ぶ。タイトルとナビゲーションの変更時にも transaction を送る（我々の規則）。
@@ -153,7 +154,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 
 **タブ。**
 
-- C1 では、アクティブなタブの `WebContentsViewCocoa` を page card の唯一の subview にする。非アクティブなビューはツリーから外し、対応する `WebContents` を hidden にする。最後のタブを閉じると Browser は破棄されるが host は残り、次の open で同じ epoch の Browser を作る（我々の規則）。
+- C1 では、アクティブなタブの `WebContentsViewCocoa` を page card に配置する。非アクティブなビューはツリーから外し、対応する `WebContents` を hidden にする。最後のタブを閉じると Browser は破棄されるが host は残り、次の open で同じ epoch の Browser を作る（我々の規則）。
 
 - タブの `WebContentsViewCocoa` をどの compositor（描画の合成を担う機構）が所有するか（タブのビューごと、プロファイルごと、ウィンドウごとの共有）は spike で決定する。Ardia は、ビューごとの compositor がタブの切り替えのたびに 1〜2 回のリフレッシュ分の遅延を生むこと、および後から変更すると描画の書き直しを要することを見出したためである（Ardia ledger 1.3、1.6）。spike では、各候補について、切り替え時の最初のフレームまでの遅延、バックグラウンドのページの活動、オクルージョン、リサイズ、分割ペイン、ディスプレイの変更を計測する。
   `--ararat-compositor=c1`（既定）ではアクティブなタブビューを page card に置く。`--ararat-compositor=c2` ではウィンドウの Views compositor に置き、page card の位置に合わせる。
@@ -190,7 +191,10 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | 新規タブ、target blank、features の無い window.open、修飾キー付きクリック | Chrome が host Browser に追加し、コアが採用する（U10、我々の規則）。空の Browser に対する New Tab は host の command handler が Chrome の NewTab を直接呼び、タブがあるときは AppController に渡す（U11、我々の規則） |
 | 新規ウィンドウ、shift クリック、復元、ブックマーク、拡張の通常ウィンドウ | Browser のコンストラクタの hook が表示中の space の profile の app host を作る（U10、我々の規則） |
 | popup の window.open（TYPE_POPUP） | Browser のコンストラクタの hook が表示中の space の profile のページだけの popup host を作る（U10、我々の規則） |
-| DevTools | 標準 Browser のまま数える。U13 |
+| ドッキングした DevTools | エンジンのレイヤーが card 内に DevTools とページの view を配置し、タブとともに DevTools の view を非表示にする（U13、我々の規則） |
+| undock した DevTools | `TYPE_DEVTOOLS` の factory 分岐がページだけの host と `DevToolsApp` の配置を使う。DevTools は `stock_browsers` に数えない。app と拡張のウィンドウは U14 まで標準のままとする（U13、我々の規則） |
+| DevTools のキーボードと Inspect Element | ⌘F はページからの入力だけを消費し、DevTools からの入力は消費しない。コンテキストメニューの Inspect Element はドッキングした DevTools を開く（U13、我々の規則） |
+| Developer メニューと ⌥⌘I / ⌥⌘J | U16 に延期する。command dispatcher はすべてのメニュー項目の `commandDispatch:` に応答するため、U16 で find と location bar の stub を備えた完全な dispatcher を設置する（我々の規則） |
 | app と app popup | 標準 Browser のまま数える。U11/U14 |
 | picture-in-picture | 標準 Browser のまま数える。後続 unit |
 | incognito | ページだけの off-the-record host を使い、workspace transaction を送らない（我々の規則） |
@@ -434,6 +438,10 @@ slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-
 U9 の検査も一時的な profile、database、mock keychain を使う。`--ararat-check=quit` は終了前後の保存済み行を比較する。`--ararat-check=quit-cancel` は beforeunload で Stay と Leave を選ぶ。`--ararat-check=close` はウィンドウの close、再オープン、Dock メニューを検査する。`--ararat-screen=quit` はウィンドウを表示し、⌘Q と Cocoa の beforeunload ダイアログを検査する（我々の規則）。
 
 U10 の検査も同じ一時 profile・database・mock keychain を使う。`--ararat-check=newtab|popup|menu|deferred` は Chrome が作るタブ、popup、メニューと外部 URL、後続 unit に残す Browser の種別を検査する。`--ararat-screen=links` はウィンドウを表示し、リンクの入力と popup の配置を検査する（我々の規則）。
+
+U13 では `deferred` を更新し、DevTools ウィンドウを閉じた後に標準の app window が 1 つあり、popup host が残っていないことを確認する。非表示の `--ararat-check=devtools` はドッキング時の矩形、重なり順と hook の呼び出し、タブの切り替え、undock と redock、DevTools または検査対象タブの close、Inspect Element、および DevTools を開いたまま終了して保存済み行が変わらないことを検査する。標準 Browser が 0 であること、host 数、ウィンドウの非表示と前面アプリも確認し、c1 と c2 の両方で実行する。エンジンでの実行は未確認である（我々の規則）。
+
+表示する `--ararat-screen=devtools` にも同じスクラッチ領域の制約を適用する。リサイズと redock の前後に window ID を指定して撮影し、空白ページと DevTools 領域の色の変化を検査する。フォーカスを確認してプロセス内から Esc と ⌘F を送り、フロントエンドの要素の表示状態から drawer と検索欄を確認する。リサイズと redock の後は矩形も検査し、c2 では両領域の hit test も確認する。画素の検査が検出するのは DevTools 領域が空白または単色の場合であり、全画素の正しさは検査しない。画面での実行は未確認である（我々の規則）。
 
 U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込み、画面上の検査ではアプリの非アクティブ化と incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
 

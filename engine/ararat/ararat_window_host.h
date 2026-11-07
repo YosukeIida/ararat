@@ -17,6 +17,7 @@ class AraratBrowserWindow;
 class AraratModalDialogHost;
 class BrowserWindowInterface;
 class Profile;
+namespace content { class WebContents; }
 
 namespace web_modal {
 class WebContentsModalDialogHost;
@@ -45,6 +46,7 @@ class AraratWindowHostCore {
   bool closing() const { return closing_; }
   bool closed() const { return closed_; }
   bool popup() const { return popup_; }
+  bool devtools() const { return devtools_; }
   const std::string& profile_name() const { return profile_name_; }
   void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
@@ -53,6 +55,7 @@ class AraratWindowHostCore {
   web_modal::WebContentsModalDialogHost* modal_dialog_host() const;
   const gfx::Rect& page_rect() const { return page_rect_; }
   void ShowBrowserProfile(BrowserWindowInterface* browser);
+  void DevToolsChanged(content::WebContents* inspected);
 
   void Close();
 
@@ -76,6 +79,7 @@ class AraratWindowHostCore {
   bool closing_ = false;
   bool closed_ = false;
   bool popup_ = false;
+  bool devtools_ = false;
   std::string profile_name_ = "Default";
   void* owner_;
   base::WeakPtrFactory<AraratWindowHostCore> weak_factory_{this};
@@ -83,6 +87,7 @@ class AraratWindowHostCore {
 
 bool AraratUsesSharedCompositor();
 bool AraratHandleMenuKey(gfx::NativeEvent event);
+bool AraratKeyEventFromDevTools(gfx::NativeEvent event);
 unsigned long AraratStockBrowserCount();
 bool AraratCheckDevToolsDestroyed();
 void AraratInstallWindowFactory();
@@ -102,6 +107,7 @@ void AraratOpenOffTheRecordURLs(Profile* profile, NSArray* urls);
 - (void)showBrowserProfile:(BrowserWindowInterface*)browser;
 - (void)showBrowserProfileForClose:(BrowserWindowInterface*)browser;
 - (void)pinProfile:(Profile*)profile;
+- (void)devToolsChanged:(content::WebContents*)inspected;
 @end
 #endif  // __OBJC__
 

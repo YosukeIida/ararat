@@ -125,6 +125,23 @@ func dragCollapseUsesThePointerThreshold() {
 }
 
 @Test @MainActor
+func sidebarHitTestingLeavesThePageAccessibleOutsideThePanel() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    container.layoutSubtreeIfNeeded()
+    let content = NSView(frame: page.bounds)
+    page.addSubview(content)
+    let panel = container.subviews.compactMap { $0 as? SidebarPanelView }.first!
+    let sidebarPoint = NSPoint(x: 100, y: 300)
+    let pagePoint = NSPoint(x: 590, y: 300)
+    #expect(panel.hitTest(pagePoint) == nil)
+    #expect(container.hitTest(pagePoint)?.isDescendant(of: content) == true)
+    #expect(container.hitTest(sidebarPoint)?.isDescendant(of: panel) == true)
+}
+
+@Test @MainActor
 func widthChangesRelayoutACleanContainerWithoutToggling() {
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     let page = NSView()

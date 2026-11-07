@@ -164,6 +164,7 @@ void CheckGuards(int argc, const char** argv) {
   bool check_dialogs = false;
   bool check_protocol = false;
   bool check_autofill = false;
+  bool check_devtools = false;
   bool disable_system_notifications = false;
   bool enable_features = false;
   unsigned disable_features_count = 0;
@@ -201,8 +202,8 @@ void CheckGuards(int argc, const char** argv) {
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
       screen_prompts = std::string_view(arg + 16) == "prompts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -217,9 +218,10 @@ void CheckGuards(int argc, const char** argv) {
       check_dialogs = name == "dialogs";
       check_protocol = name == "protocol";
       check_autofill = name == "autofill";
+      check_devtools = name == "devtools";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill";
+                           name == "ext-windows" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools";
       g_check_tabs = name == "tabs";
       check_slice = name == "slice";
       g_check_slice = check_slice;
@@ -228,7 +230,8 @@ void CheckGuards(int argc, const char** argv) {
                       name == "close" || browser_check;
       check_slice = check_slice || name == "quit" || name == "quit-cancel" ||
                     name == "close" || browser_check;
-      g_check_slice = g_check_slice || browser_check;
+      // Why not require g_slice_passed: DevTools validates after ChromeMain returns.
+      g_check_slice = g_check_slice || (browser_check && !check_devtools);
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
@@ -245,7 +248,7 @@ void CheckGuards(int argc, const char** argv) {
                       !db.ReferencesParent() && base::FilePath(temp_dir).IsParent(db);
     }
   }
-  auto refuse = [check_permissions, check_dialogs, check_protocol, check_autofill](const char* reason) {
+  auto refuse = [check_permissions, check_dialogs, check_protocol, check_autofill, check_devtools](const char* reason) {
     std::cerr << "engine: --ararat-check refused (" << reason << ")"
               << std::endl;
     if (check_permissions) {
@@ -259,6 +262,9 @@ void CheckGuards(int argc, const char** argv) {
     }
     if (check_autofill) {
       std::cout << "{\"check\":\"autofill\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
+    }
+    if (check_devtools) {
+      std::cout << "{\"check\":\"devtools\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
     }
     exit(2);
   };

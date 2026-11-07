@@ -40,7 +40,7 @@ final class SidebarPanelView: NSView {
     isolated deinit { NSWorkspace.shared.notificationCenter.removeObserver(self) }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
+        guard let hit = super.hitTest(point) else { return nil }
         if hit === coating || hit === vibrancy || hit === glass { return self }
         return hit
     }

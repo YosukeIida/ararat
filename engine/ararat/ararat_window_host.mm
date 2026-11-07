@@ -2,6 +2,7 @@
 #include "ararat/core/ararat_window_host.h"
 
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
 #include <utility>
@@ -36,6 +37,11 @@
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/devtools/devtools_contents_resizing_strategy.h"
+#include "chrome/browser/devtools/devtools_toggle_action.h"
+#include "chrome/browser/devtools/devtools_ui_bindings.h"
+#include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -53,6 +59,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/cookies/canonical_cookie.h"
@@ -102,6 +110,12 @@ bool AraratHandleMenuKey(gfx::NativeEvent event) {
 }
 
 namespace {
+
+bool IsDevToolsCheck() {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  return command->GetSwitchValueASCII("ararat-check") == "devtools" ||
+         command->GetSwitchValueASCII("ararat-screen") == "devtools";
+}
 
 bool IsCloseCheck() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -241,7 +255,7 @@ std::set<BrowserWindowInterface*>& AraratWindows() {
 
 bool g_restore_omitted = true;
 int g_restore_checked = 0;
-bool g_restore_stock_checked = false;
+bool g_restore_devtools_checked = false;
 
 std::set<AraratWindowHostCore*>& AraratHosts() {
   static base::NoDestructor<std::set<AraratWindowHostCore*>> hosts;
@@ -273,7 +287,7 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
                          !state->should_trigger_session_restore();
     ++g_restore_checked;
     if (browser->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS)
-      g_restore_stock_checked = true;
+      g_restore_devtools_checked = true;
   }
   bool checking = command_line->HasSwitch("ararat-check") ||
                   command_line->HasSwitch("ararat-screen");
@@ -286,11 +300,16 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
     auto type = browser->GetType();
     const auto name = profile->GetPath().BaseName().value();
     bool hosted = std::any_of(AraratHosts().begin(), AraratHosts().end(),
-                              [&name](AraratWindowHostCore* host) {
-                                return !host->closed() && !host->closing() && !host->popup() && host->HasProfile(name);
+                              [&name, profile, type](AraratWindowHostCore* host) {
+                                if (host->closed() || host->closing()) return false;
+                                if (!host->popup()) return host->HasProfile(name);
+                                auto* window = host->windowForProfile(name);
+                                return type == BrowserWindowInterface::TYPE_DEVTOOLS && !host->devtools() &&
+                                       window && window->browser()->GetProfile() == profile;
                               });
     if (type != BrowserWindowInterface::TYPE_NORMAL &&
-        type != BrowserWindowInterface::TYPE_POPUP) {
+        type != BrowserWindowInterface::TYPE_POPUP &&
+        type != BrowserWindowInterface::TYPE_DEVTOOLS) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=type\n");
       return nullptr;
     }
@@ -303,8 +322,18 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
       return nullptr;
     }
     auto* state = BrowserInitState::From(browser);
-    void* owner = AraratRequestHost(type == BrowserWindowInterface::TYPE_POPUP || profile->IsOffTheRecord(), name,
-                                    state->create_params().initial_bounds);
+    gfx::Rect bounds = state->create_params().initial_bounds;
+    if (type == BrowserWindowInterface::TYPE_DEVTOOLS) {
+      const auto* placement = profile->GetPrefs()->GetDict(prefs::kAppWindowPlacement).FindDict(DevToolsWindow::kDevToolsApp);
+      if (placement) {
+        int left = placement->FindInt("left").value_or(100);
+        int top = placement->FindInt("top").value_or(100);
+        int right = placement->FindInt("right").value_or(740);
+        int bottom = placement->FindInt("bottom").value_or(740);
+        bounds = gfx::Rect(left, top, std::max(0, right - left), std::max(0, bottom - top));
+      }
+    }
+    void* owner = AraratRequestHost(type == BrowserWindowInterface::TYPE_POPUP || type == BrowserWindowInterface::TYPE_DEVTOOLS || profile->IsOffTheRecord(), name, bounds);
     if (!owner) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=host-unavailable\n");
       return nullptr;
@@ -333,6 +362,16 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
 
 void AraratInstallWindowFactory() {
   g_ararat_create_browser_window = &AraratCreateBrowserWindowForPendingHost;
+  g_ararat_devtools_changed = [](content::WebContents* inspected, content::WebContents*) {
+    for (auto* host : AraratHosts()) {
+      for (const auto& [name, window] : host->windows()) {
+        if (window->browser()->GetTabStripModel()->GetIndexOfWebContents(inspected) != TabStripModel::kNoTab) {
+          host->DevToolsChanged(inspected);
+          return;
+        }
+      }
+    }
+  };
   g_ararat_shown_browser = [](NSWindow* window, bool* recognized) -> BrowserWindowInterface* {
     for (auto* host : AraratHosts()) {
       if (host->GetNativeWindow().GetNativeNSWindow() != window) continue;
@@ -342,6 +381,23 @@ void AraratInstallWindowFactory() {
     *recognized = false;
     return nullptr;
   };
+}
+
+bool AraratKeyEventFromDevTools(gfx::NativeEvent event) {
+  NSEvent* native_event = event.Get();
+  NSResponder* responder = native_event.window.firstResponder;
+  if (![responder isKindOfClass:NSView.class]) return false;
+  for (auto* host : AraratHosts()) {
+    auto* window = host->window();
+    if (!window) continue;
+    auto* active = window->browser()->GetTabStripModel()->GetActiveWebContents();
+    auto* devtools = active && DevToolsWindow::IsDevToolsWindow(active)
+                         ? active
+                         : active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
+    NSView* view = devtools ? devtools->GetNativeView().GetNativeNSView() : nil;
+    if (view && [(NSView*)responder isDescendantOf:view]) return true;
+  }
+  return false;
 }
 
 void AraratOpenOffTheRecordURLs(Profile* profile, NSArray* urls) {
@@ -490,6 +546,10 @@ void AraratWindowHostCore::ShowBrowserProfile(BrowserWindowInterface* browser) {
   [(__bridge ARWindowHost*)owner_ showBrowserProfile:browser];
 }
 
+void AraratWindowHostCore::DevToolsChanged(content::WebContents* inspected) {
+  [(__bridge ARWindowHost*)owner_ devToolsChanged:inspected];
+}
+
 void AraratWindowHostCore::Close() {
   if (!windows_.empty()) {
     if (closing_) return;
@@ -569,8 +629,13 @@ void AraratWindowHostCore::ClearPending() {
 void AraratWindowHostCore::SetWindow(AraratBrowserWindow* window) {
   [(__bridge ARWindowHost*)owner_ pinProfile:window->browser()->GetProfile()];
   windows_[window->browser()->GetProfile()->GetPath().BaseName().value()] = window;
-  popup_ = window->browser()->GetType() == BrowserWindowInterface::TYPE_POPUP ||
+  devtools_ = window->browser()->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS;
+  popup_ = devtools_ || window->browser()->GetType() == BrowserWindowInterface::TYPE_POPUP ||
            window->browser()->GetProfile()->IsOffTheRecord();
+  if (devtools_) {
+    NSWindow* native_window = GetNativeWindow().GetNativeNSWindow();
+    native_window.titleVisibility = NSWindowTitleVisible;
+  }
   __weak ARWindowHost* owner = (__bridge ARWindowHost*)owner_;
   BrowserWindowInterface* browser = window->browser();
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -685,6 +750,17 @@ class StripObserver : public TabStripModelObserver {
 }
 @end
 
+@interface ARDevToolsClipView : NSView
+@property(nonatomic) NSRect pageRect;
+@end
+
+@implementation ARDevToolsClipView
+- (NSView*)hitTest:(NSPoint)point {
+  if (NSPointInRect([self convertPoint:point fromView:self.superview], self.pageRect)) return nil;
+  return [super hitTest:point];
+}
+@end
+
 void StripObserver::OnTabStripModelChanged(TabStripModel*,
                                             const TabStripModelChange& change,
                                             const TabStripSelectionChange&) {
@@ -727,6 +803,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSMutableArray<NSNumber*>* check_closing_events_;
   base::CallbackListSubscription closing_all_subscription_;
   ARPagePositionView* page_position_view_;
+  NSView* devtools_view_;
+  ARDevToolsClipView* devtools_clip_;
+  NSUInteger devtools_hook_count_;
   id became_key_observer_;
   id resigned_key_observer_;
 }
@@ -750,7 +829,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     pending_opens_ = [NSMutableArray array];
     auto* command_line = base::CommandLine::ForCurrentProcess();
     std::string check = command_line->GetSwitchValueASCII("ararat-check");
-    if (check == "quit" || check == "quit-cancel" || check == "close" ||
+    if (check == "quit" || check == "quit-cancel" || check == "close" || check == "devtools" ||
         command_line->HasSwitch("ararat-screen"))
       check_closing_events_ = [NSMutableArray array];
     window_id_ = [windowId copy];
@@ -788,7 +867,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)updateActive:(BOOL)active {
   if (IsProfileCheck()) std::fprintf(stderr, "ararat-trace: profile-activation name=%s active=%d browser=%d\n", core_->profile_name().c_str(), active, browser_ != nullptr);
-  if (!browser_ || browser_->GetType() != BrowserWindowInterface::TYPE_NORMAL) return;
+  // Why not reject all closing hosts: beforeunload may switch profiles and cancel.
+  if (!browser_ || browser_->IsDeleteScheduled() || browser_->GetType() != BrowserWindowInterface::TYPE_NORMAL) return;
   auto* manager = BrowserActiveStateManager::From(browser_);
   if (!manager) return;
   if (active) manager->DidBecomeActive();
@@ -879,6 +959,139 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSArray<NSNumber*>*)checkClosingEvents { return [check_closing_events_ copy] ?: @[]; }
 - (BOOL)checkTryingToQuit { return browser_shutdown::IsTryingToQuit(); }
 - (NSUInteger)checkStockBrowsers { return AraratStockBrowserCount(); }
+- (void)checkOpenDevTools {
+  if ((!IsDevToolsCheck() && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") || !browser_) return;
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  if (active) DevToolsWindow::OpenDevToolsWindow(active, DevToolsToggleAction::Show(), DevToolsOpenedByAction::kUnknown);
+}
+- (void)checkCloseDevTools {
+  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
+  if ((check != "devtools" && check != "popup") || !browser_) return;
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  auto* window = active ? DevToolsWindow::GetInstanceForInspectedWebContents(active) : nullptr;
+  if (!window) return;
+  if (window->IsDocked()) DevToolsWindow::ToggleDevToolsWindow(browser_, DevToolsToggleAction::Toggle());
+  else if (auto* contents = window->GetDevToolsWebContents().get()) contents->Close();
+}
+- (NSDictionary<NSString*, id>*)checkDevToolsState {
+  if (!IsDevToolsCheck()) return @{};
+  auto* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  auto* window = active ? DevToolsWindow::GetInstanceForInspectedWebContents(active) : nullptr;
+  NSView* card = page_position_view_.superview;
+  NSView* page = active ? active->GetNativeView().GetNativeNSView() : nil;
+  NSRect cardRect = card ? [card convertRect:card.bounds toView:nil] : NSZeroRect;
+  NSRect pageRect = page && page.window ? [page convertRect:page.bounds toView:nil] : NSZeroRect;
+  NSRect devtoolsRect = devtools_view_.window ? [devtools_view_ convertRect:devtools_view_.bounds toView:nil] : NSZeroRect;
+  DevToolsContentsResizingStrategy strategy;
+  if (active) DevToolsWindow::GetInTabWebContents(active, &strategy);
+  gfx::Rect devtoolsBounds, pageBounds;
+  if (card) ApplyDevToolsContentsResizingStrategy(strategy, gfx::Rect(static_cast<int>(NSWidth(card.bounds)), static_cast<int>(NSHeight(card.bounds))), &devtoolsBounds, &pageBounds);
+  NSRect expected = card ? NSMakeRect(pageBounds.x(), card.isFlipped ? pageBounds.y() : NSHeight(card.bounds) - pageBounds.bottom(), pageBounds.width(), pageBounds.height()) : NSZeroRect;
+  NSRect expectedWindow = card ? [card convertRect:expected toView:nil] : NSZeroRect;
+  NSView* pageBranch = page;
+  NSView* devtoolsBranch = devtools_view_;
+  while (pageBranch && ![devtoolsBranch isDescendantOf:pageBranch.superview]) pageBranch = pageBranch.superview;
+  while (devtoolsBranch && devtoolsBranch.superview != pageBranch.superview) devtoolsBranch = devtoolsBranch.superview;
+  NSArray<NSView*>* siblings = pageBranch.superview.subviews;
+  NSUInteger pageIndex = [siblings indexOfObjectIdenticalTo:pageBranch];
+  NSUInteger devtoolsIndex = [siblings indexOfObjectIdenticalTo:devtoolsBranch];
+  BOOL above = pageIndex != NSNotFound && devtoolsIndex != NSNotFound && pageIndex > devtoolsIndex;
+  NSView* root = core_->GetNativeWindow().GetNativeNSWindow().contentView;
+  NSPoint pagePoint = NSMakePoint(NSMidX(pageRect), NSMidY(pageRect));
+  NSPoint toolsPoint = NSMakePoint((NSMaxX(pageRect) + NSMaxX(cardRect)) / 2, NSMidY(cardRect));
+  NSView* pageHit = [root hitTest:[root.superview convertPoint:pagePoint fromView:nil]];
+  NSView* toolsHit = [root hitTest:[root.superview convertPoint:toolsPoint fromView:nil]];
+  NSMutableDictionary<NSString*, id>* result = [@{ @"docked": @(window && window->IsDocked()), @"hook_count": @(devtools_hook_count_),
+            @"card_frame": NSStringFromRect(cardRect), @"page_frame": NSStringFromRect(pageRect),
+            @"devtools_frame": NSStringFromRect(devtoolsRect), @"strategy_page_frame": NSStringFromRect(expectedWindow),
+            @"devtools_attached": @(devtools_view_ && card && [devtools_view_ isDescendantOf:card]), @"page_above": @(above),
+            @"page_hit": @(page && [pageHit isDescendantOf:page]),
+            @"devtools_hit": @(devtools_view_ && [toolsHit isDescendantOf:devtools_view_]) } mutableCopy];
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "devtools") {
+    NSMutableArray<NSString*>* chain = [NSMutableArray array];
+    for (NSView* view = toolsHit; view; view = view.superview) [chain addObject:NSStringFromClass(view.class)];
+    NSView* clipHit = devtools_clip_ ? [devtools_clip_ hitTest:[devtools_clip_.superview convertPoint:toolsPoint fromView:nil]] : nil;
+    NSView* directHit = devtools_view_ ? [devtools_view_ hitTest:[devtools_view_.superview convertPoint:toolsPoint fromView:nil]] : nil;
+    result[@"tools_point"] = NSStringFromPoint(toolsPoint);
+    result[@"tools_hit_chain"] = chain;
+    result[@"clip_hit_class"] = clipHit ? NSStringFromClass(clipHit.class) : @"";
+    result[@"direct_hit_class"] = directHit ? NSStringFromClass(directHit.class) : @"";
+    result[@"clip_frame"] = NSStringFromRect(devtools_clip_.frame);
+    result[@"clip_bounds"] = NSStringFromRect(devtools_clip_.bounds);
+    result[@"clip_page_rect"] = NSStringFromRect(devtools_clip_.pageRect);
+    result[@"clip_hidden"] = @(devtools_clip_.isHiddenOrHasHiddenAncestor);
+    result[@"tools_hidden"] = @(devtools_view_.isHiddenOrHasHiddenAncestor);
+    result[@"tools_bounds"] = NSStringFromRect(devtools_view_.bounds);
+    result[@"tools_superview"] = devtools_view_.superview ? NSStringFromClass(devtools_view_.superview.class) : @"";
+  }
+  return result;
+}
+- (NSDictionary<NSString*, id>*)checkDevToolsTabState:(NSString*)liveId {
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "devtools") return @{};
+  for (ARTab* tab in tabs_.allValues) {
+    if (![tab.liveId isEqualToString:liveId]) continue;
+    auto* devtools = DevToolsWindow::GetInTabWebContents(tab.contents, nullptr);
+    NSView* view = devtools ? devtools->GetNativeView().GetNativeNSView() : nil;
+    return @{ @"exists": @(devtools != nullptr), @"hidden": @(devtools && devtools->GetVisibility() == content::Visibility::HIDDEN),
+              @"in_card": @(view && page_position_view_.superview && [view isDescendantOf:page_position_view_.superview]) };
+  }
+  return @{};
+}
+- (BOOL)checkSetDevToolsDocked:(BOOL)docked {
+  if (!IsDevToolsCheck() || !browser_) return NO;
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  auto* window = active ? DevToolsWindow::GetInstanceForInspectedWebContents(active) : nullptr;
+  auto* bindings = window ? DevToolsUIBindings::ForWebContents(window->GetDevToolsWebContents()) : nullptr;
+  if (!bindings) return NO;
+  static_cast<DevToolsEmbedderMessageDispatcher::Delegate*>(bindings)->SetIsDocked(
+      base::BindOnce([](const base::Value*) {}), docked);
+  return YES;
+}
+- (NSUInteger)checkDevToolsHostCount {
+  if (!IsDevToolsCheck() && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") return 0;
+  NSUInteger count = 0;
+  for (auto* host : AraratHosts()) if (host->devtools() && !host->closed()) ++count;
+  return count;
+}
+- (BOOL)checkFocusDevTools {
+  if (!IsDevToolsCheck() || !browser_) return NO;
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  auto* tools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
+  if (!tools) return NO;
+  tools->Focus();
+  NSView* view = tools->GetNativeView().GetNativeNSView();
+  NSResponder* responder = view.window.firstResponder;
+  return [responder isKindOfClass:NSView.class] && [(NSView*)responder isDescendantOf:view];
+}
+- (void)checkDevToolsFrontend:(void (^)(NSString*))completion {
+  if (!IsDevToolsCheck() || !browser_) { completion(@""); return; }
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  auto* tools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
+  if (!tools) { completion(@""); return; }
+  tools->GetPrimaryMainFrame()->ExecuteJavaScript(
+      uR"JS((() => { const all = root => Array.from(root.querySelectorAll('*')).flatMap(e => [e, ...(e.shadowRoot ? all(e.shadowRoot) : [])]); const nodes = all(document); const visible = e => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'); return JSON.stringify({drawer: nodes.some(e => e.classList.contains('drawer-tabbed-pane') && visible(e)), search: nodes.some(e => e.id === 'search-input-field' && visible(e))}); })())JS",
+      base::BindOnce(^(base::Value result) {
+        completion(result.is_string() ? [NSString stringWithUTF8String:result.GetString().c_str()] : @"");
+      }));
+}
+- (BOOL)checkInspectElement {
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "devtools" || !browser_) return NO;
+  auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
+  if (!active || !active->GetPrimaryMainFrame()) return NO;
+  content::ContextMenuParams params;
+  params.page_url = active->GetLastCommittedURL();
+  params.frame_url = params.page_url;
+  // The Mac menu displays UI; this check only exercises its command path.
+  class CheckContextMenu : public RenderViewContextMenu {
+   public:
+    using RenderViewContextMenu::RenderViewContextMenu;
+    void Show() override {}
+  };
+  CheckContextMenu menu(*active->GetPrimaryMainFrame(), params, false, false);
+  if (!menu.IsCommandIdEnabled(IDC_CONTENT_CONTEXT_INSPECTELEMENT)) return NO;
+  menu.ExecuteCommand(IDC_CONTENT_CONTEXT_INSPECTELEMENT, 0);
+  return YES;
+}
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts")) return;
@@ -900,7 +1113,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)checkCreateDeferredBrowsers {
   if (!browser_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "deferred") return;
   Profile* profile = browser_->GetProfile();
-  CreateBrowserWindow(BrowserWindowCreateParams::CreateForDevTools(profile));
+  auto* devtools = CreateBrowserWindow(BrowserWindowCreateParams::CreateForDevTools(profile));
+  if (devtools) devtools->GetWindow()->Close();
   CreateBrowserWindow(BrowserWindowCreateParams::CreateForAppPopup(
       "ararat-check", false, gfx::Rect(0, 0, 400, 300), profile, true));
 }
@@ -1006,7 +1220,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (NSString*)checkOpenLinkNewWindowTitle {
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "links") return @"";
-  return l10n_util::GetNSString(IDS_CONTENT_CONTEXT_OPENLINKNEWWINDOW);
+  return l10n_util::GetNSStringWithFixup(IDS_CONTENT_CONTEXT_OPENLINKNEWWINDOW);
 }
 - (void)disableCheckConfirmQuit {
   g_browser_process->local_state()->SetBoolean(prefs::kConfirmToQuitEnabled, false);
@@ -1041,8 +1255,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return @{ @"shown": self.profileDirectory, @"browsers": browsers,
             @"loaded": @(loaded.count), @"loaded_profiles": loaded,
             @"chrome_last": last_name, @"app_last": app_name,
-            @"restore_omitted": @(g_restore_omitted && g_restore_checked > 0 && g_restore_stock_checked),
-            @"restore_checked": @(g_restore_checked), @"restore_stock_checked": @(g_restore_stock_checked),
+            @"restore_omitted": @(g_restore_omitted && g_restore_checked > 0 && g_restore_devtools_checked),
+            @"restore_checked": @(g_restore_checked), @"restore_devtools_checked": @(g_restore_devtools_checked),
             @"devtools_destroyed": @(AraratCheckDevToolsDestroyed()),
             @"stock_browsers": @(AraratStockBrowserCount()) };
 }
@@ -1093,7 +1307,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)checkActivateShownProfile {
   if (!IsProfileCheck() || !base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
   for (const auto& [name, window] : core_->windows()) {
-    if (window != core_->window()) {
+    if (window != core_->window() && !window->browser()->IsDeleteScheduled()) {
       if (auto* manager = BrowserActiveStateManager::From(window->browser())) manager->DidBecomeInactive();
     }
   }
@@ -1414,9 +1628,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       FROM_HERE, base::BindOnce(^{ [host emitCause:@"Engine"]; }));
 }
 
+- (void)devToolsChanged:(content::WebContents*)inspected {
+  ++devtools_hook_count_;
+  [self syncTabs];
+}
+
 - (void)syncTabs {
   content::WebContents* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
   NSView* card = [self.delegate pageCardForWindowHost:self];
+  content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
+  NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;
+  if (devtools_view_ != desired_devtools) {
+    [devtools_view_ removeFromSuperview];
+    devtools_view_ = desired_devtools;
+  }
   {
     if (page_position_view_.superview != card) {
       [page_position_view_ removeFromSuperview];
@@ -1428,8 +1653,24 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         [card addSubview:page_position_view_];
       }
     }
-    if (AraratUsesSharedCompositor()) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
-    [self positionPage];
+    if (AraratUsesSharedCompositor() && !core_->devtools()) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
+  }
+  if (AraratUsesSharedCompositor() && !core_->devtools()) {
+    if (!devtools_view_ || !card) {
+      [devtools_clip_ removeFromSuperview];
+      devtools_clip_ = nil;
+    } else {
+      if (!devtools_clip_) {
+        devtools_clip_ = [[ARDevToolsClipView alloc] initWithFrame:card.bounds];
+        devtools_clip_.wantsLayer = YES;
+        devtools_clip_.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+      }
+      if (devtools_clip_.superview != card)
+        [card addSubview:devtools_clip_ positioned:NSWindowBelow relativeTo:nil];
+      if (devtools_view_.superview != devtools_clip_) [devtools_clip_ addSubview:devtools_view_];
+    }
+  } else if (devtools_view_ && devtools_view_.superview != card) {
+    [card addSubview:devtools_view_ positioned:NSWindowBelow relativeTo:nil];
   }
   NSMutableSet<NSValue*>* present = [NSMutableSet set];
   for (const auto& [name, window] : core_->windows()) {
@@ -1448,14 +1689,17 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     }
     if (!tabs_[key]) tabs_[key] = [[ARTab alloc] initWithContents:contents liveId:identity->live_id host:self];
     NSView* view = contents->GetNativeView().GetNativeNSView();
-    if (AraratUsesSharedCompositor()) {
+    content::WebContents* devtools = DevToolsWindow::GetInTabWebContents(contents, nullptr);
+    if (devtools) {
+      if (contents == active && card) devtools->WasShown();
+      else devtools->WasHidden();
+    }
+    if (AraratUsesSharedCompositor() && !core_->devtools()) {
       if (contents == active && card) contents->WasShown();
       else contents->WasHidden();
     } else if (contents == active && card) {
-      for (NSView* child in [card.subviews copy]) if (child != view && child != page_position_view_) [child removeFromSuperview];
+      for (NSView* child in [card.subviews copy]) if (child != view && child != page_position_view_ && child != devtools_view_) [child removeFromSuperview];
       if (view.superview != card) [card addSubview:view];
-      view.frame = card.bounds;
-      view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
       contents->WasShown();
     } else {
       [view removeFromSuperview];
@@ -1469,14 +1713,43 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [tabs_ removeObjectForKey:key];
     }
   }
-  if (!active && !AraratUsesSharedCompositor()) for (NSView* child in [card.subviews copy]) if (child != page_position_view_) [child removeFromSuperview];
+  if (!active && (!AraratUsesSharedCompositor() || core_->devtools())) for (NSView* child in [card.subviews copy]) if (child != page_position_view_) [child removeFromSuperview];
+  [self positionPage];
 }
 
 - (void)positionPage {
   NSView* card = page_position_view_.superview;
   NSView* root = core_->GetNativeWindow().GetNativeNSWindow().contentView;
   if (!card || !root || card.window != root.window) return;
-  NSRect rect = [card convertRect:card.bounds toView:root];
+  content::WebContents* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  DevToolsContentsResizingStrategy strategy;
+  content::WebContents* devtools = active ? DevToolsWindow::GetInTabWebContents(active, &strategy) : nullptr;
+  gfx::Rect devtools_bounds, page_bounds;
+  ApplyDevToolsContentsResizingStrategy(strategy, gfx::Rect(static_cast<int>(NSWidth(card.bounds)), static_cast<int>(NSHeight(card.bounds))), &devtools_bounds, &page_bounds);
+  NSRect page = NSMakeRect(page_bounds.x(), NSHeight(card.bounds) - page_bounds.bottom(), page_bounds.width(), page_bounds.height());
+  if (card.isFlipped) page.origin.y = page_bounds.y();
+  if (devtools && devtools_view_) {
+    if (devtools_clip_) devtools_clip_.frame = card.bounds;
+    devtools_view_.frame = devtools_clip_ ? devtools_clip_.bounds : card.bounds;
+    if (devtools_clip_) {
+      NSRect hole = NSIntersectionRect(devtools_clip_.bounds, [devtools_clip_ convertRect:page fromView:card]);
+      devtools_clip_.pageRect = hole;
+      CGMutablePathRef path = CGPathCreateMutable();
+      CGPathAddRect(path, nullptr, NSRectToCGRect(devtools_clip_.bounds));
+      if (!NSIsEmptyRect(hole)) CGPathAddRect(path, nullptr, NSRectToCGRect(hole));
+      CAShapeLayer* mask = [CAShapeLayer layer];
+      mask.frame = devtools_clip_.bounds;
+      mask.fillRule = kCAFillRuleEvenOdd;
+      mask.path = path;
+      CGPathRelease(path);
+      [CATransaction begin];
+      [CATransaction setDisableActions:YES];
+      devtools_clip_.layer.mask = mask;
+      [CATransaction commit];
+    }
+  }
+  if (active && (!AraratUsesSharedCompositor() || core_->devtools())) active->GetNativeView().GetNativeNSView().frame = page;
+  NSRect rect = [card convertRect:page toView:root];
   if (!root.isFlipped) rect.origin.y = NSHeight(root.bounds) - NSMaxY(rect);
   core_->PositionPage(gfx::Rect(static_cast<int>(NSMinX(rect)),
                                 static_cast<int>(NSMinY(rect)),

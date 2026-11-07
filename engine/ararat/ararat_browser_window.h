@@ -8,6 +8,7 @@
 
 class BrowserWindowInterface;
 class AraratWindowHostCore;
+class DevtoolsUIController;
 
 namespace ui { template <class T> class ScopedUnownedUserData; }
 
@@ -146,6 +147,7 @@ class AraratBrowserWindow : public BrowserWindow {
  private:
   raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<AraratWindowHostCore> host_;
+  std::unique_ptr<DevtoolsUIController> devtools_controller_;
   std::unique_ptr<ExclusiveAccessContext> exclusive_access_;
   std::unique_ptr<autofill::AutofillBubbleHandler> autofill_handler_;
   std::unique_ptr<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>> autofill_registration_;

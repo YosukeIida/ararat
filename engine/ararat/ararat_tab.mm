@@ -347,7 +347,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (!contents_ || (command_line->GetSwitchValueASCII("ararat-check") != "popup" &&
                      command_line->GetSwitchValueASCII("ararat-screen") != "links")) return;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
-      u"const popup = window.open('', '', 'popup,width=400,height=300'); if (popup) popup.document.title = 'Popup';",
+      u"{ const popup = window.open('', '', 'popup,width=400,height=300'); if (popup) popup.document.title = 'Popup'; }",
       base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
 }
 

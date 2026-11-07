@@ -55,6 +55,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/link-ararat-layer.patch` | ours |
 | `ararat/extra-parts-hook.patch` | ours |
 | `ararat/permission-prompt-hook.patch` | ours |
+| `ararat/devtools-hook.patch` | `mantrakp04/ardia` (GPL-3.0) |
 | `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia` (GPL-3.0) |
 | `ararat/app-controller-hooks.patch` | ours |
 | `ararat/browser-window-factory.patch` | ours |
@@ -68,6 +69,8 @@ is in `docs/research/ungoogled-inventory.md` §8.
 ## Notes on our patches
 
 `ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
+
+`ararat/devtools-hook.patch` adapts `mantrakp04/ardia`'s `engine/patches/chromium-window-docked-devtools.patch` (GPL-3.0). It reports `DevtoolsUIController::UpdateDevtools` through an optional hook; unset leaves Chrome's behavior intact. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the DevTools build target.
 
 `ararat/autofill-address-bubble.patch` comes from `mantrakp04/ardia`'s `engine/patches/chromium-autofill-address-bubble-window.patch` (GPL-3.0). It finds the Autofill handler on the Browser's unowned user data, guards the address promo's `AsBrowserView()` call and returns early from two card-controller checks.
 

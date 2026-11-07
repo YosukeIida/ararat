@@ -63,3 +63,13 @@
      ":permissions_proto",
      "//chrome/browser:browser_process",
      "//chrome/browser/actor",
+--- a/chrome/browser/devtools/BUILD.gn
++++ b/chrome/browser/devtools/BUILD.gn
+@@ -137,6 +137,7 @@
+   ]
+ 
+   deps = [
++    "//ararat/core:hooks",
+     "//base",
+     "//chrome/browser:file_select_helper",
+     "//chrome/browser/infobars",
