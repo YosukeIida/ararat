@@ -27,6 +27,8 @@ ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.pat
 ararat/remove-screenai-sandbox-parameter.patch
 ararat/link-ararat-layer.patch
 ararat/extra-parts-hook.patch
+ararat/permission-prompt-hook.patch
+ararat/autofill-address-bubble.patch
 ararat/app-controller-hooks.patch
 ararat/browser-window-factory.patch
 ararat/viewless-read-anything.patch

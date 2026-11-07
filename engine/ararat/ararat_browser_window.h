@@ -9,6 +9,8 @@
 class BrowserWindowInterface;
 class AraratWindowHostCore;
 
+namespace ui { template <class T> class ScopedUnownedUserData; }
+
 class AraratBrowserWindow : public BrowserWindow {
  public:
   AraratBrowserWindow(BrowserWindowInterface* browser,
@@ -145,6 +147,8 @@ class AraratBrowserWindow : public BrowserWindow {
   raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<AraratWindowHostCore> host_;
   std::unique_ptr<ExclusiveAccessContext> exclusive_access_;
+  std::unique_ptr<autofill::AutofillBubbleHandler> autofill_handler_;
+  std::unique_ptr<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>> autofill_registration_;
   bool tab_strip_editable_ = true;
 };
 #endif

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ararat/core/ararat_hooks.h"
+#include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_window_check.h"
 #include "ararat/core/ararat_window_host.h"
 #include "base/command_line.h"
@@ -159,13 +160,24 @@ void CheckGuards(int argc, const char** argv) {
   bool under_temp = false;
   bool mock_keychain = false;
   bool check_slice = false;
+  bool check_permissions = false;
+  bool check_dialogs = false;
+  bool check_protocol = false;
+  bool check_autofill = false;
+  bool disable_system_notifications = false;
+  bool enable_features = false;
+  unsigned disable_features_count = 0;
+  bool option_terminator = false;
   bool db_under_temp = false;
   bool has_measure = false;
   bool valid_measure = false;
   bool has_screen = false;
   bool valid_screen = false;
+  bool screen_prompts = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
+    if (strcmp(arg, "--") == 0) option_terminator = true;
+    if (strncmp(arg, "--disable-features", 18) == 0) ++disable_features_count;
     if (strncmp(arg, "--ararat-compositor=", 20) == 0) {
       std::string_view compositor(arg + 20);
       if (compositor != "c1" && compositor != "c2") {
@@ -188,8 +200,9 @@ void CheckGuards(int argc, const char** argv) {
     }
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles") g_check_slice = true;
+      screen_prompts = std::string_view(arg + 16) == "prompts";
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -200,9 +213,13 @@ void CheckGuards(int argc, const char** argv) {
     } else if (strncmp(arg, "--ararat-check=", 15) == 0) {
       has_check = true;
       std::string_view name(arg + 15);
+      check_permissions = name == "permissions";
+      check_dialogs = name == "dialogs";
+      check_protocol = name == "protocol";
+      check_autofill = name == "autofill";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "incognito";
+                           name == "ext-windows" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill";
       g_check_tabs = name == "tabs";
       check_slice = name == "slice";
       g_check_slice = check_slice;
@@ -218,15 +235,31 @@ void CheckGuards(int argc, const char** argv) {
           && base::FilePath(temp_dir).IsParent(dir);
     } else if (std::string_view(arg) == "--use-mock-keychain") {
       mock_keychain = true;
+    } else if (std::string_view(arg) == "--disable-features=SystemNotifications") {
+      disable_system_notifications = true;
+    } else if (strncmp(arg, "--enable-features", 17) == 0) {
+      enable_features = true;
     } else if (strncmp(arg, "--ararat-db=", 12) == 0) {
       base::FilePath db(std::string(arg + 12));
       db_under_temp = !temp_dir.empty() && !db.empty() &&
                       !db.ReferencesParent() && base::FilePath(temp_dir).IsParent(db);
     }
   }
-  auto refuse = [](const char* reason) {
+  auto refuse = [check_permissions, check_dialogs, check_protocol, check_autofill](const char* reason) {
     std::cerr << "engine: --ararat-check refused (" << reason << ")"
               << std::endl;
+    if (check_permissions) {
+      std::cout << "{\"check\":\"permissions\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
+    }
+    if (check_dialogs) {
+      std::cout << "{\"check\":\"dialogs\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
+    }
+    if (check_protocol) {
+      std::cout << "{\"check\":\"protocol\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
+    }
+    if (check_autofill) {
+      std::cout << "{\"check\":\"autofill\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
+    }
     exit(2);
   };
   if (bare_check) {
@@ -239,6 +272,8 @@ void CheckGuards(int argc, const char** argv) {
   if (has_screen && (!valid_screen || has_check || has_measure || temp_dir.empty() ||
                      !under_temp || !mock_keychain || !db_under_temp)) {
     std::cerr << "engine: --ararat-screen requires a scenario, scratch profile and database, and mock keychain" << std::endl;
+    if (screen_prompts)
+      std::cout << "{\"screen\":\"prompts\",\"check\":\"prompts\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
     exit(2);
   }
   if (!has_check) {
@@ -252,6 +287,9 @@ void CheckGuards(int argc, const char** argv) {
   }
   if (!mock_keychain) {
     refuse("the mock keychain is missing");
+  }
+  if ((check_permissions || check_dialogs || check_protocol || check_autofill) && (!disable_system_notifications || disable_features_count != 1 || enable_features || option_terminator)) {
+    refuse("prompts checks require --disable-features=SystemNotifications and no --enable-features");
   }
   if (check_slice && !db_under_temp) {
     refuse("the slice database is not under $TMPDIR");
@@ -278,6 +316,7 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
   AraratInstallWindowFactory();
+  AraratInstallPermissionPrompt();
   g_ararat_reopen = [](bool has_visible_windows) {
     return g_ararat_callbacks.reopen &&
            g_ararat_callbacks.reopen(g_ararat_callbacks.ctx, has_visible_windows);

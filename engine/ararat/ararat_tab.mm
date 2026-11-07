@@ -4,12 +4,37 @@
 #include <cstdio>
 
 #include "ararat/core/public/ARWindowHost.h"
+#include "ararat/core/ararat_permission_prompt.h"
+#include "ararat/core/ararat_autofill_bubble_handler.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "base/functional/bind.h"
+#include "base/json/json_writer.h"
 #include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chrome/common/chrome_isolated_world_ids.h"
+#include "chrome/browser/external_protocol/external_protocol_handler.h"
+#include "chrome/browser/autofill/personal_data_manager_factory.h"
+#include "chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/autofill/content/browser/content_autofill_driver_factory.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/foundations/autofill_driver.h"
+#include "components/autofill/core/browser/foundations/autofill_client.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "base/no_destructor.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/permissions/permission_request_manager.h"
+#include "content/public/browser/javascript_dialog_manager.h"
+#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
@@ -17,8 +42,15 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/navigation_handle.h"
 #include "url/gurl.h"
+#include "url/origin.h"
+#include "ui/views/controls/button/md_text_button.h"
+#include "ui/views/widget/widget.h"
+#include "ui/views/window/dialog_delegate.h"
 
 namespace {
+bool IsPromptScreen() {
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "prompts";
+}
 class TabContentsObserver : public content::WebContentsObserver {
  public:
   TabContentsObserver(content::WebContents* contents, ARTab* tab)
@@ -48,6 +80,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSUInteger navigation_count_;
   BOOL navigation_pending_;
   BOOL check_opener_alive_;
+  std::string screen_address_guid_;
 }
 
 - (instancetype)initWithContents:(content::WebContents*)contents
@@ -73,6 +106,211 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
 - (content::WebContents*)contents { return contents_; }
+
+- (NSUInteger)checkPermissionShownCount { return AraratCheckPermissionShownCount(); }
+- (BOOL)checkAutofillBubble:(BOOL)card decline:(BOOL)decline {
+  return contents_ && AraratCheckAutofillBubble(contents_, card, decline);
+}
+
+- (NSDictionary<NSString*, id>*)checkAutofillState {
+  if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "autofill" && !IsPromptScreen())) return @{};
+  if (!IsPromptScreen()) {
+    static base::NoDestructor<base::AutoReset<bool>> ignore_activation(
+        autofill::SaveCardBubbleControllerImpl::IgnoreWindowActivationForTesting());
+  }
+  auto* data = autofill::PersonalDataManagerFactory::GetForBrowserContext(contents_->GetBrowserContext());
+  if (!data) return @{};
+  auto& addresses = data->address_data_manager();
+  auto& payments = data->payments_data_manager();
+  int forms = 0;
+  size_t suggestions = 0;
+  if (auto* factory = autofill::ContentAutofillDriverFactory::FromWebContents(contents_)) {
+    for (auto* driver : factory->GetExistingDrivers()) {
+      driver->GetAutofillManager().ForEachCachedForm([&forms](const autofill::FormStructure&) { ++forms; });
+      suggestions = driver->GetAutofillManager().client().GetAutofillSuggestions().size();
+    }
+  }
+  return @{ @"loaded": @(data->IsDataLoaded()), @"address_enabled": @(addresses.IsAutofillProfileEnabled()),
+    @"card_enabled": @(payments.IsAutofillPaymentMethodsEnabled()), @"forms": @(forms),
+    @"addresses": @(addresses.GetProfiles().size()), @"cards": @(payments.GetCreditCards().size()),
+    @"address_pending": @(addresses.IsAwaitingPendingAddressChanges()), @"card_pending": @(payments.HasPendingPaymentQueries()),
+    @"suggestions": @(suggestions) };
+}
+
+- (void)checkAutofillAction:(NSInteger)action {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "autofill") return;
+  const char16_t* scripts[] = {u"window.fillAddress()", u"document.getElementById('address-submit').click()",
+      u"window.fillCard()", u"document.getElementById('card-submit').click()"};
+  if (action < 0 || action >= 4) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      scripts[action], base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkRefreshAutofillData {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "autofill") return;
+  if (auto* data = autofill::PersonalDataManagerFactory::GetForBrowserContext(contents_->GetBrowserContext())) data->Refresh();
+}
+- (BOOL)checkPermissionDecision:(NSInteger)decision {
+  return contents_ && decision >= 0 && decision <= 3 && AraratCheckPermissionDecision(contents_, static_cast<int>(decision));
+}
+
+- (NSDictionary<NSString*, id>*)checkPermissionBlockButton {
+  auto* widget = contents_ ? AraratCheckPermissionWidget(contents_) : nullptr;
+  auto* delegate = widget ? widget->widget_delegate()->AsDialogDelegate() : nullptr;
+  auto* button = delegate ? delegate->GetCancelButton() : nullptr;
+  NSWindow* window = widget ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
+  if (!button || !window) return @{};
+  const auto bounds = button->GetBoundsInScreen();
+  if (bounds.IsEmpty()) return @{};
+  const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
+  NSRect screen = NSMakeRect(bounds.x(), top - bounds.y() - bounds.height(), bounds.width(), bounds.height());
+  return @{ @"window": window, @"frame": [NSValue valueWithRect:[window convertRectFromScreen:screen]] };
+}
+
+- (BOOL)checkPermissionPending {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "permissions") return NO;
+  auto* manager = permissions::PermissionRequestManager::FromWebContents(contents_);
+  return manager && (manager->IsRequestInProgress() || manager->has_pending_requests());
+}
+
+- (void)checkRequestPermission:(NSInteger)request {
+  if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "permissions" && !IsPromptScreen())) return;
+  const char16_t* scripts[] = {u"window.requestNotifications()", u"window.requestLocation()", u"window.requestMidi()"};
+  if (request < 0 || request >= 3) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      scripts[request], base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkPermissionResults:(void (^)(NSString*))completion {
+  if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "permissions" && !IsPromptScreen())) {
+    completion(@"");
+    return;
+  }
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+      u"JSON.stringify(document.documentElement.dataset)",
+      base::BindOnce(^(base::Value value) {
+        const std::string* result = value.GetIfString();
+        completion(result ? base::SysUTF8ToNSString(*result) : @"");
+      }), ISOLATED_WORLD_ID_CHROME_INTERNAL);
+}
+
+- (BOOL)checkIsDialogActive {
+  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
+  if (!contents_ || (check != "dialogs" && check != "protocol" && check != "autofill" && !IsPromptScreen())) return NO;
+  auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
+  return manager && manager->IsDialogActive();
+}
+
+- (BOOL)checkDialogHostIsOurs {
+  return [self checkIsDialogActive] && [host_ checkDialogHostForContents:contents_];
+}
+
+- (BOOL)checkCloseModalDialogs {
+  if (![self checkIsDialogActive]) return NO;
+  auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
+  manager->CloseAllDialogs();
+  return YES;
+}
+
+- (NSDictionary<NSString*, id>*)checkProtocol:(NSString*)scheme launch:(BOOL)launch {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "protocol") return @{};
+  const std::string name = base::SysNSStringToUTF8(scheme);
+  if (name.size() < 2 || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789+.-") != std::string::npos ||
+      name == "mailto" || name == "http" || name == "https" || name == "file" || name == "ftp") return @{};
+  Profile* profile = Profile::FromBrowserContext(contents_->GetBrowserContext());
+  auto* prefs = profile->GetPrefs();
+  auto* allowlist = prefs->FindPreference("policy.url_allowlist");
+  auto* blocklist = prefs->FindPreference("policy.url_blocklist");
+  if (!allowlist || !blocklist || !allowlist->GetValue()->is_list() || !blocklist->GetValue()->is_list()) return @{};
+  const auto* user = prefs->GetUserPrefValue(prefs::kProtocolHandlerPerOriginAllowedProtocols);
+  std::string snapshot = "null";
+  if (user && !base::JSONWriter::Write(*user, &snapshot)) return @{};
+  const auto origin = url::Origin::Create(contents_->GetLastCommittedURL());
+  const GURL target(name + "://ararat.invalid/");
+  bool eligible = !origin.opaque() && target.is_valid() &&
+      allowlist->GetValue()->GetList().empty() && blocklist->GetValue()->GetList().empty() &&
+      ExternalProtocolHandler::GetBlockState(name, &origin, profile) == ExternalProtocolHandler::UNKNOWN;
+  if (launch && eligible) {
+    std::u16string script = base::UTF8ToUTF16("window.location.href='" + target.spec() + "'");
+    contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+        script, base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+  }
+  return @{ @"eligible": @(eligible), @"pref": base::SysUTF8ToNSString(snapshot), @"launched_request": @(launch && eligible) };
+}
+
+- (BOOL)checkAcceptJavaScriptDialog:(NSString*)text {
+  if ((base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "dialogs" && !IsPromptScreen()) ||
+      ![self checkIsDialogActive] || !contents_->GetDelegate()) return NO;
+  auto* manager = contents_->GetDelegate()->GetJavaScriptDialogManager(contents_);
+  const auto prompt = base::SysNSStringToUTF16(text);
+  return manager && manager->HandleJavaScriptDialog(contents_, true, &prompt);
+}
+
+- (BOOL)checkCancelJavaScriptDialog {
+  if ((base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "dialogs" && !IsPromptScreen()) ||
+      ![self checkIsDialogActive] || !contents_->GetDelegate()) return NO;
+  auto* manager = contents_->GetDelegate()->GetJavaScriptDialogManager(contents_);
+  return manager && manager->HandleJavaScriptDialog(contents_, false, nullptr);
+}
+
+- (void)checkRunJavaScriptDialog:(NSInteger)dialog {
+  if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "dialogs" && !IsPromptScreen())) return;
+  const char16_t* scripts[] = {u"window.runAlert()", u"window.runConfirm('confirmOk')",
+      u"window.runConfirm('confirmCancel')", u"window.runPrompt('promptText')", u"window.runPrompt('promptCancel')"};
+  if (dialog < 0 || dialog >= 5) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      scripts[dialog], base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkDialogResults:(void (^)(NSString*))completion {
+  if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "dialogs" && !IsPromptScreen())) {
+    completion(@"");
+    return;
+  }
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+      u"JSON.stringify(document.documentElement.dataset)",
+      base::BindOnce(^(base::Value value) {
+        const std::string* result = value.GetIfString();
+        completion(result ? base::SysUTF8ToNSString(*result) : @"");
+      }), ISOLATED_WORLD_ID_CHROME_INTERNAL);
+}
+
+- (void)checkScreenWebAuthn:(BOOL)create {
+  if (!contents_ || !IsPromptScreen()) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      create ? u"window.runCreate()" : u"window.runGet()", base::NullCallback(),
+      content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (BOOL)checkScreenAddress:(BOOL)seed {
+  if (!contents_ || !IsPromptScreen()) return NO;
+  auto* data = autofill::PersonalDataManagerFactory::GetForBrowserContext(contents_->GetBrowserContext());
+  if (!data || !data->IsDataLoaded()) return NO;
+  auto& addresses = data->address_data_manager();
+  if (seed) {
+    if (!screen_address_guid_.empty() || !addresses.GetProfiles().empty()) return NO;
+    autofill::AutofillProfile profile(autofill::AddressCountryCode("US"));
+    profile.SetRawInfo(autofill::NAME_FULL, u"John Smith");
+    profile.SetRawInfo(autofill::ADDRESS_HOME_LINE1, u"123 Testing St");
+    profile.SetRawInfo(autofill::ADDRESS_HOME_CITY, u"Mountain View");
+    profile.SetRawInfo(autofill::ADDRESS_HOME_STATE, u"CA");
+    profile.SetRawInfo(autofill::ADDRESS_HOME_ZIP, u"94043");
+    screen_address_guid_ = profile.guid();
+    addresses.AddProfile(profile);
+  } else {
+    if (screen_address_guid_.empty()) return NO;
+    addresses.RemoveProfile(screen_address_guid_);
+    screen_address_guid_.clear();
+  }
+  return YES;
+}
+
+- (void)checkScreenFocusAddress {
+  if (!contents_ || !IsPromptScreen()) return;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"(()=>{let e=document.querySelector('#address input[autocomplete=name]'); e.focus(); let r=e.getBoundingClientRect(); document.documentElement.dataset.field=JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height});})()",
+      base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
 
 - (NSView*)view {
   DCHECK([NSThread isMainThread]);

@@ -18,6 +18,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
+#include "base/observer_list.h"
 #include "base/process/process.h"
 #include "base/scoped_observation.h"
 #include "base/supports_user_data.h"
@@ -46,6 +47,7 @@
 #include "chrome/browser/ui/navigator/browser_navigator_params.h"
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -63,6 +65,9 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/tabs/public/tab_interface.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/chrome_constants.h"
@@ -77,6 +82,7 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/client_view.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -353,6 +359,54 @@ void AraratOpenOffTheRecordURLs(Profile* profile, NSArray* urls) {
   browser->GetWindow()->Show();
 }
 
+// Based on Ardia's engine/ardiacore/src/ardia/core/ac_modal_dialog_host.mm (GPL-3.0).
+class AraratModalDialogHost : public web_modal::WebContentsModalDialogHost,
+                              public views::WidgetObserver {
+ public:
+  explicit AraratModalDialogHost(AraratWindowHostCore* host) : host_(host) {
+    host_->widget()->AddObserver(this);
+  }
+  ~AraratModalDialogHost() override {
+    observers_.Notify(&web_modal::ModalDialogHostObserver::OnHostDestroying);
+    if (observing_) host_->widget()->RemoveObserver(this);
+  }
+  gfx::NativeView GetHostView() const override {
+    return host_->widget()->GetNativeView();
+  }
+  gfx::Point GetDialogPosition(const gfx::Size& size) override {
+    const auto& page = host_->page_rect();
+    int x = std::max(page.x() + (page.width() - size.width()) / 2, 0);
+    x = std::min(x, std::max(0, host_->widget()->GetWindowBoundsInScreen().width() - size.width()));
+    return gfx::Point(x, page.y());
+  }
+  bool ShouldActivateDialog() const override {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return false;
+    auto* window = host_->window();
+    return window && GetLastActiveBrowserWindowInterfaceWithAnyProfile() == window->browser();
+  }
+  gfx::Size GetMaximumDialogSize() override { return host_->page_rect().size(); }
+  void AddObserver(web_modal::ModalDialogHostObserver* observer) override {
+    observers_.AddObserver(observer);
+  }
+  void RemoveObserver(web_modal::ModalDialogHostObserver* observer) override {
+    observers_.RemoveObserver(observer);
+  }
+  void NotifyPositionRequiresUpdate() override {
+    observers_.Notify(&web_modal::ModalDialogHostObserver::OnPositionRequiresUpdate);
+  }
+  void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override {
+    NotifyPositionRequiresUpdate();
+  }
+  void OnWidgetDestroying(views::Widget* widget) override {
+    widget->RemoveObserver(this);
+    observing_ = false;
+  }
+ private:
+  raw_ptr<AraratWindowHostCore> host_;
+  bool observing_ = true;
+  base::ObserverList<web_modal::ModalDialogHostObserver> observers_;
+};
+
 AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
                                            void* owner)
     : owner_(owner) {
@@ -382,8 +436,13 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   params.remove_standard_frame = true;
   params.native_widget = new HostNativeWidgetMac(widget_.get());
   widget_->Init(std::move(params));
+  modal_dialog_host_ = std::make_unique<AraratModalDialogHost>(this);
   native_host->Attach(app_content_view);
   widget_->LayoutRootViewIfNecessary();
+}
+
+web_modal::WebContentsModalDialogHost* AraratWindowHostCore::modal_dialog_host() const {
+  return modal_dialog_host_.get();
 }
 
 AraratWindowHostCore::~AraratWindowHostCore() {
@@ -422,6 +481,8 @@ void AraratWindowHostCore::AttachPage(gfx::NativeView view) {
 }
 
 void AraratWindowHostCore::PositionPage(const gfx::Rect& rect) {
+  page_rect_ = rect;
+  modal_dialog_host_->NotifyPositionRequiresUpdate();
   if (page_host_) page_host_->SetBoundsRect(rect);
 }
 
@@ -609,6 +670,7 @@ class StripObserver : public TabStripModelObserver {
 
 @implementation ARPagePositionView
 @synthesize host = _host;
+- (NSView*)hitTest:(NSPoint)point { return nil; }
 - (void)setFrameSize:(NSSize)size {
   [super setFrameSize:size];
   [self.host positionPage];
@@ -733,6 +795,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   else manager->DidBecomeInactive();
 }
 
+- (void)activateBrowser {
+  if (auto* window = core_->window()) window->Activate();
+}
+
 - (void)showBrowserProfile:(BrowserWindowInterface*)browser {
   const auto name = browser->GetProfile()->GetPath().BaseName().value();
   if (name != core_->profile_name())
@@ -794,6 +860,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (NSUInteger)checkDialogCount { return g_check_dialog_count; }
+- (BOOL)checkDialogHostForContents:(content::WebContents*)contents {
+  auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents);
+  return manager && manager->delegate() &&
+      manager->delegate()->GetWebContentsModalDialogHost(contents) == core_->modal_dialog_host();
+}
 - (void)configureProfileCloseCheck:(NSUInteger)cancelDialog {
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "profiles") return;
   [self installCheckDialogFactory];
@@ -809,7 +880,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (BOOL)checkTryingToQuit { return browser_shutdown::IsTryingToQuit(); }
 - (NSUInteger)checkStockBrowsers { return AraratStockBrowserCount(); }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
-  if (!browser_ || !base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) return;
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts")) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -1345,7 +1417,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)syncTabs {
   content::WebContents* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
   NSView* card = [self.delegate pageCardForWindowHost:self];
-  if (AraratUsesSharedCompositor()) {
+  {
     if (page_position_view_.superview != card) {
       [page_position_view_ removeFromSuperview];
       page_position_view_ = nil;
@@ -1356,7 +1428,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         [card addSubview:page_position_view_];
       }
     }
-    core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
+    if (AraratUsesSharedCompositor()) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
     [self positionPage];
   }
   NSMutableSet<NSValue*>* present = [NSMutableSet set];
@@ -1380,7 +1452,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       if (contents == active && card) contents->WasShown();
       else contents->WasHidden();
     } else if (contents == active && card) {
-      for (NSView* child in [card.subviews copy]) if (child != view) [child removeFromSuperview];
+      for (NSView* child in [card.subviews copy]) if (child != view && child != page_position_view_) [child removeFromSuperview];
       if (view.superview != card) [card addSubview:view];
       view.frame = card.bounds;
       view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -1397,7 +1469,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [tabs_ removeObjectForKey:key];
     }
   }
-  if (!active && !AraratUsesSharedCompositor()) for (NSView* child in [card.subviews copy]) [child removeFromSuperview];
+  if (!active && !AraratUsesSharedCompositor()) for (NSView* child in [card.subviews copy]) if (child != page_position_view_) [child removeFromSuperview];
 }
 
 - (void)positionPage {

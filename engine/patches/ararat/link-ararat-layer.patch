@@ -53,3 +53,13 @@
        ":browser_command_controller",
        ":browser_header",
        ":browser_init_state",
+--- a/chrome/browser/permissions/BUILD.gn
++++ b/chrome/browser/permissions/BUILD.gn
+@@ -70,6 +70,7 @@
+   ]
+ 
+   deps = [
++    "//ararat/core:hooks",
+     ":permissions_proto",
+     "//chrome/browser:browser_process",
+     "//chrome/browser/actor",

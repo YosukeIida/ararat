@@ -1,57 +1,66 @@
 # エンジンのパッチセット
 
-パッチの順序は `series` だけで定める。パスはこのディレクトリからの相対パスであり、ungoogled/generic を ungoogled/macos より先に適用する。取り込んだ 25 件のパッチは下記のコミットに由来する。独自のパッチは 6 件であり、対抗パッチ、ScreenAI の修正、レイヤーと hook の 3 件、viewless ウィンドウの修正からなる。
+パッチの順序は `series` だけで定める。パスはこのディレクトリからの相対パスであり、ungoogled/generic を ungoogled/macos より先に適用する。取り込んだパッチは下記のコミットに由来する。
 
 | ソース | コミット | Chromium |
 |---|---|---|
-| ungoogled-software/ungoogled-chromium、pull request #4032（2026-11-05 時点で未マージ） | de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c | 157.0.8103.38 |
+| ungoogled-software/ungoogled-chromium、pull request #4032（2026-11-04 にマージ、タグ `157.0.8103.38-1`） | de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c | 157.0.8103.38 |
 | ungoogled-software/ungoogled-chromium-macos | 31f01756a43d55b2c4211e73ca329bfab4ebfcb2 | 156.0.8078.79 |
 
-generic のパッチは pull request の head のバイト単位のコピーである。対象は 157.0.8103.38 であり、Ararat の 157.0.8103.39 に fuzz なしで適用できる。マージ後はマージされたコミットから取り込み直す。macOS の 2 件のうち、`add-local-network-usage-description.patch` はコピーし、`disable-crashpad-handler.patch` は手作業で 157 にリベースした（crashpad の `InitialStart` に `embedder_port` 引数が加わったため）。元の効果は維持しており、`InitialStart` は空の send right を返し、`StartHandler` は false を返す。
+generic のパッチは pull request の head のバイト単位のコピーである。対象は 157.0.8103.38 であり、Ararat の 157.0.8103.39 に fuzz なしで適用できる。マージコミットは取り込み済みの head と同一なので、取り込み直しは不要である。macOS の 2 件のうち、`add-local-network-usage-description.patch` はコピーし、`disable-crashpad-handler.patch` は手作業で 157 にリベースした（crashpad の `InitialStart` に `embedder_port` 引数が加わったため）。元の効果は維持しており、`InitialStart` は空の send right を返し、`StartHandler` は false を返す。
 
 両プロジェクトは BSD-3-Clause である。LICENSE ファイルは `ungoogled/generic/LICENSE` と `ungoogled/macos/LICENSE` に変更せず保存する。
 
-## 取り込んだ 25 件と独自の 6 件（series 順）
+## パッチ一覧（series 順）
 
-| # | `series` 内のファイル | 出典 |
+| `series` 内のファイル | 出典 |
 |---|---|---|
-| 1 | `ungoogled/generic/upstream-fixes/missing-dependencies.patch` | generic, upstream-fixes |
-| 2 | `ungoogled/generic/core/inox-patchset/0003-disable-autofill-download-manager.patch` | generic, core/inox-patchset |
-| 3 | `ungoogled/generic/core/inox-patchset/0021-disable-rlz.patch` | generic, core/inox-patchset |
-| 4 | `ungoogled/generic/core/iridium-browser/safe_browsing-disable-incident-reporting.patch` | generic, core/iridium-browser |
-| 5 | `ungoogled/generic/core/ungoogled-chromium/disable-crash-reporter.patch` | generic, core |
-| 6 | `ungoogled/generic/core/ungoogled-chromium/disable-google-host-detection.patch` | generic, core |
-| 7 | `ungoogled/generic/core/ungoogled-chromium/toggle-translation-via-switch.patch` | generic, core |
-| 8 | `ungoogled/generic/core/ungoogled-chromium/disable-profile-avatar-downloading.patch` | generic, core |
-| 9 | `ungoogled/generic/core/ungoogled-chromium/disable-gcm.patch` | generic, core |
-| 10 | `ungoogled/generic/core/ungoogled-chromium/disable-domain-reliability.patch` | generic, core |
-| 11 | `ungoogled/generic/core/ungoogled-chromium/disable-gaia.patch` | generic, core |
-| 12 | `ungoogled/generic/core/ungoogled-chromium/disable-fonts-googleapis-references.patch` | generic, core |
-| 13 | `ungoogled/generic/core/ungoogled-chromium/disable-webrtc-log-uploader.patch` | generic, core |
-| 14 | `ungoogled/generic/core/ungoogled-chromium/disable-ai.patch` | generic, core |
-| 15 | `ungoogled/generic/core/ungoogled-chromium/disable-network-time-tracker.patch` | generic, core |
-| 16 | `ungoogled/generic/core/ungoogled-chromium/block-requests.patch` | generic, core |
-| 17 | `ararat/restore-component-updater.patch` | 独自 |
-| 18 | `ungoogled/generic/core/ungoogled-chromium/remove-navigation-source-param.patch` | generic, core |
-| 19 | `ungoogled/generic/core/bromite/disable-fetching-field-trials.patch` | generic, core/bromite |
-| 20 | `ungoogled/generic/extra/ungoogled-chromium/disable-intranet-redirect-detector.patch` | generic, extra |
-| 21 | `ungoogled/generic/extra/ungoogled-chromium/fix-building-without-mdns-and-service-discovery.patch` | generic, extra |
-| 22 | `ungoogled/generic/extra/ungoogled-chromium/disable-dial-repeating-discovery.patch` | generic, extra |
-| 23 | `ungoogled/generic/extra/ungoogled-chromium/add-credits.patch` | generic, extra |
-| 24 | `ungoogled/generic/extra/ungoogled-chromium/disable-ai-search-shortcuts.patch` | generic, extra |
-| 25 | `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
-| 26 | `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
-| 27 | `ararat/remove-screenai-sandbox-parameter.patch` | 独自 |
-| 28 | `ararat/link-ararat-layer.patch` | 独自 |
-| 29 | `ararat/extra-parts-hook.patch` | 独自 |
-| 30 | `ararat/browser-window-factory.patch` | 独自 |
-| 31 | `ararat/viewless-read-anything.patch` | 独自 |
+| `ungoogled/generic/upstream-fixes/missing-dependencies.patch` | generic, upstream-fixes |
+| `ungoogled/generic/core/inox-patchset/0003-disable-autofill-download-manager.patch` | generic, core/inox-patchset |
+| `ungoogled/generic/core/inox-patchset/0021-disable-rlz.patch` | generic, core/inox-patchset |
+| `ungoogled/generic/core/iridium-browser/safe_browsing-disable-incident-reporting.patch` | generic, core/iridium-browser |
+| `ungoogled/generic/core/ungoogled-chromium/disable-crash-reporter.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-google-host-detection.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/toggle-translation-via-switch.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-profile-avatar-downloading.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-gcm.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-domain-reliability.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-gaia.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-fonts-googleapis-references.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-webrtc-log-uploader.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-ai.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-network-time-tracker.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/block-requests.patch` | generic, core |
+| `ararat/restore-component-updater.patch` | 独自 |
+| `ungoogled/generic/core/ungoogled-chromium/remove-navigation-source-param.patch` | generic, core |
+| `ungoogled/generic/core/bromite/disable-fetching-field-trials.patch` | generic, core/bromite |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-intranet-redirect-detector.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/fix-building-without-mdns-and-service-discovery.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-dial-repeating-discovery.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/add-credits.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-ai-search-shortcuts.patch` | generic, extra |
+| `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
+| `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
+| `ararat/remove-screenai-sandbox-parameter.patch` | 独自 |
+| `ararat/link-ararat-layer.patch` | 独自 |
+| `ararat/extra-parts-hook.patch` | 独自 |
+| `ararat/permission-prompt-hook.patch` | 独自 |
+| `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia`（GPL-3.0） |
+| `ararat/app-controller-hooks.patch` | 独自 |
+| `ararat/browser-window-factory.patch` | 独自 |
+| `ararat/viewless-read-anything.patch` | 独自 |
 
-## この 25 件を選んだ理由
+## 取り込んだパッチを選んだ理由
 
 パッチごとの維持・スキップ・対抗パッチの判断と、セキュリティ上の帰結は `docs/research/ungoogled-inventory.md` §8 にある。
 
-## 独自の 6 件に関する注記
+## 独自パッチに関する注記
+
+`ararat/permission-prompt-hook.patch` は `ChromePermissionsClient::CreatePrompt` から独自 hook を呼ぶ。hook が未設定か null を返す場合は Chrome 標準のプロンプトを使う。`link-ararat-layer.patch` は permissions のビルドターゲットに `//ararat/core:hooks` を追加する。
+
+`ararat/autofill-address-bubble.patch` は `mantrakp04/ardia` の `engine/patches/chromium-autofill-address-bubble-window.patch`（GPL-3.0）を元にする。Browser の unowned user data から Autofill handler を取得し、住所プロモーションの `AsBrowserView()` 呼び出しをガードし、カード controller の 2 つの検査を早期 return に変える。
+
+`ararat/app-controller-hooks.patch` は Dock の再オープンとメニュー、外部 URL、表示中の Browser を独自 hook に渡す。hook が未設定のときは標準の動作を使う。
 
 `ararat/remove-screenai-sandbox-parameter.patch` は `chrome/browser/chrome_content_browser_client.cc` の sandbox パラメータから ScreenAI の分岐を削除する。`disable-ai` が ScreenAI を削除するため、この分岐を残すと `ScreenAIInstallState::GetInstance()` が未定義シンボルになり、リンクに失敗する。
 

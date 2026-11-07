@@ -30,6 +30,7 @@ let package = Package(
         ),
         .target(name: "AraratUI", dependencies: ["AraratKit"]),
         .testTarget(name: "AraratUITests", dependencies: ["AraratUI", "AraratKit", "AraratHarness"]),
+        .testTarget(name: "PromptFixtureTests", dependencies: ["Ararat"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(
             name: "AraratHarness",
             dependencies: ["AraratUI", "AraratKit"],

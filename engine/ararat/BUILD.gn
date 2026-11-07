@@ -23,6 +23,7 @@ config("ararat_exports") {
 source_set("hooks") {
   sources = [ "ararat_hooks.h" ]
   public = [ "ararat_hooks.h" ]
+  public_deps = [ "//components/permissions" ]
 }
 
 source_set("core") {
@@ -33,7 +34,7 @@ source_set("core") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_measure.mm" ]
+  sources = [ "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
     ":core",
@@ -47,6 +48,8 @@ source_set("entry") {
     "//chrome/browser:chrome_browser_main",
     "//chrome/browser:global_features",
     "//chrome/browser:main_extra_parts",
+    "//chrome/browser/autofill",
+    "//chrome/browser/external_protocol",
     "//chrome/browser/lifetime:lifetime",
     "//chrome/browser/profiles:profile_manager",
     "//chrome/browser/profiles:profile",
@@ -57,6 +60,11 @@ source_set("entry") {
     "//chrome/browser/sessions:impl",
     "//chrome/browser/themes",
     "//chrome/browser/ui:browser_window_header",
+    "//chrome/browser/ui/autofill",
+    "//chrome/browser/ui/autofill:impl",
+    "//chrome/browser/ui/autofill/autofill_ai",
+    "//chrome/browser/ui/autofill/payments",
+    "//chrome/browser/ui/autofill/payments:impl",
     "//chrome/browser/ui:browser_init_state",
     "//chrome/browser/ui/browser_active_state_manager",
     "//chrome/browser/ui/navigator",
@@ -68,6 +76,7 @@ source_set("entry") {
     "//chrome/browser/ui/find_bar",
     "//chrome/browser/ui/exclusive_access",
     "//ui/base",
+    "//ui/base/interaction",
     "//ui/base/mojom:ui_base_types",
     "//ui/gfx",
     "//ui/gfx:native_ui_types",
@@ -78,10 +87,16 @@ source_set("entry") {
     "//chrome/browser/ui/window_metadata",
     "//chrome/common",
     "//chrome/common:constants",
+    "//components/autofill/core/browser",
+    "//components/autofill/content/browser",
+    "//components/autofill/core/browser:legal_message_line",
+    "//components/constrained_window",
     "//components/input",
+    "//components/permissions",
     "//components/javascript_dialogs",
     "//components/prefs",
     "//components/tabs:public",
+    "//components/web_modal",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip",
     "//chrome/browser/ui/tabs:tab_strip_model_observer",

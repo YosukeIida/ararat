@@ -28,6 +28,27 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkPrepareExtensionWindows;
 - (void)checkReportExtensionWindow;
 - (void)checkReloadExtensionWindow;
+- (BOOL)checkIsDialogActive;
+- (BOOL)checkDialogHostIsOurs;
+- (BOOL)checkAcceptJavaScriptDialog:(NSString*)text;
+- (BOOL)checkCancelJavaScriptDialog;
+- (void)checkRunJavaScriptDialog:(NSInteger)dialog;
+- (void)checkDialogResults:(void (^)(NSString*))completion;
+- (void)checkScreenWebAuthn:(BOOL)create;
+- (BOOL)checkScreenAddress:(BOOL)seed;
+- (void)checkScreenFocusAddress;
+- (NSDictionary<NSString*, id>*)checkProtocol:(NSString*)scheme launch:(BOOL)launch;
+- (BOOL)checkCloseModalDialogs;
+- (NSUInteger)checkPermissionShownCount;
+- (BOOL)checkPermissionDecision:(NSInteger)decision;
+- (NSDictionary<NSString*, id>*)checkPermissionBlockButton;
+- (BOOL)checkPermissionPending;
+- (void)checkRequestPermission:(NSInteger)request;
+- (void)checkPermissionResults:(void (^)(NSString*))completion;
+- (BOOL)checkAutofillBubble:(BOOL)card decline:(BOOL)decline;
+- (NSDictionary<NSString*, id>*)checkAutofillState;
+- (void)checkRefreshAutofillData;
+- (void)checkAutofillAction:(NSInteger)action;
 @end
 
 @protocol ARWindowHostAPI;
@@ -43,6 +64,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, weak, nullable) id<ARWindowHostDelegate> delegate;
 - (NSWindow*)window;
 - (BOOL)hasBrowser;
+- (void)activateBrowser;
 - (BOOL)isClosing;
 - (BOOL)setProfileDirectory:(NSString*)directory;
 - (NSString*)profileDirectory;

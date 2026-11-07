@@ -28,6 +28,7 @@ class WebContents;
 - (NSString*)itemIdForTab:(ARTab*)tab;
 - (BOOL)isActiveTab:(ARTab*)tab;
 - (void)tabMetadataChanged;
+- (BOOL)checkDialogHostForContents:(content::WebContents*)contents;
 @end
 
 #endif  // ARARAT_ARARAT_TAB_H_

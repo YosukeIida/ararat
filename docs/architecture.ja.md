@@ -39,7 +39,7 @@ Ararat は、Arc のワークフロー（space、ピン留めタブと Today タ
 | コア | Rust の crate `ararat-core`、SQLite のストレージ、Swift 向けの UniFFI バインディング、C++ 向けの C ABI | macOS、Windows、Linux、iPhone で同一のコアを使用する | 6 |
 | macOS の UI | 動きのある部分はすべて AppKit、設定とオンボーディングは SwiftUI | Cra は SwiftUI から AppKit へ移行した後、space のスワイプ時のメインスレッドの処理時間が 1900 → 440 ms になったことを計測した（Cra ledger 12） | 7 |
 | 同期 | エンドツーエンド暗号化とし、アカウントを必要としない。独自サーバーは、認証済みで追記のみの blob を中継するブラインドリレーとする。デバイスはリカバリーフレーズ、または PAKE（パスワード認証鍵交換）で認証したペアリングコードで参加する | 「独自サーバー、ログインなし」の条件を満たす。Chromium の同期エンジンや共有フォルダが存在しない環境（iPhone、Windows）でも動作する | 8 |
-| プロセス | スコープ（Opus 5.5）→ 2 席で並列実装（Codex `gpt-6.1-terra`、high、labteam と、OpenCode の GLM-5.3-Flash。2026-11-06 から無料モデル `opencode/glm-5.3-flash-free`）→ レビュー（Opus 5.5）。オーナーの選択、2026-11-04。際どいエッジケースのバグは Codex から始める | オーナーの規則（`AGENTS.md`） | 13 |
+| プロセス | スコープ（Opus 5.5）→ 2 席で並列実装（Codex `gpt-6.1-terra`、high、personal アカウントと、OpenCode Go の GLM-5.3-Flash。Go の上限時は無料モデル）→ レビュー（Opus 5.5）。オーナーの選択、2026-11-08。際どいエッジケースのバグは Codex から始める | オーナーの規則（`AGENTS.md`） | 13 |
 
 ## 3. レイヤーとリポジトリの構成
 
@@ -95,30 +95,31 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 ### 4.2 ベースとパッチの管理
 
 - クリーンな Chromium の revision とベースのパッチセットは、`engine/build-inputs.toml` で別々に固定する。
-- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。ungoogled-chromium の全パッチを、維持・スキップ・対抗パッチのいずれかに分け、セキュリティ上の帰結を記した一覧は `docs/research/ungoogled-inventory.md` の 8 節にある。phase 2 では、137 本のうち 25 本と、こちらの 2 本（component updater を保つ対抗パッチは同 8.6 節、もう一方は ScreenAI の sandbox パラメータを除く `ararat/remove-screenai-sandbox-parameter.patch`）をビルドする。評判のソース（14）をオーナーが決めるまで、Google Safe Browsing をビルドに残すので、9 の拡張の kill switch は有効のままである。ドメインの置き換えとバイナリの削除は行わない（我々の規則、暫定）。固定する版は、phase 2 で 1 回計測したリベース（後述）の後の 157.0.8103.39 である。
+- ベースは ungoogled-chromium とする（オーナーの選択、2026-11-04。Helium と比べた理由は 1 節）。ungoogled-chromium の全パッチを、維持・スキップ・対抗パッチのいずれかに分け、セキュリティ上の帰結を記した一覧は `docs/research/ungoogled-inventory.md` の 8 節にある。phase 2 では、選択した upstream のパッチと、こちらのパッチ（component updater を保つ対抗パッチは同 8.6 節、もう一方は ScreenAI の sandbox パラメータを除く `ararat/remove-screenai-sandbox-parameter.patch`）をビルドする。評判のソース（14）をオーナーが決めるまで、Google Safe Browsing をビルドに残すので、9 の拡張の kill switch は有効のままである。ドメインの置き換えとバイナリの削除は行わない（我々の規則、暫定）。固定する版は、phase 2 で 1 回計測したリベース（後述）の後の 157.0.8103.39 である。
 - それまでは Helium を暫定のベースとしていた。一覧やリベースで ungoogled-chromium の手間が見込みより大きいと分かった場合は、Helium を比較の候補とし、Ardia に倣ってこちらの選択と衝突するものをスキップする（Ardia ledger 1.2）。
 - パッチの順序の唯一の正本は `engine/patches/series` である。パッチ名は関心事を表し、順序を示す接頭辞は付けない。
-- パッチの実体は、固定した ungoogled のコミットから `engine/patches/ungoogled/{generic,macos}/` に取り込み、両プロジェクトの BSD-3 の LICENSE も合わせて置く。generic のパッチは、ungoogled-chromium の 157 向けの pull request（#4032、2026-11-05 の時点で未 merge。merge されたらそのコミットから取り込み直す）の head からバイト単位で同一のまま取り込む。macOS のパッチは 156 の macOS のコミットから取り込み、`disable-crashpad-handler.patch` だけを手で 157 に当て直した。コミットの一覧は `engine/patches/README.md` にある。`engine/patches/ararat/` はこちらのパッチを置く場所である（我々の規則）。
+- パッチの実体は、固定した ungoogled のコミットから `engine/patches/ungoogled/{generic,macos}/` に取り込み、両プロジェクトの BSD-3 の LICENSE も合わせて置く。generic のパッチは、ungoogled-chromium の 157 向けの pull request（#4032、2026-11-04 に merge、タグ `157.0.8103.38-1`。merge コミットは取り込み済みの head と同一なので、取り込み直しは不要）の head からバイト単位で同一のまま取り込む。macOS のパッチは 156 の macOS のコミットから取り込み、`disable-crashpad-handler.patch` だけを手で 157 に当て直した。コミットの一覧は `engine/patches/README.md` にある。`engine/patches/ararat/` はこちらのパッチを置く場所である（我々の規則）。
 - `series` 全体を適用・検証するのは `engine/scripts/` の bash スクリプト群である: `env.sh` が共通の環境とユーティリティを担い、`fetch` がタグの取得と DEPS 同期、`apply` がリセットと no fuzz の系列適用に加えてレイヤーのコピー（`engine/ararat/` → `src/ararat/core/`、`engine/chrome/` → `src/chrome/browser/ararat/`）、`series-check` が系列のバイトとコピーされたレイヤーの検証、`gen` が args と GN の生成、`build` がロックと autoninja、`smoke` が headless 確認（我々の規則）。
 - `series-check` は、系列が触る全ファイルとコピーされたレイヤーのファイルの SHA-256 を、前回の正常な apply で記録したマニフェスト（`engine/patch-state.sha256`, `engine/` にコミットする）と、読み取り専用で比較し、コピー先のレイヤーディレクトリの余分なファイルも拒否する。リセットも適用もせず、マニフェストが別の series のために記録されたものであるときも拒否する。エンジンのビルドの前に毎回実行する。`build` は自身の前にこれを実行し、1 バイトでも違えば、ツリーに触れずに「`apply` を実行せよ」と言って止まる。`build` はリセットも再適用もしない（我々の規則）。
 - `apply` は、パッチ済みのファイルをディスク上のバイトと違うときにだけ書く。ツリーが前回の正常な apply のバイトに一致し、series も変わっていなければ何も書かず、mtime をすべてそのままにする。そうでなければツリーを pristine にリセットし（src と系列が触るすべての DEPS リポジトリ）、series を順に fuzz なしで適用し、マニフェストを書き直す。最初の失敗でパッチ名とファイル名を出して止まり、ツリーを半適用ではなくリセット済みで残す（我々の規則）。
-- phase 2 の series は、取り入れた 25 パッチとこちらの 2 パッチからなる（我々の規則）。対抗パッチの `ararat/restore-component-updater.patch` は、`block-requests` の `components/update_client/update_checker.cc` の 1 hunk だけを打ち消すので、apply の後にはこのファイルが素の Chromium とバイト単位で同一に戻る（156 で確認済み）。もう一方の `ararat/remove-screenai-sandbox-parameter.patch` は、ScreenAI サービスの sandbox パラメータ（コンポーネントのバイナリのパスを渡す branch）を `chrome/browser/chrome_content_browser_client.cc` から除く。
+- 対抗パッチの `ararat/restore-component-updater.patch` は、`block-requests` の `components/update_client/update_checker.cc` の 1 hunk だけを打ち消すので、apply の後にはこのファイルが素の Chromium とバイト単位で同一に戻る（156 で確認済み）。もう一方の `ararat/remove-screenai-sandbox-parameter.patch` は、ScreenAI サービスの sandbox パラメータ（コンポーネントのバイナリのパスを渡す branch）を `chrome/browser/chrome_content_browser_client.cc` から除く。
 - ソースは tarball でなく、固定タグの git + gclient と Chromium 固有の固定ツールチェーンから取り、ungoogled の pruning.list は実行しない（gclient が置くプリビルドのツールチェーンを消すから）（我々の規則）。
 - PGO: 156 の固定の `chrome/build/mac-arm.pgo.txt` が指す mac-arm のプロファイル（約 88.9 MB）は公開の optimization-profiles バケットにあり、gclient のフックが取得できる。ただし `.gclient` で `checkout_pgo_profiles` を立てたときだけで、`chrome_pgo_phase=2` のままでは `gn gen` が拒否する。phase 2 は `chrome_pgo_phase=0` で走り、プロファイルは取得していない。約 89 MB の取得を払うかどうかは design の判断である（我々の規則）。
-- series の適用は 156 のツリーで 11 秒であった（2026-11-05、リセット込み。計測は 26 本のときの値で、現在の series は 27 本）。mtime を保つ再適用は何も書かず、約 10 秒、すべて検証の時間である。
-- 157.0.8103.39 へのリベース（2026-11-05、1 回計測）: 取得と DEPS の同期に 5 分 45 秒かかった。当たらなくなった generic の 14 本は、ungoogled-chromium の 157 向けの pull request（#4032、157.0.8103.38 向け）の版に替えた。`disable-crashpad-handler.patch` は、crashpad の `InitialStart` に `embedder_port` 引数が増えたので、手で当て直した。その後、27 本すべてが fuzz なしで 129 ファイルに当たった。取得の開始からおよそ 8 分である。こちらの 2 本はそのまま当たった。
+- series の適用は 156 のツリーで 11 秒であった（2026-11-05、リセット込み）。mtime を保つ再適用は何も書かず、約 10 秒、すべて検証の時間である。
+- 157.0.8103.39 へのリベース（2026-11-05、1 回計測）: 取得と DEPS の同期に 5 分 45 秒かかった。当たらなくなった generic の 14 本は、ungoogled-chromium の 157 向けの pull request（#4032、157.0.8103.38 向け）の版に替えた。`disable-crashpad-handler.patch` は、crashpad の `InitialStart` に `embedder_port` 引数が増えたので、手で当て直した。その後、パッチが fuzz なしで 129 ファイルに当たった。取得の開始からおよそ 8 分である。こちらのパッチはそのまま当たった。
 - Chrome のファイルへの大きな編集は、新しいクラスと小さな hook に書き直す（Ardia は 1,012 行の PiP パッチをこの方法で書き直した）。
 - 指標はパッチの数ではなく、Chrome のファイル内の hunk の数とする。
 
 ### 4.3 Hook
 
-hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタである。パッチを当てた Chrome のファイルはこのヘッダーをインクルードするが、`g_ararat_is_window` は例外であり、`chrome/browser/ui/read_anything/read_anything_side_panel_controller.cc` でヘッダーを使わずに定義するため、宣言とのシグネチャの違いはコンパイル時に検査されない。hook が未設定のとき、Chrome は標準どおりに動作する。今日の一覧: `g_ararat_is_window` は read-anything の viewless 経路で独自ウィンドウを識別する。`chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は常時設定し、対象の Browser を独自 host に渡す。hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
+hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタである。パッチを当てた Chrome のファイルはこのヘッダーをインクルードするが、`g_ararat_is_window` は例外であり、`chrome/browser/ui/read_anything/read_anything_side_panel_controller.cc` でヘッダーを使わずに定義するため、宣言とのシグネチャの違いはコンパイル時に検査されない。hook が未設定のとき、Chrome は標準どおりに動作する。今日の一覧: `g_ararat_is_window` は read-anything の viewless 経路で独自ウィンドウを識別する。`chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は常時設定し、対象の Browser を独自 host に渡す。`g_ararat_reopen`、`g_ararat_dock_menu`、`g_ararat_open_urls` は Dock からの再オープン、Dock メニュー、外部 URL を扱い、`g_ararat_shown_browser` は AppController に表示中の Browser を返す。`g_ararat_create_permission_prompt` は権限要求を独自のタブモーダルプロンプトに渡す。window factory の hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
 
 ### 4.4 エンジン ↔ アプリの API
 
 open コマンドは項目のプロファイルを運ぶ。エンジンに届く前にユーザーが space を切り替えても、項目のプロファイルで開く。host delegate の `showProfile` 要求は、そのウィンドウで最後に表示した当該プロファイルの space に切り替える（我々の規則）。
 
 - framework は `//ararat/core` に Objective-C クラスを実装する（たとえば `ARWindowHost`、`ARTab`、および予定している `ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はアプリ向け protocol を SwiftPM 経由でインポートし、読み込んだ framework から `AraratWindowHostCreate(contentView, windowId)` を `dlsym` で取得する。host とタブは protocol を通して操作する（我々の規則）。
+- 独自レイヤーは page card 上に配置する modal dialog host を提供する。既定の c1 compositor では card にアクティブなページの view と modal host の位置を追う view を置く。後続の unit では他の subview も追加する。c2 ではページに共有 compositor を使う。`g_ararat_create_permission_prompt` は独自の tab-modal `PermissionPrompt` sheet を設定する。この sheet は phase 4 で Swift UI に置き換える。各 Browser は住所とカードの保存プロンプト用の Autofill bubble handler を unowned user data に登録する（我々の規則）。
 - タブ API は coordinator の ID を受け取る。アプリは `AraratWindowHostCreate` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
 - `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
 - Browser の factory は `create_host` で同期的に host を要求する。openURLs と Handoff は `open_urls` を使う。外部からの open は Chrome の untrusted launch フラグを運び、エンジンは opaque initiator を維持する。strip は opener の live ID、commit 済みの URL とページタイトル、および新たなナビゲーションが commit されたかを運ぶ。タイトルとナビゲーションの変更時にも transaction を送る（我々の規則）。
@@ -148,7 +149,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 - 拡張からは、プロファイルごとの `Browser` が別のウィンドウ id に見える。キーウィンドウに表示された Browser がアクティブとなり、ほかのアプリウィンドウの表示中 Browser はフォーカスされず、最小化もされない。非表示の Browser は非アクティブ、不可視、最小化されていない状態と host ウィンドウの bounds を報告する。アプリを非アクティブにすると、すべての Browser のフォーカスが外れる。拡張自身のコンテキストの `currentWindow` はそのコンテキストが属する Browser であり、バックグラウンドではフォーカス中の Browser、アプリが非アクティブな間は最後にフォーカスされた Browser である。非表示プロファイルへの `windows.update({focused: true})` は、そのウィンドウで最後に表示した当該プロファイルの space に切り替える。Arc の拡張から同一プロファイルの全タブが見えるか、現在の space のタブだけが見えるかは未確認である（我々の規則）。
 - 拡張のポップアップウィンドウ（`windows.create({type: "popup"})`）は実際のポップアップウィンドウのままとする（Cra ledger 10）。独自の内部用ヘルパーウィンドウは拡張から隠す（Ardia ledger 1.7）。プロファイルの `Browser` は内部用ではなく、拡張から見える。
 
-現在の `AraratBrowserWindow` は表示、アクティベーション、bounds、タイトル、native window の操作を host Widget に委ね、close は Chromium の unload controller に渡す。toolbar、location bar、dialog など未実装の UI の処理は空の結果を返すか、何もしない。`ARWindowHost` は受け取った `NSView` を `NativeViewHost` に配置し、アプリは Browser の破棄まで host を保持する（我々の規則）。
+現在の `AraratBrowserWindow` は表示、アクティベーション、bounds、タイトル、native window の操作を host Widget に委ね、close は Chromium の unload controller に渡す。toolbar、location bar など未実装の UI の処理は空の結果を返すか、何もしない。タブモーダルダイアログは page card の host を使う（我々の規則）。`ARWindowHost` は受け取った `NSView` を `NativeViewHost` に配置し、アプリは Browser の破棄まで host を保持する（我々の規則）。
 
 **タブ。**
 
@@ -196,18 +197,22 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | 履歴と profile メニュー | Chrome。U11 |
 | exclusive-access context | ページ入力向けに実装済み。fullscreen の動作は U15 |
 | find bar | U16（現在は null で、検索コマンドでクラッシュする） |
-| location bar | U16（現在は null で、bubble anchor の取得時にクラッシュする） |
+| location bar | U16（現在は null）。Chromium 157 では `browser_web_contents_delegate.cc:1344,1351`、`bubble_anchor_util_views.cc:64`、`browser_commands.cc:718`（`GetTabAndRevertIfNecessaryHelper`、`:1097`、`:1147`、`:1163` から到達）と `:2722`（`FocusSearch`、独自 command handler が横取り）などが null の検査なしに呼ぶため、U16 で対応する（我々の規則） |
 | download bubble controller | download UI の実装時（現在は null で、deep scan のプロンプトでクラッシュする） |
-| modal dialog host と autofill bubble handler | U12（現在は null で、ダイアログの位置指定や住所の bubble でクラッシュし得る） |
+| modal dialog host | Chromium の tab-modal ダイアログを独自 host が page card 上に配置する（U12、我々の規則） |
 | accelerator provider と pinned toolbar actions | accelerator は U16、pinned actions は toolbar の実装時（現在は null で、呼び出し側がクラッシュし得る） |
 | read-anything の viewless ウィンドウでの close | U5 |
 | pinned tab の close における `BrowserView` CHECK（`browser_commands.cc:1521`） | 後続の unit。未修正 |
-| 権限のプロンプトとその拒否 | seam の実装（ホスト側の UI） |
-| 外部プロトコルの確認 | seam の実装 |
+| 権限のプロンプトとその拒否 | `g_ararat_create_permission_prompt` を通す独自の tab-modal sheet。phase 4 で Swift UI に置き換える（U12、我々の規則） |
+| JavaScript の alert・confirm・prompt | Chrome の tab-modal ダイアログを独自 modal host に表示する。beforeunload は app-modal のままとする（U12、我々の規則） |
+| HTTP 認証 | Chrome のログインダイアログを独自 modal host に表示する（U12、我々の規則） |
+| 外部プロトコルの確認 | Chrome のダイアログを独自 modal host に表示する（U12、我々の規則） |
 | デバイスの chooser（USB、HID、Bluetooth、シリアル）、Cast | seam の実装 |
+| WebAuthn ダイアログ | Chrome のダイアログを独自 modal host に表示する。U12 では表示ありの `--ararat-screen=prompts` でのみ検査する。discovery はダイアログの表示前に Bluetooth にアクセスし得る。バンドルに `NSBluetoothAlwaysUsageDescription` がないため、Bluetooth API の呼び出しでプロセスが異常終了するか、システムの権限確認が出る可能性がある（我々の規則） |
 | フルスクリーンとポインタロックの解除の警告 | seam の実装（`ExclusiveAccessContext`） |
 | 拡張のアクションのポップアップ、インストールのプロンプト、インストール完了の bubble、サイドパネル | seam の実装 |
-| パスワードと autofill の bubble | seam の実装。autofill のドロップダウンは Chrome の子ウィンドウのままとする |
+| Autofill のカードと住所の保存 | 登録した独自 handler が tab-modal bubble を表示する。autofill のドロップダウンは Chrome の子ウィンドウのままとする（U12、我々の規則） |
+| パスワードの bubble | U16 / phase 7 までは何も表示しない（我々の規則） |
 | ページ内検索 | Chrome の `FindTabHelper`、ホスト側の UI |
 | ページとブラウザのコマンドの間のキーボードイベントの振り分け | ホスト。Chrome の規則に従う: ページを先に処理し、処理されなかったキーはメニューに戻し、予約キーは最初に取得する（Cra ledger 11） |
 | フォーカスの受け渡し（⌘L、⌘T の直後の貼り付け） | ホスト（U16）。入力欄はメインスレッド上で同期的にフォーカスを受け、command bar の索引は後から届き、それまでに打った文字と Return を再生する（Ardia ledger 1.10） |
@@ -398,6 +403,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 - Developer ID による署名と notarization。Sparkle 2 と EdDSA 署名付きの appcast、stable と nightly のチャネル（macOS）。
 - bundle id、team id、entitlement（passkey 用のキーチェーンのアクセスグループ、Bluetooth の使用）、ヘルパーの署名は、資格情報の保存がこれらに依存するため、phase 3 の spike で確定する。
+- iCloud Keychain または Touch ID の profile authenticator で passkey を作成するには、それぞれ team に結び付いた browser credential entitlement または keychain access group が必要である。phase 3 の ad-hoc バンドルにはどちらもない。Developer ID での署名と entitlement は phase 6 で扱う（我々の規則）。
+- phase 3 のバンドルには `NSBluetoothAlwaysUsageDescription` がない。WebAuthn の discovery はダイアログの表示前に Bluetooth に到達し得る。Bluetooth API の呼び出しでプロセスが異常終了するか、システムの権限確認が出る可能性がある。この経路は表示ありの prompts の画面検査でのみ試す（我々の規則）。
 - phase 3 のバンドルは ad-hoc で、内側から署名する（`bundle-app.sh`）: framework の dylib、裸のヘルパー実行体、各ヘルパー app、framework、最後に app。Renderer と GPU のヘルパーはエンジンの allow-jit entitlement を、app はエンジンのデバイス系 entitlement を持つ。team を必要とするもの（`keychain-access-groups`、`com.apple.application-identifier`、`com.apple.developer.associated-domains*`、`com.apple.developer.web-browser.public-key-credential`、値に team の接頭辞を含むものすべて）は、スクリプトの stderr に名前を出して落とす。値が team の接頭辞を持ち、ad-hoc の署名には team がないからである。ad-hoc の下では hardened runtime を使わない。bundle id は `net.iodine2.ararat` で、製品名とヘルパー名は Chromium のままとする。バンドルの実行はすべて `CFFIXED_USER_HOME` を使い捨ての home に置き、bundle id が作る `NSUserDefaults` のドメインの書き込みが `~/Library` に届かないようにする（我々の規則）。
 - CI では署名のフェーズをビルドのフェーズから分離する。action はコミットの SHA で固定する。
 - すべてのリリースに Corresponding Source を付ける（4.7）。
@@ -405,7 +412,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 13. 開発プロセス
 
-各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-terra`（effort high、labteam アカウント）と OpenCode の GLM-5.3-Flash が 2 席で並列に実装し（オーナーの選択、2026-11-04。2026-11-06 から無料モデル `opencode/glm-5.3-flash-free`）→ Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
+各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-terra`（effort high、personal アカウント）と OpenCode Go の GLM-5.3-Flash が 2 席で並列に実装し、Go の残量がないときは無料モデルを使い → Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。personal アカウントは 2026-11-08 のオーナーの選択であり、ararat では labteam を使わない。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
 
 ## 14. オーナーが決める未決の事項
 
@@ -431,6 +438,29 @@ U10 の検査も同じ一時 profile・database・mock keychain を使う。`--a
 U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込み、画面上の検査ではアプリの非アクティブ化と incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
 
 `--ararat-check=empty` は `engine/ararat/test_extensions/empty` を読み込み、空の Browser に対する `windows.getAll`、Chrome のメニュー項目の検証、New Tab の実行を調べる。U16 で command bar をアプリに接続し、この検査に ⌘L を加える（我々の規則）。
+
+U12 の非表示の検査は loopback の fixture を使い、JSON を 1 行出力する。`permissions` は通知を許可し、位置情報を拒否し、MIDI SysEx を Dismiss して、ページの結果、3 回のプロンプト、待機中の要求がないことを確認する。fixture は通知を表示しない。`--disable-features=SystemNotifications` は Chrome の macOS 通知 bridge が OS の権限を要求する経路を止める。位置情報の拒否では location の opt-in に進まず、MIDI の Dismiss では MIDI セッションを開始しない。`dialogs` は JavaScript ダイアログの許可・キャンセルと HTTP 認証のキャンセルについて、modal host とページの結果を確認する。`protocol` は Chrome の確認をキャンセルし、host、前面アプリ、handler のプロセス、origin ごとの設定を確認する。Cancel の BLOCK は metrics にのみ記録される。`autofill` は住所とカードの保存 bubble を拒否し、personal data store を再読込してどちらも保存されていないことを確認する（我々の規則）。
+
+`dialogs` は非表示の host もリサイズし、page card の変化を待ってから、もう一つの alert が新しい card の中央に収まることを確認する。JSON には card の変更前後とダイアログの frame を記録する（我々の規則）。
+
+各検査には新しくビルドしたバンドルと使い捨てのディレクトリが必要である。非表示の検査で macOS の通知 bridge を起動しないよう `SystemNotifications` を無効にする。各コマンドに別のディレクトリを使う（我々の規則）。
+
+```sh
+APP=/absolute/path/to/Ararat.app
+for CHECK in permissions dialogs protocol autofill; do
+  CHECK_TMP="$(mktemp -d "${TMPDIR%/}/ararat-${CHECK}.XXXXXX")"
+  mkdir -p "$CHECK_TMP/home"
+  CFFIXED_USER_HOME="$CHECK_TMP/home" "$APP/Contents/MacOS/Ararat" --ararat-check="$CHECK" --user-data-dir="$CHECK_TMP/profile" --ararat-db="$CHECK_TMP/workspace.sqlite" --use-mock-keychain --disable-features=SystemNotifications
+done
+```
+
+`--ararat-screen=prompts` は表示ありの U12 検査である。権限 sheet、JavaScript ダイアログ、Autofill のドロップダウン、HTTP 認証、WebAuthn の get/create ダイアログについて、位置とスクリーンショットを記録する。権限の検査では、プロセス内のマウスクリックを sheet の Block ボタンに送り、その frame をダイアログウィンドウの座標で記録する。オーナーは Bluetooth の TCC を監視する。この画面検査は未実行である。画面のロックを解除し、新しい使い捨てディレクトリで実行する（我々の規則）。
+
+```sh
+CHECK_TMP="$(mktemp -d "${TMPDIR%/}/ararat-screen-prompts.XXXXXX")"
+mkdir -p "$CHECK_TMP/home"
+CFFIXED_USER_HOME="$CHECK_TMP/home" "$APP/Contents/MacOS/Ararat" --ararat-screen=prompts --user-data-dir="$CHECK_TMP/profile" --ararat-db="$CHECK_TMP/workspace.sqlite" --use-mock-keychain --disable-features=SystemNotifications
+```
 
 | Phase | 内容 | 完了の条件 |
 |---|---|---|

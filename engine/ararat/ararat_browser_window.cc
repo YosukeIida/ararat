@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "ararat/core/ararat_window_host.h"
+#include "ararat/core/ararat_autofill_bubble_handler.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -13,6 +14,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
@@ -63,8 +65,12 @@ unsigned long AraratExclusiveInputCount() {
 AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
                                          AraratWindowHostCore* host)
     : browser_(browser), host_(host),
-      exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)) {}
+      exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)),
+      autofill_handler_(std::make_unique<AraratAutofillBubbleHandler>()),
+      autofill_registration_(std::make_unique<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>>(
+          browser->GetUnownedUserDataHost(), *autofill_handler_)) {}
 AraratBrowserWindow::~AraratBrowserWindow() {
+  autofill_registration_.reset();
   host_->OnWindowDestroyed(browser_);
 }
 void AraratBrowserWindow::RequestClose() {
@@ -137,8 +143,7 @@ void AraratBrowserWindow::SetContentsSize(const gfx::Size& size) {
 
 autofill::AutofillBubbleHandler*
 AraratBrowserWindow::GetAutofillBubbleHandler() {
-  // Why not implement it yet: address bubbles crash on null; U12 owns it.
-  return nullptr;
+  return autofill_handler_.get();
 }
 
 LocationBar* AraratBrowserWindow::GetLocationBar() const {
@@ -274,15 +279,13 @@ std::unique_ptr<FindBar> AraratBrowserWindow::CreateFindBar() {
 
 web_modal::WebContentsModalDialogHost*
 AraratBrowserWindow::GetWebContentsModalDialogHost() {
-  // Why not now: null crashes search-engine choice; U12 owns dialogs.
-  return nullptr;
+  return host_->modal_dialog_host();
 }
 
 web_modal::WebContentsModalDialogHost*
 AraratBrowserWindow::GetWebContentsModalDialogHostFor(
     content::WebContents* web_contents) {
-  // Why not now: null crashes tab dialog positioning; U12 owns dialogs.
-  return nullptr;
+  return host_->modal_dialog_host();
 }
 
 void AraratBrowserWindow::ShowAvatarBubbleFromAvatarButton(

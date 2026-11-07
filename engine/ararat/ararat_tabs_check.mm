@@ -94,8 +94,20 @@ void ScheduleTick() {
     }
     [tabs[1] activateWithCommandId:@"cmd-4"];
     self.titles = @[ tabs[0].title, tabs[1].title, tabs[2].title ];
-    for (ARTab* tab in tabs) if (tab.view && tab.view.superview == self.card) self.activeId = tab.liveId;
-    self.activeInCard = self.card.subviews.count == 1 && self.card.subviews.firstObject == tabs[1].view;
+    NSUInteger tabViewsInCard = 0;
+    for (ARTab* tab in tabs) {
+      if (tab.view && tab.view.superview == self.card) {
+        ++tabViewsInCard;
+        self.activeId = tab.liveId;
+      }
+    }
+    BOOL positionViewPassesHits = YES;
+    for (NSView* view in self.card.subviews) {
+      if ([view isKindOfClass:NSClassFromString(@"ARPagePositionView")] &&
+          [view hitTest:NSMakePoint(NSMidX(view.frame), NSMidY(view.frame))])
+        positionViewPassesHits = NO;
+    }
+    self.activeInCard = tabViewsInCard == 1 && tabs[1].view.superview == self.card && positionViewPassesHits;
     self.inactiveHidden = YES;
     for (ARTab* tab in @[ tabs[0], tabs[2] ]) {
       content::WebContents* contents = tab.contents;

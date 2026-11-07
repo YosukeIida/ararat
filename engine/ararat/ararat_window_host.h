@@ -14,8 +14,13 @@
 #include "ui/gfx/geometry/rect.h"
 
 class AraratBrowserWindow;
+class AraratModalDialogHost;
 class BrowserWindowInterface;
 class Profile;
+
+namespace web_modal {
+class WebContentsModalDialogHost;
+}
 
 namespace views {
 class NativeViewHost;
@@ -45,6 +50,8 @@ class AraratWindowHostCore {
   void SetTitle(const std::u16string& title);
   void AttachPage(gfx::NativeView view);
   void PositionPage(const gfx::Rect& rect);
+  web_modal::WebContentsModalDialogHost* modal_dialog_host() const;
+  const gfx::Rect& page_rect() const { return page_rect_; }
   void ShowBrowserProfile(BrowserWindowInterface* browser);
 
   void Close();
@@ -62,6 +69,8 @@ class AraratWindowHostCore {
   std::unique_ptr<views::WidgetDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   raw_ptr<views::NativeViewHost> page_host_ = nullptr;
+  gfx::Rect page_rect_;
+  std::unique_ptr<AraratModalDialogHost> modal_dialog_host_;
   std::map<std::string, raw_ptr<AraratBrowserWindow>> windows_;
   std::set<std::string> close_warnings_confirmed_;
   bool closing_ = false;

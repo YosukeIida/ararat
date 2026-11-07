@@ -8,6 +8,13 @@
 
 #ifdef __cplusplus
 
+#include <memory>
+#include "components/permissions/permission_prompt.h"
+
+namespace content { class WebContents; }
+extern std::unique_ptr<permissions::PermissionPrompt> (*g_ararat_create_permission_prompt)(
+    content::WebContents*, permissions::PermissionPrompt::Delegate*);
+
 #ifdef __OBJC__
 @class NSMenu;
 @class NSURL;

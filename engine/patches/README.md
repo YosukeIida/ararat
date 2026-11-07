@@ -1,17 +1,17 @@
 # Engine patch set
 
 `series` is the only source of patch order; paths in it are relative to this
-directory, ungoogled/generic before ungoogled/macos. The 25 vendored patches
-come from the commits below; six are ours: a counter-patch, a ScreenAI fix, three layer and hook patches, and a viewless-window fix.
+directory, ungoogled/generic before ungoogled/macos. The vendored patches
+come from the commits below.
 
 | Source | Commit | Chromium |
 |---|---|---|
-| ungoogled-software/ungoogled-chromium, pull request #4032 (not merged on 2026-11-05) | de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c | 157.0.8103.38 |
+| ungoogled-software/ungoogled-chromium, pull request #4032 (merged 2026-11-04, tag `157.0.8103.38-1`) | de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c | 157.0.8103.38 |
 | ungoogled-software/ungoogled-chromium-macos | 31f01756a43d55b2c4211e73ca329bfab4ebfcb2 | 156.0.8078.79 |
 
 The generic patches are byte-for-byte copies of that pull request's head,
 which targets 157.0.8103.38 and applies to our 157.0.8103.39 without fuzz;
-re-vendor them from the merged commit once it lands. Of the two macOS
+the merge commit equals the vendored head, so re-vendoring is unnecessary. Of the two macOS
 patches, `add-local-network-usage-description.patch` is a copy and
 `disable-crashpad-handler.patch` is rebased by hand onto 157 (crashpad's
 `InitialStart` gained an `embedder_port` parameter): it keeps the original's
@@ -21,48 +21,57 @@ false.
 Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 `ungoogled/generic/LICENSE` and `ungoogled/macos/LICENSE`.
 
-## The 25 plus our six, in series order
+## Patches in series order
 
-| # | File in `series` | Origin |
+| File in `series` | Origin |
 |---|---|---|
-| 1 | `ungoogled/generic/upstream-fixes/missing-dependencies.patch` | generic, upstream-fixes |
-| 2 | `ungoogled/generic/core/inox-patchset/0003-disable-autofill-download-manager.patch` | generic, core/inox-patchset |
-| 3 | `ungoogled/generic/core/inox-patchset/0021-disable-rlz.patch` | generic, core/inox-patchset |
-| 4 | `ungoogled/generic/core/iridium-browser/safe_browsing-disable-incident-reporting.patch` | generic, core/iridium-browser |
-| 5 | `ungoogled/generic/core/ungoogled-chromium/disable-crash-reporter.patch` | generic, core |
-| 6 | `ungoogled/generic/core/ungoogled-chromium/disable-google-host-detection.patch` | generic, core |
-| 7 | `ungoogled/generic/core/ungoogled-chromium/toggle-translation-via-switch.patch` | generic, core |
-| 8 | `ungoogled/generic/core/ungoogled-chromium/disable-profile-avatar-downloading.patch` | generic, core |
-| 9 | `ungoogled/generic/core/ungoogled-chromium/disable-gcm.patch` | generic, core |
-| 10 | `ungoogled/generic/core/ungoogled-chromium/disable-domain-reliability.patch` | generic, core |
-| 11 | `ungoogled/generic/core/ungoogled-chromium/disable-gaia.patch` | generic, core |
-| 12 | `ungoogled/generic/core/ungoogled-chromium/disable-fonts-googleapis-references.patch` | generic, core |
-| 13 | `ungoogled/generic/core/ungoogled-chromium/disable-webrtc-log-uploader.patch` | generic, core |
-| 14 | `ungoogled/generic/core/ungoogled-chromium/disable-ai.patch` | generic, core |
-| 15 | `ungoogled/generic/core/ungoogled-chromium/disable-network-time-tracker.patch` | generic, core |
-| 16 | `ungoogled/generic/core/ungoogled-chromium/block-requests.patch` | generic, core |
-| 17 | `ararat/restore-component-updater.patch` | ours |
-| 18 | `ungoogled/generic/core/ungoogled-chromium/remove-navigation-source-param.patch` | generic, core |
-| 19 | `ungoogled/generic/core/bromite/disable-fetching-field-trials.patch` | generic, core/bromite |
-| 20 | `ungoogled/generic/extra/ungoogled-chromium/disable-intranet-redirect-detector.patch` | generic, extra |
-| 21 | `ungoogled/generic/extra/ungoogled-chromium/fix-building-without-mdns-and-service-discovery.patch` | generic, extra |
-| 22 | `ungoogled/generic/extra/ungoogled-chromium/disable-dial-repeating-discovery.patch` | generic, extra |
-| 23 | `ungoogled/generic/extra/ungoogled-chromium/add-credits.patch` | generic, extra |
-| 24 | `ungoogled/generic/extra/ungoogled-chromium/disable-ai-search-shortcuts.patch` | generic, extra |
-| 25 | `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
-| 26 | `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
-| 27 | `ararat/remove-screenai-sandbox-parameter.patch` | ours |
-| 28 | `ararat/link-ararat-layer.patch` | ours |
-| 29 | `ararat/extra-parts-hook.patch` | ours |
-| 30 | `ararat/browser-window-factory.patch` | ours |
-| 31 | `ararat/viewless-read-anything.patch` | ours |
+| `ungoogled/generic/upstream-fixes/missing-dependencies.patch` | generic, upstream-fixes |
+| `ungoogled/generic/core/inox-patchset/0003-disable-autofill-download-manager.patch` | generic, core/inox-patchset |
+| `ungoogled/generic/core/inox-patchset/0021-disable-rlz.patch` | generic, core/inox-patchset |
+| `ungoogled/generic/core/iridium-browser/safe_browsing-disable-incident-reporting.patch` | generic, core/iridium-browser |
+| `ungoogled/generic/core/ungoogled-chromium/disable-crash-reporter.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-google-host-detection.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/toggle-translation-via-switch.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-profile-avatar-downloading.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-gcm.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-domain-reliability.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-gaia.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-fonts-googleapis-references.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-webrtc-log-uploader.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-ai.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/disable-network-time-tracker.patch` | generic, core |
+| `ungoogled/generic/core/ungoogled-chromium/block-requests.patch` | generic, core |
+| `ararat/restore-component-updater.patch` | ours |
+| `ungoogled/generic/core/ungoogled-chromium/remove-navigation-source-param.patch` | generic, core |
+| `ungoogled/generic/core/bromite/disable-fetching-field-trials.patch` | generic, core/bromite |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-intranet-redirect-detector.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/fix-building-without-mdns-and-service-discovery.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-dial-repeating-discovery.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/add-credits.patch` | generic, extra |
+| `ungoogled/generic/extra/ungoogled-chromium/disable-ai-search-shortcuts.patch` | generic, extra |
+| `ungoogled/macos/ungoogled-chromium/macos/disable-crashpad-handler.patch` | macos |
+| `ungoogled/macos/ungoogled-chromium/macos/add-local-network-usage-description.patch` | macos |
+| `ararat/remove-screenai-sandbox-parameter.patch` | ours |
+| `ararat/link-ararat-layer.patch` | ours |
+| `ararat/extra-parts-hook.patch` | ours |
+| `ararat/permission-prompt-hook.patch` | ours |
+| `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia` (GPL-3.0) |
+| `ararat/app-controller-hooks.patch` | ours |
+| `ararat/browser-window-factory.patch` | ours |
+| `ararat/viewless-read-anything.patch` | ours |
 
-## Why these 25
+## Why these upstream patches
 
 Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
-## Notes on our six
+## Notes on our patches
+
+`ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
+
+`ararat/autofill-address-bubble.patch` comes from `mantrakp04/ardia`'s `engine/patches/chromium-autofill-address-bubble-window.patch` (GPL-3.0). It finds the Autofill handler on the Browser's unowned user data, guards the address promo's `AsBrowserView()` call and returns early from two card-controller checks.
+
+`ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset.
 
 `ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
 the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:
