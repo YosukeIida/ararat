@@ -45,6 +45,8 @@ final class PromptFixtureServer {
           status = "200 OK"; headers = ""; body = dialogsPage
         case "/protocol":
           status = "200 OK"; headers = ""; body = "<!doctype html><title>Protocol fixture</title>"
+        case "/keyboard":
+          status = "200 OK"; headers = ""; body = keyboardPage
         case "/autofill":
           status = "200 OK"; headers = ""; body = autofillPage
         case "/webauthn":
@@ -87,6 +89,16 @@ final class PromptFixtureServer {
     window.runAlert = () => { alert('Alert'); result.alert = 'done'; };
     window.runConfirm = key => { result[key] = String(confirm('Confirm')); };
     window.runPrompt = key => { const value = prompt('Prompt'); result[key] = value === null ? 'null' : value; };
+    </script>
+    """
+
+  private static let keyboardPage = """
+    <!doctype html><title>Keyboard fixture</title>
+    <input id="edit" value="selection survives" autofocus>
+    <p>ararat-find ararat-find ararat-find</p>
+    <a id="next" href="/keyboard?second">Next</a>
+    <script>
+    window.registerFixtureProtocol = () => navigator.registerProtocolHandler('web+ararat', '/protocol?url=%s');
     </script>
     """
 

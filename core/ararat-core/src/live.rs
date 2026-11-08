@@ -176,6 +176,10 @@ impl Live {
     }
 
     pub fn cancel(&mut self, command_id: &str) -> bool {
+        if self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Activate) {
+            self.pending.remove(command_id);
+            return true;
+        }
         Self::cancel_open(command_id, &mut self.map, &mut self.reverse,
                           &mut self.windows, &mut self.pending)
     }

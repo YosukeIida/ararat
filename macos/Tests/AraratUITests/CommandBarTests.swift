@@ -33,6 +33,7 @@ private final class FakeCommandBarStore: CommandBarStore {
         queries.append(text)
         return results[text] ?? CommandBarResult(rows: [], inlineCompletion: nil)
     }
+    func searchURL(_ text: String) -> String { "search:" + text }
 }
 
 /// A bar in an unordered window; the field editor is made first responder so keys can be fed
@@ -49,6 +50,81 @@ private func mountedBar(_ store: FakeCommandBarStore?, mode: CommandBarMode = .n
     window.makeFirstResponder(view.field)
     controller.open(mode: mode, prefill: prefill, store: store)
     return (controller, view, window)
+}
+
+@Test @MainActor
+func commandBarFocusIsSynchronous() throws {
+    let controller = CommandBarController()
+    let view = CommandBarView(controller: controller)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = view
+    controller.open(mode: .editURL, prefill: "https://example.com", store: nil)
+    view.focusField()
+    let editor = try #require(view.field.currentEditor())
+    #expect(window.firstResponder === editor)
+    #expect(view.field.stringValue == "https://example.com")
+    #expect(editor.selectedRange == NSRange(location: 0, length: 19))
+}
+
+@Test @MainActor
+func searchModeCommitsLiteralQueryAfterSessionArrives() {
+    let controller = CommandBarController()
+    let store = FakeCommandBarStore()
+    controller.open(mode: .search, prefill: nil, store: nil)
+    controller.update(query: "example.com & 日本", allowCompletion: true)
+    var target: SuggestionTarget?
+    controller.onCommit = { row, _, _ in target = row?.target }
+    controller.commit(forceNewTab: false, applyingCompletion: "example.com")
+    #expect(controller.isOpen)
+    controller.applyStore(store)
+    #expect(target == .search(url: "search:example.com & 日本"))
+    #expect(store.queries.isEmpty)
+}
+
+@Test @MainActor
+func hiddenCommandBarNeverOrdersItsWindows() {
+    let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    let presenter = CommandBarPresenter(parent: parent, visible: false, bindings: [], highlight: .clear)
+    presenter.open(mode: .newTab, prefill: nil)
+    presenter.applyStore(FakeCommandBarStore())
+    #expect(!parent.isVisible && !presenter.panel.isVisible && presenter.panel.parent == nil)
+    presenter.close()
+    #expect(!parent.isVisible && !presenter.panel.isVisible)
+}
+
+@MainActor
+private final class FocusCountingWindow: NSWindow {
+    var frontCount = 0
+    override func makeKeyAndOrderFront(_ sender: Any?) { frontCount += 1 }
+}
+
+@Test @MainActor
+func clickingAwayDoesNotFrontThePreviousHost() {
+    let first = FocusCountingWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+    let second = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+    let presenter = CommandBarPresenter(parent: first, visible: true, bindings: [], highlight: .clear)
+    var time = Date(timeIntervalSince1970: 100)
+    presenter.controller.now = { time }
+    presenter.controller.open(mode: .newTab, prefill: nil, store: nil)
+    time.addTimeInterval(1)
+    presenter.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: second))
+    #expect(!presenter.controller.isOpen)
+    #expect(first.frontCount == 0)
+}
+
+@Test @MainActor
+func commandBarCommitSurvivesPresenterReleaseOnClose() {
+    let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    var presenter: CommandBarPresenter? = CommandBarPresenter(parent: parent, visible: false, bindings: [], highlight: .clear)
+    var committed = false
+    presenter?.onClose = { presenter = nil }
+    presenter?.onCommit = { _, _, _ in committed = true }
+    presenter?.open(mode: .search, prefill: nil)
+    let controller = presenter!.controller
+    controller.update(query: "example.com", allowCompletion: true)
+    presenter?.applyStore(FakeCommandBarStore())
+    controller.commit(forceNewTab: false)
+    #expect(presenter == nil && committed)
 }
 
 @MainActor
@@ -71,6 +147,68 @@ private func commitHarness(_ directory: URL) async throws -> (HarnessDelegate, W
     harness.sidebar = SidebarView(snapshot: snapshot)
     harness.connectSidebar()
     return (harness, adapter)
+}
+
+@Test @MainActor
+func switchingSpacesSelectsAnOpenRowInTheDestination() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (_, adapter) = try await commitHarness(directory)
+    try await commitValue { adapter.showSpace(id: "space-home", completion: $0) }
+    let initialHome = try await commitValue { adapter.createTab(url: "https://home.example", completion: $0) }
+    let expectedHomeID = try #require(initialHome.selectedId)
+    let first = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
+    let work = try #require(first.spaces.first { $0.id == "space-work" })
+    let workID = try #require(first.selectedId)
+    #expect((work.today + work.pinned + work.favorites).contains { $0.id == workID && !$0.unloaded })
+    let home = try await commitValue { adapter.showSpaceSelecting(id: "space-home", completion: $0) }
+    let destination = try #require(home.spaces.first { $0.id == "space-home" })
+    let homeID = try #require(home.selectedId)
+    #expect(homeID == expectedHomeID)
+    #expect((destination.today + destination.pinned + destination.favorites).contains { $0.id == homeID && !$0.unloaded })
+    let back = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
+    #expect(back.selectedId == workID)
+}
+
+@Test @MainActor
+func staleLiveMoveDoesNotChangeWorkspace() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (_, adapter) = try await commitHarness(directory)
+    let before = try await commitValue { adapter.snapshot(completion: $0) }
+    let space = try #require(before.spaces.first { $0.id == "space-work" })
+    let row = try #require(space.pinned.first { $0.url != nil })
+    let result = try await commitValue { adapter.moveIfLive(id: row.id, container: space.todayId, index: 0,
+        openFolder: false, expectedLive: "stale-live", completion: $0) }
+    #expect(result == nil)
+    let after = try await commitValue { adapter.snapshot(completion: $0) }
+    #expect(after.spaces.first { $0.id == space.id }?.pinned.contains { $0.id == row.id } == true)
+}
+
+@Test @MainActor
+func rejectedSplitSwitchRestoresTheSidebarAndLeavesTheWorkspaceUntouched() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (_, adapter) = try await commitHarness(directory)
+    try await commitValue { adapter.showSpace(id: "space-work", completion: $0) }
+    _ = try await commitValue { adapter.select(id: "split-1", completion: $0) }
+    let before = try await commitValue { adapter.showSpaceSelecting(id: "space-home", completion: $0) }
+    let sidebar = SidebarView(snapshot: before)
+    let oldIndex = try #require(before.spaces.firstIndex { $0.id == "space-home" })
+    let targetIndex = try #require(before.spaces.firstIndex { $0.id == "space-work" })
+    var calls = 0
+    sidebar.onShowSpace = { _ in calls += 1 }
+    sidebar.showSpace(at: targetIndex)
+    #expect(sidebar.spaceShown == targetIndex && calls == 1)
+    do {
+        _ = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
+        Issue.record("A selected split must reject the space switch")
+    } catch {
+        #expect((error as? CoreError) == .UnsupportedSplit)
+        sidebar.restoreShownSpace()
+    }
+    let after = try await commitValue { adapter.snapshot(completion: $0) }
+    #expect(after == before && sidebar.spaceShown == oldIndex && calls == 1)
 }
 
 @Test @MainActor
@@ -290,6 +428,11 @@ func returnAndArrowsGoToTheInputMethodWhileTextIsMarked() throws {
     // the bar — the coordinator does not consume them and nothing commits or moves.
     editor.setMarkedText("こん", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
     #expect(editor.hasMarkedText())
+    let delegate = try #require(view.field.delegate)
+    #expect(delegate.control?(view.field, textView: editor, doCommandBy: #selector(NSResponder.cancelOperation(_:))) == false)
+    #expect(!view.performKeyEquivalent(with: try barKeyEvent("\r", keyCode: 36, flags: .command)))
+    view.sync()
+    #expect(editor.hasMarkedText() && controller.isOpen && commits.isEmpty)
     editor.keyDown(with: try barKeyEvent("\r", keyCode: 36))
     #expect(commits.isEmpty && controller.isOpen)
     editor.keyDown(with: try barKeyEvent("\u{F701}", keyCode: 125))
@@ -393,6 +536,21 @@ func openUrlSearchRowsCreateTodayTabsAndCommandLEditsTheCurrentTab() async throw
     try await waitUntil { harness.snapshot.selectedId != nil && harness.snapshot.selectedId != searchId }
     let forcedSpace = try #require(harness.snapshot.spaces.first { $0.id == shown })
     #expect(forcedSpace.today.first?.url == "https://example.test/forced")
+    _ = try await commitValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func editingPinnedTabKeepsItsSavedDestination() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (harness, adapter) = try await commitHarness(directory)
+    harness.commitCommandBar(barRow("Spec", target: .tab(id: "tab-spec", spaceId: "space-work")), mode: .newTab, forceNewTab: false)
+    try await waitUntil { harness.snapshot.selectedId == "tab-spec" }
+    let saved = harness.selectedTabRow?.url
+    harness.commitCommandBar(barRow("Next", target: .openUrl(url: "https://example.test/next")), mode: .editURL, forceNewTab: false)
+    #expect(harness.selectedTabRow?.url == saved)
+    let persisted = try await commitValue { adapter.snapshot(completion: $0) }
+    #expect(persisted.spaces.flatMap(\.pinned).first { $0.id == "tab-spec" }?.url == saved)
     _ = try await commitValue { adapter.shutdown(completion: $0) }
 }
 

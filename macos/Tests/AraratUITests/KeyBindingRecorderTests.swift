@@ -4,6 +4,19 @@ import Testing
 @testable import AraratUI
 @testable import AraratHarness
 
+@Test @MainActor
+func clearingCoreShortcutCollisionsPreservesOtherModifiers() {
+    let menu = NSMenu()
+    let collision = menu.addItem(withTitle: "Save", action: nil, keyEquivalent: "s")
+    collision.keyEquivalentModifierMask = .command
+    let other = menu.addItem(withTitle: "Other", action: nil, keyEquivalent: "s")
+    other.keyEquivalentModifierMask = [.command, .shift]
+    let displaced = KeyBindingsModel.clearCollisions(defaultKeyBindings().filter { $0.command == "toggle_sidebar" }, in: menu)
+    #expect(displaced["toggle_sidebar"] === collision)
+    #expect(collision.keyEquivalent.isEmpty)
+    #expect(other.keyEquivalent == "s")
+}
+
 @MainActor
 private func bindingValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }

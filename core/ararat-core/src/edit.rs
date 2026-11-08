@@ -575,6 +575,18 @@ impl Workspace {
         self.windows.get(window).and_then(|state| state.selected.as_deref())
     }
 
+    pub fn clear_selection(&mut self, window: &str) -> Vec<Op> {
+        if self.selected(window).is_none() { return Vec::new(); }
+        let now = self.lifecycle_time();
+        let mut ops = self.stamp_outgoing(window, None, now);
+        let mut state = self.window_state(window);
+        state.select(None);
+        state.changed_at = now;
+        ops.push(Op::Put(Record::Window(state)));
+        for op in &ops { self.apply(op); }
+        ops
+    }
+
     pub fn is_selectable(&self, id: &str) -> bool {
         let Some(item) = self.items.get(id) else { return false };
         matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }) && self.list_for(id).is_some_and(|(root, _)| {

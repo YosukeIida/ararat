@@ -50,6 +50,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/app-controller-hooks.patch` | 独自 |
 | `ararat/browser-window-factory.patch` | 独自 |
 | `ararat/viewless-read-anything.patch` | 独自 |
+| `ararat/viewless-bubble-anchor.patch` | 独自 |
 
 ## 取り込んだパッチを選んだ理由
 
@@ -63,6 +64,10 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 `ararat/autofill-address-bubble.patch` は `mantrakp04/ardia` の `engine/patches/chromium-autofill-address-bubble-window.patch`（GPL-3.0）を元にする。Browser の unowned user data から Autofill handler を取得し、住所プロモーションの `AsBrowserView()` 呼び出しをガードし、カード controller の 2 つの検査を早期 return に変える。
 
+`ararat/keyboard-ime-diagnostics.patch` は keyboard check の対象と転送の観測を件数制限付きで記録し、入力テキストは記録しない。
+
+`ararat/hidden-dialog-containment.patch` は hidden check の予期しない通常の JavaScript dialog を拒否し、beforeunload の開始と完了を WebContents の境界で検証できるようにする。
+
 `ararat/app-controller-hooks.patch` は Dock の再オープンとメニュー、外部 URL、表示中の Browser を独自 hook に渡す。hook が未設定のときは標準の動作を使う。
 
 `ararat/remove-screenai-sandbox-parameter.patch` は `chrome/browser/chrome_content_browser_client.cc` の sandbox パラメータから ScreenAI の分岐を削除する。`disable-ai` が ScreenAI を削除するため、この分岐を残すと `ScreenAIInstallState::GetInstance()` が未定義シンボルになり、リンクに失敗する。
@@ -72,6 +77,8 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 `ararat/link-ararat-layer.patch` は `//ararat/core` を framework の依存に追加し、`ararat.exports` をリンカに渡し、独自のシンボルを `chrome/app/framework.order` に追加する。`ararat/extra-parts-hook.patch` は `ChromeContentBrowserClient::CreateBrowserMainParts` の末尾で `g_ararat_add_browser_main_extra_parts` が設定されていれば呼び出す。未設定の場合、Chrome は標準どおりに動作する。`ararat/browser-window-factory.patch` は `Browser` のコンストラクタで独自の window factory が設定されていれば呼び出す。未設定の場合と null が返った場合は、Chrome が標準ウィンドウを生成する。location bar がないウィンドウでは、その状態の保存も省く。hook の一覧は architecture §4.3 にある。
 
 `ararat/viewless-read-anything.patch` は、side panel のない独自の viewless ウィンドウで side panel の後処理を省く。
+
+`ararat/viewless-bubble-anchor.patch` は、`BrowserView` がない場合、location bar の chip を確認した後に空の page-info anchor を返す。その後 chooser とファイルシステムの復元権限バブルは、host ウィンドウの上端の開始側から Chromium の no-toolbar offset だけ離れた位置を使う。RTL では左右を反転する。host がない場合や空の場合は空の矩形を返し、標準の `BrowserView` の経路は変えない。実際の bubble の配置は未検証である。
 
 factory hook の設定時、このパッチは `BrowserInitState` がフラグを取り込む前に Chrome のセッション復元を無効にする。標準ウィンドウを使う Browser も対象である。Ararat 自身の workspace の復元は U17 で core から行う。
 U14 の拡張 action container と popup anchor は独自レイヤーにあり、Chromium のパッチを追加しない。外部インストールのエラーダイアログは `BrowserView` を前提としているため、外部インストールをサポートするにはガードまたはパッチが必要である（我々の規則）。

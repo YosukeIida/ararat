@@ -6,6 +6,7 @@
 #include "ararat/core/public/ARWindowHost.h"
 #include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_autofill_bubble_handler.h"
+#include "ararat/core/ararat_window_host.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
@@ -33,11 +34,14 @@
 #include "base/no_destructor.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/permissions/permission_request_manager.h"
+#include "components/find_in_page/find_tab_helper.h"
+#include "components/find_in_page/find_notification_details.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -48,7 +52,34 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
 
+@interface NSObject (AraratCheckInputObservation)
+- (int)textInputType;
+- (BOOL)isHandlingKeyDown;
+@end
+
 namespace {
+NSDictionary* KeyboardIMEObservation(content::WebContents* contents, NSString* stage) {
+  auto* render_view = contents->GetRenderWidgetHostView();
+  auto* frame = contents->GetFocusedFrame();
+  NSView* view = contents->GetContentNativeView().GetNativeNSView();
+  NSWindow* window = view.window;
+  id<NSTextInputClient> input = (id<NSTextInputClient>)view;
+  BOOL text_type_available = [view respondsToSelector:@selector(textInputType)];
+  BOOL key_down_available = [view respondsToSelector:@selector(isHandlingKeyDown)];
+  BOOL marked_available = [view respondsToSelector:@selector(hasMarkedText)];
+  return @{ @"stage": stage, @"view_class": view ? NSStringFromClass(view.class) : @"",
+            @"view_present": @(view != nil), @"window_present": @(window != nil),
+            @"window_visible": @(window.isVisible), @"window_key": @(window.isKeyWindow),
+            @"first_responder": @(view && window.firstResponder == view), @"app_active": @(NSApp.isActive),
+            @"render_view_present": @(render_view != nullptr), @"render_focus": @(render_view && render_view->HasFocus()),
+            @"render_showing": @(render_view && render_view->IsShowing()), @"focused_frame_present": @(frame != nullptr),
+            @"focused_widget_is_root": @(frame && render_view && frame->GetRenderWidgetHost() == render_view->GetRenderWidgetHost()),
+            @"text_input_type": text_type_available ? @([(NSObject*)view textInputType]) : (id)[NSNull null],
+            @"handling_key_down": key_down_available ? @([(NSObject*)view isHandlingKeyDown]) : (id)[NSNull null],
+            @"has_marked_text": marked_available ? @([input hasMarkedText]) : (id)[NSNull null] };
+}
+base::WeakPtr<content::WebContents> g_held_find_contents;
+int g_held_find_request = -1;
 bool IsPromptScreen() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "prompts";
 }
@@ -58,7 +89,11 @@ class TabContentsObserver : public content::WebContentsObserver {
       : tab_(tab) { Observe(contents); }
   void Stop() { Observe(nullptr); }
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
-    if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) [tab_ navigationFinished];
+    if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
+      if (!navigation->IsSameDocument() && tab_ && web_contents())
+        AraratCheckRevokeChangedDocument(base::SysNSStringToUTF8([tab_ liveId]), web_contents());
+      [tab_ navigationFinished];
+    }
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
@@ -81,6 +116,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSUInteger navigation_count_;
   BOOL navigation_pending_;
   BOOL check_opener_alive_;
+  NSMutableArray<NSDictionary*>* check_ime_observations_;
   std::string screen_address_guid_;
 }
 
@@ -108,11 +144,113 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
 - (content::WebContents*)contents { return contents_; }
 
+- (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) { completion(@""); return; }
+  const char16_t* scripts[] = {
+    u"JSON.stringify({value:document.querySelector('#edit')?.value, start:document.querySelector('#edit')?.selectionStart, end:document.querySelector('#edit')?.selectionEnd, focused:document.activeElement === document.querySelector('#edit'), events:window.araratInputEvents})",
+    u"window.araratInputEvents = []; if (!window.araratInputProbe) { window.araratInputProbe = true; ['compositionstart','compositionupdate','compositionend','beforeinput','input'].forEach(type => document.querySelector('#edit').addEventListener(type, e => window.araratInputEvents.push(e.type))); } document.querySelector('#edit').focus(); document.querySelector('#edit').setSelectionRange(2,6); 'ready'",
+    u"try { window.registerFixtureProtocol(); 'requested' } catch(e) { e.name }",
+    u"document.documentElement.dataset.extensionCommand || ''",
+    u"delete document.documentElement.dataset.extensionCommand; 'cleared'",
+    u"window.onbeforeunload = e => { e.preventDefault(); e.returnValue = ''; }; 'armed'",
+    u"window.onbeforeunload = null; 'disarmed'"
+  };
+  if (script < 0 || script >= 7) { completion(@""); return; }
+  if (script == 5 && !AraratCheckRegisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_)) { completion(@""); return; }
+  if (script == 6) AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
+  auto weak_contents = contents_->GetWeakPtr();
+  auto document = contents_->GetPrimaryMainFrame()->GetWeakDocumentPtr();
+  bool verify_document = (script == 5 || script == 6) && !args->HasSwitch("ararat-screen");
+  uint64_t generation = verify_document ? AraratCheckDocumentRevision() : 0;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(scripts[script], base::BindOnce(^(base::Value value) {
+    if (verify_document && (!weak_contents || !weak_contents->GetPrimaryMainFrame() || document.AsRenderFrameHostIfValid() != weak_contents->GetPrimaryMainFrame() || AraratCheckDocumentRevision() != generation)) { completion(@""); return; }
+    completion(value.is_string() ? base::SysUTF8ToNSString(value.GetString()) : @"");
+  }), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (BOOL)checkKeyboardIME {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return NO;
+  auto contents = contents_->GetWeakPtr();
+  check_ime_observations_ = [NSMutableArray array];
+  [check_ime_observations_ addObject:KeyboardIMEObservation(contents.get(), @"before_focus_override")];
+  if (args->GetSwitchValueASCII("ararat-check") == "keyboard") {
+    auto* render_view = contents->GetRenderWidgetHostView();
+    if (!render_view) return NO;
+    render_view->SetHasFocusForTesting(true);
+  }
+  if (!contents || contents_ != contents.get()) return NO;
+  NSView* view = contents->GetContentNativeView().GetNativeNSView();
+  if (![view respondsToSelector:@selector(setMarkedText:selectedRange:replacementRange:)] ||
+      ![view respondsToSelector:@selector(insertText:replacementRange:)]) return NO;
+  if (args->GetSwitchValueASCII("ararat-screen") == "keyboard" &&
+      (!view.window || view.window.firstResponder != view)) return NO;
+  id<NSTextInputClient> input = (id<NSTextInputClient>)view;
+  [check_ime_observations_ addObject:KeyboardIMEObservation(contents.get(), @"before_marked")];
+  [input setMarkedText:@"か" selectedRange:NSMakeRange(1, 0) replacementRange:NSMakeRange(NSNotFound, 0)];
+  if (!contents || contents_ != contents.get() || contents->GetContentNativeView().GetNativeNSView() != view) return NO;
+  [check_ime_observations_ addObject:KeyboardIMEObservation(contents.get(), @"after_marked")];
+  [input insertText:@"漢" replacementRange:NSMakeRange(NSNotFound, 0)];
+  if (contents && contents_ == contents.get() && contents->GetContentNativeView().GetNativeNSView() == view)
+    [check_ime_observations_ addObject:KeyboardIMEObservation(contents.get(), @"after_insert")];
+  return YES;
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)checkKeyboardIMEState {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard") return @[];
+  return [check_ime_observations_ copy] ?: @[];
+}
+
+- (void)checkStartBackgroundFind:(NSString*)text {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return;
+  if (auto* helper = find_in_page::FindTabHelper::FromWebContents(contents_))
+    helper->StartFinding(base::SysNSStringToUTF16(text), true, false, true);
+}
+
+- (NSDictionary<NSString*, id>*)checkBackgroundFindState {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return @{};
+  auto* helper = find_in_page::FindTabHelper::FromWebContents(contents_);
+  if (!helper) return @{};
+  const auto& result = helper->find_result();
+  return @{ @"request_id": @(result.request_id()), @"final": @(result.final_update()), @"matches": @(result.number_of_matches()),
+            @"text": base::SysUTF16ToNSString(helper->find_text()) };
+}
+
+- (BOOL)checkHoldFindReply:(NSString*)text {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return NO;
+  auto* helper = find_in_page::FindTabHelper::FromWebContents(contents_);
+  if (!helper) return NO;
+  helper->StartFinding(base::SysNSStringToUTF16(text), true, false, true);
+  g_held_find_request = helper->current_find_request_id();
+  g_held_find_contents = contents_->GetWeakPtr();
+  return g_held_find_request > 0;
+}
+
+- (NSDictionary<NSString*, id>*)checkDeliverHeldFindReply {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard") return @{};
+  bool alive = !!g_held_find_contents;
+  auto* helper = alive ? find_in_page::FindTabHelper::FromWebContents(g_held_find_contents.get()) : nullptr;
+  if (helper) static_cast<content::WebContentsObserver*>(helper)->DidReceiveFindReply(g_held_find_request, 19, gfx::Rect(), 1, true);
+  g_held_find_contents.reset();
+  g_held_find_request = -1;
+  return @{ @"alive": @(alive), @"delivered": @(helper != nullptr) };
+}
+
+- (BOOL)checkHeldFindTargetAlive { return !!g_held_find_contents; }
+
 - (void)checkFullscreenRequest:(BOOL)enter {
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
-                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) return;
-  if (command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen" &&
+                     command->GetSwitchValueASCII("ararat-check") != "keyboard" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "keyboard")) return;
+  if (command->GetSwitchValueASCII("ararat-check") == "fullscreen" || command->GetSwitchValueASCII("ararat-check") == "keyboard") {
     if (auto* view = contents_->GetRenderWidgetHostView()) view->SetHasFocusForTesting(true);
   }
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
@@ -123,7 +261,9 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (void)checkFullscreenElement:(void (^)(BOOL))completion {
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
-                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) {
+                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen" &&
+                     command->GetSwitchValueASCII("ararat-check") != "keyboard" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "keyboard")) {
     completion(NO);
     return;
   }
@@ -355,6 +495,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (void)prepareCheckBeforeUnload {
   if (!contents_) return;
+  if (!AraratCheckRegisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_)) return;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
       u"window.addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = ''; });",
       base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
@@ -435,7 +576,9 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 
 - (void)checkExtensionPopupWindow:(BOOL)remove {
-  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "ext-windows-popup") return;
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup" &&
+      !(args->GetSwitchValueASCII("ararat-screen") == "extensions" && args->HasSwitch("ararat-page-only-menu-check")))) return;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
       remove ? u"location.hash = 'remove-popup'" : u"location.hash = 'popup'",
       base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
@@ -485,6 +628,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (void)invalidate {
   if (!contents_) return;
+  AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];
   contents_ = nullptr;
   observer_->Stop();
@@ -492,6 +636,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 
 - (void)replaceContents:(content::WebContents*)contents {
+  AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];
   observer_.reset();
   contents_ = contents;

@@ -11,6 +11,8 @@ final class LookEditorModel: ObservableObject {
     @Published private(set) var error: String?
     let settings: SettingsModel
     let spaceID: String
+    private let contextGeneration: Int
+    private let previewOwner = UUID()
     private var saved: Look?
     private var gestureStart: Look?
     private var revision = 0
@@ -18,6 +20,7 @@ final class LookEditorModel: ObservableObject {
 
     init(settings: SettingsModel, space: SpaceSnapshot) {
         self.settings = settings
+        contextGeneration = settings.contextGeneration
         spaceID = space.id
         saved = space.look
         look = space.look ?? Self.defaultLook
@@ -71,7 +74,7 @@ final class LookEditorModel: ObservableObject {
     }
     func change(_ edit: (inout Look) -> Void) {
         edit(&look)
-        settings.previewLook(id: spaceID, look: look, active: editing)
+        preview(look, active: editing)
         if !editing { commit() }
     }
     func moveHandle(_ index: Int, dx: Double, dy: Double) {
@@ -87,14 +90,14 @@ final class LookEditorModel: ObservableObject {
         editing = false
         gestureStart = nil
         if changed { commit() }
-        else { settings.previewLook(id: spaceID, look: saved, active: pendingReplies > 0) }
+        else { preview(saved, active: pendingReplies > 0) }
     }
     func dismiss() {
         editing = false
         gestureStart = nil
         look = saved ?? Self.defaultLook
         selected = min(selected, look.colors.count - 1)
-        settings.previewLook(id: spaceID, look: saved, active: pendingReplies > 0)
+        preview(saved, active: pendingReplies > 0)
     }
     func add() {
         guard look.colors.count < 3 else { return }
@@ -128,15 +131,21 @@ final class LookEditorModel: ObservableObject {
         write(look, ids: settings.snapshot.spaces.map(\.id))
     }
     private func commit() { write(look, ids: [spaceID]) }
+    private func preview(_ look: Look?, active: Bool) {
+        settings.previewLook(id: spaceID, look: look, active: active, owner: previewOwner, generation: contextGeneration)
+    }
     private func write(_ value: Look?, ids: [String]) {
+        guard settings.contextGeneration == contextGeneration else { return }
         revision += 1
         let submitted = revision
         pendingReplies = ids.count
         saved = value
         error = nil
         for id in ids {
+            let completion = settings.editCompletion()
             settings.adapter.setSpaceLook(id: id, look: value) { [self] result in
-                settings.receive(result)
+                completion(result)
+                guard settings.contextGeneration == contextGeneration else { return }
                 if case .failure = result {
                     error = settings.error
                     if submitted == revision {
@@ -147,13 +156,13 @@ final class LookEditorModel: ObservableObject {
                         }
                     }
                 }
-                if submitted == revision {
+                if submitted == revision && settings.ownsLookPreview(id: spaceID, owner: previewOwner, generation: contextGeneration) {
                     pendingReplies -= 1
-                    settings.previewLook(id: spaceID, look: editing ? look : saved, active: editing || pendingReplies > 0)
+                    preview(editing ? look : saved, active: editing || pendingReplies > 0)
                 }
             }
         }
         if value == nil { look = Self.defaultLook; selected = 0 }
-        settings.previewLook(id: spaceID, look: value, active: true)
+        preview(value, active: true)
     }
 }

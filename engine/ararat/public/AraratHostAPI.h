@@ -53,6 +53,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkAutofillAction:(NSInteger)action;
 - (void)checkFullscreenRequest:(BOOL)enter;
 - (void)checkFullscreenElement:(void (^)(BOOL))completion;
+- (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion;
+- (BOOL)checkKeyboardIME;
+- (NSArray<NSDictionary<NSString*, id>*>*)checkKeyboardIMEState;
+- (void)checkStartBackgroundFind:(NSString*)text;
+- (NSDictionary<NSString*, id>*)checkBackgroundFindState;
+- (BOOL)checkHoldFindReply:(NSString*)text;
+- (BOOL)checkHeldFindTargetAlive;
+- (NSDictionary<NSString*, id>*)checkDeliverHeldFindReply;
 @end
 
 @protocol ARWindowHostAPI;
@@ -62,8 +70,13 @@ NS_ASSUME_NONNULL_BEGIN
     didReceiveTransaction:(NSDictionary<NSString*, id>*)transaction;
 - (void)windowHost:(id<ARWindowHostAPI>)host showProfile:(NSString*)profile;
 - (void)windowHostClosingAllCancelled:(id<ARWindowHostAPI>)host;
+- (void)windowHostWillBeginClosing:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host pageFullscreenChanged:(BOOL)fullscreen;
 - (void)windowHost:(id<ARWindowHostAPI>)host windowFullscreenChanged:(BOOL)fullscreen;
+- (void)windowHost:(id<ARWindowHostAPI>)host performWorkspaceCommand:(NSString*)command;
+- (void)windowHost:(id<ARWindowHostAPI>)host updateFindBar:(NSDictionary<NSString*, id>*)state;
+- (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
+- (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @end
 
 @protocol ARWindowHostAPI <NSObject>
@@ -76,6 +89,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkOpenDevTools;
 - (void)checkCloseDevTools;
 - (NSDictionary<NSString*, id>*)checkDevToolsState;
+- (NSDictionary<NSString*, id>*)checkPagePresentation:(NSString*)liveId;
 - (NSDictionary<NSString*, id>*)checkDevToolsTabState:(NSString*)liveId;
 - (BOOL)checkSetDevToolsDocked:(BOOL)docked;
 - (NSUInteger)checkDevToolsHostCount;
@@ -88,6 +102,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)activateBrowser;
 - (BOOL)isClosing;
 - (BOOL)setProfileDirectory:(NSString*)directory;
+- (BOOL)setClosePresentationProfile:(NSString*)directory;
 - (NSString*)profileDirectory;
 - (BOOL)hasProfileDirectory:(NSString*)directory;
 - (BOOL)hasBrowserForProfile:(NSString*)directory;
@@ -97,9 +112,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted;
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted;
 - (NSArray*)tabs;
+- (BOOL)hasActiveTab;
+- (void)setWorkspacePageHidden:(BOOL)hidden;
+- (nullable NSDictionary<NSString*, id>*)navigationTarget;
+- (BOOL)navigateURL:(NSString*)url target:(NSDictionary<NSString*, id>*)target;
+- (void)findAction:(NSString*)action text:(NSString*)text selection:(NSRange)selection liveId:(NSString*)liveId profile:(NSString*)profile;
 - (nullable NSString*)activeItemId;
 - (void)close;
 - (void)installCheckDialogFactory;
+- (void)expectCheckDialogs:(NSUInteger)limit;
+- (BOOL)checkDialogIntegrity;
 - (NSUInteger)checkDialogCount;
 - (void)configureProfileCloseCheck:(NSUInteger)cancelDialog;
 - (NSDictionary<NSString*, id>*)checkProfileCloseState;
@@ -126,6 +148,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkNavigateOffTheRecord;
 - (NSDictionary<NSString*, id>*)checkFullscreenState;
 - (void)checkFullscreenAction:(NSInteger)action;
+- (void)checkKeyboardCommand:(NSString*)command;
+- (void)checkSetFindPasteboard:(NSString*)text;
+- (BOOL)checkCloseFindEnabled;
+- (NSUInteger)checkPageOnlySaveCount;
+- (BOOL)checkReplaceActiveForKeyboard;
+- (BOOL)checkKeyboardAccelerator:(BOOL)action;
+- (BOOL)checkKeyboardDevTools;
+- (BOOL)checkReassignInactiveAction;
+- (BOOL)checkReassignProbeCommand:(BOOL)collision;
+- (BOOL)checkReassignedAction;
+- (BOOL)checkShortcutActivation;
+- (BOOL)checkViewlessBubbleAnchor;
+- (NSDictionary<NSString*, id>*)checkViewlessBubbleAnchorGeometry;
+- (void)checkShowViewlessBubble:(NSInteger)kind;
+- (NSDictionary<NSString*, id>*)checkViewlessBubbleState;
+- (void)checkCloseViewlessBubble;
 @end
 
 #ifdef __cplusplus

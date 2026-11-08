@@ -33,6 +33,20 @@ public final class SettingsWindowController: NSWindowController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     public func refreshShortcuts() { model.readShortcuts() }
     public func modelUpdate(snapshot: WorkspaceSnapshot) { model.update(snapshot: snapshot) }
+    public func checkResetSidebarWidth() {
+        guard CommandLine.arguments.contains("--ararat-check=keyboard") else { return }
+        model.resetWidth()
+    }
+    public func checkRenameShownSpace(_ name: String) {
+        guard CommandLine.arguments.contains("--ararat-check=keyboard"), case .space(let id) = model.page else { return }
+        model.rename(id, name: name)
+    }
+    public func retarget(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void,
+                         resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void,
+                         keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
+        model.retarget(snapshot: snapshot, adapter: adapter, publish: publish, resetWidth: resetWidth,
+                       preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
+    }
     public func prepare(shownSpaceID: String?) {
         model.readShortcuts()
         model.airTraffic.load()

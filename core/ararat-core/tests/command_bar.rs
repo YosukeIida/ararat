@@ -20,6 +20,10 @@ fn url_detection_and_typed_rows() {
     assert!(matches!(&command_bar::rank("localhost:3000", &[])[0].target, Target::OpenUrl { url } if url == "http://localhost:3000"));
     assert!(matches!(&command_bar::rank("hello world", &[])[0].target, Target::Search { url } if url.ends_with("hello+world")));
 }
+#[test]
+fn search_url_encodes_url_like_and_unicode_input() {
+    assert_eq!(command_bar::search_url("example.com & 日本"), "https://www.google.com/search?q=example.com+%26+%E6%97%A5%E6%9C%AC");
+}
 struct Extra;
 impl Source for Extra {
     fn candidates(&self, _: &str) -> Vec<Suggestion> {
@@ -63,6 +67,16 @@ fn index_covers_sources_and_excludes_the_current_tab() {
 
 fn fixture() -> ararat_core::model::Workspace {
     arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0
+}
+
+#[test]
+fn every_default_command_is_reachable_by_its_full_title() {
+    let workspace = fixture();
+    let index = Index::new(&workspace, "one", 0);
+    for command in ararat_core::key_bindings::commands() {
+        let rows = index.query(&command.title).rows;
+        assert!(rows.iter().take(5).any(|row| matches!(&row.target, Target::Command { id } if id == &command.id)), "{}", command.id);
+    }
 }
 
 #[test]

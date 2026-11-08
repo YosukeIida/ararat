@@ -4,6 +4,11 @@ use crate::model::{ItemKind, Lifecycle, Workspace};
 
 pub const SEARCH_URL: &str = "https://www.google.com/search?q=";
 
+pub fn search_url(query: &str) -> String {
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    format!("{SEARCH_URL}{encoded}")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Tab { id: String, space_id: Option<String> },
@@ -258,8 +263,7 @@ pub fn rank_with_completion(query: &str, sources: &[&dyn Source]) -> CommandBarR
         let url = if query.contains("://") || query.starts_with("about:") || query.starts_with("file:") { query.to_string() } else if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { format!("http://{query}") } else { format!("https://{query}") };
         Target::OpenUrl { url }
     } else {
-        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-        Target::Search { url: format!("{SEARCH_URL}{encoded}") }
+        Target::Search { url: search_url(query) }
     };
     let typed = Suggestion { title: query.into(), subtitle: if url_like { "Open URL" } else { "Search" }.into(), url: None, key: None, target, score: 0.0 };
     results.insert(if url_like || results.is_empty() { 0 } else { 1 }, typed);

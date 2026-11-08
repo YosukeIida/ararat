@@ -27,11 +27,14 @@ public final class SettingsModel: ObservableObject {
     @Published var shortcutQuery = "" { didSet { keyBindings.clearError() } }
     @Published var customizedOnly = false { didSet { keyBindings.clearError() } }
     @Published var conflictingOnly = false { didSet { keyBindings.clearError() } }
-    let adapter: WorkspaceAdapter
-    let keyBindings: KeyBindingsModel
-    let airTraffic: AirTrafficModel
+    var adapter: WorkspaceAdapter
+    var keyBindings: KeyBindingsModel
+    var airTraffic: AirTrafficModel
     var preview: (String, Look?, Bool) -> Void
     var publish: (WorkspaceSnapshot) -> Void
+    private(set) var contextGeneration = 0
+    private var lookPreviewOwners: [String: UUID] = [:]
+    var checkEditCompletion: ((@escaping () -> Void) -> Void)?
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
@@ -54,6 +57,23 @@ public final class SettingsModel: ObservableObject {
         // "Deleted space" set: the set is the core's answer, so it reloads with the spaces
         // instead of waiting for the next routing answer the pane triggers.
         if spaceIds != snapshot.spaces.map(\.id) { airTraffic.reloadDeletedSpaces() }
+    }
+
+    public func retarget(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void,
+                         resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void,
+                         keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
+        for id in lookPreviewOwners.keys {
+            preview(id, self.snapshot.spaces.first(where: { $0.id == id })?.look, false)
+        }
+        lookPreviewOwners.removeAll()
+        contextGeneration += 1
+        self.adapter = adapter
+        self.publish = publish
+        self.resetWidth = resetWidth
+        self.preview = preview
+        self.keyBindings = keyBindings
+        self.airTraffic = airTraffic
+        update(snapshot: snapshot)
     }
 
     func navigate(_ target: Page, highlight: String? = nil) {
@@ -133,7 +153,18 @@ public final class SettingsModel: ObservableObject {
             navigate(.space(snapshot.spaces[index + delta].id))
         }
     }
-    func previewLook(id: String, look: Look?, active: Bool) { preview(id, look, active) }
+    func previewLook(id: String, look: Look?, active: Bool, owner: UUID, generation: Int) {
+        guard contextGeneration == generation else { return }
+        if active { lookPreviewOwners[id] = owner }
+        else {
+            guard lookPreviewOwners[id] == nil || lookPreviewOwners[id] == owner else { return }
+            lookPreviewOwners.removeValue(forKey: id)
+        }
+        preview(id, look, active)
+    }
+    func ownsLookPreview(id: String, owner: UUID, generation: Int) -> Bool {
+        contextGeneration == generation && lookPreviewOwners[id] == owner
+    }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
     /// The profile the default destination's and the New Route's fresh Little-window picks
@@ -165,34 +196,61 @@ public final class SettingsModel: ObservableObject {
     var archiveAfter: ArchiveAfter { archiveSpace?.archiveAfter ?? .hours12 }
     func setArchiveAfter(_ value: ArchiveAfter) {
         guard let space = archiveSpace else { return }
-        adapter.setArchiveAfter(spaceID: space.id, value: value, completion: receive)
+        adapter.setArchiveAfter(spaceID: space.id, value: value, completion: editCompletion())
     }
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { error = "Enter a space name."; return }
-        adapter.renameSpace(id: id, name: name, completion: receive)
+        adapter.renameSpace(id: id, name: name, completion: editCompletion())
     }
     func icon(_ id: String, value: String) {
         guard value.isEmpty || value.count == 1 else { error = "Choose exactly one character."; return }
-        adapter.setSpaceIcon(id: id, icon: value.isEmpty ? nil : value, completion: receive)
+        adapter.setSpaceIcon(id: id, icon: value.isEmpty ? nil : value, completion: editCompletion())
     }
     func move(_ id: String, to index: Int) {
         guard snapshot.spaces.indices.contains(index), snapshot.spaces.contains(where: { $0.id == id }) else { return }
-        adapter.moveSpace(id: id, index: index, completion: receive)
+        adapter.moveSpace(id: id, index: index, completion: editCompletion())
     }
     func requestDelete(_ id: String) { if snapshot.spaces.count > 1 { pendingDelete = id } }
     func confirmDelete() {
         guard let id = pendingDelete else { return }
         pendingDelete = nil
-        adapter.deleteSpace(id: id, completion: receive)
+        adapter.deleteSpace(id: id, completion: editCompletion())
     }
-    func receive(_ result: Result<WorkspaceSnapshot, Error>) {
+    func editCompletion() -> WorkspaceAdapter.Completion<WorkspaceSnapshot> {
+        let generation = contextGeneration
+        let originPublish = publish
+        return { [weak self] result in
+            let deliver = { [weak self] in
+                if case .success(let snapshot) = result { originPublish(snapshot) }
+                guard let self else { return }
+                guard self.contextGeneration == generation else {
+                    if case .success = result { self.refreshCurrentContext() }
+                    return
+                }
+                self.receive(result)
+            }
+            if let hold = self?.checkEditCompletion { hold(deliver) } else { deliver() }
+        }
+    }
+    private func refreshCurrentContext() {
+        let generation = contextGeneration
+        adapter.snapshot { [weak self] result in
+            guard let self else { return }
+            guard self.contextGeneration == generation else { self.refreshCurrentContext(); return }
+            guard case .success(let snapshot) = result else { return }
+            self.update(snapshot: snapshot)
+            self.publish(snapshot)
+        }
+    }
+    private func receive(_ result: Result<WorkspaceSnapshot, Error>) {
         switch result {
-        case .success(let snapshot): error = nil; update(snapshot: snapshot); publish(snapshot)
+        case .success(let snapshot): error = nil; update(snapshot: snapshot)
         case .failure(let error):
             if let core = error as? CoreError {
                 switch core {
                 case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): self.error = message
+                case .UnsupportedSplit: self.error = "The selected split cannot be shown yet."
                 }
             } else { self.error = error.localizedDescription }
         }

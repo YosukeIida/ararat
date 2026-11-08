@@ -27,6 +27,7 @@ func promptFixtureServesOnlyLoopbackPages() async throws {
         ("/permissions", "requestNotifications"),
         ("/dialogs", "runAlert"),
         ("/protocol", "Protocol fixture"),
+        ("/keyboard", "registerFixtureProtocol"),
         ("/autofill", "address-submit"),
         ("/webauthn", "runCreate"),
     ] {

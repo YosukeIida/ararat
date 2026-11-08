@@ -61,7 +61,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var settings: SettingsWindowController?
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
-    private var commandBarView: CommandBarView?
+    private var commandPresenter: CommandBarPresenter?
+    private var mockLiveURLs: [String: String] = [:]
     // Internal for the tests.
     var commandBar: CommandBarController?
     var commandPanel: CommandBarPanel?
@@ -519,37 +520,33 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func openCommandBar(_ mode: CommandBarMode) {
         guard let window, !terminating else { return }
         if commandBar != nil { closeCommandBar() }
-        let spec = CommandBarController.openSpec(mode: mode, selectedTabURL: selectedTabRow?.url)
-        let controller = CommandBarController()
-        commandBar = controller
-        let view = CommandBarView(controller: controller)
-        commandBarView = view
-        let panel = CommandBarPanel()
-        panel.contentView = view
-        commandPanel = panel
-        panel.delegate = self
-        panel.menuCommandBindings = menuCommandBindings
-        controller.highlight = commandBarHighlight()
-        // Always centred in the window, also when opened from the toolbar [Cra, M:1805-1807].
-        controller.panelWidth = CommandBarMetrics.cappedWidth(windowWidth: window.frame.width)
-        controller.onClose = { [weak self, weak panel] in self?.finishCommandBar(panel) }
-        controller.onCommit = { [weak self] row, mode, forceNewTab in
-            self?.commitCommandBar(row, mode: mode, forceNewTab: forceNewTab)
+        let selected = selectedTabRow
+        let spec = CommandBarController.openSpec(mode: mode, selectedTabURL: selected.flatMap { mockLiveURLs[$0.id] ?? $0.url })
+        let presenter = CommandBarPresenter(parent: window, visible: true, bindings: menuCommandBindings, highlight: commandBarHighlight())
+        commandPresenter = presenter
+        commandBar = presenter.controller
+        commandPanel = presenter.panel
+        presenter.onClose = { [weak self] in
+            self?.commandBar = nil
+            self?.commandPanel = nil
+            self?.commandPresenter = nil
         }
-        controller.onRowsChange = { [weak self, weak controller] in
-            guard let self, let controller, self.commandBar === controller else { return }
-            // The panel's height follows the row count on every query, not only at open (Cra
-            // repositions in observeCommandBar, M:1817-1829).
-            self.positionCommandPanel(controller)
+        presenter.onCommit = { [weak self] row, mode, forceNewTab in
+            guard let self else { return }
+            if mode == .editURL && !forceNewTab && self.selectedTabRow?.id != selected?.id { return }
+            if let row {
+                switch row.target {
+                case .moveToSpace, .moveToFolder:
+                    if self.selectedTabRow?.id != selected?.id { return }
+                default: break
+                }
+            }
+            self.commitCommandBar(row, mode: mode, forceNewTab: forceNewTab)
         }
-        // The panel and field key at once (typing never waits, Cra M:1818, architecture.md:146);
-        // the session applies when it arrives and `applyStore` replays the typed text as the query.
-        controller.open(mode: spec.mode, prefill: spec.prefill, store: nil)
-        if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
-        panel.makeKeyAndOrderFront(nil)
-        adapter.commandBarSession { [weak self] result in
-            guard let self, !self.terminating, let session = try? result.get(), self.commandBar === controller else { return }
-            controller.applyStore(CommandBarSessionStore(session: session))
+        presenter.open(mode: spec.mode, prefill: spec.prefill)
+        adapter.commandBarSession { [weak self, weak presenter] result in
+            guard let self, let presenter, !self.terminating, let session = try? result.get(), self.commandPresenter === presenter else { return }
+            presenter.applyStore(CommandBarSessionStore(session: session))
         }
     }
 
@@ -561,17 +558,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                                                            rows: controller.result.rows.count), display: true)
     }
 
-    private func finishCommandBar(_ panel: CommandBarPanel?) {
-        if let panel, panel.parent != nil { window?.removeChildWindow(panel) }
-        panel?.orderOut(nil)
-        window?.makeKeyAndOrderFront(nil)
-        commandBar = nil
-        commandPanel = nil
-        commandBarView = nil
-    }
-
     private func closeCommandBar() {
-        // onClose runs finishCommandBar and clears the references.
         commandBar?.close()
     }
 
@@ -600,7 +587,13 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     /// a new tab (design note, behaviour).
     private func commitCommandBarURL(_ url: String, mode: CommandBarMode, forceNewTab: Bool) {
         if mode == .editURL, !forceNewTab, let id = selectedTabRow?.id {
-            adapter.setTabURL(id: id, url: url) { [weak self] result in _ = self?.publish(result) }
+            let saved = snapshot.spaces.contains { space in (space.favorites + space.pinned).contains { $0.id == id } }
+            if saved {
+                mockLiveURLs[id] = url
+                showSelection()
+            } else {
+                adapter.setTabURL(id: id, url: url) { [weak self] result in _ = self?.publish(result) }
+            }
         } else {
             adapter.createTab(url: url) { [weak self] result in _ = self?.publish(result) }
         }
@@ -705,7 +698,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         let row = snapshot.spaces.flatMap { $0.favorites + $0.pinned + $0.today }.first { $0.id == snapshot.selectedId }
         if row != nil || snapshot.selectedId == nil {
-            card?.show(title: row?.title ?? "Select a tab", url: row?.url)
+            card?.show(title: row?.title ?? "Select a tab", url: row.flatMap { mockLiveURLs[$0.id] ?? $0.url })
         }
         sidebarContainer?.selectionChanged()
     }
@@ -737,15 +730,6 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         return .terminateLater
     }
 
-}
-
-@MainActor
-final class CommandBarSessionStore: CommandBarStore {
-    let session: CommandBarSession
-
-    init(session: CommandBarSession) { self.session = session }
-
-    func query(_ text: String) -> CommandBarResult { session.query(text: text) }
 }
 
 @MainActor

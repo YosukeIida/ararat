@@ -58,6 +58,26 @@ fn replaying_the_same_active_strip_preserves_workspace_rows() {
 }
 
 #[test]
+fn a_hidden_page_snapshot_keeps_empty_space_selection_and_live_membership() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let (_, open) = live.open(&mut ws, "a", "https://a.example").unwrap();
+    live.command_sent(&open);
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
+    ws.create_space("one", "Empty", "empty").unwrap();
+    let before = ws.clone();
+    for (rev, cause) in [(1, Cause::Engine), (2, Cause::Chrome)] {
+        let (_, outcome) = live.apply(&mut ws, Transaction {
+            epoch: 1, rev, cause, strips: vec![strip(&live, &["a"], None)],
+        });
+        assert!(outcome.applied);
+        assert_eq!(ws.selected("one"), None);
+        assert_eq!(ws.windows["one"], before.windows["one"]);
+        assert_eq!(live.live_tab("a").as_deref(), Some(open.id.as_str()));
+    }
+}
+
+#[test]
 fn reconciliation_selects_the_shown_browsers_active_tab() {
     let mut ws = workspace();
     let mut live = Live::new();
@@ -279,7 +299,7 @@ fn rejected_open_can_be_cancelled_without_changing_lifecycle() {
 }
 
 #[test]
-fn cancelling_a_pending_activation_leaves_it_in_flight() {
+fn cancelling_a_pending_activation_keeps_the_live_tab_and_rejects_a_late_completion() {
     let mut ws = workspace();
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![]));
@@ -292,13 +312,14 @@ fn cancelling_a_pending_activation_leaves_it_in_flight() {
     assert!(outcome.applied);
     let activate = live.activate(&ws, "a").unwrap();
     live.command_sent(&activate);
+    assert!(live.cancel(&activate.id));
     assert!(!live.cancel(&activate.id));
     assert_eq!(live.live_tab("a").as_deref(), Some(open.id.as_str()));
     let (_, outcome) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 2, cause: Cause::Command(activate.id),
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
-    assert!(outcome.applied);
+    assert!(!outcome.applied);
 }
 
 #[test]

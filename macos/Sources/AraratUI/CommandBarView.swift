@@ -40,7 +40,7 @@ public final class CommandBarView: NSView {
     }
 
     /// The query field, for tests and focus handling.
-    var field: NSTextField { text.field }
+    public var field: NSTextField { text.field }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -51,11 +51,17 @@ public final class CommandBarView: NSView {
     /// to `noop:`, so the bar takes it in the key-equivalent pass, which runs before them, and
     /// commits through the same completion step as Return does (Cra F:126-135).
     override public func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, event.characters == "\r", event.modifierFlags.contains(.command), controller.isOpen {
+        if event.type == .keyDown, event.characters == "\r", event.modifierFlags.contains(.command), controller.isOpen,
+           (text.field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             text.commitReturn(forceNewTab: true)
             return true
         }
         return super.performKeyEquivalent(with: event)
+    }
+
+    public func focusField() {
+        window?.makeFirstResponder(text.field)
+        text.update()
     }
 
     private var dark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }

@@ -60,9 +60,47 @@ if isHelper {
 enum Launcher {
   static var handle: UnsafeMutableRawPointer!
   static var startupWatchdog: DispatchSourceTimer?
+  static var teardownDeadline: TeardownDeadline?
+  static var teardownFailure = false
   @MainActor static var runtime: Runtime?
   @MainActor static var pendingURLs: [(url: String, untrusted: Bool)] = []
   @MainActor static var browserCheckFinished = false
+}
+
+final class TeardownDeadline {
+  private let lock = NSLock()
+  private var finished = false
+  private var expired = false
+  private var timer: DispatchSourceTimer?
+  private var deadline: DispatchTime = .distantFuture
+
+  func start(seconds: Int) {
+    let timer = DispatchSource.makeTimerSource(queue: .global())
+    self.timer = timer
+    deadline = .now() + .seconds(seconds)
+    timer.schedule(deadline: deadline)
+    timer.setEventHandler { [weak self] in
+      guard let self else { return }
+      self.lock.lock()
+      defer { self.lock.unlock() }
+      guard !self.finished else { return }
+      self.expired = true
+      FileHandle.standardError.write(Data("ararat-teardown: deadline expired; process outcome incomplete\n".utf8))
+    }
+    timer.resume()
+  }
+
+  func finish() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    finished = true
+    timer?.cancel()
+    if !expired && DispatchTime.now().uptimeNanoseconds >= deadline.uptimeNanoseconds {
+      expired = true
+      FileHandle.standardError.write(Data("ararat-teardown: deadline expired; process outcome incomplete\n".utf8))
+    }
+    return !expired
+  }
 }
 
 func checkRecords(_ path: String) -> [[String]]? {
@@ -87,6 +125,24 @@ func checkRecords(_ path: String) -> [[String]]? {
     }
     rows.append(row)
   }
+}
+
+func checkCoverageFlags(_ arguments: [String]) -> [String] {
+  let names = ["--ararat-keyboard-main-scope", "--ararat-incognito-window-check", "--ararat-space-matrix-check", "--ararat-page-only-menu-check", "--ararat-quit-suggestion-check",
+    "--ararat-multiple-quit-check", "--ararat-multiple-close-check", "--ararat-split-close-check",
+    "--ararat-empty-close-check", "--ararat-same-profile-empty-quit-check", "--ararat-selection-race",
+    "--ararat-selection-supersede", "--ararat-committed-switch-race", "--ararat-cross-window-selection-check",
+    "--ararat-cross-window-reverse-check"]
+  return arguments.filter { argument in names.contains { argument == $0 || argument.hasPrefix($0 + "=") } }
+}
+
+func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any] {
+  guard check == "incognito" else { return [:] }
+  let regular = arguments.contains("--ararat-incognito-window-check")
+  return ["case": regular ? "incognito-regular-window" : "incognito-private",
+          "check_flags": checkCoverageFlags(arguments),
+          "compositor": arguments.contains("--ararat-compositor=c2") ? "c2" : "c1",
+          "requested_direction": arguments.contains("--force-ui-direction=rtl") ? "rtl" : "default"]
 }
 
 func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
@@ -128,7 +184,9 @@ func checkWindowSelection(_ rows: [[String]]?, windowID: String) -> String? {
 
 @MainActor
 final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
+  let rootView = NSView()
   let card = NSView()
+  let findBar = FindBarView()
   var host: (any ARWindowHostAPI)?
   var createdSize = NSSize.zero
   var closeObserver: NSObjectProtocol?
@@ -137,17 +195,35 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction transaction: [String: Any]) {}
   func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {}
   func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {}
+  func windowHostWillBeginClosing(_ host: any ARWindowHostAPI) {}
   func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {}
   func windowHost(_ host: any ARWindowHostAPI, windowFullscreenChanged fullscreen: Bool) {}
+  func windowHost(_ host: any ARWindowHostAPI, performWorkspaceCommand command: String) {}
+  func windowHost(_ host: any ARWindowHostAPI, updateFindBar state: [String: Any]) { findBar.update(state: state) }
+  func findBarHasFocus(forWindowHost host: any ARWindowHostAPI) -> Bool { findBar.hasFocus }
+  func windowHost(_ host: any ARWindowHostAPI, findPageRectChanged rect: NSRect) {
+    let page = rootView.convert(rect, from: card)
+    let width = min(380, page.width)
+    findBar.frame = NSRect(x: page.maxX - width, y: page.maxY - 36, width: width, height: 36)
+  }
 
   func create(bounds: NSRect) -> Bool {
+    rootView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    rootView.addSubview(card)
+    card.frame = rootView.bounds
+    card.autoresizingMask = [.width, .height]
+    findBar.frame = NSRect(x: max(0, rootView.bounds.width - 380), y: max(0, rootView.bounds.height - 36), width: 380, height: 36)
+    findBar.autoresizingMask = [.minXMargin, .minYMargin]
+    findBar.isHidden = true
+    rootView.addSubview(findBar)
     guard let symbol = dlsym(Launcher.handle, "AraratWindowHostCreate") else { return false }
     typealias Factory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> UnsafeMutableRawPointer?
     let id = UUID().uuidString as NSString
     guard let pointer = unsafeBitCast(symbol, to: Factory.self)(
-      Unmanaged.passUnretained(card).toOpaque(), Unmanaged.passUnretained(id).toOpaque()),
+      Unmanaged.passUnretained(rootView).toOpaque(), Unmanaged.passUnretained(id).toOpaque()),
       let host = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue() as? any ARWindowHostAPI else { return false }
     self.host = host
+    findBar.onAction = { [weak host] action, text, selection, live, profile in host?.findAction(action, text: text, selection: selection, liveId: live, profile: profile) }
     if CommandLine.arguments.contains("--ararat-check=popup") {
       FileHandle.standardError.write(Data("ararat-trace: popup created\n".utf8))
     }
@@ -170,14 +246,16 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
 }
 
 @MainActor
-final class Runtime {
+final class Runtime: NSObject {
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
   var popups: [PopupHost] = []
   var hostClosing = false
-  var hasUsableHost: Bool { !hostClosing && host.map { !$0.isClosing() } == true }
-  init(windowID: String = UUID().uuidString) { self.windowID = windowID }
+  var selectionGeneration = 0
+  var unsupportedSplitCount = 0
+  var hasUsableHost: Bool { !hostClosing && host.map { !$0.isClosing() && !$0.isClosingAll() } == true }
+  init(windowID: String = UUID().uuidString) { self.windowID = windowID; super.init() }
   func refreshOtherWindows() {
     let owner = root ?? self
     for window in [owner] + owner.children where window !== self { window.adapter?.refresh() }
@@ -190,6 +268,9 @@ final class Runtime {
     target.adapter?.openExternalURLs(urls)
   }
   func createHost(popup: Bool, profile: String, bounds: NSRect) -> UnsafeMutableRawPointer? {
+    if ["incognito", "keyboard"].contains(browserCheckMode ?? "") {
+      FileHandle.standardError.write(Data("ararat-trace: create-host phase=\(browserCheckPhase) popup=\(popup) profile=\(profile)\n".utf8))
+    }
     func fallback(_ reason: String) -> UnsafeMutableRawPointer? {
       if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
         FileHandle.standardError.write(Data("ararat-trace: browser-factory fallback=\(reason)\n".utf8))
@@ -237,6 +318,69 @@ final class Runtime {
   var container: SidebarContainerView?
   var workspace: WorkspaceAdapter?
   var keyBindings: KeyBindingsModel?
+  var settings: SettingsWindowController?
+  var airTraffic: AirTrafficModel?
+  var commandPresenter: CommandBarPresenter?
+  var coreMenuInstalled = false
+  weak var settingsOwner: Runtime?
+  var displacedMenuItems: [String: NSMenuItem] = [:]
+  var keyboardResults: [String: Any] = [:]
+  var keyboardLiveID = ""
+  var keyboardNavigation: UInt = 0
+  var keyboardScriptPending = false
+  var keyboardScriptResult: String?
+  var keyboardOtherItem = ""
+  var keyboardStaleIndex = 0
+  var keyboardFindRequest = 0
+  var keyboardRestoreItem = ""
+  var keyboardFindOtherItem = ""
+  var keyboardFindOtherLive = ""
+  var keyboardFindTeardownText = ""
+  var spaceMatrixPhase = 0
+  var spaceMatrixNumber = 1
+  var spaceMatrixIDs: [String] = []
+  struct MatrixTarget {
+    let space: String
+    let item: String
+    let profile: String
+    let url: String
+    var live: String?
+  }
+  var matrixTargets: [MatrixTarget] = []
+  var matrixSetupIndex = 0
+  var matrixSetupGeneration = 0
+  var matrixCommand: String?
+  var matrixCommandOpens = false
+  var matrixAcknowledgedLive: String?
+  var matrixAcknowledgedEpoch: UInt64?
+  var matrixReturning = false
+  var matrixEpoch: UInt64?
+  var matrixEpochChanged = false
+  var matrixCommandInvariantFailed = false
+  var spaceMatrixSuggestionPassed: [Int] = []
+  var spaceMatrixMenuPassed: [Int] = []
+  var spaceMatrixCommandIndex = 0
+  var spaceMatrixCommandsPassed: [String] = []
+  var spaceMatrixCommandItem = ""
+  var spaceMatrixCommandLive = ""
+  var spaceMatrixWasPinned = false
+  var spaceMatrixSidebarBefore = ""
+  var spaceMatrixLibraryBefore = false
+  var spaceMatrixDefaultWidth: CGFloat = 0
+  var spaceMatrixBeforeRows: [[String]]?
+  var spaceMatrixBeforeTabCount = 0
+  var spaceMatrixBeforeSelected: String?
+  var spaceMatrixSetup: [String: Any] = [:]
+  var spaceMatrixLastTransaction: [String: Any] = [:]
+  var keyboardSavedURL = ""
+  var incognitoTabsBefore = 0
+  var incognitoWindowRows: [[String]]?
+  var incognitoWindowID = ""
+  var incognitoWindowItem = ""
+  var incognitoWindowLive = ""
+  var incognitoPrivateLive = ""
+  var incognitoPrivateProfile = ""
+  var incognitoPrivateBrowser = ""
   var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
   var sliceTimer: Timer?
   var sliceRows: [Row] = []
@@ -270,6 +414,7 @@ final class Runtime {
   var quitDialogCount: UInt = 0
   var quitWillShutDown = false
   var quitFirst: [String: Any] = [:]
+  var quitDialogPages: [[String: Any]] = []
   var quitClosedRows: [[String]]?
   var quitReopened = false
   var quitDockEmpty = false
@@ -287,8 +432,35 @@ final class Runtime {
   var profileCheckLoadedAfterClose = false
   var profileCheckPointer: String?
   var profileCloseBefore: [[String]]?
+  var profileCloseAfterPrevious: [[String]]?
   var profileCloseCancelled: [String: Any] = [:]
   var profileCloseFinal: [String: Any] = [:]
+  var splitCloseExpected: [String: String] = [:]
+  var splitCloseBefore: WorkspaceSnapshot?
+  var splitPanelBeforeRows: [[String]]?
+  var splitPanelLive = ""
+  weak var splitPanelPage: NSView?
+  var splitCloseUnsupportedBefore = 0
+  var splitCloseRaceCommand: String?
+  var splitCloseRaceSettled = false
+  var splitCloseRaceFailed = false
+  var splitCloseRaceActivated = false
+  var splitCloseConfirmRaceOK = true
+  var committedSwitchRace = false
+  var multiCloseChildItem = ""
+  var multiCloseChildLive = ""
+  var multiCloseChildSpace = ""
+  var multiCloseChildWindowID = ""
+  var multiCloseRootLive = ""
+  weak var multiCloseRootPage: NSView?
+  var multiCloseDefaultItems: Set<String> = []
+  var multiClosePassed = false
+  var multiQuitFirst: [String: Any] = [:]
+  var multiQuitSecond: [String: Any] = [:]
+  var multiCloseOriginal: [[String]]?
+  var childRaceCommand: String?
+  var childRaceActivated = false
+  var childRaceCompleted = false
   var profileCheckResult: [String: Any] = [:]
   var profileCheckPassed = false
   var browserCheckTimer: Timer?
@@ -298,8 +470,13 @@ final class Runtime {
   var browserCheckRows: [Row] = []
   var browserCheckSeedID: String?
   var browserCheckBefore: WorkspaceSnapshot?
+  var popupNewTabBefore: [(live: String, item: String?)] = []
+  var popupNewTabRows: Set<String> = []
+  var popupNewTabDestination = ""
+  var checkSeedSelectionStage = "not_started"
   var browserCheckPopupSize = NSSize.zero
   var browserCheckPopupOpenerAlive = false
+  var browserCheckPopupOpenerProbeStarted = false
   var browserCheckStyleMask: UInt = 0
   var browserCheckStock: UInt = 0
   var promptFixture: PromptFixtureServer?
@@ -409,12 +586,12 @@ final class Runtime {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
-      if ["popup", "ext-popup", "ext-windows-popup"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
+      if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if checkName == "fullscreen" {
         popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"])
         fullscreenActivationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
@@ -427,7 +604,8 @@ final class Runtime {
       if screenName == "devtools" { browserCheckMode = "screen-devtools" }
       if screenName == "extensions" { browserCheckMode = "screen-extensions" }
       if screenName == "fullscreen" { browserCheckMode = "screen-fullscreen" }
-      if ["permissions", "dialogs", "protocol", "autofill"].contains(checkName ?? "") || screenName == "prompts" {
+      if screenName == "keyboard" { browserCheckMode = "screen-keyboard" }
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -478,13 +656,13 @@ final class Runtime {
     let card = NSView()
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let singleCheck = (browserCheckMode != nil && !profileCheck) || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -502,6 +680,7 @@ final class Runtime {
     observeClose(host)
     self.adapter = adapter
     self.workspace = workspace
+    self.airTraffic = AirTrafficModel(adapter: workspace)
     let bindings = KeyBindingsModel(adapter: workspace)
     self.keyBindings = bindings
     bindings.onChange = { [weak sidebar, weak bindings] in
@@ -514,11 +693,19 @@ final class Runtime {
     self.container = container
     adapter.onPageFullscreenChanged = { [weak container] in container?.pageFullscreen = $0 }
     adapter.onWindowFullscreenChanged = { [weak container] in container?.windowFullscreen = $0 }
+    adapter.onWorkspaceCommand = { [weak self] command in self?.performWorkspaceCommand(command) }
+    adapter.onFindBar = { [weak container] state in container?.findBar.update(state: state) }
+    adapter.findBarHasFocus = { [weak container] in container?.findBar.hasFocus ?? false }
+    adapter.onFindPageRect = { [weak container] in container?.setFindPageRect($0) }
+    container.findBar.onAction = { [weak host] action, text, selection, live, profile in host?.findAction(action, text: text, selection: selection, liveId: live, profile: profile) }
     container.extensionActions = { [weak host] in host?.extensionActions() ?? [] }
     container.onExtensionAnchor = { [weak host] rect in host?.setExtensionAnchor(rect) }
     container.onExtensionAction = { [weak host] id in host?.runExtensionAction(id) }
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
+      guard self?.host?.isClosing() != true, self?.host?.isClosingAll() != true else { return }
       self?.snapshot = snapshot
+      self?.updatePageVisibility(snapshot)
+      if let self, (self.root ?? self).settingsOwner === self { (self.root ?? self).settings?.modelUpdate(snapshot: snapshot) }
       if self?.host?.isClosingAll() != true, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
@@ -530,21 +717,42 @@ final class Runtime {
           rows.first { $0.url == "data:text/html,<title>Ararat \(name)</title>" }
         }
         if linkCheck { self?.sliceRows = rows.filter { $0.url?.contains("Open link") == true } }
+        if self?.browserCheckMode == "keyboard" || self?.browserCheckMode == "screen-keyboard" {
+          self?.sliceRows = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today ?? []
+        }
         if extensionPopupCheck { self?.sliceRows = rows.filter { $0.url?.contains("/probe.html") == true } }
       }
     }
-    adapter.onTransaction = { [weak self] transaction in
+    adapter.onTransaction = { [weak self] transaction, applied in
       guard let self else { return }
+      self.recordMatrixTransaction(transaction, applied: applied, usableHost: self.hasUsableHost)
       self.sliceTransactions += 1
       self.sliceLastRev = transaction.rev
       for strip in transaction.strips {
         self.sliceActive = strip.tabs.first { $0.liveId == strip.active }?.item
       }
+      if CommandLine.arguments.contains("--ararat-space-matrix-check"), self.browserCheckMode != nil {
+        self.spaceMatrixLastTransaction = ["epoch": transaction.epoch, "rev": transaction.rev,
+          "cause": String(describing: transaction.cause), "strips": transaction.strips.prefix(10).map { strip in
+            ["window": strip.window, "active": strip.active ?? "", "tabs": strip.tabs.prefix(20).map {
+              ["live": $0.liveId, "item": $0.item ?? "", "profile": String(describing: $0.profile)]
+            }] as [String: Any]
+          }]
+      }
     }
     adapter.onWorkspaceChange = { [weak self] in self?.refreshOtherWindows() }
     adapter.onQuitProfileSwitch = { [weak self] in self?.quitDuringProfileSwitch = self?.captureCheckRows() }
+    adapter.onCloseStarted = { [weak self] in
+      self?.selectionGeneration += 1
+      self?.workspace?.cancelPendingSpaceSwitches()
+      self?.commandPresenter?.close(restoreFocus: false)
+    }
+    adapter.onUnsupportedSplit = { [weak self] in self?.reportUnsupportedSplit() }
     let actions = SidebarActions()
-    actions.onSelect = { [weak adapter] row in
+    actions.onSelect = { [weak self, weak adapter] row in
+      self?.selectionGeneration += 1
+      self?.workspace?.cancelPendingSpaceSwitches()
+      self?.host?.setWorkspacePageHidden(false)
       if let url = row.url { adapter?.select(id: row.id, url: url) }
     }
     actions.configureEditing(adapter: workspace, isActive: { true }, window: { [weak self] in self?.host?.window() }, show: { [weak self] snapshot in self?.show(snapshot) }, record: { [weak self] snapshot in self?.snapshot = snapshot })
@@ -556,13 +764,10 @@ final class Runtime {
       self?.adapter?.close(id: id, archive: true)
     }
     actions.onShowSpace = { [weak self] id in
-      self?.workspace?.showSpace(id: id) { [weak self] result in
-        if case .failure(let error) = result { self?.report(error) }
-        self?.workspace?.snapshot { [weak self] result in self?.showResult(result) }
-      }
+      self?.switchWorkspaceSpace(id)
     }
     actions.onRestore = { [weak self] id in
-      self?.workspace?.restore(id: id) { [weak self] result in self?.showResult(result) }
+      self?.restoreWorkspaceItem(id)
     }
     actions.onArchiveDelete = { [weak self] id in
       self?.workspace?.deleteArchive(id: id) { [weak self] result in self?.showResult(result) }
@@ -573,6 +778,11 @@ final class Runtime {
     actions.onCreatePageChanged = { [weak self] in self?.container?.selectionChanged() }
     actions.bind(to: sidebar)
     adapter.attach(host)
+    if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
+       (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || quitMode == "quit-cancel" || quitMode == "close") {
+      host.installCheckDialogFactory()
+    }
+    if root == nil { installCoreMenu() }
     if let argument = arguments.first(where: { $0.hasPrefix("--ararat-measure=") }) {
       guard let symbol = dlsym(Launcher.handle, "AraratStartMeasure") else {
         throw NSError(domain: "Ararat.measure", code: 1)
@@ -585,7 +795,7 @@ final class Runtime {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -622,7 +832,6 @@ final class Runtime {
         NSApp.activate(ignoringOtherApps: true)
         host.window().makeKeyAndOrderFront(nil)
       }
-      if quitMode == "quit-cancel" || quitMode == "close" { host.installCheckDialogFactory() }
       let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
         MainActor.assumeIsolated { self?.quitTick() }
       }
@@ -645,6 +854,7 @@ final class Runtime {
     ) { [weak weakHost = host as AnyObject, weak self] _ in
       MainActor.assumeIsolated {
         self?.hostClosing = true
+        self?.commandPresenter?.close(restoreFocus: false)
         if let host = weakHost as? any ARWindowHostAPI {
           self?.captureCheckState(host)
           self?.adapter?.closeWindow(quitting: host.isClosingAll())
@@ -659,6 +869,9 @@ final class Runtime {
   }
 
   func captureCheckState(_ host: any ARWindowHostAPI) {
+    if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-race=") }) {
+      splitCloseConfirmRaceOK = selectionRaceSettled() && !splitCloseRaceFailed
+    }
     if browserCheckMode != nil {
       browserCheckStyleMask = host.window().styleMask.rawValue
       browserCheckStock = host.checkStockBrowsers()
@@ -667,10 +880,14 @@ final class Runtime {
     guard quitMode != nil else { return }
     quitEvents = host.checkClosingEvents()
     quitDialogCount = host.checkDialogCount()
+    quitDialogPages = host.checkProfileCloseState()["dialog_pages"] as? [[String: Any]] ?? []
     quitStock = host.checkStockBrowsers()
   }
 
   func reopen() -> Bool {
+    if ["popup", "incognito", "keyboard"].contains(browserCheckMode ?? "") {
+      FileHandle.standardError.write(Data("ararat-trace: reopen-callback check=\(browserCheckMode ?? "") phase=\(browserCheckPhase) host=\(hasUsableHost)\n".utf8))
+    }
     if quitMode == "close" { FileHandle.standardError.write(Data("ararat-trace: reopen-callback host=\(host != nil) selected=\(snapshot.selectedId != nil)\n".utf8)) }
     if !hasUsableHost, let existing = children.first(where: { $0.hasUsableHost })?.host {
       if quitMode == nil { existing.window().makeKeyAndOrderFront(nil) }
@@ -697,9 +914,138 @@ final class Runtime {
 
   func show(_ snapshot: WorkspaceSnapshot) {
     self.snapshot = snapshot
+    updatePageVisibility(snapshot)
+    if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
     sidebar?.update(snapshot: snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
+  }
+
+  func updatePageVisibility(_ snapshot: WorkspaceSnapshot) {
+    let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+    let rows = space.map { $0.today + $0.pinned + $0.favorites } ?? []
+    let visible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
+    host?.setWorkspacePageHidden(!visible)
+  }
+
+  func selectCheckSeed(_ row: Row) {
+    guard let workspace, let host, let adapter, let url = row.url else { checkSeedSelectionStage = "missing_context"; return }
+    let space = snapshot.shownSpaceId
+    checkSeedSelectionStage = "selecting_workspace"
+    workspace.select(id: row.id) { [weak self, weak host, weak adapter] result in
+      guard let self, let host, let adapter, let current = self.host,
+            (current as AnyObject) === (host as AnyObject), !host.isClosing(), !host.isClosingAll() else { return }
+      guard case .success(let selected) = result,
+            Self.checkSeedSelectionMatches(selected, item: row.id, space: space),
+            let latest = adapter.session.queue.sync(execute: { adapter.session.store?.snapshot(windowId: self.windowID) }),
+            Self.checkSeedSelectionMatches(latest, item: row.id, space: space) else {
+        self.checkSeedSelectionStage = "workspace_selection_failed_or_stale"; return
+      }
+      self.checkSeedSelectionStage = "opening_native_page"
+      self.show(latest)
+      adapter.select(id: row.id, url: url)
+    }
+  }
+
+  static func checkSeedSelectionMatches(_ snapshot: WorkspaceSnapshot, item: String, space: String?) -> Bool {
+    snapshot.shownSpaceId == space && snapshot.selectedId == item &&
+      snapshot.spaces.first(where: { $0.id == space })?.today.contains(where: { $0.id == item }) == true
+  }
+
+  static func popupTabMappings(_ tabs: [(live: String, item: String?)]) -> [String: String]? {
+    var items: [String: String] = [:]
+    var lives: Set<String> = []
+    for tab in tabs {
+      guard !tab.live.isEmpty, let item = tab.item, !item.isEmpty,
+            lives.insert(tab.live).inserted, items[item] == nil else { return nil }
+      items[item] = tab.live
+    }
+    return items
+  }
+
+  func popupStoreMappings(_ items: [String: String]) -> [String: String] {
+    guard let adapter else { return [:] }
+    return adapter.session.queue.sync {
+      var mappings: [String: String] = [:]
+      for item in items.keys { mappings[item] = adapter.session.store?.liveTab(item: item) }
+      return mappings
+    }
+  }
+
+  static func checkPopupNewTabInExistingWindow(previousTabs: [(live: String, item: String?)], previousRows: Set<String>,
+                                                currentTabs: [(live: String, item: String?)], currentRows: Set<String>,
+                                                selected: String?, nativeActive: String?, compositor: String,
+                                                presentation: [String: Any], storeMappings: [String: String]) -> Bool {
+    guard let old = popupTabMappings(previousTabs), !old.isEmpty,
+          let current = popupTabMappings(currentTabs), current.count == old.count + 1,
+          old.allSatisfy({ current[$0.key] == $0.value }),
+          current.allSatisfy({ storeMappings[$0.key] == $0.value }),
+          Set(old.keys).isSubset(of: previousRows), previousRows.isSubset(of: currentRows) else { return false }
+    let added = current.filter { old[$0.key] == nil }
+    guard added.count == 1, let (item, live) = added.first, !old.values.contains(live),
+          currentRows.subtracting(previousRows) == [item], selected == item, nativeActive == item,
+          presentation["compositor"] as? String == compositor, presentation["live"] as? String == live,
+          presentation["target"] as? Bool == true, presentation["host"] as? Bool == true,
+          presentation["visible"] as? Bool == true, presentation["presented"] as? Bool == true else { return false }
+    return compositor == "c1" || (compositor == "c2" && presentation["window"] as? Bool == true && presentation["bounds"] as? Bool == true)
+  }
+
+  static func checkIncognitoRegularWindowRows(before: [[String]], during: [[String]], after: [[String]],
+                                               window: String, item: String) -> Bool {
+    guard !window.isEmpty, !item.isEmpty else { return false }
+    func records(_ rows: [[String]]) -> [String: String]? {
+      var result: [String: String] = [:]
+      for row in rows {
+        guard row.count == 3 else { return nil }
+        let key = row[0] + "\u{0}" + row[1]
+        guard result[key] == nil else { return nil }
+        result[key] = row[2]
+      }
+      return result
+    }
+    guard let old = records(before), let opened = records(during), let closed = records(after),
+          old.allSatisfy({ opened[$0.key] == $0.value && closed[$0.key] == $0.value }) else { return false }
+    let itemKey = "item\u{0}" + item, windowKey = "window\u{0}" + window, selectedKey = "last_selected\u{0}" + item
+    guard Set(opened.keys).subtracting(old.keys) == [itemKey, windowKey, selectedKey],
+          Set(closed.keys).subtracting(old.keys) == [itemKey, selectedKey],
+          opened[itemKey] == closed[itemKey], opened[selectedKey] == closed[selectedKey],
+          let itemBody = opened[itemKey]?.data(using: .utf8),
+          let itemRecord = (try? JSONSerialization.jsonObject(with: itemBody)) as? [String: Any],
+          itemRecord["id"] as? String == item, itemRecord["lifecycle"] as? String == "Open",
+          let membership = itemRecord["membership"] as? [String: Any], membership["parent"] as? String == "today-default",
+          let kind = itemRecord["kind"] as? [String: Any], let tab = kind["Tab"] as? [String: Any],
+          let url = tab["url"] as? String, url.isEmpty || url.hasPrefix("chrome://newtab/"),
+          let windowBody = opened[windowKey]?.data(using: .utf8),
+          let windowRecord = (try? JSONSerialization.jsonObject(with: windowBody)) as? [String: Any],
+          windowRecord["id"] as? String == window, windowRecord["shown_space"] as? String == "default",
+          windowRecord["selected"] as? String == item else { return false }
+    return true
+  }
+
+  static func checkIncognitoCloseState(tabs: [(live: String, item: String?)], browsers: [[String: Any]],
+                                       privateLive: String, privateProfile: String, privateBrowser: String,
+                                       childLive: String, childMapping: String?, childReverseMapping: String?) -> Bool {
+    guard !privateLive.isEmpty, !privateProfile.isEmpty, !privateBrowser.isEmpty, !childLive.isEmpty,
+          childLive != privateLive, childMapping == nil, childReverseMapping == nil, tabs.count == 1,
+          tabs[0].live == privateLive, tabs[0].item == nil, browsers.count == 1 else { return false }
+    return browsers[0]["off_the_record"] as? Bool == true &&
+      browsers[0]["profile_pointer"] as? String == privateProfile &&
+      browsers[0]["browser_pointer"] as? String == privateBrowser
+  }
+
+  func checkSelectionDiagnostics(item: String?) -> [String: Any] {
+    let tabs = (host?.tabs() as? [any ARTabAPI] ?? []).map { tab in
+      ["live": tab.liveId, "item": tab.itemId ?? "", "loading": tab.isLoading,
+       "navigation_count": tab.navigationCount] as [String: Any]
+    }
+    let mapped = adapter.map { adapter in
+      adapter.session.queue.sync { item.flatMap { adapter.session.store?.liveTab(item: $0) } }
+    } ?? nil
+    return ["stage": checkSeedSelectionStage, "expected_item": item ?? "", "snapshot_selected": snapshot.selectedId ?? "",
+            "snapshot_space": snapshot.shownSpaceId ?? "", "transaction_active": sliceActive ?? "",
+            "host_active": host?.activeItemId() ?? "", "host_has_active": host?.hasActiveTab() ?? false,
+            "live_mapping": mapped ?? "", "tabs": tabs, "window_visible": host?.window().isVisible ?? false,
+            "window_key": host?.window().isKeyWindow ?? false]
   }
 
   func showResult(_ result: Result<WorkspaceSnapshot, Error>) {
@@ -707,6 +1053,81 @@ final class Runtime {
     case .success(let snapshot): show(snapshot)
     case .failure(let error): report(error)
     }
+  }
+
+  func showAndSelect(_ result: Result<WorkspaceSnapshot, Error>, expectedSpace: String? = nil, selectedItem: String? = nil) {
+    guard case .success(let next) = result else { showResult(result); return }
+    guard hasUsableHost, expectedSpace == nil || next.shownSpaceId == expectedSpace,
+          let space = next.spaces.first(where: { $0.id == next.shownSpaceId }),
+          host?.setProfileDirectory(space.profileName) == true else { return }
+    show(next)
+    if let id = selectedItem ?? next.selectedId,
+       let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
+       let url = row.url { adapter?.select(id: id, url: url) }
+  }
+
+  func restoreWorkspaceItem(_ id: String) {
+    guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
+    selectionGeneration += 1
+    workspace?.cancelPendingSpaceSwitches()
+    let generation = selectionGeneration
+    workspace?.restore(id: id) { [weak self] result in
+      guard let self, self.selectionGeneration == generation else { return }
+      if case .success = result { self.adapter?.invalidateSelection() }
+      self.showAndSelect(result)
+    }
+  }
+
+  func switchWorkspaceSpace(_ id: String, completion: (() -> Void)? = nil) {
+    guard host?.isClosing() != true, host?.isClosingAll() != true else { sidebar?.restoreShownSpace(); return }
+    selectionGeneration += 1
+    workspace?.cancelPendingSpaceSwitches()
+    let generation = selectionGeneration
+    workspace?.showSpaceSelecting(id: id) { [weak self] result in
+      guard let self, self.selectionGeneration == generation else { return }
+      switch result {
+      case .failure(let error):
+        self.sidebar?.restoreShownSpace()
+        self.workspace?.snapshot { [weak self] latest in
+          guard let self, self.selectionGeneration == generation, case .success(let snapshot) = latest else { return }
+          self.showAndSelect(.success(snapshot))
+          if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) {
+            self.sidebar?.showSpaceWithoutNotification(at: index)
+          }
+        }
+        if let coreError = error as? CoreError, case .UnsupportedSplit = coreError { self.reportUnsupportedSplit() }
+        else { self.report(error) }
+      case .success(let snapshot):
+        guard snapshot.shownSpaceId == id else { return }
+        self.workspace?.snapshot { [weak self] latest in
+          guard let self, self.selectionGeneration == generation, case .success(let current) = latest,
+                current.shownSpaceId == id else { return }
+          self.adapter?.invalidateSelection()
+          self.showAndSelect(.success(current), expectedSpace: id)
+          if let index = current.spaces.firstIndex(where: { $0.id == id }) {
+            self.sidebar?.showSpaceWithoutNotification(at: index)
+          }
+          completion?()
+        }
+      }
+    }
+  }
+
+  func reportUnsupportedSplit() {
+    unsupportedSplitCount += 1
+    FileHandle.standardError.write(Data("workspace: switching to a space with a selected split is not supported yet\n".utf8))
+    guard !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }),
+          let host, hasUsableHost else { return }
+    let alert = NSAlert()
+    alert.messageText = "Cannot open this space yet"
+    alert.informativeText = "The selected split will be available when split view is supported."
+    alert.addButton(withTitle: "OK")
+    alert.beginSheetModal(for: host.window())
+  }
+
+  func showSuggestedSpace(_ id: String) {
+    guard let index = snapshot.spaces.firstIndex(where: { $0.id == id }) else { return }
+    sidebar?.showSpace(at: index)
   }
 
   func showChange(_ result: Result<WorkspaceAdapter.Change, Error>) {
@@ -718,6 +1139,193 @@ final class Runtime {
 
   func close(_ id: String) {
     adapter?.close(id: id)
+  }
+
+  func performWorkspaceCommand(_ command: String) {
+    guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
+    let shown = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+    let rows = shown.map { $0.today + $0.pinned + $0.favorites } ?? []
+    let selectedIsVisible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
+    switch command {
+    case "settings": openSettings()
+    case "quit": NSApp.terminate(nil)
+    case "new_tab": openCommandBar(.newTab)
+    case "edit_url": openCommandBar(.editURL)
+    case "search": openCommandBar(.search)
+    case "close_tab": if selectedIsVisible, let id = snapshot.selectedId { close(id) }
+    case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
+    case "toggle_sidebar": container?.toggleSidebar()
+    case "toggle_library": sidebar?.toggleLibrary(nil)
+    case "reset_sidebar_width": container?.resizeHandle.resetWidth()
+    default:
+      if command.hasPrefix("show_space_"), let index = Int(command.dropFirst("show_space_".count)), snapshot.spaces.indices.contains(index - 1) {
+        sidebar?.showSpace(at: index - 1)
+      }
+    }
+  }
+
+  func openSettings() {
+    guard let workspace, let keyBindings, let airTraffic else { return }
+    let owner = root ?? self
+    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.show($0) }
+    let resetWidth: () -> Void = { [weak self] in self?.container?.resizeHandle.resetWidth() }
+    let preview: (String, Look?, Bool) -> Void = { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }
+    if owner.settings == nil {
+      owner.settings = SettingsWindowController(model: SettingsModel(snapshot: snapshot, adapter: workspace, publish: publish,
+        resetWidth: resetWidth, preview: preview, keyBindings: keyBindings, airTraffic: airTraffic))
+    } else {
+      owner.settings?.retarget(snapshot: snapshot, adapter: workspace, publish: publish, resetWidth: resetWidth,
+                               preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
+    }
+    owner.settingsOwner = self
+    if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
+      owner.settings?.prepare(shownSpaceID: snapshot.shownSpaceId)
+    } else {
+      owner.settings?.open(shownSpaceID: snapshot.shownSpaceId)
+    }
+  }
+
+  func installCoreMenu() {
+    guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
+    coreMenuInstalled = true
+    let ids = ["pin_tab", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).map { "show_space_\($0)" }
+    let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
+    func flags(_ key: KeyCombination) -> NSEvent.ModifierFlags {
+      var result: NSEvent.ModifierFlags = []
+      if key.command { result.insert(.command) }
+      if key.control { result.insert(.control) }
+      if key.option { result.insert(.option) }
+      if key.shift { result.insert(.shift) }
+      return result
+    }
+    displacedMenuItems = KeyBindingsModel.clearCollisions(bindings, in: menu)
+    let core = NSMenu(title: "Ararat Commands")
+    for binding in bindings {
+      let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")
+      item.target = self
+      item.representedObject = binding.command
+      if let key = binding.key { item.keyEquivalentModifierMask = flags(key) }
+    }
+    menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "").submenu = core
+  }
+
+  @objc func coreMenuCommand(_ item: NSMenuItem) {
+    let owner = root ?? self
+    guard let command = item.representedObject as? String else { return }
+    if ([owner] + owner.children).contains(where: { runtime in
+      runtime.popups.contains(where: { $0.host?.window().isKeyWindow == true })
+    }),
+       let original = owner.displacedMenuItems[command], let action = original.action {
+      NSApp.sendAction(action, to: original.target, from: original)
+      return
+    }
+    guard let target = ([owner] + owner.children).first(where: {
+      $0.host?.window().isKeyWindow == true || $0.commandPresenter?.panel.isKeyWindow == true
+    }) else { return }
+    if let event = NSApp.currentEvent, let window = NSApp.keyWindow,
+       WorkspaceCommands.yieldsToOwnField(defaultKeyBindings(), event: event, in: window) {
+      window.firstResponder?.keyDown(with: event)
+      return
+    }
+    target.performWorkspaceCommand(command)
+  }
+
+  func openCommandBar(_ requested: CommandBarMode) {
+    guard hasUsableHost, let host, let adapter, let workspace else { return }
+    commandPresenter?.close()
+    let target = adapter.captureNavigationTarget()
+    let missingTarget = target == nil && host.hasActiveTab()
+    if requested == .editURL && missingTarget { return }
+    let capturedProfile = host.profileDirectory()
+    let capturedSpace = snapshot.shownSpaceId
+    let capturedItem = snapshot.selectedId
+    let spec = CommandBarController.openSpec(mode: requested, selectedTabURL: target?["url"] as? String)
+    let hidden = CommandLine.arguments.contains { $0.hasPrefix("--ararat-check=") }
+    let presenter = CommandBarPresenter(parent: host.window(), visible: !hidden,
+      bindings: keyBindings?.bindings ?? [], highlight: .selectedContentBackgroundColor)
+    commandPresenter = presenter
+    presenter.onClose = { [weak self, weak presenter] in
+      if self?.commandPresenter === presenter { self?.commandPresenter = nil }
+    }
+    presenter.onCommit = { [weak self, weak host, weak adapter] row, mode, forceNew in
+      guard let self, let host, let adapter, self.hasUsableHost,
+            let current = self.host, (current as AnyObject) === (host as AnyObject),
+            host.profileDirectory() == capturedProfile, self.snapshot.shownSpaceId == capturedSpace else { return }
+      guard let row else { return }
+      switch row.target {
+      case .openUrl(let url), .search(let url):
+        if mode == .search && !forceNew && missingTarget { return }
+        if mode != .newTab && !forceNew, let target { _ = adapter.navigateCommandURL(url, target: target) }
+        else { adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile) }
+      case .tab(let id, let space):
+        if let space {
+          self.selectionGeneration += 1
+          workspace.cancelPendingSpaceSwitches()
+          let generation = self.selectionGeneration
+          workspace.showSpaceSelectingTab(id: space, item: id) { [weak self] result in
+            guard let self, self.selectionGeneration == generation else { return }
+            if case .failure(let error) = result { self.report(error); return }
+            workspace.snapshot { [weak self] latest in
+              guard let self, self.selectionGeneration == generation, case .success(let current) = latest,
+                    current.shownSpaceId == space, current.selectedId == id else { return }
+              adapter.invalidateSelection()
+              self.showAndSelect(.success(current), expectedSpace: space, selectedItem: id)
+              if let index = current.spaces.firstIndex(where: { $0.id == space }) {
+                self.sidebar?.showSpaceWithoutNotification(at: index)
+              }
+            }
+          }
+        } else if let url = row.url { adapter.select(id: id, url: url) }
+      case .archive(let id): self.restoreWorkspaceItem(id)
+      case .space(let id):
+        self.showSuggestedSpace(id)
+      case .folder(let id, let space):
+        self.switchWorkspaceSpace(space) { [weak self] in
+          workspace.openFolder(id: id) { [weak self] in self?.showResult($0) }
+        }
+      case .command(let id):
+        if id == "pin_tab" || id == "close_tab" {
+          guard self.snapshot.selectedId == capturedItem, let target, adapter.isCurrentNavigationTarget(target) else { return }
+          if id == "close_tab", let item = capturedItem, let live = target["live"] as? String {
+            adapter.close(id: item, expectedLive: live)
+            return
+          }
+          if id == "pin_tab", let live = target["live"] as? String {
+            self.sidebar?.pinSelectedTab { [weak self] item, container, index, openFolder, completion in
+              workspace.moveIfLive(id: item, container: container, index: index, openFolder: openFolder, expectedLive: live) { result in
+                switch result {
+                case .success(let snapshot): completion(snapshot); if let snapshot { self?.show(snapshot) }
+                case .failure(let error): completion(nil); self?.report(error)
+                }
+              }
+            }
+            return
+          }
+        }
+        self.performWorkspaceCommand(id)
+      case .moveToSpace(let id):
+        guard let item = capturedItem, self.snapshot.selectedId == item, let target, adapter.isCurrentNavigationTarget(target),
+              let space = self.snapshot.spaces.first(where: { $0.id == id }) else { return }
+        guard let live = target["live"] as? String else { return }
+        workspace.moveIfLive(id: item, container: space.todayId, index: Int(space.todayCount), openFolder: false, expectedLive: live) { [weak self] result in
+          switch result { case .success(let snapshot): if let snapshot { self?.show(snapshot) }; case .failure(let error): self?.report(error) }
+        }
+      case .moveToFolder(let id, let spaceID):
+        guard let item = capturedItem, self.snapshot.selectedId == item, let target, adapter.isCurrentNavigationTarget(target),
+              let space = self.snapshot.spaces.first(where: { $0.id == spaceID }) else { return }
+        let index = space.pinned.filter { $0.parentId == id }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
+        guard let live = target["live"] as? String else { return }
+        workspace.moveIfLive(id: item, container: id, index: index, openFolder: false, expectedLive: live) { [weak self] result in
+          switch result { case .success(let snapshot): if let snapshot { self?.show(snapshot) }; case .failure(let error): self?.report(error) }
+        }
+      }
+    }
+    presenter.open(mode: spec.mode, prefill: spec.prefill)
+    workspace.commandBarSession { [weak self, weak presenter] result in
+      guard let self, let presenter, self.commandPresenter === presenter,
+            let session = try? result.get() else { return }
+      presenter.applyStore(CommandBarSessionStore(session: session))
+    }
   }
 
   func captureCheckRows() -> [[String]]? {
@@ -794,6 +1402,10 @@ final class Runtime {
     }
   }
 
+static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, regular: () -> Void) {
+  if mode == "popup", (6...10).contains(phase) { devtools() } else { regular() }
+}
+
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
     if browserCheckPhase != browserCheckTracedPhase {
@@ -802,6 +1414,20 @@ final class Runtime {
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if mode == "keyboard" || mode == "screen-keyboard" {
+      timeoutValues.merge(keyboardResults) { _, new in new }
+      timeoutValues["phase"] = browserCheckPhase
+      timeoutValues["fixture_error"] = promptFixtureError as Any? ?? NSNull()
+      timeoutValues["script_result"] = keyboardScriptResult as Any? ?? NSNull()
+      timeoutValues["script_pending"] = keyboardScriptPending
+      timeoutValues["visible_windows"] = NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map { ["number": $0.windowNumber, "visible": $0.isVisible, "key": $0.isKeyWindow] as [String: Any] }
+      timeoutValues["host_window_number"] = host?.window().windowNumber ?? 0
+      timeoutValues["selection_diagnostics"] = checkSelectionDiagnostics(item: browserCheckSeedID)
+      if browserCheckAttempts > 900 && CommandLine.arguments.contains("--ararat-space-matrix-check") {
+        timeoutValues["matrix_diagnostics"] = matrixDiagnostics()
+      }
+      if let error = promptFixtureError { finishBrowserCheck(ok: false, values: timeoutValues.merging(["error": error]) { _, new in new }); return }
+    }
     if mode == "fullscreen" || mode == "screen-fullscreen" {
       timeoutValues["fullscreen_state"] = host?.checkFullscreenState() ?? [:]
       timeoutValues["fullscreen_element"] = fullscreenElement as Any? ?? NSNull()
@@ -849,6 +1475,32 @@ final class Runtime {
       timeoutValues["shown_profile"] = host.profileDirectory()
       timeoutValues["host_tab_count"] = host.tabs().count
       timeoutValues["selected_item"] = snapshot.selectedId ?? ""
+      if mode == "incognito" { timeoutValues["selection_diagnostics"] = checkSelectionDiagnostics(item: browserCheckSeedID) }
+      if mode == "incognito" {
+        timeoutValues["child_states"] = children.compactMap { $0.host?.checkProfileState() }
+        timeoutValues["child_hosts"] = children.filter { $0.host != nil }.count
+        if CommandLine.arguments.contains("--ararat-incognito-window-check") {
+          timeoutValues["regular_rows_before"] = quitBefore ?? []
+          timeoutValues["regular_rows_current"] = captureCheckRows() ?? []
+          timeoutValues["regular_rows_during"] = incognitoWindowRows ?? []
+          timeoutValues["regular_child_window"] = children.first?.windowID ?? incognitoWindowID
+          timeoutValues["regular_child_tabs"] = (children.first?.host?.tabs() as? [any ARTabAPI] ?? []).map {
+            ["live": $0.liveId, "item": $0.itemId ?? "", "url": $0.url]
+          }
+          timeoutValues["regular_private_expected"] = ["live": incognitoPrivateLive, "profile_pointer": incognitoPrivateProfile,
+                                                       "browser_pointer": incognitoPrivateBrowser]
+          timeoutValues["regular_child_expected_live"] = incognitoWindowLive
+          timeoutValues["regular_child_expected_item"] = incognitoWindowItem
+          if let adapter {
+            let mapping = adapter.session.queue.sync {
+              (adapter.session.store?.liveTab(item: incognitoWindowItem),
+               adapter.session.store?.itemForLive(liveId: incognitoWindowLive))
+            }
+            timeoutValues["regular_child_current_mapping"] = mapping.0 as Any? ?? NSNull()
+            timeoutValues["regular_child_current_reverse_mapping"] = mapping.1 as Any? ?? NSNull()
+          }
+        }
+      }
       timeoutValues["default_rows"] = snapshot.spaces.first(where: { $0.id == "default" })?.today.count ?? 0
       timeoutValues["named_rows"] = snapshot.spaces.first(where: { $0.id == "named" })?.today.count ?? 0
       timeoutValues["application_active"] = NSApp.isActive
@@ -1001,7 +1653,7 @@ final class Runtime {
       timeoutValues.merge(devtoolsResults) { _, new in new }
       timeoutValues["sidebar_state"] = container?.sidebarState ?? "missing"
     }
-    if ["popup", "ext-popup", "ext-windows-popup", "fullscreen"].contains(mode) {
+    if ["popup", "ext-popup", "ext-windows-popup", "fullscreen", "keyboard"].contains(mode) {
       let front = commandOutput("/usr/bin/lsappinfo", ["front"])
       let visible = NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
       popupWindowsHidden = popupWindowsHidden && !visible
@@ -1020,7 +1672,7 @@ final class Runtime {
       }
       timeoutValues.merge(["width": size.width, "height": size.height,
                            "opener_alive": popupTab?.checkOpenerAlive() ?? browserCheckPopupOpenerAlive,
-                           "opener_probe_started": browserCheckPhase >= 3,
+                           "opener_probe_started": browserCheckPopupOpenerProbeStarted,
                            "popup_host_present": popupHost != nil,
                            "popup_has_browser": popupHost?.hasBrowser() ?? false,
                            "popup_tab_present": popupTab != nil,
@@ -1031,10 +1683,59 @@ final class Runtime {
                            "devtools_hosts": popupHost?.checkDevToolsHostCount() ?? 0,
                            "stock_browsers": popupHost?.checkStockBrowsers() ?? browserCheckStock,
                            "browser_count": count as Any? ?? NSNull(), "front_before": popupFrontBefore ?? "",
+                           "process_id": ProcessInfo.processInfo.processIdentifier,
                            "front_now": front ?? "", "front_change": popupFrontChange ?? [:],
                            "windows_hidden": popupWindowsHidden]) { _, new in new }
+      if mode == "popup" {
+        timeoutValues["popup_new_tab_before_tabs"] = popupNewTabBefore.map { ["live": $0.live, "item": $0.item ?? ""] }
+        timeoutValues["popup_new_tab_before_rows"] = popupNewTabRows.sorted()
+        timeoutValues["popup_workspace_selection"] = checkSelectionDiagnostics(item: snapshot.selectedId)
+        timeoutValues["child_hosts"] = children.filter { $0.host != nil }.count
+        if let host {
+          let tabs = (host.tabs() as? [any ARTabAPI] ?? []).map { (live: $0.liveId, item: $0.itemId) }
+          timeoutValues["popup_current_tabs"] = tabs.map { ["live": $0.live, "item": $0.item ?? ""] }
+          timeoutValues["popup_current_rows"] = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id).sorted()
+          let oldLives = Set(popupNewTabBefore.map(\.live))
+          let added = tabs.filter { !oldLives.contains($0.live) }
+          timeoutValues["popup_current_mappings"] = Self.popupTabMappings(tabs).map { popupStoreMappings($0) } ?? [:]
+          timeoutValues["popup_new_tab_presentation"] = added.count == 1 ? host.checkPagePresentation(added[0].live) : [:]
+        }
+      }
     }
-    if browserCheckAttempts > 300 { finishBrowserCheck(ok: false, values: timeoutValues); return }
+    let limit = mode == "keyboard" || mode == "screen-keyboard" ? 900 : 300
+    if browserCheckAttempts > limit { finishBrowserCheck(ok: false, values: timeoutValues); return }
+    if mode == "profiles", CommandLine.arguments.contains("--ararat-multiple-close-check"), host == nil,
+       let symbol = dlsym(Launcher.handle, "AraratBrowserCount") {
+      let count = unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)()
+      if browserCheckPhase == 8, count == 1, multipleCloseChildValid(), let childHost = children.first?.host,
+         let after = captureCheckRows(), let before = profileCloseBefore,
+         let pages = profileCloseFinal["dialog_pages"] as? [[String: Any]] {
+        let rowsKept = before.filter { $0.first != "window" } == after.filter { $0.first != "window" }
+        let rootRemoved = !after.contains { $0.count >= 2 && $0[0] == "window" && $0[1] == windowID }
+        let childKept = after.contains { $0.count >= 2 && $0[0] == "window" && $0[1] == children[0].windowID }
+        multiClosePassed = profileCheckPassed && rowsKept && rootRemoved && childKept &&
+          profileCloseFinal["close_cancelled"] as? Int == 2 && multipleClosePagesValid(pages, defaultCount: 2, namedCount: 1)
+        profileCheckResult["multiple_child_unchanged"] = true
+        profileCheckResult["multiple_rows_unchanged"] = rowsKept
+        profileCheckResult["multiple_root_removed"] = rootRemoved
+        profileCheckResult["multiple_child_kept"] = childKept
+        profileCheckResult["multiple_rows_before"] = before
+        profileCheckResult["multiple_rows_after"] = after
+        profileCheckResult["root_window_id"] = windowID
+        profileCheckResult["child_window_id"] = children[0].windowID
+        profileCheckResult["expected_dialog_items"] = splitCloseExpected
+        profileCheckResult["expected_default_items"] = Array(multiCloseDefaultItems).sorted()
+        profileCheckResult["multiple_final"] = profileCloseFinal
+        browserCheckPhase = 9
+        childHost.close()
+        return
+      }
+      if browserCheckPhase == 9, count == 0, children.isEmpty {
+        finishBrowserCheck(ok: multiClosePassed && browserCheckStock == 0, values: profileCheckResult)
+        return
+      }
+      return
+    }
     if mode == "profiles", browserCheckPhase == 8, host == nil,
        let symbol = dlsym(Launcher.handle, "AraratBrowserCount"),
        unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)() == 0 {
@@ -1046,8 +1747,11 @@ final class Runtime {
       let closed = profileCloseFinal["closed"] as? Bool == true &&
         profileCloseFinal["browsers"] as? Int == 0 && profileCloseFinal["dialogs"] as? Int == 2 &&
         profileCloseFinal["close_cancelled"] as? Int == 1 &&
-        profileCloseFinal["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"]
+        profileCloseFinal["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"] &&
+        splitClosePagesMatch(profileCloseFinal) && splitCloseConfirmRaceOK
       profileCheckResult.merge(["cancel_run": profileCloseCancelled, "close_run": profileCloseFinal,
+        "expected_dialog_items": splitCloseExpected,
+        "selection_confirm_race": splitCloseConfirmRaceOK,
         "rows_before_close": profileCloseBefore ?? [], "rows_after_close": after ?? [],
         "rows_unchanged_after_close": unchanged, "window_removed": removed,
         "widget_closed": true, "stock_browsers": browserCheckStock]) { _, new in new }
@@ -1055,7 +1759,7 @@ final class Runtime {
                          values: profileCheckResult)
       return
     }
-    if mode == "popup", browserCheckPhase >= 6 {
+    Self.dispatchPopupCheck(mode: mode, phase: browserCheckPhase) {
       guard let popup = popups.first?.host else { return }
       if browserCheckPhase == 6, host == nil, popups.count == 1,
          let symbol = dlsym(Launcher.handle, "AraratBrowserCount"),
@@ -1069,6 +1773,14 @@ final class Runtime {
         popup.checkCloseDevTools()
       } else if browserCheckPhase == 8, popups.count == 1, popup.checkDevToolsHostCount() == 0 {
         devtoolsResults["popup_only_devtools_closed"] = true
+        browserCheckPhase = 9
+        popup.checkOpenDevTools()
+      } else if browserCheckPhase == 9, popups.count == 2, popup.checkDevToolsHostCount() == 1,
+                let toolsHost = popups.last?.host {
+        toolsHost.checkKeyboardCommand("close")
+        browserCheckPhase = 10
+      } else if browserCheckPhase == 10, popups.count == 1, popup.checkDevToolsHostCount() == 0 {
+        devtoolsResults["devtools_command_close"] = true
         devtoolsResults["stock_browsers"] = popup.checkStockBrowsers()
         let front = commandOutput("/usr/bin/lsappinfo", ["front"])
         let frontUnchanged = !(popupFrontBefore ?? "").isEmpty && !(front ?? "").isEmpty && popupFrontBefore == front && popupFrontChange == nil
@@ -1079,8 +1791,7 @@ final class Runtime {
         devtoolsResults["windows_hidden"] = popupWindowsHidden
         finishBrowserCheck(ok: popup.checkStockBrowsers() == 0 && frontUnchanged && popupWindowsHidden, values: devtoolsResults)
       }
-      return
-    }
+    } regular: {
     guard let host else { return }
     if mode == "devtools" { devtoolsCheckTick(host); return }
     if mode == "screen-devtools" { devtoolsScreenTick(host); return }
@@ -1088,6 +1799,7 @@ final class Runtime {
     if mode == "dialogs" { dialogCheckTick(host); return }
     if mode == "protocol" { protocolCheckTick(host); return }
     if mode == "autofill" { autofillCheckTick(host); return }
+    if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
     if mode == "empty" { emptyCheckTick(host); return }
     if mode == "profiles" { profileCheckTick(host); return }
@@ -1140,10 +1852,38 @@ final class Runtime {
       let frame = popup.window().frame
       let screen = popup.window().screen?.visibleFrame ?? .zero
       let placed = screen.contains(frame)
+      if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
+        guard placed, let rows = captureCheckRows() else { return }
+        quitBefore = rows
+        popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
+        popup.window().makeKeyAndOrderFront(nil)
+        browserCheckPhase = 41
+        return
+      }
       let stock = host.checkStockBrowsers()
       finishBrowserCheck(ok: placed && stock == 0,
         values: ["command_click": true, "context_menu": true, "popup_placed": placed,
                  "popup_x": frame.origin.x, "popup_y": frame.origin.y, "stock_browsers": stock])
+    } else if mode == "screen-links", browserCheckPhase == 41, let popup = popups.first?.host,
+              popup.window().isKeyWindow, let tab = (popup.tabs() as? [any ARTabAPI])?.first,
+              tab.title == "Ararat save check", !tab.isLoading {
+      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
+          context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 42
+    } else if mode == "screen-links", browserCheckPhase == 42, let popup = popups.first?.host,
+              popup.checkPageOnlySaveCount() == 1,
+              let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
+      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      save.cancel(nil)
+      browserCheckPhase = 43
+    } else if mode == "screen-links", browserCheckPhase == 43, let popup = popups.first?.host,
+              !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
+      let unchanged = captureCheckRows() == quitBefore
+      finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+        values: ["command_click": true, "context_menu": true, "popup_placed": true, "page_only_save": true,
+                 "rows_unchanged": unchanged, "stock_browsers": host.checkStockBrowsers()])
     } else if mode == "deferred", browserCheckPhase == 2, host.checkStockBrowsers() >= 1, popups.isEmpty {
       let stock = host.checkStockBrowsers()
       finishBrowserCheck(ok: stock == 1 && children.isEmpty && popups.isEmpty,
@@ -1162,11 +1902,16 @@ final class Runtime {
       browserCheckRows = [first, last]
       browserCheckPhase = 4
       host.checkMenuCommand(false)
-    } else if mode == "menu", browserCheckPhase == 4, host.tabs().count >= 4 {
-      guard host.checkFocusSearch() else {
-        finishBrowserCheck(ok: false, values: ["focus_search_unchanged": false])
+    } else if mode == "menu", browserCheckPhase == 4, commandPresenter?.controller.isOpen == true {
+      guard host.tabs().count == 3 else {
+        finishBrowserCheck(ok: false, values: ["new_tab_created_early": true])
         return
       }
+      commandPresenter?.close()
+      guard host.checkFocusSearch(), commandPresenter?.controller.mode == .search else {
+        finishBrowserCheck(ok: false, values: ["focus_search_opened": false]); return
+      }
+      commandPresenter?.close()
       browserCheckPhase = 5
       host.checkMenuCommand(true)
     } else if mode == "menu", browserCheckPhase == 5, let child = children.first, let childHost = child.host {
@@ -1178,7 +1923,12 @@ final class Runtime {
     } else if mode == "menu", browserCheckPhase == 7, !host.hasBrowser() {
       browserCheckPhase = 8
       host.checkMenuCommand(false)
-    } else if mode == "menu", browserCheckPhase == 8, host.hasBrowser(), !host.tabs().isEmpty {
+    } else if mode == "menu", browserCheckPhase == 8, commandPresenter?.controller.isOpen == true {
+      let bar = commandPresenter?.controller
+      bar?.update(query: "https://example.test/menu-empty", allowCompletion: false)
+      bar?.commit(forceNewTab: false)
+      browserCheckPhase = 13
+    } else if mode == "menu", browserCheckPhase == 13, host.hasBrowser(), !host.tabs().isEmpty {
       browserCheckPhase = 9
       host.checkMenuCommand(true)
     } else if mode == "menu", browserCheckPhase == 9, let child = children.first(where: { $0.host != nil }), let childHost = child.host {
@@ -1194,21 +1944,72 @@ final class Runtime {
               children.allSatisfy({ $0.host == nil }) {
       let stock = host.checkStockBrowsers()
       finishBrowserCheck(ok: stock == 0, values: ["urls_added": browserCheckRows.count,
-        "last_selected": true, "ntp_preserved": true, "reused_empty_host": true, "focus_search_unchanged": true,
+        "last_selected": true, "ntp_preserved": true, "reused_empty_host": true, "focus_search_opened": true,
         "stock_browsers": stock])
     } else if mode == "popup", browserCheckPhase == 2,
               let popup = popups.first?.host,
               let tab = (popup.tabs() as? [any ARTabAPI])?.first, !tab.isLoading, tab.title == "Popup" {
       browserCheckPopupSize = popups.first?.createdSize ?? popup.window().frame.size
+      popup.checkKeyboardCommand("location")
+      popup.checkKeyboardCommand("search")
+      guard commandPresenter == nil, tab.itemId == nil else { finishBrowserCheck(ok: false, values: ["popup_workspace_command": true]); return }
+      let original = (host.tabs() as? [any ARTabAPI] ?? []).map { (live: $0.liveId, item: $0.itemId) }
+      guard let oldMappings = Self.popupTabMappings(original), !oldMappings.isEmpty,
+            popupStoreMappings(oldMappings) == oldMappings else { return }
+      popupNewTabBefore = original
+      popupNewTabRows = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
+      popup.checkKeyboardCommand("new")
+      browserCheckPhase = 20
+    } else if mode == "popup", browserCheckPhase == 20 {
+      if let child = children.first(where: { $0.host != nil }), let childHost = child.host, childHost.hasBrowser() {
+        popupNewTabDestination = "new_window"
+        childHost.close()
+        browserCheckPhase = 21
+      } else {
+        let tabs = (host.tabs() as? [any ARTabAPI] ?? []).map { (live: $0.liveId, item: $0.itemId) }
+        let rows = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
+        let oldLives = Set(popupNewTabBefore.map(\.live))
+        let newTabs = tabs.filter { !oldLives.contains($0.live) }
+        let presentation = newTabs.count == 1 ? host.checkPagePresentation(newTabs[0].live) : [:]
+        let mappings = Self.popupTabMappings(tabs).map { popupStoreMappings($0) } ?? [:]
+        let compositor = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+        if Self.checkPopupNewTabInExistingWindow(previousTabs: popupNewTabBefore, previousRows: popupNewTabRows,
+                                                 currentTabs: tabs, currentRows: rows, selected: snapshot.selectedId,
+                                                 nativeActive: host.activeItemId(), compositor: compositor,
+                                                 presentation: presentation, storeMappings: mappings) {
+          popupNewTabDestination = "existing_window"
+          browserCheckPhase = 21
+        }
+      }
+    } else if mode == "popup", browserCheckPhase == 21, children.allSatisfy({ $0.host == nil }),
+              let popup = popups.first?.host {
+      popup.checkKeyboardCommand("window")
+      browserCheckPhase = 22
+    } else if mode == "popup", browserCheckPhase == 22,
+              let child = children.first(where: { $0.host != nil }), let childHost = child.host, childHost.hasBrowser() {
+      childHost.close()
+      browserCheckPhase = 23
+    } else if mode == "popup", browserCheckPhase == 23, children.allSatisfy({ $0.host == nil }),
+              let popup = popups.first?.host {
+      popup.checkKeyboardCommand("incognito")
+      browserCheckPhase = 24
+    } else if mode == "popup", browserCheckPhase == 24, popups.count == 2, let privateHost = popups.last?.host,
+              (privateHost.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      privateHost.checkKeyboardCommand("close")
+      browserCheckPhase = 25
+    } else if mode == "popup", browserCheckPhase == 25, popups.count == 1,
+              let tab = (popups.first?.host?.tabs() as? [any ARTabAPI])?.first {
+      browserCheckBefore = snapshot
       FileHandle.standardError.write(Data("ararat-trace: popup loaded navigation_count=\(tab.navigationCount)\n".utf8))
       browserCheckPhase = 3
+      browserCheckPopupOpenerProbeStarted = true
       tab.probeCheckOpener()
     } else if mode == "popup", browserCheckPhase == 3,
               let tab = (popups.first?.host?.tabs() as? [any ARTabAPI])?.first, tab.checkOpenerAlive() {
       browserCheckPopupOpenerAlive = true
       browserCheckPhase = 4
       FileHandle.standardError.write(Data("ararat-trace: popup close requested\n".utf8))
-      tab.closeCheckPopup()
+      popups.first?.host?.checkKeyboardCommand("close")
     } else if mode == "popup", browserCheckPhase == 4, popups.isEmpty,
               let symbol = dlsym(Launcher.handle, "AraratBrowserCount"),
               unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)() == 1 {
@@ -1216,8 +2017,10 @@ final class Runtime {
       let rowsUnchanged = snapshot == browserCheckBefore
       let sizeOK = abs(browserCheckPopupSize.width - 400) <= 20 && abs(browserCheckPopupSize.height - 300) <= 40
       devtoolsResults = ["opener_alive": true, "popup_closed": true, "rows_unchanged": rowsUnchanged,
+                         "native_new_tab": true, "native_new_window": true, "native_new_incognito_window": true, "location_search_noop": true,
+                         "native_new_tab_destination": popupNewTabDestination,
                          "width": browserCheckPopupSize.width, "height": browserCheckPopupSize.height, "stock_browsers": stock]
-      guard rowsUnchanged && sizeOK && stock == 0,
+      guard rowsUnchanged && sizeOK && stock == 0 && hiddenPopupSafe(),
             let tab = (host.tabs() as? [any ARTabAPI])?.first else {
         finishBrowserCheck(ok: false, values: devtoolsResults); return
       }
@@ -1245,6 +2048,7 @@ final class Runtime {
         "selected": snapshot.selectedId ?? "", "urls": browserCheckRows.map { $0.url ?? "" },
         "titles": browserCheckRows.map(\.title), "app_windows": children.count,
         "popup_hosts": popups.count, "stock_browsers": stock])
+    }
     }
   }
 
@@ -1284,7 +2088,22 @@ final class Runtime {
       emptyRowsBefore = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
       browserCheckPhase = 3
       host.checkMenuCommand(false)
-    } else if browserCheckPhase == 3, host.hasBrowser(),
+    } else if browserCheckPhase == 3, host.hasBrowser(), commandPresenter?.controller.isOpen == true {
+      guard host.tabs().isEmpty else { finishBrowserCheck(ok: false, values: ["new_tab_created_early": true]); return }
+      commandPresenter?.close()
+      host.checkKeyboardCommand("location")
+      browserCheckPhase = 31
+    } else if browserCheckPhase == 31, commandPresenter?.controller.isOpen == true {
+      guard commandPresenter?.controller.mode == .newTab else { finishBrowserCheck(ok: false, values: ["empty_location_fallback": false]); return }
+      commandPresenter?.close()
+      host.checkMenuCommand(false)
+      browserCheckPhase = 32
+    } else if browserCheckPhase == 32, commandPresenter?.controller.isOpen == true {
+      let bar = commandPresenter?.controller
+      bar?.update(query: "https://example.test/empty", allowCompletion: false)
+      bar?.commit(forceNewTab: false)
+      browserCheckPhase = 4
+    } else if browserCheckPhase == 4, host.hasBrowser(),
               let tab = (host.tabs() as? [any ARTabAPI])?.first,
               let id = tab.itemId, !emptyRowsBefore.contains(id),
               snapshot.spaces.flatMap({ $0.today + $0.pinned + $0.favorites }).contains(where: { $0.id == id }) {
@@ -1292,7 +2111,7 @@ final class Runtime {
       finishBrowserCheck(ok: stock == 0 && emptyMenuCount > 0 && emptyRestorePassed, values: ["empty_windows_probe": emptyProbe,
         "menu_items_validated": emptyMenuCount, "enabled_command_ids": emptyMenuEnabled,
         "session_restore": emptyRestore, "new_tab": true, "new_tab_row_id": id,
-        "command_bar_available": false, "stock_browsers": stock])
+        "command_bar_available": true, "empty_location_fallback": true, "stock_browsers": stock])
     }
   }
 
@@ -1522,11 +2341,11 @@ final class Runtime {
 
   func preparePromptFixture(_ host: any ARWindowHostAPI, name: String) -> Bool {
     if browserCheckPhase == 0 {
-      guard promptFixturePort != nil, let row = sliceRows.first, let url = row.url else { return false }
+      guard promptFixturePort != nil, let row = sliceRows.first, row.url != nil else { return false }
       browserCheckSeedID = row.id
       browserCheckPhase = -1
       FileHandle.standardError.write(Data("ararat-trace: \(name) seed-select id=\(row.id)\n".utf8))
-      adapter?.select(id: row.id, url: url)
+      selectCheckSeed(row)
       return false
     }
     if browserCheckPhase == -1 {
@@ -1584,12 +2403,1691 @@ final class Runtime {
       guard permissionResults["midiResult"] == "NotAllowedError", permissionResults["midiState"] == "prompt",
             !tab.checkPermissionPending() else { return }
       let stock = host.checkStockBrowsers()
-      finishBrowserCheck(ok: stock == 0 && tab.checkPermissionShownCount() == 3,
+      let viewlessAnchor = host.checkViewlessBubbleAnchor()
+      let anchorGeometry = host.checkViewlessBubbleAnchorGeometry()
+      let geometryOK = anchorGeometry["initial"] as? Bool == true && anchorGeometry["negative_origin"] as? Bool == true && anchorGeometry["missing_host"] as? Bool == true
+      finishBrowserCheck(ok: stock == 0 && tab.checkPermissionShownCount() == 3 && viewlessAnchor && geometryOK,
         values: ["notifications": "granted", "location": "1", "midi_result": "NotAllowedError",
                  "midi_state": "prompt", "prompt_shown": tab.checkPermissionShownCount(),
-                 "pending": false, "stock_browsers": stock])
+                 "pending": false, "viewless_anchor_empty": viewlessAnchor, "anchor_geometry": anchorGeometry, "stock_browsers": stock])
     default: break
     }
+  }
+
+  func keyboardRead(_ tab: any ARTabAPI, script: Int) {
+    guard !keyboardScriptPending else { return }
+    keyboardScriptPending = true
+    tab.checkKeyboardScript(script) { [weak self] value in
+      MainActor.assumeIsolated { self?.keyboardScriptPending = false; self?.keyboardScriptResult = value }
+    }
+  }
+
+  func keyboardSend(_ host: any ARWindowHostAPI, command: String, key: String, code: UInt16, flags: NSEvent.ModifierFlags, screen: Bool) {
+    if !screen { host.checkKeyboardCommand(command); return }
+    guard let window = NSApp.keyWindow,
+          let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code) else { return }
+    NSApp.sendEvent(event)
+  }
+
+  func keyboardCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    if CommandLine.arguments.contains("--ararat-space-matrix-check") {
+      commandSpaceMatrixTick(host, screen: screen)
+      return
+    }
+    guard preparePromptFixture(host, name: "keyboard"), let port = promptFixturePort else { return }
+    if browserCheckPhase == 35 {
+      guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == browserCheckSeedID }) else { return }
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID })?.url == keyboardSavedURL else {
+        finishBrowserCheck(ok: false, values: ["pinned_close_lost_destination": true]); return
+      }
+      keyboardResults["fullscreen_close"] = true
+      let stock = host.checkStockBrowsers()
+      keyboardResults["stock_browsers"] = stock
+      let required = ["page_ime", "reload", "new_tab_panel", "location_focus", "location_navigated", "today_committed",
+        "pinned_saved", "back", "find_previous", "protocol_requested", "extension_command", "extension_action",
+        "devtools", "forced_search", "default_space_cross_profile", "suggestion_space_cross_profile", "archive_restore", "profile_shortcuts", "inactive_reassignment", "two_window_shortcuts",
+        "two_window_teardown", "inactive_profile_teardown", "profile_reload", "stale_profile_rejected", "stale_search_rejected",
+        "closed_host_rejected", "invalid_targets", "stale_suggestion_actions", "core_menu_collision", "command_suggestions", "suggestion_panel_commands", "suggestion_space_commands", "suggestion_close_tab", "folder_and_move_suggestions", "tab_suggestion", "duplicate", "close", "fullscreen_new", "fullscreen_location",
+        "fullscreen_find_dismissed", "fullscreen_page_escape", "fullscreen_close", "find_pasteboard", "find_zero", "find_visibility", "find_reopen_navigation", "find_devtools_geometry", "find_resized_geometry", "find_tab_guard", "find_background_result", "find_delayed_background", "find_replace_guard", "find_pending_teardown", "find_host_teardown", "find_profile_guard"]
+      let requiredOK = required.allSatisfy { keyboardResults[$0] as? Bool == true }
+      let hiddenWindowSafe = screen || hiddenPopupSafe()
+      let modeOK = screen
+        ? keyboardResults["command_ime"] as? Bool == true && keyboardResults["find_ime_escape"] as? Bool == true &&
+          keyboardResults["devtools_find"] as? Bool == true && keyboardResults["fullscreen_command_marked_escape"] as? Bool == true &&
+          keyboardResults["fullscreen_find_marked_escape"] as? Bool == true && keyboardResults["core_menu_shortcut"] as? Bool == true &&
+          keyboardResults["core_menu_library"] as? Bool == true && keyboardResults["core_menu_reset_width"] as? Bool == true &&
+          keyboardResults["core_menu_pin"] as? Bool == true && keyboardResults["core_menu_space"] as? Bool == true && keyboardResults["core_menu_settings"] as? Bool == true &&
+          keyboardResults["extension_reserved_priority"] as? Bool == true &&
+          keyboardResults["own_field_noncommand"] as? Bool == true &&
+          keyboardResults["chooser_screenshot"] != nil && keyboardResults["restore_screenshot"] != nil
+        : keyboardResults["beforeunload_cancel"] as? Bool == true && keyboardResults["viewless_anchor_empty"] as? Bool == true &&
+          keyboardResults["hidden_settings"] as? Bool == true && keyboardResults["shared_settings"] as? Bool == true &&
+          keyboardResults["settings_edit_target"] as? Bool == true && keyboardResults["settings_space_edit"] as? Bool == true && hiddenWindowSafe
+      let c2 = CommandLine.arguments.contains("--ararat-compositor=c2")
+      let c2OK = !c2 || (keyboardResults["c2_page_attachment"] as? Bool == true &&
+        keyboardResults["c2_find_attachment"] as? Bool == true && keyboardResults["c2_find_resized_attachment"] as? Bool == true &&
+        (!screen || (keyboardResults["c2_page_input_hit"] as? Bool == true && keyboardResults["c2_find_stacking_input"] as? Bool == true)))
+      let caseOK = requiredOK && modeOK && c2OK && stock == 0
+      keyboardResults["hidden_window_safe"] = hiddenWindowSafe
+      keyboardResults["unverified_reach"] = ["core_menu_and_suggestion_reach",
+        "page_only_menu_actions", "find_lifetime_and_geometry"]
+      let scoped = CommandLine.arguments.contains("--ararat-keyboard-main-scope")
+      finishBrowserCheck(ok: scoped && caseOK, values: keyboardResults.merging(["case": "keyboard-main", "u16_complete": false,
+        "case_ok": caseOK]) { _, new in new })
+      return
+    }
+    if (40...68).contains(browserCheckPhase) || [470, 490, 500, 520, 521, 522, 523, 524, 525, 560, 641, 642, 643, 644].contains(browserCheckPhase) {
+      keyboardProfileCheckTick(host, port: port, screen: screen)
+      return
+    }
+    guard
+          let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }) else { return }
+    let baseURL = "http://127.0.0.1:\(port)/keyboard"
+    func send(_ name: String, _ key: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = .command) {
+      keyboardSend(host, command: name, key: key, code: code, flags: flags, screen: screen)
+    }
+    func fail(_ reason: String) {
+      keyboardResults["error"] = reason
+      keyboardResults["phase"] = browserCheckPhase
+      finishBrowserCheck(ok: false, values: keyboardResults)
+    }
+    func bubbleNearAnchor(_ state: [String: Any], frame: NSRect) -> Bool {
+      guard let x = state["anchor_x"] as? CGFloat else { return false }
+      let hostFrame = NSRectFromString(state["host_frame"] as? String ?? "")
+      let rtl = state["rtl"] as? Bool == true
+      let expectedX = rtl ? hostFrame.maxX - 40 : hostFrame.minX + 40
+      return abs(x - expectedX) <= 2 && x >= frame.minX - 32 && x <= frame.maxX + 32 &&
+        frame.maxY <= hostFrame.maxY + 80 && frame.maxY >= hostFrame.maxY - 120
+    }
+    switch browserCheckPhase {
+    case 1:
+      guard tab.url == baseURL, !tab.isLoading else { return }
+      if CommandLine.arguments.contains("--ararat-compositor=c2") {
+        let presentation = host.checkPagePresentation(tab.liveId)
+        guard presentation["compositor"] as? String == "c2", presentation["presented"] as? Bool == true,
+              !screen || presentation["page_hit"] as? Bool == true else { return }
+        keyboardResults["c2_page_attachment"] = true
+        if screen { keyboardResults["c2_page_input_hit"] = true }
+      }
+      keyboardLiveID = tab.liveId
+      guard let target = host.navigationTarget() else { fail("capture navigation target"); return }
+      if !screen {
+        guard host.checkViewlessBubbleAnchor() else { fail("viewless anchor"); return }
+        let geometry = host.checkViewlessBubbleAnchorGeometry()
+        guard geometry["initial"] as? Bool == true, geometry["negative_origin"] as? Bool == true,
+              geometry["missing_host"] as? Bool == true else { fail("viewless anchor geometry"); return }
+        keyboardResults["viewless_anchor_empty"] = true
+        keyboardResults["anchor_geometry"] = geometry
+      }
+      guard !host.navigateURL("http://[", target: target) else { fail("invalid URL accepted"); return }
+      var invalid = target
+      invalid["epoch"] = 0
+      guard !host.navigateURL(baseURL + "?invalid", target: invalid) else { fail("invalid epoch accepted"); return }
+      invalid = target
+      invalid["live"] = "invalid-live-id"
+      guard !host.navigateURL(baseURL + "?invalid", target: invalid) else { fail("invalid live id accepted"); return }
+      invalid = target
+      invalid["item"] = "invalid-item-id"
+      guard !host.navigateURL(baseURL + "?invalid", target: invalid) else { fail("invalid item id accepted"); return }
+      invalid = target
+      invalid["profile"] = "invalid-profile"
+      guard !host.navigateURL(baseURL + "?invalid", target: invalid) else { fail("invalid profile accepted"); return }
+      keyboardResults["invalid_targets"] = true
+      keyboardRead(tab, script: 1)
+      browserCheckPhase = 2
+    case 2:
+      guard let result = keyboardScriptResult else { return }
+      keyboardScriptResult = nil
+      guard result == "ready" else { fail("page IME dispatch"); return }
+      let dispatched = tab.checkKeyboardIME()
+      keyboardResults["ime_diagnostics"] = tab.checkKeyboardIMEState()
+      guard dispatched else { fail("page IME dispatch"); return }
+      browserCheckPhase = 3
+    case 3:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result.contains("漢") {
+          keyboardResults["page_ime"] = true
+          keyboardNavigation = tab.navigationCount
+          send("reload", "r", 15)
+          browserCheckPhase = 4
+          return
+        }
+      }
+      keyboardRead(tab, script: 0)
+    case 4:
+      guard tab.navigationCount > keyboardNavigation, !tab.isLoading else { return }
+      keyboardResults["reload"] = true
+      guard let save = displacedMenuItems["toggle_sidebar"], save.keyEquivalent.isEmpty,
+            let bookmark = displacedMenuItems["pin_tab"], bookmark.keyEquivalent.isEmpty else { fail("core menu collision"); return }
+      keyboardResults["core_menu_collision"] = true
+      if screen && keyboardResults["extension_reserved_priority"] as? Bool != true {
+        guard host.checkReassignProbeCommand(true) else { fail("reassign extension shortcut"); return }
+        keyboardRead(tab, script: 4)
+        browserCheckPhase = 401
+        return
+      }
+      if screen, let container {
+        let before = container.sidebarState
+        keyboardSend(host, command: "", key: "s", code: 1, flags: .command, screen: true)
+        guard container.sidebarState != before else { fail("core menu shortcut did not toggle sidebar"); return }
+        keyboardSend(host, command: "", key: "s", code: 1, flags: .command, screen: true)
+        guard container.sidebarState == before else { fail("core menu shortcut did not restore sidebar"); return }
+        keyboardResults["core_menu_shortcut"] = true
+        guard let sidebar else { fail("library menu target"); return }
+        let library = sidebar.libraryOpen
+        keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
+        guard sidebar.libraryOpen != library else { fail("library menu did not toggle"); return }
+        keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
+        guard sidebar.libraryOpen == library else { fail("library menu did not restore"); return }
+        keyboardResults["core_menu_library"] = true
+        container.resizeHandle.resetWidth()
+        let defaultWidth = container.resizeHandle.sidebarWidth
+        container.resizeHandle.sidebarWidth = defaultWidth + 40
+        guard let item = NSApp.mainMenu?.item(withTitle: "Ararat Commands")?.submenu?.items.first(where: {
+          $0.representedObject as? String == "reset_sidebar_width"
+        }), let action = item.action, NSApp.sendAction(action, to: item.target, from: item),
+              container.resizeHandle.sidebarWidth == defaultWidth else { fail("reset width menu"); return }
+        keyboardResults["core_menu_reset_width"] = true
+        keyboardSend(host, command: "", key: ",", code: 43, flags: .command, screen: true)
+        guard let settingsWindow = (root ?? self).settings?.window, settingsWindow.isVisible,
+              (root ?? self).settingsOwner === self else { fail("settings menu"); return }
+        settingsWindow.orderOut(nil)
+        host.window().makeKeyAndOrderFront(nil)
+        keyboardResults["core_menu_settings"] = true
+      }
+      send("new", "t", 17)
+      browserCheckPhase = 5
+    case 401:
+      guard keyboardScriptResult == "cleared" else { return }
+      keyboardScriptResult = nil
+      keyboardSend(host, command: "", key: "l", code: 37, flags: .command, screen: true)
+      guard commandPresenter == nil else { fail("location intercepted extension shortcut"); return }
+      browserCheckPhase = 402
+    case 402:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result == "probe-command" {
+          guard commandPresenter == nil, host.checkReassignProbeCommand(false) else { fail("restore extension shortcut"); return }
+          keyboardRead(tab, script: 4)
+          browserCheckPhase = 403
+          return
+        }
+      }
+      keyboardRead(tab, script: 3)
+    case 403:
+      guard keyboardScriptResult == "cleared" else { return }
+      keyboardScriptResult = nil
+      keyboardResults["extension_reserved_priority"] = true
+      browserCheckPhase = 4
+    case 5:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      guard host.tabs().count == 1, screen || (!presenter.panel.isVisible && presenter.panel.parent == nil && !host.window().isVisible) else { fail("new tab panel visibility or unexpected tab"); return }
+      keyboardResults["new_tab_panel"] = true
+      presenter.close()
+      openCommandBar(.newTab)
+      guard let newBar = commandPresenter?.controller else { fail("new tab suggestion panel"); return }
+      newBar.commit(Suggestion(title: "New Tab", subtitle: "", url: nil, key: nil, target: .command(id: "new_tab"), score: 0))
+      guard commandPresenter?.controller.isOpen == true, commandPresenter?.controller.mode == .newTab else { fail("new tab suggestion"); return }
+      commandPresenter?.close()
+      openCommandBar(.newTab)
+      guard let editBar = commandPresenter?.controller else { fail("edit URL suggestion panel"); return }
+      editBar.commit(Suggestion(title: "Edit URL", subtitle: "", url: nil, key: nil, target: .command(id: "edit_url"), score: 0))
+      guard commandPresenter?.controller.isOpen == true, commandPresenter?.controller.mode == .editURL else { fail("edit URL suggestion"); return }
+      commandPresenter?.close()
+      keyboardResults["suggestion_panel_commands"] = true
+      guard let container, let sidebar else { fail("workspace command views"); return }
+      let initialSidebar = container.sidebarState
+      let initialLibrary = sidebar.libraryOpen
+      for command in ["toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library"] {
+        let previousSidebar = container.sidebarState
+        let previousLibrary = sidebar.libraryOpen
+        openCommandBar(.newTab)
+        guard let bar = commandPresenter?.controller else { fail("command suggestion panel"); return }
+        bar.commit(Suggestion(title: command, subtitle: "", url: nil, key: nil, target: .command(id: command), score: 0))
+        if command == "toggle_sidebar" && container.sidebarState == previousSidebar { fail("sidebar suggestion did not toggle"); return }
+        if command == "toggle_library" && sidebar.libraryOpen == previousLibrary { fail("library suggestion did not toggle"); return }
+      }
+      guard container.sidebarState == initialSidebar, sidebar.libraryOpen == initialLibrary else { fail("command suggestion toggles"); return }
+      container.resizeHandle.resetWidth()
+      let defaultWidth = container.resizeHandle.sidebarWidth
+      container.resizeHandle.sidebarWidth = defaultWidth + 40
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("reset width suggestion panel"); return }
+      bar.commit(Suggestion(title: "Reset Sidebar Width", subtitle: "", url: nil, key: nil,
+                            target: .command(id: "reset_sidebar_width"), score: 0))
+      guard container.resizeHandle.sidebarWidth == defaultWidth else { fail("reset width suggestion"); return }
+      keyboardResults["command_suggestions"] = true
+      keyboardRead(tab, script: 1)
+      browserCheckPhase = 6
+    case 6:
+      guard let result = keyboardScriptResult else { return }
+      keyboardScriptResult = nil
+      guard result == "ready" else { fail("page selection setup"); return }
+      send("location", "l", 37)
+      if screen {
+        guard let presenter = commandPresenter, presenter.controller.isOpen, presenter.panel.isKeyWindow,
+              let editor = presenter.view.field.currentEditor(), presenter.panel.firstResponder === editor else { fail("synchronous field focus"); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("ararat-paste", forType: .string)
+        keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
+        guard presenter.view.field.stringValue == "ararat-paste" else { fail("immediate paste"); return }
+      }
+      browserCheckPhase = 7
+    case 7:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      guard presenter.controller.mode == .editURL, screen || presenter.controller.query == tab.url else { fail("location prefill"); return }
+      if screen {
+        guard presenter.panel.isKeyWindow, let editor = presenter.view.field.currentEditor(), presenter.panel.firstResponder === editor else { fail("synchronous field focus"); return }
+        let savedBindings = presenter.panel.menuCommandBindings
+        presenter.panel.menuCommandBindings = [KeyBinding(command: "toggle_sidebar", title: "Toggle Sidebar", menu: "View", description: "",
+          defaultKey: nil, key: KeyCombination(key: "w", command: false, control: false, option: true, shift: false),
+          customized: true, conflicting: false, assignedKey: nil)]
+        let oldSidebar = container?.sidebarState
+        editor.selectAll(nil)
+        guard let optionW = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .option,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: presenter.panel.windowNumber,
+          context: nil, characters: "∞", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13) else { fail("own-field key event"); return }
+        NSApp.sendEvent(optionW)
+        guard editor.string == "∞", presenter.controller.isOpen, container?.sidebarState == oldSidebar else { fail("non-command key did not reach own field"); return }
+        presenter.panel.menuCommandBindings = savedBindings
+        keyboardResults["own_field_noncommand"] = true
+        guard let textView = presenter.view.field.currentEditor() as? NSTextView else { fail("command field editor"); return }
+        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
+        guard presenter.controller.isOpen else { fail("marked Return closed command field"); return }
+        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\r", code: 36, flags: .command, screen: true)
+        guard presenter.controller.isOpen else { fail("marked Command-Return closed command field"); return }
+        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+        guard presenter.controller.isOpen else { fail("marked Escape closed command field"); return }
+        textView.unmarkText()
+        keyboardResults["command_ime"] = true
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+      } else { presenter.close() }
+      keyboardResults["location_focus"] = true
+      keyboardRead(tab, script: 0)
+      browserCheckPhase = 8
+    case 8:
+      guard let result = keyboardScriptResult else { return }
+      keyboardScriptResult = nil
+      guard result.contains("\"start\":2"), result.contains("\"end\":6") else { fail("page selection after cancel"); return }
+      send("location", "l", 37)
+      browserCheckPhase = 9
+    case 9:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      if screen {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(baseURL + "?second", forType: .string)
+        keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
+        keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
+      } else {
+        presenter.controller.update(query: baseURL + "?second", allowCompletion: false)
+        presenter.controller.commit(forceNewTab: false)
+      }
+      browserCheckPhase = 10
+    case 10:
+      guard tab.url == baseURL + "?second", !tab.isLoading,
+            snapshot.spaces.flatMap(\.today).first(where: { $0.id == browserCheckSeedID })?.url == baseURL + "?second" else { return }
+      guard tab.liveId == keyboardLiveID else { fail("live identity changed"); return }
+      keyboardResults["location_navigated"] = true
+      keyboardResults["today_committed"] = true
+      if screen {
+        keyboardSend(host, command: "", key: "d", code: 2, flags: .command, screen: true)
+      } else {
+        openCommandBar(.newTab)
+        guard let bar = commandPresenter?.controller else { fail("pin suggestion panel"); return }
+        bar.commit(Suggestion(title: "Pin", subtitle: "", url: nil, key: nil, target: .command(id: "pin_tab"), score: 0))
+      }
+      browserCheckPhase = 101
+    case 101:
+      guard let row = snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID }), let url = row.url else { return }
+      if screen { keyboardResults["core_menu_pin"] = true }
+      keyboardSavedURL = url
+      send("location", "l", 37)
+      browserCheckPhase = 102
+    case 102:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      presenter.controller.update(query: baseURL + "?pinned", allowCompletion: false)
+      presenter.controller.commit(forceNewTab: false)
+      browserCheckPhase = 103
+    case 103:
+      guard tab.url == baseURL + "?pinned", !tab.isLoading else { return }
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID })?.url == keyboardSavedURL else { fail("pinned saved URL changed"); return }
+      keyboardResults["pinned_saved"] = true
+      guard let pin = snapshot.spaces.first(where: { $0.id == "default" })?.pinnedId else { fail("default pinned root"); return }
+      workspace?.edit(.createFolder(id: "keyboard-folder", container: pin, index: 0)) { [weak self] in self?.showResult($0) }
+      browserCheckPhase = 1031
+    case 1031:
+      guard snapshot.spaces.flatMap(\.pinned).contains(where: { $0.id == "keyboard-folder" }) else { return }
+      workspace?.edit(.collapse(id: "keyboard-folder", collapsed: true)) { [weak self] in self?.showResult($0) }
+      browserCheckPhase = 1032
+    case 1032:
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == "keyboard-folder" })?.collapsed == true else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("folder suggestion panel"); return }
+      bar.commit(Suggestion(title: "Folder", subtitle: "", url: nil, key: nil, target: .folder(id: "keyboard-folder", spaceId: "default"), score: 0))
+      browserCheckPhase = 1033
+    case 1033:
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == "keyboard-folder" })?.collapsed == false else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("move folder suggestion panel"); return }
+      bar.commit(Suggestion(title: "Move", subtitle: "", url: nil, key: nil, target: .moveToFolder(id: "keyboard-folder", spaceId: "default"), score: 0))
+      browserCheckPhase = 1034
+    case 1034:
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID })?.parentId == "keyboard-folder" else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("move space suggestion panel"); return }
+      bar.commit(Suggestion(title: "Move", subtitle: "", url: nil, key: nil, target: .moveToSpace(id: "default"), score: 0))
+      browserCheckPhase = 1035
+    case 1035:
+      guard snapshot.spaces.flatMap(\.today).contains(where: { $0.id == browserCheckSeedID }) else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("restore pinned suggestion panel"); return }
+      bar.commit(Suggestion(title: "Pin", subtitle: "", url: nil, key: nil, target: .command(id: "pin_tab"), score: 0))
+      browserCheckPhase = 1036
+    case 1036:
+      guard snapshot.spaces.flatMap(\.pinned).contains(where: { $0.id == browserCheckSeedID }) else { return }
+      keyboardResults["folder_and_move_suggestions"] = true
+      send("back", "[", 33)
+      browserCheckPhase = 104
+    case 104:
+      guard tab.url == baseURL + "?second", !tab.isLoading else { return }
+      send("back", "[", 33)
+      browserCheckPhase = 11
+    case 11:
+      guard tab.url == baseURL, !tab.isLoading else { return }
+      keyboardResults["back"] = true
+      host.checkSetFindPasteboard("ararat-find")
+      send("find", "f", 3)
+      browserCheckPhase = 12
+    case 12:
+      guard let find = container?.findBar, !find.isHidden else { return }
+      guard find.field.stringValue == "ararat-find", host.checkCloseFindEnabled() else { fail("find pasteboard or command state"); return }
+      keyboardResults["find_pasteboard"] = true
+      if screen {
+        guard let editor = find.field.currentEditor() as? NSTextView else { fail("find field focus"); return }
+        editor.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        let ordinal = find.ordinal
+        keyboardSend(host, command: "", key: "\r", code: 36, flags: .command, screen: true)
+        guard !find.isHidden, find.ordinal == ordinal else { fail("marked Command-Return changed find"); return }
+        editor.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+        guard !find.isHidden else { fail("marked Escape closed find"); return }
+        editor.unmarkText()
+        editor.selectAll(nil)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("ararat-find", forType: .string)
+        keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
+        keyboardResults["find_ime_escape"] = true
+      } else {
+        host.findAction("change", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      }
+      keyboardFindRequest = find.requestID
+      host.findAction("change", text: "ararat-no-such-match", selection: NSRange(location: 20, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      browserCheckPhase = 130
+    case 130:
+      guard let find = container?.findBar, find.matches == 0, find.requestID > keyboardFindRequest, find.finalUpdate else { return }
+      keyboardResults["find_zero"] = true
+      keyboardFindRequest = find.requestID
+      host.findAction("change", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      browserCheckPhase = 13
+    case 13:
+      guard let find = container?.findBar, find.matches == 3, find.ordinal > 0, find.requestID > keyboardFindRequest, find.finalUpdate else { return }
+      keyboardResults["find_count"] = find.matches
+      keyboardResults["find_initial"] = find.ordinal
+      host.findAction("next", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      browserCheckPhase = 14
+    case 14:
+      guard let find = container?.findBar, find.ordinal != keyboardResults["find_initial"] as? Int else { return }
+      keyboardResults["find_next"] = find.ordinal
+      host.findAction("previous", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      browserCheckPhase = 15
+    case 15:
+      guard let find = container?.findBar, find.ordinal == keyboardResults["find_initial"] as? Int else { return }
+      if screen {
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+        guard find.isHidden else { fail("Escape did not close find"); return }
+      } else {
+        host.findAction("close", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      }
+      guard !host.checkCloseFindEnabled() else { fail("find command remained enabled after hide"); return }
+      keyboardResults["find_visibility"] = true
+      keyboardResults["find_previous"] = true
+      send("find", "f", 3)
+      browserCheckPhase = 151
+    case 151:
+      guard let find = container?.findBar, !find.isHidden else { return }
+      guard find.field.stringValue == "ararat-find" else { fail("find text lost after reopen"); return }
+      host.checkNavigate(baseURL + "?find-navigation", disposition: "current")
+      browserCheckPhase = 152
+    case 152:
+      guard tab.url == baseURL + "?find-navigation", !tab.isLoading else { return }
+      send("find", "f", 3)
+      browserCheckPhase = 153
+    case 153:
+      guard let find = container?.findBar, !find.isHidden else { return }
+      guard find.field.stringValue == "ararat-find" else { fail("find text lost after navigation"); return }
+      host.findAction("close", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      keyboardResults["find_reopen_navigation"] = true
+      send("back", "[", 33)
+      browserCheckPhase = 154
+    case 154:
+      guard tab.url == baseURL, !tab.isLoading else { return }
+      adapter?.openCommandURL(baseURL + "?find-second", expectedSpace: "default", profile: "Default")
+      browserCheckPhase = 155
+    case 155:
+      guard let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first(where: { $0.url == baseURL + "?find-second" }),
+            let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == row.id }),
+            host.activeItemId() == row.id, !other.isLoading else { return }
+      keyboardFindOtherItem = row.id
+      guard let seed = browserCheckSeedID else { fail("tab suggestion seed"); return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("tab suggestion panel"); return }
+      bar.commit(Suggestion(title: "First tab", subtitle: "", url: baseURL, key: nil, target: .tab(id: seed, spaceId: "default"), score: 0))
+      browserCheckPhase = 1551
+    case 1551:
+      guard host.activeItemId() == browserCheckSeedID else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("return tab suggestion panel"); return }
+      bar.commit(Suggestion(title: "Second tab", subtitle: "", url: baseURL + "?find-second", key: nil,
+                            target: .tab(id: keyboardFindOtherItem, spaceId: "default"), score: 0))
+      browserCheckPhase = 1552
+    case 1552:
+      guard host.activeItemId() == keyboardFindOtherItem else { return }
+      keyboardResults["tab_suggestion"] = true
+      send("find", "f", 3)
+      browserCheckPhase = 156
+    case 156:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardFindOtherItem }),
+            let find = container?.findBar, !find.isHidden else { return }
+      guard find.field.stringValue == "ararat-find" else { fail("global find on new tab"); return }
+      host.findAction("change", text: "stale-background", selection: NSRange(location: 16, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      guard find.field.stringValue == "ararat-find" else { fail("background find changed active field"); return }
+      guard tab.checkHoldFindReply("held-background") else { fail("hold background find reply"); return }
+      let held = other.checkDeliverHeldFindReply()
+      guard held["alive"] as? Bool == true, held["delivered"] as? Bool == true,
+            tab.checkBackgroundFindState()["matches"] as? Int == 19,
+            find.field.stringValue == "ararat-find", host.activeItemId() == keyboardFindOtherItem else {
+        fail("delayed background find changed active field"); return
+      }
+      keyboardResults["find_delayed_background"] = true
+      tab.checkStartBackgroundFind("stale-background")
+      browserCheckPhase = 1560
+    case 1560:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardFindOtherItem }),
+            let find = container?.findBar else { return }
+      let background = tab.checkBackgroundFindState()
+      guard background["text"] as? String == "stale-background", background["final"] as? Bool == true,
+            background["matches"] as? Int == 0, (background["request_id"] as? Int ?? 0) > 0 else { return }
+      guard find.field.stringValue == "ararat-find", host.activeItemId() == keyboardFindOtherItem else { fail("background find result changed active field"); return }
+      keyboardResults["find_background_result"] = true
+      keyboardFindOtherLive = other.liveId
+      guard other.checkHoldFindReply("pending-before-replace") else { fail("hold replacement find reply"); return }
+      guard host.checkReplaceActiveForKeyboard() else { fail("replace find target"); return }
+      browserCheckPhase = 1561
+    case 1561:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardFindOtherItem }),
+            other.liveId == keyboardFindOtherLive, let find = container?.findBar, !tab.checkHeldFindTargetAlive() else { return }
+      let replaced = tab.checkDeliverHeldFindReply()
+      guard replaced["alive"] as? Bool == false, replaced["delivered"] as? Bool == false else { fail("replaced contents retained find reply"); return }
+      guard !["stale-background", "pending-before-replace"].contains(find.field.stringValue) else { fail("stale find result after replacement"); return }
+      keyboardResults["find_replace_guard"] = true
+      if find.isHidden { send("find", "f", 3) }
+      guard !find.isHidden else { fail("find not visible before tab closure"); return }
+      guard other.checkHoldFindReply("pending-before-close") else { fail("hold closing find reply"); return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("close tab suggestion panel"); return }
+      bar.commit(Suggestion(title: "Close Tab", subtitle: "", url: nil, key: nil, target: .command(id: "close_tab"), score: 0))
+      browserCheckPhase = 158
+    case 158:
+      guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardFindOtherItem }),
+            host.activeItemId() == browserCheckSeedID, !tab.checkHeldFindTargetAlive() else { return }
+      let closed = tab.checkDeliverHeldFindReply()
+      guard closed["alive"] as? Bool == false, closed["delivered"] as? Bool == false else { fail("closed contents retained find reply"); return }
+      guard let text = container?.findBar.field.stringValue,
+            !["stale-background", "pending-before-close", "pending-before-replace"].contains(text) else { fail("closed tab changed find field"); return }
+      keyboardResults["find_pending_teardown"] = true
+      keyboardResults["suggestion_close_tab"] = true
+      if container?.findBar.isHidden == false {
+        host.findAction("close", text: "ararat-find", selection: NSRange(location: 0, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      }
+      keyboardResults["find_tab_guard"] = true
+      keyboardRead(tab, script: 2)
+      browserCheckPhase = 16
+    case 16:
+      guard let result = keyboardScriptResult else { return }
+      keyboardScriptResult = nil
+      guard result == "requested" else { fail("protocol registration: \(result)"); return }
+      keyboardResults["protocol_requested"] = true
+      host.checkExtensionAction(5)
+      guard host.checkKeyboardAccelerator(false) else { fail("extension command accelerator"); return }
+      browserCheckPhase = 17
+    case 17:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result == "probe-command" {
+          keyboardResults["extension_command"] = true
+          guard host.checkKeyboardAccelerator(true) else { fail("extension action accelerator"); return }
+          browserCheckPhase = 18
+          return
+        }
+      }
+      keyboardRead(tab, script: 3)
+    case 18:
+      let state = host.checkExtensionActionState()
+      guard (state["loaded"] as? Int ?? 0) > 0 else { return }
+      keyboardResults["extension_action"] = true
+      host.checkExtensionAction(1)
+      browserCheckPhase = 181
+    case 181:
+      guard (host.checkExtensionActionState()["destroyed"] as? Int ?? 0) > 0,
+            !screen || host.window().isKeyWindow else { return }
+      send("devtools", "i", 34, [.command, .option])
+      browserCheckPhase = 19
+    case 19:
+      guard host.checkKeyboardDevTools() else { return }
+      keyboardResults["devtools"] = true
+      host.checkKeyboardCommand("find")
+      guard let find = container?.findBar, !find.isHidden else { fail("find with DevTools"); return }
+      let geometry = host.checkDevToolsState()
+      let page = NSRectFromString(geometry["strategy_page_frame"] as? String ?? "")
+      let overlay = find.convert(find.bounds, to: nil)
+      guard !page.isEmpty, overlay.minX >= page.minX - 2, overlay.maxX <= page.maxX + 2,
+            overlay.minY >= page.minY - 2, overlay.maxY <= page.maxY + 2 else { fail("find outside DevTools page rect"); return }
+      if CommandLine.arguments.contains("--ararat-compositor=c2") {
+        let presentation = host.checkPagePresentation(tab.liveId)
+        guard presentation["compositor"] as? String == "c2", presentation["presented"] as? Bool == true,
+              NSRectFromString(geometry["page_frame"] as? String ?? "") == page else { fail("c2 docked page geometry"); return }
+        keyboardResults["c2_find_attachment"] = true
+        if screen {
+          let root = host.window().contentView
+          let point = NSPoint(x: overlay.midX, y: overlay.midY)
+          let hit = root.flatMap { root in root.superview.flatMap { root.hitTest($0.convert(point, from: nil)) } }
+          guard geometry["page_above"] as? Bool == true, geometry["page_hit"] as? Bool == true,
+                geometry["devtools_hit"] as? Bool == true, hit?.isDescendant(of: find) == true else {
+            fail("c2 find stacking or input"); return
+          }
+          keyboardResults["c2_find_stacking_input"] = true
+        }
+      }
+      keyboardResults["find_devtools_geometry"] = true
+      let window = host.window()
+      let originalFrame = window.frame
+      let (resizeOK, c2ResizeOK): (Bool, Bool) = {
+        defer { window.setFrame(originalFrame, display: false) }
+        window.setFrame(NSRect(x: originalFrame.minX, y: originalFrame.minY, width: max(500, originalFrame.width - 120), height: originalFrame.height), display: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let resized = host.checkDevToolsState()
+        let resizedPage = NSRectFromString(resized["strategy_page_frame"] as? String ?? "")
+        let resizedOverlay = find.convert(find.bounds, to: nil)
+        let contained = window.frame != originalFrame && !resizedPage.isEmpty && resizedOverlay.minX >= resizedPage.minX - 2 && resizedOverlay.maxX <= resizedPage.maxX + 2 &&
+          resizedOverlay.minY >= resizedPage.minY - 2 && resizedOverlay.maxY <= resizedPage.maxY + 2
+        let c2 = !CommandLine.arguments.contains("--ararat-compositor=c2") ||
+          (host.checkPagePresentation(tab.liveId)["presented"] as? Bool == true &&
+           NSRectFromString(resized["page_frame"] as? String ?? "") == resizedPage)
+        return (contained, c2)
+      }()
+      guard resizeOK else { fail("find outside resized DevTools page rect"); return }
+      if CommandLine.arguments.contains("--ararat-compositor=c2") {
+        guard c2ResizeOK else { fail("c2 resized page geometry"); return }
+        keyboardResults["c2_find_resized_attachment"] = true
+      }
+      keyboardResults["find_resized_geometry"] = true
+      host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
+      if screen {
+        guard host.checkFocusDevTools() else { return }
+        keyboardSend(host, command: "", key: "f", code: 3, flags: .command, screen: true)
+        browserCheckPhase = 190
+        return
+      }
+      send("devtools", "i", 34, [.command, .option])
+      browserCheckPhase = 20
+    case 190:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result.contains("\"search\":true") && container?.findBar.isHidden == true {
+          keyboardResults["devtools_find"] = true
+          send("devtools", "i", 34, [.command, .option])
+          browserCheckPhase = 20
+          return
+        }
+      }
+      if !keyboardScriptPending {
+        keyboardScriptPending = true
+        host.checkDevToolsFrontend { [weak self] value in
+          MainActor.assumeIsolated { self?.keyboardScriptPending = false; self?.keyboardScriptResult = value }
+        }
+      }
+    case 20:
+      guard !host.checkKeyboardDevTools() else { return }
+      send("search", "f", 3, [.command, .option])
+      browserCheckPhase = 21
+    case 21:
+      guard let presenter = commandPresenter, presenter.controller.mode == .search else { return }
+      if screen {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("example.com", forType: .string)
+        keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
+        keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
+      } else {
+        presenter.controller.update(query: "example.com", allowCompletion: true)
+        presenter.controller.commit(forceNewTab: false)
+      }
+      browserCheckPhase = 22
+    case 22:
+      guard tab.url.contains("google.com/search?q=example.com") else { return }
+      keyboardResults["forced_search"] = true
+      send("back", "[", 33)
+      browserCheckPhase = 23
+    case 23:
+      guard tab.url == baseURL, !tab.isLoading else { return }
+      if screen {
+        host.checkShowViewlessBubble(0)
+        browserCheckPhase = 230
+        return
+      }
+      keyboardRead(tab, script: 4)
+      browserCheckPhase = 36
+    case 230:
+      let state = host.checkViewlessBubbleState()
+      guard state["visible"] as? Bool == true else { return }
+      let frame = NSRectFromString(state["frame"] as? String ?? "")
+      guard frame.width > 0, frame.height > 0, bubbleNearAnchor(state, frame: frame),
+            let bubble = NSApp.windows.first(where: { $0.isVisible && $0.frame == frame }),
+            let screenshot = promptScreenScreenshot(bubble, name: "keyboard-chooser", withoutShadow: true) else { fail("chooser bubble capture"); return }
+      keyboardResults["chooser_bubble"] = state
+      keyboardResults["chooser_screenshot"] = screenshot
+      host.checkCloseViewlessBubble()
+      browserCheckPhase = 231
+    case 231:
+      guard host.window().isKeyWindow else { return }
+      host.checkShowViewlessBubble(1)
+      browserCheckPhase = 232
+    case 232:
+      let state = host.checkViewlessBubbleState()
+      guard state["visible"] as? Bool == true else { return }
+      let frame = NSRectFromString(state["frame"] as? String ?? "")
+      guard frame.width > 0, frame.height > 0, bubbleNearAnchor(state, frame: frame),
+            let bubble = NSApp.windows.first(where: { $0.isVisible && $0.frame == frame }),
+            let screenshot = promptScreenScreenshot(bubble, name: "keyboard-restore", withoutShadow: true) else { fail("restore bubble capture"); return }
+      keyboardResults["restore_bubble"] = state
+      keyboardResults["restore_screenshot"] = screenshot
+      host.checkCloseViewlessBubble()
+      keyboardRead(tab, script: 4)
+      browserCheckPhase = 36
+    case 36:
+      guard keyboardScriptResult == "cleared" else { return }
+      keyboardScriptResult = nil
+      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, let url = row.url else { fail("named profile seed"); return }
+      keyboardOtherItem = row.id
+      _ = url
+      if screen { keyboardSend(host, command: "", key: "2", code: 19, flags: .control, screen: true) }
+      else { performWorkspaceCommand("show_space_2") }
+      browserCheckPhase = 360
+    case 360:
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      keyboardResults["default_space_cross_profile"] = true
+      if screen { keyboardResults["core_menu_space"] = true }
+      send("find", "f", 3)
+      browserCheckPhase = 368
+    case 368:
+      guard let find = container?.findBar, !find.isHidden,
+            let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }) else { return }
+      guard find.field.stringValue == "ararat-find" else { fail("global find on new profile"); return }
+      host.findAction("change", text: "stale-profile", selection: NSRange(location: 13, length: 0), liveId: tab.liveId, profile: "Default")
+      guard find.field.stringValue == "ararat-find" else { fail("background profile changed find"); return }
+      host.findAction("close", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: other.liveId, profile: "Profile 1")
+      keyboardResults["find_profile_guard"] = true
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("space suggestion panel"); return }
+      bar.commit(Suggestion(title: "Default", subtitle: "", url: nil, key: nil, target: .space(id: "default"), score: 0))
+      browserCheckPhase = 361
+    case 361:
+      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("space suggestion return panel"); return }
+      bar.commit(Suggestion(title: "Named", subtitle: "", url: nil, key: nil, target: .space(id: "named"), score: 0))
+      browserCheckPhase = 362
+    case 362:
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      keyboardResults["suggestion_space_cross_profile"] = true
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("show space command suggestion"); return }
+      bar.commit(Suggestion(title: "Show Space 1", subtitle: "", url: nil, key: nil, target: .command(id: "show_space_1"), score: 0))
+      browserCheckPhase = 3621
+    case 3621:
+      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("return space command suggestion"); return }
+      bar.commit(Suggestion(title: "Show Space 2", subtitle: "", url: nil, key: nil, target: .command(id: "show_space_2"), score: 0))
+      browserCheckPhase = 3622
+    case 3622:
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      keyboardResults["suggestion_space_commands"] = true
+      adapter?.openCommandURL(baseURL + "?restore", expectedSpace: "named", profile: "Profile 1")
+      browserCheckPhase = 363
+    case 363:
+      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first(where: { $0.url == baseURL + "?restore" }),
+            host.activeItemId() == row.id else { return }
+      keyboardRestoreItem = row.id
+      adapter?.close(id: row.id, archive: true)
+      browserCheckPhase = 364
+    case 364:
+      guard snapshot.archive.contains(where: { $0.id == keyboardRestoreItem }),
+            !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }) else { return }
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller else { fail("archive suggestion panel"); return }
+      bar.commit(Suggestion(title: "Restore", subtitle: "", url: nil, key: nil, target: .archive(id: keyboardRestoreItem), score: 0))
+      browserCheckPhase = 365
+    case 365:
+      guard snapshot.selectedId == keyboardRestoreItem, host.activeItemId() == keyboardRestoreItem,
+            (host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem && $0.url == baseURL + "?restore" }) else { return }
+      keyboardResults["archive_restore"] = true
+      adapter?.close(id: keyboardRestoreItem)
+      browserCheckPhase = 366
+    case 366:
+      guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
+            host.activeItemId() == keyboardOtherItem else { return }
+      browserCheckPhase = 40
+    case 24:
+      guard host.tabs().count == 2, let selected = snapshot.selectedId, selected != browserCheckSeedID else { return }
+      keyboardResults["duplicate"] = true
+      host.checkKeyboardCommand("close")
+      browserCheckPhase = 25
+    case 25:
+      guard host.tabs().count == 1, host.activeItemId() == browserCheckSeedID else { return }
+      keyboardResults["close"] = true
+      resetFullscreenProbe()
+      tab.checkFullscreenRequest(true)
+      browserCheckPhase = 26
+    case 26:
+      probeFullscreen(tab)
+      guard fullscreenElement == true, host.checkFullscreenState()["tab"] as? Bool == true else { return }
+      send("new", "t", 17)
+      browserCheckPhase = 27
+    case 27:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      keyboardResults["fullscreen_new"] = true
+      if screen {
+        guard let editor = presenter.view.field.currentEditor() as? NSTextView else { fail("fullscreen command field focus"); return }
+        editor.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+        guard presenter.controller.isOpen, host.checkFullscreenState()["tab"] as? Bool == true else { fail("fullscreen marked command Escape"); return }
+        editor.unmarkText()
+        keyboardResults["fullscreen_command_marked_escape"] = true
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+      }
+      else { presenter.close() }
+      resetFullscreenProbe()
+      browserCheckPhase = 28
+    case 28:
+      probeFullscreen(tab)
+      guard fullscreenElement == true, commandPresenter == nil else { return }
+      send("location", "l", 37)
+      browserCheckPhase = 29
+    case 29:
+      guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      keyboardResults["fullscreen_location"] = true
+      if screen { keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true) }
+      else { presenter.close() }
+      resetFullscreenProbe()
+      browserCheckPhase = 30
+    case 30:
+      probeFullscreen(tab)
+      guard fullscreenElement == true, commandPresenter == nil else { return }
+      send("find", "f", 3)
+      browserCheckPhase = 31
+    case 31:
+      guard let find = container?.findBar, !find.isHidden else { return }
+      if screen {
+        guard let editor = find.field.currentEditor() as? NSTextView else { fail("fullscreen find focus"); return }
+        editor.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+        guard !find.isHidden, host.checkFullscreenState()["tab"] as? Bool == true else { fail("fullscreen marked find Escape"); return }
+        editor.unmarkText()
+        keyboardResults["fullscreen_find_marked_escape"] = true
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+      }
+      else { host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: tab.liveId, profile: host.profileDirectory()) }
+      resetFullscreenProbe()
+      browserCheckPhase = 32
+    case 32:
+      probeFullscreen(tab)
+      guard fullscreenElement == true, container?.findBar.isHidden == true else { return }
+      keyboardResults["fullscreen_find_dismissed"] = true
+      if screen {
+        tab.focusCheckPage()
+        keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
+      } else { host.checkFullscreenAction(0) }
+      resetFullscreenProbe()
+      browserCheckPhase = 33
+    case 33:
+      probeFullscreen(tab)
+      let fullscreenState = host.checkFullscreenState()
+      guard fullscreenElement == false, fullscreenState["transitioning"] as? Bool == false,
+            fullscreenState["window"] as? Bool == false else { return }
+      keyboardResults["fullscreen_page_escape"] = true
+      resetFullscreenProbe()
+      tab.checkFullscreenRequest(true)
+      browserCheckPhase = 34
+    case 34:
+      probeFullscreen(tab)
+      guard fullscreenElement == true else { return }
+      send("close", "w", 13)
+      browserCheckPhase = 35
+    default: break
+    }
+  }
+
+  func commandSpaceMatrixTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    guard let adapter else { return }
+    if spaceMatrixPhase == 0 {
+      do {
+        let seeded = try adapter.session.queue.sync { () -> (WorkspaceSnapshot, [MatrixTarget]) in
+          guard let store = adapter.session.store else { throw NSError(domain: "Ararat.space-matrix", code: 1) }
+          let initial = store.snapshot(windowId: windowID)
+          guard initial.spaces.map(\.id) == ["default", "named"] else { throw NSError(domain: "Ararat.space-matrix", code: 2) }
+          var targets: [MatrixTarget] = []
+          for space in initial.spaces {
+            let rows = (space.today + space.pinned + space.favorites).filter { $0.url != nil }
+            guard rows.count == 1, let row = rows.first, let url = row.url else { throw NSError(domain: "Ararat.space-matrix", code: 3) }
+            targets.append(MatrixTarget(space: space.id, item: row.id, profile: space.profileName, url: url))
+          }
+          for number in 3...9 {
+            _ = try store.createSpace(windowId: windowID, name: "Matrix \(number)", spaceId: "matrix-\(number)")
+            let created = try store.createTab(windowId: windowID, url: "about:blank?matrix=\(number)")
+            guard let space = created.spaces.first(where: { $0.id == "matrix-\(number)" }),
+                  (space.today + space.pinned + space.favorites).filter({ $0.url != nil }).count == 1,
+                  let id = created.selectedId, let row = space.today.first(where: { $0.id == id }), let url = row.url else {
+              throw NSError(domain: "Ararat.space-matrix", code: 4)
+            }
+            targets.append(MatrixTarget(space: space.id, item: id, profile: space.profileName, url: url))
+          }
+          return (store.snapshot(windowId: windowID), targets)
+        }
+        guard seeded.0.spaces.map(\.id) == seeded.1.map(\.space), seeded.1.count == 9,
+              Set(seeded.1.map(\.item)).count == 9 else {
+          finishBrowserCheck(ok: false, values: ["space_matrix_setup": false]); return
+        }
+        matrixTargets = seeded.1
+        spaceMatrixIDs = seeded.0.spaces.map(\.id)
+        spaceMatrixSetup = Self.matrixSnapshotDiagnostics(seeded.0)
+        adapter.refresh()
+        spaceMatrixPhase = 9
+      } catch { finishBrowserCheck(ok: false, values: ["space_matrix_setup_error": "\(error)"]) }
+      return
+    }
+    guard spaceMatrixIDs.count == 9 else { return }
+    if (6...8).contains(spaceMatrixPhase) {
+      let afterClose = spaceMatrixPhase == 8 && spaceMatrixCommandIndex == 10
+      let retained = matrixRetained(host, excluding: afterClose ? matrixTargets.last?.item : nil)
+      let current = afterClose || (matrixTargets.indices.contains(8) && matrixTargets[8].live.map {
+        matrixCurrentTargetReady(host, index: 8, live: $0)
+      } == true)
+      guard !matrixCommandInvariantFailed, retained, current else {
+        matrixCommandInvariantFailed = true
+        return
+      }
+    }
+    if spaceMatrixPhase == 9 {
+      guard let workspace, matrixTargets.indices.contains(matrixSetupIndex), hasUsableHost else { return }
+      let target = matrixTargets[matrixSetupIndex]
+      matrixCommand = nil
+      matrixAcknowledgedLive = nil
+      matrixAcknowledgedEpoch = nil
+      selectionGeneration += 1
+      workspace.cancelPendingSpaceSwitches()
+      let generation = selectionGeneration
+      matrixSetupGeneration = generation
+      adapter.checkSelectionCommand = { [weak self] item, command, opens in
+        guard let self, self.spaceMatrixPhase == 10, self.selectionGeneration == generation,
+              self.hasUsableHost, item == target.item else { return }
+        self.matrixCommand = command
+        self.matrixCommandOpens = opens
+      }
+      spaceMatrixPhase = 10
+      workspace.showSpaceSelectingTab(id: target.space, item: target.item) { [weak self] result in
+        guard let self, self.selectionGeneration == generation, self.hasUsableHost,
+              case .success = result else { return }
+        workspace.snapshot { [weak self] latest in
+          guard let self, self.selectionGeneration == generation, self.hasUsableHost,
+                case .success(let current) = latest, current.shownSpaceId == target.space,
+                current.selectedId == target.item else { return }
+          adapter.invalidateSelection()
+          self.showAndSelect(.success(current), expectedSpace: target.space, selectedItem: target.item)
+          if let index = current.spaces.firstIndex(where: { $0.id == target.space }) {
+            self.sidebar?.showSpaceWithoutNotification(at: index)
+          }
+        }
+      }
+    } else if spaceMatrixPhase == 10 {
+      guard selectionGeneration == matrixSetupGeneration, hasUsableHost, !matrixEpochChanged,
+            let live = matrixAcknowledgedLive, matrixCurrentTargetReady(host, index: matrixSetupIndex, live: live) else { return }
+      if matrixReturning {
+        guard matrixTargets[matrixSetupIndex].live == live, matrixRetained(host) else { return }
+        adapter.checkSelectionCommand = nil
+        spaceMatrixPhase = 1
+      } else {
+        matrixTargets[matrixSetupIndex].live = live
+        if matrixSetupIndex < 8 { matrixSetupIndex += 1; spaceMatrixPhase = 9 }
+        else {
+          guard matrixRetained(host) else { return }
+          matrixReturning = true
+          matrixCommand = nil
+          matrixAcknowledgedLive = nil
+          matrixAcknowledgedEpoch = nil
+          let generation = selectionGeneration + 1
+          matrixSetupGeneration = generation
+          adapter.checkSelectionCommand = { [weak self] item, command, opens in
+            guard let self, self.spaceMatrixPhase == 10, self.selectionGeneration == generation,
+                  self.hasUsableHost, item == self.matrixTargets[8].item else { return }
+            self.matrixCommand = command
+            self.matrixCommandOpens = opens
+          }
+          switchWorkspaceSpace(matrixTargets[8].space)
+        }
+      }
+    } else if spaceMatrixPhase == 1 {
+      guard matrixRetained(host), let live = matrixTargets[8].live,
+            matrixCurrentTargetReady(host, index: 8, live: live) else { return }
+      openCommandBar(.newTab)
+      guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
+      bar.update(query: "Show Space \(spaceMatrixNumber)", allowCompletion: false)
+      spaceMatrixPhase = 2
+    } else if spaceMatrixPhase == 2, let bar = commandPresenter?.controller, bar.isOpen {
+      let expected = "show_space_\(spaceMatrixNumber)"
+      guard let index = bar.result.rows.firstIndex(where: { row in
+        if case .command(let id) = row.target { return id == expected }
+        return false
+      }) else { return }
+      bar.moveSelection(by: index - bar.selectedIndex)
+      bar.commit(forceNewTab: false)
+      spaceMatrixPhase = 3
+    } else if spaceMatrixPhase == 3 {
+      guard matrixRetained(host), spaceMatrixTargetIsDisplayed(host) else { return }
+      spaceMatrixSuggestionPassed.append(spaceMatrixNumber)
+      if spaceMatrixNumber < 9 {
+        spaceMatrixNumber += 1
+        openCommandBar(.newTab)
+        guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
+        bar.update(query: "Show Space \(spaceMatrixNumber)", allowCompletion: false)
+        spaceMatrixPhase = 2
+      } else if screen {
+        spaceMatrixNumber = 1
+        spaceMatrixPhase = 4
+      } else { spaceMatrixPhase = 6 }
+    } else if spaceMatrixPhase == 4 {
+      guard host.window().isKeyWindow else { return }
+      let codes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+      keyboardSend(host, command: "", key: "\(spaceMatrixNumber)", code: codes[spaceMatrixNumber - 1], flags: .control, screen: true)
+      spaceMatrixPhase = 5
+    } else if spaceMatrixPhase == 5 {
+      guard matrixRetained(host), spaceMatrixTargetIsDisplayed(host) else { return }
+      spaceMatrixMenuPassed.append(spaceMatrixNumber)
+      if spaceMatrixNumber < 9 { spaceMatrixNumber += 1; spaceMatrixPhase = 4 }
+      else { spaceMatrixPhase = 6 }
+    } else if spaceMatrixPhase == 6 {
+      let commands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
+      guard commands.indices.contains(spaceMatrixCommandIndex), let container, let sidebar,
+            let binding = defaultKeyBindings().first(where: { $0.command == commands[spaceMatrixCommandIndex] }) else {
+        finishBrowserCheck(ok: false, values: ["command_matrix_setup": false]); return
+      }
+      spaceMatrixSidebarBefore = container.sidebarState
+      spaceMatrixLibraryBefore = sidebar.libraryOpen
+      spaceMatrixBeforeRows = captureCheckRows()
+      spaceMatrixBeforeTabCount = host.tabs().count
+      spaceMatrixBeforeSelected = snapshot.selectedId
+      guard spaceMatrixBeforeRows != nil else { return }
+      if binding.command == "reset_sidebar_width" {
+        container.resizeHandle.resetWidth()
+        spaceMatrixDefaultWidth = container.resizeHandle.sidebarWidth
+        container.resizeHandle.sidebarWidth = spaceMatrixDefaultWidth + 40
+      }
+      if binding.command == "pin_tab" || binding.command == "close_tab" {
+        guard let item = snapshot.selectedId, let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == item }) else { return }
+        spaceMatrixCommandItem = item
+        spaceMatrixCommandLive = active.liveId
+        spaceMatrixWasPinned = snapshot.spaces.flatMap(\.pinned).contains(where: { $0.id == item })
+      }
+      openCommandBar(.newTab)
+      guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
+      bar.update(query: binding.title, allowCompletion: false)
+      spaceMatrixPhase = 7
+    } else if spaceMatrixPhase == 7, let bar = commandPresenter?.controller, bar.isOpen {
+      let commands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
+      let expected = commands[spaceMatrixCommandIndex]
+      guard let index = bar.result.rows.firstIndex(where: { row in
+        if case .command(let id) = row.target { return id == expected }
+        return false
+      }) else { return }
+      bar.moveSelection(by: index - bar.selectedIndex)
+      bar.commit(forceNewTab: false)
+      spaceMatrixPhase = 8
+    } else if spaceMatrixPhase == 8 {
+      let commands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
+      let command = commands[spaceMatrixCommandIndex]
+      guard let container, let sidebar else { return }
+      switch command {
+      case "new_tab", "edit_url":
+        guard let presenter = commandPresenter, presenter.controller.isOpen,
+              presenter.controller.mode == (command == "new_tab" ? .newTab : .editURL) else { return }
+        guard matrixPanelIsSafe(host, screen: screen) else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
+        guard host.tabs().count == spaceMatrixBeforeTabCount, snapshot.selectedId == spaceMatrixBeforeSelected,
+              host.activeItemId() == spaceMatrixBeforeSelected, captureCheckRows() == spaceMatrixBeforeRows else {
+          finishBrowserCheck(ok: false, values: ["command_matrix_unexpected_tab": command]); return
+        }
+        presenter.close()
+      case "toggle_sidebar": guard container.sidebarState != spaceMatrixSidebarBefore else { return }
+      case "toggle_library": guard sidebar.libraryOpen != spaceMatrixLibraryBefore else { return }
+      case "reset_sidebar_width": guard container.resizeHandle.sidebarWidth == spaceMatrixDefaultWidth else { return }
+      case "pin_tab":
+        guard snapshot.spaces.flatMap(\.pinned).contains(where: { $0.id == spaceMatrixCommandItem }) != spaceMatrixWasPinned,
+              host.activeItemId() == spaceMatrixCommandItem,
+              (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == spaceMatrixCommandItem && $0.liveId == spaceMatrixCommandLive }) == true else { return }
+      case "settings":
+        guard let owner = (root ?? self).settings, let window = owner.window,
+              screen ? window.isVisible : (!window.isVisible && !window.isKeyWindow) else { return }
+        guard host.tabs().count == spaceMatrixBeforeTabCount, snapshot.selectedId == spaceMatrixBeforeSelected,
+              host.activeItemId() == spaceMatrixBeforeSelected, captureCheckRows() == spaceMatrixBeforeRows else {
+          finishBrowserCheck(ok: false, values: ["command_matrix_settings_mutated_workspace": true]); return
+        }
+        if screen { window.orderOut(nil); host.window().makeKeyAndOrderFront(nil) }
+      case "close_tab":
+        guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.liveId == spaceMatrixCommandLive }),
+              snapshot.selectedId != spaceMatrixCommandItem else { return }
+      default: return
+      }
+      spaceMatrixCommandsPassed.append(command)
+      spaceMatrixCommandIndex += 1
+      if spaceMatrixCommandIndex == commands.count { finishSpaceMatrix(host, screen: screen) }
+      else { spaceMatrixPhase = 6 }
+    }
+  }
+
+  static func matrixSnapshotDiagnostics(_ value: WorkspaceSnapshot) -> [String: Any] {
+    ["shown": value.shownSpaceId ?? "", "selected": value.selectedId ?? "",
+     "spaces": value.spaces.prefix(12).map { space in
+       ["id": space.id, "profile": space.profileName, "rows": (space.today + space.pinned + space.favorites).prefix(32).map {
+         ["id": $0.id, "url": $0.url ?? "", "unloaded": $0.unloaded] as [String: Any]
+       }] as [String: Any]
+     }, "space_count": value.spaces.count]
+  }
+
+  func matrixDiagnostics() -> [String: Any] {
+    let target = [9, 10].contains(spaceMatrixPhase) && matrixTargets.indices.contains(matrixSetupIndex) ? matrixTargets[matrixSetupIndex].space :
+      spaceMatrixPhase == 1 ? (spaceMatrixIDs.last ?? "") :
+      (spaceMatrixIDs.indices.contains(spaceMatrixNumber - 1) ? spaceMatrixIDs[spaceMatrixNumber - 1] : "")
+    let waiting = [0: "setup", 1: "last_space_and_active", 2: "space_suggestion", 3: "space_presentation",
+                   4: "screen_window_key", 5: "screen_space_presentation", 6: "command_setup",
+                   7: "command_suggestion", 8: "command_effect", 9: "fixture_dispatch", 10: "fixture_completion_and_presentation"]
+    var result: [String: Any] = ["phase": spaceMatrixPhase, "number": spaceMatrixNumber, "target_space": target,
+      "waiting_for": waiting[spaceMatrixPhase] ?? "unknown",
+      "ids": spaceMatrixIDs, "suggestions_passed": spaceMatrixSuggestionPassed, "menu_passed": spaceMatrixMenuPassed,
+      "command_index": spaceMatrixCommandIndex, "commands_passed": spaceMatrixCommandsPassed,
+      "setup": spaceMatrixSetup, "ui": Self.matrixSnapshotDiagnostics(snapshot),
+      "last_transaction": spaceMatrixLastTransaction, "transaction_count": sliceTransactions,
+      "last_transaction_rev": sliceLastRev, "transaction_active": sliceActive ?? ""]
+    result["fixture"] = ["index": matrixSetupIndex + 1, "returning": matrixReturning,
+      "generation": matrixSetupGeneration, "current_generation": selectionGeneration,
+      "command": matrixCommand ?? "", "opens": matrixCommandOpens, "ack_live": matrixAcknowledgedLive ?? "",
+      "ack_epoch": matrixAcknowledgedEpoch as Any? ?? NSNull(),
+      "epoch_changed": matrixEpochChanged,
+      "command_invariant_failed": matrixCommandInvariantFailed,
+      "targets": matrixTargets.map { ["space": $0.space, "item": $0.item, "profile": $0.profile, "live": $0.live ?? ""] }]
+    if let adapter {
+      result["selection"] = adapter.checkSelectionState()
+      let storeState: [String: Any]? = adapter.session.queue.sync {
+        guard let store = adapter.session.store else { return nil }
+        let current = store.snapshot(windowId: windowID)
+        let selected = current.selectedId
+        let targetItems = current.spaces.first(where: { $0.id == target }).map { Array(($0.today + $0.pinned + $0.favorites).prefix(32)) } ?? []
+        return ["snapshot": Self.matrixSnapshotDiagnostics(current),
+                "selected_live": selected.flatMap { store.liveTab(item: $0) } as Any? ?? NSNull(),
+                "target_mappings": Dictionary(uniqueKeysWithValues: Set(targetItems.map(\.id)).sorted().compactMap {
+                  item in store.liveTab(item: item).map { (item, $0) }
+                })]
+      }
+      result["store"] = storeState as Any? ?? NSNull()
+    }
+    if let host {
+      let tabs = (host.tabs() as? [any ARTabAPI] ?? [])
+      result["native"] = ["profile": host.profileDirectory(), "active": host.activeItemId() ?? "",
+        "has_active": host.hasActiveTab(), "tabs": tabs.prefix(32).map {
+          ["live": $0.liveId, "item": $0.itemId ?? "", "loading": $0.isLoading, "url": $0.url] as [String: Any]
+        }]
+      if let activeID = host.activeItemId(), let active = tabs.first(where: { $0.itemId == activeID }) {
+        result["presentation"] = host.checkPagePresentation(active.liveId)
+      }
+    }
+    if let bar = commandPresenter?.controller {
+      result["panel"] = ["open": bar.isOpen, "selected_index": bar.selectedIndex,
+                         "rows": bar.result.rows.prefix(32).map { String(describing: $0.target) }]
+    }
+    return result
+  }
+
+  func matrixPanelIsSafe(_ host: any ARWindowHostAPI, screen: Bool) -> Bool {
+    guard let presenter = commandPresenter, presenter.controller.isOpen else { return false }
+    return screen || (!presenter.panel.isVisible && !presenter.panel.isKeyWindow && presenter.panel.parent == nil &&
+      !host.window().isVisible && !host.window().isKeyWindow)
+  }
+
+  func spaceMatrixTargetIsDisplayed(_ host: any ARWindowHostAPI) -> Bool {
+    let index = spaceMatrixNumber - 1
+    guard matrixTargets.indices.contains(index), let live = matrixTargets[index].live else { return false }
+    return matrixCurrentTargetReady(host, index: index, live: live)
+  }
+
+  static func matrixAcceptedLive(_ transaction: LiveTransaction, applied: Bool, command: String, window: String, target: MatrixTarget) -> String? {
+    guard applied, case .command(let actual) = transaction.cause, actual == command else { return nil }
+    for strip in transaction.strips where strip.window == window {
+      for tab in strip.tabs where tab.item == target.item && strip.active == tab.liveId {
+        let profile: String
+        switch tab.profile { case .default: profile = "Default"; case .named(let name): profile = name }
+        if profile == target.profile { return tab.liveId }
+      }
+    }
+    return nil
+  }
+
+  func recordMatrixTransaction(_ transaction: LiveTransaction, applied: Bool, usableHost: Bool) {
+    if applied, let epoch = matrixEpoch, epoch != transaction.epoch { matrixEpochChanged = true }
+    guard spaceMatrixPhase == 10, selectionGeneration == matrixSetupGeneration, usableHost,
+          matrixTargets.indices.contains(matrixSetupIndex), let command = matrixCommand,
+          let live = Self.matrixAcceptedLive(transaction, applied: applied, command: command,
+              window: windowID, target: matrixTargets[matrixSetupIndex]),
+          !matrixCommandOpens || live == command else { return }
+    matrixAcknowledgedLive = live
+    matrixAcknowledgedEpoch = transaction.epoch
+    if matrixEpoch == nil { matrixEpoch = transaction.epoch }
+  }
+
+  func matrixCurrentTargetReady(_ host: any ARWindowHostAPI, index: Int, live: String) -> Bool {
+    guard matrixTargets.indices.contains(index), let adapter else { return false }
+    let target = matrixTargets[index]
+    let tabs = host.tabs() as? [any ARTabAPI] ?? []
+    guard snapshot.shownSpaceId == target.space, snapshot.selectedId == target.item,
+          host.profileDirectory() == target.profile, host.activeItemId() == target.item,
+          tabs.filter({ $0.itemId == target.item }).count == 1,
+          tabs.filter({ $0.liveId == live }).count == 1,
+          let tab = tabs.first(where: { $0.itemId == target.item && $0.liveId == live }), !tab.isLoading,
+          adapter.session.queue.sync(execute: {
+            guard let store = adapter.session.store else { return false }
+            let current = store.snapshot(windowId: windowID)
+            guard current.shownSpaceId == target.space, current.selectedId == target.item,
+                  let space = current.spaces.first(where: { $0.id == target.space }), space.profileName == target.profile,
+                  let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == target.item }),
+                  !row.unloaded, row.url == target.url,
+                  store.liveTab(item: target.item) == live, store.itemForLive(liveId: live) == target.item,
+                  let profile = store.itemProfile(itemId: target.item) else { return false }
+            switch profile { case .default: return target.profile == "Default"; case .named(let name): return name == target.profile }
+          }) else { return false }
+    let state = host.checkPagePresentation(live)
+    return Self.matrixPagePresented(state, live: live, c2: CommandLine.arguments.contains("--ararat-compositor=c2"),
+                                    screen: browserCheckMode == "screen-keyboard")
+  }
+
+  static func matrixPagePresented(_ state: [String: Any], live: String, c2: Bool, screen: Bool) -> Bool {
+    guard state["live"] as? String == live, state["target"] as? Bool == true,
+          state["presented"] as? Bool == true else { return false }
+    return !c2 || (state["compositor"] as? String == "c2" && state["window"] as? Bool == true &&
+      state["bounds"] as? Bool == true && (!screen || state["page_hit"] as? Bool == true))
+  }
+
+  func matrixRetained(_ host: any ARWindowHostAPI, excluding item: String? = nil) -> Bool {
+    guard matrixTargets.count == 9, !matrixEpochChanged, let adapter else { return false }
+    let tabs = host.tabs() as? [any ARTabAPI] ?? []
+    return adapter.session.queue.sync {
+      guard let store = adapter.session.store else { return false }
+      let current = store.snapshot(windowId: windowID)
+      for target in matrixTargets {
+        if target.item == item { continue }
+        guard let live = target.live,
+              tabs.filter({ $0.itemId == target.item }).count == 1,
+              tabs.filter({ $0.liveId == live }).count == 1,
+              tabs.contains(where: { $0.itemId == target.item && $0.liveId == live }),
+              let space = current.spaces.first(where: { $0.id == target.space }), space.profileName == target.profile,
+              let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == target.item }),
+              !row.unloaded, row.url == target.url,
+              store.liveTab(item: target.item) == live, store.itemForLive(liveId: live) == target.item,
+              let profile = store.itemProfile(itemId: target.item) else { return false }
+        switch profile { case .default: if target.profile != "Default" { return false }
+                         case .named(let name): if name != target.profile { return false } }
+      }
+      return true
+    }
+  }
+
+  func matrixFinalValid(_ host: any ARWindowHostAPI) -> Bool {
+    guard !matrixCommandInvariantFailed, !matrixEpochChanged, matrixTargets.count == 9,
+          let target = matrixTargets.last, let live = target.live, let adapter,
+          matrixRetained(host, excluding: target.item), snapshot.selectedId != target.item,
+          !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == target.item || $0.liveId == live }) else { return false }
+    return adapter.session.queue.sync {
+      guard let store = adapter.session.store else { return false }
+      return store.snapshot(windowId: windowID).selectedId != target.item &&
+        store.liveTab(item: target.item) == nil && store.itemForLive(liveId: live) == nil
+    }
+  }
+
+  func finishSpaceMatrix(_ host: any ARWindowHostAPI, screen: Bool) {
+    let expected = Array(1...9)
+    let expectedCommands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
+    let passed = matrixFinalValid(host) && spaceMatrixSuggestionPassed == expected && (!screen || spaceMatrixMenuPassed == expected) &&
+      spaceMatrixCommandsPassed == expectedCommands && host.checkStockBrowsers() == 0 && (screen || hiddenPopupSafe())
+    finishBrowserCheck(ok: passed, values: ["case": "space-command-matrix", "u16_complete": false,
+      "space_matrix_suggestion": spaceMatrixSuggestionPassed,
+      "space_matrix_menu": spaceMatrixMenuPassed, "indexed_commands": spaceMatrixCommandsPassed,
+      "c2_matrix_attachment": CommandLine.arguments.contains("--ararat-compositor=c2") && passed,
+      "c2_matrix_input_hit": CommandLine.arguments.contains("--ararat-compositor=c2") && screen && passed,
+      "unverified_reach": ["remaining_keyboard_matrix", "runtime_verification"]])
+  }
+
+  func keyboardProfileCheckTick(_ host: any ARWindowHostAPI, port: UInt16, screen: Bool) {
+    if browserCheckPhase == 641 {
+      guard commandPresenter?.controller.isOpen == true, let seed = browserCheckSeedID else { return }
+      adapter?.close(id: seed)
+      browserCheckPhase = 642
+      return
+    }
+    if browserCheckPhase == 642 {
+      guard let seed = browserCheckSeedID, !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == seed }) else { return }
+      adapter?.select(id: seed, url: keyboardSavedURL)
+      browserCheckPhase = 643
+      return
+    }
+    if browserCheckPhase == 643 {
+      guard let seed = browserCheckSeedID, let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }),
+            reopened.liveId != keyboardLiveID, !reopened.isLoading, let bar = commandPresenter?.controller else { return }
+      keyboardLiveID = reopened.liveId
+      let target: SuggestionTarget = keyboardStaleIndex == 0 ? .command(id: "close_tab") :
+        keyboardStaleIndex == 1 ? .command(id: "pin_tab") : .moveToSpace(id: "default")
+      bar.commit(Suggestion(title: "stale", subtitle: "", url: nil, key: nil, target: target, score: 0))
+      workspace?.snapshot { [weak self] result in
+        guard let self, case .success(let value) = result else { return }
+        self.keyboardResults["stale_snapshot_ok"] = value.spaces.first(where: { $0.id == "default" })?.pinned.contains(where: { $0.id == seed }) == true
+      }
+      browserCheckPhase = 644
+      return
+    }
+    if browserCheckPhase == 644 {
+      guard let unchanged = keyboardResults.removeValue(forKey: "stale_snapshot_ok") as? Bool,
+            let seed = browserCheckSeedID else { return }
+      guard unchanged, (host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == seed && $0.liveId == keyboardLiveID }) else {
+        finishBrowserCheck(ok: false, values: ["stale_suggestion_changed_target": keyboardStaleIndex]); return
+      }
+      keyboardStaleIndex += 1
+      if keyboardStaleIndex < 3 {
+        host.checkKeyboardCommand("location")
+        browserCheckPhase = 641
+      } else {
+        keyboardResults["stale_suggestion_actions"] = true
+        if screen { host.checkKeyboardCommand("duplicate"); browserCheckPhase = 24 }
+        else { if let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }) { keyboardRead(reopened, script: 5) }; browserCheckPhase = 65 }
+      }
+      return
+    }
+    if browserCheckPhase == 54 {
+      guard !host.hasBrowser(forProfile: "Profile 1") else { return }
+      guard host.checkKeyboardAccelerator(false), host.checkShortcutActivation() else {
+        finishBrowserCheck(ok: false, values: ["inactive_profile_teardown": false]); return
+      }
+      keyboardResults["inactive_profile_teardown"] = true
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard", expectedSpace: "named", profile: "Profile 1")
+      browserCheckPhase = 55
+      return
+    }
+    if browserCheckPhase == 55 {
+      guard host.profileDirectory() == "Profile 1", host.hasBrowser(forProfile: "Profile 1"), host.activeItemId() != nil,
+            host.extensionActions().contains(where: { $0["id"] as? String == "kmgaadhbnkendcanjninlfmfgehagggl" }) else { return }
+      host.checkExtensionAction(5)
+      guard host.checkReassignedAction() else { finishBrowserCheck(ok: false, values: ["profile_reload_action": false]); return }
+      browserCheckPhase = 56
+      return
+    }
+    if browserCheckPhase == 56 {
+      guard (host.checkExtensionActionState()["loaded"] as? Int ?? 0) > 0 else { return }
+      host.checkExtensionAction(1)
+      browserCheckPhase = 560
+      return
+    }
+    if browserCheckPhase == 560 {
+      guard (host.checkExtensionActionState()["destroyed"] as? Int ?? 0) > 0 else { return }
+      adapter?.windowHost(host, showProfile: "Default")
+      host.checkCloseTabs(forProfile: "Profile 1")
+      browserCheckPhase = 57
+      return
+    }
+    if browserCheckPhase == 57 {
+      guard !host.hasBrowser(forProfile: "Profile 1"), host.profileDirectory() == "Default" else { return }
+      keyboardResults["profile_reload"] = true
+      host.checkKeyboardCommand("location")
+      browserCheckPhase = 58
+      return
+    }
+    if browserCheckPhase == 58 {
+      guard let original = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            let bar = commandPresenter?.controller, bar.isOpen else { return }
+      keyboardNavigation = original.navigationCount
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      bar.update(query: "http://127.0.0.1:\(port)/keyboard?stale", allowCompletion: false)
+      bar.commit(forceNewTab: false)
+      browserCheckPhase = 59
+      return
+    }
+    if browserCheckPhase == 59 {
+      guard commandPresenter == nil, host.hasBrowser(forProfile: "Profile 1"),
+            let original = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }) else { return }
+      guard original.navigationCount == keyboardNavigation, !original.url.contains("stale") else {
+        finishBrowserCheck(ok: false, values: ["stale_target_navigated": true]); return
+      }
+      keyboardResults["stale_profile_rejected"] = true
+      adapter?.windowHost(host, showProfile: "Default")
+      host.checkCloseTabs(forProfile: "Profile 1")
+      browserCheckPhase = 60
+      return
+    }
+    if browserCheckPhase == 60 {
+      guard host.profileDirectory() == "Default" else { return }
+      host.checkKeyboardCommand("search")
+      browserCheckPhase = 61
+      return
+    }
+    if browserCheckPhase == 61 {
+      guard commandPresenter?.controller.mode == .search else { return }
+      host.checkKeyboardCommand("close")
+      browserCheckPhase = 62
+      return
+    }
+    if browserCheckPhase == 62 {
+      guard let seed = browserCheckSeedID,
+            !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == seed }) else { return }
+      adapter?.select(id: seed, url: keyboardSavedURL)
+      browserCheckPhase = 63
+      return
+    }
+    if browserCheckPhase == 63 {
+      guard let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            reopened.liveId != keyboardLiveID, !reopened.isLoading, reopened.url == keyboardSavedURL,
+            let bar = commandPresenter?.controller else { return }
+      keyboardLiveID = reopened.liveId
+      keyboardNavigation = reopened.navigationCount
+      bar.update(query: "example.com", allowCompletion: true)
+      bar.commit(forceNewTab: false)
+      browserCheckPhase = 64
+      return
+    }
+    if browserCheckPhase == 64 {
+      guard commandPresenter == nil, let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }) else { return }
+      guard reopened.navigationCount == keyboardNavigation, reopened.url == keyboardSavedURL else {
+        finishBrowserCheck(ok: false, values: ["stale_search_navigated": true]); return
+      }
+      keyboardResults["stale_search_rejected"] = true
+      keyboardStaleIndex = 0
+      host.checkKeyboardCommand("location")
+      browserCheckPhase = 641
+      return
+    }
+    if browserCheckPhase == 65 {
+      guard keyboardScriptResult == "armed", let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            reopened.checkHasBeforeUnload() else { return }
+      keyboardScriptResult = nil
+      host.checkKeyboardCommand("location")
+      browserCheckPhase = 66
+      return
+    }
+    if browserCheckPhase == 66 {
+      guard let bar = commandPresenter?.controller, bar.isOpen else { return }
+      host.expectCheckDialogs(1)
+      bar.update(query: "http://127.0.0.1:\(port)/keyboard?rejected", allowCompletion: false)
+      bar.commit(forceNewTab: false)
+      browserCheckPhase = 67
+      return
+    }
+    if browserCheckPhase == 67 {
+      guard host.checkDialogCount() > 0, let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            !reopened.isLoading, reopened.url == keyboardSavedURL else { return }
+      guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID })?.url == keyboardSavedURL else {
+        finishBrowserCheck(ok: false, values: ["beforeunload_saved_url_changed": true]); return
+      }
+      keyboardResults["beforeunload_cancel"] = true
+      keyboardRead(reopened, script: 6)
+      browserCheckPhase = 68
+      return
+    }
+    if browserCheckPhase == 68 {
+      guard keyboardScriptResult == "disarmed" else { return }
+      keyboardScriptResult = nil
+      host.checkKeyboardCommand("duplicate")
+      browserCheckPhase = 24
+      return
+    }
+    guard let original = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+          let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }) else { return }
+    switch browserCheckPhase {
+    case 40:
+      guard host.profileDirectory() == "Profile 1", !other.isLoading, other.navigationCount > 0 else { return }
+      host.checkNavigate("http://127.0.0.1:\(port)/keyboard", disposition: "current")
+      browserCheckPhase = 41
+    case 41:
+      guard other.url.contains("/keyboard"), !other.isLoading, host.checkKeyboardAccelerator(false) else { return }
+      browserCheckPhase = 42
+    case 42:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result == "probe-command" {
+          keyboardRead(other, script: 4)
+          browserCheckPhase = 43
+          return
+        }
+      }
+      keyboardRead(other, script: 3)
+    case 43:
+      guard keyboardScriptResult == "cleared" else { return }
+      keyboardScriptResult = nil
+      adapter?.windowHost(host, showProfile: "Default")
+      browserCheckPhase = 44
+    case 44:
+      guard host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID,
+            host.checkKeyboardAccelerator(false) else { return }
+      browserCheckPhase = 45
+    case 45:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result == "probe-command" {
+          keyboardRead(other, script: 3)
+          browserCheckPhase = 46
+          return
+        }
+      }
+      keyboardRead(original, script: 3)
+    case 46:
+      guard let result = keyboardScriptResult else { return }
+      keyboardScriptResult = nil
+      guard result.isEmpty else {
+        keyboardResults["inactive_profile_received_shortcut"] = true
+        finishBrowserCheck(ok: false, values: keyboardResults)
+        return
+      }
+      guard host.checkReassignInactiveAction(), !host.checkReassignedAction(), host.checkKeyboardAccelerator(true) else {
+        keyboardResults["inactive_reassignment"] = false
+        finishBrowserCheck(ok: false, values: keyboardResults)
+        return
+      }
+      browserCheckPhase = 47
+    case 47:
+      let state = host.checkExtensionActionState()
+      guard (state["loaded"] as? Int ?? 0) >= 2 else { return }
+      host.checkExtensionAction(1)
+      browserCheckPhase = 470
+    case 470:
+      guard (host.checkExtensionActionState()["destroyed"] as? Int ?? 0) >= 2 else { return }
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      browserCheckPhase = 48
+    case 48:
+      guard host.profileDirectory() == "Profile 1" else { return }
+      host.checkExtensionAction(5)
+      guard host.checkReassignedAction() else {
+        keyboardResults["reassigned_action_fired"] = false
+        finishBrowserCheck(ok: false, values: keyboardResults)
+        return
+      }
+      browserCheckPhase = 49
+    case 49:
+      guard (host.checkExtensionActionState()["loaded"] as? Int ?? 0) > 0 else { return }
+      host.checkExtensionAction(1)
+      browserCheckPhase = 490
+    case 490:
+      guard (host.checkExtensionActionState()["destroyed"] as? Int ?? 0) > 0 else { return }
+      adapter?.windowHost(host, showProfile: "Default")
+      browserCheckPhase = 50
+    case 50:
+      guard host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+      host.checkExtensionAction(5)
+      guard host.checkKeyboardAccelerator(true) else {
+        keyboardResults["default_action_after_switch"] = false
+        finishBrowserCheck(ok: false, values: keyboardResults)
+        return
+      }
+      browserCheckPhase = 500
+    case 500:
+      guard (host.checkExtensionActionState()["loaded"] as? Int ?? 0) > 0 else { return }
+      host.checkExtensionAction(1)
+      browserCheckPhase = 51
+    case 51:
+      guard (host.checkExtensionActionState()["destroyed"] as? Int ?? 0) > 0 else { return }
+      keyboardResults["profile_shortcuts"] = true
+      keyboardResults["inactive_reassignment"] = true
+      guard host.checkShortcutActivation() else { finishBrowserCheck(ok: false, values: ["shortcut_activation": false]); return }
+      host.checkMenuCommand(true)
+      browserCheckPhase = 52
+    case 52:
+      guard let child = children.first(where: { $0.host != nil }), let childHost = child.host,
+            childHost.hasBrowser() else { return }
+      if screen && !childHost.window().isKeyWindow { childHost.window().makeKeyAndOrderFront(nil); return }
+      childHost.checkNavigate("http://127.0.0.1:\(port)/keyboard?child", disposition: "current")
+      keyboardRead(original, script: 4)
+      browserCheckPhase = 520
+    case 520:
+      guard keyboardScriptResult == "cleared", let childHost = children.first?.host,
+            let childTab = (childHost.tabs() as? [any ARTabAPI])?.first, childTab.url.contains("/keyboard?child"), !childTab.isLoading else { return }
+      keyboardScriptResult = nil
+      keyboardRead(childTab, script: 4)
+      browserCheckPhase = 521
+    case 521:
+      guard keyboardScriptResult == "cleared", let childHost = children.first?.host else { return }
+      keyboardScriptResult = nil
+      guard host.checkShortcutActivation(), childHost.checkShortcutActivation(), childHost.checkKeyboardAccelerator(false) else { return }
+      browserCheckPhase = 522
+    case 522:
+      guard let childHost = children.first?.host, let childTab = (childHost.tabs() as? [any ARTabAPI])?.first else { return }
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result == "probe-command" {
+          keyboardRead(original, script: 3)
+          browserCheckPhase = 523
+          return
+        }
+      }
+      keyboardRead(childTab, script: 3)
+    case 523:
+      guard let result = keyboardScriptResult, let child = children.first, let childHost = child.host,
+            let target = childHost.navigationTarget() else { return }
+      keyboardScriptResult = nil
+      guard result.isEmpty else { finishBrowserCheck(ok: false, values: ["inactive_window_received_shortcut": true]); return }
+      if !screen {
+        let suggestion = Suggestion(title: "Settings", subtitle: "", url: nil, key: nil, target: .command(id: "settings"), score: 0)
+        openCommandBar(.newTab)
+        guard let firstBar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["settings_first_bar": false]); return }
+        firstBar.commit(suggestion)
+        guard let settings, let window = settings.window, !window.isVisible, settingsOwner === self else {
+          finishBrowserCheck(ok: false, values: ["hidden_settings": false]); return
+        }
+        let defaultWidth = child.container?.resizeHandle.sidebarWidth
+        container?.resizeHandle.sidebarWidth = 300
+        child.container?.resizeHandle.sidebarWidth = 330
+        child.openCommandBar(.newTab)
+        guard let secondBar = child.commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["settings_second_bar": false]); return }
+        secondBar.commit(suggestion)
+        guard self.settings?.window === window, settingsOwner === child, !window.isVisible, !window.isKeyWindow else {
+          finishBrowserCheck(ok: false, values: ["shared_settings": false]); return
+        }
+        settings.checkResetSidebarWidth()
+        guard container?.resizeHandle.sidebarWidth == 300,
+              child.container?.resizeHandle.sidebarWidth == defaultWidth else {
+          finishBrowserCheck(ok: false, values: ["settings_wrong_window": true]); return
+        }
+        keyboardResults["hidden_settings"] = true
+        keyboardResults["shared_settings"] = true
+        keyboardResults["settings_edit_target"] = true
+        guard let index = child.snapshot.spaces.firstIndex(where: { $0.id == "named" }) else {
+          finishBrowserCheck(ok: false, values: ["settings_named_space_missing": true]); return
+        }
+        child.sidebar?.showSpace(at: index)
+        browserCheckPhase = 524
+        return
+      }
+      keyboardResults["two_window_shortcuts"] = true
+      guard holdChildFindForTeardown(childHost) else { finishBrowserCheck(ok: false, values: ["find_child_setup": false]); return }
+      childHost.close()
+      guard !childHost.navigateURL("http://127.0.0.1:\(port)/keyboard?closed", target: target) else {
+        finishBrowserCheck(ok: false, values: ["closed_host_navigated": true]); return
+      }
+      keyboardResults["closed_host_rejected"] = true
+      browserCheckPhase = 53
+    case 524:
+      guard let child = children.first, let childHost = child.host, child.snapshot.shownSpaceId == "named",
+            childHost.profileDirectory() == "Profile 1", let settings, let window = settings.window else { return }
+      child.openCommandBar(.newTab)
+      guard let bar = child.commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["settings_profile_bar": false]); return }
+      bar.commit(Suggestion(title: "Settings", subtitle: "", url: nil, key: nil, target: .command(id: "settings"), score: 0))
+      guard self.settings?.window === window, settingsOwner === child, !window.isVisible else {
+        finishBrowserCheck(ok: false, values: ["settings_profile_owner": false]); return
+      }
+      settings.checkRenameShownSpace("U16 named settings")
+      browserCheckPhase = 525
+    case 525:
+      guard let child = children.first, let childHost = child.host,
+            child.snapshot.spaces.first(where: { $0.id == "named" })?.title == "U16 named settings",
+            child.snapshot.spaces.first(where: { $0.id == "default" })?.title == "Default",
+            let target = childHost.navigationTarget() else { return }
+      keyboardResults["settings_space_edit"] = true
+      keyboardResults["two_window_shortcuts"] = true
+      guard holdChildFindForTeardown(childHost) else { finishBrowserCheck(ok: false, values: ["find_child_setup": false]); return }
+      childHost.close()
+      guard !childHost.navigateURL("http://127.0.0.1:\(port)/keyboard?closed", target: target) else {
+        finishBrowserCheck(ok: false, values: ["closed_host_navigated": true]); return
+      }
+      keyboardResults["closed_host_rejected"] = true
+      browserCheckPhase = 53
+    case 53:
+      guard children.allSatisfy({ $0.host == nil }), !original.checkHeldFindTargetAlive() else { return }
+      let held = original.checkDeliverHeldFindReply()
+      guard held["alive"] as? Bool == false, held["delivered"] as? Bool == false,
+            container?.findBar.field.stringValue == keyboardFindTeardownText else {
+        finishBrowserCheck(ok: false, values: ["find_host_teardown": false]); return
+      }
+      keyboardResults["find_host_teardown"] = true
+      if screen && !host.window().isKeyWindow { host.window().makeKeyAndOrderFront(nil); return }
+      guard host.checkShortcutActivation(), host.checkKeyboardAccelerator(false) else { return }
+      keyboardResults["two_window_teardown"] = true
+      host.checkCloseTabs(forProfile: "Profile 1")
+      browserCheckPhase = 54
+    default: break
+    }
+  }
+
+  func holdChildFindForTeardown(_ childHost: any ARWindowHostAPI) -> Bool {
+    guard let active = childHost.activeItemId(),
+          let tab = (childHost.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active }) else { return false }
+    keyboardFindTeardownText = container?.findBar.field.stringValue ?? ""
+    childHost.checkKeyboardCommand("find")
+    return tab.checkHoldFindReply("pending-before-host-close")
   }
 
   func autofillCheckTick(_ host: any ARWindowHostAPI) {
@@ -2198,17 +4696,46 @@ final class Runtime {
       browserCheckPhase = 6
     } else if screen, browserCheckPhase == 6, let popup = popups.first?.host,
               (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
+        guard let rows = captureCheckRows() else { return }
+        quitBefore = rows
+        popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
+        popup.window().makeKeyAndOrderFront(nil)
+        browserCheckPhase = 61
+        return
+      }
       finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
         "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
+    } else if screen, browserCheckPhase == 61, let popup = popups.first?.host,
+              popup.window().isKeyWindow,
+              let tab = (popup.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
+      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
+          context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 62
+    } else if screen, browserCheckPhase == 62, let popup = popups.first?.host,
+              popup.checkPageOnlySaveCount() == 1,
+              let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
+      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      save.cancel(nil)
+      browserCheckPhase = 63
+    } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
+              !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
+      let unchanged = captureCheckRows() == quitBefore
+      finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+        values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
+          "focus_none": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
+          "stock_browsers": host.checkStockBrowsers()])
     }
   }
 
   func incognitoCheckTick(_ host: any ARWindowHostAPI) {
     if browserCheckPhase == 0,
        let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
-       let url = row.url {
+       row.url != nil {
       browserCheckSeedID = row.id
-      adapter?.select(id: row.id, url: url)
+      selectCheckSeed(row)
       browserCheckPhase = 1
     } else if browserCheckPhase == 1, sliceActive == browserCheckSeedID, !host.tabs().isEmpty {
       browserCheckBefore = snapshot
@@ -2218,6 +4745,40 @@ final class Runtime {
       browserCheckPhase = 2
     } else if browserCheckPhase == 2, let popup = popups.first?.host,
               (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      if CommandLine.arguments.contains("--ararat-incognito-window-check") {
+        guard let tabs = popup.tabs() as? [any ARTabAPI], tabs.count == 1, let tab = tabs.first, tab.itemId == nil,
+              let browsers = popup.checkProfileState()["browsers"] as? [[String: Any]], browsers.count == 1,
+              browsers[0]["off_the_record"] as? Bool == true,
+              let profile = browsers[0]["profile_pointer"] as? String, !profile.isEmpty,
+              let browser = browsers[0]["browser_pointer"] as? String, !browser.isEmpty,
+              !tab.liveId.isEmpty, captureCheckRows() == quitBefore else { return }
+        incognitoPrivateLive = tab.liveId
+        incognitoPrivateProfile = profile
+        incognitoPrivateBrowser = browser
+        popup.checkKeyboardCommand("window")
+        browserCheckPhase = 30
+        return
+      }
+      incognitoTabsBefore = popup.tabs().count
+      popup.checkKeyboardCommand("location")
+      popup.checkKeyboardCommand("search")
+      popup.checkKeyboardCommand("new")
+      browserCheckPhase = 21
+    } else if browserCheckPhase == 21, let popup = popups.first?.host,
+              popup.tabs().count > incognitoTabsBefore {
+      guard commandPresenter == nil, snapshot == browserCheckBefore else {
+        finishBrowserCheck(ok: false, values: ["private_command_created_workspace_row": true]); return
+      }
+      popup.checkKeyboardCommand("close")
+      browserCheckPhase = 22
+    } else if browserCheckPhase == 22, let popup = popups.first?.host, popup.tabs().count == incognitoTabsBefore {
+      popup.checkKeyboardCommand("incognito")
+      browserCheckPhase = 25
+    } else if browserCheckPhase == 25, popups.count == 2, let child = popups.last?.host,
+              (child.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      child.checkKeyboardCommand("close")
+      browserCheckPhase = 26
+    } else if browserCheckPhase == 26, popups.count == 1 {
       host.checkNavigateOffTheRecord()
       browserCheckPhase = 3
     } else if browserCheckPhase == 3, popups.contains(where: { popup in
@@ -2226,9 +4787,63 @@ final class Runtime {
       let stock = host.checkStockBrowsers()
       let after = captureCheckRows()
       let rowsUnchanged = snapshot == browserCheckBefore && quitBefore != nil && after == quitBefore
-      finishBrowserCheck(ok: rowsUnchanged && stock == 0, values: ["off_the_record": true,
-        "off_the_record_navigation": true, "rows_unchanged": rowsUnchanged,
+      finishBrowserCheck(ok: rowsUnchanged && stock == 0, values: ["case": "incognito-private", "off_the_record": true,
+        "off_the_record_navigation": true, "native_private_new_tab": true, "private_command_close": true,
+        "private_new_incognito_window": true, "location_search_noop": true, "rows_unchanged": rowsUnchanged,
         "rows_before": quitBefore ?? [], "rows_after": after ?? [], "stock_browsers": stock])
+    } else if browserCheckPhase == 30, children.count == 1, popups.count == 1,
+              let child = children.first, let childHost = child.host, childHost.hasBrowser(),
+              let privateHost = popups.first?.host,
+              let privateTabs = privateHost.tabs() as? [any ARTabAPI], privateTabs.count == 1, let privateTab = privateTabs.first,
+              privateTab.liveId == incognitoPrivateLive, privateTab.itemId == nil,
+              let privateBrowsers = privateHost.checkProfileState()["browsers"] as? [[String: Any]], privateBrowsers.count == 1,
+              let privateBrowser = privateBrowsers.first,
+              privateBrowser["off_the_record"] as? Bool == true,
+              privateBrowser["profile_pointer"] as? String == incognitoPrivateProfile,
+              privateBrowser["browser_pointer"] as? String == incognitoPrivateBrowser,
+              let browsers = childHost.checkProfileState()["browsers"] as? [[String: Any]], browsers.count == 1,
+              browsers[0]["profile"] as? String == "Default", browsers[0]["off_the_record"] as? Bool == false,
+              childHost.profileDirectory() == "Default",
+              let rootBrowser = (host.checkProfileState()["browsers"] as? [[String: Any]])?.first,
+              let rootProfile = rootBrowser["profile_pointer"] as? String, !rootProfile.isEmpty,
+              browsers[0]["profile_pointer"] as? String == rootProfile,
+              let privateProfile = privateBrowser["profile_pointer"] as? String, !privateProfile.isEmpty, privateProfile != rootProfile,
+              let tabs = childHost.tabs() as? [any ARTabAPI], tabs.count == 1,
+              let item = tabs[0].itemId, !item.isEmpty, tabs[0].liveId != incognitoPrivateLive,
+              tabs[0].url.hasPrefix("chrome://newtab/"), childHost.activeItemId() == item,
+              child.popupStoreMappings([item: tabs[0].liveId])[item] == tabs[0].liveId,
+              let before = quitBefore, let rows = captureCheckRows(),
+              Self.checkIncognitoRegularWindowRows(before: before, during: rows,
+                after: rows.filter { $0.count != 3 || $0[0] != "window" || $0[1] != child.windowID },
+                window: child.windowID, item: item) {
+      incognitoWindowRows = rows
+      incognitoWindowID = child.windowID
+      incognitoWindowItem = item
+      incognitoWindowLive = tabs[0].liveId
+      childHost.close()
+      browserCheckPhase = 31
+    } else if browserCheckPhase == 31, children.isEmpty, popups.count == 1,
+              let popup = popups.first?.host,
+              let tabs = popup.tabs() as? [any ARTabAPI],
+              let browsers = popup.checkProfileState()["browsers"] as? [[String: Any]],
+              let adapter,
+              let mapping = adapter.session.queue.sync(execute: { () -> (live: String?, item: String?)? in
+                guard let store = adapter.session.store else { return nil }
+                return (store.liveTab(item: incognitoWindowItem), store.itemForLive(liveId: incognitoWindowLive))
+              }),
+              Self.checkIncognitoCloseState(tabs: tabs.map { (live: $0.liveId, item: $0.itemId) }, browsers: browsers,
+                privateLive: incognitoPrivateLive, privateProfile: incognitoPrivateProfile, privateBrowser: incognitoPrivateBrowser,
+                childLive: incognitoWindowLive, childMapping: mapping.live, childReverseMapping: mapping.item),
+              let before = quitBefore, let during = incognitoWindowRows, let after = captureCheckRows() {
+      let valid = Self.checkIncognitoRegularWindowRows(before: before, during: during, after: after,
+                                                       window: incognitoWindowID, item: incognitoWindowItem)
+      finishBrowserCheck(ok: valid && host.checkStockBrowsers() == 0,
+        values: ["case": "incognito-regular-window", "regular_window_rows": valid,
+                 "child_window_id": incognitoWindowID, "child_item_id": incognitoWindowItem,
+                 "private_live": incognitoPrivateLive, "child_live": incognitoWindowLive,
+                 "child_live_mapping_cleared": true, "private_state_unchanged": true,
+                 "rows_before": before, "rows_during": during,
+                 "rows_after": after, "stock_browsers": host.checkStockBrowsers()])
     }
   }
 
@@ -2303,28 +4918,434 @@ final class Runtime {
       profileCheckPassed = correct
       profileCheckResult = ["states": profileCheckStates, "cookie": cookies,
         "loaded_after_hidden_close": profileCheckLoadedAfterClose, "profile_pointer_before": profileCheckPointer ?? "", "restore_omitted": state["restore_omitted"] ?? false, "devtools_destroyed": state["devtools_destroyed"] ?? false, "stock_browsers": stock, "reopened": true]
+      if CommandLine.arguments.contains("--ararat-multiple-close-check"), let adapter {
+        let child = Runtime(windowID: UUID().uuidString)
+        child.root = self
+        do { try child.start(session: adapter.session, shownSpace: "default") }
+        catch { finishBrowserCheck(ok: false, values: ["multiple_child_setup": "\(error)"]); return }
+        children.append(child)
+        child.adapter?.openCommandURL("about:blank?unrelated", expectedSpace: "default", profile: "Default")
+        adapter.windowHost(host, showProfile: "Default")
+        adapter.openCommandURL("about:blank?multiple", expectedSpace: "default", profile: "Default")
+        browserCheckPhase = 501
+        return
+      }
       for tab in tabs { tab.prepareCheckBeforeUnload() }
       browserCheckPhase = 6
+    } else if browserCheckPhase == 501, let child = children.first, let childHost = child.host,
+              let childItem = child.snapshot.selectedId,
+              let childTab = (childHost.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == childItem && !$0.isLoading }),
+              let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 3, tabs.allSatisfy({ !$0.isLoading }),
+              let first = snapshot.spaces.first(where: { $0.id == "default" })?.today.first(where: { $0.url == "about:blank" }),
+              let second = snapshot.spaces.first(where: { $0.id == "default" })?.today.first(where: { $0.url == "about:blank?multiple" }),
+              tabs.contains(where: { $0.itemId == first.id }), tabs.contains(where: { $0.itemId == second.id }) {
+      multiCloseChildItem = childItem
+      multiCloseChildLive = childTab.liveId
+      multiCloseChildSpace = child.snapshot.shownSpaceId ?? ""
+      multiCloseChildWindowID = child.windowID
+      multiCloseDefaultItems = [first.id, second.id]
+      for tab in tabs { tab.prepareCheckBeforeUnload() }
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      browserCheckPhase = 502
+    } else if browserCheckPhase == 502, host.profileDirectory() == "Profile 1", snapshot.shownSpaceId == "named",
+              let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 3, tabs.allSatisfy({ $0.checkHasBeforeUnload() }),
+              let selected = snapshot.selectedId, host.activeItemId() == selected,
+              let rootTab = tabs.first(where: { $0.itemId == selected }), let rootPage = rootTab.view,
+              let rows = captureCheckRows() {
+      splitCloseExpected = ["Profile 1": selected]
+      multiCloseRootLive = rootTab.liveId
+      multiCloseRootPage = rootPage
+      profileCloseBefore = rows
+      multiCloseOriginal = rows
+      if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") }),
+         let adapter, let childHost = children.first?.host,
+         let row = snapshot.spaces.flatMap(\.today).first(where: { $0.id == selected }), let url = row.url {
+        let stage = String(argument.dropFirst("--ararat-cross-window-reverse-check=".count))
+        guard ["registered", "resolved"].contains(stage),
+              adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: selected) != nil }) else {
+          finishBrowserCheck(ok: false, values: ["cross_window_reverse_setup": false]); return
+        }
+        let previous = adapter.onTransaction
+        adapter.onTransaction = { [weak self] transaction, applied in
+          previous?(transaction, applied)
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+        }
+        adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
+          guard let self, let adapter else { return }
+          guard actual == stage else { resume(); return }
+          adapter.checkSelectionDispatch = nil
+          self.childRaceCommand = command
+          adapter.checkSelectionActivated = { [weak self] id in
+            if id == command { self?.childRaceActivated = true }
+          }
+          childHost.close()
+          resume()
+        }
+        browserCheckPhase = 505
+        adapter.select(id: selected, url: url)
+        return
+      }
+      host.configureProfileCloseCheck(1)
+      browserCheckPhase = 503
+      if let raceArgument = CommandLine.arguments.first(where: { $0 == "--ararat-cross-window-selection-check" || $0.hasPrefix("--ararat-cross-window-selection-check=") }),
+         let child = children.first, let childAdapter = child.adapter,
+         let row = child.snapshot.spaces.flatMap(\.today).first(where: { $0.id == multiCloseChildItem }), let url = row.url {
+        let stageWanted = raceArgument.contains("=") ? String(raceArgument.split(separator: "=", maxSplits: 1).last ?? "") : "registered"
+        guard ["registered", "resolved"].contains(stageWanted) else { finishBrowserCheck(ok: false, values: ["cross_window_setup": false]); return }
+        let previous = childAdapter.onTransaction
+        childAdapter.onTransaction = { [weak self] transaction, applied in
+          previous?(transaction, applied)
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+        }
+        childAdapter.checkSelectionDispatch = { [weak self, weak childAdapter] stage, command, resume in
+          guard let self, let childAdapter else { return }
+          guard stage == stageWanted else { resume(); return }
+          childAdapter.checkSelectionDispatch = nil
+          self.childRaceCommand = command
+          childAdapter.checkSelectionActivated = { [weak self] id in
+            if id == command { self?.childRaceActivated = true }
+          }
+          host.close()
+          resume()
+        }
+        childAdapter.select(id: multiCloseChildItem, url: url)
+      } else { host.close() }
+    } else if browserCheckPhase == 503 {
+      let state = host.checkProfileCloseState()
+      guard state["dialogs"] as? Int == 1, state["closing"] as? Bool == false, multipleCloseChildValid(),
+            let pages = state["dialog_pages"] as? [[String: Any]], pages.count == 1 else { return }
+      if CommandLine.arguments.contains(where: { $0 == "--ararat-cross-window-selection-check" || $0.hasPrefix("--ararat-cross-window-selection-check=") }) {
+        guard childRaceActivated, childRaceCompleted, let command = childRaceCommand,
+              let childAdapter = children.first?.adapter else { return }
+        let wasPending = childAdapter.session.queue.sync { childAdapter.session.store?.liveCancel(commandId: command) }
+        guard wasPending == false else { finishBrowserCheck(ok: false, values: ["cross_window_pending": true]); return }
+        profileCheckResult["cross_window_selection"] = true
+      }
+      guard let rows = captureCheckRows(), let original = multiCloseOriginal,
+            rows.filter({ !["window", "last_selected"].contains($0.first ?? "") }) == original.filter({ !["window", "last_selected"].contains($0.first ?? "") }),
+            multipleClosePagesValid(pages, defaultCount: 1, namedCount: 0),
+            snapshot.selectedId == host.activeItemId() else { finishBrowserCheck(ok: false, values: ["multiple_first_cancel": state]); return }
+      profileCheckResult["multiple_first_cancel"] = state.merging(["selected_matches_active": true, "child_unchanged": true, "workspace_rows_unchanged": true]) { _, new in new }
+      profileCloseBefore = captureCheckRows()
+      host.configureProfileCloseCheck(2)
+      browserCheckPhase = 504
+      host.close()
+    } else if browserCheckPhase == 505, children.isEmpty, childRaceActivated, childRaceCompleted,
+              let command = childRaceCommand, let adapter,
+              snapshot.shownSpaceId == "named", snapshot.selectedId == splitCloseExpected["Profile 1"],
+              host.profileDirectory() == "Profile 1", host.activeItemId() == snapshot.selectedId {
+      let wasPending = adapter.session.queue.sync { adapter.session.store?.liveCancel(commandId: command) }
+      let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == snapshot.selectedId })
+      let presentation = active.map { host.checkPagePresentation($0.liveId) } ?? [:]
+      let attached = presentation["presented"] as? Bool == true
+      let expectedRows = profileCloseBefore?.filter { !($0.count >= 2 && $0[0] == "window" && $0[1] == multiCloseChildWindowID) }
+      let rowsUnchanged = expectedRows != nil && captureCheckRows() == expectedRows
+      let passed = wasPending == false && attached && active?.liveId == multiCloseRootLive && active?.view === multiCloseRootPage &&
+        rowsUnchanged && host.checkStockBrowsers() == 0
+      if passed { host.configureProfileCloseCheck(0) }
+      finishBrowserCheck(ok: passed, values: ["case": "cross-window-reverse", "u16_complete": false,
+        "dispatch_boundary": CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") }).map { String($0.split(separator: "=").last ?? "") } ?? "",
+        "cross_window_reverse": passed, "rows_unchanged": rowsUnchanged,
+        "expected_page_live": multiCloseRootLive, "page_presentation": presentation])
+    } else if browserCheckPhase == 504 {
+      let state = host.checkProfileCloseState()
+      guard state["dialogs"] as? Int == 2, state["closing"] as? Bool == false, multipleCloseChildValid(),
+            let pages = state["dialog_pages"] as? [[String: Any]], pages.count == 2 else { return }
+      guard let rows = captureCheckRows(), let original = multiCloseOriginal,
+            rows.filter({ !["window", "last_selected"].contains($0.first ?? "") }) == original.filter({ !["window", "last_selected"].contains($0.first ?? "") }),
+            multipleClosePagesValid(pages, defaultCount: 2, namedCount: 0),
+            snapshot.selectedId == host.activeItemId() else { finishBrowserCheck(ok: false, values: ["multiple_second_cancel": state]); return }
+      profileCheckResult["multiple_second_cancel"] = state.merging(["selected_matches_active": true, "child_unchanged": true, "workspace_rows_unchanged": true]) { _, new in new }
+      profileCloseBefore = captureCheckRows()
+      host.configureProfileCloseCheck(0)
+      browserCheckPhase = 8
+      host.close()
     } else if browserCheckPhase == 6, let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 2,
               tabs.allSatisfy({ $0.checkHasBeforeUnload() }), let rows = captureCheckRows() {
+      guard let named = snapshot.selectedId,
+            let original = snapshot.spaces.first(where: { $0.id == "default" })?.today.first?.id else { return }
+      splitCloseExpected = ["Default": original, "Profile 1": named]
+      if CommandLine.arguments.contains("--ararat-split-close-check") {
+        guard let adapter else { return }
+        do { try adapter.session.queue.sync { _ = try adapter.session.store?.selectItem(windowId: windowID, id: "close-split") } }
+        catch { finishBrowserCheck(ok: false, values: ["split_setup_error": "\(error)"]); return }
+        adapter.windowHost(host, showProfile: "Default")
+        browserCheckPhase = 60
+        return
+      }
+      profileCloseBefore = rows
+      browserCheckPhase = 7
+      beginCloseRaceCheck(host) { host.configureProfileCloseCheck(2); host.close() }
+    } else if browserCheckPhase == 60, host.profileDirectory() == "Default",
+              snapshot.shownSpaceId == "default", snapshot.selectedId == splitCloseExpected["Default"],
+              host.activeItemId() == snapshot.selectedId,
+              let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == snapshot.selectedId }),
+              let page = active.view, let rows = captureCheckRows() {
+      splitCloseBefore = snapshot
+      splitPanelBeforeRows = rows
+      splitPanelLive = active.liveId
+      splitPanelPage = page
+      splitCloseUnsupportedBefore = unsupportedSplitCount
+      openCommandBar(.newTab)
+      guard let bar = commandPresenter?.controller, bar.isOpen else {
+        finishBrowserCheck(ok: false, values: ["split_panel_open": false]); return
+      }
+      bar.update(query: "Profile 1", allowCompletion: false)
+      browserCheckPhase = 61
+    } else if browserCheckPhase == 61, let bar = commandPresenter?.controller, bar.isOpen {
+      guard let index = bar.result.rows.firstIndex(where: { row in
+        if case .space(let id) = row.target { return id == "named" }
+        return false
+      }) else { return }
+      bar.moveSelection(by: index - bar.selectedIndex)
+      bar.commit(forceNewTab: false)
+      browserCheckPhase = 62
+    } else if browserCheckPhase == 62, unsupportedSplitCount > splitCloseUnsupportedBefore,
+              let before = splitCloseBefore, let rows = captureCheckRows() {
+      guard snapshot == before, rows == splitPanelBeforeRows,
+            host.profileDirectory() == "Default", host.activeItemId() == before.selectedId,
+            let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == before.selectedId }),
+            active.liveId == splitPanelLive, active.view === splitPanelPage, host.hasActiveTab() else {
+        finishBrowserCheck(ok: false, values: ["split_panel_preserved": false]); return
+      }
+      profileCheckResult["split_panel_preserved"] = true
+      if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-selection-supersede=") }),
+         let adapter, let target = splitCloseExpected["Profile 1"], let current = splitCloseExpected["Default"],
+         let targetRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == target }), let targetURL = targetRow.url,
+         let currentRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == current }), let currentURL = currentRow.url {
+        let stage = String(argument.dropFirst("--ararat-selection-supersede=".count))
+        guard ["registered", "resolved"].contains(stage), adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: target) != nil }) else {
+          finishBrowserCheck(ok: false, values: ["selection_supersede_setup": false]); return
+        }
+        splitCloseRaceCommand = nil
+        splitCloseRaceSettled = false
+        splitCloseRaceFailed = false
+        splitCloseRaceActivated = false
+        adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
+          guard let self, let adapter else { return }
+          guard actual == stage else { resume(); return }
+          adapter.checkSelectionDispatch = nil
+          self.splitCloseRaceCommand = command
+          adapter.checkSelectionActivated = { [weak self] id in
+            if id == command { self?.splitCloseRaceActivated = true }
+          }
+          adapter.select(id: current, url: currentURL)
+          resume()
+        }
+        adapter.select(id: target, url: targetURL)
+        browserCheckPhase = 66
+        return
+      }
+      if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-committed-switch-race=") }),
+         let adapter {
+        let kind = String(argument.dropFirst("--ararat-committed-switch-race=".count))
+        guard ["space", "tab"].contains(kind), let target = splitCloseExpected["Profile 1"] else {
+          finishBrowserCheck(ok: false, values: ["committed_switch_setup": false]); return
+        }
+        if kind == "space" {
+          do {
+            try adapter.session.queue.sync {
+              guard let store = adapter.session.store else { throw NSError(domain: "Ararat.check", code: 1) }
+              _ = try store.showSpaceSelectingTab(windowId: windowID, spaceId: "named", itemId: target)
+              _ = try store.showSpaceSelecting(windowId: windowID, spaceId: "default")
+            }
+          } catch { finishBrowserCheck(ok: false, values: ["committed_switch_setup": "\(error)"]); return }
+          adapter.refresh()
+        }
+        browserCheckPhase = 64
+        return
+      }
+      if CommandLine.arguments.contains("--ararat-empty-close-check"), let adapter {
+        do {
+          _ = try adapter.session.queue.sync {
+            try adapter.session.store?.createSpace(windowId: windowID, name: "Empty", spaceId: "close-empty")
+          }
+        } catch { finishBrowserCheck(ok: false, values: ["empty_setup_error": "\(error)"]); return }
+        adapter.refresh()
+        browserCheckPhase = 63
+        return
+      }
+      profileCloseBefore = rows
+      browserCheckPhase = 7
+      beginCloseRaceCheck(host) { host.configureProfileCloseCheck(2); host.close() }
+    } else if browserCheckPhase == 66, selectionRaceSettled(), let before = splitCloseBefore,
+              let rows = captureCheckRows() {
+      guard !splitCloseRaceFailed, snapshot == before, rows == splitPanelBeforeRows,
+            host.profileDirectory() == "Default", host.activeItemId() == before.selectedId,
+            let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == before.selectedId }),
+            active.liveId == splitPanelLive, active.view === splitPanelPage else {
+        finishBrowserCheck(ok: false, values: ["selection_supersede_failed": true]); return
+      }
+      profileCheckResult["selection_supersession"] = true
       profileCloseBefore = rows
       host.configureProfileCloseCheck(2)
       browserCheckPhase = 7
       host.close()
+    } else if browserCheckPhase == 63, snapshot.shownSpaceId == "close-empty", snapshot.selectedId == nil,
+              host.profileDirectory() == "Default", !host.hasActiveTab(), let rows = captureCheckRows() {
+      splitCloseBefore = snapshot
+      profileCloseBefore = rows
+      host.configureProfileCloseCheck(2)
+      browserCheckPhase = 7
+      host.close()
+    } else if browserCheckPhase == 64, snapshot.shownSpaceId == "default",
+              host.profileDirectory() == "Default", let adapter, let workspace,
+              let target = splitCloseExpected["Profile 1"] {
+      let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-committed-switch-race=") }) ?? ""
+      let kind = String(argument.dropFirst("--ararat-committed-switch-race=".count))
+      workspace.checkSpaceSwitchCompletion = { [weak self, weak workspace, weak adapter] actual, resume in
+        guard let self, let workspace, let adapter else { return }
+        guard actual == kind else { resume(); return }
+        workspace.checkSpaceSwitchCompletion = nil
+        let committed = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: self.windowID) }
+        guard let committed, committed.shownSpaceId == "named", committed.selectedId == target,
+              host.profileDirectory() == "Default", let rows = self.captureCheckRows() else {
+          self.finishBrowserCheck(ok: false, values: ["committed_switch_before_close": false]); return
+        }
+        self.committedSwitchRace = true
+        self.splitCloseBefore = committed
+        self.profileCloseBefore = rows
+        host.configureProfileCloseCheck(2)
+        self.browserCheckPhase = 7
+        host.close()
+        resume()
+      }
+      browserCheckPhase = 65
+      if kind == "space" {
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == "named" }) else { return }
+        sidebar?.showSpace(at: index)
+      } else {
+        openCommandBar(.newTab)
+        guard let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["committed_tab_panel": false]); return }
+        bar.commit(Suggestion(title: "Profile 1 tab", subtitle: "", url: nil, key: nil,
+                              target: .tab(id: target, spaceId: "named"), score: 0))
+      }
     } else if browserCheckPhase == 7 {
       let closeState = host.checkProfileCloseState()
       guard closeState["dialogs"] as? Int == 2, closeState["closing"] as? Bool == false else { return }
       let after = captureCheckRows()
-      let rowsKept = after?.filter { $0.first != "window" } == profileCloseBefore?.filter { $0.first != "window" } && after != nil
-      let valid = closeState["browsers"] as? Int == 2 && closeState["closed"] as? Bool == false &&
+      guard let after else { return }
+      guard profileCloseAfterPrevious == after else { profileCloseAfterPrevious = after; return }
+      guard selectionRaceSettled() else { return }
+      let rowsKept = after.filter { $0.first != "window" } == profileCloseBefore?.filter { $0.first != "window" }
+      let expectedProfile = committedSwitchRace ? "Profile 1" : "Default"
+      let splitOK = splitCloseBefore == nil || (after == profileCloseBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
+        snapshot.selectedId == splitCloseBefore?.selectedId && host.profileDirectory() == expectedProfile &&
+        (snapshot.selectedId == nil ? !host.hasActiveTab() : host.activeItemId() == snapshot.selectedId) && splitClosePagesMatch(closeState))
+      let valid = closeState["browsers"] as? Int == 2 && closeState["closed"] as? Bool == false && splitOK &&
+        splitClosePagesMatch(closeState) && !splitCloseRaceFailed &&
         closeState["close_cancelled"] as? Int == 1 &&
         closeState["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"] && rowsKept
-      profileCloseCancelled = closeState.merging(["rows_unchanged": rowsKept, "host_open": true]) { _, new in new }
+      profileCloseCancelled = closeState.merging(["rows_unchanged": rowsKept, "host_open": true,
+        "split_cancel_restored": splitOK,
+        "selection_race_settled": splitCloseRaceSettled, "selection_race_activated": splitCloseRaceActivated,
+        "selection_race_failed": splitCloseRaceFailed]) { _, new in new }
       profileCheckPassed = profileCheckPassed && valid
-      host.configureProfileCloseCheck(0)
+      if committedSwitchRace { profileCheckResult["committed_switch_race"] = valid }
       browserCheckPhase = 8
-      host.close()
+      beginCloseRaceCheck(host) { host.configureProfileCloseCheck(0); host.close() }
     }
+  }
+
+  func beginCloseRaceCheck(_ host: any ARWindowHostAPI, close: @escaping () -> Void) {
+    let prefix = "--ararat-selection-race="
+    guard let value = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }) else { close(); return }
+    let stage = String(value.dropFirst(prefix.count))
+    splitCloseRaceCommand = nil
+    splitCloseRaceSettled = false
+    splitCloseRaceFailed = false
+    splitCloseRaceActivated = false
+    guard ["registered", "resolved"].contains(stage), let adapter, let item = splitCloseExpected["Profile 1"] ?? snapshot.selectedId,
+          let row = snapshot.spaces.flatMap({ $0.today + $0.pinned + $0.favorites }).first(where: { $0.id == item }),
+          let url = row.url, adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: item) != nil }) else {
+      if quitMode != nil { quitTimedOut = true; finishQuitCheck(exitCode: 1) }
+      else { finishBrowserCheck(ok: false, values: ["selection_race_setup": false]) }
+      return
+    }
+    adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
+      guard let self, let adapter else { return }
+      guard actual == stage else { resume(); return }
+      adapter.checkSelectionDispatch = nil
+      self.splitCloseRaceCommand = command
+      adapter.checkSelectionActivated = { [weak self] id in
+        if id == command { self?.splitCloseRaceActivated = true }
+      }
+      close()
+      resume()
+    }
+    adapter.select(id: item, url: url)
+  }
+
+  func selectionRaceSettled() -> Bool {
+    guard CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-race=") || $0.hasPrefix("--ararat-selection-supersede=") }) else { return true }
+    if splitCloseRaceSettled { return true }
+    guard let command = splitCloseRaceCommand, let adapter else { return false }
+    let wasPending = adapter.session.queue.sync { adapter.session.store?.liveCancel(commandId: command) }
+    guard let wasPending else { return false }
+    splitCloseRaceFailed = wasPending || splitCloseRaceActivated
+    splitCloseRaceSettled = true
+    return splitCloseRaceSettled
+  }
+
+  func splitClosePagesMatch(_ state: [String: Any]) -> Bool {
+    guard let pages = state["dialog_pages"] as? [[String: Any]], pages.count == 2 else { return false }
+    return pages.allSatisfy { page in
+      guard let profile = page["profile"] as? String else { return false }
+      return page["item"] as? String == splitCloseExpected[profile] &&
+        page["active"] as? Bool == true && page["presented"] as? Bool == true
+    } && Set(pages.compactMap { $0["profile"] as? String }) == Set(splitCloseExpected.keys)
+  }
+
+  func multipleCloseChildValid() -> Bool {
+    guard let child = children.first, let host = child.host,
+          child.snapshot.shownSpaceId == multiCloseChildSpace, child.snapshot.selectedId == multiCloseChildItem,
+          host.activeItemId() == multiCloseChildItem,
+          let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == multiCloseChildItem }) else { return false }
+    return tab.liveId == multiCloseChildLive && host.checkPagePresentation(tab.liveId)["presented"] as? Bool == true &&
+      !host.isClosing() && !host.isClosingAll()
+  }
+
+  static func multipleQuitSetupItems(snapshot: WorkspaceSnapshot, expected: [String: String],
+                                      rootTabs: [(item: String?, live: String, loading: Bool)],
+                                      childItem: String, childLive: String, mappings: [String: String],
+                                      reverse: [String: String], profiles: [String: String]) -> [String]? {
+    guard let first = expected["Default"], !first.isEmpty, let named = expected["Profile 1"], !named.isEmpty,
+          let defaultSpace = snapshot.spaces.first(where: { $0.id == "default" && $0.profileName == "Default" }),
+          let namedSpace = snapshot.spaces.first(where: { $0.id == "named" && $0.profileName == "Profile 1" }),
+          defaultSpace.today.contains(where: { $0.id == first && $0.url != nil }),
+          namedSpace.today.contains(where: { $0.id == named && $0.url != nil }),
+          let second = defaultSpace.today.first(where: { $0.url == "about:blank?multiple" })?.id,
+          defaultSpace.today.contains(where: { $0.id == childItem && $0.url == "about:blank?unrelated" }),
+          !second.isEmpty, !childItem.isEmpty, Set([first, second, named, childItem]).count == 4, !childLive.isEmpty,
+          rootTabs.count == 3, rootTabs.allSatisfy({ !$0.loading && !$0.live.isEmpty && $0.item != nil }),
+          Set(rootTabs.compactMap(\.item)) == Set([first, second, named]),
+          Set(rootTabs.map(\.live)).count == 3, !rootTabs.contains(where: { $0.live == childLive }) else { return nil }
+    for tab in rootTabs {
+      guard let item = tab.item, mappings[item] == tab.live, reverse[tab.live] == item,
+            profiles[item] == (item == named ? "Profile 1" : "Default") else { return nil }
+    }
+    guard mappings[childItem] == childLive, reverse[childLive] == childItem, profiles[childItem] == "Default" else { return nil }
+    return [first, second]
+  }
+
+  func multipleClosePagesValid(_ pages: [[String: Any]], defaultCount: Int, namedCount: Int) -> Bool {
+    let defaults = pages.filter { $0["profile"] as? String == "Default" }
+    let named = pages.filter { $0["profile"] as? String == "Profile 1" }
+    return defaults.count == defaultCount && named.count == namedCount && defaults.count + named.count == pages.count &&
+      Set(defaults.compactMap { $0["item"] as? String }).count == defaultCount &&
+      defaults.allSatisfy { page in
+        guard let item = page["item"] as? String else { return false }
+        return multiCloseDefaultItems.contains(item) && page["active"] as? Bool == true && page["presented"] as? Bool == true
+      } && named.allSatisfy { page in
+        page["item"] as? String == splitCloseExpected["Profile 1"] &&
+          page["active"] as? Bool == true && page["presented"] as? Bool == true
+      }
+  }
+
+  func multipleClosePagesValidInAnyOrder(_ pages: [[String: Any]]) -> Bool {
+    let defaults = pages.filter { $0["profile"] as? String == "Default" }.count
+    let named = pages.filter { $0["profile"] as? String == "Profile 1" }.count
+    return defaults <= 2 && named <= 1 && multipleClosePagesValid(pages, defaultCount: defaults, namedCount: named)
   }
 
   func extensionScreenTick(_ host: any ARWindowHostAPI) {
@@ -2415,7 +5436,50 @@ final class Runtime {
       let stock = host.checkStockBrowsers()
       devtoolsResults["api_popup"] = true
       devtoolsResults["stock_browsers"] = stock
+      if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
+        guard stock == 0, devtoolsResults["placed_below"] as? Bool == true,
+              (devtoolsResults["anchor_gap"] as? CGFloat ?? .infinity) <= 24,
+              devtoolsResults["aligned_with_button"] as? Bool == true,
+              devtoolsResults["menu_screenshot"] != nil, devtoolsResults["floating_screenshot"] != nil,
+              devtoolsResults["sidebar_state_at_invocation"] as? String == "floating",
+              devtoolsResults["sidebar_state_during_menu"] as? String == "floating",
+              devtoolsResults["sidebar_state_after_selection"] as? String == "hidden" else {
+          finishBrowserCheck(ok: false, values: devtoolsResults); return
+        }
+        host.checkExtensionAction(1)
+        browserCheckPhase = 60
+        return
+      }
       finishBrowserCheck(ok: stock == 0 && devtoolsResults["placed_below"] as? Bool == true && (devtoolsResults["anchor_gap"] as? CGFloat ?? .infinity) <= 24 && devtoolsResults["aligned_with_button"] as? Bool == true && devtoolsResults["menu_screenshot"] != nil && devtoolsResults["floating_screenshot"] != nil && devtoolsResults["sidebar_state_at_invocation"] as? String == "floating" && devtoolsResults["sidebar_state_during_menu"] as? String == "floating" && devtoolsResults["sidebar_state_after_selection"] as? String == "hidden", values: devtoolsResults)
+    } else if browserCheckPhase == 60, (state["destroyed"] as? Int ?? 0) >= 2 {
+      tab.checkExtensionPopupWindow(false)
+      browserCheckPhase = 61
+    } else if browserCheckPhase == 61, let popup = popups.first?.host, popup.checkIsExtensionAppPopup(),
+              let rows = captureCheckRows() {
+      quitBefore = rows
+      popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
+      popup.window().makeKeyAndOrderFront(nil)
+      browserCheckPhase = 62
+    } else if browserCheckPhase == 62, let popup = popups.first?.host, popup.window().isKeyWindow,
+              let page = (popup.tabs() as? [any ARTabAPI])?.first, page.title == "Ararat save check", !page.isLoading {
+      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
+          context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 63
+    } else if browserCheckPhase == 63, let popup = popups.first?.host, popup.checkPageOnlySaveCount() == 1,
+              let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
+      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      save.cancel(nil)
+      browserCheckPhase = 64
+    } else if browserCheckPhase == 64, let popup = popups.first?.host,
+              !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
+      let unchanged = captureCheckRows() == quitBefore
+      devtoolsResults["page_only_save"] = true
+      devtoolsResults["app_popup"] = popup.checkIsExtensionAppPopup()
+      devtoolsResults["rows_unchanged"] = unchanged
+      finishBrowserCheck(ok: unchanged && popup.checkIsExtensionAppPopup() && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+                         values: devtoolsResults)
     }
   }
 
@@ -2478,18 +5542,40 @@ final class Runtime {
               let data = tab.title.data(using: .utf8),
               let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let result = report["popupResult"] as? [String: Any], result["type"] as? String == "popup" {
+      popup.checkKeyboardCommand("window")
+      browserCheckPhase = 20
+    } else if browserCheckPhase == 20, let child = children.first(where: { $0.host != nil }),
+              let childHost = child.host, childHost.hasBrowser() {
+      childHost.close()
+      browserCheckPhase = 21
+    } else if browserCheckPhase == 21, children.allSatisfy({ $0.host == nil }), let popup = popups.first?.host {
+      popup.checkKeyboardCommand("incognito")
+      browserCheckPhase = 22
+    } else if browserCheckPhase == 22, popups.count == 2, let privateHost = popups.last?.host,
+              (privateHost.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+      privateHost.checkKeyboardCommand("close")
+      browserCheckPhase = 23
+    } else if browserCheckPhase == 23, popups.count == 1 {
+      browserCheckBefore = snapshot
       browserCheckPhase = 3
       tab.checkExtensionPopupWindow(true)
     } else if browserCheckPhase == 3, popups.isEmpty,
               let data = tab.title.data(using: .utf8),
               let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let result = report["popupResult"] as? [String: Any], result["removed"] as? Bool == true {
+      browserCheckPhase = 4
+      tab.checkExtensionPopupWindow(false)
+    } else if browserCheckPhase == 4, let popup = popups.first?.host, popup.checkIsExtensionAppPopup() {
+      popup.checkKeyboardCommand("close")
+      browserCheckPhase = 5
+    } else if browserCheckPhase == 5, popups.isEmpty {
       let before = browserCheckBefore?.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
       let after = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
       let stock = host.checkStockBrowsers()
       let unchanged = before == after
       finishBrowserCheck(ok: unchanged && stock == 0 && hiddenPopupSafe(),
-        values: ["app_popup": true, "windows_type": "popup", "popup_removed": true,
+        values: ["app_popup": true, "windows_type": "popup", "popup_removed": true, "command_close": true,
+                 "native_new_window": true, "native_new_incognito_window": true,
                  "rows_unchanged": unchanged, "stock_browsers": stock])
     }
   }
@@ -2771,6 +5857,7 @@ final class Runtime {
   }
 
   func finishBrowserCheck(ok: Bool, values: [String: Any]) {
+    let ok = ok && (host?.checkDialogIntegrity() ?? true)
 
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)
@@ -2812,17 +5899,57 @@ final class Runtime {
       result["focus_trace_dropped"] = fullscreenFocusTraceDropped
       result["menu_dispatch"] = fullscreenMenuDispatch
     }
+    if browserCheckMode == "screen-keyboard" { result["check"] = "keyboard"; result["screen"] = "keyboard" }
+    if browserCheckMode == "incognito" {
+      result.merge(incognitoResultIdentity(check: "incognito", arguments: CommandLine.arguments)) { _, new in new }
+    }
+    if result["case"] == nil {
+      if CommandLine.arguments.contains("--ararat-space-matrix-check") { result["case"] = "space-command-matrix" }
+      else if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") }) { result["case"] = "cross-window-reverse" }
+      else if browserCheckMode == "keyboard" || browserCheckMode == "screen-keyboard" { result["case"] = "keyboard-main" }
+    }
+    result["check_flags"] = coverageFlags()
+    result["compositor"] = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+    if CommandLine.arguments.contains("--ararat-split-close-check"), browserCheckMode == "profiles",
+       !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-") || $0.hasPrefix("--ararat-committed-switch-race=") }) {
+      result["case"] = CommandLine.arguments.contains("--ararat-empty-close-check") ? "close-empty" : "close-split"
+    }
+    result["requested_direction"] = CommandLine.arguments.contains("--force-ui-direction=rtl") ? "rtl" : "default"
+    result["selection_confirm_race"] = splitCloseConfirmRaceOK
     result["ok"] = ok
     result["exit"] = ok ? 0 : 1
     if result["stock_browsers"] == nil { result["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock }
     result["phase"] = browserCheckPhase
     result["attempts"] = browserCheckAttempts
     result["style_mask"] = host?.window().styleMask.rawValue ?? browserCheckStyleMask
-    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
-       let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
-    if let symbol = dlsym(Launcher.handle, "AraratFinishSliceCheck") {
-      unsafeBitCast(symbol, to: (@convention(c) (Bool) -> Void).self)(ok)
+    let traceTeardown = browserCheckMode == "profiles" && CommandLine.arguments.contains {
+      $0.hasPrefix("--ararat-cross-window-reverse-check=")
     }
+    if traceTeardown {
+      let deadline = TeardownDeadline()
+      Launcher.teardownDeadline = deadline
+      deadline.start(seconds: 30)
+    }
+    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+       let line = String(data: data, encoding: .utf8) {
+      print(line); fflush(stdout)
+      if traceTeardown { FileHandle.standardError.write(Data("ararat-teardown: result emitted\n".utf8)) }
+    } else if traceTeardown {
+      Launcher.teardownFailure = true
+      FileHandle.standardError.write(Data("ararat-teardown: result serialization failed\n".utf8))
+    }
+    if let symbol = dlsym(Launcher.handle, "AraratFinishSliceCheck") {
+      if traceTeardown { FileHandle.standardError.write(Data("ararat-teardown: finish symbol found; calling\n".utf8)) }
+      unsafeBitCast(symbol, to: (@convention(c) (Bool) -> Void).self)(ok)
+      if traceTeardown { FileHandle.standardError.write(Data("ararat-teardown: finish call returned\n".utf8)) }
+    } else if traceTeardown {
+      Launcher.teardownFailure = true
+      FileHandle.standardError.write(Data("ararat-teardown: finish symbol missing\n".utf8))
+    }
+  }
+
+  func coverageFlags() -> [String] {
+    checkCoverageFlags(CommandLine.arguments)
   }
 
   func clickScreenDialog(stay: Bool) -> Bool {
@@ -2840,6 +5967,8 @@ final class Runtime {
 
   func quitTick() {
     guard let mode = quitMode else { return }
+    let sameProfileEmpty = CommandLine.arguments.contains("--ararat-same-profile-empty-quit-check")
+    let quitPromptProfile = sameProfileEmpty ? "Default" : "Profile 1"
     quitAttempts += 1
     if quitAttempts > 300 {
       quitTimedOut = true
@@ -2865,24 +5994,159 @@ final class Runtime {
       if quitPhase == 11, let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
          let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == row.id }),
          !tab.isLoading {
-        tab.prepareCheckBeforeUnload()
+        if sameProfileEmpty {
+          guard let id = snapshot.spaces.first(where: { $0.id == "default" })?.today.first?.id,
+                let defaultTab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) else { return }
+          defaultTab.prepareCheckBeforeUnload()
+        } else { tab.prepareCheckBeforeUnload() }
         quitPhase = 12
         return
       }
-      if quitPhase == 12, let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
-         (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == row.id })?.checkHasBeforeUnload() == true {
+      if quitPhase == 12, let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first {
+        guard let defaultID = snapshot.spaces.first(where: { $0.id == "default" })?.today.first?.id else { return }
+        let promptID = sameProfileEmpty ? defaultID : row.id
+        guard (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == promptID })?.checkHasBeforeUnload() == true else { return }
+        splitCloseExpected = ["Default": defaultID, "Profile 1": row.id]
+        if CommandLine.arguments.contains("--ararat-multiple-quit-check"), let adapter {
+          let child = Runtime(windowID: UUID().uuidString)
+          child.root = self
+          do { try child.start(session: adapter.session, shownSpace: "default") }
+          catch { quitTimedOut = true; finishQuitCheck(exitCode: 1); return }
+          children.append(child)
+          child.adapter?.openCommandURL("about:blank?unrelated", expectedSpace: "default", profile: "Default")
+          adapter.windowHost(host, showProfile: "Default")
+          adapter.openCommandURL("about:blank?multiple", expectedSpace: "default", profile: "Default")
+          quitPhase = 16
+          return
+        }
+        if CommandLine.arguments.contains("--ararat-split-close-check") {
+          guard let adapter else { return }
+          do { try adapter.session.queue.sync { _ = try adapter.session.store?.selectItem(windowId: windowID, id: "close-split") } }
+          catch { quitTimedOut = true; finishQuitCheck(exitCode: 1); return }
+        }
         adapter?.windowHost(host, showProfile: "Default")
         quitBefore = nil
         quitPhase = 13
+        return
+      }
+      if quitPhase == 16, children.count == 1, let child = children.first, let childHost = child.host,
+         child.windowID != windowID, childHost.profileDirectory() == "Default", host.profileDirectory() == "Default",
+         child.snapshot.shownSpaceId == "default",
+         let childItem = child.snapshot.selectedId,
+         let childTab = (childHost.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == childItem && !$0.isLoading }),
+         childHost.activeItemId() == childItem, let tabs = host.tabs() as? [any ARTabAPI], let adapter,
+         let evidence = adapter.session.queue.sync(execute: { () -> (mapping: [String: String], reverse: [String: String], profiles: [String: String])? in
+           guard let store = adapter.session.store else { return nil }
+           var mappings: [String: String] = [:], reverse: [String: String] = [:], profiles: [String: String] = [:]
+           for item in tabs.compactMap(\.itemId) + [childItem] {
+             if let live = store.liveTab(item: item) {
+               mappings[item] = live
+               reverse[live] = store.itemForLive(liveId: live)
+             }
+             if let profile = store.itemProfile(itemId: item) {
+               switch profile { case .default: profiles[item] = "Default"; case .named(let name): profiles[item] = name }
+             }
+           }
+           return (mappings, reverse, profiles)
+         }),
+         let items = Self.multipleQuitSetupItems(snapshot: snapshot, expected: splitCloseExpected,
+           rootTabs: tabs.map { (item: $0.itemId, live: $0.liveId, loading: $0.isLoading) },
+           childItem: childItem, childLive: childTab.liveId, mappings: evidence.mapping,
+           reverse: evidence.reverse, profiles: evidence.profiles) {
+        multiCloseChildItem = childItem
+        multiCloseChildLive = childTab.liveId
+        multiCloseChildSpace = child.snapshot.shownSpaceId ?? ""
+        multiCloseChildWindowID = child.windowID
+        multiCloseDefaultItems = Set(items)
+        for tab in tabs { tab.prepareCheckBeforeUnload() }
+        quitPhase = 17
+        return
+      }
+      if quitPhase == 17, let tabs = host.tabs() as? [any ARTabAPI], tabs.count == 3,
+         tabs.allSatisfy({ $0.checkHasBeforeUnload() }), multipleCloseChildValid(), let rows = captureCheckRows() {
+        guard quitBefore == rows else { quitBefore = rows; return }
+        quitOriginal = rows
+        host.configureProfileCloseCheck(1)
+        quitPhase = 18
+        NSApp.terminate(nil)
+        return
+      }
+      if quitPhase == 18 || quitPhase == 19 {
+        let state = host.checkProfileCloseState()
+        let expectedCount = quitPhase == 18 ? 1 : 2
+        guard state["dialogs"] as? Int == expectedCount, !host.checkTryingToQuit(),
+              multipleCloseChildValid(), let pages = state["dialog_pages"] as? [[String: Any]],
+              pages.count == expectedCount, let rows = captureCheckRows() else { return }
+        guard quitCancelPrevious == rows else { quitCancelPrevious = rows; return }
+        guard let original = quitOriginal,
+              rows.filter({ !["window", "last_selected"].contains($0.first ?? "") }) == original.filter({ !["window", "last_selected"].contains($0.first ?? "") }),
+              multipleClosePagesValidInAnyOrder(pages), snapshot.selectedId == host.activeItemId() else {
+          quitTimedOut = true; finishQuitCheck(exitCode: 1); return
+        }
+        if quitPhase == 18 {
+          multiQuitFirst = state.merging(["trying_to_quit": false, "selected_matches_active": true, "child_unchanged": true, "workspace_rows_unchanged": true]) { _, new in new }
+          quitCancelPrevious = nil
+          quitBefore = rows
+          host.configureProfileCloseCheck(2)
+          quitPhase = 19
+        } else {
+          multiQuitSecond = state.merging(["trying_to_quit": false, "selected_matches_active": true, "child_unchanged": true, "workspace_rows_unchanged": true]) { _, new in new }
+          quitCancelPrevious = nil
+          quitBefore = rows
+          host.configureProfileCloseCheck(0)
+          quitPhase = 20
+        }
+        NSApp.terminate(nil)
         return
       }
       if quitPhase == 13, host.profileDirectory() == "Default",
          let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first,
          snapshot.selectedId == row.id, let rows = captureCheckRows() {
         guard quitBefore == rows else { quitBefore = rows; return }
+        if (CommandLine.arguments.contains("--ararat-empty-close-check") || sameProfileEmpty), let adapter {
+          do {
+            _ = try adapter.session.queue.sync {
+              try adapter.session.store?.createSpace(windowId: windowID, name: "Empty", spaceId: "close-empty")
+            }
+          } catch { quitTimedOut = true; finishQuitCheck(exitCode: 1); return }
+          adapter.refresh()
+          quitBefore = nil
+          quitPhase = 14
+          return
+        }
         quitOriginal = rows
+        if CommandLine.arguments.contains("--ararat-split-close-check") { splitCloseBefore = snapshot }
+        quitStyleMask = host.window().styleMask.rawValue
+        if CommandLine.arguments.contains("--ararat-quit-suggestion-check") {
+          openCommandBar(.newTab)
+          guard let bar = commandPresenter?.controller, bar.isOpen else { quitTimedOut = true; finishQuitCheck(exitCode: 1); return }
+          bar.update(query: "Quit", allowCompletion: false)
+          quitPhase = 15
+          return
+        }
+        quitPhase = 3
+        beginCloseRaceCheck(host) { host.expectCheckDialogs(1); NSApp.terminate(nil) }
+        return
+      }
+      if quitPhase == 15, let bar = commandPresenter?.controller, bar.isOpen {
+        guard let index = bar.result.rows.firstIndex(where: { row in
+          if case .command(let id) = row.target { return id == "quit" }
+          return false
+        }) else { return }
+        bar.moveSelection(by: index - bar.selectedIndex)
+        quitPhase = 3
+        host.expectCheckDialogs(1)
+        bar.commit(forceNewTab: false)
+        return
+      }
+      if quitPhase == 14, snapshot.shownSpaceId == "close-empty", snapshot.selectedId == nil,
+         host.profileDirectory() == "Default", !host.hasActiveTab(), let rows = captureCheckRows() {
+        guard quitBefore == rows else { quitBefore = rows; return }
+        quitOriginal = rows
+        splitCloseBefore = snapshot
         quitStyleMask = host.window().styleMask.rawValue
         quitPhase = 3
+        host.expectCheckDialogs(1)
         NSApp.terminate(nil)
         return
       }
@@ -2890,7 +6154,7 @@ final class Runtime {
     if quitPhase == 0, host != nil, !sliceRows.isEmpty {
       quitPhase = 1
       let row = sliceRows[0]
-      if let url = row.url { adapter?.select(id: row.id, url: url) }
+      if row.url != nil { selectCheckSeed(row) }
       return
     }
     if quitPhase == 1, let host, sliceActive == sliceRows.first?.id,
@@ -2924,6 +6188,7 @@ final class Runtime {
         return
       }
       quitPhase = 3
+      if mode == "close" { host.expectCheckDialogs(1) }
       if mode == "close" { container?.sidebarCloseButton?.performClick(nil) }
       else if mode == "screen-quit" { sendQuitKey(host) }
       else { NSApp.terminate(nil) }
@@ -2950,9 +6215,11 @@ final class Runtime {
       let browsers = unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)()
       guard browsers == UInt(expectedBrowsers) else { return }
       guard let rows = captureCheckRows() else { return }
+      guard selectionRaceSettled() else { return }
       let activeItem = host.activeItemId()
-      let selectedMatches = activeItem != nil && snapshot.selectedId == activeItem &&
-        checkWindowSelection(rows, windowID: windowID) == activeItem
+      let selectedMatches = snapshot.selectedId == nil
+        ? !host.hasActiveTab() && checkWindowSelection(rows, windowID: windowID) == nil
+        : activeItem != nil && snapshot.selectedId == activeItem && checkWindowSelection(rows, windowID: windowID) == activeItem
       if mode == "quit-cancel" {
         guard selectedMatches else { quitCancelPrevious = nil; return }
         guard quitCancelPrevious == rows else { quitCancelPrevious = rows; return }
@@ -2972,21 +6239,32 @@ final class Runtime {
               allowedSelections.contains(id) else { return false }
         return rows.contains { $0.count == 3 && $0[0] == "last_selected" && $0[1] == id }
       }
+      let quitPromptPage = (host.checkProfileCloseState()["dialog_pages"] as? [[String: Any]])?.contains(where: { page in
+        page["profile"] as? String == quitPromptProfile && page["item"] as? String == splitCloseExpected[quitPromptProfile] &&
+          page["active"] as? Bool == true && page["presented"] as? Bool == true
+      }) == true
+      let splitCancel = splitCloseBefore != nil && !splitCloseRaceFailed && rows == quitBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
+        snapshot.selectedId == splitCloseBefore?.selectedId && host.profileDirectory() == "Default" && selectedMatches &&
+        quitPromptPage
       quitFirst = ["trying_to_quit": host.checkTryingToQuit(), "browsers": browsers,
                    "host_alive": true, "tabs": host.tabs().count,
-                   "rows_unchanged": mode == "quit-cancel" ? onlyWindowSpaceChanged && selectedMatches : rows == quitBefore,
+                   "rows_unchanged": mode == "quit-cancel" ? (splitCloseBefore == nil ? onlyWindowSpaceChanged && selectedMatches : splitCancel) : rows == quitBefore,
                    "hidden_profile_shown": mode == "quit-cancel" && host.profileDirectory() == "Profile 1",
-                   "rows_unchanged_during_switch": mode == "quit-cancel" && quitDuringProfileSwitch != nil && duringDiff.isEmpty,
+                   "rows_unchanged_during_switch": mode == "quit-cancel" && (sameProfileEmpty ? rows == quitBefore : quitDuringProfileSwitch != nil && duringDiff.isEmpty),
                    "window_written_after_cancel": mode == "quit-cancel" && onlyWindowSpaceChanged,
+                   "split_cancel_restored": splitCancel,
+                   "prompt_page": quitPromptPage,
+                   "selection_race_settled": splitCloseRaceSettled, "selection_race_activated": splitCloseRaceActivated,
+                   "selection_race_failed": splitCloseRaceFailed,
                    "outgoing_item": outgoingItem ?? "", "active_item": activeItem ?? "",
                    "window_records_changed": windowRecordsChanged, "selected_matches_active": selectedMatches,
                    "during_diff": duringDiff, "cancel_diff": cancelDiff]
       if mode == "quit-cancel" { quitBefore = rows }
       quitEvents = host.checkClosingEvents()
       quitPhase = 4
-      if mode == "close" { container?.sidebarCloseButton?.performClick(nil) }
+      if mode == "close" { host.expectCheckDialogs(2); container?.sidebarCloseButton?.performClick(nil) }
       else if mode == "screen-quit" { sendQuitKey(host) }
-      else { NSApp.terminate(nil) }
+      else { beginCloseRaceCheck(host) { host.expectCheckDialogs(2); NSApp.terminate(nil) } }
       return
     }
     if quitPhase == 4 && mode == "screen-quit" && screenDialogs == 1 {
@@ -3017,6 +6295,7 @@ final class Runtime {
 
   @discardableResult func finishQuitCheck(exitCode: Int32) -> Bool {
     guard let mode = quitMode else { return true }
+    let quitPromptProfile = CommandLine.arguments.contains("--ararat-same-profile-empty-quit-check") ? "Default" : "Profile 1"
     Launcher.startupWatchdog?.cancel()
     Launcher.startupWatchdog = nil
     let after = quitPath.flatMap(checkRecords)
@@ -3038,19 +6317,43 @@ final class Runtime {
       devtoolsResults["hidden"] = true
       modePassed = unchanged && events == [true] && frontUnchanged &&
         ["initial_docked", "background_hidden", "tab_restored", "undocked_host", "redocked", "closed_full_page", "inspected_tab_closed", "inspect_docked", "open_at_quit"].allSatisfy { devtoolsResults[$0] as? Bool == true }
-    case "quit-cancel": modePassed = unchanged && firstPassed && dialogSeen == 2 && events == [true, false, true] &&
-      quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["rows_unchanged_during_switch"] as? Bool == true &&
-      quitFirst["window_written_after_cancel"] as? Bool == true
+    case "quit-cancel":
+      if CommandLine.arguments.contains("--ararat-multiple-quit-check") {
+        let rootKept = after?.contains(where: { $0.count >= 2 && $0[0] == "window" && $0[1] == windowID }) == true
+        let childKept = after?.contains(where: { $0.count >= 2 && $0[0] == "window" && $0[1] == multiCloseChildWindowID }) == true
+        modePassed = unchanged && rootKept && childKept && !multiQuitFirst.isEmpty && !multiQuitSecond.isEmpty &&
+          dialogSeen == 3 && events == [true, false, true, false, true] &&
+          multipleClosePagesValid(quitDialogPages, defaultCount: 2, namedCount: 1)
+      } else {
+        modePassed = unchanged && firstPassed && splitCloseConfirmRaceOK && dialogSeen == 2 && events == [true, false, true] &&
+          quitFirst["prompt_page"] as? Bool == true && quitDialogPages.count == 2 && quitDialogPages.allSatisfy { page in
+            page["profile"] as? String == quitPromptProfile && page["item"] as? String == splitCloseExpected[quitPromptProfile] &&
+              page["active"] as? Bool == true && page["presented"] as? Bool == true
+          } &&
+          quitFirst["rows_unchanged_during_switch"] as? Bool == true &&
+          (splitCloseBefore == nil ? quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["window_written_after_cancel"] as? Bool == true :
+            quitFirst["split_cancel_restored"] as? Bool == true)
+      }
     case "close": modePassed = firstPassed && closedRowsUnchanged && windowRemoved && quitReopened && quitDockEmpty && dialogSeen == 2
     case "screen-quit": modePassed = unchanged && firstPassed && dialogSeen == 2 && Array(events.dropFirst(screenClosingOffset)) == [true, false, true] && screenSidebarLights && screenAppKitLightsHidden
     default: modePassed = false
     }
-    let ok = exitCode == 0 && !quitTimedOut && quitWillShutDown && quitStock == 0 && modePassed
+    let ok = exitCode == 0 && !quitTimedOut && quitWillShutDown && quitStock == 0 && modePassed && (host?.checkDialogIntegrity() ?? true)
     var result: [String: Any] = ["check": mode == "screen-quit" ? "quit" : mode,
       "closing": quitEvents, "will_shut_down": quitWillShutDown,
       "stock_browsers": quitStock, "rows_before": quitBefore ?? [], "rows_after": after ?? [],
       "rows_unchanged": unchanged, "dialog_seen": dialogSeen, "exit": ok ? 0 : 1, "ok": ok,
       "timeout": quitTimedOut, "phase": quitPhase, "attempts": quitAttempts, "style_mask": quitStyleMask]
+    result["check_flags"] = coverageFlags()
+    result["compositor"] = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+    if mode == "quit-cancel", CommandLine.arguments.contains("--ararat-split-close-check"),
+       !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-race=") }) {
+      result["case"] = CommandLine.arguments.contains("--ararat-same-profile-empty-quit-check") ? "quit-empty-same-profile" :
+        (CommandLine.arguments.contains("--ararat-empty-close-check") ? "quit-empty-other-profile" : "quit-split")
+    }
+    result["requested_direction"] = CommandLine.arguments.contains("--force-ui-direction=rtl") ? "rtl" : "default"
+    result["selection_confirm_race"] = splitCloseConfirmRaceOK
+    if quitTimedOut { result["selection_diagnostics"] = checkSelectionDiagnostics(item: sliceRows.first?.id) }
     if mode == "devtools" {
       result.merge(devtoolsResults) { _, new in new }
       result["phase"] = browserCheckPhase
@@ -3064,7 +6367,60 @@ final class Runtime {
       result["appkit_lights_hidden"] = screenAppKitLightsHidden
     }
     if mode == "quit-cancel" || mode == "close" || mode == "screen-quit" { result["after_stay"] = quitFirst }
-    if mode == "quit-cancel" { result["rows_before_first_quit"] = quitOriginal ?? [] }
+    if mode == "quit-cancel" {
+      result["expected_dialog_items"] = splitCloseExpected
+      result["dialog_pages"] = quitDialogPages
+      result["rows_before_first_quit"] = quitOriginal ?? []
+      result["quit_suggestion"] = CommandLine.arguments.contains("--ararat-quit-suggestion-check")
+      if CommandLine.arguments.contains("--ararat-multiple-quit-check") {
+        result["expected_default_items"] = Array(multiCloseDefaultItems).sorted()
+        result["root_window_id"] = windowID
+        result["child_window_id"] = multiCloseChildWindowID
+        result["multiple_first_cancel"] = multiQuitFirst
+        result["multiple_second_cancel"] = multiQuitSecond
+        result["multiple_final_pages"] = quitDialogPages
+        if quitTimedOut && quitPhase == 16 {
+          var diagnostic: [String: Any] = ["children": children.count, "root_window": windowID,
+            "expected": splitCloseExpected, "root_ui": Self.matrixSnapshotDiagnostics(snapshot)]
+          if let host {
+            diagnostic["root_native"] = ["profile": host.profileDirectory(), "active": host.activeItemId() ?? "",
+              "tabs": (host.tabs() as? [any ARTabAPI] ?? []).map {
+                ["item": $0.itemId ?? "", "live": $0.liveId, "loading": $0.isLoading, "url": $0.url] as [String: Any]
+              }]
+          }
+          if let child = children.first {
+            diagnostic["child_window"] = child.windowID
+            diagnostic["child_ui"] = Self.matrixSnapshotDiagnostics(child.snapshot)
+            if let childHost = child.host {
+              diagnostic["child_native"] = ["profile": childHost.profileDirectory(), "active": childHost.activeItemId() ?? "",
+                "tabs": (childHost.tabs() as? [any ARTabAPI] ?? []).map {
+                  ["item": $0.itemId ?? "", "live": $0.liveId, "loading": $0.isLoading, "url": $0.url] as [String: Any]
+                }]
+            }
+            if let childAdapter = child.adapter { diagnostic["child_selection"] = childAdapter.checkSelectionState() }
+          }
+          if let adapter {
+            diagnostic["root_selection"] = adapter.checkSelectionState()
+            diagnostic["store"] = adapter.session.queue.sync {
+              guard let store = adapter.session.store else { return [:] as [String: Any] }
+              let current = store.snapshot(windowId: windowID)
+              let items = current.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
+              var mappings: [String: String] = [:], reverse: [String: String] = [:], profiles: [String: String] = [:]
+              for item in Set(items).sorted() {
+                if let live = store.liveTab(item: item) { mappings[item] = live; reverse[live] = store.itemForLive(liveId: live) }
+                if let profile = store.itemProfile(itemId: item) {
+                  switch profile { case .default: profiles[item] = "Default"; case .named(let name): profiles[item] = name }
+                }
+              }
+              let childStore = children.first.map { Self.matrixSnapshotDiagnostics(store.snapshot(windowId: $0.windowID)) } ?? [:]
+              return ["snapshot": Self.matrixSnapshotDiagnostics(current), "child_snapshot": childStore,
+                      "mappings": mappings, "reverse": reverse, "profiles": profiles] as [String: Any]
+            }
+          }
+          result["multiple_setup_diagnostics"] = diagnostic
+        }
+      }
+    }
     if mode == "close" {
       result["rows_after_close"] = quitClosedRows ?? []
       result["rows_unchanged_after_close"] = closedRowsUnchanged
@@ -3146,6 +6502,7 @@ final class Runtime {
   }
 
   func shutdown() {
+    commandPresenter?.close(restoreFocus: false)
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)
       promptScreenSeeded = false
@@ -3264,10 +6621,14 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
+  let watchdogSeconds = name == "keyboard" ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
-  timer.schedule(deadline: .now() + 60)
+  timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {
-    var result: [String: Any] = ["check": name, "ok": false, "timeout": "watchdog", "exit": 1, "phase": -1, "attempts": 0, "style_mask": 0]
+    var result: [String: Any] = ["check": name, "ok": false, "timeout": "watchdog", "exit": 1,
+      "phase": -1, "attempts": 0, "style_mask": 0, "phase_is_placeholder": true,
+      "attempts_are_placeholder": true, "watchdog_seconds": watchdogSeconds]
+    if !screen { result.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { result["screen"] = name }
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
       FileHandle.standardOutput.write(data)
@@ -3284,6 +6645,13 @@ let result = withUnsafePointer(to: &callbacks) {
 let checksPassed = MainActor.assumeIsolated {
   if Launcher.browserCheckFinished { return true }
   if let runtime = Launcher.runtime {
+    if runtime.browserCheckMode == "incognito" {
+      var failure: [String: Any] = ["check": "incognito", "ok": false, "error": "engine exited before check completed", "exit": 1]
+      failure.merge(incognitoResultIdentity(check: "incognito", arguments: CommandLine.arguments)) { _, new in new }
+      if let data = try? JSONSerialization.data(withJSONObject: failure, options: [.sortedKeys]),
+         let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+      return false
+    }
     if runtime.browserCheckMode == "devtools" && runtime.quitMode == nil {
       let failure: [String: Any] = ["check": "devtools", "ok": false, "error": "engine exited before quit", "exit": 1, "phase": runtime.browserCheckPhase]
       if let data = try? JSONSerialization.data(withJSONObject: failure), let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
@@ -3298,6 +6666,7 @@ let checksPassed = MainActor.assumeIsolated {
     let screen = argument.hasPrefix("--ararat-screen=")
     let name = String(argument.dropFirst(screen ? 16 : 15))
     var failure: [String: Any] = ["check": name, "ok": false, "error": "startup", "exit": 1]
+    if !screen { failure.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { failure["screen"] = name }
     if let data = try? JSONSerialization.data(withJSONObject: failure), let line = String(data: data, encoding: .utf8) {
       print(line)
@@ -3307,4 +6676,8 @@ let checksPassed = MainActor.assumeIsolated {
   }
   return true
 }
-exit(result == 0 && !checksPassed ? 1 : result)
+let teardownPassed = Launcher.teardownDeadline?.finish() ?? true
+if Launcher.teardownDeadline != nil {
+  FileHandle.standardError.write(Data("ararat-teardown: engine returned; deadline_passed=\(teardownPassed)\n".utf8))
+}
+exit(result == 0 && (!checksPassed || !teardownPassed || Launcher.teardownFailure) ? 1 : result)

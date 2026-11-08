@@ -5,6 +5,7 @@
 #include "ararat/core/public/AraratEngine.h"
 
 #include <atomic>
+#include <cstdio>
 #include <iostream>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/web_contents.h"
 #import "ararat/core/public/AraratHostAPI.h"
 
 // 157 declares ChromeMain file-locally (chrome/app/chrome_main.cc:89-93) and
@@ -50,6 +52,16 @@ bool g_slice_passed = false;
 bool g_shared_compositor = false;
 unsigned long g_stock_browsers = 0;
 bool g_check_devtools_destroyed = false;
+bool g_trace_teardown = false;
+
+bool TraceTeardown() {
+  return g_trace_teardown;
+}
+
+void TraceAttemptExit() {
+  if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: AttemptExit entered\n");
+  chrome::AttemptExit();
+}
 
 void DispatchCommandLineURLs(Profile* profile) {
   if (!profile || !g_ararat_open_urls) return;
@@ -109,6 +121,7 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
   }
 
   void PostMainMessageLoopRun() override {
+    if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: main message loop returned\n");
     observation_.Reset();
     ChromeBrowserMainExtraParts::PostMainMessageLoopRun();
     if (g_ararat_callbacks.will_shut_down) {
@@ -202,8 +215,8 @@ void CheckGuards(int argc, const char** argv) {
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
       screen_prompts = std::string_view(arg + 16) == "prompts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -221,7 +234,7 @@ void CheckGuards(int argc, const char** argv) {
       check_devtools = name == "devtools";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard";
       g_check_tabs = name == "tabs";
       check_slice = name == "slice";
       g_check_slice = check_slice;
@@ -321,6 +334,20 @@ void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect&
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
+  content::g_ararat_reject_javascript_dialog = &AraratCheckRejectJavaScriptDialog;
+  content::g_ararat_begin_beforeunload = &AraratCheckBeginBeforeUnload;
+  content::g_ararat_finish_beforeunload = &AraratCheckFinishBeforeUnload;
+  content::g_ararat_enter_beforeunload_manager = &AraratCheckEnterBeforeUnloadManager;
+  content::g_ararat_leave_beforeunload_manager = &AraratCheckLeaveBeforeUnloadManager;
+  bool profiles = false;
+  bool reverse = false;
+  for (int i = 1; i < argc; ++i) {
+    if (!argv[i]) continue;
+    if (strcmp(argv[i], "--") == 0) break;
+    if (strcmp(argv[i], "--ararat-check=profiles") == 0) profiles = true;
+    if (strncmp(argv[i], "--ararat-cross-window-reverse-check=", 36) == 0) reverse = true;
+  }
+  g_trace_teardown = profiles && reverse;
   AraratInstallWindowFactory();
   AraratInstallPermissionPrompt();
   g_ararat_reopen = [](bool has_visible_windows) {
@@ -356,7 +383,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   int browser_argc = static_cast<int>(browser_args.size());
   browser_args.push_back(nullptr);
   int result = ChromeMain(browser_argc, browser_args.data());
-  return result == 0 && (!AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) ||
+  if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: ChromeMain returned=%d\n", result);
+  return result == 0 && (!AraratCheckDialogIntegrity() || !AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) ||
                          (g_check_slice && !g_slice_passed)) ? 1 : result;
 }
 
@@ -365,11 +393,19 @@ __attribute__((visibility("default"))) void AraratQuit(void) {
   // Before the started stage there is no task executor to post to; the extra
   // parts post the request once the loop is near. After it, any thread can
   // post, and AttemptExit is the engine's own quit path.
-  if (!g_ui_ready.load(std::memory_order_acquire)) {
+  bool ready = g_ui_ready.load(std::memory_order_acquire);
+  if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: quit entered ui_ready=%d\n", ready);
+  if (!ready) {
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&chrome::AttemptExit));
+  if (TraceTeardown()) {
+    bool posted = content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&TraceAttemptExit));
+    std::fprintf(stderr, "ararat-teardown: AttemptExit posted=%d\n", posted);
+  } else {
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&chrome::AttemptExit));
+  }
 }
 
 __attribute__((visibility("default"))) NSString* AraratUserDataDirectory(void) {
@@ -384,6 +420,7 @@ __attribute__((visibility("default"))) NSUInteger AraratBrowserCount(void) {
 }
 
 __attribute__((visibility("default"))) void AraratFinishSliceCheck(BOOL passed) {
+  if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: finish entered passed=%d\n", passed);
   g_slice_passed = passed;
   AraratQuit();
 }

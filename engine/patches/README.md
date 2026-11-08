@@ -60,6 +60,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/app-controller-hooks.patch` | ours |
 | `ararat/browser-window-factory.patch` | ours |
 | `ararat/viewless-read-anything.patch` | ours |
+| `ararat/viewless-bubble-anchor.patch` | ours |
 
 ## Why these upstream patches
 
@@ -73,6 +74,10 @@ is in `docs/research/ungoogled-inventory.md` §8.
 `ararat/devtools-hook.patch` adapts `mantrakp04/ardia`'s `engine/patches/chromium-window-docked-devtools.patch` (GPL-3.0). It reports `DevtoolsUIController::UpdateDevtools` through an optional hook; unset leaves Chrome's behavior intact. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the DevTools build target.
 
 `ararat/autofill-address-bubble.patch` comes from `mantrakp04/ardia`'s `engine/patches/chromium-autofill-address-bubble-window.patch` (GPL-3.0). It finds the Autofill handler on the Browser's unowned user data, guards the address promo's `AsBrowserView()` call and returns early from two card-controller checks.
+
+`ararat/keyboard-ime-diagnostics.patch` records bounded target and forwarding observations for the keyboard checks without recording input text.
+
+`ararat/hidden-dialog-containment.patch` lets the hidden-check layer reject unexpected ordinary JavaScript dialogs and validate beforeunload admission and completion at the WebContents boundary.
 
 `ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset.
 
@@ -103,5 +108,7 @@ When the factory hook is set, the patch disables Chrome session restore before
 Ararat restores its own workspace from the core in U17.
 
 `ararat/viewless-read-anything.patch` skips side-panel cleanup for our viewless windows when there is no side panel.
+
+`ararat/viewless-bubble-anchor.patch` returns an empty page-info anchor after checking the location bar's chip when there is no `BrowserView`. The chooser and file-system restore bubbles then use a fallback at the host window's leading top edge, offset by Chromium's no-toolbar value and mirrored in RTL. Missing or empty hosts return an empty rectangle; stock `BrowserView` paths are unchanged. Runtime bubble placement remains to be verified.
 
 U14's extension action container and popup anchor are in our layer and add no Chromium patch. The external-install error dialog still assumes a `BrowserView`; supporting external installs requires a guard or patch (ours).

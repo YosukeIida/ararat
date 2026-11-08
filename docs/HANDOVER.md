@@ -5,6 +5,15 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U16 committed with native acceptance deferred: keyboard routing through the native
+  window host, workspace New Tab / Edit URL / Search / Close Tab interception, the Developer
+  menu, the find bar, the viewless location bar, extension action shortcuts, hidden-dialog
+  containment and keyboard/IME diagnostics. Source review, 96 Rust/Swift tests against a
+  rebuilt FFI, the engine build (build-7) and the release Swift build with eight matrix tests
+  (build-8) pass. The hidden checks, screen checks, IME delivery and real dialog containment
+  have not run: they wait for the guest-isolation gate (owner), because earlier scratch runs
+  raised Leave-site dialogs on the host desktop whose cause is not established. Evidence is in
+  the design session's reports (`design-u16-*`).
 - Phase 3 U15 done: tab and browser fullscreen use the native window, with sidebar
   behavior and exclusive access integrated into the host. Hidden fullscreen checks pass
   under C1 and C2. The unlocked screen check passed native entry, Escape, the menu,
@@ -199,7 +208,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U15 are done (C1 chosen, §4.6). Next: U16–U19 in plan order (specs `keyboard-53` … `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U16 are done (C1 chosen, §4.6); U16's native acceptance waits for the guest-isolation gate. Next: U17–U19 in plan order (specs `relaunch-54` … `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 

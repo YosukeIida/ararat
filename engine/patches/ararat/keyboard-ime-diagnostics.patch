@@ -1,0 +1,89 @@
+--- a/content/browser/renderer_host/render_widget_host_view_mac.mm
++++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
+@@ -6,6 +6,7 @@
+ 
+ #import <Carbon/Carbon.h>
+ 
++#include <cstdio>
+ #include <limits>
+ #include <memory>
+ #include <optional>
+@@ -2277,7 +2278,17 @@
+     const gfx::Range& replacement_range,
+     int selection_start,
+     int selection_end) {
+-  if (auto* widget_host = GetWidgetForIme()) {
++  auto* widget_host = GetWidgetForIme();
++  auto* args = base::CommandLine::ForCurrentProcess();
++  if (args->GetSwitchValueASCII("ararat-check") == "keyboard" ||
++      args->GetSwitchValueASCII("ararat-screen") == "keyboard") {
++    static unsigned count = 0;
++    if (count++ < 16)
++      std::fprintf(stderr, "ararat-ime: ImeSetComposition target=%d receiver_host=%d forwarding=%d\n",
++                   widget_host != nullptr, widget_host && widget_host == GetRenderWidgetHost(),
++                   widget_host != nullptr);
++  }
++  if (widget_host) {
+     widget_host->ImeSetComposition(text, ime_text_spans, replacement_range,
+                                    selection_start, selection_end);
+   }
+@@ -2286,7 +2297,17 @@
+ void RenderWidgetHostViewMac::ImeCommitText(
+     const std::u16string& text,
+     const gfx::Range& replacement_range) {
+-  if (auto* widget_host = GetWidgetForIme()) {
++  auto* widget_host = GetWidgetForIme();
++  auto* args = base::CommandLine::ForCurrentProcess();
++  if (args->GetSwitchValueASCII("ararat-check") == "keyboard" ||
++      args->GetSwitchValueASCII("ararat-screen") == "keyboard") {
++    static unsigned count = 0;
++    if (count++ < 16)
++      std::fprintf(stderr, "ararat-ime: ImeCommitText target=%d receiver_host=%d forwarding=%d\n",
++                   widget_host != nullptr, widget_host && widget_host == GetRenderWidgetHost(),
++                   widget_host != nullptr);
++  }
++  if (widget_host) {
+     widget_host->ImeCommitText(text, std::vector<ui::ImeTextSpan>(),
+                                replacement_range, 0);
+   }
+--- a/content/browser/renderer_host/render_widget_host_impl.cc
++++ b/content/browser/renderer_host/render_widget_host_impl.cc
+@@ -15,6 +15,8 @@
+ 
+ #include "base/auto_reset.h"
+ #include "base/check.h"
++#include <cstdio>
++
+ #include "base/command_line.h"
+ #include "base/debug/alias.h"
+ #include "base/debug/dump_without_crashing.h"
+@@ -2527,6 +2529,14 @@
+     int selection_start,
+     int selection_end,
+     blink::mojom::ImeState ime_state) {
++#if BUILDFLAG(IS_MAC)
++  auto* args = base::CommandLine::ForCurrentProcess();
++  if (args->GetSwitchValueASCII("ararat-check") == "keyboard" ||
++      args->GetSwitchValueASCII("ararat-screen") == "keyboard") {
++    static unsigned count = 0;
++    if (count++ < 16) std::fprintf(stderr, "ararat-ime: ImeSetComposition browser handler forwarding\n");
++  }
++#endif
+   // Passing null callback since it is only needed for Devtools
+   GetWidgetInputHandler()->ImeSetComposition(
+       text, ime_text_spans, replacement_range, selection_start, selection_end,
+@@ -2544,6 +2554,14 @@
+     const std::vector<ui::ImeTextSpan>& ime_text_spans,
+     const gfx::Range& replacement_range,
+     int relative_cursor_pos) {
++#if BUILDFLAG(IS_MAC)
++  auto* args = base::CommandLine::ForCurrentProcess();
++  if (args->GetSwitchValueASCII("ararat-check") == "keyboard" ||
++      args->GetSwitchValueASCII("ararat-screen") == "keyboard") {
++    static unsigned count = 0;
++    if (count++ < 16) std::fprintf(stderr, "ararat-ime: ImeCommitText browser handler forwarding\n");
++  }
++#endif
+   // Passing null callback since it is only needed for Devtools
+   GetWidgetInputHandler()->ImeCommitText(
+       text, ime_text_spans, replacement_range, relative_cursor_pos,

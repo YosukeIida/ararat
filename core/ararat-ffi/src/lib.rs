@@ -15,6 +15,7 @@ pub enum CoreError {
     Store { message: String },
     Edit { message: String },
     Live { message: String },
+    UnsupportedSplit,
 }
 
 impl std::fmt::Display for CoreError {
@@ -24,6 +25,7 @@ impl std::fmt::Display for CoreError {
             CoreError::Store { message } => write!(f, "store failed: {message}"),
             CoreError::Edit { message } => write!(f, "edit failed: {message}"),
             CoreError::Live { message } => write!(f, "live failed: {message}"),
+            CoreError::UnsupportedSplit => write!(f, "Switching to a space with a selected split is not supported yet"),
         }
     }
 }
@@ -213,6 +215,47 @@ impl WorkspaceStore {
         let ops = workspace.show_space(&window_id, &space_id)?;
         self.store.write(ops);
         Ok(())
+    }
+
+    pub fn show_space_selecting(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut next = workspace.clone();
+        let mut ops = next.show_space(&window_id, &space_id)?;
+        let view = snapshot(next.clone(), &window_id);
+        let rows: Vec<_> = view.spaces.iter().find(|space| space.id == space_id)
+            .into_iter().flat_map(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites))
+            .filter(|row| !row.unloaded && (row.url.is_some() || (row.kind == RowKind::Split && next.outline(&row.id).iter().any(|(_, item)| {
+                item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. })
+            })))).collect();
+        let selected = view.selected_id.as_ref().filter(|id| rows.iter().any(|row| &row.id == *id))
+            .or_else(|| next.windows.get(&window_id).and_then(|state| state.history.iter().find(|id| rows.iter().any(|row| &row.id == *id))))
+            .or_else(|| rows.first().map(|row| &row.id)).cloned();
+        if selected.as_ref().is_some_and(|id| rows.iter().any(|row| &row.id == id && row.kind == RowKind::Split)) {
+            return Err(CoreError::UnsupportedSplit);
+        }
+        match selected {
+            Some(id) if next.selected(&window_id) != Some(id.as_str()) => ops.extend(next.select_item(&window_id, &id)?),
+            None => ops.extend(next.clear_selection(&window_id)),
+            _ => {}
+        }
+        self.store.write(ops);
+        *workspace = next;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn show_space_selecting_tab(&self, window_id: String, space_id: String, item_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut next = workspace.clone();
+        let mut ops = next.show_space(&window_id, &space_id)?;
+        let view = snapshot(next.clone(), &window_id);
+        let valid = view.spaces.iter().find(|space| space.id == space_id)
+            .is_some_and(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites)
+                .any(|row| row.id == item_id && row.kind == RowKind::Tab && row.url.is_some()));
+        if !valid { return Err(CoreError::Edit { message: "Tab is not visible in the requested space".into() }); }
+        ops.extend(next.select_item(&window_id, &item_id)?);
+        self.store.write(ops);
+        *workspace = next;
+        Ok(snapshot(workspace.clone(), &window_id))
     }
 
     pub fn recent_space_for_profile(&self, window_id: String, profile: Profile) -> Option<String> {
@@ -987,6 +1030,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn showing_space_selects_each_windows_own_recent_tab() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-space-selection-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
+        let a = store.create_tab("one".into(), "https://a.example".into()).unwrap().selected_id.unwrap();
+        let b = store.create_tab("one".into(), "https://b.example".into()).unwrap().selected_id.unwrap();
+        store.show_space("two".into(), "work".into()).unwrap();
+        store.select_item("two".into(), a.clone()).unwrap();
+        store.create_space("one".into(), "Home".into(), "home".into()).unwrap();
+        store.create_tab("one".into(), "https://home.example".into()).unwrap();
+        store.show_space_selecting("two".into(), "home".into()).unwrap();
+        assert_eq!(store.show_space_selecting("one".into(), "work".into()).unwrap().selected_id, Some(b));
+        assert_eq!(store.show_space_selecting("two".into(), "work".into()).unwrap().selected_id, Some(a));
+        store.create_space("one".into(), "Empty".into(), "empty".into()).unwrap();
+        store.show_space_selecting("one".into(), "work".into()).unwrap();
+        assert_eq!(store.show_space_selecting("one".into(), "empty".into()).unwrap().selected_id, None);
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    #[test]
+    fn showing_space_rejects_split_atomically_and_allows_favorite() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-space-groups-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
+        store.show_space("one".into(), "space-work".into()).unwrap();
+        store.select_item("one".into(), "split-1".into()).unwrap();
+        store.show_space_selecting("one".into(), "space-home".into()).unwrap();
+        let before = store.snapshot("one".into());
+        let error = store.show_space_selecting("one".into(), "space-work".into()).unwrap_err();
+        assert!(error.to_string().contains("selected split"));
+        assert_eq!(store.snapshot("one".into()), before);
+        assert!(store.show_space_selecting_tab("one".into(), "space-work".into(), "missing-tab".into()).is_err());
+        assert_eq!(store.snapshot("one".into()), before);
+        assert_eq!(store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-mail".into()).unwrap().selected_id.as_deref(), Some("tab-mail"));
+        store.select_item("one".into(), "tab-mail".into()).unwrap();
+        store.show_space_selecting("one".into(), "space-home".into()).unwrap();
+        assert_eq!(store.show_space_selecting("one".into(), "space-work".into()).unwrap().selected_id.as_deref(), Some("tab-mail"));
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    #[test]
     fn routing_ops_flush_and_read_back() {
         let path = std::env::temp_dir().join(format!("ararat-ffi-routing-{}.sqlite", std::process::id()));
         assert!(!path.exists());
@@ -1440,6 +1528,10 @@ pub struct CommandBarResult {
 
 #[uniffi::export]
 impl CommandBarSession {
+    pub fn search_url(&self, text: String) -> String {
+        ararat_core::command_bar::search_url(&text)
+    }
+
     pub fn query(&self, text: String) -> CommandBarResult {
         use ararat_core::command_bar::Target;
         let result = self.index.query(&text);

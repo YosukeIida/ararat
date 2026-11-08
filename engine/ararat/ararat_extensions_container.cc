@@ -199,9 +199,21 @@ void AraratExtensionsContainer::OnPopupClosed(
 
 views::FocusManager*
 AraratExtensionsContainer::GetFocusManagerForAccelerator() {
+  if (!shortcuts_active_) return nullptr;
   auto anchor = GetAnchor();
   auto* view = anchor.GetIfView();
   return view && view->GetWidget() ? view->GetWidget()->GetFocusManager() : nullptr;
+}
+
+void AraratExtensionsContainer::SetShortcutActive(bool active) {
+  if (shortcuts_active_ == active) return;
+  if (!active) {
+    for (const auto& [_, model] : actions_) model->UnregisterCommand();
+    shortcuts_active_ = false;
+  } else {
+    shortcuts_active_ = true;
+    for (const auto& [_, model] : actions_) model->RegisterCommand();
+  }
 }
 
 views::BubbleAnchor
@@ -272,9 +284,11 @@ void AraratExtensionsContainer::CreateActions() {
 
 void AraratExtensionsContainer::CreateActionForId(
     const ToolbarActionsModel::ActionId& action_id) {
+  if (actions_.contains(action_id)) return;
   actions_[action_id] = ExtensionActionViewModel::Create(
       action_id, browser_,
       std::make_unique<ExtensionActionDelegateDesktop>(browser_, this, this));
+  if (shortcuts_active_) actions_[action_id]->RegisterCommand();
 }
 
 views::BubbleAnchor AraratExtensionsContainer::GetAnchor() const {

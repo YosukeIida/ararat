@@ -1,0 +1,65 @@
+diff --git a/chrome/browser/ui/views/bubble_anchor_util_views.cc b/chrome/browser/ui/views/bubble_anchor_util_views.cc
+--- a/chrome/browser/ui/views/bubble_anchor_util_views.cc
++++ b/chrome/browser/ui/views/bubble_anchor_util_views.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
+ 
+ #include "base/feature_list.h"
++#include "base/i18n/rtl.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/browser_window.h"
+@@ -37,5 +38,8 @@ AnchorConfiguration GetPageInfoAnchorConfiguration(
+     BrowserWindowInterface* browser,
+     Anchor anchor) {
++  if (!browser || !browser->GetWindow()) {
++    return {};
++  }
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+   auto* location_bar_view =
+       browser_view ? browser_view->GetLocationBarView() : nullptr;
+@@ -68,6 +72,10 @@ AnchorConfiguration GetPageInfoAnchorConfiguration(
+     }
+   }
+ 
++  if (!browser_view) {
++    return {};
++  }
++
+   if (anchor == Anchor::kLocationBar) {
+     LocationBar* location_bar =
+         browser_view ? browser_view->GetLocationBar() : nullptr;
+@@ -194,6 +202,22 @@ gfx::Rect GetPageInfoAnchorRect(BrowserWindowInterface* browser) {
++  if (!browser || !browser->GetWindow()) {
++    return {};
++  }
+   DCHECK(GetPageInfoAnchorConfiguration(browser).anchor.IsNull());
+ 
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view) {
++    auto* window = browser->GetWindow();
++    if (!window) {
++      return {};
++    }
++    const gfx::Rect bounds = window->GetBounds();
++    if (bounds.IsEmpty()) {
++      return {};
++    }
++    const int x = base::i18n::IsRTL() ? bounds.right() - kNoToolbarLeftOffset
++                                      : bounds.x() + kNoToolbarLeftOffset;
++    return gfx::Rect(gfx::Point(x, bounds.y()), gfx::Size());
++  }
+   // Get position in view (taking RTL UI into account).
+   int x_within_browser_view = browser_view->GetMirroredXInView(
+       bubble_anchor_util::kNoToolbarLeftOffset);
+diff --git a/chrome/browser/ui/views/BUILD.gn b/chrome/browser/ui/views/BUILD.gn
+--- a/chrome/browser/ui/views/BUILD.gn
++++ b/chrome/browser/ui/views/BUILD.gn
+@@ -101,6 +101,7 @@ source_set("bubble_anchor_util_views_impl") {
+   ]
+   deps = [
+     "//base",
++    "//base:i18n",
+     "//build:buildflag_header_h",
+     "//chrome/browser/ui:browser_element_identifiers",
+     "//chrome/browser/ui:browser_window_header",

@@ -41,6 +41,28 @@ public final class KeyBindingsModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    public static func clearCollisions(_ bindings: [KeyBinding], in menu: NSMenu) -> [String: NSMenuItem] {
+        var collisions: [String: NSMenuItem] = [:]
+        for item in menu.items {
+            if let submenu = item.submenu { collisions.merge(clearCollisions(bindings, in: submenu)) { first, _ in first } }
+            for binding in bindings {
+                guard let key = binding.key else { continue }
+                var flags: NSEvent.ModifierFlags = []
+                if key.command { flags.insert(.command) }
+                if key.control { flags.insert(.control) }
+                if key.option { flags.insert(.option) }
+                if key.shift { flags.insert(.shift) }
+                if item.keyEquivalent.lowercased() == key.key.lowercased(),
+                   item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == flags {
+                    collisions[binding.command] = item
+                    item.keyEquivalent = ""
+                }
+            }
+        }
+        return collisions
+    }
+
     public func load(completion: @escaping WorkspaceAdapter.Completion<Void>) {
         adapter.keyBindings { [weak self] result in self?.receive(result, completion: completion) }
     }
@@ -128,6 +150,7 @@ public final class KeyBindingsModel: ObservableObject {
             if let core = error as? CoreError {
                 switch core {
                 case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): self.error = message
+                case .UnsupportedSplit: self.error = "The selected split cannot be shown yet."
                 }
             } else { self.error = error.localizedDescription }
             completion(.failure(error))

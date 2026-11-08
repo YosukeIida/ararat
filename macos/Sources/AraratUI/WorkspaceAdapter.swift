@@ -8,6 +8,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     private let session: WorkspaceSession
     private var queue: DispatchQueue { session.queue }
     private let windowID: String
+    private let spaceSwitchLock = NSLock()
+    private var spaceSwitchGeneration: UInt64 = 0
+    @MainActor public var checkSpaceSwitchCompletion: ((String, @escaping () -> Void) -> Void)?
+    @MainActor var checkLookCompletion: ((@escaping () -> Void) -> Void)?
     private var store: WorkspaceStore? {
         get { session.store }
         set { session.store = newValue }
@@ -130,6 +134,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
+    public func moveIfLive(id: String, container: String, index: Int, openFolder: Bool, expectedLive: String, completion: @escaping Completion<WorkspaceSnapshot?>) {
+        enqueue({
+            let store = try self.opened()
+            guard store.liveTab(item: id) == expectedLive else { return nil }
+            return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: openFolder)
+        }, completion: completion)
+    }
+
     public func openFolder(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().setFolderCollapsed(windowId: self.windowID, id: id, collapsed: false) }, completion: completion)
     }
@@ -152,6 +164,36 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 
     public func showSpace(id: String, completion: @escaping Completion<Void>) {
         enqueue({ try self.opened().showSpace(windowId: self.windowID, spaceId: id) }, completion: completion)
+    }
+
+    public func showSpaceSelecting(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        let generation = spaceSwitchLock.withLock { spaceSwitchGeneration }
+        enqueue({
+            try self.spaceSwitchLock.withLock {
+                guard self.spaceSwitchGeneration == generation else { throw CoreError.Edit(message: "space switch cancelled") }
+                return try self.opened().showSpaceSelecting(windowId: self.windowID, spaceId: id)
+            }
+        }, completion: { result in
+            if case .success = result, let check = self.checkSpaceSwitchCompletion { check("space", { completion(result) }) }
+            else { completion(result) }
+        })
+    }
+
+    public func showSpaceSelectingTab(id: String, item: String, completion: @escaping Completion<WorkspaceSnapshot>) {
+        let generation = spaceSwitchLock.withLock { spaceSwitchGeneration }
+        enqueue({
+            try self.spaceSwitchLock.withLock {
+                guard self.spaceSwitchGeneration == generation else { throw CoreError.Edit(message: "space switch cancelled") }
+                return try self.opened().showSpaceSelectingTab(windowId: self.windowID, spaceId: id, itemId: item)
+            }
+        }, completion: { result in
+            if case .success = result, let check = self.checkSpaceSwitchCompletion { check("tab", { completion(result) }) }
+            else { completion(result) }
+        })
+    }
+
+    public func cancelPendingSpaceSwitches() {
+        spaceSwitchLock.withLock { spaceSwitchGeneration &+= 1 }
     }
 
     /// The command bar's per-open session: the index is built once per open and dropped with it.
@@ -208,7 +250,9 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 extension WorkspaceAdapter {
     @MainActor
     public func setSpaceLook(id: String, look: Look?, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().setSpaceLook(windowId: self.windowID, spaceId: id, look: look) }, completion: completion)
+        enqueue({ try self.opened().setSpaceLook(windowId: self.windowID, spaceId: id, look: look) }) { result in
+            if let hold = self.checkLookCompletion { hold { completion(result) } } else { completion(result) }
+        }
     }
 
     public func renameSpace(id: String, name: String, completion: @escaping Completion<WorkspaceSnapshot>) {

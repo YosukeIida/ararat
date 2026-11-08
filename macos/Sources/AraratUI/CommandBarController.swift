@@ -5,6 +5,7 @@ import AraratKit
 public enum CommandBarMode: Equatable {
     case newTab
     case editURL
+    case search
 }
 
 /// Answered by the per-open core session (built once per open, dropped on close).
@@ -13,6 +14,16 @@ public protocol CommandBarStore: AnyObject {
     /// Pure query against the session's index; the ranking and the inline completion come
     /// from the core, never derived here.
     func query(_ text: String) -> CommandBarResult
+    func searchURL(_ text: String) -> String
+}
+
+@MainActor
+public final class CommandBarSessionStore: CommandBarStore {
+    private let session: CommandBarSession
+
+    public init(session: CommandBarSession) { self.session = session }
+    public func query(_ text: String) -> CommandBarResult { session.query(text: text) }
+    public func searchURL(_ text: String) -> String { session.searchUrl(text: text) }
 }
 
 /// Values from the design note; each is labelled where it is used.
@@ -95,13 +106,15 @@ public final class CommandBarController {
     /// ⌘L prefills the current tab's URL all selected; with no tab it falls back to a new tab
     /// [Cra, MainWindowController.swift:1799-1801].
     public static func openSpec(mode: CommandBarMode, selectedTabURL: String?) -> (mode: CommandBarMode, prefill: String?) {
-        mode == .editURL && selectedTabURL != nil ? (.editURL, selectedTabURL) : (.newTab, nil)
+        if mode == .search { return (.search, nil) }
+        return mode == .editURL && selectedTabURL != nil ? (.editURL, selectedTabURL) : (.newTab, nil)
     }
 
     public var placeholder: String {
         switch mode {
         case .newTab: return "Search or enter URL…" // [Cra, CommandBarController.swift:51-52]
         case .editURL: return "Edit URL or search…"
+        case .search: return "Search…"
         }
     }
 
@@ -146,7 +159,15 @@ public final class CommandBarController {
     }
 
     private func relist(allowCompletion: Bool) {
-        var result = store?.query(query) ?? CommandBarResult(rows: [], inlineCompletion: nil)
+        var result: CommandBarResult
+        if mode == .search, let store, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let url = store.searchURL(query)
+            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], inlineCompletion: nil)
+        } else if mode == .search {
+            result = CommandBarResult(rows: [], inlineCompletion: nil)
+        } else {
+            result = store?.query(query) ?? CommandBarResult(rows: [], inlineCompletion: nil)
+        }
         if !allowCompletion { result.inlineCompletion = nil }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
         self.result = result
@@ -198,6 +219,7 @@ public final class CommandBarController {
     /// re-queried before the commit, so the selected row targets the full text (Cra F:126-135).
     /// ⌘Return shares this step and then forces a new tab.
     public func commit(forceNewTab: Bool, applyingCompletion completion: String?) {
+        if mode == .search { return commit(forceNewTab: forceNewTab) }
         guard let completion else { return commit(forceNewTab: forceNewTab) }
         update(query: completion, allowCompletion: false)
         commit(forceNewTab: forceNewTab)

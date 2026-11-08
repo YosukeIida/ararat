@@ -4,7 +4,7 @@ import AppKit
 /// MIT `Sources/Cra/UI/CommandBar/CommandTextField.swift`: the completed suffix is inserted
 /// selected, so typing replaces it and Backspace removes it without re-completing. The
 /// completion itself comes from the core with each query. While the field has marked text
-/// (IME), Return and ↑/↓ go to the input method, never to the bar (ours; Cra lacks it).
+/// (IME), editing keys go to the input method, never to the bar (ours; Cra lacks it).
 @MainActor
 public final class CommandTextField {
     let controller: CommandBarController
@@ -25,8 +25,7 @@ public final class CommandTextField {
 
     func update() {
         Self.update(field, controller: controller, coordinator: coordinator)
-        // A completion needs the field's editor, which exists once the field is first responder
-        // (made so on the next turn when the bar opens): apply what is pending again then.
+        // A completion needs the field's editor.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Self.update(self.field, controller: self.controller, coordinator: self.coordinator)
@@ -53,28 +52,16 @@ public final class CommandTextField {
 
     private static func update(_ field: NSTextField, controller: CommandBarController, coordinator coord: Coordinator) {
         field.placeholderString = controller.placeholder
+        if (field.currentEditor() as? NSTextView)?.hasMarkedText() == true { return }
         if coord.appliedVersion != controller.fieldTextVersion {
+            guard let editor = field.currentEditor() else { return }
             coord.appliedVersion = controller.fieldTextVersion
             coord.suppressChange = true
             field.stringValue = controller.fieldText
             coord.lastTyped = controller.fieldText
             coord.suppressChange = false
             let selected = controller.fieldTextSelected
-            // The pushed text is selected (a prefill) or the caret goes after it. When the
-            // field's editor exists the selection lands now; otherwise it waits for the field
-            // to become first responder as the bar opens.
-            let applySelection = {
-                guard let editor = field.currentEditor() else { return }
-                if selected { editor.selectAll(nil) } else { editor.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0) }
-            }
-            if field.currentEditor() != nil {
-                applySelection()
-            } else {
-                DispatchQueue.main.async {
-                    field.window?.makeFirstResponder(field)
-                    applySelection()
-                }
-            }
+            if selected { editor.selectAll(nil) } else { editor.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0) }
         }
         if coord.appliedPreview != controller.previewVersion {
             coord.appliedPreview = controller.previewVersion
@@ -135,10 +122,9 @@ public final class CommandTextField {
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // While the field has marked text (IME composition), Return and ↑/↓ belong to the
-            // input method, never to the bar.
             if textView.hasMarkedText() && (selector == #selector(NSResponder.insertNewline(_:))
-                || selector == #selector(NSResponder.moveUp(_:)) || selector == #selector(NSResponder.moveDown(_:))) {
+                || selector == #selector(NSResponder.moveUp(_:)) || selector == #selector(NSResponder.moveDown(_:))
+                || selector == #selector(NSResponder.cancelOperation(_:))) {
                 return false
             }
             switch selector {

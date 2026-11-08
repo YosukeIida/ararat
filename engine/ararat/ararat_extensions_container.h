@@ -59,6 +59,7 @@ class AraratExtensionsContainer
   // Updates the WebContents associated with this container.
   void SetWebContents(content::WebContents* web_contents);
   const auto& actions() const { return actions_; }
+  void SetShortcutActive(bool active);
 
   // ExtensionsContainer:
   ToolbarActionViewModel* GetActionForId(const std::string& action_id) override;
@@ -113,6 +114,7 @@ class AraratExtensionsContainer
   base::WeakPtr<content::WebContents> web_contents_;
   const AnchorProvider anchor_provider_;
   raw_ptr<ToolbarActionsModel> toolbar_model_ = nullptr;
+  bool shortcuts_active_ = false;
   base::ScopedObservation<ToolbarActionsModel, ToolbarActionsModel::Observer>
       toolbar_model_observation_{this};
   raw_ptr<ToolbarActionViewModel> popup_owner_ = nullptr;

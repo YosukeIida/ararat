@@ -372,9 +372,14 @@ public final class SidebarView: NSView {
     }
 
     @objc public func pinSelectedTab(_ sender: Any?) {
-        guard canPinSelectedTab, let space = snapshotSpace, let id = selectedID, let onMove else { return }
+        guard let onMove else { return }
+        pinSelectedTab(using: onMove)
+    }
+
+    public func pinSelectedTab(using move: (String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void) {
+        guard canPinSelectedTab, let space = snapshotSpace, let id = selectedID else { return }
         let pinning = space.today.contains { $0.id == id }
-        onMove(id, pinning ? space.pinnedId : space.todayId, 0, false) { [weak self] snapshot in
+        move(id, pinning ? space.pinnedId : space.todayId, 0, false) { [weak self] snapshot in
             guard let self, let snapshot else { return }
             self.replaceSnapshot(snapshot)
             if pinning { self.showPinHint(id: id, space: space.id) }
@@ -389,7 +394,16 @@ public final class SidebarView: NSView {
         showSpace(at: index, animatedReveal: true)
     }
 
-    private func showSpace(at index: Int, animatedReveal: Bool) {
+    public func restoreShownSpace() {
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) else { return }
+        showSpace(at: index, animatedReveal: false, notify: false)
+    }
+
+    public func showSpaceWithoutNotification(at index: Int) {
+        showSpace(at: index, animatedReveal: false, notify: false)
+    }
+
+    private func showSpace(at index: Int, animatedReveal: Bool, notify: Bool = true) {
         guard snapshot.spaces.indices.contains(index) else { return }
         if drag != nil { cancelDrag() }
         listScroll.stopReveal()
@@ -403,7 +417,7 @@ public final class SidebarView: NSView {
         listScroll.move(to: spaceListOrigins[snapshot.spaces[index].id] ?? 0)
         revealSelection(animated: animatedReveal)
         refreshPointer()
-        onShowSpace?(snapshot.spaces[index].id)
+        if notify { onShowSpace?(snapshot.spaces[index].id) }
     }
 
     private func build() {

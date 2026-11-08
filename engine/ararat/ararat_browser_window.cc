@@ -13,10 +13,14 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/devtools/devtools_ui_controller.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/global_keyboard_shortcuts_mac.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
+#include "chrome/browser/ui/find_bar/find_bar_controller.h"
+#include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/views/bubble_anchor_util_views.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -25,6 +29,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/find_in_page/find_notification_details.h"
+#include "components/find_in_page/find_tab_helper.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
@@ -34,13 +40,110 @@
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/range/range.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/view.h"
 
+// Adapted from Ardia's GPL-3.0 ac_location_bar.mm and ac_browser_window.h.
+class AraratLocationBar : public LocationBar {
+ public:
+  AraratLocationBar(BrowserWindowInterface* browser, AraratWindowHostCore* host)
+      : LocationBar(nullptr), browser_(browser), host_(host) {}
+  ~AraratLocationBar() override = default;
+  void FocusLocation(bool user, bool) override { if (user && host_->window() && host_->window()->browser() == browser_) host_->ShowCommandBar(false); }
+  void FocusSearch() override { if (host_->window() && host_->window()->browser() == browser_) host_->ShowCommandBar(true); }
+  void UpdateFocusBehavior(bool) override {}
+  void UpdateContentSettingsIcons() override {}
+  void SaveStateToContents(content::WebContents*) override {}
+  void Revert() override {}
+  OmniboxView* GetOmniboxView() override { return nullptr; }
+  OmniboxPopupView* GetOmniboxPopupView() override { return nullptr; }
+  OmniboxController* GetOmniboxController() override { return nullptr; }
+  bool ShouldCloseOmniboxPopup(ui::MouseEvent*) override { return false; }
+  content::WebContents* GetWebContents() override { return browser_->GetTabStripModel()->GetActiveWebContents(); }
+  LocationBarModel* GetLocationBarModel() override { return nullptr; }
+  std::optional<bubble_anchor_util::AnchorConfiguration> GetChipAnchor() override { return std::nullopt; }
+  ChipController* GetChipController() override { return nullptr; }
+  void AnnounceAlert(const std::u16string&) override {}
+  void OnChanged() override {}
+  void UpdateWithoutTabRestore() override {}
+  ui::TrackedElement* GetAnchorOrNull() override { return nullptr; }
+  BrowserWindowInterface* GetBrowser() override { return browser_; }
+  Profile* GetProfile() override { return browser_->GetProfile(); }
+  bool IsInitialized() const override { return true; }
+  bool IsVisible() const override { return false; }
+  bool IsDrawn() const override { return false; }
+  bool IsFullscreen() const override { return host_->IsFullscreen(); }
+  bool IsEditingOrEmpty() const override { return false; }
+  bool IsMouseHovered() const override { return false; }
+  bool IsFocusWithin() const override { return false; }
+  void InvalidateLayout() override {}
+  gfx::Rect Bounds() const override { return {}; }
+  gfx::Rect BoundsInScreen() const override { return {}; }
+  gfx::Size MinimumSize() const override { return {}; }
+  gfx::Size PreferredSize() const override { return {}; }
+  void Update(content::WebContents*) override {}
+  void ResetTabState(content::WebContents*) override {}
+  bool HasSecurityStateChanged() override { return false; }
+  LocationBarTesting* GetLocationBarForTesting() override { return nullptr; }
+ private:
+  raw_ptr<BrowserWindowInterface> browser_;
+  raw_ptr<AraratWindowHostCore> host_;
+};
 namespace {
 unsigned long g_exclusive_input_count = 0;
+class AraratFindBar : public FindBar {
+ public:
+  AraratFindBar(BrowserWindowInterface* browser, AraratWindowHostCore* host)
+      : browser_(browser), host_(host) {}
+  ~AraratFindBar() override { visible_ = false; Publish(false); }
+  FindBarController* GetFindBarController() const override { return controller_; }
+  void SetFindBarController(FindBarController* controller) override { controller_ = controller; }
+  void Show(bool, bool focus) override { bool changed = !visible_; visible_ = true; SetFocused(focus); Publish(focus); if (changed && controller_) controller_->OnFindBarVisibilityChanged(); }
+  void Hide(bool) override { bool changed = visible_; visible_ = false; SetFocused(false); Publish(false); if (changed && controller_) controller_->OnFindBarVisibilityChanged(); }
+  void SetFocusAndSelection() override { SetFocused(true); Publish(true); }
+  void ClearResults(const find_in_page::FindNotificationDetails&) override { matches_ = 0; ordinal_ = 0; request_id_ = 0; final_update_ = false; Publish(false); }
+  void StopAnimation() override {}
+  void MoveWindowIfNecessary() override { Publish(false); }
+  void SetFindTextAndSelectedRange(const std::u16string& text, const gfx::Range& range) override {
+    text_ = text; range_ = range; Publish(false);
+  }
+  std::u16string_view GetFindText() const override { return text_; }
+  gfx::Range GetSelectedRange() const override { return range_; }
+  void UpdateUIForFindResult(const find_in_page::FindNotificationDetails& result, const std::u16string& text) override {
+    if (!text.empty()) text_ = text;
+    matches_ = result.number_of_matches(); ordinal_ = result.active_match_ordinal();
+    request_id_ = result.request_id(); final_update_ = result.final_update(); Publish(false);
+  }
+  void AudibleAlert() override {}
+  bool IsFindBarVisible() const override { return visible_; }
+  void RestoreSavedFocus() override { if (auto* contents = browser_->GetTabStripModel()->GetActiveWebContents()) contents->Focus(); }
+  bool HasGlobalFindPasteboard() const override { return true; }
+  void UpdateFindBarForChangedWebContents() override { Publish(false); }
+  bool CanPopulateFromSelectedText() override { return true; }
+  const FindBarTesting* GetFindBarTesting() const override { return nullptr; }
+  bool HasFocus() const override { return visible_ && host_->FindBarHasFocus(browser_); }
+  void CloseOverlappingBubbles() override {}
+  views::Widget* GetHostWidget() override { return host_->widget(); }
+ private:
+  void SetFocused(bool focused) {
+    if (auto* contents = browser_->GetTabStripModel()->GetActiveWebContents())
+      if (auto* helper = find_in_page::FindTabHelper::FromWebContents(contents)) helper->set_find_ui_focused(focused);
+  }
+  void Publish(bool focus) { host_->UpdateFindBar(browser_, text_, range_.start(), range_.end(), matches_, ordinal_, request_id_, final_update_, visible_, focus); }
+  raw_ptr<BrowserWindowInterface> browser_;
+  raw_ptr<AraratWindowHostCore> host_;
+  raw_ptr<FindBarController> controller_ = nullptr;
+  std::u16string text_;
+  gfx::Range range_;
+  int matches_ = 0;
+  int ordinal_ = 0;
+  int request_id_ = 0;
+  bool final_update_ = false;
+  bool visible_ = false;
+};
 // Bubble lifecycle follows WebUIBrowserExclusiveAccessContext in Chromium.
 class AraratExclusiveAccessContext : public ExclusiveAccessContext,
                                      public ExclusiveAccessBubbleViewsContext,
@@ -155,6 +258,7 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
                                          AraratWindowHostCore* host)
     : browser_(browser), host_(host),
       devtools_controller_(std::make_unique<DevtoolsUIController>(browser, std::vector<raw_ptr<ContentsContainerView, DanglingUntriaged>>{})),
+      location_bar_(std::make_unique<AraratLocationBar>(browser, host)),
       exclusive_access_(std::make_unique<AraratExclusiveAccessContext>(browser, host)),
       autofill_handler_(std::make_unique<AraratAutofillBubbleHandler>()),
       autofill_registration_(std::make_unique<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>>(
@@ -169,6 +273,7 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
   }
 }
 AraratBrowserWindow::~AraratBrowserWindow() {
+  if (host_->window() == this) host_->SetShortcutWindow(nullptr, false);
   extensions_registration_.reset();
   extensions_.reset();
   devtools_controller_.reset();
@@ -262,13 +367,18 @@ AraratBrowserWindow::GetAutofillBubbleHandler() {
 }
 
 LocationBar* AraratBrowserWindow::GetLocationBar() const {
-  // Why not now: null crashes bubble anchors; U16 owns the location bar.
-  return nullptr;
+  return location_bar_.get();
 }
 
 ui::AcceleratorProvider* AraratBrowserWindow::GetAcceleratorProvider() {
-  // Why not implement it yet: new-tab shortcuts crash on null; U16 owns it.
-  return nullptr;
+  return this;
+}
+
+bool AraratBrowserWindow::GetAcceleratorForCommandId(int command, ui::Accelerator* accelerator) const {
+  if (command == IDC_TASK_MANAGER || command == IDC_TASK_MANAGER_APP_MENU ||
+      command == IDC_TASK_MANAGER_CONTEXT_MENU || command == IDC_TASK_MANAGER_MAIN_MENU)
+    command = IDC_TASK_MANAGER_SHORTCUT;
+  return GetDefaultMacAcceleratorForCommandId(command, accelerator);
 }
 
 PinnedToolbarActions* AraratBrowserWindow::GetPinnedToolbarActions() {
@@ -276,7 +386,9 @@ PinnedToolbarActions* AraratBrowserWindow::GetPinnedToolbarActions() {
   return nullptr;
 }
 
-void AraratBrowserWindow::SetFocusToLocationBar(bool is_user_initiated) {}
+void AraratBrowserWindow::SetFocusToLocationBar(bool is_user_initiated) {
+  if (is_user_initiated && host_->window() == this) host_->ShowCommandBar(false);
+}
 
 void AraratBrowserWindow::UpdateReloadStopState(bool is_loading, bool force) {}
 
@@ -376,22 +488,16 @@ void AraratBrowserWindow::HandleDragEnded() {}
 content::KeyboardEventProcessingResult
 AraratBrowserWindow::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
-  if (event.windows_key_code == 'F' &&
-      (event.GetModifiers() & blink::WebInputEvent::kMetaKey) &&
-      !(event.GetModifiers() & blink::WebInputEvent::kControlKey) &&
-      !AraratKeyEventFromDevTools(event.os_event))
-    return content::KeyboardEventProcessingResult::HANDLED;
-  return content::KeyboardEventProcessingResult::NOT_HANDLED;
+  return AraratIsKeyboardShortcut(event) ? content::KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT : content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool AraratBrowserWindow::HandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
-  return AraratHandleMenuKey(event.os_event);
+  return AraratRedispatchKeyboardEvent(host_, event);
 }
 
 std::unique_ptr<FindBar> AraratBrowserWindow::CreateFindBar() {
-  // Why not implement it yet: FindBarController crashes on null; U16 owns it.
-  return {};
+  return std::make_unique<AraratFindBar>(browser_, host_);
 }
 
 web_modal::WebContentsModalDialogHost*

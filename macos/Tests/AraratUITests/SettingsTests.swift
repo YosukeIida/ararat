@@ -5,9 +5,123 @@ import Testing
 @testable import AraratUI
 @testable import AraratHarness
 
+@Test @MainActor
+func settingsRetargetsOneWindowToTheNewWorkspace() {
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+    let first = WorkspaceAdapter(windowID: "settings-first")
+    let second = WorkspaceAdapter(windowID: "settings-second")
+    let model = SettingsModel(snapshot: snapshot, adapter: first, publish: { _ in }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: first), airTraffic: AirTrafficModel(adapter: first))
+    let controller = SettingsWindowController(model: model)
+    let window = controller.window
+    var target = ""
+    controller.retarget(snapshot: snapshot, adapter: second, publish: { _ in target = "second" }, resetWidth: {},
+                        preview: { _, _, _ in }, keyBindings: KeyBindingsModel(adapter: second), airTraffic: AirTrafficModel(adapter: second))
+    model.publish(snapshot)
+    #expect(controller.window === window && model.adapter === second && target == "second")
+    #expect(window?.isVisible == false)
+}
+
+@Test @MainActor
+func settingsEditAfterRetargetUsesTheSecondWindowsSpace() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let first = WorkspaceAdapter(windowID: "settings-window-one", session: session)
+    let second = WorkspaceAdapter(windowID: "settings-window-two", session: session)
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    let initial = try await settingsValue { first.open(path: directory.appendingPathComponent("settings.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    try await settingsValue { first.showSpace(id: "space-work", completion: $0) }
+    try await settingsValue { second.showSpace(id: "space-home", completion: $0) }
+    let firstSnapshot = try await settingsValue { first.snapshot(completion: $0) }
+    let secondSnapshot = try await settingsValue { second.snapshot(completion: $0) }
+    let model = SettingsModel(snapshot: firstSnapshot, adapter: first, publish: { _ in }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: first), airTraffic: AirTrafficModel(adapter: first))
+    let settings = SettingsWindowController(model: model)
+    let window = settings.window
+    settings.retarget(snapshot: secondSnapshot, adapter: second, publish: { _ in }, resetWidth: {}, preview: { _, _, _ in },
+                      keyBindings: KeyBindingsModel(adapter: second), airTraffic: AirTrafficModel(adapter: second))
+    settings.prepare(shownSpaceID: secondSnapshot.shownSpaceId)
+    model.rename("space-home", name: "Second window")
+    try await waitUntil { model.snapshot.spaces.first { $0.id == "space-home" }?.title == "Second window" }
+    #expect(settings.window === window && model.page == .space("space-home"))
+    #expect(model.snapshot.spaces.first { $0.id == "space-work" }?.title == initial.spaces.first { $0.id == "space-work" }?.title)
+    #expect(window?.isVisible == false)
+}
+
 @MainActor
 private func settingsValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
     try await withCheckedThrowingContinuation { done in start { done.resume(with: $0) } }
+}
+
+@Test @MainActor
+func settingsPendingEditKeepsItsOriginAfterRetarget() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let first = WorkspaceAdapter(windowID: "pending-settings-a", session: session)
+    let second = WorkspaceAdapter(windowID: "pending-settings-b", session: session)
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    _ = try await settingsValue { first.open(path: directory.appendingPathComponent("pending.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    try await settingsValue { first.showSpace(id: "space-work", completion: $0) }
+    try await settingsValue { second.showSpace(id: "space-home", completion: $0) }
+    let firstSnapshot = try await settingsValue { first.snapshot(completion: $0) }
+    let secondSnapshot = try await settingsValue { second.snapshot(completion: $0) }
+    var firstPublished: WorkspaceSnapshot?
+    var secondPublished: WorkspaceSnapshot?
+    var release: (() -> Void)?
+    let model = SettingsModel(snapshot: firstSnapshot, adapter: first, publish: { firstPublished = $0 }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: first), airTraffic: AirTrafficModel(adapter: first))
+    model.checkEditCompletion = { release = $0 }
+    model.rename("space-work", name: "Delayed edit")
+    try await waitUntil { release != nil }
+    model.retarget(snapshot: secondSnapshot, adapter: second, publish: { secondPublished = $0 }, resetWidth: {}, preview: { _, _, _ in },
+                   keyBindings: KeyBindingsModel(adapter: second), airTraffic: AirTrafficModel(adapter: second))
+    release?()
+    try await waitUntil { secondPublished != nil }
+    #expect(firstPublished?.shownSpaceId == "space-work")
+    #expect(secondPublished?.shownSpaceId == "space-home")
+    #expect(model.snapshot.shownSpaceId == "space-home")
+    #expect(model.snapshot.spaces.first { $0.id == "space-work" }?.title == "Delayed edit")
+    #expect(secondPublished?.spaces.first { $0.id == "space-work" }?.title == "Delayed edit")
+}
+
+@Test @MainActor
+func delayedLookCompletionDoesNotClearRetargetedPreview() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let first = WorkspaceAdapter(windowID: "look-pending-a", session: session)
+    let second = WorkspaceAdapter(windowID: "look-pending-b", session: session)
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let json = try String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8)
+    let initial = try await settingsValue { first.open(path: directory.appendingPathComponent("look.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    let space = try #require(initial.spaces.first)
+    let secondSnapshot = try await settingsValue { second.snapshot(completion: $0) }
+    var firstPublished: WorkspaceSnapshot?
+    var secondPreview: Look?
+    var secondPreviewActive = false
+    var release: (() -> Void)?
+    let model = SettingsModel(snapshot: initial, adapter: first, publish: { firstPublished = $0 }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: first), airTraffic: AirTrafficModel(adapter: first))
+    let oldEditor = LookEditorModel(settings: model, space: space)
+    first.checkLookCompletion = { release = $0 }
+    oldEditor.preset(1)
+    oldEditor.dismiss()
+    try await waitUntil { release != nil }
+    model.retarget(snapshot: secondSnapshot, adapter: second, publish: { _ in }, resetWidth: {},
+                   preview: { _, look, active in secondPreview = look; secondPreviewActive = active },
+                   keyBindings: KeyBindingsModel(adapter: second), airTraffic: AirTrafficModel(adapter: second))
+    let newEditor = LookEditorModel(settings: model, space: space)
+    newEditor.begin()
+    newEditor.change { $0.opacity = 0.21 }
+    let expectedPreview = newEditor.look
+    release?()
+    #expect(firstPublished?.spaces.first(where: { $0.id == space.id })?.look?.colors == LookEditorModel.presets[1])
+    #expect(secondPreviewActive && secondPreview == expectedPreview)
+    #expect(newEditor.editing)
 }
 
 @Test @MainActor
@@ -328,7 +442,7 @@ func settingsErrorsSearchAndEdgeBounceUseTheirVisibleValues() {
     _ = NSApplication.shared
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [])
     let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [space]), adapter: WorkspaceAdapter(windowID: "values"), publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: WorkspaceAdapter(windowID: "values-keys")), airTraffic: AirTrafficModel(adapter: WorkspaceAdapter(windowID: "values-atc")))
-    model.receive(.failure(CoreError.Edit(message: "unknown space missing-id")))
+    model.editCompletion()(.failure(CoreError.Edit(message: "unknown space missing-id")))
     #expect(model.error == "unknown space missing-id")
     model.navigate(.tabs)
     #expect(model.error == nil)

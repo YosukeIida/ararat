@@ -18,8 +18,21 @@ class AraratBrowserWindow;
 class AraratModalDialogHost;
 class BrowserWindowInterface;
 class FullscreenController;
+class ExtensionKeybindingRegistryViews;
 class Profile;
-namespace content { class WebContents; }
+namespace content { class WebContents; class RenderFrameHost; }
+namespace input { class NativeWebKeyboardEvent; }
+
+bool AraratCheckDialogIntegrity();
+bool AraratCheckRegisterBeforeUnload(const std::string& live, content::WebContents* contents);
+void AraratCheckUnregisterBeforeUnload(const std::string& live, content::WebContents* contents);
+void AraratCheckRevokeChangedDocument(const std::string& live, content::WebContents* contents);
+uint64_t AraratCheckDocumentRevision();
+bool AraratCheckRejectJavaScriptDialog();
+uint64_t AraratCheckBeginBeforeUnload(content::WebContents*, content::RenderFrameHost*, bool);
+bool AraratCheckFinishBeforeUnload(uint64_t, bool);
+uint64_t AraratCheckEnterBeforeUnloadManager(uint64_t);
+void AraratCheckLeaveBeforeUnloadManager(uint64_t);
 
 namespace web_modal {
 class WebContentsModalDialogHost;
@@ -65,11 +78,20 @@ class AraratWindowHostCore {
   void FullscreenTransitionStarting();
   void SynchronizeFullscreenForCheck();
   void AttachPage(gfx::NativeView view);
+  views::NativeViewHost* page_host() const { return page_host_; }
   void PositionPage(const gfx::Rect& rect);
   web_modal::WebContentsModalDialogHost* modal_dialog_host() const;
   const gfx::Rect& page_rect() const { return page_rect_; }
   void ShowBrowserProfile(BrowserWindowInterface* browser);
   void DevToolsChanged(content::WebContents* inspected);
+  void ShowCommandBar(bool search);
+  bool DispatchWorkspaceCommand(int command);
+  bool ExecuteEmptyCommand(int command);
+  bool ValidateEmptyCommand(int command);
+  void UpdateFindBar(BrowserWindowInterface* browser, const std::u16string& text,
+                     unsigned int start, unsigned int end, int matches, int ordinal, int request_id, bool final_update,
+                     bool visible, bool focus);
+  bool FindBarHasFocus(BrowserWindowInterface* browser) const;
 
   void Close();
 
@@ -77,6 +99,9 @@ class AraratWindowHostCore {
   void ClearPending();
 
   void SetWindow(AraratBrowserWindow* window);
+  void SetShortcutWindow(AraratBrowserWindow* window, bool active);
+  void SetShortcutActivation(bool active);
+  bool ShortcutActivationMatches(bool active) const;
   void OnWindowDestroyed(BrowserWindowInterface* browser);
   void OnCloseCancelled();
   void ConfirmClose();
@@ -89,6 +114,8 @@ class AraratWindowHostCore {
   raw_ptr<views::View> extension_anchor_ = nullptr;
   gfx::Rect page_rect_;
   std::unique_ptr<AraratModalDialogHost> modal_dialog_host_;
+  std::unique_ptr<ExtensionKeybindingRegistryViews> shortcut_registry_;
+  raw_ptr<AraratBrowserWindow> shortcut_window_ = nullptr;
   std::map<std::string, raw_ptr<AraratBrowserWindow>> windows_;
   std::set<std::string> close_warnings_confirmed_;
   bool closing_ = false;
@@ -105,8 +132,8 @@ class AraratWindowHostCore {
 };
 
 bool AraratUsesSharedCompositor();
-bool AraratHandleMenuKey(gfx::NativeEvent event);
-bool AraratKeyEventFromDevTools(gfx::NativeEvent event);
+bool AraratIsKeyboardShortcut(const input::NativeWebKeyboardEvent& event);
+bool AraratRedispatchKeyboardEvent(AraratWindowHostCore* host, const input::NativeWebKeyboardEvent& event);
 unsigned long AraratStockBrowserCount();
 bool AraratCheckDevToolsDestroyed();
 void AraratInstallWindowFactory();

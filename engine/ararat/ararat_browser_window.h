@@ -4,17 +4,19 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/unload_controller.h"
+#include "ui/base/accelerators/accelerator.h"
 #include <memory>
 
 class BrowserWindowInterface;
 class AraratWindowHostCore;
+class AraratLocationBar;
 class DevtoolsUIController;
 namespace ararat { class AraratExtensionsContainer; }
 class ExtensionsContainer;
 
 namespace ui { template <class T> class ScopedUnownedUserData; }
 
-class AraratBrowserWindow : public BrowserWindow {
+class AraratBrowserWindow : public BrowserWindow, public ui::AcceleratorProvider {
  public:
   AraratBrowserWindow(BrowserWindowInterface* browser,
                       AraratWindowHostCore* host);
@@ -48,6 +50,7 @@ class AraratBrowserWindow : public BrowserWindow {
   autofill::AutofillBubbleHandler* GetAutofillBubbleHandler() override;
   LocationBar* GetLocationBar() const override;
   ui::AcceleratorProvider* GetAcceleratorProvider() override;
+  bool GetAcceleratorForCommandId(int command, ui::Accelerator* accelerator) const override;
   PinnedToolbarActions* GetPinnedToolbarActions() override;
   void SetFocusToLocationBar(bool is_user_initiated) override;
   void UpdateReloadStopState(bool is_loading, bool force) override;
@@ -153,6 +156,7 @@ class AraratBrowserWindow : public BrowserWindow {
   raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<AraratWindowHostCore> host_;
   std::unique_ptr<DevtoolsUIController> devtools_controller_;
+  std::unique_ptr<AraratLocationBar> location_bar_;
   std::unique_ptr<ExclusiveAccessContext> exclusive_access_;
   std::unique_ptr<autofill::AutofillBubbleHandler> autofill_handler_;
   std::unique_ptr<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>> autofill_registration_;

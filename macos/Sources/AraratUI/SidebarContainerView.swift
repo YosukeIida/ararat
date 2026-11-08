@@ -4,6 +4,8 @@ import AppKit
 public final class SidebarContainerView: NSView {
     private let sidebar: SidebarView
     private let page: NSView
+    public let findBar = FindBarView()
+    private var findPageRect: NSRect?
     private let panel = SidebarPanelView()
     private let pageMask = CAShapeLayer()
     public let resizeHandle: SidebarResizeHandle
@@ -100,6 +102,8 @@ public final class SidebarContainerView: NSView {
         panel.wantsLayer = true
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
+        findBar.isHidden = true
+        addSubview(findBar)
         addSubview(panel)
         extensionsButton.image = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: "Extensions")
         extensionsButton.isBordered = false
@@ -189,6 +193,7 @@ public final class SidebarContainerView: NSView {
             panel.isHidden = true
             page.frame = bounds
             page.layer?.mask = nil
+            layoutFindBar()
             return
         }
         panel.isHidden = false
@@ -207,6 +212,7 @@ public final class SidebarContainerView: NSView {
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
                             height: max(0, bounds.height - SidebarMetrics.cardInset * 2))
+        layoutFindBar()
         panel.layer?.cornerRadius = docked ? 0 : SidebarMetrics.cornerRadius
         panel.layer?.masksToBounds = !docked
         panel.layer?.borderWidth = docked ? 0 : SidebarMetrics.borderWidth
@@ -220,6 +226,17 @@ public final class SidebarContainerView: NSView {
         windowButtons?.isHidden = window?.styleMask.contains(.fullScreen) == true || windowButtons?.sidebarHidden == true
         if let window { WindowChrome.layout(window: window, lights: windowButtons) }
         updateBorder()
+    }
+
+    private func layoutFindBar() {
+        let rect = findPageRect.map { convert($0, from: page) } ?? page.frame
+        let width = min(380, rect.width)
+        findBar.frame = NSRect(x: rect.maxX - width, y: rect.minY, width: width, height: 36)
+    }
+
+    public func setFindPageRect(_ rect: NSRect) {
+        findPageRect = rect
+        layoutFindBar()
     }
 
     @objc private func showExtensions() {

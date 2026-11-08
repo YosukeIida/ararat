@@ -42,8 +42,13 @@ void ScheduleTick() {
 
 @implementation ARTabsCheck
 - (void)windowHostClosingAllCancelled:(id<ARWindowHostAPI>)host {}
+- (void)windowHostWillBeginClosing:(id<ARWindowHostAPI>)host {}
 - (void)windowHost:(id<ARWindowHostAPI>)host pageFullscreenChanged:(BOOL)fullscreen {}
 - (void)windowHost:(id<ARWindowHostAPI>)host windowFullscreenChanged:(BOOL)fullscreen {}
+- (void)windowHost:(id<ARWindowHostAPI>)host performWorkspaceCommand:(NSString*)command {}
+- (void)windowHost:(id<ARWindowHostAPI>)host updateFindBar:(NSDictionary<NSString*, id>*)state {}
+- (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host { return NO; }
+- (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect {}
 @synthesize host = _host;
 @synthesize card = _card;
 @synthesize transactions = _transactions;
