@@ -38,6 +38,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/navigation_handle.h"
@@ -106,6 +107,31 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
 - (content::WebContents*)contents { return contents_; }
+
+- (void)checkFullscreenRequest:(BOOL)enter {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) return;
+  if (command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+    if (auto* view = contents_->GetRenderWidgetHostView()) view->SetHasFocusForTesting(true);
+  }
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      enter ? u"document.documentElement.requestFullscreen()" : u"document.exitFullscreen()",
+      base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkFullscreenElement:(void (^)(BOOL))completion {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
+                     command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) {
+    completion(NO);
+    return;
+  }
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"!!document.fullscreenElement", base::BindOnce(^(base::Value value) {
+        completion(value.is_bool() && value.GetBool());
+      }), content::ISOLATED_WORLD_ID_GLOBAL);
+}
 
 - (NSUInteger)checkPermissionShownCount { return AraratCheckPermissionShownCount(); }
 - (BOOL)checkAutofillBubble:(BOOL)card decline:(BOOL)decline {

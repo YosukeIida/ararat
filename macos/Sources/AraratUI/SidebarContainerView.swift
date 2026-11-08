@@ -17,6 +17,41 @@ public final class SidebarContainerView: NSView {
     private var maskingTransition = false
     private var motionGeneration = 0
     private var moving = false
+    private var stateBeforeFullscreen: SidebarState?
+    public var windowFullscreen = false {
+        didSet {
+            guard windowFullscreen != oldValue else { return }
+            if windowFullscreen {
+                stateBeforeFullscreen = state
+                state.hideForFullscreen()
+            } else if let previous = stateBeforeFullscreen {
+                let selection = state.hasSelection
+                state = previous
+                state.hasSelection = selection
+                stateBeforeFullscreen = nil
+            }
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+            processPointer()
+        }
+    }
+    public var pageFullscreen = false {
+        didSet {
+            guard pageFullscreen != oldValue else { return }
+            if pageFullscreen {
+                stopMonitoring()
+                motionGeneration += 1
+                moving = false
+                maskingTransition = false
+                panel.layer?.removeAllAnimations()
+                page.layer?.removeAllAnimations()
+                pageMask.removeAllAnimations()
+            }
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+            if !pageFullscreen { processPointer() }
+        }
+    }
     private var windowButtons: SidebarWindowButtons?
     private let extensionsButton = NSButton()
     public var extensionActions: (() -> [[String: Any]])? {
@@ -31,13 +66,22 @@ public final class SidebarContainerView: NSView {
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
     public var sidebarState: String { state.mode.rawValue }
+    public var sidebarAnimating: Bool { moving }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }
     public var sidebarExtensionsButton: NSButton { extensionsButton }
     public var hasSidebarLights: Bool { windowButtons?.subviews.count == 3 }
+    public var sidebarLightsHidden: Bool { windowButtons?.isHidden == true }
     public var appKitLightsHidden: Bool {
         guard let window else { return false }
         return [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].allSatisfy {
             window.standardWindowButton($0)?.isHidden == true
+        }
+    }
+    public var appKitLightsVisible: Bool {
+        guard let window else { return false }
+        return [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].allSatisfy {
+            guard let button = window.standardWindowButton($0) else { return false }
+            return !button.isHidden
         }
     }
     override public var isFlipped: Bool { true }
@@ -115,6 +159,7 @@ public final class SidebarContainerView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     public func toggleSidebar() {
+        guard !pageFullscreen else { return }
         libraryRevealedSidebar = false
         state.toggle()
         render(state.mode == .docked ? .dockShow : .dockHide)
@@ -140,6 +185,13 @@ public final class SidebarContainerView: NSView {
 
     override public func layout() {
         super.layout()
+        if pageFullscreen {
+            panel.isHidden = true
+            page.frame = bounds
+            page.layer?.mask = nil
+            return
+        }
+        panel.isHidden = false
         let width = resizeHandle.displayedWidth
         let docked = state.mode == .docked
         let floating = state.mode == .floating
@@ -349,6 +401,7 @@ public final class SidebarContainerView: NSView {
     }
 
     func processPointer() {
+        guard !pageFullscreen else { return }
         guard let window else { return }
         let old = state.mode
         state.update(pointer: pointerLocation(), now: clock(),

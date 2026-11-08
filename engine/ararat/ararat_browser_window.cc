@@ -8,6 +8,9 @@
 #include "base/functional/bind.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
+#include "base/task/cancelable_task_tracker.h"
+#include "base/task/single_thread_task_runner.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/devtools/devtools_ui_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -15,6 +18,10 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+#include "chrome/browser/ui/views/exclusive_access/exclusive_access_bubble_views.h"
+#include "chrome/browser/ui/views/exclusive_access/exclusive_access_bubble_views_context.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
 #include "components/input/native_web_keyboard_event.h"
@@ -23,42 +30,119 @@
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
+#include "ui/base/accelerators/accelerator.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/views/view.h"
 
 namespace {
 unsigned long g_exclusive_input_count = 0;
-class AraratExclusiveAccessContext : public ExclusiveAccessContext {
+// Bubble lifecycle follows WebUIBrowserExclusiveAccessContext in Chromium.
+class AraratExclusiveAccessContext : public ExclusiveAccessContext,
+                                     public ExclusiveAccessBubbleViewsContext,
+                                     public ui::AcceleratorProvider {
  public:
   AraratExclusiveAccessContext(BrowserWindowInterface* browser,
                                AraratWindowHostCore* host)
       : browser_(browser), host_(host) {}
   Profile* GetProfile() override { return browser_->GetProfile(); }
-  bool IsFullscreen() const override { return host_->widget()->IsFullscreen(); }
+  bool IsFullscreen() const override { return host_->IsFullscreen(); }
+  void UpdateUIForTabFullscreen() override {
+    auto* manager = ExclusiveAccessManager::From(browser_);
+    if (manager && host_->window() && host_->window()->browser() == browser_) {
+      auto weak = weak_factory_.GetWeakPtr();
+      host_->SetPageFullscreen(manager->fullscreen_controller()->IsWindowFullscreenForTabOrPending());
+      if (weak && base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&AraratExclusiveAccessContext::SynchronizeForCheck,
+                                      weak));
+      }
+    }
+  }
   void EnterFullscreen(const url::Origin&, ExclusiveAccessBubbleType,
-                       FullscreenTabParams) override {
-    host_->widget()->SetFullscreen(true);
+                       FullscreenTabParams params) override {
+    if (!IsFullscreen() || params.display_id != display::kInvalidDisplayId)
+      host_->SetFullscreen(true, params.display_id);
   }
-  void ExitFullscreen() override { host_->widget()->SetFullscreen(false); }
+  void ExitFullscreen() override {
+    if (IsFullscreen()) host_->SetFullscreen(false, display::kInvalidDisplayId);
+  }
   void UpdateExclusiveAccessBubble(
-      const ExclusiveAccessBubbleParams&,
+      const ExclusiveAccessBubbleParams& params,
       ExclusiveAccessBubbleHideCallback callback) override {
-    if (callback)
-      std::move(callback).Run(ExclusiveAccessBubbleHideReason::kNotShown);
+    auto weak = weak_factory_.GetWeakPtr();
+    if (!params.has_download && params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE) {
+      if (callback) std::move(callback).Run(ExclusiveAccessBubbleHideReason::kNotShown);
+      if (!bubble_ || destruction_task_) return;
+      bubble_->HideImmediately();
+      destruction_task_ = tasks_.PostTask(
+          base::SingleThreadTaskRunner::GetCurrentDefault().get(), FROM_HERE,
+          base::BindOnce(&AraratExclusiveAccessContext::DestroyAnyExclusiveAccessBubble,
+                         weak_factory_.GetWeakPtr()));
+      return;
+    }
+    if (bubble_) {
+      if (destruction_task_) {
+        tasks_.TryCancel(*destruction_task_);
+        destruction_task_.reset();
+      }
+      bubble_->Update(params, std::move(callback));
+    } else {
+      bubble_ = std::make_unique<ExclusiveAccessBubbleViews>(this, params, std::move(callback));
+    }
+    // Why not animate in hidden checks: the popup must not be ordered on screen.
+    if (weak && bubble_ && base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) {
+      bubble_->animation_for_test()->Reset();
+      bubble_->GetView()->GetWidget()->Hide();
+    }
   }
-  bool IsExclusiveAccessBubbleDisplayed() const override { return false; }
-  void OnExclusiveAccessUserInput() override { ++g_exclusive_input_count; }
+  bool IsExclusiveAccessBubbleDisplayed() const override {
+    return bubble_ && (bubble_->IsShowing() || bubble_->IsVisible());
+  }
+  bool HasBubble() const { return bubble_ != nullptr; }
+  bool BubbleVisibleOnScreen() const {
+    return bubble_ && bubble_->GetView() && bubble_->GetView()->GetWidget() &&
+           bubble_->GetView()->GetWidget()->IsVisibleOnScreen();
+  }
+  void OnExclusiveAccessUserInput() override {
+    ++g_exclusive_input_count;
+    if (bubble_) bubble_->OnUserInput();
+  }
   content::WebContents* GetWebContentsForExclusiveAccess() override {
     return browser_->GetTabStripModel()->GetActiveWebContents();
   }
   bool CanUserEnterFullscreen() const override { return true; }
   bool CanUserExitFullscreen() const override { return true; }
+  ExclusiveAccessManager* GetExclusiveAccessManager() override {
+    return ExclusiveAccessManager::From(browser_);
+  }
+  ui::AcceleratorProvider* GetAcceleratorProvider() override { return this; }
+  bool GetAcceleratorForCommandId(int command, ui::Accelerator* accelerator) const override {
+    if (command != IDC_FULLSCREEN) return false;
+    *accelerator = ui::Accelerator(ui::VKEY_F, ui::EF_CONTROL_DOWN | ui::EF_COMMAND_DOWN);
+    return true;
+  }
+  gfx::NativeView GetBubbleParentView() const override { return host_->widget()->GetNativeView(); }
+  gfx::Rect GetClientAreaBoundsInScreen() const override { return host_->widget()->GetClientAreaBoundsInScreen(); }
+  bool IsImmersiveModeEnabled() const override { return false; }
+  gfx::Rect GetTopContainerBoundsInScreen() override { return {}; }
+  void DestroyAnyExclusiveAccessBubble() override {
+    bubble_.reset();
+    destruction_task_.reset();
+  }
 
  private:
+  void SynchronizeForCheck() { host_->SynchronizeFullscreenForCheck(); }
   raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<AraratWindowHostCore> host_;
+  std::unique_ptr<ExclusiveAccessBubbleViews> bubble_;
+  base::CancelableTaskTracker tasks_;
+  std::optional<base::CancelableTaskTracker::TaskId> destruction_task_;
+  base::WeakPtrFactory<AraratExclusiveAccessContext> weak_factory_{this};
 };
 }  // namespace
 
@@ -90,6 +174,12 @@ AraratBrowserWindow::~AraratBrowserWindow() {
   devtools_controller_.reset();
   autofill_registration_.reset();
   host_->OnWindowDestroyed(browser_);
+}
+bool AraratBrowserWindow::HasExclusiveAccessBubbleForCheck() const {
+  return static_cast<AraratExclusiveAccessContext*>(exclusive_access_.get())->HasBubble();
+}
+bool AraratBrowserWindow::IsExclusiveAccessBubbleVisibleForCheck() const {
+  return static_cast<AraratExclusiveAccessContext*>(exclusive_access_.get())->BubbleVisibleOnScreen();
 }
 void AraratBrowserWindow::RequestClose() {
   UnloadController::From(browser_)->OnWindowClosing();
@@ -288,6 +378,7 @@ AraratBrowserWindow::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
   if (event.windows_key_code == 'F' &&
       (event.GetModifiers() & blink::WebInputEvent::kMetaKey) &&
+      !(event.GetModifiers() & blink::WebInputEvent::kControlKey) &&
       !AraratKeyEventFromDevTools(event.os_event))
     return content::KeyboardEventProcessingResult::HANDLED;
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
@@ -444,7 +535,7 @@ bool AraratBrowserWindow::IsMinimized() const {
 }
 
 bool AraratBrowserWindow::IsFullscreen() const {
-  return host_->widget()->IsFullscreen();
+  return host_->IsFullscreen();
 }
 
 gfx::Rect AraratBrowserWindow::GetRestoredBounds() const {

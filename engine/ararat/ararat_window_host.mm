@@ -48,6 +48,9 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/extensions/extension_action_view_model.h"
 #include "chrome/browser/ui/unload_controller.h"
 #include "chrome/browser/ui/browser_init_state.h"
@@ -66,6 +69,8 @@
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/storage_partition.h"
@@ -86,12 +91,15 @@
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/display/types/display_constants.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #import "ui/base/cocoa/command_dispatcher.h"
 #import "ui/base/cocoa/user_interface_item_command_handler.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -199,9 +207,16 @@ struct HostedProfile : ProfileObserver {
 
 class HostNativeWidgetMac : public views::NativeWidgetMac {
  public:
-  explicit HostNativeWidgetMac(views::Widget* widget) : NativeWidgetMac(widget) {}
+  HostNativeWidgetMac(views::Widget* widget, AraratWindowHostCore* host)
+      : NativeWidgetMac(widget), host_(host) {}
 
  protected:
+  void OnWindowFullscreenTransitionStart() override {
+    host_->FullscreenTransitionStarting();
+  }
+  void OnWindowFullscreenTransitionComplete() override {
+    host_->FullscreenStateChanged();
+  }
   void PopulateCreateWindowParams(
       const views::Widget::InitParams& widget_params,
       remote_cocoa::mojom::CreateWindowParams* params) override {
@@ -211,11 +226,15 @@ class HostNativeWidgetMac : public views::NativeWidgetMac {
     params->titlebar_appears_transparent = true;
     params->window_title_hidden = true;
   }
+ private:
+  raw_ptr<AraratWindowHostCore> host_;
 };
 
 NSUInteger g_check_dialog_count = 0;
 NSUInteger g_check_cancel_dialog = 1;
 NSMutableArray<NSString*>* g_check_beforeunload_profiles;
+bool g_fullscreen_completion_called = false;
+bool g_fullscreen_completion_without_browser = false;
 
 class CheckDialog : public javascript_dialogs::AppModalDialogView {
  public:
@@ -535,7 +554,7 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   params.name = "AraratWindowHost";
   params.bounds = gfx::Rect(0, 0, 800, 600);
   params.remove_standard_frame = true;
-  params.native_widget = new HostNativeWidgetMac(widget_.get());
+  params.native_widget = new HostNativeWidgetMac(widget_.get(), this);
   widget_->Init(std::move(params));
   modal_dialog_host_ = std::make_unique<AraratModalDialogHost>(this);
   native_host->Attach(app_content_view);
@@ -573,6 +592,82 @@ gfx::NativeWindow AraratWindowHostCore::GetNativeWindow() const {
 
 void AraratWindowHostCore::SetTitle(const std::u16string& title) {
   delegate_->SetTitle(title);
+}
+
+void AraratWindowHostCore::SetPageFullscreen(bool fullscreen) {
+  ARWindowHost* owner = (__bridge ARWindowHost*)owner_;
+  [owner.delegate windowHost:owner pageFullscreenChanged:fullscreen];
+}
+
+void AraratWindowHostCore::SetWindowFullscreen(bool fullscreen) {
+  ARWindowHost* owner = (__bridge ARWindowHost*)owner_;
+  [owner.delegate windowHost:owner windowFullscreenChanged:fullscreen];
+}
+
+bool AraratWindowHostCore::IsFullscreen() const {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")
+      ? check_fullscreen_ : widget_->IsFullscreen();
+}
+
+void AraratWindowHostCore::SetFullscreen(bool fullscreen, int64_t display_id) {
+  FullscreenStateChanging();
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check")) {
+    widget_->SetFullscreen(fullscreen, display_id);
+    return;
+  }
+  check_fullscreen_ = fullscreen;
+  auto weak = weak_factory_.GetWeakPtr();
+  FullscreenTransitionStarting();
+  if (!weak) return;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&AraratWindowHostCore::FullscreenStateChanged,
+                                weak));
+}
+
+void AraratWindowHostCore::FullscreenTransitionStarting() {
+  fullscreen_transitioning_ = true;
+  ++fullscreen_transition_generation_;
+  auto weak = weak_factory_.GetWeakPtr();
+  FullscreenStateChanging();
+  SetWindowFullscreen(IsFullscreen());
+  if (!weak || !window()) return;
+  auto* manager = ExclusiveAccessManager::From(window()->browser());
+  if (manager) SetPageFullscreen(manager->fullscreen_controller()->IsWindowFullscreenForTabOrPending());
+}
+
+void AraratWindowHostCore::FullscreenStateChanging() {
+  if (fullscreen_transition_controller_ || !window()) return;
+  auto* manager = ExclusiveAccessManager::From(window()->browser());
+  if (manager) fullscreen_transition_controller_ = manager->fullscreen_controller()->GetWeakPtr();
+}
+
+void AraratWindowHostCore::FullscreenStateChanged() {
+  const auto generation = fullscreen_transition_generation_;
+  auto weak = weak_factory_.GetWeakPtr();
+  SetWindowFullscreen(IsFullscreen());
+  if (!weak) return;
+  auto previous = fullscreen_transition_controller_;
+  fullscreen_transition_controller_.reset();
+  auto* manager = window() ? ExclusiveAccessManager::From(window()->browser()) : nullptr;
+  auto current = manager ? manager->fullscreen_controller()->GetWeakPtr() : nullptr;
+  if (previous) previous->WindowFullscreenStateChanged();
+  if (!weak) return;
+  if (current && current.get() != previous.get()) current->WindowFullscreenStateChanged();
+  if (!weak) return;
+  manager = window() ? ExclusiveAccessManager::From(window()->browser()) : nullptr;
+  SetPageFullscreen(manager && manager->fullscreen_controller()->IsWindowFullscreenForTabOrPending());
+  if (weak) SynchronizeFullscreenForCheck();
+  if (weak && generation == fullscreen_transition_generation_)
+    fullscreen_transitioning_ = false;
+}
+
+void AraratWindowHostCore::SynchronizeFullscreenForCheck() {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check") || !window()) return;
+  auto* strip = window()->browser()->GetTabStripModel();
+  for (int i = 0; i < strip->count(); ++i) {
+    auto* view = strip->GetWebContentsAt(i)->GetRenderWidgetHostView();
+    if (view) view->GetRenderWidgetHost()->SynchronizeVisualProperties();
+  }
 }
 
 void AraratWindowHostCore::AttachPage(gfx::NativeView view) {
@@ -1099,6 +1194,62 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSArray<NSNumber*>*)checkClosingEvents { return [check_closing_events_ copy] ?: @[]; }
 - (BOOL)checkTryingToQuit { return browser_shutdown::IsTryingToQuit(); }
 - (NSUInteger)checkStockBrowsers { return AraratStockBrowserCount(); }
+
+- (NSDictionary<NSString*, id>*)checkFullscreenState {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!core_->window() || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
+                          command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) return @{};
+  auto* manager = ExclusiveAccessManager::From(core_->window()->browser());
+  if (!manager) return @{};
+  auto* controller = manager->fullscreen_controller();
+  auto* contents = core_->window()->browser()->GetTabStripModel()->GetActiveWebContents();
+  auto* view = contents ? contents->GetRenderWidgetHostView() : nullptr;
+  return @{ @"window": @(core_->IsFullscreen()), @"tab": @(controller->IsTabFullscreen()),
+            @"transitioning": @(core_->IsFullscreenTransitioning()),
+            @"pending": @(controller->IsWindowFullscreenForTabOrPending()),
+            @"browser": @(controller->IsFullscreenForBrowser()),
+            @"bubble_created": @(core_->window()->HasExclusiveAccessBubbleForCheck()),
+            @"bubble_visible": @(core_->window()->IsExclusiveAccessBubbleVisibleForCheck()),
+            @"completion_without_browser": @(g_fullscreen_completion_without_browser),
+            @"view_focused": @(view && view->HasFocus()) };
+}
+
+- (void)checkFullscreenAction:(NSInteger)action {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  if (!core_->window() || (command->GetSwitchValueASCII("ararat-check") != "fullscreen" &&
+                          command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) return;
+  auto* manager = ExclusiveAccessManager::From(core_->window()->browser());
+  if (!manager) return;
+  if (action == 0) {
+    input::NativeWebKeyboardEvent event(blink::WebInputEvent::Type::kRawKeyDown, 0, base::TimeTicks::Now());
+    event.windows_key_code = ui::VKEY_ESCAPE;
+    manager->HandleUserKeyEvent(event);
+    input::NativeWebKeyboardEvent up(blink::WebInputEvent::Type::kKeyUp, 0, base::TimeTicks::Now());
+    up.windows_key_code = ui::VKEY_ESCAPE;
+    if (core_->window() && ExclusiveAccessManager::From(core_->window()->browser()) == manager)
+      manager->HandleUserKeyEvent(up);
+  } else if (action == 1) {
+    manager->fullscreen_controller()->ToggleBrowserFullscreenMode(true);
+  } else if (action == 2 && command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+    core_->SetFullscreen(false, display::kInvalidDisplayId);
+  } else if (action == 3 && command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+    auto* strip = core_->window()->browser()->GetTabStripModel();
+    if (strip->count() >= 2) strip->ActivateTabAt(strip->active_index() == 0 ? 1 : 0);
+  } else if (action == 4 && command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+    auto* strip = core_->window()->browser()->GetTabStripModel();
+    if (strip->count() >= 2) strip->CloseWebContentsAt(strip->active_index(), TabCloseTypes::CLOSE_CREATE_HISTORICAL_TAB);
+  } else if (action == 5 && command->GetSwitchValueASCII("ararat-check") == "fullscreen") {
+    auto* controller = manager->fullscreen_controller();
+    controller->ToggleBrowserFullscreenMode(true);
+    g_fullscreen_completion_called = false;
+    controller->RunOrDeferUntilTransitionIsComplete(base::BindOnce([] { g_fullscreen_completion_called = true; }));
+    const bool deferred = !g_fullscreen_completion_called;
+    [self setProfileDirectory:@"Fullscreen Check"];
+    const bool missing = core_->window() == nullptr;
+    core_->FullscreenStateChanged();
+    g_fullscreen_completion_without_browser = deferred && missing && g_fullscreen_completion_called;
+  }
+}
 - (void)checkOpenDevTools {
   if ((!IsDevToolsCheck() && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "popup") || !browser_) return;
   auto* active = browser_->GetTabStripModel()->GetActiveWebContents();
@@ -1234,7 +1385,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts")) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen")) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -1981,6 +2132,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     return YES;
   }
   if (IsProfileCheck()) std::fprintf(stderr, "ararat-trace: show-profile old=%s new=%s exists=%d\n", core_->profile_name().c_str(), name.value().c_str(), core_->windowForProfile(name.value()) != nullptr);
+  if (core_->window()) {
+    auto* old_browser = core_->window()->browser();
+    auto* manager = ExclusiveAccessManager::From(old_browser);
+    auto* contents = old_browser->GetTabStripModel()->GetActiveWebContents();
+    if (manager && contents) manager->OnTabDeactivated(contents);
+  }
   if (self.window.isKeyWindow) [self updateActive:NO];
   core_->SetProfileName(name.value());
   browser_ = core_->window() ? core_->window()->browser() : nullptr;

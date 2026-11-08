@@ -137,6 +137,8 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction transaction: [String: Any]) {}
   func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {}
   func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {}
+  func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {}
+  func windowHost(_ host: any ARWindowHostAPI, windowFullscreenChanged fullscreen: Bool) {}
 
   func create(bounds: NSRect) -> Bool {
     guard let symbol = dlsym(Launcher.handle, "AraratWindowHostCreate") else { return false }
@@ -371,22 +373,60 @@ final class Runtime {
   var devtoolsScreenFrontend: [String: Bool] = [:]
   var devtoolsScreenReading = false
   var devtoolsScreenOriginalSize = NSSize.zero
+  var fullscreenRound = 0
+  var fullscreenElement: Bool?
+  var fullscreenProbePending = false
+  var fullscreenProbeGeneration = 0
+  var fullscreenResults: [String: Any] = [:]
+  var fullscreenTab: (any ARTabAPI)?
+  var fullscreenOtherTab: (any ARTabAPI)?
+  var fullscreenEnteredNotification = false
+  let fullscreenExitGate = FullscreenExitGate()
+  var fullscreenCardBefore = NSRect.zero
+  var fullscreenNavigation: UInt = 0
+  var fullscreenObserver: NSObjectProtocol?
+  var fullscreenActivationObserver: NSObjectProtocol?
+  var fullscreenActivated = false
+  var fullscreenFocusObservers: [NSObjectProtocol] = []
+  var fullscreenFocusTrace: [[String: Any]] = []
+  var fullscreenFocusTraceDropped = 0
+  var fullscreenMenuDispatch: [String: Any] = [:]
+  var fullscreenPhase4Observed = false
+
+  func recordFullscreenFocus(_ event: String, window: NSWindow) {
+    guard fullscreenFocusTrace.count < 64 else { fullscreenFocusTraceDropped += 1; return }
+    fullscreenFocusTrace.append([
+      "event": event, "uptime": ProcessInfo.processInfo.systemUptime, "phase": browserCheckPhase,
+      "app_active": NSApp.isActive, "window_key": window.isKeyWindow,
+      "window_visible": window.isVisible, "can_become_key": window.canBecomeKey,
+      "activation_policy": NSApp.activationPolicy().rawValue,
+      "style_mask": window.styleMask.rawValue, "collection_behavior": window.collectionBehavior.rawValue,
+      "fullscreen_state": host?.checkFullscreenState() ?? [:],
+    ])
+  }
 
   func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false) throws {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
+      if checkName == "fullscreen" {
+        popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"])
+        fullscreenActivationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
+          MainActor.assumeIsolated { self?.fullscreenActivated = true }
+        }
+      }
       if screenName == "links" { browserCheckMode = "screen-links" }
       if screenName == "profiles" { browserCheckMode = "screen-profiles" }
       if screenName == "prompts" { browserCheckMode = "screen-prompts" }
       if screenName == "devtools" { browserCheckMode = "screen-devtools" }
       if screenName == "extensions" { browserCheckMode = "screen-extensions" }
+      if screenName == "fullscreen" { browserCheckMode = "screen-fullscreen" }
       if ["permissions", "dialogs", "protocol", "autofill"].contains(checkName ?? "") || screenName == "prompts" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -472,6 +512,8 @@ final class Runtime {
     }
     self.sidebar = sidebar
     self.container = container
+    adapter.onPageFullscreenChanged = { [weak container] in container?.pageFullscreen = $0 }
+    adapter.onWindowFullscreenChanged = { [weak container] in container?.windowFullscreen = $0 }
     container.extensionActions = { [weak host] in host?.extensionActions() ?? [] }
     container.onExtensionAnchor = { [weak host] rect in host?.setExtensionAnchor(rect) }
     container.onExtensionAction = { [weak host] id in host?.runExtensionAction(id) }
@@ -543,9 +585,31 @@ final class Runtime {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" {
+        if browserCheckMode == "screen-fullscreen" {
+          let window = host.window()
+          for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
+            fullscreenFocusObservers.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self, weak window] _ in
+              MainActor.assumeIsolated {
+                if name == NSWindow.didExitFullScreenNotification { self?.fullscreenExitGate.didExit() }
+                if let window { self?.recordFullscreenFocus(name.rawValue, window: window) }
+              }
+            })
+          }
+          recordFullscreenFocus("before_activate", window: window)
+        }
         NSApp.activate(ignoringOtherApps: true)
+        if browserCheckMode == "screen-fullscreen" {
+          recordFullscreenFocus("after_activate", window: host.window())
+          fullscreenObserver = NotificationCenter.default.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: host.window(), queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+              self?.fullscreenEnteredNotification = true
+              if let self, let window = self.host?.window() { self.recordFullscreenFocus("did_enter_fullscreen", window: window) }
+            }
+          }
+        }
         host.window().makeKeyAndOrderFront(nil)
+        if browserCheckMode == "screen-fullscreen" { recordFullscreenFocus("after_make_key", window: host.window()) }
       }
       let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
         MainActor.assumeIsolated { self?.browserCheckTick() }
@@ -738,6 +802,34 @@ final class Runtime {
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if mode == "fullscreen" || mode == "screen-fullscreen" {
+      timeoutValues["fullscreen_state"] = host?.checkFullscreenState() ?? [:]
+      timeoutValues["fullscreen_element"] = fullscreenElement as Any? ?? NSNull()
+      timeoutValues["round"] = fullscreenRound
+      timeoutValues["completed"] = fullscreenResults
+      if mode == "fullscreen" {
+        timeoutValues["shown_profile"] = host?.profileDirectory() ?? ""
+        timeoutValues["shown_has_browser"] = host?.hasBrowser() ?? false
+        timeoutValues["fullscreen_check_has_browser"] = host?.hasBrowser(forProfile: "Fullscreen Check") ?? false
+        timeoutValues["app_activated"] = fullscreenActivated
+      } else {
+        timeoutValues["app_active"] = NSApp.isActive
+        timeoutValues["window_key"] = host?.window().isKeyWindow ?? false
+        timeoutValues["window_visible"] = host?.window().isVisible ?? false
+        timeoutValues["first_responder"] = host?.window().firstResponder.map { String(describing: type(of: $0)) } ?? "none"
+        timeoutValues["fullscreen_entered_notification"] = fullscreenEnteredNotification
+        timeoutValues["fullscreen_exited_notification"] = fullscreenExitGate.exited
+        timeoutValues["sidebar_state"] = container?.sidebarState ?? "none"
+        timeoutValues["sidebar_lights_hidden"] = container?.sidebarLightsHidden ?? false
+        timeoutValues["appkit_lights_visible"] = container?.appKitLightsVisible ?? false
+        timeoutValues["seed_selected"] = browserCheckSeedID != nil && sliceActive == browserCheckSeedID
+        if let tab = (host?.tabs() as? [any ARTabAPI])?.first {
+          timeoutValues["tab_loading"] = tab.isLoading
+          timeoutValues["tab_navigation_count"] = tab.navigationCount
+          timeoutValues["tab_view_in_window"] = tab.view?.window != nil && tab.view?.window === host?.window()
+        }
+      }
+    }
     if ["profiles", "ext-windows", "incognito", "screen-profiles"].contains(mode), let host {
       let profileState = host.checkProfileState()
       timeoutValues["profile_state"] = profileState
@@ -909,7 +1001,7 @@ final class Runtime {
       timeoutValues.merge(devtoolsResults) { _, new in new }
       timeoutValues["sidebar_state"] = container?.sidebarState ?? "missing"
     }
-    if ["popup", "ext-popup", "ext-windows-popup"].contains(mode) {
+    if ["popup", "ext-popup", "ext-windows-popup", "fullscreen"].contains(mode) {
       let front = commandOutput("/usr/bin/lsappinfo", ["front"])
       let visible = NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
       popupWindowsHidden = popupWindowsHidden && !visible
@@ -1004,6 +1096,7 @@ final class Runtime {
     if mode == "ext-windows-popup" { extensionPopupWindowCheckTick(host); return }
     if mode == "ext-popup" { extensionActionCheckTick(host); return }
     if mode == "screen-extensions" { extensionScreenTick(host); return }
+    if mode == "fullscreen" || mode == "screen-fullscreen" { fullscreenCheckTick(host, screen: mode == "screen-fullscreen"); return }
     browserCheckStyleMask = host.window().styleMask.rawValue
     browserCheckStock = host.checkStockBrowsers()
     if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
@@ -2407,6 +2500,276 @@ final class Runtime {
       !(popupFrontBefore ?? "").isEmpty && front == popupFrontBefore && popupFrontChange == nil
   }
 
+  func resetFullscreenProbe() {
+    fullscreenProbeGeneration += 1
+    fullscreenElement = nil
+    fullscreenProbePending = false
+  }
+
+  func probeFullscreen(_ tab: any ARTabAPI) {
+    guard !fullscreenProbePending else { return }
+    fullscreenProbePending = true
+    let generation = fullscreenProbeGeneration
+    tab.checkFullscreenElement { [weak self] value in
+      MainActor.assumeIsolated {
+        guard let self, self.fullscreenProbeGeneration == generation else { return }
+        self.fullscreenElement = value
+        self.fullscreenProbePending = false
+      }
+    }
+  }
+
+  func fullscreenCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    let tabs = host.tabs() as? [any ARTabAPI] ?? []
+    let state = host.checkFullscreenState()
+    let windowFull = state["window"] as? Bool == true
+    let tabFull = state["tab"] as? Bool == true
+    let cardFull = promptPageCard?.frame == container?.bounds
+    if screen { fullscreenScreenTick(host, tabs: tabs, state: state); return }
+    switch browserCheckPhase {
+    case 0:
+      guard let row = sliceRows.first, let url = row.url else { return }
+      browserCheckSeedID = row.id
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 1
+    case 1:
+      guard sliceActive == browserCheckSeedID, let tab = tabs.first,
+            !tab.isLoading, tab.navigationCount > 0 else { return }
+      fullscreenTab = tab
+      fullscreenCardBefore = promptPageCard?.frame ?? .zero
+      host.checkNavigate("data:text/html,<title>Fullscreen other</title>", disposition: "background")
+      browserCheckPhase = 2
+    case 2:
+      guard tabs.count >= 2, let original = fullscreenTab,
+            let other = tabs.first(where: { $0.liveId != original.liveId }), !other.isLoading,
+            !original.isLoading, host.activeItemId() == original.itemId else { return }
+      fullscreenOtherTab = other
+      if fullscreenRound == 0, let view = original.view, let window = view.window {
+        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+        if let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+          eventNumber: 0, clickCount: 0, pressure: 0) {
+          fullscreenResults["mouse_sent"] = original.sendCheckMouseMoved(event)
+        }
+      }
+      resetFullscreenProbe()
+      original.checkFullscreenRequest(true)
+      browserCheckPhase = 3
+    case 3:
+      guard let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard tabFull, windowFull, fullscreenElement == true, cardFull,
+            state["bubble_created"] as? Bool == true, state["bubble_visible"] as? Bool == false,
+            container?.pageFullscreen == true else { return }
+      fullscreenResults["entry_\(fullscreenRound)"] = true
+      resetFullscreenProbe()
+      switch fullscreenRound {
+      case 0: host.checkFullscreenAction(0)
+      case 1: tab.checkFullscreenRequest(false)
+      case 2:
+        fullscreenNavigation = tab.navigationCount
+        host.checkNavigate("data:text/html,<title>Fullscreen navigated</title>", disposition: "current")
+      case 3: host.checkFullscreenAction(2)
+      case 4: host.checkFullscreenAction(3)
+      default: host.checkFullscreenAction(4)
+      }
+      browserCheckPhase = 4
+    case 4:
+      guard !tabFull, !windowFull, container?.pageFullscreen == false,
+            fullscreenCardBefore != .zero, promptPageCard?.frame == fullscreenCardBefore else { return }
+      if fullscreenRound == 4 {
+        guard let other = fullscreenOtherTab, let item = other.itemId, host.activeItemId() == item else { return }
+      }
+      if fullscreenRound == 5, let tab = fullscreenTab {
+        guard !tabs.contains(where: { $0.liveId == tab.liveId }) else { return }
+      }
+      if fullscreenRound != 5, let tab = fullscreenTab {
+        guard !tab.isLoading else { return }
+        if fullscreenRound == 2, tab.navigationCount <= fullscreenNavigation { return }
+        probeFullscreen(tab)
+        guard fullscreenElement == false else { return }
+      }
+      let names = ["escape", "document_exit", "navigation", "native_exit", "tab_switch", "tab_close"]
+      fullscreenResults[names[fullscreenRound]] = true
+      if fullscreenRound == 4 {
+        host.checkFullscreenAction(3)
+      }
+      fullscreenRound += 1
+      if fullscreenRound == names.count {
+        fullscreenTab = fullscreenOtherTab
+        host.checkFullscreenAction(1)
+        browserCheckPhase = 5
+      } else {
+        browserCheckPhase = 2
+      }
+    case 5:
+      guard windowFull, state["browser"] as? Bool == true, let tab = fullscreenTab else { return }
+      resetFullscreenProbe()
+      tab.checkFullscreenRequest(true)
+      browserCheckPhase = 6
+    case 6:
+      guard let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard tabFull, fullscreenElement == true, cardFull else { return }
+      resetFullscreenProbe()
+      host.checkFullscreenAction(0)
+      browserCheckPhase = 7
+    case 7:
+      guard let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard !tabFull, windowFull, state["browser"] as? Bool == true,
+            fullscreenElement == false, container?.pageFullscreen == false else { return }
+      fullscreenResults["return_to_browser"] = true
+      host.checkFullscreenAction(5)
+      browserCheckPhase = 8
+    case 8:
+      guard host.hasBrowser(forProfile: "Fullscreen Check"), host.hasBrowser() else { return }
+      let completionWithoutBrowser = state["completion_without_browser"] as? Bool == true
+      fullscreenResults["completion_without_browser"] = completionWithoutBrowser
+      fullscreenResults["shown_profile"] = host.profileDirectory()
+      fullscreenResults["fullscreen_check_has_browser"] = true
+      let count = dlsym(Launcher.handle, "AraratExclusiveInputCount").map {
+        unsafeBitCast($0, to: (@convention(c) () -> UInt).self)()
+      } ?? 0
+      fullscreenResults["exclusive_input_seen"] = count > 0
+      fullscreenResults["stock_browsers"] = host.checkStockBrowsers()
+      let hidden = popupWindowsHidden && !NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
+      let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+      let frontUnchanged = !(popupFrontBefore ?? "").isEmpty && front == popupFrontBefore && popupFrontChange == nil && !fullscreenActivated
+      fullscreenResults["windows_hidden"] = hidden
+      fullscreenResults["front_unchanged"] = frontUnchanged
+      fullscreenResults["front_change"] = popupFrontChange ?? [:]
+      fullscreenResults["app_activated"] = fullscreenActivated
+      finishBrowserCheck(ok: completionWithoutBrowser && count > 0 && fullscreenResults["mouse_sent"] as? Bool == true && host.checkStockBrowsers() == 0 && hidden && frontUnchanged, values: fullscreenResults)
+    default: break
+    }
+  }
+
+  func fullscreenScreenTick(_ host: any ARWindowHostAPI, tabs: [any ARTabAPI], state: [String: Any]) {
+    let window = host.window()
+    let full = state["window"] as? Bool == true
+    let page = state["tab"] as? Bool == true
+    func sendKey(_ text: String, code: UInt16, flags: NSEvent.ModifierFlags = []) {
+      for type in [NSEvent.EventType.keyDown, .keyUp] {
+        if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+          characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code) { NSApp.sendEvent(event) }
+      }
+    }
+    func fullscreenMenu(_ menu: NSMenu?) -> (NSMenu, Int)? {
+      guard let menu else { return nil }
+      for (index, item) in menu.items.enumerated() {
+        if item.action == #selector(NSWindow.toggleFullScreen(_:)), !item.isHidden { return (menu, index) }
+        if let found = fullscreenMenu(item.submenu) { return found }
+      }
+      return nil
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard let row = sliceRows.first, let url = row.url else { return }
+      browserCheckSeedID = row.id
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 1
+    case 1:
+      guard sliceActive == browserCheckSeedID, let tab = tabs.first, !tab.isLoading, tab.navigationCount > 0 else { return }
+      guard NSApp.isActive, window.isKeyWindow else { return }
+      tab.focusCheckPage()
+      guard state["view_focused"] as? Bool == true else { return }
+      fullscreenTab = tab
+      fullscreenEnteredNotification = false
+      resetFullscreenProbe()
+      tab.checkFullscreenRequest(true)
+      browserCheckPhase = 2
+    case 2:
+      guard let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard full, page, fullscreenElement == true, fullscreenEnteredNotification,
+            window.styleMask.contains(.fullScreen), container?.pageFullscreen == true,
+            promptPageCard?.frame == container?.bounds,
+            let image = promptScreenScreenshot(window, name: "fullscreen-page", withoutShadow: true) else { return }
+      fullscreenResults["page_screenshot"] = image
+      fullscreenResults["native_space_entry"] = true
+      tab.focusCheckPage()
+      resetFullscreenProbe()
+      fullscreenExitGate.arm()
+      recordFullscreenFocus("before_escape", window: window)
+      sendKey("\u{1b}", code: 53)
+      browserCheckPhase = 3
+    case 3:
+      guard fullscreenExitGate.ready(transitioning: state["transitioning"] as? Bool),
+            NSApp.isActive, window.isKeyWindow,
+            !full, !page, !window.styleMask.contains(.fullScreen), let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard fullscreenElement == false, let (menu, index) = fullscreenMenu(NSApp.mainMenu) else { return }
+      fullscreenResults["escape"] = true
+      fullscreenEnteredNotification = false
+      let item = menu.items[index]
+      let target = NSApp.target(forAction: #selector(NSWindow.toggleFullScreen(_:)), to: item.target, from: item) as AnyObject?
+      fullscreenMenuDispatch = ["enabled": item.isEnabled, "target_class": target.map { String(describing: type(of: $0)) } ?? "none", "target_is_window": target === window]
+      recordFullscreenFocus("before_menu", window: window)
+      menu.performActionForItem(at: index)
+      recordFullscreenFocus("after_menu", window: window)
+      browserCheckPhase = 4
+    case 4:
+      if !fullscreenPhase4Observed {
+        fullscreenPhase4Observed = true
+        recordFullscreenFocus("first_phase4_tick", window: window)
+      }
+      guard full, !page, fullscreenEnteredNotification, window.styleMask.contains(.fullScreen),
+            let container, container.sidebarState == "hidden", container.sidebarLightsHidden,
+            container.appKitLightsVisible,
+            let image = promptScreenScreenshot(window, name: "fullscreen-browser", withoutShadow: true) else { return }
+      fullscreenResults["browser_screenshot"] = image
+      fullscreenResults["menu_toggle"] = true
+      fullscreenResults["appkit_lights"] = true
+      guard let screen = NSScreen.screens.first else { return }
+      let edge = NSPoint(x: window.frame.minX + 2, y: window.frame.midY)
+      guard CGWarpMouseCursorPosition(CGPoint(x: edge.x, y: screen.frame.maxY - edge.y)) == .success,
+            let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: edge),
+              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+              context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 8
+    case 8:
+      guard full, !page, let container, container.sidebarState == "floating", !container.sidebarAnimating,
+            NSApp.isActive, window.isKeyWindow, let tab = fullscreenTab,
+            let edgeImage = promptScreenScreenshot(window, name: "fullscreen-edge", withoutShadow: true) else { return }
+      fullscreenResults["edge_reveal"] = true
+      fullscreenResults["edge_screenshot"] = edgeImage
+      tab.focusCheckPage()
+      browserCheckPhase = 9
+    case 9:
+      guard full, !page, NSApp.isActive, window.isKeyWindow, let tab = fullscreenTab,
+            let item = tab.itemId, host.activeItemId() == item else { return }
+      guard state["view_focused"] as? Bool == true else { tab.focusCheckPage(); return }
+      sendKey("f", code: 3, flags: [.control, .command])
+      browserCheckPhase = 5
+    case 5:
+      guard !full, !page, !window.styleMask.contains(.fullScreen), let tab = fullscreenTab else { return }
+      guard NSApp.isActive, window.isKeyWindow else { return }
+      tab.focusCheckPage()
+      guard state["view_focused"] as? Bool == true else { return }
+      fullscreenResults["focused_control_command_f"] = true
+      fullscreenEnteredNotification = false
+      resetFullscreenProbe()
+      tab.checkFullscreenRequest(true)
+      browserCheckPhase = 6
+    case 6:
+      guard full, page, fullscreenEnteredNotification,
+            let button = window.standardWindowButton(.zoomButton) else { return }
+      button.performClick(nil)
+      browserCheckPhase = 7
+    case 7:
+      guard !full, !page, !window.styleMask.contains(.fullScreen), let tab = fullscreenTab else { return }
+      probeFullscreen(tab)
+      guard fullscreenElement == false, container?.pageFullscreen == false else { return }
+      fullscreenResults["green_button_exit"] = true
+      fullscreenResults["stock_browsers"] = host.checkStockBrowsers()
+      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: fullscreenResults)
+    default: break
+    }
+  }
+
   func finishBrowserCheck(ok: Bool, values: [String: Any]) {
 
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
@@ -2419,6 +2782,12 @@ final class Runtime {
     promptFixture = nil
     browserCheckTimer?.invalidate()
     browserCheckTimer = nil
+    if let fullscreenObserver { NotificationCenter.default.removeObserver(fullscreenObserver) }
+    fullscreenObserver = nil
+    if let fullscreenActivationObserver { NotificationCenter.default.removeObserver(fullscreenActivationObserver) }
+    fullscreenActivationObserver = nil
+    for observer in fullscreenFocusObservers { NotificationCenter.default.removeObserver(observer) }
+    fullscreenFocusObservers.removeAll()
     if let linkMenuObserver { NotificationCenter.default.removeObserver(linkMenuObserver) }
     linkMenuObserver = nil
     Launcher.startupWatchdog?.cancel()
@@ -2437,6 +2806,12 @@ final class Runtime {
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }
     if browserCheckMode == "screen-devtools" { result["screen"] = "devtools" }
     if browserCheckMode == "screen-extensions" { result["check"] = "extensions"; result["screen"] = "extensions" }
+    if browserCheckMode == "screen-fullscreen" {
+      result["check"] = "fullscreen"; result["screen"] = "fullscreen"
+      result["focus_trace"] = fullscreenFocusTrace
+      result["focus_trace_dropped"] = fullscreenFocusTraceDropped
+      result["menu_dispatch"] = fullscreenMenuDispatch
+    }
     result["ok"] = ok
     result["exit"] = ok ? 0 : 1
     if result["stock_browsers"] == nil { result["stock_browsers"] = host?.checkStockBrowsers() ?? browserCheckStock }

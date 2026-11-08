@@ -86,6 +86,11 @@ struct SidebarState {
     var hasSelection = false
     private(set) var dwellStartedAt: TimeInterval?
 
+    mutating func hideForFullscreen() {
+        mode = .hidden
+        dwellStartedAt = nil
+    }
+
     mutating func toggle() {
         mode = mode == .docked ? (hasSelection ? .hidden : .floating) : .docked
         dwellStartedAt = nil

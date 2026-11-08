@@ -21,6 +21,8 @@ class AraratBrowserWindow : public BrowserWindow {
   ~AraratBrowserWindow() override;
   void RequestClose();
   BrowserWindowInterface* browser() const { return browser_; }
+  bool HasExclusiveAccessBubbleForCheck() const;
+  bool IsExclusiveAccessBubbleVisibleForCheck() const;
   ararat::AraratExtensionsContainer* extensions() const { return extensions_.get(); }
   gfx::NativeWindow GetNativeWindow() const override;
   bool IsOnCurrentWorkspace() const override;

@@ -42,6 +42,8 @@ void ScheduleTick() {
 
 @implementation ARTabsCheck
 - (void)windowHostClosingAllCancelled:(id<ARWindowHostAPI>)host {}
+- (void)windowHost:(id<ARWindowHostAPI>)host pageFullscreenChanged:(BOOL)fullscreen {}
+- (void)windowHost:(id<ARWindowHostAPI>)host windowFullscreenChanged:(BOOL)fullscreen {}
 @synthesize host = _host;
 @synthesize card = _card;
 @synthesize transactions = _transactions;

@@ -15,6 +15,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onTransaction: (@MainActor (LiveTransaction) -> Void)?
     public var onWorkspaceChange: (@MainActor () -> Void)?
     public var onQuitProfileSwitch: (@MainActor () -> Void)?
+    public var onPageFullscreenChanged: (@MainActor (Bool) -> Void)?
+    public var onWindowFullscreenChanged: (@MainActor (Bool) -> Void)?
 
     public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
@@ -118,6 +120,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
+
+    public func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {
+        MainActor.assumeIsolated { onPageFullscreenChanged?(fullscreen) }
+    }
+
+    public func windowHost(_ host: any ARWindowHostAPI, windowFullscreenChanged fullscreen: Bool) {
+        MainActor.assumeIsolated { onWindowFullscreenChanged?(fullscreen) }
+    }
 
     public func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {
         if host.isClosingAll() {

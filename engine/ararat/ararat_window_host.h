@@ -2,6 +2,7 @@
 #define ARARAT_ARARAT_WINDOW_HOST_H_
 
 #include <memory>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
@@ -16,6 +17,7 @@
 class AraratBrowserWindow;
 class AraratModalDialogHost;
 class BrowserWindowInterface;
+class FullscreenController;
 class Profile;
 namespace content { class WebContents; }
 
@@ -53,6 +55,15 @@ class AraratWindowHostCore {
   const std::string& profile_name() const { return profile_name_; }
   void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
+  void SetPageFullscreen(bool fullscreen);
+  void SetWindowFullscreen(bool fullscreen);
+  bool IsFullscreen() const;
+  bool IsFullscreenTransitioning() const { return fullscreen_transitioning_; }
+  void SetFullscreen(bool fullscreen, int64_t display_id);
+  void FullscreenStateChanged();
+  void FullscreenStateChanging();
+  void FullscreenTransitionStarting();
+  void SynchronizeFullscreenForCheck();
   void AttachPage(gfx::NativeView view);
   void PositionPage(const gfx::Rect& rect);
   web_modal::WebContentsModalDialogHost* modal_dialog_host() const;
@@ -84,6 +95,10 @@ class AraratWindowHostCore {
   bool closed_ = false;
   bool popup_ = false;
   bool devtools_ = false;
+  bool check_fullscreen_ = false;
+  bool fullscreen_transitioning_ = false;
+  uint64_t fullscreen_transition_generation_ = 0;
+  base::WeakPtr<FullscreenController> fullscreen_transition_controller_;
   std::string profile_name_ = "Default";
   void* owner_;
   base::WeakPtrFactory<AraratWindowHostCore> weak_factory_{this};

@@ -29,6 +29,21 @@ private func fixture() -> (NSWindow, SidebarView, SidebarContainerView, NSView) 
 }
 
 @Test @MainActor
+func fullscreenSidebarRemainsReachableWithoutSelection() {
+    let (window, sidebar, container, _) = fixture()
+    defer { window.contentView = nil }
+    container.windowFullscreen = true
+    #expect(container.sidebarState == "hidden")
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    container.selectionChanged()
+    #expect(container.sidebarState == "floating")
+    container.windowFullscreen = false
+    container.windowFullscreen = true
+    container.processPointer()
+    #expect(container.sidebarState == "floating")
+}
+
+@Test @MainActor
 func libraryOpeningFocusesSearchOnceAfterButtonMotion() throws {
     let (window, sidebar, container, page) = fixture()
     defer { window.contentView = nil }

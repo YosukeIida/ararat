@@ -169,6 +169,45 @@ func widthChangesRelayoutACleanContainerWithoutToggling() {
 }
 
 @Test @MainActor
+func windowFullscreenHidesAndRestoresSidebar() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
+    container.layoutSubtreeIfNeeded()
+    container.windowFullscreen = true
+    #expect(container.sidebarState == "hidden")
+    #expect(page.frame == NSRect(x: 10, y: 10, width: 1080, height: 700))
+    container.pageFullscreen = true
+    #expect(page.frame == container.bounds)
+    container.pageFullscreen = false
+    #expect(container.sidebarState == "hidden")
+    container.windowFullscreen = false
+    #expect(container.sidebarState == "docked")
+    #expect(page.frame == NSRect(x: 240, y: 10, width: 850, height: 700))
+}
+
+@Test @MainActor
+func pageFullscreenFillsWindowAndRestoresSidebar() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
+    container.layoutSubtreeIfNeeded()
+    let original = page.frame
+    let panel = container.subviews.compactMap { $0 as? SidebarPanelView }.first!
+    container.pageFullscreen = true
+    #expect(page.frame == container.bounds)
+    #expect(page.layer?.mask == nil)
+    #expect(panel.isHidden)
+    container.toggleSidebar()
+    container.pageFullscreen = false
+    #expect(page.frame == original)
+    #expect(!panel.isHidden)
+    #expect(container.sidebarState == "docked")
+}
+
+@Test @MainActor
 func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
     let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Title", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [

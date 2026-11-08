@@ -51,6 +51,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary<NSString*, id>*)checkAutofillState;
 - (void)checkRefreshAutofillData;
 - (void)checkAutofillAction:(NSInteger)action;
+- (void)checkFullscreenRequest:(BOOL)enter;
+- (void)checkFullscreenElement:(void (^)(BOOL))completion;
 @end
 
 @protocol ARWindowHostAPI;
@@ -60,6 +62,8 @@ NS_ASSUME_NONNULL_BEGIN
     didReceiveTransaction:(NSDictionary<NSString*, id>*)transaction;
 - (void)windowHost:(id<ARWindowHostAPI>)host showProfile:(NSString*)profile;
 - (void)windowHostClosingAllCancelled:(id<ARWindowHostAPI>)host;
+- (void)windowHost:(id<ARWindowHostAPI>)host pageFullscreenChanged:(BOOL)fullscreen;
+- (void)windowHost:(id<ARWindowHostAPI>)host windowFullscreenChanged:(BOOL)fullscreen;
 @end
 
 @protocol ARWindowHostAPI <NSObject>
@@ -120,6 +124,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkActivateShownProfile;
 - (void)checkCreateIncognito;
 - (void)checkNavigateOffTheRecord;
+- (NSDictionary<NSString*, id>*)checkFullscreenState;
+- (void)checkFullscreenAction:(NSInteger)action;
 @end
 
 #ifdef __cplusplus
