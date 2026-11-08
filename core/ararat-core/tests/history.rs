@@ -77,6 +77,7 @@ fn pinned_and_favorite_unload_then_reselect_reopens_in_the_same_batch() {
         ws.select_item_at("one", "y4", 100).unwrap(); ws.select_item_at("one", id, 101).unwrap();
         let ops = ws.close_item(id).unwrap();
         assert_eq!(ops.len(), 3);
+        assert!(ws.history_purges.is_empty());
         assert_eq!(ws.items[id].lifecycle, Lifecycle::Unloaded);
         assert!(ws.is_selectable(id));
         assert_eq!(ws.selected("one"), Some("y4"));

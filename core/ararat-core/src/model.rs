@@ -129,6 +129,8 @@ pub struct Workspace {
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
+    pub history_purges: HashMap<Id, (Profile, Id)>,
+    pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
     pub items: HashMap<Id, Item>,
@@ -151,6 +153,8 @@ pub enum Kind {
     FolderState,
     RoutingRule,
     RoutingDefault,
+    HistoryPurge,
+    HistoryProfile,
 }
 
 impl Kind {
@@ -166,11 +170,13 @@ impl Kind {
             Kind::FolderState => "folder_state",
             Kind::RoutingRule => "routing_rule",
             Kind::RoutingDefault => "routing_default",
+            Kind::HistoryPurge => "history_purge",
+            Kind::HistoryProfile => "history_profile",
         }
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::RoutingRule, Kind::RoutingDefault].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -186,6 +192,8 @@ pub enum Record {
     Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
+    HistoryPurge { id: Id, profile: Profile, item: Id },
+    HistoryProfile { item: Id, profile: Profile },
 }
 
 impl Record {
@@ -201,6 +209,8 @@ impl Record {
             Record::Favorites { .. } => Kind::Favorites,
             Record::RoutingRule { .. } => Kind::RoutingRule,
             Record::RoutingDefault { .. } => Kind::RoutingDefault,
+            Record::HistoryPurge { .. } => Kind::HistoryPurge,
+            Record::HistoryProfile { .. } => Kind::HistoryProfile,
         }
     }
 
@@ -216,6 +226,8 @@ impl Record {
             Record::Favorites { profile, .. } => profile_id(profile),
             Record::RoutingRule { rule, .. } => rule.id.clone(),
             Record::RoutingDefault { .. } => "workspace".into(),
+            Record::HistoryPurge { id, .. } => id.clone(),
+            Record::HistoryProfile { item, .. } => item.clone(),
         }
     }
 
@@ -233,6 +245,8 @@ impl Record {
                 order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone(),
                 profile: rule.profile.clone() }),
             Record::RoutingDefault { destination } => serde_json::to_string(destination),
+            Record::HistoryPurge { profile, item, .. } => serde_json::to_string(&(profile, item)),
+            Record::HistoryProfile { profile, .. } => serde_json::to_string(profile),
         }
         .expect("model types serialise")
     }
@@ -261,6 +275,11 @@ impl Record {
                 }
             }
             Kind::RoutingDefault => Record::RoutingDefault { destination: serde_json::from_str(body)? },
+            Kind::HistoryPurge => {
+                let (profile, item) = serde_json::from_str(body)?;
+                Record::HistoryPurge { id: id.into(), profile, item }
+            },
+            Kind::HistoryProfile => Record::HistoryProfile { item: id.into(), profile: serde_json::from_str(body)? },
         })
     }
 }
@@ -354,6 +373,10 @@ impl Workspace {
             // Default records changed since the last sync: a tombstone resets ours to the
             // built-in default the same way rule deletes remove their rule.
             Op::Delete(Kind::RoutingDefault, _) => { self.routing_default = crate::routing::Destination::default(); },
+            Op::Put(Record::HistoryPurge { id, profile, item }) => { self.history_purges.insert(id.clone(), (profile.clone(), item.clone())); },
+            Op::Delete(Kind::HistoryPurge, id) => { self.history_purges.remove(id); },
+            Op::Put(Record::HistoryProfile { item, profile }) => { self.history_profiles.insert(item.clone(), profile.clone()); },
+            Op::Delete(Kind::HistoryProfile, id) => { self.history_profiles.remove(id); },
         }
     }
 
@@ -369,7 +392,9 @@ impl Workspace {
         // (Workspace::default().to_ops() stays empty).
         let default = (self.routing_default != crate::routing::Destination::default())
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter())
+        let purges = self.history_purges.iter().map(|(id, (profile, item))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone() });
+        let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 

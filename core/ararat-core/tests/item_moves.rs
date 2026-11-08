@@ -68,12 +68,12 @@ fn all_edits_persist_and_journal_replays_only_synced_state() {
     let path = std::env::temp_dir().join(format!("ararat-item-moves-{}.sqlite", std::process::id())); assert!(!path.exists());
     let (store, _) = Store::open(&path).unwrap(); let mut ws = workspace(); store.write(ws.to_ops()); let base_count = ws.to_ops().len();
     let mut ops = ws.create_folder("new", "New", "pin-work", 0, &[]).unwrap(); ops.extend(ws.move_item("tab-mail", "new", 0, false).unwrap()); ops.extend(ws.rename_tab("tab-mail", "Renamed").unwrap()); ops.extend(ws.rename_folder("new", "Folder").unwrap()); ops.extend(ws.set_folder_collapsed("new", true).unwrap()); ops.extend(ws.delete_folder("folder-docs").unwrap());
-    let edits_count = ops.iter().filter(|op| !matches!(op, Op::Put(Record::FolderState { .. }))).count(); store.write(ops); store.flush().unwrap(); drop(store);
+    let edits_count = ops.iter().filter(|op| !matches!(op, Op::Put(Record::FolderState { .. } | Record::HistoryPurge { .. } | Record::HistoryProfile { .. }))).count(); store.write(ops); store.flush().unwrap(); drop(store);
     let (store, reopened) = Store::open(&path).unwrap(); assert_eq!(reopened, ws); drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let rows: Vec<(String, String, Option<String>)> = conn.prepare("SELECT kind,id,body FROM journal ORDER BY seq").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect(); assert_eq!(rows.len(), base_count + edits_count);
     let mut synced = Workspace::default(); for (kind, id, body) in rows { let kind = Kind::parse(&kind).unwrap(); assert!(!matches!(kind, Kind::Window | Kind::LastSelected | Kind::FolderState)); synced.apply(&match body { Some(body) => Op::Put(Record::parse(kind, &id, &body).unwrap()), None => Op::Delete(kind, id) }); }
-    ws.folder_collapsed.clear(); assert_eq!(synced, ws); drop(conn);
+    ws.folder_collapsed.clear(); ws.history_purges.clear(); ws.history_profiles.clear(); assert_eq!(synced, ws); drop(conn);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 #[test]

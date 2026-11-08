@@ -261,16 +261,15 @@ fn failed_open_clears_its_mapping_and_can_be_retried() {
     live.apply(&mut ws, snapshot_tx(vec![]));
     let (_, command) = live.open(&mut ws, "a", "u").unwrap();
     live.command_sent(&command);
-    let lifecycle = ws.items["a"].lifecycle.clone();
     let (ops, outcome) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 1, cause: Cause::Command(command.id.clone()),
         strips: vec![strip_empty("one")],
     });
     assert!(outcome.applied);
-    assert!(ops.is_empty());
+    assert!(!ops.is_empty());
     assert_eq!(live.live_tab("a"), None);
     assert_eq!(live.item_for(&command.id), None);
-    assert_eq!(ws.items["a"].lifecycle, lifecycle);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Unloaded);
     assert!(live.open(&mut ws, "a", "u").is_ok());
     let (_, duplicate) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 2, cause: Cause::Command(command.id), strips: vec![],
@@ -279,22 +278,24 @@ fn failed_open_clears_its_mapping_and_can_be_retried() {
 }
 
 #[test]
-fn rejected_open_can_be_cancelled_without_changing_lifecycle() {
+fn rejected_open_can_be_cancelled_and_unloaded() {
     let mut ws = workspace();
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![]));
     let (_, command) = live.open(&mut ws, "a", "u").unwrap();
     live.command_sent(&command);
     let lifecycle = ws.items["a"].lifecycle.clone();
-    assert!(!live.cancel("unknown"));
+    assert!(!live.cancel(&mut ws, "unknown").0);
     assert_eq!(live.live_tab("a").as_deref(), Some(command.id.as_str()));
     assert_eq!(live.item_for(&command.id).as_deref(), Some("a"));
     assert_eq!(ws.items["a"].lifecycle, lifecycle);
-    assert!(live.cancel(&command.id));
-    assert!(!live.cancel(&command.id));
+    let (cancelled, ops) = live.cancel(&mut ws, &command.id);
+    assert!(cancelled);
+    assert!(!ops.is_empty());
+    assert!(!live.cancel(&mut ws, &command.id).0);
     assert_eq!(live.live_tab("a"), None);
     assert_eq!(live.item_for(&command.id), None);
-    assert_eq!(ws.items["a"].lifecycle, lifecycle);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Unloaded);
     assert!(live.open(&mut ws, "a", "u").is_ok());
 }
 
@@ -312,8 +313,8 @@ fn cancelling_a_pending_activation_keeps_the_live_tab_and_rejects_a_late_complet
     assert!(outcome.applied);
     let activate = live.activate(&ws, "a").unwrap();
     live.command_sent(&activate);
-    assert!(live.cancel(&activate.id));
-    assert!(!live.cancel(&activate.id));
+    assert!(live.cancel(&mut ws, &activate.id).0);
+    assert!(!live.cancel(&mut ws, &activate.id).0);
     assert_eq!(live.live_tab("a").as_deref(), Some(open.id.as_str()));
     let (_, outcome) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 2, cause: Cause::Command(activate.id),

@@ -16,6 +16,7 @@ class WebContents;
 - (content::WebContents*)contents;
 - (void)refresh;
 - (void)navigationFinished;
+- (void)rendererCrashed;
 - (BOOL)takePendingNavigation;
 - (void)invalidate;
 - (void)replaceContents:(content::WebContents*)contents;

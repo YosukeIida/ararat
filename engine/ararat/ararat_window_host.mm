@@ -1585,6 +1585,14 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSArray<NSNumber*>*)checkClosingEvents { return [check_closing_events_ copy] ?: @[]; }
 - (BOOL)checkTryingToQuit { return browser_shutdown::IsTryingToQuit(); }
 - (NSUInteger)checkStockBrowsers { return AraratStockBrowserCount(); }
+- (NSUInteger)checkBrowserViews {
+  NSUInteger count = 0;
+  for (const auto& [name, window] : core_->windows()) {
+    auto* browser = window->browser();
+    if (browser && BrowserWindow::FromBrowser(browser)->AsBrowserView()) ++count;
+  }
+  return count;
+}
 
 - (NSDictionary<NSString*, id>*)checkFullscreenState {
   auto* command = base::CommandLine::ForCurrentProcess();
@@ -2441,10 +2449,26 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* pending_window = core_->windowForProfile([open[@"profile"] UTF8String]);
     if (loading_profile_ || (pending_window && pending_window->browser()->IsDeleteScheduled())) break;
     [pending_opens_ removeObjectAtIndex:0];
+    id<ARWindowHostDelegate> delegate = self.delegate;
+    if (!delegate || ([delegate respondsToSelector:@selector(windowHost:shouldOpenCommand:itemId:)] &&
+        ![delegate windowHost:self shouldOpenCommand:open[@"command"] itemId:open[@"item"]])) {
+      [self emitOpenFailure:open[@"command"]];
+      continue;
+    }
     [self openURL:open[@"url"] commandId:open[@"command"] itemId:open[@"item"] external:[open[@"external"] boolValue] untrusted:[open[@"untrusted"] boolValue] profile:open[@"profile"]];
   }
   draining_opens_ = NO;
   if (core_->closed()) [self discardPendingOpens];
+}
+
+- (BOOL)cancelPendingOpen:(NSString*)commandId {
+  for (NSUInteger index = 0; index < pending_opens_.count; ++index) {
+    if ([pending_opens_[index][@"command"] isEqualToString:commandId]) {
+      [pending_opens_ removeObjectAtIndex:index];
+      return YES;
+    }
+  }
+  return NO;
 }
 
 - (void)profileLoaded:(BOOL)loaded {
@@ -2471,6 +2495,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   command_id_ = commandId;
   emitted_change_ = NO;
   strip->ActivateTabAt(index);
+  if (tab.contents->IsCrashed()) tab.contents->GetController().Reload(content::ReloadType::NORMAL, true);
   if (!emitted_change_) [self emitCause:@{ @"Command": commandId }];
   command_id_ = nil;
 }
@@ -2706,6 +2731,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     [entries addObject:@{ @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
                           @"opener": opener_identity ? (id)opener_identity->live_id : (id)NSNull.null,
                           @"navigated": @(consumeNavigation && [tab takePendingNavigation]),
+                          @"crashed": @(tab.crashed),
                           @"url": url ?: (id)NSNull.null,
                           @"title": committed.is_valid() ? (id)tab.title : (id)NSNull.null }];
     if (tab.contents == active) active_id = tab.liveId;

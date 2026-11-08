@@ -32,6 +32,8 @@ private final class MatrixFakeHost: NSObject {
     var hidden = false
     var activated: [String] = []
     var opened: [String] = []
+    var deferOpen = false
+    var pendingOpens: [String: String] = [:]
     var presentationOverride: [String: Any]?
     @objc func isClosing() -> Bool { closing }
     @objc func isClosingAll() -> Bool { closing }
@@ -51,10 +53,18 @@ private final class MatrixFakeHost: NSObject {
     }
     @objc(openURL:commandId:itemId:profile:external:untrusted:)
     func open(_ url: String, command: String, item: String, profile: String, external: Bool, untrusted: Bool) -> Bool {
+        if deferOpen {
+            pendingOpens[command] = item
+            opened.append(command)
+            return true
+        }
         entries.append(MatrixFakeTab(item: item, live: command, profile: profile, owner: self))
         active = item
         opened.append(command)
         return true
+    }
+    @objc(cancelPendingOpen:) func cancelPendingOpen(_ command: String) -> Bool {
+        pendingOpens.removeValue(forKey: command) != nil
     }
 }
 
@@ -76,15 +86,40 @@ private func matrixWait(_ predicate: () -> Bool) async throws {
 }
 
 @MainActor
-private func matrixTransaction(_ fake: MatrixFakeHost, window: String, epoch: UInt64, rev: UInt64, command: String?) -> [String: Any] {
+private func matrixTransaction(_ fake: MatrixFakeHost, window: String, epoch: UInt64, rev: UInt64, command: String?, crashedItem: String? = nil) -> [String: Any] {
     let tabs: [[String: Any]] = fake.entries.map { tab in
         ["profile": tab.profile, "live_id": tab.liveId, "item": tab.itemId as Any? ?? NSNull(),
-         "opener": NSNull(), "url": NSNull(), "title": NSNull(), "navigated": false]
+         "opener": NSNull(), "url": NSNull(), "title": NSNull(), "navigated": false, "crashed": tab.itemId != nil && tab.itemId == crashedItem]
     }
     return ["epoch": NSNumber(value: epoch), "rev": NSNumber(value: rev),
             "cause": command.map { ["Command": $0] } as Any? ?? "Engine",
             "strips": [["window": window, "tabs": tabs,
                          "active": fake.entries.first(where: { $0.itemId == fake.active })?.liveId as Any? ?? NSNull()]]]
+}
+
+@Test @MainActor
+func crashedStripKeepsTheLiveRowAndClearsAfterRecovery() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "crash", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    let row = try session.queue.sync { () -> (String, String) in
+        let snapshot = try #require(session.store).snapshot(windowId: "crash")
+        let row = try #require(snapshot.spaces.first(where: { $0.id == "default" })?.today.first)
+        return (row.id, try #require(row.url))
+    }
+    engine.select(id: row.0, url: row.1)
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "crash", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { session.queue.sync { session.store?.liveTab(item: row.0) == fake.opened[0] } }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "crash", epoch: 1, rev: 1, command: nil, crashedItem: row.0))
+    try await matrixWait { engine.crashedItems.contains(row.0) }
+    #expect(session.queue.sync { session.store?.liveTab(item: row.0) } == fake.opened[0])
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "crash", epoch: 1, rev: 2, command: nil))
+    try await matrixWait { engine.crashedItems.isEmpty }
 }
 
 @Test @MainActor
@@ -427,4 +462,79 @@ func matrixDelayedAcceptedOpenDoesNotAdvanceSupersededOrClosedStage() async thro
         #expect(runtime.matrixAcknowledgedLive == nil && runtime.spaceMatrixPhase == 10)
         #expect(fake.entries.count == 1)
     }
+}
+
+@Test @MainActor
+func pendingProfileOpenIsWithdrawnOrRejectedWhenItsCommandChanges() async throws {
+    for action in ["selection", "close", "core", "space"] {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let session = WorkspaceSession()
+        let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "pending", card: NSView(), seedProfiles: true, session: session)
+        let (fake, host) = matrixFake()
+        fake.deferOpen = true
+        engine.attach(host)
+        let row = try session.queue.sync { () -> (String, String) in
+            let store = try #require(session.store)
+            _ = try store.showSpaceSelecting(windowId: "pending", spaceId: "named")
+            let row = try #require(store.snapshot(windowId: "pending").spaces.first(where: { $0.id == "named" })?.today.first)
+            return (row.id, try #require(row.url))
+        }
+        engine.select(id: row.0, url: row.1)
+        try await matrixWait { fake.opened.count == 1 }
+        let command = try #require(fake.opened.first)
+        #expect(engine.windowHost(host, shouldOpenCommand: command, itemId: row.0))
+        if action == "selection" || action == "close" {
+            if action == "close" {
+                fake.closing = true
+                engine.windowHostWillBeginClosing(host)
+            } else {
+                engine.invalidateSelection()
+            }
+            #expect(fake.pendingOpens.isEmpty)
+            try await matrixWait { session.queue.sync { session.store?.liveTab(item: row.0) == nil } }
+        } else if action == "core" {
+            _ = session.queue.sync { session.store?.liveCancel(commandId: command) }
+            #expect(!engine.windowHost(host, shouldOpenCommand: command, itemId: row.0))
+        } else {
+            try session.queue.sync { try session.store?.showSpace(windowId: "pending", spaceId: "default") }
+            #expect(!engine.windowHost(host, shouldOpenCommand: command, itemId: row.0))
+        }
+        if action == "core" {
+            #expect(session.queue.sync { session.store?.liveTab(item: row.0) } == nil)
+        }
+    }
+}
+
+@Test @MainActor
+func restoredSelectionIsRevalidatedWhenDeferredOpenDrains() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "restore", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    fake.deferOpen = true
+    let ids = try session.queue.sync { () -> (String, String) in
+        let store = try #require(session.store)
+        _ = try store.showSpaceSelecting(windowId: "restore", spaceId: "named")
+        let first = try #require(store.snapshot(windowId: "restore").selectedId)
+        let second = try #require(try store.createTab(windowId: "restore", url: "https://second.example/").selectedId)
+        _ = try store.selectItem(windowId: "restore", id: first)
+        return (first, second)
+    }
+    engine.attach(host)
+    engine.windowHost(host, didReceiveTransaction: ["epoch": 1, "rev": 0, "cause": "Engine", "strips": []])
+    engine.restoreSelection()
+    try await matrixWait { fake.opened.count == 1 }
+    let command = try #require(fake.opened.first)
+    #expect(fake.pendingOpens == [command: ids.0])
+    #expect(engine.windowHost(host, shouldOpenCommand: command, itemId: ids.0))
+    _ = try session.queue.sync { try session.store!.selectItem(windowId: "restore", id: ids.1) }
+    #expect(!engine.windowHost(host, shouldOpenCommand: command, itemId: ids.0))
+    let (_, otherHost) = matrixFake()
+    #expect(!engine.windowHost(otherHost, shouldOpenCommand: command, itemId: ids.0))
+    engine.invalidateSelection()
+    #expect(!engine.windowHost(host, shouldOpenCommand: command, itemId: ids.0))
 }

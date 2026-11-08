@@ -14,10 +14,14 @@ __attribute__((visibility("default")))
 @property(nonatomic, readonly, copy) NSString* url;
 @property(nonatomic, readonly) BOOL isLoading;
 @property(nonatomic, readonly) NSUInteger navigationCount;
+@property(nonatomic, readonly) NSUInteger entryCount;
+@property(nonatomic, readonly) BOOL canGoBack;
+@property(nonatomic, readonly) BOOL crashed;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
 - (BOOL)sendCheckMouseMoved:(NSEvent*)event;
+- (BOOL)checkCrashRenderer;
 @end
 
 NS_ASSUME_NONNULL_END

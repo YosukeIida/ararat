@@ -51,12 +51,15 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/browser-window-factory.patch` | 独自 |
 | `ararat/viewless-read-anything.patch` | 独自 |
 | `ararat/viewless-bubble-anchor.patch` | 独自 |
+| `ararat/sad-tab-viewless.patch` | 独自、設計は Ardia を先例に挙げるが未検証 |
 
 ## 取り込んだパッチを選んだ理由
 
 パッチごとの維持・スキップ・対抗パッチの判断と、セキュリティ上の帰結は `docs/research/ungoogled-inventory.md` §8 にある。
 
 ## 独自パッチに関する注記
+
+`ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。U17 の設計は Ardia（`mantrakp04/ardia`、GPL-3.0）のガードを先例として挙げているが、ここではそのソースを確認していない。このパッチは Chromium のソースに対して独自に記述した。
 
 `ararat/permission-prompt-hook.patch` は `ChromePermissionsClient::CreatePrompt` から独自 hook を呼ぶ。hook が未設定か null を返す場合は Chrome 標準のプロンプトを使う。`link-ararat-layer.patch` は permissions のビルドターゲットに `//ararat/core:hooks` を追加する。
 

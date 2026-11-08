@@ -57,6 +57,10 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
+if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" }) {
+  exit(runRelaunchDriver(String(check.dropFirst(15))))
+}
+
 enum Launcher {
   static var handle: UnsafeMutableRawPointer!
   static var startupWatchdog: DispatchSourceTimer?
@@ -384,6 +388,7 @@ final class Runtime: NSObject {
   var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
   var sliceTimer: Timer?
   var sliceRows: [Row] = []
+  var relaunchSeedRows: [Row] = []
   var slicePhase = 0
   var sliceAttempts = 0
   var sliceTransactions = 0
@@ -586,10 +591,10 @@ final class Runtime: NSObject {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if checkName == "fullscreen" {
@@ -641,6 +646,7 @@ final class Runtime: NSObject {
     let path = requested ?? (directory as NSString).appendingPathComponent("workspace.sqlite")
     quitPath = path
     let running = session ?? WorkspaceSession()
+    var adoptedWindow = false
     if session == nil || reopening {
       // Design (c): the first window adopts the newest kept `Window` record, none kept
       // means a fresh UUID; reopen adopts the newest kept record no open window names.
@@ -651,18 +657,20 @@ final class Runtime: NSObject {
         running.store = try? running.store ?? WorkspaceStore.open(path: path)
       }
       let kept = running.queue.sync { running.store?.keptWindows() ?? [] }
-      windowID = kept.first { !openIDs.contains($0.id) }?.id ?? UUID().uuidString
+      let adopted = kept.first { !openIDs.contains($0.id) }
+      adoptedWindow = adopted != nil
+      windowID = adopted?.id ?? UUID().uuidString
     }
     let card = NSView()
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
     let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
-    let singleCheck = (browserCheckMode != nil && !profileCheck) || (quitMode != nil && quitMode != "quit")
+    let singleCheck = (browserCheckMode != nil && !profileCheck && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck, seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -778,6 +786,7 @@ final class Runtime: NSObject {
     actions.onCreatePageChanged = { [weak self] in self?.container?.selectionChanged() }
     actions.bind(to: sidebar)
     adapter.attach(host)
+    if session == nil && adoptedWindow { adapter.restoreSelection() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
        (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || quitMode == "quit-cancel" || quitMode == "close") {
       host.installCheckDialogFactory()
@@ -1406,6 +1415,73 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   if mode == "popup", (6...10).contains(phase) { devtools() } else { regular() }
 }
 
+  func relaunchCheckTick(_ host: any ARWindowHostAPI, mode: String) {
+    let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
+    if mode == "relaunch-seed" {
+      if browserCheckPhase == 1, browserCheckAttempts % 100 == 0 {
+        let id = relaunchSeedRows.first?.id
+        let tab = tabs.first { $0.itemId == id }
+        FileHandle.standardError.write(Data("ararat-trace: relaunch-seed waiting rows=\(sliceRows.count) active=\(sliceActive == id) strip_active=\(sliceActive ?? "nil") selected=\(snapshot.selectedId ?? "nil") first=\(id ?? "nil") host_active=\(host.activeItemId() ?? "nil") selection_stage=\(checkSeedSelectionStage) matched=\(tab != nil) loading=\(tab?.isLoading ?? false) navigations=\(tab?.navigationCount ?? 0)\n".utf8))
+      }
+      if browserCheckPhase == 0, sliceRows.count == 3, sliceRows[0].url != nil {
+        relaunchSeedRows = sliceRows
+        browserCheckPhase = 1
+        selectCheckSeed(relaunchSeedRows[0])
+      } else if browserCheckPhase == 1, relaunchSeedRows.count == 3, snapshot.selectedId == relaunchSeedRows[0].id, sliceActive == relaunchSeedRows[0].id,
+                tabs.contains(where: { $0.itemId == relaunchSeedRows[0].id && !$0.isLoading && $0.navigationCount > 0 }),
+                relaunchSeedRows[1].url != nil {
+        browserCheckSeedID = relaunchSeedRows[1].id
+        browserCheckPhase = 2
+        selectCheckSeed(relaunchSeedRows[1])
+      } else if browserCheckPhase == 2, let id = browserCheckSeedID, snapshot.selectedId == id, sliceActive == id,
+                let tab = tabs.first(where: { $0.itemId == id }), !tab.isLoading, tab.navigationCount > 0 {
+        browserCheckPhase = 3
+        host.checkNavigate("data:text/html,<title>Ararat Reloaded</title>", disposition: "current")
+      } else if browserCheckPhase == 3, let id = browserCheckSeedID, snapshot.selectedId == id, sliceActive == id,
+                let tab = tabs.first(where: { $0.itemId == id }), !tab.isLoading, tab.navigationCount > 1,
+                let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+                let row = space.today.first(where: { $0.id == id }), row.url == tab.url,
+                let records = captureCheckRows(), host.checkStockBrowsers() == 0 {
+        let ready: [String: Any] = ["ready": true, "space": space.id, "selected": id,
+                                    "url": tab.url, "items": space.today.map(\.id),
+                                    "records": records.map { Array($0.prefix(2)) }]
+        guard let data = try? JSONSerialization.data(withJSONObject: ready, options: [.sortedKeys]),
+              let line = String(data: data, encoding: .utf8) else {
+          finishBrowserCheck(ok: false, values: ["error": "cannot encode ready state"]); return
+        }
+        browserCheckPhase = 4
+        print(line); fflush(stdout)
+        if CommandLine.arguments.contains("--ararat-relaunch-mode=relaunch") {
+          finishBrowserCheck(ok: true, values: [:])
+        }
+      }
+      return
+    }
+    guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-relaunch-expected=") }),
+          let data = Data(base64Encoded: String(argument.dropFirst("--ararat-relaunch-expected=".count))),
+          let expected = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let spaceID = expected["space"] as? String, let selected = expected["selected"] as? String,
+          let url = expected["url"] as? String, let items = expected["items"] as? [String],
+          let committed = expected["records"] as? [[String]] else {
+      finishBrowserCheck(ok: false, values: ["error": "invalid expected state"]); return
+    }
+    guard snapshot.shownSpaceId == spaceID, snapshot.selectedId == selected,
+          let space = snapshot.spaces.first(where: { $0.id == spaceID }),
+          let tab = tabs.first(where: { $0.itemId == selected }), !tab.isLoading,
+          tab.navigationCount > 0, tab.url == url, sliceActive == selected else { return }
+    let rows = space.today + space.pinned + space.favorites
+    guard let records = captureCheckRows() else { return }
+    let present = Set(records.map { Array($0.prefix(2)) })
+    let allPresent = Set(committed).isSubset(of: present) && Set(items).isSubset(of: Set(rows.map(\.id)))
+    let othersUnloaded = rows.filter { items.contains($0.id) && $0.id != selected }.allSatisfy(\.unloaded)
+    let stock = host.checkStockBrowsers()
+    let browserViews = host.checkBrowserViews()
+    finishBrowserCheck(ok: allPresent && othersUnloaded && stock == 0 && browserViews == 0,
+                       values: ["space_restored": true, "selected_live": true, "url_restored": true,
+                                "committed_records_present": allPresent, "others_unloaded": othersUnloaded,
+                                "stock_browsers": stock, "browser_views": browserViews])
+  }
+
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
     if browserCheckPhase != browserCheckTracedPhase {
@@ -1798,6 +1874,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "permissions" { permissionCheckTick(host); return }
     if mode == "dialogs" { dialogCheckTick(host); return }
     if mode == "protocol" { protocolCheckTick(host); return }
+    if mode == "relaunch-seed" || mode == "relaunch-verify" { relaunchCheckTick(host, mode: mode); return }
     if mode == "autofill" { autofillCheckTick(host); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
@@ -1820,7 +1897,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               snapshot.spaces.flatMap({ $0.today }).contains(where: { $0.id == browserCheckSeedID && (mode == "screen-links" || $0.title == "Ararat One") }) {
       browserCheckPhase = 2
       browserCheckBefore = snapshot
-      if mode == "newtab" {
+      if mode == "sadtab" {
+        if !tab.checkCrashRenderer() { finishBrowserCheck(ok: false, values: ["error": "renderer shutdown failed"]) }
+      } else if mode == "newtab" {
         for disposition in ["background", "split", "foreground"] {
           host.checkNavigate("data:text/html,<title>Ararat \(disposition)</title>", disposition: disposition)
         }
@@ -1835,6 +1914,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         browserCheckBefore = snapshot
         sendLinkClick(tab, right: false, command: true)
       }
+    } else if mode == "sadtab", browserCheckPhase == 2,
+              let id = browserCheckSeedID,
+              let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }),
+              tab.crashed, adapter?.crashedItems.contains(id) == true {
+      browserCheckPhase = 3
+      browserCheckBefore = snapshot
+      if let row = sliceRows.first(where: { $0.id == id }), let url = row.url { adapter?.select(id: id, url: url) }
+    } else if mode == "sadtab", browserCheckPhase == 3,
+              let id = browserCheckSeedID,
+              let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }),
+              !tab.crashed, !tab.isLoading, tab.navigationCount > 1,
+              adapter?.crashedItems.contains(id) == false, sliceActive == id {
+      let stock = host.checkStockBrowsers()
+      finishBrowserCheck(ok: stock == 0, values: ["renderer_crashed": true, "strip_crashed": true, "reloaded": true, "stock_browsers": stock])
     } else if mode == "screen-links", browserCheckPhase == 2,
               snapshot.spaces.flatMap({ $0.today }).contains(where: { $0.url?.contains("example.test/link") == true }),
               let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }) {
@@ -5887,7 +5980,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["front_unchanged"] = !(popupFrontBefore ?? "").isEmpty && result["front_after"] as? String == popupFrontBefore && popupFrontChange == nil
       result["front_change"] = popupFrontChange ?? [:]
     }
-    result["check"] = browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode == "screen-prompts" ? "prompts" : (browserCheckMode == "screen-devtools" ? "devtools" : (browserCheckMode ?? "unknown"))))
+    result["check"] = browserCheckMode == "relaunch-verify" ? (CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-relaunch-mode=") }).map { String($0.dropFirst("--ararat-relaunch-mode=".count)) } ?? "relaunch") : (browserCheckMode == "screen-links" ? "links" : (browserCheckMode == "screen-profiles" ? "profiles" : (browserCheckMode == "screen-prompts" ? "prompts" : (browserCheckMode == "screen-devtools" ? "devtools" : (browserCheckMode ?? "unknown")))))
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
     if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }

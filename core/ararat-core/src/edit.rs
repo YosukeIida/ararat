@@ -399,6 +399,7 @@ impl Workspace {
             item.lifecycle_changed_at = changed_at;
             Op::Put(Record::Item(item))
         }).collect();
+        ops.extend(self.history_purge_ops(&ops));
         let mut windows: Vec<_> = self.windows.values().cloned().collect();
         windows.sort_by(|a, b| a.id.cmp(&b.id));
         for mut state in windows {
@@ -518,6 +519,10 @@ impl Workspace {
             return Err(EditError(format!("item {id} is not an archived tab")));
         }
         let mut ops = vec![Op::Delete(crate::model::Kind::Item, id.into())];
+        ops.extend(self.history_purge_ops(&ops));
+        if self.history_profiles.contains_key(id) || ops.iter().any(|op| matches!(op, Op::Put(Record::HistoryProfile { .. }))) {
+            ops.push(Op::Delete(crate::model::Kind::HistoryProfile, id.into()));
+        }
         if self.last_selected.contains_key(id) { ops.push(Op::Delete(crate::model::Kind::LastSelected, id.into())); }
         for op in &ops { self.apply(op); }
         Ok(ops)
@@ -711,6 +716,7 @@ impl Workspace {
                 changed.lifecycle_changed_at = changed_at;
                 Op::Put(Record::Item(changed))
             }).collect();
+        ops.extend(self.history_purge_ops(&ops));
         let mut windows: Vec<_> = self.windows.values().cloned().collect();
         windows.sort_by(|a, b| a.id.cmp(&b.id));
         for mut state in windows {
@@ -747,6 +753,25 @@ impl Workspace {
         selected.sort();
         for id in selected { ops.extend(self.stamp_selection(&id, changed_at)); }
         Ok(ops)
+    }
+
+    fn history_purge_ops(&self, changes: &[Op]) -> Vec<Op> {
+        use std::hash::BuildHasher;
+        changes.iter().filter_map(|op| {
+            let item = match op {
+                Op::Put(Record::Item(item)) if item.lifecycle != Lifecycle::Unloaded => item,
+                Op::Delete(crate::model::Kind::Item, id) => self.items.get(id)?,
+                _ => return None,
+            };
+            if !matches!(item.kind, ItemKind::Tab { .. }) { return None; }
+            let profile = self.item_profile(&item.id).or_else(|| self.history_profiles.get(&item.id))?.clone();
+            let random = std::collections::hash_map::RandomState::new();
+            let id = format!("{:016x}{:016x}", random.hash_one(0u8), random.hash_one(1u8));
+            Some((id, profile, item.id.clone()))
+        }).flat_map(|(id, profile, item)| [
+            Op::Put(Record::HistoryPurge { id, profile: profile.clone(), item: item.clone() }),
+            Op::Put(Record::HistoryProfile { item, profile }),
+        ]).collect()
     }
 
     pub(crate) fn list_for(&self, id: &str) -> Option<(&str, bool)> {

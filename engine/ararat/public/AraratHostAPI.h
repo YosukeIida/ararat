@@ -12,10 +12,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, copy) NSString* url;
 @property(nonatomic, readonly) BOOL isLoading;
 @property(nonatomic, readonly) NSUInteger navigationCount;
+@property(nonatomic, readonly) NSUInteger entryCount;
+@property(nonatomic, readonly) BOOL canGoBack;
+@property(nonatomic, readonly) BOOL crashed;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
 - (BOOL)sendCheckMouseMoved:(NSEvent*)event;
+- (BOOL)checkCrashRenderer;
 - (void)prepareCheckBeforeUnload;
 - (BOOL)checkHasBeforeUnload;
 - (void)focusCheckPage;
@@ -77,6 +81,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)windowHost:(id<ARWindowHostAPI>)host updateFindBar:(NSDictionary<NSString*, id>*)state;
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
+@optional
+- (BOOL)windowHost:(id<ARWindowHostAPI>)host shouldOpenCommand:(NSString*)commandId itemId:(NSString*)itemId;
 @end
 
 @protocol ARWindowHostAPI <NSObject>
@@ -111,6 +117,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId;
 - (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted;
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted;
+- (BOOL)cancelPendingOpen:(NSString*)commandId;
 - (NSArray*)tabs;
 - (BOOL)hasActiveTab;
 - (void)setWorkspacePageHidden:(BOOL)hidden;
@@ -128,6 +135,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSNumber*>*)checkClosingEvents;
 - (BOOL)checkTryingToQuit;
 - (NSUInteger)checkStockBrowsers;
+- (NSUInteger)checkBrowserViews;
 - (void)disableCheckConfirmQuit;
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition;
 - (void)checkCreateDeferredBrowsers;

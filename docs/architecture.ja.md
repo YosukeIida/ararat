@@ -116,6 +116,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 
 ### 4.4 エンジン ↔ アプリの API
 
+- 各タブはプロセス内の navigation 回数とは別に、navigation controller のエントリ数と `canGoBack` を公開する。strip は renderer のクラッシュ状態を報告する。クラッシュしたタブを選択すると、すでにアクティブな場合も再読み込みを要求する（我々の規則。実行時の検証は未実施）。
 - host delegate はページの fullscreen と native window の遷移先 fullscreen 状態を別々に報告する。native widget は遷移の完了を遷移を始めた Browser と、表示中の Browser が変わった場合はその Browser に通知する。exclusive-access context は要求中のタブ fullscreen をアプリに報告する。非表示の検査ではウィンドウ状態を模擬し、host を表示せずに表示中の Browser の各タブの renderer を同期する（U15、我々の規則）。
 - 通常の app host の Browser は、プロファイルごとに `ExtensionsContainer` を登録する。アプリは action の ID・名前・アイコンの一覧を取得し、action の実行と既定の anchor rect の設定を行う。`FillLayout` の対象外でイベントを受けない Views の proxy が Chrome の `ExtensionPopup` の anchor になり、AppKit の座標を host の y 反転した座標に変換する。Chromium での実行は未確認である（U14、我々の規則）。
 
@@ -139,7 +140,7 @@ AppController の hook はメインウィンドウの表示中 Browser を返し
 
 - `started` でアプリは workspace を開き、sidebar と page card を `SidebarContainerView` に組み立て、host を生成して engine adapter を接続する。`will_shut_down` で adapter を切り離し、host をメインスレッドで解放する（我々の規則）。
 - バンドルの起動実行体（`Sources/Ararat`）が framework を読み込む。ブラウザプロセスは独自の `AraratMain` を呼ぶ（ランチャーのコールバックを保存し、extra-parts の hook を設定して `ChromeMain` を呼ぶ）。ヘルパーは標準の `ChromeMain` を呼ぶ。hook は標準の client のパーツに独自の `ChromeBrowserMainExtraParts` を加え、それらが `PostBrowserStart` でランチャーの `started` コールバックを、`PostMainMessageLoopRun` で `will_shut_down` を呼ぶ。`started` は `PreMainMessageLoopRun` の中で、起動ブラウザが開いた後、メインループが回る前に発火する。ハンドラはループが回っていると見なしてはならない。`AraratQuit` はどこからでも呼べる。ループが近づく前の要求は、started の段階で叶う。`--ararat-check=<name>` は、`--user-data-dir` が `$TMPDIR` の下にあり `--use-mock-keychain` があるときだけ実行され、そうでなければ 2 で終わる。`started` は 1 行の JSON `{"check":"started","ok":true,"browsers":N}` を出して終了する。`window` は非表示の host、native window、hit test を検査し、Browser の破棄を待つ。`NSApp` は Chrome の `BrowserCrApplication` である。Chromium の起動前に `NSApp` に触れる処理は存在せず、AppKit の UI は Chromium の起動時のコールバックから生成する（我々の規則）。
-- Chrome の `AppController` を application delegate として維持し、終了、ログアウト、ダウンロードの確認、ウィンドウがないときの keep-alive を任せる。独自レイヤーは Dock からの再オープンと Dock メニュー、および Browser がないときにダウンロードの待機を選んだ場合を処理する。`AraratMain` は Chrome を呼ぶ前に `--no-startup-window` を追加し、再オープンはアプリの callback が処理する。通常プロファイルの openURLs、Handoff、コマンドラインの URL はキーウィンドウの Today に行を作り、最後の行を選ぶ。off-the-record の URL はページだけの host で開く。`open -a` とそのほかの Launch Services は `application:openURLs:` を通るので対象である。URL 引数つきの別の起動は、`--no-startup-window` が設定されたままで ProcessSingleton を経由し、その URL は捨てられる（未確認）。これは U10 ではなく、phase 5 の既定ハンドラの仕事と一緒に扱う。外部リンクの Air Traffic Control も phase 5 で扱う。起動時、最初のウィンドウは、保存されている `Window` レコードのうち最も新しいものを採用し、そのレコードが記録していた表示中の space が戻る。保存されているものが無いときだけ、UUID で新しいレコードを作る。再オープンは、開いているウィンドウが使っていない保存レコードのうち最も新しいものを採用し、無ければ UUID で新しいレコードを作る。レコードは、書かれるたびに時刻を記録し（表示中 space の変更、選択、生成）、この時刻が採用の順序を決める。複数のウィンドウの保存レコードは、その復元とともに phase 5 の仕事として残る。ユーザーが閉じたウィンドウはその `Window` レコードを削除し、終了はすべての `Window` レコードを残す（unit 46 の行の規則と同じで、id は再利用しない）。終了とウィンドウの close は workspace のタブの行を変更せず、close をキャンセルすると host と Browser が残る（我々の規則）。
+- Chrome の `AppController` を application delegate として維持し、終了、ログアウト、ダウンロードの確認、ウィンドウがないときの keep-alive を任せる。独自レイヤーは Dock からの再オープンと Dock メニュー、および Browser がないときにダウンロードの待機を選んだ場合を処理する。`AraratMain` は Chrome を呼ぶ前に `--no-startup-window` を追加し、再オープンはアプリの callback が処理する。通常プロファイルの openURLs、Handoff、コマンドラインの URL はキーウィンドウの Today に行を作り、最後の行を選ぶ。off-the-record の URL はページだけの host で開く。`open -a` とそのほかの Launch Services は `application:openURLs:` を通るので対象である。URL 引数つきの別の起動は、`--no-startup-window` が設定されたままで ProcessSingleton を経由し、その URL は捨てられる（未確認）。これは U10 ではなく、phase 5 の既定ハンドラの仕事と一緒に扱う。外部リンクの Air Traffic Control も phase 5 で扱う。起動時、最初のウィンドウは、保存されている `Window` レコードのうち最も新しいものを採用し、そのレコードが記録していた表示中の space を戻し、検証した選択中のタブを開く。保存されているものが無いときだけ、UUID で新しいレコードを作る。再オープンは、開いているウィンドウが使っていない保存レコードのうち最も新しいものを採用し、無ければ UUID で新しいレコードを作る。レコードは、書かれるたびに時刻を記録し（表示中 space の変更、選択、生成）、この時刻が採用の順序を決める。複数のウィンドウの保存レコードは、その復元とともに phase 5 の仕事として残る。ユーザーが閉じたウィンドウはその `Window` レコードを削除し、終了はすべての `Window` レコードを残す（unit 46 の行の規則と同じで、id は再利用しない）。終了とウィンドウの close は workspace のタブの行を変更せず、close をキャンセルすると host と Browser が残る（我々の規則）。
 
 ### 4.6 ウィンドウ、タブ、および Chrome の UI から引き継ぐ責務
 
@@ -230,7 +231,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | ダウンロードの UI | ホスト（Chrome の bubble は無効にする） |
 | セッションの永続化 | 独自レイヤー（下記） |
 
-**セッション。** 独自の `Browser` については Chrome のウィンドウの自動復元を無効にするが、永続化の責務そのものは放棄しない。独自レイヤーは、各タブのナビゲーションスタック、選択中のエントリ、セッションストレージの名前空間を、Chrome 自身のセッションのコードでシリアライズし、コアの安定した項目 id をキーとして保存する。保持期間は次のとおりである。live タブと、読み込まれていない workspace のタブは、エントリを保持する。archive したタブは、archive が存続する間エントリを保持する。最近閉じたタブは Chrome の上限に従う。タブを復元するときはエンジンにコアの id を渡し、エンジンは履歴を含めて `WebContents` を再構築する。パッチは factory hook が設定されたすべての Browser で Chrome の復元を無効にする。プロファイルを host が保持している間、独自レイヤーは起動設定を Chrome のデフォルトに固定し、変更されても戻す。これにより Browser を指定しない復元要求でも Chrome のセッションを開かない。Chrome の強制管理ポリシーはこの設定より優先される。core からの復元は U17 の仕事である（我々の規則）。
+**セッション。** 独自の `Browser` では Chrome のウィンドウの自動復元を無効にする。パッチは factory hook が設定されたすべての Browser で復元を無効にする。プロファイルを host が保持している間、独自レイヤーは起動設定を Chrome のデフォルトに固定し、変更されても戻す。これにより Browser を指定しない復元要求でも Chrome のセッションを開かない。Chrome の強制管理ポリシーはこの設定より優先される。タブごとのナビゲーション履歴の永続化は未実装である。U17b で予定する履歴ファイルはプロファイルとコアの項目 id をキーとし、close、archive、delete で削除する。unload では保持する。復元にはファイルの URL と行の URL の一致を要求するため、移動した pinned 行は保存済み URL を新たに読み込む。sessionStorage は復元しない。PageState の復元はベストエフォートである。renderer からの更新は遅れる場合があり、Chromium は状態の一部を除去または無害化する（我々の規則）。
 
 ### 4.7 ビルドと成果物の同一性
 
@@ -277,7 +278,7 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 |---|---|---|
 | space、ピン留め / Today への所属、favorites、フォルダ、split の項目、archive、ウィンドウごとの表示状態、Air Traffic Control の規則、キーバインド | Rust のコア | Arc のモデルの形（components note 3） |
 | どの `WebContents` が、どの `Browser` に存在するか、順序、active タブ | Chrome の `TabStripModel` | Chrome がコミットする。拡張の API は同じ呼び出しの中で結果を読み戻すため、事前にアプリへ問い合わせることはしない（Ardia ledger 1.4） |
-| ナビゲーションスタックとセッションストレージ | エンジンのセッションの永続化（4.6） | コアの項目 id をキーとする |
+| ナビゲーションスタック | エンジンのセッションの永続化（4.6）、予定 | プロファイルとコアの項目 id をキーとする。sessionStorage は復元しない |
 | 履歴、ブックマーク、favicon、閉じたタブ、ズーム、ダウンロード、パスワード、autofill | Chrome のサービス | コアには複製しない |
 
 - 読み込まれていない workspace のタブは `WebContents` を持たない。
@@ -291,12 +292,13 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 
 ### 5.2 クラッシュ時の一貫性
 
-- すべての live タブはコアの項目 id を持つが、その id はタブのそばの WebContents の user data（`kTabIdentityKey`）に置かれ、再起動後も残らない。live id の対応もそれと一緒に消える。そのため再起動のあとは、エンジンのタブは項目 id を持たない。項目 id のないタブは新しい行として取り込まれ、エンジンが報告しない行は読み込まれていない状態として記録される。どちらも下の §5.2 の場合分けによる（我々の規則）。タブを既存の行に url や順序で結びつける処理は存在しない。クラッシュと再起動に耐えるタブごとの同一性は U17（crash and relaunch reconciliation）の仕事である（我々の規則）。
-- 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。正とするのは workspace である。各項目は、ライフサイクルの状態（開いている、読み込まれていない、閉じた、アーカイブした）を、変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。workspace が開いている、または読み込まれていないと記録していてエンジンが知らないタブは、復元するか、読み込まれていない状態として記録する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。項目が存在しないエンジンのタブ（クラッシュの前の、commit されていない最後の 1 秒に生成されたもの）は Today に取り込む。epoch の途中で届いた item の無いタブ（⌘ クリック、タブへの `window.open`）も、同じ transaction の中で、スナップショットと同じやり方で取り込む。そのウィンドウで最後に表示した当該プロファイルの space の Today の末尾に open の行として入る。URL は commit 済みのナビゲーションが報告されるまで空とし、すでに報告されていれば採用時に URL とタイトルを保存する。採用は、作った項目とともに live タブを名指し、エンジンはその組を WebContents の user data として持つ（上のタブの同一性。再起動から復元できる形でタブのセッションデータに項目 id を保存するのは U17 の仕事である）。エンジンが live として報告した読み込まれていない行は open に変わる。どのタブが存在するかはエンジンが所有するからである（我々の規則）。
+- live タブの同一性と live id の対応は再起動後に残らない。Chrome のセッション復元は無効であり、エンジンの最初の空のスナップショットは、存在しない行を未読み込みにする。最初のウィンドウは最新の保存済み Window を引き継ぎ、検証した選択中のタブを項目 id と保存済み URL で開く。他の行は未読み込みのままである。選択がない、閉じた、アーカイブ済み、split またはその子孫、表示中の space に属さない、祖先か URL が無効、または Open が失敗・取消された場合はカードを空にする。Arc の再起動時の動作は未計測である（我々の規則）。
+- 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。workspace を正とし、各項目のライフサイクル状態を変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。epoch の途中で項目なしで届いたタブ（⌘ クリック、`window.open`）は、そのウィンドウで最後に表示した当該プロファイルの space の Today に取り込む。URL は commit 済みのナビゲーションが報告されるまで空とする。採用した live タブと項目の対応は WebContents の user data に保持する。エンジンが live と報告した未読み込みの行は open に変わる（我々の規則）。
 - 落とされたトランザクションは rev を消費する。同じ rev の後のトランザクションは、再送ではなくエンジンのバグである（我々の規則）。
 - コマンドの完了は発行時の epoch を持ち、現在の epoch でなければ捨てる。
-- クラッシュ時に失われうる範囲: workspace の変更は、その SQLite トランザクションがコミットされた時点で永続化され、コミットは、ストレージが動いている間はイベントから最大 1 秒後である（メインスレッド外でバッチ処理する）。書き込みが失敗している間（次の項目）は、再試行が成功するまでこの範囲が広がる。クラッシュで失われうるのは、最大でその直近 1 秒分の workspace の変更である。workspace と送信用の同期ログは同じトランザクションで書き込むため、クラッシュによって両者が不整合になることはない。
+- クラッシュ時に失われうる範囲: workspace の変更は SQLite トランザクションのコミット時に永続化される。大半の編集と live の照合は成功を返す前に flush するが、選択と space の変更は 1 秒ごとのバッチを待つ。書き込みが失敗すると、再試行が成功するまで失われうる範囲が広がる。workspace の変更と送信用の同期ログは同じトランザクションで書く。
 - ディスクの容量不足や書き込みの失敗の場合は、メモリ上の状態を保持し、バックオフ付きで再試行し、ユーザーに通知する。データベースを切り詰めることはしない。
+- close、archive、delete（archive の項目、folder、space）は workspace の変更とともに、ローカルの永続的な履歴削除 outbox を記録する。unload では記録しない。U17a はこれを処理せず、完了も待たない。履歴の永続化とファイルの削除は U17b で予定し、復元にはファイルの URL と行の URL の一致を要求する。
 - バックアップには SQLite の backup API を用いるため、WAL も含まれる。
 
 ### 5.3 プライベートブラウジング
@@ -447,6 +449,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 ## 15. ロードマップ
 
 各 phase は、動作するビルドとサンドイッチ型のレビューで終える。
+
+U17a は workspace の再調整を検査する 2 回起動の `--ararat-check=relaunch|crash` と、renderer crash からの復旧を検査する `--ararat-check=sadtab` を加える。seed は各 fixture の行を workspace で選択してから開く。driver は stderr を転送し、失敗時の JSON に 1 回目の最後の trace、stderr の末尾 4 KiB、終了ステータスまたはシグナルを記録する。再起動をまたぐナビゲーション履歴は検査しない。履歴の永続化と既存の削除 outbox の処理は U17b で予定する。2 回の isolation run では `sadtab` は通り、2 回起動の両検査は ready の前で停止した。最新の修正後の実行はまだである（我々の規則）。
 
 slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-db`、一時的な user data directory、mock keychain を使う。3 行のうち 2 行を開き、2 行目を選び直す。画面上の検査は U8 で行う（我々の規則）。
 

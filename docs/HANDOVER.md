@@ -5,6 +5,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
+- Phase 3 U17a done: relaunch selects the adopted window's selected row, other rows stay
+  Unloaded; a cancelled, withdrawn or rejected Open rolls the row back; the core keeps a
+  durable outbox of history purges (written, not yet consumed); a crashed renderer keeps its
+  row Open, the strip marks it and selecting it reloads (sad-tab guard patch). Hidden checks
+  `relaunch`, `crash` (two-run driver) and `sadtab` pass on the host with the full suite,
+  `cargo test` and `swift test`. Navigation history files, their restore, physical deletion
+  and the clear-data barrier are U17b. The keyboard check is not part of this exit: its U16
+  fixes are in progress on `fix/u16-keyboard-check`.
 - Phase 3 U16 committed with native acceptance deferred: keyboard routing through the native
   window host, workspace New Tab / Edit URL / Search / Close Tab interception, the Developer
   menu, the find bar, the viewless location bar, extension action shortcuts, hidden-dialog
@@ -208,7 +216,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U16 are done (C1 chosen, §4.6); U16's native acceptance waits for the guest-isolation gate. Next: U17–U19 in plan order (specs `relaunch-54` … `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U16 are done (C1 chosen, §4.6); U16's native acceptance waits for the guest-isolation gate. Next: land the U16 keyboard-check fixes, then U17b (history files; design writes the engine boundary note first), U18 and U19 (specs `transfer-split-55`, `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 

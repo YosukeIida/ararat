@@ -61,6 +61,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/browser-window-factory.patch` | ours |
 | `ararat/viewless-read-anything.patch` | ours |
 | `ararat/viewless-bubble-anchor.patch` | ours |
+| `ararat/sad-tab-viewless.patch` | ours; design cites Ardia precedent, unverified |
 
 ## Why these upstream patches
 
@@ -68,6 +69,8 @@ Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
+
+`ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. The U17 design cites an Ardia (`mantrakp04/ardia`, GPL-3.0) guard as precedent; its source has not been verified here. This patch was written against Chromium's source.
 
 `ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
 

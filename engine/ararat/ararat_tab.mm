@@ -41,6 +41,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/isolated_world_ids.h"
@@ -97,6 +98,9 @@ class TabContentsObserver : public content::WebContentsObserver {
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
+  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
+    [tab_ rendererCrashed];
+  }
   void TitleWasSet(content::NavigationEntry*) override { [tab_ refresh]; }
   void WebContentsDestroyed() override { [tab_ invalidate]; }
 
@@ -142,6 +146,14 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSString*)url { DCHECK([NSThread isMainThread]); return url_; }
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
+- (NSUInteger)entryCount { DCHECK([NSThread isMainThread]); return contents_ ? contents_->GetController().GetEntryCount() : 0; }
+- (BOOL)canGoBack { DCHECK([NSThread isMainThread]); return contents_ && contents_->GetController().CanGoBack(); }
+- (BOOL)crashed { DCHECK([NSThread isMainThread]); return contents_ && contents_->IsCrashed(); }
+- (BOOL)checkCrashRenderer {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "sadtab") return NO;
+  auto* frame = contents_->GetPrimaryMainFrame();
+  return frame && frame->GetProcess()->Shutdown(1);
+}
 - (content::WebContents*)contents { return contents_; }
 
 - (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion {
@@ -594,6 +606,10 @@ class TabContentsObserver : public content::WebContentsObserver {
   ++navigation_count_;
   navigation_pending_ = YES;
   [self refresh];
+  [host_ tabMetadataChanged];
+}
+
+- (void)rendererCrashed {
   [host_ tabMetadataChanged];
 }
 

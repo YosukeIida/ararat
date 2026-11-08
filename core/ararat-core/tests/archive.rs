@@ -83,7 +83,9 @@ fn deleting_archived_tabs_removes_only_the_item_and_persists_a_journal_tombstone
     let before: i64 = conn.query_row("SELECT count(*) FROM journal", [], |row| row.get(0)).unwrap();
     let mut expected = ws.clone(); expected.items.remove("tab-a");
     let ops = ws.delete_archive_item("tab-a").unwrap();
-    assert_eq!(ops, [Op::Delete(ararat_core::model::Kind::Item, "tab-a".into())]);
+    assert!(matches!(&ops[0], Op::Delete(ararat_core::model::Kind::Item, id) if id == "tab-a"));
+    assert!(matches!(&ops[1], Op::Put(Record::HistoryPurge { item, .. }) if item == "tab-a"));
+    for op in &ops[1..] { expected.apply(op); }
     assert_eq!(ws, expected);
     store.write(ops); store.flush().unwrap();
     assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 1);

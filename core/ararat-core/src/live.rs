@@ -175,21 +175,25 @@ impl Live {
         self.pending.insert(command.id.clone(), (command.kind, command.item.clone()));
     }
 
-    pub fn cancel(&mut self, command_id: &str) -> bool {
+    pub fn cancel(&mut self, workspace: &mut Workspace, command_id: &str) -> (bool, Vec<Op>) {
         if self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Activate) {
             self.pending.remove(command_id);
-            return true;
+            return (true, Vec::new());
         }
-        Self::cancel_open(command_id, &mut self.map, &mut self.reverse,
-                          &mut self.windows, &mut self.pending)
+        let mut ops = Vec::new();
+        let cancelled = Self::cancel_open(workspace, command_id, &mut self.map, &mut self.reverse,
+                          &mut self.windows, &mut self.pending, &mut ops);
+        (cancelled, ops)
     }
 
     fn cancel_open(
+        workspace: &mut Workspace,
         command_id: &str,
         map: &mut HashMap<Id, Id>,
         reverse: &mut HashMap<Id, Id>,
         windows: &mut HashMap<Id, Id>,
         pending: &mut HashMap<Id, (CommandKind, Id)>,
+        ops: &mut Vec<Op>,
     ) -> bool {
         let Some((CommandKind::Open, item)) = pending.get(command_id).cloned() else {
             return false;
@@ -202,6 +206,14 @@ impl Live {
             reverse.remove(command_id);
         }
         windows.remove(command_id);
+        if !map.contains_key(&item)
+            && !pending.values().any(|(kind, id)| *kind == CommandKind::Open && id == &item) {
+            if let Some(tab) = workspace.items.get_mut(&item).filter(|tab|
+                matches!(tab.kind, ItemKind::Tab { .. }) && tab.lifecycle == Lifecycle::Open) {
+                tab.lifecycle = Lifecycle::Unloaded;
+                ops.push(Op::Put(Record::Item(tab.clone())));
+            }
+        }
         true
     }
 
@@ -399,8 +411,8 @@ impl Live {
             .flat_map(|strip| strip.tabs.iter().map(|tab| &tab.live_id)).collect();
         if let Cause::Command(id) = &transaction.cause {
             if !reported.contains(id) && next_pending.get(id).is_some_and(|(kind, _)| *kind == CommandKind::Open) {
-                Self::cancel_open(id, &mut next_map, &mut next_reverse,
-                                  &mut next_windows, &mut next_pending);
+                Self::cancel_open(&mut next, id, &mut next_map, &mut next_reverse,
+                                  &mut next_windows, &mut next_pending, &mut ops);
             } else {
                 next_pending.remove(id);
             }

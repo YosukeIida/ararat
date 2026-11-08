@@ -280,6 +280,44 @@ impl WorkspaceStore {
             .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at }).collect()
     }
 
+    pub fn pending_history_purges(&self) -> Result<Vec<HistoryPurge>, CoreError> {
+        let workspace = self.workspace.lock().unwrap();
+        self.store.flush()?;
+        let mut purges: Vec<_> = workspace.history_purges.iter().map(|(id, (profile, item))|
+            HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone() }).collect();
+        purges.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(purges)
+    }
+
+    pub fn acknowledge_history_purge(&self, id: String) -> Result<(), CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        if !workspace.history_purges.contains_key(&id) { return Ok(()); }
+        let op = ararat_core::model::Op::Delete(ararat_core::model::Kind::HistoryPurge, id);
+        self.store.write(vec![op.clone()]);
+        self.store.flush()?;
+        workspace.apply(&op);
+        Ok(())
+    }
+
+    pub fn restoration_candidate(&self, window_id: String) -> Option<RestorationCandidate> {
+        let workspace = self.workspace.lock().unwrap();
+        let state = workspace.windows.get(&window_id)?;
+        let space = workspace.spaces.iter().find(|space| Some(space.id.as_str()) == workspace.shown_space(&window_id))?;
+        let item = workspace.items.get(state.selected.as_ref()?)?;
+        let ItemKind::Tab { url, .. } = &item.kind else { return None };
+        if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) || url.is_empty() { return None; }
+        let mut current = item;
+        for _ in 0..workspace.items.len() {
+            let Some(parent) = current.membership.parent.as_ref() else { break };
+            current = workspace.items.get(parent)?;
+            if !matches!(current.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+                || matches!(current.kind, ItemKind::Split { .. } | ItemKind::Tab { .. }) { return None; }
+        }
+        if current.membership.parent.is_some() || !(current.id == space.today || current.id == space.pinned
+            || workspace.favorites.get(&space.profile) == Some(&current.id)) { return None; }
+        Some(RestorationCandidate { id: item.id.clone(), url: url.clone(), space: space.id.clone(), profile: space.profile.clone().into() })
+    }
+
     pub fn close_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.close_item(&id)?;
@@ -448,7 +486,10 @@ impl WorkspaceStore {
     }
 
     pub fn live_cancel(&self, command_id: String) -> bool {
-        self.live.lock().unwrap().cancel(&command_id)
+        let mut workspace = self.workspace.lock().unwrap();
+        let (cancelled, ops) = self.live.lock().unwrap().cancel(&mut workspace, &command_id);
+        self.store.write(ops);
+        cancelled
     }
 
     pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {
@@ -513,6 +554,21 @@ pub struct Row {
     pub kind: RowKind,
     pub unloaded: bool,
     pub last_selected_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct HistoryPurge {
+    pub id: String,
+    pub profile: Profile,
+    pub item: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct RestorationCandidate {
+    pub id: String,
+    pub url: String,
+    pub space: String,
+    pub profile: Profile,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -1028,6 +1084,131 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn purge_acknowledgement_cannot_erase_a_later_obligation() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-purge-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
+        let item = store.create_tab("one".into(), "https://example.test/".into()).unwrap().selected_id.unwrap();
+        store.archive_item("one".into(), item.clone()).unwrap();
+        let first = store.pending_history_purges().unwrap().pop().unwrap();
+        assert_eq!(first.item, item);
+        store.restore_item("one".into(), item.clone()).unwrap();
+        store.archive_item("one".into(), item.clone()).unwrap();
+        assert_eq!(store.pending_history_purges().unwrap().len(), 2);
+        store.acknowledge_history_purge(first.id.clone()).unwrap();
+        let remaining = store.pending_history_purges().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].item, item);
+        assert_ne!(remaining[0].id, first.id);
+        drop(store);
+        let reopened = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(reopened.pending_history_purges().unwrap(), remaining);
+        drop(reopened);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    #[test]
+    fn restoration_candidate_survives_empty_epoch_and_rejects_stale_items() {
+        let path = std::env::temp_dir().join(format!("ararat-ffi-restore-candidate-{}.sqlite", std::process::id()));
+        assert!(!path.exists());
+        let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
+        store.import_arc_sidebar("one".into(), include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json").into(), None, None, None, None).unwrap();
+        store.show_space("one".into(), "space-home".into()).unwrap();
+        let id = store.create_tab("one".into(), "https://restore.example/".into()).unwrap().selected_id.unwrap();
+        let candidate = store.restoration_candidate("one".into()).unwrap();
+        assert_eq!(candidate.id, id);
+        assert_eq!(candidate.profile, Profile::Named("Profile 1".into()));
+        assert_eq!(store.restoration_candidate("missing".into()), None);
+        store.live_apply(LiveTransaction { epoch: 1, rev: 0, cause: LiveCause::Engine,
+            strips: vec![] }).unwrap();
+        assert_eq!(store.snapshot("one".into()).selected_id, None);
+        assert_eq!(store.restoration_candidate("one".into()), Some(candidate));
+        store.select_item("one".into(), id.clone()).unwrap();
+        let command = store.live_open(id.clone(), "https://restore.example/".into()).unwrap();
+        assert_eq!(store.live_tab(id.clone()), Some(command.id.clone()));
+        assert!(store.live_cancel(command.id.clone()));
+        assert!(!store.live_cancel(command.id));
+        assert_eq!(store.live_tab(id.clone()), None);
+        assert_eq!(store.workspace.lock().unwrap().items[&id].lifecycle, Lifecycle::Unloaded);
+        assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
+        store.select_item("one".into(), id.clone()).unwrap();
+        let command = store.live_open(id.clone(), "https://restore.example/".into()).unwrap();
+        store.live_apply(LiveTransaction { epoch: 1, rev: 1, cause: LiveCause::Command(command.id), strips: vec![] }).unwrap();
+        assert_eq!(store.workspace.lock().unwrap().items[&id].lifecycle, Lifecycle::Unloaded);
+        assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.items.get_mut(&id).unwrap().lifecycle = Lifecycle::Closed;
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.items.get_mut(&id).unwrap().lifecycle = Lifecycle::Unloaded;
+            let mut folder = workspace.items[&id].clone();
+            folder.id = "test-folder".into();
+            folder.kind = ItemKind::Folder;
+            folder.lifecycle = Lifecycle::Open;
+            workspace.items.insert(folder.id.clone(), folder);
+            workspace.items.get_mut(&id).unwrap().membership.parent = Some("test-folder".into());
+        }
+        assert!(store.restoration_candidate("one".into()).is_some());
+        for lifecycle in [Lifecycle::Closed, Lifecycle::Archived] {
+            store.workspace.lock().unwrap().items.get_mut("test-folder").unwrap().lifecycle = lifecycle;
+            assert_eq!(store.restoration_candidate("one".into()), None);
+        }
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            let folder = workspace.items.get_mut("test-folder").unwrap();
+            folder.lifecycle = Lifecycle::Open;
+            folder.kind = ItemKind::Split { orientation: ararat_core::model::Orientation::Horizontal, width_factors: vec![] };
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            let profile = workspace.spaces.iter().find(|s| s.id == "space-home").unwrap().profile.clone();
+            let today = workspace.spaces.iter().find(|s| s.id == "space-home").unwrap().today.clone();
+            let mut favorites = workspace.items[&today].clone();
+            favorites.id = "test-favorites".into();
+            workspace.items.insert(favorites.id.clone(), favorites);
+            workspace.favorites.insert(profile, "test-favorites".into());
+            workspace.items.get_mut(&id).unwrap().membership.parent = Some("test-favorites".into());
+        }
+        assert!(store.restoration_candidate("one".into()).is_some());
+        store.show_space("one".into(), "space-work".into()).unwrap();
+        store.workspace.lock().unwrap().windows.get_mut("one").unwrap().selected = Some(id.clone());
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        store.show_space("one".into(), "space-home".into()).unwrap();
+        store.workspace.lock().unwrap().windows.get_mut("one").unwrap().selected = Some(id.clone());
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.items.get_mut(&id).unwrap().lifecycle = Lifecycle::Archived;
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.items.get_mut(&id).unwrap().lifecycle = Lifecycle::Unloaded;
+            workspace.windows.get_mut("one").unwrap().selected = None;
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.windows.get_mut("one").unwrap().selected = Some("missing".into());
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            workspace.windows.get_mut("one").unwrap().selected = Some(id.clone());
+            workspace.items.get_mut(&id).unwrap().kind = ItemKind::Split {
+                orientation: ararat_core::model::Orientation::Horizontal, width_factors: vec![],
+            };
+        }
+        assert_eq!(store.restoration_candidate("one".into()), None);
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
 
     #[test]
     fn showing_space_selects_each_windows_own_recent_tab() {

@@ -180,8 +180,10 @@ fn a_failed_close_flush_keeps_the_edit_for_retry() {
     let (_, before_retry) = Store::open(&path).unwrap();
     assert_eq!(before_retry.items["tab-a"].lifecycle, ararat_core::model::Lifecycle::Open);
     assert_eq!(before_retry.selected("test"), Some("tab-a"));
+    assert!(before_retry.history_purges.is_empty());
     blocker.execute_batch("ROLLBACK").unwrap();
     store.flush().unwrap();
+    assert!(store.pending_history_purges().unwrap().iter().any(|purge| purge.item == "tab-a"));
     let expected = store.snapshot("test".into()); drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), expected);
 }
@@ -387,7 +389,8 @@ fn deleting_an_archive_entry_removes_only_its_record_and_persists_the_tombstone(
     let remaining = store.delete_archive_item("test".into(), "tab-a".into()).unwrap();
     assert_eq!(remaining.archive.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), ["tab-b"]);
     assert!(remaining.archive[0].lifecycle_changed_at > 0);
-    assert_eq!(records(&path), before.into_iter().filter(|(kind, id, _)| !matches!(kind.as_str(), "item" | "last_selected") || id != "tab-a").collect::<Vec<_>>());
+    let synced = |rows: Vec<(String, String, String)>| rows.into_iter().filter(|(kind, _, _)| !matches!(kind.as_str(), "history_purge" | "history_profile")).collect::<Vec<_>>();
+    assert_eq!(synced(records(&path)), synced(before.into_iter().filter(|(kind, id, _)| !matches!(kind.as_str(), "item" | "last_selected") || id != "tab-a").collect()));
     assert_eq!(count(), journal + 1);
     assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE id='tab-a' AND body IS NULL", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     let after = records(&path);
