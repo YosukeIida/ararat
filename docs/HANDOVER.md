@@ -19,7 +19,14 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   `ararat-test` VM, the rest on the host). Not run: the crash-lock-abandon browser test; the
   abandon path and the clear-marker failure UI are not exercised natively. In the VM the app
   spawns `screencapture`, which still cannot capture after re-signing with `ararat-test-sign`
-  and granting Screen Recording; keyboard screen cases run on the host until that is solved.
+  and granting Screen Recording (superseded below).
+- E2E checks run only in the `ararat-test` VM now (the owner works on the host): `design/vm-u16matrix.sh
+  <wt> <bundle> <out> <id> . all` runs the 22 exit checks and all 63 U16 cases. The guest re-signs
+  each build with `ararat-test-sign` (Screen Recording is granted to that identity) and launches
+  through `disclaim` so TCC attributes capture to Ararat, not sshd. 85/85 pass on main.
+- vmkeys (d46224a): a late selection report no longer selects a tab outside the shown space (core
+  re-activates the selected tab); keyboard checks wait for their own selection to apply.
+- focusnone (a3cafc3): extensions get `windows.onFocusChanged(WINDOW_ID_NONE)` when Ararat loses focus.
 - Phase 3 U16 checks pass (8229e80): all 63 U16 coverage cases (C1/C2, default/RTL,
   hidden/screen) pass on one host build, with the 22 exit checks (`design/exitchecks.sh`,
   each with its fixture), `cargo test` and 368 Swift tests. Running them exposed and fixed
@@ -226,7 +233,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U17b are done (C1 chosen, §4.6). Next: U18 (waits for the owner's answer on more-than-two and nested splits) and U19 (specs `transfer-split-55`, `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U17b are done (C1 chosen, §4.6). Next: U18 (owner: render every split shape, N panes and nested; in progress in `u18`) and U19 (specs `transfer-split-55`, `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 
