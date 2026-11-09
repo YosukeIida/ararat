@@ -131,6 +131,15 @@ func checkRecords(_ path: String) -> [[String]]? {
   }
 }
 
+func checkStoredTabMetadata(_ rows: [[String]], item: String, url: String, title: String) -> Bool {
+  guard !title.isEmpty,
+        let row = rows.first(where: { $0.count == 3 && $0[0] == "item" && $0[1] == item }),
+        let data = row[2].data(using: .utf8),
+        let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        let kind = record["kind"] as? [String: Any], let tab = kind["Tab"] as? [String: Any] else { return false }
+  return tab["url"] as? String == url && tab["saved_title"] as? String == title
+}
+
 func checkCoverageFlags(_ arguments: [String]) -> [String] {
   let names = ["--ararat-keyboard-main-scope", "--ararat-incognito-window-check", "--ararat-space-matrix-check", "--ararat-page-only-menu-check", "--ararat-quit-suggestion-check",
     "--ararat-multiple-quit-check", "--ararat-multiple-close-check", "--ararat-split-close-check",
@@ -191,6 +200,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   let rootView = NSView()
   let card = NSView()
   let findBar = FindBarView()
+  var findPageRect = NSRect.zero
   var host: (any ARWindowHostAPI)?
   var createdSize = NSSize.zero
   var closeObserver: NSObjectProtocol?
@@ -203,12 +213,23 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {}
   func windowHost(_ host: any ARWindowHostAPI, windowFullscreenChanged fullscreen: Bool) {}
   func windowHost(_ host: any ARWindowHostAPI, performWorkspaceCommand command: String) {}
-  func windowHost(_ host: any ARWindowHostAPI, updateFindBar state: [String: Any]) { findBar.update(state: state) }
+  func windowHost(_ host: any ARWindowHostAPI, updateFindBar state: [String: Any]) {
+    if CommandLine.arguments.contains("--ararat-compositor=c2"), state["visible"] as? Bool == true,
+       let root = host.window().contentView, findBar.superview !== root || root.subviews.last !== findBar {
+      root.addSubview(findBar, positioned: .above, relativeTo: nil)
+      positionFindBar()
+    }
+    findBar.update(state: state)
+  }
   func findBarHasFocus(forWindowHost host: any ARWindowHostAPI) -> Bool { findBar.hasFocus }
   func windowHost(_ host: any ARWindowHostAPI, findPageRectChanged rect: NSRect) {
-    let page = rootView.convert(rect, from: card)
-    let width = min(380, page.width)
-    findBar.frame = NSRect(x: page.maxX - width, y: page.maxY - 36, width: width, height: 36)
+    findPageRect = rootView.convert(rect, from: card)
+    positionFindBar()
+  }
+  func positionFindBar() {
+    let width = min(380, findPageRect.width)
+    let frame = NSRect(x: findPageRect.maxX - width, y: findPageRect.maxY - 36, width: width, height: 36)
+    findBar.frame = findBar.superview.map { $0.convert(frame, from: rootView) } ?? frame
   }
 
   func create(bounds: NSRect) -> Bool {
@@ -329,6 +350,13 @@ final class Runtime: NSObject {
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
+  var keyboardSidebarBefore = ""
+  var keyboardLibraryBefore = false
+  var profileFocusEventCount = 0
+  var profileFocusNoneObserved = false
+  var profileNewFocusNoneEvent = false
+  var keyboardSettingsTabs = Set<String>()
+  weak var keyboardSettingsWindow: NSWindow?
   var keyboardLiveID = ""
   var keyboardNavigation: UInt = 0
   var keyboardScriptPending = false
@@ -702,7 +730,11 @@ final class Runtime: NSObject {
     adapter.onPageFullscreenChanged = { [weak container] in container?.pageFullscreen = $0 }
     adapter.onWindowFullscreenChanged = { [weak container] in container?.windowFullscreen = $0 }
     adapter.onWorkspaceCommand = { [weak self] command in self?.performWorkspaceCommand(command) }
-    adapter.onFindBar = { [weak container] state in container?.findBar.update(state: state) }
+    adapter.onFindBar = { [weak container, weak host] state in
+      if CommandLine.arguments.contains("--ararat-compositor=c2"), state["visible"] as? Bool == true,
+         let root = host?.window().contentView { container?.placeFindBarAbovePage(in: root) }
+      container?.findBar.update(state: state)
+    }
     adapter.findBarHasFocus = { [weak container] in container?.findBar.hasFocus ?? false }
     adapter.onFindPageRect = { [weak container] in container?.setFindPageRect($0) }
     container.findBar.onAction = { [weak host] action, text, selection, live, profile in host?.findAction(action, text: text, selection: selection, liveId: live, profile: profile) }
@@ -953,6 +985,7 @@ final class Runtime: NSObject {
       self.checkSeedSelectionStage = "opening_native_page"
       self.show(latest)
       adapter.select(id: row.id, url: url)
+      self.checkSeedSelectionStage = "native_page_requested"
     }
   }
 
@@ -1199,13 +1232,12 @@ final class Runtime: NSObject {
     coreMenuInstalled = true
     let ids = ["pin_tab", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).map { "show_space_\($0)" }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
-    func flags(_ key: KeyCombination) -> NSEvent.ModifierFlags {
-      var result: NSEvent.ModifierFlags = []
-      if key.command { result.insert(.command) }
-      if key.control { result.insert(.control) }
-      if key.option { result.insert(.option) }
-      if key.shift { result.insert(.shift) }
-      return result
+    if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
+       let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
+      settingsItem.target = self
+      settingsItem.action = #selector(coreMenuCommand(_:))
+      settingsItem.representedObject = "settings"
+      KeyBindingsModel.setCoreMenuShortcut(binding.key, on: settingsItem)
     }
     displacedMenuItems = KeyBindingsModel.clearCollisions(bindings, in: menu)
     let core = NSMenu(title: "Ararat Commands")
@@ -1213,9 +1245,11 @@ final class Runtime: NSObject {
       let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")
       item.target = self
       item.representedObject = binding.command
-      if let key = binding.key { item.keyEquivalentModifierMask = flags(key) }
+      KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
     }
-    menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "").submenu = core
+    let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
+    coreItem.tag = 0x4152434d
+    coreItem.submenu = core
   }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
@@ -1230,7 +1264,8 @@ final class Runtime: NSObject {
     }
     guard let target = ([owner] + owner.children).first(where: {
       $0.host?.window().isKeyWindow == true || $0.commandPresenter?.panel.isKeyWindow == true
-    }) else { return }
+    }) ?? (owner.settings?.window?.isKeyWindow == true ? owner.settingsOwner : nil)
+       ?? (command == "settings" ? ([owner] + owner.children).first(where: { $0.popups.contains { $0.host?.window().isKeyWindow == true } }) : nil) else { return }
     if let event = NSApp.currentEvent, let window = NSApp.keyWindow,
        WorkspaceCommands.yieldsToOwnField(defaultKeyBindings(), event: event, in: window) {
       window.firstResponder?.keyDown(with: event)
@@ -1553,7 +1588,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       timeoutValues["selected_item"] = snapshot.selectedId ?? ""
       if mode == "incognito" { timeoutValues["selection_diagnostics"] = checkSelectionDiagnostics(item: browserCheckSeedID) }
       if mode == "incognito" {
-        timeoutValues["child_states"] = children.compactMap { $0.host?.checkProfileState() }
         timeoutValues["child_hosts"] = children.filter { $0.host != nil }.count
         if CommandLine.arguments.contains("--ararat-incognito-window-check") {
           timeoutValues["regular_rows_before"] = quitBefore ?? []
@@ -1580,6 +1614,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       timeoutValues["default_rows"] = snapshot.spaces.first(where: { $0.id == "default" })?.today.count ?? 0
       timeoutValues["named_rows"] = snapshot.spaces.first(where: { $0.id == "named" })?.today.count ?? 0
       timeoutValues["application_active"] = NSApp.isActive
+      timeoutValues["application_hidden"] = NSApp.isHidden
       timeoutValues["window_key"] = host.window().isKeyWindow
       timeoutValues["popup_hosts"] = popups.count
       timeoutValues["popup_states"] = popups.compactMap { $0.host?.checkProfileState() }
@@ -2447,6 +2482,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             tab.itemId == browserCheckSeedID, !tab.isLoading, tab.navigationCount > 0 else { return false }
       let url = "http://127.0.0.1:\(port)/\(name)"
       FileHandle.standardError.write(Data("ararat-trace: \(name) tab-ready\n".utf8))
+      checkSeedSelectionStage = "native_page_ready"
       FileHandle.standardError.write(Data("ararat-trace: \(name) open-fixture url=\(url)\n".utf8))
       host.checkNavigate(url, disposition: "current")
       browserCheckPhase = 1
@@ -2520,7 +2556,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     guard let window = NSApp.keyWindow,
           let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-            context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code) else { return }
+            context: nil, characters: flags.contains(.shift) ? key.lowercased() : key,
+            charactersIgnoringModifiers: key, isARepeat: false, keyCode: code) else { return }
     NSApp.sendEvent(event)
   }
 
@@ -2546,12 +2583,22 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "fullscreen_find_dismissed", "fullscreen_page_escape", "fullscreen_close", "find_pasteboard", "find_zero", "find_visibility", "find_reopen_navigation", "find_devtools_geometry", "find_resized_geometry", "find_tab_guard", "find_background_result", "find_delayed_background", "find_replace_guard", "find_pending_teardown", "find_host_teardown", "find_profile_guard"]
       let requiredOK = required.allSatisfy { keyboardResults[$0] as? Bool == true }
       let hiddenWindowSafe = screen || hiddenPopupSafe()
+      if !hiddenWindowSafe {
+        keyboardResults["front_before_final"] = popupFrontBefore ?? ""
+        keyboardResults["front_after_final"] = commandOutput("/usr/bin/lsappinfo", ["front"]) ?? ""
+        keyboardResults["front_change_final"] = popupFrontChange ?? [:]
+        keyboardResults["windows_hidden_final"] = popupWindowsHidden
+        keyboardResults["visible_windows_final"] = NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map {
+          ["number": $0.windowNumber, "visible": $0.isVisible, "key": $0.isKeyWindow] as [String: Any]
+        }
+      }
       let modeOK = screen
         ? keyboardResults["command_ime"] as? Bool == true && keyboardResults["find_ime_escape"] as? Bool == true &&
           keyboardResults["devtools_find"] as? Bool == true && keyboardResults["fullscreen_command_marked_escape"] as? Bool == true &&
           keyboardResults["fullscreen_find_marked_escape"] as? Bool == true && keyboardResults["core_menu_shortcut"] as? Bool == true &&
           keyboardResults["core_menu_library"] as? Bool == true && keyboardResults["core_menu_reset_width"] as? Bool == true &&
           keyboardResults["core_menu_pin"] as? Bool == true && keyboardResults["core_menu_space"] as? Bool == true && keyboardResults["core_menu_settings"] as? Bool == true &&
+          keyboardResults["page_menu_settings"] as? Bool == true && keyboardResults["app_menu_settings"] as? Bool == true && keyboardResults["engine_settings"] as? Bool == true &&
           keyboardResults["extension_reserved_priority"] as? Bool == true &&
           keyboardResults["own_field_noncommand"] as? Bool == true &&
           keyboardResults["chooser_screenshot"] != nil && keyboardResults["restore_screenshot"] != nil
@@ -2571,7 +2618,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "case_ok": caseOK]) { _, new in new })
       return
     }
-    if (40...68).contains(browserCheckPhase) || [470, 490, 500, 520, 521, 522, 523, 524, 525, 560, 641, 642, 643, 644].contains(browserCheckPhase) {
+    if (40...68).contains(browserCheckPhase) || [470, 490, 500, 520, 521, 522, 523, 524, 5241, 525, 560, 641, 642, 643, 644, 645, 680, 681].contains(browserCheckPhase) {
       keyboardProfileCheckTick(host, port: port, screen: screen)
       return
     }
@@ -2593,6 +2640,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let expectedX = rtl ? hostFrame.maxX - 40 : hostFrame.minX + 40
       return abs(x - expectedX) <= 2 && x >= frame.minX - 32 && x <= frame.maxX + 32 &&
         frame.maxY <= hostFrame.maxY + 80 && frame.maxY >= hostFrame.maxY - 120
+    }
+    if (408...415).contains(browserCheckPhase),
+       Set((host.tabs() as? [any ARTabAPI] ?? []).map(\.liveId)) != keyboardSettingsTabs {
+      fail("settings created or closed a tab"); return
     }
     switch browserCheckPhase {
     case 1:
@@ -2628,6 +2679,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       invalid["profile"] = "invalid-profile"
       guard !host.navigateURL(baseURL + "?invalid", target: invalid) else { fail("invalid profile accepted"); return }
       keyboardResults["invalid_targets"] = true
+      if screen {
+        tab.focusCheckPage()
+        browserCheckPhase = 1002
+        return
+      }
+      keyboardRead(tab, script: 1)
+      browserCheckPhase = 2
+    case 1002:
+      guard NSApp.isActive, host.window().isKeyWindow,
+            host.checkFullscreenState()["view_focused"] as? Bool == true else { return }
       keyboardRead(tab, script: 1)
       browserCheckPhase = 2
     case 2:
@@ -2654,7 +2715,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard tab.navigationCount > keyboardNavigation, !tab.isLoading else { return }
       keyboardResults["reload"] = true
       guard let save = displacedMenuItems["toggle_sidebar"], save.keyEquivalent.isEmpty,
-            let bookmark = displacedMenuItems["pin_tab"], bookmark.keyEquivalent.isEmpty else { fail("core menu collision"); return }
+            let bookmark = displacedMenuItems["pin_tab"], bookmark.keyEquivalent.isEmpty,
+            let library = displacedMenuItems["toggle_library"], library.keyEquivalent.isEmpty else { fail("core menu collision"); return }
       keyboardResults["core_menu_collision"] = true
       if screen && keyboardResults["extension_reserved_priority"] as? Bool != true {
         guard host.checkReassignProbeCommand(true) else { fail("reassign extension shortcut"); return }
@@ -2663,34 +2725,87 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         return
       }
       if screen, let container {
-        let before = container.sidebarState
+        keyboardSidebarBefore = container.sidebarState
         keyboardSend(host, command: "", key: "s", code: 1, flags: .command, screen: true)
-        guard container.sidebarState != before else { fail("core menu shortcut did not toggle sidebar"); return }
-        keyboardSend(host, command: "", key: "s", code: 1, flags: .command, screen: true)
-        guard container.sidebarState == before else { fail("core menu shortcut did not restore sidebar"); return }
-        keyboardResults["core_menu_shortcut"] = true
-        guard let sidebar else { fail("library menu target"); return }
-        let library = sidebar.libraryOpen
-        keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
-        guard sidebar.libraryOpen != library else { fail("library menu did not toggle"); return }
-        keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
-        guard sidebar.libraryOpen == library else { fail("library menu did not restore"); return }
-        keyboardResults["core_menu_library"] = true
-        container.resizeHandle.resetWidth()
-        let defaultWidth = container.resizeHandle.sidebarWidth
-        container.resizeHandle.sidebarWidth = defaultWidth + 40
-        guard let item = NSApp.mainMenu?.item(withTitle: "Ararat Commands")?.submenu?.items.first(where: {
-          $0.representedObject as? String == "reset_sidebar_width"
-        }), let action = item.action, NSApp.sendAction(action, to: item.target, from: item),
-              container.resizeHandle.sidebarWidth == defaultWidth else { fail("reset width menu"); return }
-        keyboardResults["core_menu_reset_width"] = true
-        keyboardSend(host, command: "", key: ",", code: 43, flags: .command, screen: true)
-        guard let settingsWindow = (root ?? self).settings?.window, settingsWindow.isVisible,
-              (root ?? self).settingsOwner === self else { fail("settings menu"); return }
-        settingsWindow.orderOut(nil)
-        host.window().makeKeyAndOrderFront(nil)
-        keyboardResults["core_menu_settings"] = true
+        browserCheckPhase = 404
+        return
       }
+      send("new", "t", 17)
+      browserCheckPhase = 5
+    case 404:
+      guard let container, container.sidebarState != keyboardSidebarBefore else { return }
+      keyboardSend(host, command: "", key: "s", code: 1, flags: .command, screen: true)
+      browserCheckPhase = 405
+    case 405:
+      guard let container, container.sidebarState == keyboardSidebarBefore, let sidebar else { return }
+      keyboardResults["core_menu_shortcut"] = true
+      keyboardLibraryBefore = sidebar.libraryOpen
+      keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
+      browserCheckPhase = 406
+    case 406:
+      guard let sidebar, sidebar.libraryOpen != keyboardLibraryBefore else { return }
+      keyboardSend(host, command: "", key: "L", code: 37, flags: [.command, .shift], screen: true)
+      browserCheckPhase = 407
+    case 407:
+      guard let sidebar, sidebar.libraryOpen == keyboardLibraryBefore, let container else { return }
+      keyboardResults["core_menu_library"] = true
+      container.resizeHandle.resetWidth()
+      let defaultWidth = container.resizeHandle.sidebarWidth
+      container.resizeHandle.sidebarWidth = defaultWidth + 40
+      guard let item = NSApp.mainMenu?.item(withTitle: "Ararat Commands")?.submenu?.items.first(where: {
+        $0.representedObject as? String == "reset_sidebar_width"
+      }), let action = item.action, NSApp.sendAction(action, to: item.target, from: item),
+            container.resizeHandle.sidebarWidth == defaultWidth else { fail("reset width menu"); return }
+      keyboardResults["core_menu_reset_width"] = true
+      keyboardSettingsTabs = Set((host.tabs() as? [any ARTabAPI] ?? []).map(\.liveId))
+      keyboardSend(host, command: "", key: ",", code: 43, flags: .command, screen: true)
+      browserCheckPhase = 408
+    case 408:
+      guard let settingsWindow = (root ?? self).settings?.window, settingsWindow.isVisible,
+            (root ?? self).settingsOwner === self else { return }
+      keyboardSettingsWindow = settingsWindow
+      settingsWindow.orderOut(nil)
+      host.window().makeKeyAndOrderFront(nil)
+      keyboardResults["core_menu_settings"] = true
+      browserCheckPhase = 409
+    case 409:
+      guard host.window().isKeyWindow else { return }
+      tab.focusCheckPage()
+      guard host.checkFullscreenState()["view_focused"] as? Bool == true else { return }
+      keyboardSend(host, command: "", key: ",", code: 43, flags: .command, screen: true)
+      browserCheckPhase = 410
+    case 410:
+      guard let settingsWindow = keyboardSettingsWindow, settingsWindow.isVisible,
+            (root ?? self).settings?.window === settingsWindow, (root ?? self).settingsOwner === self else { return }
+      settingsWindow.orderOut(nil)
+      host.window().makeKeyAndOrderFront(nil)
+      keyboardResults["page_menu_settings"] = true
+      browserCheckPhase = 411
+    case 411:
+      guard host.window().isKeyWindow else { return }
+      guard let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.representedObject as? String == "settings" }),
+            let action = item.action, NSApp.sendAction(action, to: item.target, from: item) else { fail("settings app menu dispatch"); return }
+      browserCheckPhase = 412
+    case 412:
+      guard let settingsWindow = keyboardSettingsWindow, settingsWindow.isVisible,
+            (root ?? self).settings?.window === settingsWindow, (root ?? self).settingsOwner === self else { return }
+      settingsWindow.orderOut(nil)
+      host.window().makeKeyAndOrderFront(nil)
+      keyboardResults["app_menu_settings"] = true
+      browserCheckPhase = 413
+    case 413:
+      guard host.window().isKeyWindow else { return }
+      host.checkKeyboardCommand("settings")
+      browserCheckPhase = 414
+    case 414:
+      guard let settingsWindow = keyboardSettingsWindow, settingsWindow.isVisible,
+            (root ?? self).settings?.window === settingsWindow, (root ?? self).settingsOwner === self else { return }
+      settingsWindow.orderOut(nil)
+      host.window().makeKeyAndOrderFront(nil)
+      keyboardResults["engine_settings"] = true
+      browserCheckPhase = 415
+    case 415:
+      guard host.window().isKeyWindow else { return }
       send("new", "t", 17)
       browserCheckPhase = 5
     case 401:
@@ -2943,10 +3058,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let find = container?.findBar, find.ordinal == keyboardResults["find_initial"] as? Int else { return }
       if screen {
         keyboardSend(host, command: "", key: "\u{1b}", code: 53, flags: [], screen: true)
-        guard find.isHidden else { fail("Escape did not close find"); return }
       } else {
         host.findAction("close", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
       }
+      browserCheckPhase = 150
+    case 150:
+      guard let find = container?.findBar, find.isHidden else { return }
       guard !host.checkCloseFindEnabled() else { fail("find command remained enabled after hide"); return }
       keyboardResults["find_visibility"] = true
       keyboardResults["find_previous"] = true
@@ -3039,10 +3156,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 158:
       guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardFindOtherItem }),
             host.activeItemId() == browserCheckSeedID, !tab.checkHeldFindTargetAlive() else { return }
+      let text = container?.findBar.field.stringValue
       let closed = tab.checkDeliverHeldFindReply()
       guard closed["alive"] as? Bool == false, closed["delivered"] as? Bool == false else { fail("closed contents retained find reply"); return }
-      guard let text = container?.findBar.field.stringValue,
-            !["stale-background", "pending-before-close", "pending-before-replace"].contains(text) else { fail("closed tab changed find field"); return }
+      guard let text, !["pending-before-close", "pending-before-replace"].contains(text) else { fail("closed tab changed find field"); return }
       keyboardResults["find_pending_teardown"] = true
       keyboardResults["suggestion_close_tab"] = true
       if container?.findBar.isHidden == false {
@@ -3056,6 +3173,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardScriptResult = nil
       guard result == "requested" else { fail("protocol registration: \(result)"); return }
       keyboardResults["protocol_requested"] = true
+      browserCheckPhase = 160
+    case 160:
+      let state = host.checkDevToolsState()
+      keyboardResults["protocol_dialog"] = state["find_dialog_kind"]
+      guard state["find_dialog_kind"] as? String == "register_protocol_handler_permission",
+            tab.checkPermissionDecision(3) else { return }
+      browserCheckPhase = 161
+    case 161:
+      guard !tab.checkPermissionPending(), !tab.checkIsDialogActive() else { return }
       host.checkExtensionAction(5)
       guard host.checkKeyboardAccelerator(false) else { fail("extension command accelerator"); return }
       browserCheckPhase = 17
@@ -3100,8 +3226,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           let root = host.window().contentView
           let point = NSPoint(x: overlay.midX, y: overlay.midY)
           let hit = root.flatMap { root in root.superview.flatMap { root.hitTest($0.convert(point, from: nil)) } }
-          guard geometry["page_above"] as? Bool == true, geometry["page_hit"] as? Bool == true,
-                geometry["devtools_hit"] as? Bool == true, hit?.isDescendant(of: find) == true else {
+          let checks: [(String, Bool)] = [("page_above", geometry["page_above"] as? Bool == true),
+            ("page_hit", geometry["page_hit"] as? Bool == true), ("devtools_hit", geometry["devtools_hit"] as? Bool == true),
+            ("find_hit", hit?.isDescendant(of: find) == true)]
+          keyboardResults["c2_find_hit_checks"] = ["failed": checks.filter { !$0.1 }.map { $0.0 },
+            "results": Dictionary(uniqueKeysWithValues: checks), "point": NSStringFromPoint(point),
+            "find_frame": NSStringFromRect(overlay)] as [String: Any]
+          guard checks.allSatisfy({ $0.1 }) else {
             fail("c2 find stacking or input"); return
           }
           keyboardResults["c2_find_stacking_input"] = true
@@ -3132,13 +3263,28 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["find_resized_geometry"] = true
       host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
       if screen {
-        guard host.checkFocusDevTools() else { return }
-        keyboardSend(host, command: "", key: "f", code: 3, flags: .command, screen: true)
-        browserCheckPhase = 190
+        keyboardScriptResult = nil
+        browserCheckPhase = 191
         return
       }
       send("devtools", "i", 34, [.command, .option])
       browserCheckPhase = 20
+    case 191:
+      if let result = keyboardScriptResult {
+        keyboardScriptResult = nil
+        if result.contains("\"ready\":true"), NSApp.isActive, host.window().isKeyWindow {
+          guard host.checkFocusDevTools() else { return }
+          keyboardSend(host, command: "", key: "f", code: 3, flags: .command, screen: true)
+          browserCheckPhase = 190
+          return
+        }
+      }
+      if !keyboardScriptPending {
+        keyboardScriptPending = true
+        host.checkDevToolsFrontend { [weak self] value in
+          MainActor.assumeIsolated { self?.keyboardScriptPending = false; self?.keyboardScriptResult = value }
+        }
+      }
     case 190:
       if let result = keyboardScriptResult {
         keyboardScriptResult = nil
@@ -3161,6 +3307,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 21
     case 21:
       guard let presenter = commandPresenter, presenter.controller.mode == .search else { return }
+      let commit = presenter.controller.onCommit
+      presenter.controller.onCommit = { row, mode, forceNew in
+        guard let row, case .search(let url) = row.target,
+              url == "https://www.google.com/search?q=example.com" else { return }
+        let fixture = Suggestion(title: row.title, subtitle: row.subtitle, url: nil, key: nil,
+          target: .search(url: "http://127.0.0.1:\(port)/search?q=example.com"), score: row.score)
+        commit(fixture, mode, forceNew)
+      }
       if screen {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("example.com", forType: .string)
@@ -3168,11 +3322,17 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
       } else {
         presenter.controller.update(query: "example.com", allowCompletion: true)
+        guard let row = presenter.controller.result.rows.first else { return }
+        guard case .search(let url) = row.target, url == "https://www.google.com/search?q=example.com" else {
+          fail("forced search URL"); return
+        }
         presenter.controller.commit(forceNewTab: false)
       }
       browserCheckPhase = 22
     case 22:
-      guard tab.url.contains("google.com/search?q=example.com") else { return }
+      let fixtureURL = "http://127.0.0.1:\(port)/search?q=example.com"
+      guard tab.url == fixtureURL, !tab.isLoading,
+            tab.checkNavigationState()["committed_url"] as? String == fixtureURL else { return }
       keyboardResults["forced_search"] = true
       send("back", "[", 33)
       browserCheckPhase = 23
@@ -3215,9 +3375,31 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 36:
       guard keyboardScriptResult == "cleared" else { return }
       keyboardScriptResult = nil
-      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, let url = row.url else { fail("named profile seed"); return }
+      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, row.url != nil else { fail("named profile seed"); return }
       keyboardOtherItem = row.id
-      _ = url
+      guard let workspace else { fail("named profile workspace"); return }
+      selectionGeneration += 1
+      workspace.cancelPendingSpaceSwitches()
+      let generation = selectionGeneration
+      browserCheckPhase = 369
+      workspace.showSpaceSelectingTab(id: "named", item: row.id) { [weak self] result in
+        guard let self, self.selectionGeneration == generation else { return }
+        if case .failure = result { self.finishBrowserCheck(ok: false, values: ["error": "named profile setup selection"]); return }
+        workspace.snapshot { [weak self] latest in
+          guard let self, self.selectionGeneration == generation, case .success(let current) = latest,
+                current.shownSpaceId == "named", current.selectedId == row.id else { return }
+          self.adapter?.invalidateSelection()
+          self.showAndSelect(.success(current), expectedSpace: "named", selectedItem: row.id)
+        }
+      }
+    case 369:
+      guard snapshot.shownSpaceId == "named", snapshot.selectedId == keyboardOtherItem,
+            host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      switchWorkspaceSpace("default")
+      browserCheckPhase = 3690
+    case 3690:
+      guard snapshot.shownSpaceId == "default", snapshot.selectedId == browserCheckSeedID,
+            host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
       if screen { keyboardSend(host, command: "", key: "2", code: 19, flags: .control, screen: true) }
       else { performWorkspaceCommand("show_space_2") }
       browserCheckPhase = 360
@@ -3293,13 +3475,21 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 25
     case 25:
       guard host.tabs().count == 1, host.activeItemId() == browserCheckSeedID else { return }
+      if screen {
+        guard NSApp.isActive, host.window().isKeyWindow else { return }
+        tab.focusCheckPage()
+        guard host.checkFullscreenState()["view_focused"] as? Bool == true else { return }
+      }
       keyboardResults["close"] = true
       resetFullscreenProbe()
       tab.checkFullscreenRequest(true)
       browserCheckPhase = 26
     case 26:
       probeFullscreen(tab)
-      guard fullscreenElement == true, host.checkFullscreenState()["tab"] as? Bool == true else { return }
+      let state = host.checkFullscreenState()
+      guard fullscreenElement == true, state["tab"] as? Bool == true,
+            state["window"] as? Bool == true, state["transitioning"] as? Bool == false,
+            !screen || (NSApp.isActive && host.window().isKeyWindow) else { return }
       send("new", "t", 17)
       browserCheckPhase = 27
     case 27:
@@ -3363,13 +3553,21 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let fullscreenState = host.checkFullscreenState()
       guard fullscreenElement == false, fullscreenState["transitioning"] as? Bool == false,
             fullscreenState["window"] as? Bool == false else { return }
+      if screen {
+        guard NSApp.isActive, host.window().isKeyWindow else { return }
+        tab.focusCheckPage()
+        guard host.checkFullscreenState()["view_focused"] as? Bool == true else { return }
+      }
       keyboardResults["fullscreen_page_escape"] = true
       resetFullscreenProbe()
       tab.checkFullscreenRequest(true)
       browserCheckPhase = 34
     case 34:
       probeFullscreen(tab)
-      guard fullscreenElement == true else { return }
+      let state = host.checkFullscreenState()
+      guard fullscreenElement == true, state["tab"] as? Bool == true,
+            state["window"] as? Bool == true, state["transitioning"] as? Bool == false,
+            !screen || (NSApp.isActive && host.window().isKeyWindow) else { return }
       send("close", "w", 13)
       browserCheckPhase = 35
     default: break
@@ -3770,11 +3968,36 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   func finishSpaceMatrix(_ host: any ARWindowHostAPI, screen: Bool) {
     let expected = Array(1...9)
     let expectedCommands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
-    let passed = matrixFinalValid(host) && spaceMatrixSuggestionPassed == expected && (!screen || spaceMatrixMenuPassed == expected) &&
-      spaceMatrixCommandsPassed == expectedCommands && host.checkStockBrowsers() == 0 && (screen || hiddenPopupSafe())
+    let finalValid = matrixFinalValid(host)
+    let stock = host.checkStockBrowsers()
+    let hiddenSafe = screen || hiddenPopupSafe()
+    let checks: [(String, Bool)] = [("matrix_final", finalValid),
+      ("suggestions", spaceMatrixSuggestionPassed == expected), ("menu", !screen || spaceMatrixMenuPassed == expected),
+      ("indexed_commands", spaceMatrixCommandsPassed == expectedCommands), ("stock_browsers", stock == 0), ("hidden_safety", hiddenSafe)]
+    let passed = checks.allSatisfy { $0.1 }
+    let target = matrixTargets.last
+    let live = target?.live
+    let storeState: [String: Any] = adapter?.session.queue.sync {
+      guard let store = adapter?.session.store else { return ["available": false] }
+      return ["available": true, "selected": store.snapshot(windowId: windowID).selectedId ?? "",
+              "target_live": target.flatMap { store.liveTab(item: $0.item) } ?? "",
+              "live_item": live.flatMap { store.itemForLive(liveId: $0) } ?? ""]
+    } ?? ["available": false]
+    let finalValues: [String: Any] = ["invariant_failed": matrixCommandInvariantFailed, "epoch_changed": matrixEpochChanged,
+      "target_count": matrixTargets.count, "expected_target_count": 9, "target_item": target?.item ?? "", "target_live": live ?? "",
+      "retained": target.map { matrixRetained(host, excluding: $0.item) } ?? false,
+      "snapshot_selected": snapshot.selectedId ?? "", "tabs": (host.tabs() as? [any ARTabAPI] ?? []).map { ["item": $0.itemId ?? "", "live": $0.liveId] },
+      "store": storeState]
     finishBrowserCheck(ok: passed, values: ["case": "space-command-matrix", "u16_complete": false,
+      "observed_direction": (host.checkPagePresentation("")["rtl"] as? Bool).map { $0 ? "rtl" : "ltr" } as Any? ?? NSNull(),
       "space_matrix_suggestion": spaceMatrixSuggestionPassed,
       "space_matrix_menu": spaceMatrixMenuPassed, "indexed_commands": spaceMatrixCommandsPassed,
+      "failed_assertions": checks.filter { !$0.1 }.map { $0.0 }, "matrix_final_values": finalValues,
+      "expected_suggestions": expected, "expected_menu": screen ? expected : [], "expected_commands": expectedCommands,
+      "stock_browsers_final": stock, "hidden_safety": hiddenSafe,
+      "front_before_final": popupFrontBefore ?? "", "front_after_final": commandOutput("/usr/bin/lsappinfo", ["front"]) ?? "",
+      "front_change_final": popupFrontChange ?? [:], "windows_hidden_final": popupWindowsHidden,
+      "visible_windows_final": NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map { ["number": $0.windowNumber, "visible": $0.isVisible, "key": $0.isKeyWindow] as [String: Any] },
       "c2_matrix_attachment": CommandLine.arguments.contains("--ararat-compositor=c2") && passed,
       "c2_matrix_input_hit": CommandLine.arguments.contains("--ararat-compositor=c2") && screen && passed,
       "unverified_reach": ["remaining_keyboard_matrix", "runtime_verification"]])
@@ -3819,9 +4042,28 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         browserCheckPhase = 641
       } else {
         keyboardResults["stale_suggestion_actions"] = true
-        if screen { host.checkKeyboardCommand("duplicate"); browserCheckPhase = 24 }
-        else { if let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }) { keyboardRead(reopened, script: 5) }; browserCheckPhase = 65 }
+        if screen { browserCheckPhase = 680 }
+        else {
+          guard let workspace else { return }
+          selectionGeneration += 1
+          workspace.cancelPendingSpaceSwitches()
+          let generation = selectionGeneration
+          browserCheckPhase = 645
+          workspace.select(id: seed) { [weak self] result in
+            guard let self, self.selectionGeneration == generation else { return }
+            self.showAndSelect(result, expectedSpace: "default", selectedItem: seed)
+          }
+        }
       }
+      return
+    }
+    if browserCheckPhase == 645 {
+      guard snapshot.selectedId == browserCheckSeedID, host.activeItemId() == browserCheckSeedID,
+            let target = host.navigationTarget(), target["item"] as? String == browserCheckSeedID,
+            let seed = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            target["live"] as? String == seed.liveId, !seed.isLoading, seed.url == keyboardSavedURL else { return }
+      keyboardRead(seed, script: 5)
+      browserCheckPhase = 65
       return
     }
     if browserCheckPhase == 54 {
@@ -3928,23 +4170,33 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     if browserCheckPhase == 65 {
       guard keyboardScriptResult == "armed", let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
-            reopened.checkHasBeforeUnload() else { return }
+            reopened.checkHasBeforeUnload(), snapshot.selectedId == browserCheckSeedID,
+            host.activeItemId() == browserCheckSeedID, host.navigationTarget()?["live"] as? String == reopened.liveId else { return }
       keyboardScriptResult = nil
       host.checkKeyboardCommand("location")
       browserCheckPhase = 66
       return
     }
     if browserCheckPhase == 66 {
-      guard let bar = commandPresenter?.controller, bar.isOpen else { return }
+      guard let bar = commandPresenter?.controller, bar.isOpen, bar.mode == .editURL,
+            let target = host.navigationTarget(), target["item"] as? String == browserCheckSeedID else { return }
+      let rejectedURL = "http://127.0.0.1:\(port)/keyboard?rejected"
+      bar.update(query: rejectedURL, allowCompletion: false)
+      guard let row = bar.result.rows.first else { return }
+      guard case .openUrl(let url) = row.target, url == rejectedURL else {
+        finishBrowserCheck(ok: false, values: ["error": "beforeunload location target"]); return
+      }
       host.expectCheckDialogs(1)
-      bar.update(query: "http://127.0.0.1:\(port)/keyboard?rejected", allowCompletion: false)
       bar.commit(forceNewTab: false)
       browserCheckPhase = 67
       return
     }
     if browserCheckPhase == 67 {
       guard host.checkDialogCount() > 0, let reopened = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
-            !reopened.isLoading, reopened.url == keyboardSavedURL else { return }
+            !reopened.isLoading, reopened.url == keyboardSavedURL,
+            reopened.checkNavigationState()["committed_url"] as? String == keyboardSavedURL,
+            reopened.checkNavigationState()["visible_url"] as? String == keyboardSavedURL,
+            reopened.checkNavigationState()["loading"] as? Bool == false else { return }
       guard snapshot.spaces.flatMap(\.pinned).first(where: { $0.id == browserCheckSeedID })?.url == keyboardSavedURL else {
         finishBrowserCheck(ok: false, values: ["beforeunload_saved_url_changed": true]); return
       }
@@ -3956,6 +4208,25 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckPhase == 68 {
       guard keyboardScriptResult == "disarmed" else { return }
       keyboardScriptResult = nil
+      browserCheckPhase = 680
+      return
+    }
+    if browserCheckPhase == 680 {
+      guard let workspace, let seed = browserCheckSeedID else { return }
+      selectionGeneration += 1
+      workspace.cancelPendingSpaceSwitches()
+      let generation = selectionGeneration
+      browserCheckPhase = 681
+      workspace.select(id: seed) { [weak self] result in
+        guard let self, self.selectionGeneration == generation else { return }
+        self.showAndSelect(result, expectedSpace: "default", selectedItem: seed)
+      }
+      return
+    }
+    if browserCheckPhase == 681 {
+      guard snapshot.selectedId == browserCheckSeedID, host.activeItemId() == browserCheckSeedID,
+            let seed = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
+            !seed.isLoading, seed.url == keyboardSavedURL else { return }
       host.checkKeyboardCommand("duplicate")
       browserCheckPhase = 24
       return
@@ -4061,24 +4332,28 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 52
     case 52:
       guard let child = children.first(where: { $0.host != nil }), let childHost = child.host,
-            childHost.hasBrowser() else { return }
+            childHost.hasBrowser(), let childAdapter = child.adapter else { return }
       if screen && !childHost.window().isKeyWindow { childHost.window().makeKeyAndOrderFront(nil); return }
-      childHost.checkNavigate("http://127.0.0.1:\(port)/keyboard?child", disposition: "current")
+      childAdapter.openCommandURL("http://127.0.0.1:\(port)/keyboard?child", expectedSpace: "default", profile: "Default")
       keyboardRead(original, script: 4)
       browserCheckPhase = 520
     case 520:
-      guard keyboardScriptResult == "cleared", let childHost = children.first?.host,
-            let childTab = (childHost.tabs() as? [any ARTabAPI])?.first, childTab.url.contains("/keyboard?child"), !childTab.isLoading else { return }
+      guard keyboardScriptResult == "cleared", let child = children.first, let childHost = child.host,
+            let target = childHost.navigationTarget(), let live = target["live"] as? String,
+            let item = target["item"] as? String, child.snapshot.selectedId == item,
+            let childTab = (childHost.tabs() as? [any ARTabAPI])?.first(where: { $0.liveId == live }),
+            childTab.url == "http://127.0.0.1:\(port)/keyboard?child", !childTab.isLoading else { return }
       keyboardScriptResult = nil
       keyboardRead(childTab, script: 4)
       browserCheckPhase = 521
     case 521:
       guard keyboardScriptResult == "cleared", let childHost = children.first?.host else { return }
-      keyboardScriptResult = nil
       guard host.checkShortcutActivation(), childHost.checkShortcutActivation(), childHost.checkKeyboardAccelerator(false) else { return }
+      keyboardScriptResult = nil
       browserCheckPhase = 522
     case 522:
-      guard let childHost = children.first?.host, let childTab = (childHost.tabs() as? [any ARTabAPI])?.first else { return }
+      guard let childHost = children.first?.host, let live = childHost.navigationTarget()?["live"] as? String,
+            let childTab = (childHost.tabs() as? [any ARTabAPI])?.first(where: { $0.liveId == live }) else { return }
       if let result = keyboardScriptResult {
         keyboardScriptResult = nil
         if result == "probe-command" {
@@ -4135,7 +4410,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 53
     case 524:
       guard let child = children.first, let childHost = child.host, child.snapshot.shownSpaceId == "named",
-            childHost.profileDirectory() == "Profile 1", let settings, let window = settings.window else { return }
+            childHost.profileDirectory() == "Profile 1", settings?.window != nil else { return }
+      child.adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard?settings-child", expectedSpace: "named", profile: "Profile 1")
+      browserCheckPhase = 5241
+    case 5241:
+      guard let child = children.first, let childHost = child.host, child.snapshot.shownSpaceId == "named",
+            childHost.profileDirectory() == "Profile 1", let target = childHost.navigationTarget(),
+            target["url"] as? String == "http://127.0.0.1:\(port)/keyboard?settings-child",
+            let settings, let window = settings.window else { return }
       child.openCommandBar(.newTab)
       guard let bar = child.commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["settings_profile_bar": false]); return }
       bar.commit(Suggestion(title: "Settings", subtitle: "", url: nil, key: nil, target: .command(id: "settings"), score: 0))
@@ -4770,20 +5052,25 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
           "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "stock_browsers": host.checkStockBrowsers()])
       } else {
-        NSApp.deactivate()
+        guard let events = report("Profile 1")?["focusEvents"] as? [Int] else { return }
+        profileFocusEventCount = events.count
+        NSApp.hide(nil)
         browserCheckPhase = 4
       }
-    } else if screen, browserCheckPhase == 4, let named = report("Profile 1"),
-              let events = named["focusEvents"] as? [Int], events.contains(-1),
-              let windows = named["windows"] as? [[String: Any]],
-              let id = windows.first?["id"] as? Int, events.contains(id) {
+    } else if screen, browserCheckPhase == 4, NSApp.isHidden, !NSApp.isActive {
+      profileFocusNoneObserved = NSApp.keyWindow == nil
+      let events = report("Profile 1")?["focusEvents"] as? [Int] ?? []
+      profileNewFocusNoneEvent = events.dropFirst(profileFocusEventCount).contains(-1)
+      NSApp.unhide(nil)
       NSApp.activate(ignoringOtherApps: true)
       host.window().makeKeyAndOrderFront(nil)
       browserCheckPhase = 5
-    } else if screen, browserCheckPhase == 5, host.window().isKeyWindow {
+    } else if screen, browserCheckPhase == 5, !NSApp.isHidden, NSApp.isActive {
+      let window = host.window()
+      guard window.isKeyWindow else { window.makeKeyAndOrderFront(nil); return }
       if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: host.window().windowNumber,
-          context: nil, characters: "N", charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45) {
+          context: nil, characters: "n", charactersIgnoringModifiers: "N", isARepeat: false, keyCode: 45) {
         NSApp.sendEvent(event)
       }
       browserCheckPhase = 6
@@ -4798,7 +5085,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         return
       }
       finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
-        "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
+        "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
+        "new_focus_none_event": profileNewFocusNoneEvent, "app_deactivated": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
     } else if screen, browserCheckPhase == 61, let popup = popups.first?.host,
               popup.window().isKeyWindow,
               let tab = (popup.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
@@ -4818,7 +5106,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let unchanged = captureCheckRows() == quitBefore
       finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
-          "focus_none": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
+          "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
+          "app_deactivated": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
           "stock_browsers": host.checkStockBrowsers()])
     }
   }
@@ -4830,9 +5119,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckSeedID = row.id
       selectCheckSeed(row)
       browserCheckPhase = 1
-    } else if browserCheckPhase == 1, sliceActive == browserCheckSeedID, !host.tabs().isEmpty {
+    } else if browserCheckPhase == 1, let seed = browserCheckSeedID, sliceActive == seed,
+              snapshot.selectedId == seed, host.activeItemId() == seed,
+              let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }),
+              !tab.isLoading, tab.navigationCount > 0, tab.url == "about:blank", !tab.title.isEmpty,
+              snapshot.spaces.first(where: { $0.id == "default" })?.today.first(where: { $0.id == seed })?.title == tab.title,
+              let rows = captureCheckRows(), checkStoredTabMetadata(rows, item: seed, url: tab.url, title: tab.title) {
       browserCheckBefore = snapshot
-      guard let rows = captureCheckRows() else { return }
       quitBefore = rows
       host.checkCreateIncognito()
       browserCheckPhase = 2
@@ -6000,6 +6293,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if CommandLine.arguments.contains("--ararat-space-matrix-check") { result["case"] = "space-command-matrix" }
       else if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") }) { result["case"] = "cross-window-reverse" }
       else if browserCheckMode == "keyboard" || browserCheckMode == "screen-keyboard" { result["case"] = "keyboard-main" }
+    }
+    if result["case"] as? String == "keyboard-main" {
+      result["observed_direction"] = (host?.checkPagePresentation("")["rtl"] as? Bool).map { $0 ? "rtl" : "ltr" } as Any? ?? NSNull()
     }
     result["check_flags"] = coverageFlags()
     result["compositor"] = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"

@@ -1,5 +1,6 @@
 #include "ararat/core/ararat_tab.h"
 
+#include <algorithm>
 #include <memory>
 #include <cstdio>
 
@@ -40,8 +41,10 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/isolated_world_ids.h"
@@ -98,6 +101,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
+  void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }
   void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
     [tab_ rendererCrashed];
   }
@@ -156,6 +160,17 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 - (content::WebContents*)contents { return contents_; }
 
+- (NSDictionary<NSString*, id>*)checkNavigationState {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" &&
+                     args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return @{};
+  auto* pending = contents_->GetController().GetPendingEntry();
+  return @{ @"committed_url": base::SysUTF8ToNSString(contents_->GetLastCommittedURL().spec()),
+            @"visible_url": base::SysUTF8ToNSString(contents_->GetVisibleURL().spec()),
+            @"pending_url": pending ? base::SysUTF8ToNSString(pending->GetVirtualURL().spec()) : (id)[NSNull null],
+            @"loading": @(contents_->IsLoading()) };
+}
+
 - (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion {
   auto* args = base::CommandLine::ForCurrentProcess();
   if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) { completion(@""); return; }
@@ -191,6 +206,7 @@ class TabContentsObserver : public content::WebContentsObserver {
     auto* render_view = contents->GetRenderWidgetHostView();
     if (!render_view) return NO;
     render_view->SetHasFocusForTesting(true);
+    render_view->GetRenderWidgetHost()->Focus();
   }
   if (!contents || contents_ != contents.get()) return NO;
   NSView* view = contents->GetContentNativeView().GetNativeNSView();
@@ -346,7 +362,8 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 
 - (BOOL)checkPermissionPending {
-  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "permissions") return NO;
+  const auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "permissions" && args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return NO;
   auto* manager = permissions::PermissionRequestManager::FromWebContents(contents_);
   return manager && (manager->IsRequestInProgress() || manager->has_pending_requests());
 }
@@ -374,7 +391,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (BOOL)checkIsDialogActive {
   const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
-  if (!contents_ || (check != "dialogs" && check != "protocol" && check != "autofill" && !IsPromptScreen())) return NO;
+  if (!contents_ || (check != "dialogs" && check != "protocol" && check != "autofill" && check != "keyboard" && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "keyboard" && !IsPromptScreen())) return NO;
   auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
   return manager && manager->IsDialogActive();
 }

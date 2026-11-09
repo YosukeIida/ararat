@@ -60,6 +60,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion;
 - (BOOL)checkKeyboardIME;
 - (NSArray<NSDictionary<NSString*, id>*>*)checkKeyboardIMEState;
+- (NSDictionary<NSString*, id>*)checkNavigationState;
 - (void)checkStartBackgroundFind:(NSString*)text;
 - (NSDictionary<NSString*, id>*)checkBackgroundFindState;
 - (BOOL)checkHoldFindReply:(NSString*)text;

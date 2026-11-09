@@ -106,6 +106,8 @@
 #include "components/javascript_dialogs/app_modal_dialog_manager.h"
 #include "components/javascript_dialogs/app_modal_dialog_view.h"
 #include "components/permissions/chooser_controller.h"
+#include "components/permissions/permission_request.h"
+#include "components/permissions/permission_request_manager.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_types.h"
 #include "ui/gfx/range/range.h"
@@ -129,6 +131,7 @@
 #include "ui/display/types/display_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #import "ui/base/cocoa/command_dispatcher.h"
+#import "ui/base/cocoa/nsmenu_additions.h"
 #import "ui/base/cocoa/user_interface_item_command_handler.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/layout/fill_layout.h"
@@ -149,6 +152,24 @@
 - (void)commandDispatchUsingKeyModifiers:(id)sender;
 - (void)windowDidBecomeMain:(NSNotification*)notification;
 - (Profile*)lastProfileIfLoaded;
+@end
+
+@interface AraratCommandDispatcherDelegate : ChromeCommandDispatcherDelegate
+@end
+
+@implementation AraratCommandDispatcherDelegate
+- (ui::PerformKeyEquivalentResult)postPerformKeyEquivalent:(NSEvent*)event
+                                                    window:(NSWindow*)window
+                                              isRedispatch:(BOOL)isRedispatch {
+  if (isRedispatch) {
+    NSMenu* core = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+    NSMenu* appMenu = NSApp.mainMenu.itemArray.firstObject.submenu;
+    NSMenuItem* appItem = [appMenu cr_menuItemForKeyEquivalentEvent:event];
+    if ([core cr_menuItemForKeyEquivalentEvent:event] || [appItem.representedObject isEqual:@"settings"])
+      return ui::PerformKeyEquivalentResult::kPassToMainMenu;
+  }
+  return [super postPerformKeyEquivalent:event window:window isRedispatch:isRedispatch];
+}
 @end
 
 bool AraratIsKeyboardShortcut(const input::NativeWebKeyboardEvent& event) {
@@ -255,14 +276,14 @@ class HostNativeWidgetMac : public views::NativeWidgetMac {
  protected:
   void OnWindowInitialized() override {
     if (auto* bridge = GetInProcessNSWindowBridge())
-      bridge->SetCommandDispatcher([[ChromeCommandDispatcherDelegate alloc] init], [[BrowserWindowCommandHandler alloc] init]);
+      bridge->SetCommandDispatcher([[AraratCommandDispatcherDelegate alloc] init], [[BrowserWindowCommandHandler alloc] init]);
   }
   void ValidateUserInterfaceItem(int32_t command, remote_cocoa::mojom::ValidateUserInterfaceItemResult* result) override {
     auto* window = host_->window();
     auto* browser = window ? window->browser() : nullptr;
     if (host_->popup() && (command == IDC_FOCUS_LOCATION || command == IDC_FOCUS_SEARCH)) { result->enable = false; return; }
     if (!host_->popup() && !host_->closing() && !host_->closed() &&
-        (command == IDC_NEW_TAB || command == IDC_FOCUS_LOCATION || command == IDC_FOCUS_SEARCH)) { result->enable = true; return; }
+        (command == IDC_NEW_TAB || command == IDC_FOCUS_LOCATION || command == IDC_FOCUS_SEARCH || command == IDC_OPTIONS)) { result->enable = true; return; }
     result->enable = browser && !browser->IsDeleteScheduled() ? chrome::IsCommandEnabled(browser, command) : host_->ValidateEmptyCommand(command);
   }
   bool WillExecuteCommand(int32_t command, WindowOpenDisposition disposition, bool before) override {
@@ -271,7 +292,7 @@ class HostNativeWidgetMac : public views::NativeWidgetMac {
     if (host_->closing() || host_->closed() || (browser && browser->IsDeleteScheduled())) return false;
     if (!before) return true;
     if (ui::GlobalAcceleratorListener::GetInstance() && ui::GlobalAcceleratorListener::GetInstance()->IsShortcutHandlingSuspended()) return false;
-    if (!host_->popup() && (command == IDC_NEW_TAB || command == IDC_FOCUS_LOCATION || command == IDC_FOCUS_SEARCH || command == IDC_CLOSE_TAB)) return true;
+    if (!host_->popup() && (command == IDC_NEW_TAB || command == IDC_FOCUS_LOCATION || command == IDC_FOCUS_SEARCH || command == IDC_CLOSE_TAB || command == IDC_OPTIONS)) return true;
     if (!browser) return false;
     input::NativeWebKeyboardEvent event(blink::WebInputEvent::Type::kKeyDown, 0, base::TimeTicks());
     auto* controller = chrome::BrowserCommandController::From(browser);
@@ -717,6 +738,7 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
   extension_anchor_->SetProperty(views::kViewIgnoredByLayoutKey, true);
   extension_anchor_->SetCanProcessEventsWithinSubtree(false);
   if (AraratUsesSharedCompositor()) {
+    native_host->SetMirrored(false);
     page_host_ = native_host->AddChildView(std::make_unique<views::NativeViewHost>());
   }
   delegate_->SetContentsView(std::move(contents));
@@ -1556,7 +1578,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSPoint point = NSMakePoint(NSMidX(pageRect), NSMidY(pageRect));
   NSView* hit = root.superview ? [root hitTest:[root.superview convertPoint:point fromView:nil]] : nil;
   BOOL pageHit = view && hit && [hit isDescendantOf:view];
-  return @{ @"compositor": shared ? @"c2" : @"c1", @"live": tab.liveId ?: @"", @"target": @(target), @"host": @(host),
+  return @{ @"compositor": shared ? @"c2" : @"c1", @"rtl": @(base::i18n::IsRTL()), @"live": tab.liveId ?: @"", @"target": @(target), @"host": @(host),
             @"window": @(windowMatch), @"visible": @(visible), @"bounds": @(bounds),
             @"page_hit": @(pageHit), @"page_frame": NSStringFromRect(pageRect), @"expected_frame": NSStringFromRect(expectedWindow),
             @"presented": @(target && host && visible && (!shared || (windowMatch && bounds))) };
@@ -1607,7 +1629,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* view = contents ? contents->GetRenderWidgetHostView() : nullptr;
   return @{ @"window": @(core_->IsFullscreen()), @"tab": @(controller->IsTabFullscreen()),
             @"transitioning": @(core_->IsFullscreenTransitioning()),
-            @"pending": @(controller->IsWindowFullscreenForTabOrPending()),
+            @"tab_or_pending": @(controller->IsWindowFullscreenForTabOrPending()),
             @"browser": @(controller->IsFullscreenForBrowser()),
             @"bubble_created": @(core_->window()->HasExclusiveAccessBubbleForCheck()),
             @"bubble_visible": @(core_->window()->IsExclusiveAccessBubbleVisibleForCheck()),
@@ -1701,6 +1723,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
             @"devtools_attached": @(devtools_view_ && card && [devtools_view_ isDescendantOf:card]), @"page_above": @(above),
             @"page_hit": @(page && [pageHit isDescendantOf:page]),
             @"devtools_hit": @(devtools_view_ && [toolsHit isDescendantOf:devtools_view_]) } mutableCopy];
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "keyboard" ||
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "keyboard") {
+    auto* modal = active ? web_modal::WebContentsModalDialogManager::FromWebContents(active) : nullptr;
+    auto* permission_manager = active ? permissions::PermissionRequestManager::FromWebContents(active) : nullptr;
+    NSString* kind = @"none";
+    if (modal && modal->IsDialogActive()) {
+      kind = @"unknown";
+      if (permission_manager && permission_manager->GetCurrentPrompt() && permission_manager->Requests().size() == 1 &&
+          permission_manager->Requests()[0]->request_type() == permissions::RequestType::kRegisterProtocolHandler)
+        kind = @"register_protocol_handler_permission";
+    }
+    result[@"find_dialog_kind"] = kind;
+  }
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "devtools") {
     NSMutableArray<NSString*>* chain = [NSMutableArray array];
     for (NSView* view = toolsHit; view; view = view.superview) [chain addObject:NSStringFromClass(view.class)];
@@ -1763,7 +1798,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* tools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   if (!tools) { completion(@""); return; }
   tools->GetPrimaryMainFrame()->ExecuteJavaScript(
-      uR"JS((() => { const all = root => Array.from(root.querySelectorAll('*')).flatMap(e => [e, ...(e.shadowRoot ? all(e.shadowRoot) : [])]); const nodes = all(document); const visible = e => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'); return JSON.stringify({drawer: nodes.some(e => e.classList.contains('drawer-tabbed-pane') && visible(e)), search: nodes.some(e => e.id === 'search-input-field' && visible(e))}); })())JS",
+      uR"JS((() => { const all = root => Array.from(root.querySelectorAll('*')).flatMap(e => [e, ...(e.shadowRoot ? all(e.shadowRoot) : [])]); const nodes = all(document); const visible = e => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'); if (!window.__araratFindProbe) window.__araratFindProbe = {ready:false}; const probe = window.__araratFindProbe; const main = globalThis.Main?.Main?.instanceForTest; if (main && !probe.waiting) { probe.waiting = true; main.readyForTest().then(() => { probe.ready = true; }); } return JSON.stringify({drawer: nodes.some(e => e.classList.contains('drawer-tabbed-pane') && visible(e)), search: nodes.some(e => e.id === 'search-input-field' && visible(e)), ready: probe.ready}); })())JS",
       base::BindOnce(^(base::Value result) {
         completion(result.is_string() ? [NSString stringWithUTF8String:result.GetString().c_str()] : @"");
       }));
@@ -1839,7 +1874,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     @"new": @(IDC_NEW_TAB), @"location": @(IDC_FOCUS_LOCATION), @"search": @(IDC_FOCUS_SEARCH),
     @"find": @(IDC_FIND), @"next": @(IDC_FIND_NEXT), @"previous": @(IDC_FIND_PREVIOUS),
     @"reload": @(IDC_RELOAD), @"back": @(IDC_BACK), @"devtools": @(IDC_DEV_TOOLS),
-    @"duplicate": @(IDC_DUPLICATE_TAB), @"close": @(IDC_CLOSE_TAB),
+    @"duplicate": @(IDC_DUPLICATE_TAB), @"close": @(IDC_CLOSE_TAB), @"settings": @(IDC_OPTIONS),
     @"window": @(IDC_NEW_WINDOW), @"incognito": @(IDC_NEW_INCOGNITO_WINDOW)
   };
   NSNumber* tag = commands[command];

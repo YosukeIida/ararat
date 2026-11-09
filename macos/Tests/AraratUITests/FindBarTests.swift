@@ -21,6 +21,28 @@ func findOverlayTracksThePageRectWhenItResizes() {
 }
 
 @Test @MainActor
+func findOverlayRemainsAboveASeparateHostedPage() {
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: SidebarView(snapshot: snapshot), page: page)
+    container.frame = root.bounds
+    root.addSubview(container)
+    container.layoutSubtreeIfNeeded()
+    container.setFindPageRect(NSRect(x: 0, y: 0, width: 150, height: 580))
+    let hostedPage = NSView(frame: container.convert(page.bounds, from: page))
+    root.addSubview(hostedPage)
+    container.placeFindBarAbovePage(in: root)
+    container.findBar.isHidden = false
+    let frame = container.findBar.frame
+    let hit = root.hitTest(NSPoint(x: frame.midX, y: frame.midY))
+    #expect(hit?.isDescendant(of: container.findBar) == true)
+    #expect(container.findBar.convert(container.findBar.bounds, to: page).width == 150)
+    container.setFindPageRect(NSRect(x: 0, y: 0, width: 100, height: 400))
+    #expect(container.findBar.convert(container.findBar.bounds, to: page).width == 100)
+}
+
+@Test @MainActor
 func findResultsExposeRequestAndFinalUpdate() {
     let view = FindBarView()
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": false])

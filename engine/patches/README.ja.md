@@ -52,6 +52,9 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/viewless-read-anything.patch` | 独自 |
 | `ararat/viewless-bubble-anchor.patch` | 独自 |
 | `ararat/sad-tab-viewless.patch` | 独自、設計は Ardia を先例に挙げるが未検証 |
+| `ararat/keyboard-ime-diagnostics.patch` | 独自 |
+| `ararat/find-close-command.patch` | 独自 |
+| `ararat/hidden-dialog-containment.patch` | 独自 |
 
 ## 取り込んだパッチを選んだ理由
 
@@ -67,9 +70,11 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 `ararat/autofill-address-bubble.patch` は `mantrakp04/ardia` の `engine/patches/chromium-autofill-address-bubble-window.patch`（GPL-3.0）を元にする。Browser の unowned user data から Autofill handler を取得し、住所プロモーションの `AsBrowserView()` 呼び出しをガードし、カード controller の 2 つの検査を早期 return に変える。
 
-`ararat/keyboard-ime-diagnostics.patch` は keyboard check の対象と転送の観測を件数制限付きで記録し、入力テキストは記録しない。
+`ararat/keyboard-ime-diagnostics.patch` は keyboard check の browser 側の対象と転送を件数制限付きで記録する。入力テキストは記録しない。
 
 `ararat/hidden-dialog-containment.patch` は hidden check の予期しない通常の JavaScript dialog を拒否し、beforeunload の開始と完了を WebContents の境界で検証できるようにする。
+
+`ararat/find-close-command.patch` は検索セッションの終了後、検索 UI が非アクティブになった時点でコマンドの状態を更新する。
 
 `ararat/app-controller-hooks.patch` は Dock の再オープンとメニュー、外部 URL、表示中の Browser を独自 hook に渡す。hook が未設定のときは標準の動作を使う。
 

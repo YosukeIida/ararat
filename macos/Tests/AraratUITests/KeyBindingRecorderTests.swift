@@ -17,6 +17,19 @@ func clearingCoreShortcutCollisionsPreservesOtherModifiers() {
     #expect(other.keyEquivalent == "s")
 }
 
+@Test @MainActor
+func clearingCoreShortcutCollisionsRecognizesShiftInUppercaseEquivalent() {
+    let menu = NSMenu()
+    let collision = menu.addItem(withTitle: "Vertical Tabs", action: nil, keyEquivalent: "L")
+    collision.keyEquivalentModifierMask = .command
+    let other = menu.addItem(withTitle: "Location", action: nil, keyEquivalent: "l")
+    other.keyEquivalentModifierMask = .command
+    let displaced = KeyBindingsModel.clearCollisions(defaultKeyBindings().filter { $0.command == "toggle_library" }, in: menu)
+    #expect(displaced["toggle_library"] === collision)
+    #expect(collision.keyEquivalent.isEmpty)
+    #expect(other.keyEquivalent == "l")
+}
+
 @MainActor
 private func bindingValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }

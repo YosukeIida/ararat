@@ -47,6 +47,8 @@ final class PromptFixtureServer {
           status = "200 OK"; headers = ""; body = "<!doctype html><title>Protocol fixture</title>"
         case "/keyboard":
           status = "200 OK"; headers = ""; body = keyboardPage
+        case "/search":
+          status = "200 OK"; headers = ""; body = "<!doctype html><title>Search fixture</title>"
         case "/autofill":
           status = "200 OK"; headers = ""; body = autofillPage
         case "/webauthn":

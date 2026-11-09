@@ -5,6 +5,18 @@ import Testing
 @testable import Ararat
 
 @Test
+func incognitoBaselineWaitsForStoredSeedMetadata() {
+    let body = #"{"kind":{"Tab":{"url":"about:blank","saved_title":"about:blank"}}}"#
+    let ready = [["item", "seed", body]]
+    #expect(checkStoredTabMetadata(ready, item: "seed", url: "about:blank", title: "about:blank"))
+    #expect(!checkStoredTabMetadata(ready, item: "other", url: "about:blank", title: "about:blank"))
+    #expect(!checkStoredTabMetadata(ready, item: "seed", url: "about:blank", title: ""))
+    #expect(!checkStoredTabMetadata(ready, item: "seed", url: "other", title: "about:blank"))
+    #expect(!checkStoredTabMetadata([["item", "seed", #"{"kind":{"Tab":{"url":"about:blank","saved_title":null}}}"#]], item: "seed", url: "about:blank", title: "about:blank"))
+    #expect(!checkStoredTabMetadata([["item", "seed", "invalid"]], item: "seed", url: "about:blank", title: "about:blank"))
+}
+
+@Test
 func teardownDeadlineRejectsLateCompletion() {
     let onTime = TeardownDeadline()
     onTime.start(seconds: 30)

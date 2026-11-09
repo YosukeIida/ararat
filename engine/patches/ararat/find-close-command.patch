@@ -1,0 +1,10 @@
+--- a/chrome/browser/ui/find_bar/find_bar_controller.cc
++++ b/chrome/browser/ui/find_bar/find_bar_controller.cc
+@@ -146,6 +146,7 @@
+     // tickmarks and highlighting.
+     find_tab_helper->set_find_ui_focused(false);
+     find_tab_helper->StopFinding(selection_action);
++    OnFindBarVisibilityChanged();
+ 
+     if (result_action == find_in_page::ResultAction::kClear) {
+       find_bar->ClearResults(find_tab_helper->find_result());

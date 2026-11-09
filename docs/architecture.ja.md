@@ -117,7 +117,7 @@ hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタで�
 ### 4.4 エンジン ↔ アプリの API
 
 - 各タブはプロセス内の navigation 回数とは別に、navigation controller のエントリ数と `canGoBack` を公開する。strip は renderer のクラッシュ状態を報告する。クラッシュしたタブを選択すると、すでにアクティブな場合も再読み込みを要求する（我々の規則。実行時の検証は未実施）。
-- host delegate はページの fullscreen と native window の遷移先 fullscreen 状態を別々に報告する。native widget は遷移の完了を遷移を始めた Browser と、表示中の Browser が変わった場合はその Browser に通知する。exclusive-access context は要求中のタブ fullscreen をアプリに報告する。非表示の検査ではウィンドウ状態を模擬し、host を表示せずに表示中の Browser の各タブの renderer を同期する（U15、我々の規則）。
+- host delegate はページの fullscreen と native window の遷移先 fullscreen 状態を別々に報告する。native widget は遷移の完了を遷移を始めた Browser と、表示中の Browser が変わった場合はその Browser に通知する。exclusive-access context は要求中を含むタブ fullscreen の状態をアプリに報告する。非表示の検査ではウィンドウ状態を模擬し、host を表示せずに表示中の Browser の各タブの renderer を同期する（U15、我々の規則）。
 - 通常の app host の Browser は、プロファイルごとに `ExtensionsContainer` を登録する。アプリは action の ID・名前・アイコンの一覧を取得し、action の実行と既定の anchor rect の設定を行う。`FillLayout` の対象外でイベントを受けない Views の proxy が Chrome の `ExtensionPopup` の anchor になり、AppKit の座標を host の y 反転した座標に変換する。Chromium での実行は未確認である（U14、我々の規則）。
 
 open コマンドは項目のプロファイルを運ぶ。エンジンに届く前にユーザーが space を切り替えても、項目のプロファイルで開く。host delegate の `showProfile` 要求は、そのウィンドウで最後に表示した当該プロファイルの space に切り替える（我々の規則）。
@@ -207,7 +207,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | incognito | ページだけの off-the-record host を使い、workspace transaction を送らない（我々の規則） |
 | 履歴と profile メニュー | Chrome。U11 |
 | exclusive-access context | Chromium の fullscreen controller と native window fullscreen を使う。fullscreen・pointer lock・keyboard lock は `ExclusiveAccessBubbleViews` で通知し、bubble 専用の accelerator provider が ⌃⌘F を返す（U15、我々の規則） |
-| find bar | Chromium の find controller と共通 pasteboard に、profile ごとの状態と結果を扱うウィンドウ内の入力欄を接続する（U16、我々の規則。エンジンと画面での検証は未了） |
+| find bar | Chromium の find controller と共通 pasteboard に、profile ごとの状態と結果を扱うウィンドウ内の入力欄を接続する（U16、我々の規則。U16 の検査で検証済み） |
 | location bar | viewless の interface が表示中の contents、Browser、profile を返し、ユーザーによるフォーカスを command bar に渡す。viewless bubble-anchor patch は chooser と復元権限バブルの代替位置を host ウィンドウの上端の開始側に置き、RTL では左右を反転する（U16、我々の規則。エンジンと bubble の配置の検証は未了） |
 | download bubble controller | download UI の実装時（現在は null で、deep scan のプロンプトでクラッシュする） |
 | modal dialog host | Chromium の tab-modal ダイアログを独自 host が page card 上に配置する（U12、我々の規則） |
@@ -285,8 +285,8 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 - コアの coordinator は id を付けて live タブのコマンドを発行する。エンジンはトランザクション `{epoch, rev, cause, strips}` で応答する。`epoch` はエンジンの起動時に変わる。`rev` は 1 つの epoch の中で単調に増加する。`cause` は、独自のコマンドの id、独自のエンジン呼び出し、Chrome 自身のいずれかである。1 つのトランザクションに複数の cause を混在させない。エコーを抑制する時間窓や、「自分が起こした変更か」を示すフラグは設けない。コマンドは、発行されてから、その id を名指すトランザクションが届くまで飛行中にあり、飛行中のコマンドは新しい epoch の始まりで消去され、飛行中のコマンドを名指さない完了は落とす（我々の規則）。
 - Chrome が自ら行う変更（拡張によるタブの移動、クローズ後の後継タブ）は差分を取り、コアの規則によって workspace に適用する。後継タブは、Chrome の選択ではなくコアの規則（split の連続性、折りたたんだタブと読み込まれていないタブのスキップ）に従う。後継は、Arc と同じく、そのウィンドウで表示している space のタブのうち、最も最近に選んだもので、まだ開いていて表示されているものとする（閉じる操作でサイドバーを別の space へ移さない。Arc で計測した）（2026-11-01 に ⌘W と AppleScript で計測した。閉じると選択の履歴をさかのぼり、隣のタブには移らなかった。`docs/research/arc-ardia-observed.ja.md` の 7 節）。該当するタブが無ければ、同じ一覧で閉じたタブより下にある最も近い表示中の開いたタブ、無ければ上、それも無ければ何も選ばない（我々の規則）。split の中のタブの後継はその split とし、split は最後に開いていたタブを閉じると一緒に閉じる。pinned のタブと favorites で ⌘W を押すと、そのタブを読み込んでいない状態にし、行は残し、同じ規則で後継へ移る。選択の履歴はウィンドウごとにローカルに持ち、同期しない。
 - トランザクションの strips は、運ぶウィンドウを名指し、coordinator の gone パスはそのウィンドウだけを見る。トランザクションが名指さないウィンドウから消えたタブはそのままにする（我々の規則）。閉じたウィンドウは空の strip として届くので、そのタブは消えたものとして見える。
-- 採用したタブは、そのウィンドウで最後に表示した当該プロファイルの space の Today の末尾に置く。リンクから開いたタブの Arc での位置は未確認である。active な採用タブは選択し、background のタブには選択時刻と後継の履歴を付けない。コアは報告された URL とページタイトルを保存し、ユーザーが付けたタイトルを保持する。ただし URL とタイトルが動くのは Today の行だけである。pinned と favorite の行は保存した URL とタイトルを保つ。Arc が pinned タブの URL を保つのと同じで、「pinned URL へ戻る」は後の unit の仕事である。opener の ID は strip で運ぶが、配置にはまだ使わない（我々の規則）。
-- strips の active タブは、トランザクションの cause にかかわらずウィンドウごとの選択を更新する。エンジンが確認したコマンドは、Chrome 自身の切り替えと同じように記録される（我々の規則）。Chrome による close でウィンドウの選択が変わったときは、そのウィンドウの strips の active タブは記録せず、規則が選んだ後継を残す（我々の規則）。
+- 採用したタブは、そのウィンドウで最後に表示した当該プロファイルの space の Today の末尾に置く。リンクから開いたタブの Arc での位置は未確認である。active な採用タブは選択するが、epoch の初回 snapshot より後の Engine による strip では選択しない。background のタブには選択時刻と後継の履歴を付けない。コアは報告された URL とページタイトルを保存し、ユーザーが付けたタイトルを保持する。ただし URL とタイトルが動くのは Today の行だけである。pinned と favorite の行は保存した URL とタイトルを保つ。Arc が pinned タブの URL を保つのと同じで、「pinned URL へ戻る」は後の unit の仕事である。opener の ID は strip で運ぶが、配置にはまだ使わない（我々の規則）。
+- epoch の初回 snapshot の後は、コマンドの確認と Chrome による変更の strip がウィンドウごとの選択を更新する。Engine による strip はタブの状態と metadata を更新し、選択は変えない。プロファイル切り替え時には、要求したタブの activation より先に、その Browser で以前 active だったタブが報告されることがあるためである。Chrome による close でウィンドウの選択が変わったときは、そのウィンドウの strips の active タブは記録せず、規則が選んだ後継を残す（我々の規則）。
 - タブの切り替えでは、まずネイティブにページを表示する。表示の経路に UI の状態を経由する往復は含めない。
 - Air Traffic Control は規則自身のプロファイルの内側に保つ: 規則は、その routing ファイルの持ち主のプロファイル（呼び出し側が渡す。持ち主を知らないときは、space を名指す行き先はその space のプロファイルを、それ以外の行き先は最初の space のプロファイルを、規則ごとに載せる）に属し、space の行き先はそのプロファイルの space でなければならず、Little window の行き先は workspace が持つプロファイル（組み込みのもの、または帳簿に載っている名前のあるもの）を名指しし、これらを破る編集は断られ、取り込みはその規則を飛ばす。space を消された規則はそれでも当てはまり、まず自分のプロファイルの、最も最近使われた space —— 選択の記録の中で最も新しいタブが順位をつける —— に続き、既定の行き先、既定のプロファイルの最も最近使われた space の順で答え、それも無ければ最も最近の space に送る（我々の規則）。
 
@@ -347,11 +347,13 @@ workspace、archive、同期のジャーナルには SQLite（WAL）を用いる
 - 拡張機能は、設定ウィンドウの Extensions のペインからプロファイルごとに追加・管理する予定である。このペインはまだ無い。Arc に入っていて未導入の拡張機能を一覧して追加する経路を持たせ（Yab と同じ。オーナーの選択、2026-10-31）、§9 のインポートの規則に従わせる。
 - phase 3 のサイドバーのヘッダーには Extensions ボタンを置き、表示中のプロファイルの action を AppKit のメニューに並べる。最終的な外観は phase 4 で扱う（我々の規則）。
 
-U16 は command panel を harness とアプリで共有する。Edit URL は対象の live tab を固定して移動する。Today はコミット済みの navigation を反映し、pinned と favorite は保存先を維持する。Focus Search は入力文字列をそのまま検索する。find 欄はページ上に置き、DevTools を除いたページの矩形に追従する。変換中の文字列は Return、⌘Return、矢印キー、Escape より優先する。ユーザーのキー再割り当てと Chrome メニューの同期は未対応である。エンジンと画面での検証は未了である（我々の規則）。
+U16 は command panel を harness とアプリで共有する。Edit URL は対象の live tab を固定して移動する。Today はコミット済みの navigation を反映し、pinned と favorite は保存先を維持する。Focus Search は入力文字列をそのまま検索する。find 欄はページ上に置き、DevTools を除いたページの矩形に追従する。変換中の文字列は Return、⌘Return、矢印キー、Escape より優先する。ユーザーのキー再割り当てと Chrome メニューの同期は未対応である。core メニューのショートカットは重複する Chrome メニューのショートカットを退避し、ページが処理しなかったキーの再配送時も Chrome の accelerator より優先する。これらのエンジンと画面の経路は U16 の検査で検証済みである（我々の規則）。
 
 workspace の space を切り替えると、その space で開いていて表示されるタブまたは split のうち、そのウィンドウで最後に選んだものを選ぶ。履歴になければ最初の対象を選ぶ。対象が split なら、現在の space とページを変えずに切り替えを断る。split の表示は phase 5 で実装する。対象がなければ、タブを選ぶまでページを隠す（我々の規則。エンジンでの検証は未了）。
 
 ウィンドウの close または終了時には、workspace の切り替えを行わず、beforeunload を発した profile とページを表示する。キャンセル時には、その profile の space を表示できる場合はそこに合わせ、選択対象が未対応の split の場合は元の space とページを維持する。close の開始時には、保留中の選択と切り替えを無効にする（我々の規則。エンジンでの検証は未了）。
+
+beforeunload ダイアログで navigation をキャンセルしたときは、Chromium が保留中の entry を破棄した後、タブに保持した visible URL と loading 状態を更新する（我々の規則。エンジンでの検証は未了）。
 
 ## 8. 同期
 
@@ -462,7 +464,7 @@ U13 では `deferred` を更新し、DevTools ウィンドウを閉じた後に�
 
 表示する `--ararat-screen=devtools` にも同じスクラッチ領域の制約を適用する。リサイズと redock の前後に window ID を指定して撮影し、空白ページと DevTools 領域の色の変化を検査する。フォーカスを確認してプロセス内から Esc と ⌘F を送り、フロントエンドの要素の表示状態から drawer と検索欄を確認する。リサイズと redock の後は矩形も検査し、c2 では両領域の hit test も確認する。画素の検査が検出するのは DevTools 領域が空白または単色の場合であり、全画素の正しさは検査しない。画面での実行は未確認である（我々の規則）。
 
-U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込み、画面上の検査ではアプリの非アクティブ化と incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
+U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込む。画面上の検査ではアプリの非表示と再表示を行い、非アクティブ化と再アクティブ化を観測してから incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
 
 split と close の fixture は profiles または quit-cancel の検査に `--ararat-split-close-check` を加えて使う。`--ararat-empty-close-check` を加えると同じ profile の空の space から close を始め、`--ararat-selection-race=registered|resolved` を加えると live 選択の二つの dispatch 境界のいずれかで処理を止める。空 space と選択競合は別々の scratch 実行で検査する。ダイアログの対象タブとページの接続状態を記録する。エンジンでの実行は未確認である（我々の規則）。
 
@@ -470,7 +472,7 @@ split と close の fixture は profiles または quit-cancel の検査に `--a
 
 同じ profile の空 space からの quit は、quit-cancel の split fixture に `--ararat-same-profile-empty-quit-check` を加えて検査する。profiles の split fixture に `--ararat-committed-switch-race=space|tab` を加えると、storage の commit 後の completion を close 開始まで保留する。`--ararat-check=profiles --ararat-multiple-close-check` は複数の確認対象タブ、2 回のキャンセル、別ウィンドウを検査する。それぞれ別の scratch 実行とする（我々の規則。エンジンでの検証は未了）。
 
-`--ararat-screen=profiles --ararat-page-only-menu-check` は off-the-record の page-only ウィンドウで退避した Save Page のショートカットを試し、native の保存パネルが開くことを確認して保存せずにキャンセルする（我々の規則。画面での検証は未了）。
+`--ararat-screen=profiles --ararat-page-only-menu-check` は off-the-record の page-only ウィンドウで退避した Save Page のショートカットを試し、native の保存パネルが開くことを確認して保存せずにキャンセルする。profiles の screen 検査と同じく、`--load-extension` で `windows` 拡張 fixture を読み込む必要がある（我々の規則。画面での検証は未了）。
 
 同じ page-only の指定を `--ararat-screen=links` に加えると通常の popup、`--ararat-screen=extensions` に加えると拡張の APP_POPUP を検査する。`--ararat-check=quit-cancel --ararat-multiple-quit-check` は複数の確認対象タブと別ウィンドウがある状態で、キャンセルの繰り返しと最終的な quit を検査する。profiles の split fixture に `--ararat-selection-supersede=registered|resolved` を加えると、close せずに live 選択を上書きする競合を検査する。`--ararat-check=profiles --ararat-multiple-close-check --ararat-cross-window-selection-check` は、一方のウィンドウの close 中に他方の保留中の選択を検査する。`--ararat-check=keyboard --ararat-space-matrix-check` は番号付き9件とその他の command を索引から選択して検査し、screen 版では番号付きの core-menu ショートカットも送る。keyboard の acceptance は引き続き false である（我々の規則。エンジンと画面での検証は未了）。
 
@@ -478,19 +480,23 @@ multiple-close fixture の `--ararat-cross-window-selection-check=registered|res
 
 space／command matrix と逆順のウィンドウ間検査は、それぞれの対象範囲について `ok` を返し、`u16_complete` は false とする。main keyboard 検査は通常 `ok: false` を返し、その実行内の assertion の結果を `case_ok` に記録する。`--ararat-keyboard-main-scope` を加えると、その範囲の assertion を `ok` に反映するが、`u16_complete` は false のままとする。別々の実行で得た JSON 行には、記録した実プロセスの `process_exit` と共通の空でない `build_id` を加える。keyboard の結果には確認した `observed_direction`（`ltr` または `rtl`）を加える。screen 実行には、実行全体で session がロックされなかったと確認した場合だけ `screen_session_unlocked_throughout: true` を加える。そのうえで `jq -s -f macos/scripts/u16-coverage.jq result-*.json` で集約し、未実行・重複・失敗・成功を区別する。異なる build の結果は同じ集約で成功としない。この集約だけでは U16 全体を完了と判定しない。実際の日本語入力、破棄をまたぐ renderer 応答、実際の chooser／restore 到達性、design が担当する回帰確認は集約の対象外である（我々の規則）。
 
-集約には C1 と C2 の検査範囲を別々に列挙し、C2 の結果を C1 の成功として扱わない。C2 ではページを page card の子孫ではなく共有 Views compositor に接続する。検査では active な NativeViewHost の対象、所属 widget と window、可視性、実際の bounds を確認する。C2 keyboard と matrix の画面検査ではページの hit test と Find／DevTools の幾何・重なり・入力も確認する。hidden 検査は画面入力の証拠にはならない。これらの assertion と既存の C2 DevTools 画面検査には、session と build の記録を伴う native 実行が別途必要である（我々の規則）。
+集約には C1 と C2 の検査範囲を別々に列挙し、C2 の結果を C1 の成功として扱わない。C2 ではページを page card の子孫ではなく共有 Views compositor に接続する。ページの位置は既に左右反転した layout に従うため、hosted page 自体は RTL で反転しない。Find overlay を window の native view 階層でページより前面に置く。検査では active な NativeViewHost の対象、所属 widget と window、可視性、実際の bounds を確認する。C2 keyboard と matrix の画面検査ではページの hit test と Find／DevTools の幾何・重なり・入力も確認する。hidden 検査は画面入力の証拠にはならない。既存の C2 DevTools 画面検査には、session と build の記録を伴う native 実行が別途必要である（我々の規則）。
+
+両 keyboard 検査は、生成された強制検索 URL を検証した後、loopback の検索 fixture へ移動し、読み込み完了を待って Back を検査する。公開検索 URL は読み込まない。両 keyboard 検査は、プロファイルをまたぐ space ショートカットを試す前に、移動先の fixture タブを開いて元の space に戻る。そのうえで、開いたタブへの切り替えを検査する。ウィンドウ別のショートカットと子ウィンドウの破棄を検査する前に、子ウィンドウの workspace に fixture タブを作成して選択する。非表示の settings 検査では、子ウィンドウに named profile の fixture タブを別に開き、settings の編集と子ウィンドウの破棄を検査する。画面 keyboard 検査では複製タブを閉じた後、元のページにフォーカスが戻るのを待ってから fullscreen を要求し、⌘T と ⌘W は native fullscreen の遷移完了を待って送る（我々の規則）。
+
+非表示の beforeunload 検査では、seed タブを選択・active にしてから Edit URL を開き、同じタブでキャンセルを検証する（我々の規則）。
 
 U14 は同じ fixture と制限を使う `--ararat-check=ext-popup|ext-windows-popup` と `--ararat-screen=extensions` を加える。非表示の検査は action popup の生成・破棄、storage、API callback と拡張が作る popup window を調べる。画面上の検査はメニューと popup、その配置、API による popup の表示を記録する。エンジンと画面での実行は未確認である（我々の規則）。
 
 U15 は同じスクラッチ領域の制約の下で `--ararat-check=fullscreen` と `--ararat-screen=fullscreen` を加える。非表示の検査はページの fullscreen とその終了、bubble、ブラウザ fullscreen への復帰、新しい profile の読み込み中における遷移完了を調べ、その profile の Browser が作成されるまで待つ。読み込み中に表示先が変わる場合があるため、表示中の profile を記録する。検査中は window の表示と前面アプリを継続的にサンプリングし、アプリのアクティブ化を通知で検出する。サンプリングだけでは window が画面に一度も表示されなかったことを証明できない。画面上の検査は window ID を指定して native window を撮影し、メニュー、キーボード、緑のボタン、サイドバーの端からの表示を試す。端からの表示には実際のカーソル位置、プロセス内のマウスイベント、製品の待機時間を使い、アニメーションの完了を待つ。エンジンと画面での実行は未確認である（我々の規則）。
 
-U16 は loopback fixture と windows 拡張 fixture を使う `--ararat-check=keyboard` と `--ararat-screen=keyboard` を加える。command panel、navigation と保存先、find、メニューの dispatch、拡張ショートカット、fullscreen を調べる。非表示の検査はウィンドウの表示と前面状態をサンプリングするが、短時間の表示がなかったことまでは証明できない。前の実装で行った非表示検査の2回はいずれもタイムアウトし、最後の trace は seed の準備中を示していた。watchdog は期限時の実際の phase を記録していない。画面検査は未実行である。その後の非表示検査は phase 3 に進んだが、IME の挿入は観測されなかった。サンプリング時にウィンドウは非表示のままだったが、前面のアプリは別のアプリに変わった。画面検査と U16 の受け入れは未完了である（我々の規則）。
+U16 は loopback fixture と windows 拡張 fixture を使う `--ararat-check=keyboard` と `--ararat-screen=keyboard` を加える。command panel、navigation と保存先、find、メニューの dispatch、拡張ショートカット、fullscreen を調べる。C1 と C2 の既定方向と RTL の非表示・画面検査は、同じ build の集約ですべて通過している。非表示の検査はウィンドウの表示と前面状態をサンプリングするが、短時間の表示がなかったことまでは証明できない。集約の対象外となる前述の検査が残るため、U16 の受け入れは未完了である（我々の規則）。
 
-非表示の incognito 検査は別々の scratch 環境で実行する。`--ararat-check=incognito` はプライベート操作で永続行が変わらないことを調べ、`--ararat-incognito-window-check` を加えた検査は明示的な native New Window が通常プロファイルの子ウィンドウと想定した workspace レコードだけを作ることを調べる。いずれも対応する native の再実行が必要である（我々の規則）。
+非表示の incognito 検査は別々の scratch 環境で実行する。`--ararat-check=incognito` は通常の seed タブのタイトルと URL が永続行に反映されるまで待って比較前の状態を取り、プライベート操作で永続行が変わらないことを調べる。`--ararat-incognito-window-check` を加えた検査は明示的な native New Window が通常プロファイルの子ウィンドウと想定した workspace レコードだけを作ることを調べる。
 
 viewless anchor の回帰検査は host の実際の矩形、負の画面座標、host がない場合を調べる。keyboard の両検査は既定の方向と `--force-ui-direction=rtl` の両方で実行する。画面検査はテスト用の chooser とファイルシステムの復元権限バブルを開き、矩形とスクリーンショットを記録する。これらはエンジンと画面での実行が必要である（我々の規則）。
 
-`--ararat-check=empty` は `engine/ararat/test_extensions/empty` を読み込み、`windows.getAll`、メニュー項目の検証、空の host における Edit URL の fallback と、command bar からの新規タブ作成を調べる。U16 で改めた経路は未実行である（我々の規則）。
+`--ararat-check=empty` は `engine/ararat/test_extensions/empty` を読み込み、`windows.getAll`、メニュー項目の検証、空の host における Edit URL の fallback と、command bar からの新規タブ作成を調べる。U16 で改めた経路は fixture を読み込んだ検査で通過している（我々の規則）。
 
 U12 の非表示の検査は loopback の fixture を使い、JSON を 1 行出力する。`permissions` は通知を許可し、位置情報を拒否し、MIDI SysEx を Dismiss して、ページの結果、3 回のプロンプト、待機中の要求がないことを確認する。fixture は通知を表示しない。`--disable-features=SystemNotifications` は Chrome の macOS 通知 bridge が OS の権限を要求する経路を止める。位置情報の拒否では location の opt-in に進まず、MIDI の Dismiss では MIDI セッションを開始しない。`dialogs` は JavaScript ダイアログの許可・キャンセルと HTTP 認証のキャンセルについて、modal host とページの結果を確認する。`protocol` は Chrome の確認をキャンセルし、host、前面アプリ、handler のプロセス、origin ごとの設定を確認する。Cancel の BLOCK は metrics にのみ記録される。`autofill` は住所とカードの保存 bubble を拒否し、personal data store を再読込してどちらも保存されていないことを確認する（我々の規則）。
 

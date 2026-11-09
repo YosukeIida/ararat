@@ -58,6 +58,33 @@ fn replaying_the_same_active_strip_preserves_workspace_rows() {
 }
 
 #[test]
+fn engine_metadata_does_not_replace_a_space_switch_selection() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    ws.create_space("one", "Other", "other").unwrap();
+    tab(&mut ws, "c2", "other:today", "https://c.example");
+    ws.select_item("one", "c2").unwrap();
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Engine,
+        strips: vec![strip(&live, &["a", "b"], Some("a"))],
+    });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("one"), Some("c2"));
+    assert!(live.live_tab("a").is_some());
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "b"], Some("b"))],
+    });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("one"), Some("b"));
+}
+
+#[test]
 fn a_hidden_page_snapshot_keeps_empty_space_selection_and_live_membership() {
     let mut ws = workspace();
     let mut live = Live::new();

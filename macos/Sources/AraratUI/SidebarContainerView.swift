@@ -231,7 +231,15 @@ public final class SidebarContainerView: NSView {
     private func layoutFindBar() {
         let rect = findPageRect.map { convert($0, from: page) } ?? page.frame
         let width = min(380, rect.width)
-        findBar.frame = NSRect(x: rect.maxX - width, y: rect.minY, width: width, height: 36)
+        let frame = NSRect(x: rect.maxX - width, y: rect.minY, width: width, height: 36)
+        findBar.frame = findBar.superview.map { $0.convert(frame, from: self) } ?? frame
+    }
+
+    public func placeFindBarAbovePage(in root: NSView) {
+        if findBar.superview !== root || root.subviews.last !== findBar {
+            root.addSubview(findBar, positioned: .above, relativeTo: nil)
+        }
+        layoutFindBar()
     }
 
     public func setFindPageRect(_ rect: NSRect) {

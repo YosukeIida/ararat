@@ -27,6 +27,19 @@ public final class KeyBindingsModel: ObservableObject {
         Self.apply(bindings, to: menu)
     }
 
+    public static func setCoreMenuShortcut(_ key: KeyCombination?, on item: NSMenuItem) {
+        var modifiers: NSEvent.ModifierFlags = []
+        if key?.command == true { modifiers.insert(.command) }
+        if key?.control == true { modifiers.insert(.control) }
+        if key?.option == true { modifiers.insert(.option) }
+        let character = key?.key ?? ""
+        let upper = character.uppercased()
+        let shiftedLetter = key?.shift == true && character != upper && upper.count == 1
+        if key?.shift == true && !shiftedLetter { modifiers.insert(.shift) }
+        item.keyEquivalent = shiftedLetter ? upper : character
+        item.keyEquivalentModifierMask = modifiers
+    }
+
     public static func apply(_ bindings: [KeyBinding], to menu: NSMenu) {
         for item in menu.items {
             if let submenu = item.submenu { apply(bindings, to: submenu) }
@@ -53,8 +66,10 @@ public final class KeyBindingsModel: ObservableObject {
                 if key.control { flags.insert(.control) }
                 if key.option { flags.insert(.option) }
                 if key.shift { flags.insert(.shift) }
-                if item.keyEquivalent.lowercased() == key.key.lowercased(),
-                   item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask) == flags {
+                var itemFlags = item.keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask)
+                let equivalent = item.keyEquivalent
+                if equivalent != equivalent.lowercased() && equivalent == equivalent.uppercased() { itemFlags.insert(.shift) }
+                if equivalent.lowercased() == key.key.lowercased(), itemFlags == flags {
                     collisions[binding.command] = item
                     item.keyEquivalent = ""
                 }

@@ -26,7 +26,8 @@ pub enum CommandKind { Open, Activate, Close }
 pub enum Cause {
     /// The engine's reply to the command with this id.
     Command(Id),
-    /// The engine changed something on its own call (navigation, session restore).
+    /// The engine reported state on its own call (metadata, profile switch, window close);
+    /// within an epoch it never changes the selection.
     Engine,
     /// Chrome changed something on its own (user gesture, extension).
     Chrome,
@@ -519,7 +520,7 @@ impl Live {
             }
         }
         for strip in &transaction.strips {
-            if changed_windows.contains(&strip.window) { continue; }
+            if matches!(transaction.cause, Cause::Engine) || changed_windows.contains(&strip.window) { continue; }
             if let Some(active) = &strip.active {
                 if let Some(item) = next_reverse.get(active).cloned() {
                     if next.selected(&strip.window) != Some(item.as_str())

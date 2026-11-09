@@ -34,6 +34,7 @@ ararat/app-controller-hooks.patch
 ararat/browser-window-factory.patch
 ararat/viewless-read-anything.patch
 ararat/viewless-bubble-anchor.patch
-ararat/keyboard-ime-diagnostics.patch
-ararat/hidden-dialog-containment.patch
 ararat/sad-tab-viewless.patch
+ararat/keyboard-ime-diagnostics.patch
+ararat/find-close-command.patch
+ararat/hidden-dialog-containment.patch

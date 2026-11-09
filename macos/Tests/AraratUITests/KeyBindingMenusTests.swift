@@ -32,6 +32,29 @@ private func routingEvent(keyCode: UInt16, characters: String, charactersIgnorin
 }
 
 @MainActor
+private final class ShortcutTarget: NSObject {
+    var calls = 0
+    @objc func toggle(_ sender: Any?) { calls += 1 }
+}
+
+@Test @MainActor
+func shiftedCoreMenuShortcutMatchesTheNativeKeyEvent() throws {
+    _ = NSApplication.shared
+    let target = ShortcutTarget()
+    let menu = NSMenu()
+    let item = menu.addItem(withTitle: "Toggle Library", action: #selector(ShortcutTarget.toggle(_:)), keyEquivalent: "")
+    item.target = target
+    let key = try #require(defaultKeyBindings().first { $0.command == "toggle_library" }?.key)
+    KeyBindingsModel.setCoreMenuShortcut(key, on: item)
+    let event = try routingEvent(keyCode: 37, characters: "l", charactersIgnoringModifiers: "L", flags: [.command, .shift])
+    #expect(menu.performKeyEquivalent(with: event))
+    #expect(target.calls == 1)
+    let unshifted = try routingEvent(keyCode: 37, characters: "l", charactersIgnoringModifiers: "l", flags: [.command])
+    #expect(!menu.performKeyEquivalent(with: unshifted))
+    #expect(target.calls == 1)
+}
+
+@MainActor
 private func openBindings(_ directory: URL) async throws -> (WorkspaceAdapter, WorkspaceSnapshot) {
     let adapter = WorkspaceAdapter(windowID: "bindings")
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

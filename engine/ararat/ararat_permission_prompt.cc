@@ -43,7 +43,9 @@ CheckState& GetCheckState() {
 bool IsPermissionCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   return command->GetSwitchValueASCII("ararat-check") == "permissions" ||
-         command->GetSwitchValueASCII("ararat-screen") == "prompts";
+         command->GetSwitchValueASCII("ararat-screen") == "prompts" ||
+         command->GetSwitchValueASCII("ararat-check") == "keyboard" ||
+         command->GetSwitchValueASCII("ararat-screen") == "keyboard";
 }
 
 void ApplyDecision(base::WeakPtr<permissions::PermissionPrompt::Delegate> delegate,

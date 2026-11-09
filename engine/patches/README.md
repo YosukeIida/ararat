@@ -62,6 +62,9 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/viewless-read-anything.patch` | ours |
 | `ararat/viewless-bubble-anchor.patch` | ours |
 | `ararat/sad-tab-viewless.patch` | ours; design cites Ardia precedent, unverified |
+| `ararat/keyboard-ime-diagnostics.patch` | ours |
+| `ararat/find-close-command.patch` | ours |
+| `ararat/hidden-dialog-containment.patch` | ours |
 
 ## Why these upstream patches
 
@@ -78,9 +81,11 @@ is in `docs/research/ungoogled-inventory.md` §8.
 
 `ararat/autofill-address-bubble.patch` comes from `mantrakp04/ardia`'s `engine/patches/chromium-autofill-address-bubble-window.patch` (GPL-3.0). It finds the Autofill handler on the Browser's unowned user data, guards the address promo's `AsBrowserView()` call and returns early from two card-controller checks.
 
-`ararat/keyboard-ime-diagnostics.patch` records bounded target and forwarding observations for the keyboard checks without recording input text.
+`ararat/keyboard-ime-diagnostics.patch` records bounded browser target and forwarding observations for the keyboard checks without recording input text.
 
 `ararat/hidden-dialog-containment.patch` lets the hidden-check layer reject unexpected ordinary JavaScript dialogs and validate beforeunload admission and completion at the WebContents boundary.
+
+`ararat/find-close-command.patch` refreshes command state after ending a find session, when the find UI is no longer active.
 
 `ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset.
 
