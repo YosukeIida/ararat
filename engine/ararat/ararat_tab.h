@@ -27,6 +27,7 @@ class WebContents;
 - (void)closeTab:(ARTab*)tab commandId:(NSString*)commandId;
 - (void)setItemId:(NSString*)itemId forTab:(ARTab*)tab;
 - (NSString*)itemIdForTab:(ARTab*)tab;
+- (void)checkFlushHistoryForTab:(ARTab*)tab completion:(void (^)(BOOL))completion;
 - (BOOL)isActiveTab:(ARTab*)tab;
 - (void)tabMetadataChanged;
 - (BOOL)checkDialogHostForContents:(content::WebContents*)contents;

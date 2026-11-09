@@ -38,3 +38,5 @@ ararat/sad-tab-viewless.patch
 ararat/keyboard-ime-diagnostics.patch
 ararat/find-close-command.patch
 ararat/hidden-dialog-containment.patch
+ararat/history-deletion-hook.patch
+ararat/crash-lock-abandon.patch

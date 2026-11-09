@@ -112,9 +112,11 @@ macOS App ──► AraratUI ──► AraratKit ──► ararat-ffi ──► 
 
 ### 4.3 Hook
 
-hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタである。パッチを当てた Chrome のファイルはこのヘッダーをインクルードするが、`g_ararat_is_window` は例外であり、`chrome/browser/ui/read_anything/read_anything_side_panel_controller.cc` でヘッダーを使わずに定義するため、宣言とのシグネチャの違いはコンパイル時に検査されない。hook が未設定のとき、Chrome は標準どおりに動作する。今日の一覧: `g_ararat_is_window` は read-anything の viewless 経路で独自ウィンドウを識別する。`chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は常時設定し、対象の Browser を独自 host に渡す。`g_ararat_reopen`、`g_ararat_dock_menu`、`g_ararat_open_urls` は Dock からの再オープン、Dock メニュー、外部 URL を扱い、`g_ararat_shown_browser` は AppController に表示中の Browser を返す。`g_ararat_create_permission_prompt` は権限要求を独自のタブモーダルプロンプトに渡す。window factory の hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
+hook は `ararat_hooks.h` で宣言する `g_ararat_*` の関数ポインタである。パッチを当てた Chrome のファイルはこのヘッダーをインクルードするが、`g_ararat_is_window` と `g_ararat_history_deleting` は例外である。前者は read-anything controller、後者は HistoryService でヘッダーを使わずに定義するため、宣言とのシグネチャの違いはコンパイル時に検査されない。履歴削除 hook は HistoryService が明示的な削除を予約する前に呼ばれる。hook が未設定のとき、Chrome は標準どおりに動作する。今日の一覧: `g_ararat_is_window` は read-anything の viewless 経路で独自ウィンドウを識別する。`chrome/browser/chrome_content_browser_client.cc` の `g_ararat_add_browser_main_extra_parts` は、client が作ったブラウザのメインパーツを独自レイヤーに渡し、レイヤーは `AddParts` を通じて独自の `ChromeBrowserMainExtraParts` を加える。`chrome/browser/ui/browser.cc` の `g_ararat_create_browser_window` は常時設定し、対象の Browser を独自 host に渡す。`g_ararat_reopen`、`g_ararat_dock_menu`、`g_ararat_open_urls` は Dock からの再オープン、Dock メニュー、外部 URL を扱い、`g_ararat_shown_browser` は AppController に表示中の Browser を返す。`g_ararat_create_permission_prompt` は権限要求を独自のタブモーダルプロンプトに渡す。window factory の hook は `Browser*` ではなく `BrowserWindowInterface*` を受け取る。upstream は呼び出し側を interface へ移すため `browser.h` の利用を `browser_header` の visibility で制限しており、独自レイヤーには interface だけで足りるためである。エクスポートする名前は、`ararat.exports`（リンカの `-exported_symbols_list`）と、`link-ararat-layer.patch` が `chrome/app/framework.order` に追加するシンボルの両方に並べる。`verify_order.py` は order ファイルにない framework のエクスポートを拒否するためであり、両者の違いはスクリプトが断り、`engine/ararat/` に定義のない名前も断る（我々の規則）。
 
 ### 4.4 エンジン ↔ アプリの API
+
+U17b は `openURL:commandId:itemId:profile:external:untrusted:historyStamp:`、`AraratPurgeTabHistory`、`AraratFinishCrashRecovery`、`AraratCheckTabHistoryFile`、`AraratCheckDeleteHistory`、`AraratCheckCrashState`、`AraratCheckCommitProfilePrefs` と、タブの `checkFlushHistory:` を追加する。flush の成功はファイルの atomic write の完了を示す。profile preferences の commit 検査は、crash seed が ready を出す前に Chromium の書き込み完了通知を待つ。
 
 - 各タブはプロセス内の navigation 回数とは別に、navigation controller のエントリ数と `canGoBack` を公開する。strip は renderer のクラッシュ状態を報告する。クラッシュしたタブを選択すると、すでにアクティブな場合も再読み込みを要求する（我々の規則。実行時の検証は未実施）。
 - host delegate はページの fullscreen と native window の遷移先 fullscreen 状態を別々に報告する。native widget は遷移の完了を遷移を始めた Browser と、表示中の Browser が変わった場合はその Browser に通知する。exclusive-access context は要求中を含むタブ fullscreen の状態をアプリに報告する。非表示の検査ではウィンドウ状態を模擬し、host を表示せずに表示中の Browser の各タブの renderer を同期する（U15、我々の規則）。
@@ -231,7 +233,9 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | ダウンロードの UI | ホスト（Chrome の bubble は無効にする） |
 | セッションの永続化 | 独自レイヤー（下記） |
 
-**セッション。** 独自の `Browser` では Chrome のウィンドウの自動復元を無効にする。パッチは factory hook が設定されたすべての Browser で復元を無効にする。プロファイルを host が保持している間、独自レイヤーは起動設定を Chrome のデフォルトに固定し、変更されても戻す。これにより Browser を指定しない復元要求でも Chrome のセッションを開かない。Chrome の強制管理ポリシーはこの設定より優先される。タブごとのナビゲーション履歴の永続化は未実装である。U17b で予定する履歴ファイルはプロファイルとコアの項目 id をキーとし、close、archive、delete で削除する。unload では保持する。復元にはファイルの URL と行の URL の一致を要求するため、移動した pinned 行は保存済み URL を新たに読み込む。sessionStorage は復元しない。PageState の復元はベストエフォートである。renderer からの更新は遅れる場合があり、Chromium は状態の一部を除去または無害化する（我々の規則）。
+**セッション。** 独自の `Browser` では Chrome のウィンドウの自動復元を無効にする。パッチは factory hook が設定されたすべての Browser で復元を無効にする。プロファイルを host が保持している間、独自レイヤーは起動設定を Chrome のデフォルトに固定し、変更されても戻す。これにより Browser を指定しない復元要求でも Chrome のセッションを開かない。Chrome の強制管理ポリシーはこの設定より優先される。U17b の履歴永続化は実装中であり、未検証である。その履歴ファイルはプロファイルとコアの項目 id をキーとし、close、archive、delete で削除を予約する。unload では保持する。復元にはファイルの URL と行の URL の一致を要求するため、移動した pinned 行は保存済み URL を新たに読み込む。sessionStorage は復元しない。PageState の復元はベストエフォートである。renderer からの更新は遅れる場合があり、Chromium は状態の一部を除去または無害化する（我々の規則）。
+
+クラッシュした通常プロファイルでは、エンジンは `AraratFinishCrashRecovery` まで Chromium の `CrashedLock` を保持する。復旧前にプロファイルが破棄される場合は、クラッシュを確認済みにせず lock を放棄する。明示的な削除では要求時と通知時の 2 回無効化するため、その間に結び付いた writer は停止される。dispatch 済みの復元が取り消され、その後に transaction が適用されず終了した場合、確認は保留され、次の起動でもクラッシュが報告されることがある。これらは未検証である（我々の規則）。
 
 ### 4.7 ビルドと成果物の同一性
 
@@ -278,7 +282,7 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 |---|---|---|
 | space、ピン留め / Today への所属、favorites、フォルダ、split の項目、archive、ウィンドウごとの表示状態、Air Traffic Control の規則、キーバインド | Rust のコア | Arc のモデルの形（components note 3） |
 | どの `WebContents` が、どの `Browser` に存在するか、順序、active タブ | Chrome の `TabStripModel` | Chrome がコミットする。拡張の API は同じ呼び出しの中で結果を読み戻すため、事前にアプリへ問い合わせることはしない（Ardia ledger 1.4） |
-| ナビゲーションスタック | エンジンのセッションの永続化（4.6）、予定 | プロファイルとコアの項目 id をキーとする。sessionStorage は復元しない |
+| ナビゲーションスタック | エンジンのセッションの永続化（4.6） | プロファイルとコアの項目 id をキーとする。sessionStorage は復元しない |
 | 履歴、ブックマーク、favicon、閉じたタブ、ズーム、ダウンロード、パスワード、autofill | Chrome のサービス | コアには複製しない |
 
 - 読み込まれていない workspace のタブは `WebContents` を持たない。
@@ -296,9 +300,11 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 - 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。workspace を正とし、各項目のライフサイクル状態を変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。epoch の途中で項目なしで届いたタブ（⌘ クリック、`window.open`）は、そのウィンドウで最後に表示した当該プロファイルの space の Today に取り込む。URL は commit 済みのナビゲーションが報告されるまで空とする。採用した live タブと項目の対応は WebContents の user data に保持する。エンジンが live と報告した未読み込みの行は open に変わる（我々の規則）。
 - 落とされたトランザクションは rev を消費する。同じ rev の後のトランザクションは、再送ではなくエンジンのバグである（我々の規則）。
 - コマンドの完了は発行時の epoch を持ち、現在の epoch でなければ捨てる。
+- クラッシュの確認には `CrashedLock` と `AraratFinishCrashRecovery` を使う。復旧前にプロファイルが破棄された場合は、確認済みにせず lock を放棄する（4.6）。確認は crash の check で検査し、放棄の経路は native では検査していない。
 - クラッシュ時に失われうる範囲: workspace の変更は SQLite トランザクションのコミット時に永続化される。大半の編集と live の照合は成功を返す前に flush するが、選択と space の変更は 1 秒ごとのバッチを待つ。書き込みが失敗すると、再試行が成功するまで失われうる範囲が広がる。workspace の変更と送信用の同期ログは同じトランザクションで書く。
 - ディスクの容量不足や書き込みの失敗の場合は、メモリ上の状態を保持し、バックオフ付きで再試行し、ユーザーに通知する。データベースを切り詰めることはしない。
-- close、archive、delete（archive の項目、folder、space）は workspace の変更とともに、ローカルの永続的な履歴削除 outbox を記録する。unload では記録しない。U17a はこれを処理せず、完了も待たない。履歴の永続化とファイルの削除は U17b で予定し、復元にはファイルの URL と行の URL の一致を要求する。
+- close、archive、delete（archive の項目、folder、space）は workspace の変更とともに、ローカルの永続的な履歴削除 outbox を記録する。unload では記録しない。U17b は consumer と admission stamp を追加し、古い purge が新しい writer のファイルを消さないようにする。エンジンとの接続は history-purge の check で native に検査する。復元にはファイルの URL と行の URL の一致を要求する。
+- 明示的な履歴削除ではプロファイルの generation を無効化し、既存の writer を停止する。自動的な期限切れは対象外とする。marker とファイルの削除は履歴用シーケンスで行う。marker の永続化前のクラッシュや削除失敗では古いファイルが残ることがある。通常のファイル削除であり、復元不能な消去は保証しない。失敗はログに記録して再試行し、ユーザーへの表示は phase 4 に残す（未検証）。
 - バックアップには SQLite の backup API を用いるため、WAL も含まれる。
 
 ### 5.3 プライベートブラウジング
@@ -452,7 +458,9 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 各 phase は、動作するビルドとサンドイッチ型のレビューで終える。
 
-U17a は workspace の再調整を検査する 2 回起動の `--ararat-check=relaunch|crash` と、renderer crash からの復旧を検査する `--ararat-check=sadtab` を加える。seed は各 fixture の行を workspace で選択してから開く。driver は stderr を転送し、失敗時の JSON に 1 回目の最後の trace、stderr の末尾 4 KiB、終了ステータスまたはシグナルを記録する。再起動をまたぐナビゲーション履歴は検査しない。履歴の永続化と既存の削除 outbox の処理は U17b で予定する。2 回の isolation run では `sadtab` は通り、2 回起動の両検査は ready の前で停止した。最新の修正後の実行はまだである（我々の規則）。
+U17a は workspace の再調整を検査する 2 回起動の `--ararat-check=relaunch|crash` と、renderer crash からの復旧を検査する `--ararat-check=sadtab` を加える。seed は各 fixture の行を workspace で選択してから開く。driver は stderr を転送し、失敗時の JSON に 1 回目の最後の trace、stderr の末尾 4 KiB、終了ステータスまたはシグナルを記録する。U17b では 2 回起動の検査に履歴の flush 成功と Back スタックの復元を追加する。native exit では relaunch は通ったが、crash は前回が正常終了だったと読み取った。その後の profile preferences の commit 完了を待つ修正は、エンジンでは未実行である（我々の規則）。
+
+U17b は非表示の `--ararat-check=history-clear` と `--ararat-check=history-purge` を追加し、無効化、期限切れ、purge の順序、pinned の unload、ファイルの破損、削除の再試行を検査する。両方とも native exit で通った。off-the-record の writer を拒否する guard は未検証である（我々の規則）。
 
 slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-db`、一時的な user data directory、mock keychain を使う。3 行のうち 2 行を開き、2 行目を選び直す。画面上の検査は U8 で行う（我々の規則）。
 

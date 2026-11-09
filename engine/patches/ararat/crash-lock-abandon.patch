@@ -1,0 +1,66 @@
+--- a/chrome/browser/sessions/exit_type_service.h
++++ b/chrome/browser/sessions/exit_type_service.h
+@@ -55,6 +55,7 @@
+     CrashedLock(const CrashedLock&) = delete;
+     CrashedLock& operator=(const CrashedLock&) = delete;
+     ~CrashedLock();
++    void Abandon();
+ 
+    private:
+     friend class ExitTypeService;
+@@ -157,6 +158,7 @@
+ 
+   // Number of outstanding CrashedLock created.
+   int crashed_lock_count_ = 0;
++  bool ararat_suppress_crash_ack_ = false;
+ 
+   // Used for observing a restore.
+   base::CallbackListSubscription restore_subscription_;
+--- a/chrome/browser/sessions/exit_type_service.cc
++++ b/chrome/browser/sessions/exit_type_service.cc
+@@ -123,7 +123,14 @@
+ };
+ 
+ ExitTypeService::CrashedLock::~CrashedLock() {
+-  service_->CrashedLockDestroyed();
++  if (service_) service_->CrashedLockDestroyed();
++}
++
++void ExitTypeService::CrashedLock::Abandon() {
++  if (!service_) return;
++  service_->ararat_suppress_crash_ack_ = true;
++  --service_->crashed_lock_count_;
++  service_ = nullptr;
+ }
+ 
+ ExitTypeService::CrashedLock::CrashedLock(ExitTypeService* service)
+@@ -208,6 +215,7 @@
+ }
+ 
+ void ExitTypeService::CheckUserAckedCrash() {
++  if (ararat_suppress_crash_ack_) return;
+   // Once shutdown has started the state this checks may be torn down. During
+   // tear down we shouldn't run the callbacks, as the user did not really ack
+   // the crash.
+--- a/chrome/browser/sessions/exit_type_service_browsertest.cc
++++ b/chrome/browser/sessions/exit_type_service_browsertest.cc
+@@ -109,6 +109,19 @@
+   }
+ };
+ 
++IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, AbandonedCrashLockDoesNotAcknowledge) {
++  auto* service = GetExitTypeService();
++  service->SetWaitingForUserToAckCrashForTest(true);
++  auto lock = service->CreateCrashedLock();
++  ASSERT_TRUE(lock);
++  auto other_lock = service->CreateCrashedLock();
++  ASSERT_TRUE(other_lock);
++  lock->Abandon();
++  lock.reset();
++  other_lock.reset();
++  EXPECT_TRUE(service->waiting_for_user_to_ack_crash());
++}
++
+ // Sets state so that on the next run the last session exit type is crashed.
+ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, PRE_PRE_PRE_CrashCrashNewBrowser) {
+   ExitTypeService::GetInstanceForProfile(browser()->GetProfile())

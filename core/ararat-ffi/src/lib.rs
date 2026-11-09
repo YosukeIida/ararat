@@ -289,11 +289,20 @@ impl WorkspaceStore {
 
     pub fn pending_history_purges(&self) -> Result<Vec<HistoryPurge>, CoreError> {
         let workspace = self.workspace.lock().unwrap();
+        if workspace.history_purges.is_empty() { return Ok(Vec::new()); }
         self.store.flush()?;
-        let mut purges: Vec<_> = workspace.history_purges.iter().map(|(id, (profile, item))|
-            HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone() }).collect();
+        let mut purges: Vec<_> = workspace.history_purges.iter().map(|(id, (profile, item, changed_at))|
+            HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone(), changed_at: *changed_at }).collect();
         purges.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(purges)
+    }
+
+    pub fn history_admission(&self, item: String) -> HistoryAdmission {
+        let workspace = self.workspace.lock().unwrap();
+        let stamp = workspace.items.get(&item).map_or(0, |i| i.lifecycle_changed_at);
+        let purges = workspace.history_purges.iter().filter(|(_, (_, id, _))| id == &item)
+            .map(|(id, (profile, item, changed_at))| HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone(), changed_at: *changed_at }).collect();
+        HistoryAdmission { stamp, purges }
     }
 
     pub fn acknowledge_history_purge(&self, id: String) -> Result<(), CoreError> {
@@ -568,6 +577,13 @@ pub struct HistoryPurge {
     pub id: String,
     pub profile: Profile,
     pub item: String,
+    pub changed_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct HistoryAdmission {
+    pub stamp: u64,
+    pub purges: Vec<HistoryPurge>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -1102,7 +1118,11 @@ mod tests {
         store.archive_item("one".into(), item.clone()).unwrap();
         let first = store.pending_history_purges().unwrap().pop().unwrap();
         assert_eq!(first.item, item);
+        let admission = store.history_admission(item.clone());
+        assert_eq!(admission.purges, vec![first.clone()]);
+        assert_eq!(admission.stamp, first.changed_at);
         store.restore_item("one".into(), item.clone()).unwrap();
+        assert!(store.history_admission(item.clone()).stamp > first.changed_at);
         store.archive_item("one".into(), item.clone()).unwrap();
         assert_eq!(store.pending_history_purges().unwrap().len(), 2);
         store.acknowledge_history_purge(first.id.clone()).unwrap();

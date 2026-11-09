@@ -8,6 +8,15 @@ fn workspace() -> Workspace {
 }
 
 #[test]
+fn auto_archive_purge_follows_all_existing_lifecycle_times() {
+    let mut ws = workspace();
+    let future = u64::MAX - 100;
+    ws.items.get_mut("tab-a").unwrap().lifecycle_changed_at = future;
+    ws.auto_archive(ArchiveAfter::Hours12.millis() + 1).unwrap();
+    assert!(ws.history_purges.values().any(|(_, item, changed_at)| item == "tab-a" && *changed_at > future));
+}
+
+#[test]
 fn creating_or_restoring_a_selection_preserves_the_recently_viewed_tab() {
     for action in ["tab", "space", "restore"] {
         let mut ws = workspace();

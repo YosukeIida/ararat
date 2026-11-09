@@ -502,6 +502,8 @@ final class Runtime: NSObject {
   var browserCheckTracedPhase = -1
   var browserCheckRows: [Row] = []
   var browserCheckSeedID: String?
+  var historyClearCheck: HistoryClearCheck?
+  var historyPurgeCheck: HistoryPurgeCheck?
   var browserCheckBefore: WorkspaceSnapshot?
   var popupNewTabBefore: [(live: String, item: String?)] = []
   var popupNewTabRows: Set<String> = []
@@ -619,10 +621,10 @@ final class Runtime: NSObject {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if checkName == "fullscreen" {
@@ -674,6 +676,19 @@ final class Runtime: NSObject {
     let path = requested ?? (directory as NSString).appendingPathComponent("workspace.sqlite")
     quitPath = path
     let running = session ?? WorkspaceSession()
+    guard let purgeSymbol = dlsym(Launcher.handle, "AraratPurgeTabHistory"),
+          let finishSymbol = dlsym(Launcher.handle, "AraratFinishCrashRecovery") else {
+      throw NSError(domain: "Ararat.history", code: 1)
+    }
+    typealias PurgeHistory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, UInt64, @escaping @convention(block) (Bool) -> Void) -> Void
+    let purgeHistory = unsafeBitCast(purgeSymbol, to: PurgeHistory.self)
+    let finishCrashRecovery = unsafeBitCast(finishSymbol, to: (@convention(c) () -> Void).self)
+    running.finishCrashRecovery = { finishCrashRecovery() }
+    running.purgeHistory = { profile, item, changedAt, completion in
+      let profileObject = profile as NSString
+      let itemObject = item as NSString
+      purgeHistory(Unmanaged.passUnretained(profileObject).toOpaque(), Unmanaged.passUnretained(itemObject).toOpaque(), changedAt, completion)
+    }
     var adoptedWindow = false
     if session == nil || reopening {
       // Design (c): the first window adopts the newest kept `Window` record, none kept
@@ -819,6 +834,7 @@ final class Runtime: NSObject {
     actions.bind(to: sidebar)
     adapter.attach(host)
     if session == nil && adoptedWindow { adapter.restoreSelection() }
+    if session == nil && !adoptedWindow { running.finishCrashRecovery?() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
        (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || quitMode == "quit-cancel" || quitMode == "close") {
       host.installCheckDialogFactory()
@@ -1479,15 +1495,37 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
                 let records = captureCheckRows(), host.checkStockBrowsers() == 0 {
         let ready: [String: Any] = ["ready": true, "space": space.id, "selected": id,
                                     "url": tab.url, "items": space.today.map(\.id),
-                                    "records": records.map { Array($0.prefix(2)) }]
-        guard let data = try? JSONSerialization.data(withJSONObject: ready, options: [.sortedKeys]),
-              let line = String(data: data, encoding: .utf8) else {
-          finishBrowserCheck(ok: false, values: ["error": "cannot encode ready state"]); return
-        }
+                                    "records": records.map { Array($0.prefix(2)) },
+                                    "entry_count": tab.entryCount, "can_go_back": tab.canGoBack]
+        let validHistory = tab.entryCount == 2 && tab.canGoBack
         browserCheckPhase = 4
-        print(line); fflush(stdout)
-        if CommandLine.arguments.contains("--ararat-relaunch-mode=relaunch") {
-          finishBrowserCheck(ok: true, values: [:])
+        tab.checkFlushHistory { written in
+          MainActor.assumeIsolated {
+            guard written, validHistory else {
+              self.finishBrowserCheck(ok: false, values: ["error": "history flush or stack failed"]); return
+            }
+            guard let symbol = dlsym(Launcher.handle, "AraratCheckCommitProfilePrefs") else {
+              self.finishBrowserCheck(ok: false, values: ["error": "missing profile prefs commit API"]); return
+            }
+            typealias Commit = @convention(c) (UnsafeRawPointer, @escaping @convention(block) (Bool) -> Void) -> Void
+            let commit = unsafeBitCast(symbol, to: Commit.self)
+            let profile = "Default" as NSString
+            commit(Unmanaged.passUnretained(profile).toOpaque()) { done in
+              MainActor.assumeIsolated {
+                guard done else {
+                  self.finishBrowserCheck(ok: false, values: ["error": "profile unavailable for prefs commit"]); return
+                }
+                guard let data = try? JSONSerialization.data(withJSONObject: ready, options: [.sortedKeys]),
+                      let line = String(data: data, encoding: .utf8) else {
+                  self.finishBrowserCheck(ok: false, values: ["error": "cannot encode ready state"]); return
+                }
+                print(line); fflush(stdout)
+                if CommandLine.arguments.contains("--ararat-relaunch-mode=relaunch") {
+                  self.finishBrowserCheck(ok: true, values: [:])
+                }
+              }
+            }
+          }
         }
       }
       return
@@ -1497,6 +1535,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           let expected = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
           let spaceID = expected["space"] as? String, let selected = expected["selected"] as? String,
           let url = expected["url"] as? String, let items = expected["items"] as? [String],
+          let entryCount = expected["entry_count"] as? Int, expected["can_go_back"] as? Bool == true,
           let committed = expected["records"] as? [[String]] else {
       finishBrowserCheck(ok: false, values: ["error": "invalid expected state"]); return
     }
@@ -1511,10 +1550,25 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     let othersUnloaded = rows.filter { items.contains($0.id) && $0.id != selected }.allSatisfy(\.unloaded)
     let stock = host.checkStockBrowsers()
     let browserViews = host.checkBrowserViews()
-    finishBrowserCheck(ok: allPresent && othersUnloaded && stock == 0 && browserViews == 0,
+    let historyRestored = Int(tab.entryCount) == entryCount && tab.canGoBack
+    guard let crashSymbol = dlsym(Launcher.handle, "AraratCheckCrashState") else {
+      finishBrowserCheck(ok: false, values: ["error": "missing crash state API"]); return
+    }
+    let crashCheck = unsafeBitCast(crashSymbol, to: (@convention(c) (UnsafeRawPointer) -> UnsafeRawPointer?).self)
+    let defaultProfile = "Default" as NSString
+    guard let crashPointer = crashCheck(Unmanaged.passUnretained(defaultProfile).toOpaque()),
+          let crashState = Unmanaged<NSDictionary>.fromOpaque(crashPointer).takeUnretainedValue() as? [String: Bool],
+          let lastCrashed = crashState["last_exit_crashed"], let waiting = crashState["waiting_for_ack"] else {
+      finishBrowserCheck(ok: false, values: ["error": "invalid crash state"]); return
+    }
+    let crashExpected = CommandLine.arguments.contains("--ararat-relaunch-mode=crash")
+    let crashCorrect = lastCrashed == crashExpected && !waiting
+    finishBrowserCheck(ok: allPresent && othersUnloaded && historyRestored && crashCorrect && stock == 0 && browserViews == 0,
                        values: ["space_restored": true, "selected_live": true, "url_restored": true,
                                 "committed_records_present": allPresent, "others_unloaded": othersUnloaded,
-                                "stock_browsers": stock, "browser_views": browserViews])
+                                "history_restored": historyRestored, "entry_count": tab.entryCount,
+                                "can_go_back": tab.canGoBack, "last_exit_crashed": lastCrashed,
+                                "waiting_for_ack": waiting, "stock_browsers": stock, "browser_views": browserViews])
   }
 
   func browserCheckTick() {
@@ -1904,6 +1958,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
     } regular: {
     guard let host else { return }
+    if mode == "history-clear" {
+      if historyClearCheck == nil { historyClearCheck = HistoryClearCheck(runtime: self) }
+      historyClearCheck?.tick(host)
+      return
+    }
+    if mode == "history-purge" {
+      if historyPurgeCheck == nil { historyPurgeCheck = HistoryPurgeCheck(runtime: self) }
+      historyPurgeCheck?.tick(host)
+      return
+    }
     if mode == "devtools" { devtoolsCheckTick(host); return }
     if mode == "screen-devtools" { devtoolsScreenTick(host); return }
     if mode == "permissions" { permissionCheckTick(host); return }
@@ -6243,7 +6307,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func finishBrowserCheck(ok: Bool, values: [String: Any]) {
-    let ok = ok && (host?.checkDialogIntegrity() ?? true)
+    let cleanupSucceeded = historyPurgeCheck?.cleanup() ?? true
+    let ok = ok && cleanupSucceeded && (host?.checkDialogIntegrity() ?? true)
 
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)

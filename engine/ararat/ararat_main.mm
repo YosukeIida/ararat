@@ -11,6 +11,7 @@
 
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_permission_prompt.h"
+#include "ararat/core/ararat_tab_history.h"
 #include "ararat/core/ararat_window_check.h"
 #include "ararat/core/ararat_window_host.h"
 #include "base/command_line.h"
@@ -98,6 +99,7 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
   }
   void PostBrowserStart() override {
     ChromeBrowserMainExtraParts::PostBrowserStart();
+    ararat::tab_history::StartHistoryWatcher();
     g_ui_ready.store(true, std::memory_order_release);
     // A quit requested before the loop exists is honoured here; the posted task
     // runs once the main loop runs.
@@ -234,7 +236,7 @@ void CheckGuards(int argc, const char** argv) {
       check_devtools = name == "devtools";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
       g_check_tabs = name == "tabs";
       check_slice = name == "slice";
       g_check_slice = check_slice;

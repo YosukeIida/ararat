@@ -18,7 +18,10 @@ fn lifecycle_purges_are_local_and_durable_but_empty_epoch_is_not_a_delete() {
     store.flush().unwrap();
     let loaded = Store::open(&path).unwrap().1;
     assert_eq!(loaded.items["tab-spec"].lifecycle, Lifecycle::Archived);
-    assert_eq!(loaded.history_purges.values().collect::<Vec<_>>(), vec![&(Profile::Default, "tab-spec".into())]);
+    assert_eq!(loaded.history_purges.values().collect::<Vec<_>>(), vec![&(Profile::Default, "tab-spec".into(), loaded.items["tab-spec"].lifecycle_changed_at)]);
+    let purge_at = loaded.items["tab-spec"].lifecycle_changed_at;
+    ws.restore_item("one", "tab-spec").unwrap();
+    assert!(ws.items["tab-spec"].lifecycle_changed_at > purge_at);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let count: u32 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'history_purge'", [], |row| row.get(0)).unwrap();
     assert_eq!(count, 0);
@@ -36,11 +39,12 @@ fn deleting_a_space_records_its_unloaded_tabs_with_the_old_profile() {
     let id = ws.selected("one").unwrap().to_string();
     ws.items.get_mut(&id).unwrap().lifecycle = Lifecycle::Unloaded;
     ws.delete_space("space-home").unwrap();
-    assert!(ws.history_purges.values().any(|(profile, item)| *profile == Profile::Named("Profile 1".into()) && item == &id));
+    assert!(ws.history_purges.values().any(|(profile, item, _)| *profile == Profile::Named("Profile 1".into()) && item == &id));
     assert_eq!(ws.items[&id].lifecycle, Lifecycle::Archived);
     ws.history_purges.clear();
+    let archived_at = ws.items[&id].lifecycle_changed_at;
     ws.delete_archive_item(&id).unwrap();
-    assert!(ws.history_purges.values().any(|(profile, item)| *profile == Profile::Named("Profile 1".into()) && item == &id));
+    assert!(ws.history_purges.values().any(|(profile, item, changed_at)| *profile == Profile::Named("Profile 1".into()) && item == &id && *changed_at > archived_at));
     assert!(!ws.history_profiles.contains_key(&id));
 }
 
@@ -50,7 +54,7 @@ fn deleting_a_folder_queues_each_tab_including_unloaded_split_members() {
     ws.move_item("split-1", "folder-docs", 1, false).unwrap();
     ws.items.get_mut("tab-b").unwrap().lifecycle = Lifecycle::Unloaded;
     ws.delete_folder("folder-docs").unwrap();
-    let mut items: Vec<_> = ws.history_purges.values().map(|(profile, item)| {
+    let mut items: Vec<_> = ws.history_purges.values().map(|(profile, item, _)| {
         assert_eq!(*profile, Profile::Default);
         item.as_str()
     }).collect();

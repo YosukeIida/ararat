@@ -61,10 +61,12 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/browser-window-factory.patch` | ours |
 | `ararat/viewless-read-anything.patch` | ours |
 | `ararat/viewless-bubble-anchor.patch` | ours |
-| `ararat/sad-tab-viewless.patch` | ours; design cites Ardia precedent, unverified |
+| `ararat/sad-tab-viewless.patch` | ours; Ardia has the same guard |
 | `ararat/keyboard-ime-diagnostics.patch` | ours |
 | `ararat/find-close-command.patch` | ours |
 | `ararat/hidden-dialog-containment.patch` | ours |
+| `ararat/history-deletion-hook.patch` | ours |
+| `ararat/crash-lock-abandon.patch` | ours |
 
 ## Why these upstream patches
 
@@ -73,7 +75,12 @@ is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
 
-`ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. The U17 design cites an Ardia (`mantrakp04/ardia`, GPL-3.0) guard as precedent; its source has not been verified here. This patch was written against Chromium's source.
+`ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. Ardia (`mantrakp04/ardia`, GPL-3.0) has the same guard in `engine/ardiacore/apply.sh`. This patch was written independently against Chromium's source.
+
+`ararat/history-deletion-hook.patch` calls an optional hook before HistoryService schedules a deletion, allowing Ararat to invalidate tab history on the file sequence.
+The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. It confirms that the request hook queued invalidation; it does not wait for the history backend or its later deletion notification.
+
+`ararat/crash-lock-abandon.patch` lets the host release a crash lock without acknowledging the crash when its profile is destroyed before workspace recovery completes.
 
 `ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
 

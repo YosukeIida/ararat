@@ -51,8 +51,8 @@ private final class MatrixFakeHost: NSObject {
         return ["live": tab?.liveId ?? "", "target": shown, "host": shown, "visible": shown,
                 "window": shown, "bounds": shown, "page_hit": shown, "compositor": "c1", "presented": shown]
     }
-    @objc(openURL:commandId:itemId:profile:external:untrusted:)
-    func open(_ url: String, command: String, item: String, profile: String, external: Bool, untrusted: Bool) -> Bool {
+    @objc(openURL:commandId:itemId:profile:external:untrusted:historyStamp:)
+    func open(_ url: String, command: String, item: String, profile: String, external: Bool, untrusted: Bool, historyStamp: UInt64) -> Bool {
         if deferOpen {
             pendingOpens[command] = item
             opened.append(command)
@@ -556,4 +556,28 @@ func restoredSelectionIsRevalidatedWhenDeferredOpenDrains() async throws {
     #expect(!engine.windowHost(otherHost, shouldOpenCommand: command, itemId: ids.0))
     engine.invalidateSelection()
     #expect(!engine.windowHost(host, shouldOpenCommand: command, itemId: ids.0))
+}
+
+@Test @MainActor
+func recoveryDoesNotAcknowledgeTheInitialTransactionBeforeSelectionDispatch() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                                   windowID: "recovery-order", card: NSView(), session: session)
+    let (fake, host) = matrixFake()
+    var acknowledgements = 0
+    var observedInitial = false
+    session.finishCrashRecovery = { acknowledgements += 1 }
+    engine.onTransaction = { transaction, applied in
+        if transaction.rev == 0 && applied {
+            observedInitial = true
+            #expect(acknowledgements == 0)
+        }
+    }
+    engine.attach(host)
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "recovery-order", epoch: 1, rev: 0, command: nil))
+    engine.restoreSelection()
+    try await matrixWait { observedInitial && acknowledgements == 1 }
 }

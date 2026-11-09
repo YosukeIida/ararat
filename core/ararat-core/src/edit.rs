@@ -758,18 +758,18 @@ impl Workspace {
     fn history_purge_ops(&self, changes: &[Op]) -> Vec<Op> {
         use std::hash::BuildHasher;
         changes.iter().filter_map(|op| {
-            let item = match op {
-                Op::Put(Record::Item(item)) if item.lifecycle != Lifecycle::Unloaded => item,
-                Op::Delete(crate::model::Kind::Item, id) => self.items.get(id)?,
+            let (item, changed_at) = match op {
+                Op::Put(Record::Item(item)) if item.lifecycle != Lifecycle::Unloaded => (item, item.lifecycle_changed_at),
+                Op::Delete(crate::model::Kind::Item, id) => (self.items.get(id)?, self.lifecycle_time()),
                 _ => return None,
             };
             if !matches!(item.kind, ItemKind::Tab { .. }) { return None; }
             let profile = self.item_profile(&item.id).or_else(|| self.history_profiles.get(&item.id))?.clone();
             let random = std::collections::hash_map::RandomState::new();
             let id = format!("{:016x}{:016x}", random.hash_one(0u8), random.hash_one(1u8));
-            Some((id, profile, item.id.clone()))
-        }).flat_map(|(id, profile, item)| [
-            Op::Put(Record::HistoryPurge { id, profile: profile.clone(), item: item.clone() }),
+            Some((id, profile, item.id.clone(), changed_at))
+        }).flat_map(|(id, profile, item, changed_at)| [
+            Op::Put(Record::HistoryPurge { id, profile: profile.clone(), item: item.clone(), changed_at }),
             Op::Put(Record::HistoryProfile { item, profile }),
         ]).collect()
     }
@@ -842,7 +842,7 @@ impl Workspace {
         if ops.is_empty() && expired.is_empty() { return Ok(ops); }
         let mut next = self.clone();
         for op in &ops { next.apply(op); }
-        for id in expired { ops.extend(next.finish_item(&id, true, now)?); }
+        for id in expired { ops.extend(next.finish_item(&id, true, next.lifecycle_time())?); }
         *self = next;
         Ok(ops)
     }

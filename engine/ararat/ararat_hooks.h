@@ -12,6 +12,8 @@
 #include "components/permissions/permission_prompt.h"
 
 namespace content { class WebContents; }
+namespace history { class HistoryService; }
+extern void (*g_ararat_history_deleting)(history::HistoryService*);
 extern void (*g_ararat_devtools_changed)(content::WebContents*,
                                          content::WebContents*);
 extern std::unique_ptr<permissions::PermissionPrompt> (*g_ararat_create_permission_prompt)(

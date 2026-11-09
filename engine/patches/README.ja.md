@@ -51,10 +51,12 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/browser-window-factory.patch` | 独自 |
 | `ararat/viewless-read-anything.patch` | 独自 |
 | `ararat/viewless-bubble-anchor.patch` | 独自 |
-| `ararat/sad-tab-viewless.patch` | 独自、設計は Ardia を先例に挙げるが未検証 |
+| `ararat/sad-tab-viewless.patch` | 独自、Ardia に同じガードがある |
 | `ararat/keyboard-ime-diagnostics.patch` | 独自 |
 | `ararat/find-close-command.patch` | 独自 |
 | `ararat/hidden-dialog-containment.patch` | 独自 |
+| `ararat/history-deletion-hook.patch` | 独自 |
+| `ararat/crash-lock-abandon.patch` | 独自 |
 
 ## 取り込んだパッチを選んだ理由
 
@@ -62,7 +64,12 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 ## 独自パッチに関する注記
 
-`ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。U17 の設計は Ardia（`mantrakp04/ardia`、GPL-3.0）のガードを先例として挙げているが、ここではそのソースを確認していない。このパッチは Chromium のソースに対して独自に記述した。
+`ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。Ardia（`mantrakp04/ardia`、GPL-3.0）の `engine/ardiacore/apply.sh` にも同じガードがある。このパッチは Chromium のソースに対して独自に記述した。
+
+`ararat/history-deletion-hook.patch` は、HistoryService が履歴削除を予約する前に任意の hook を呼び、Ararat がファイル用シーケンスでタブ履歴を無効化できるようにする。
+mode 1 の検査は `DeleteURLs` を要求し、ファイル用シーケンスの barrier を待つ。要求時の hook が無効化を予約したことを確認するもので、history backend の完了や後続の削除通知は待たない。
+
+`ararat/crash-lock-abandon.patch` は、workspace の復旧完了前にプロファイルが破棄された場合、クラッシュを確認済みにせず crash lock を解放できるようにする。
 
 `ararat/permission-prompt-hook.patch` は `ChromePermissionsClient::CreatePrompt` から独自 hook を呼ぶ。hook が未設定か null を返す場合は Chrome 標準のプロンプトを使う。`link-ararat-layer.patch` は permissions のビルドターゲットに `//ararat/core:hooks` を追加する。
 

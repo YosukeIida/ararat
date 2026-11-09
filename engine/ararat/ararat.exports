@@ -1,10 +1,16 @@
 # One exported symbol per line, no wildcards; the same set the link patch adds
 # to chrome/app/framework.order — engine/scripts refuses a difference.
 _AraratBrowserCount
+_AraratCheckCommitProfilePrefs
+_AraratCheckCrashState
+_AraratCheckDeleteHistory
+_AraratCheckTabHistoryFile
 _AraratEngineVersion
 _AraratExclusiveInputCount
+_AraratFinishCrashRecovery
 _AraratFinishSliceCheck
 _AraratMain
+_AraratPurgeTabHistory
 _AraratQuit
 _AraratStartMeasure
 _AraratUserDataDirectory

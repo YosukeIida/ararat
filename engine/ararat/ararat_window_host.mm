@@ -17,6 +17,7 @@
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_tab.h"
+#include "ararat/core/ararat_tab_history.h"
 #include "base/check.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
@@ -54,6 +55,8 @@
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_tabrestore.h"
+#include "components/sessions/core/serialized_user_agent_override.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/dialogs/browser_dialogs.h"
 #include "chrome/browser/ui/browser_command_controller.h"
@@ -1045,9 +1048,11 @@ void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
 namespace {
 const char kTabIdentityKey[] = "ararat.tab.identity";
 struct TabIdentity : public base::SupportsUserData::Data {
-  TabIdentity(NSString* live, NSString* item) : live_id([live copy]), item_id([item copy]) {}
+  TabIdentity(NSString* live, NSString* item, uint64_t stamp) : live_id([live copy]), item_id([item copy]), admitted_at(stamp) {}
   __strong NSString* live_id;
   __strong NSString* item_id;
+  uint64_t admitted_at;
+  std::unique_ptr<ararat::tab_history::Writer> history;
 };
 
 uint64_t g_epoch = 0;
@@ -1085,8 +1090,9 @@ class StripObserver : public TabStripModelObserver {
 - (void)discardPendingOpens;
 - (TabStripModel*)stripForTab:(ARTab*)tab;
 - (void)ensureProfileBrowser:(NSString*)directory;
-- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId external:(BOOL)external untrusted:(BOOL)untrusted profile:(NSString*)profile;
+- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId external:(BOOL)external untrusted:(BOOL)untrusted profile:(NSString*)profile historyStamp:(uint64_t)stamp;
 - (void)profileLoaded:(BOOL)loaded;
+- (void)historyLoaded:(std::optional<ararat::tab_history::Restore>)result command:(NSString*)command;
 - (void)positionPage;
 - (BOOL)dispatchWorkspaceCommand:(NSInteger)command;
 - (NSString*)findLiveId;
@@ -1239,8 +1245,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSString* window_id_;
   NSString* command_id_;
   NSString* opening_item_;
+  uint64_t opening_stamp_;
   BOOL draining_opens_;
   BOOL loading_profile_;
+  BOOL loading_history_;
+  std::map<std::string, std::optional<ararat::tab_history::Restore>> history_results_;
+  std::map<std::string, uint64_t> history_epochs_;
   BOOL emitted_change_;
   BOOL empty_reported_;
   BOOL closing_all_;
@@ -1869,7 +1879,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)checkKeyboardCommand:(NSString*)command {
   auto* args = base::CommandLine::ForCurrentProcess();
-  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && args->GetSwitchValueASCII("ararat-check") != "empty" && args->GetSwitchValueASCII("ararat-check") != "incognito" && args->GetSwitchValueASCII("ararat-check") != "popup" && args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup") return;
+  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && args->GetSwitchValueASCII("ararat-check") != "empty" && args->GetSwitchValueASCII("ararat-check") != "incognito" && args->GetSwitchValueASCII("ararat-check") != "popup" && args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup" && args->GetSwitchValueASCII("ararat-check") != "history-purge") return;
   NSDictionary<NSString*, NSNumber*>* commands = @{
     @"new": @(IDC_NEW_TAB), @"location": @(IDC_FOCUS_LOCATION), @"search": @(IDC_FOCUS_SEARCH),
     @"find": @(IDC_FIND), @"next": @(IDC_FIND_NEXT), @"previous": @(IDC_FIND_PREVIOUS),
@@ -2377,20 +2387,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId {
-  return [self openURL:url commandId:commandId itemId:itemId external:NO untrusted:NO profile:self.profileDirectory];
+  return [self openURL:url commandId:commandId itemId:itemId external:NO untrusted:NO profile:self.profileDirectory historyStamp:0];
 }
 
 - (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted {
-  return [self openURL:url commandId:commandId itemId:itemId external:YES untrusted:untrusted profile:self.profileDirectory];
+  return [self openURL:url commandId:commandId itemId:itemId external:YES untrusted:untrusted profile:self.profileDirectory historyStamp:0];
 }
 
-- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted {
+- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted historyStamp:(uint64_t)stamp {
   base::FilePath name(profile.UTF8String);
   if (name.empty() || name.IsAbsolute() || name.ReferencesParent() || name.BaseName() != name || name.value() == ".") return NO;
-  return [self openURL:url commandId:commandId itemId:itemId external:external untrusted:untrusted profile:profile];
+  return [self openURL:url commandId:commandId itemId:itemId external:external untrusted:untrusted profile:profile historyStamp:stamp];
 }
 
-- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId external:(BOOL)external untrusted:(BOOL)untrusted profile:(NSString*)profileDirectory {
+- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId external:(BOOL)external untrusted:(BOOL)untrusted profile:(NSString*)profileDirectory historyStamp:(uint64_t)stamp {
   DCHECK([NSThread isMainThread]);
   if (core_->closing() || core_->closed() || closing_all_ || !g_epoch ||
       !url || !commandId || !itemId) return NO;
@@ -2399,9 +2409,22 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   const std::string profile_name_value(profileDirectory.UTF8String);
   auto* existing_window = core_->windowForProfile(profile_name_value);
   BrowserWindowInterface* closing_browser = existing_window ? existing_window->browser() : nullptr;
-  if ((!draining_opens_ && pending_opens_.count) ||
+  if ((!draining_opens_ && (pending_opens_.count || loading_history_)) ||
       (closing_browser && closing_browser->IsDeleteScheduled())) {
-    [pending_opens_ addObject:@{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy], @"external": @(external), @"untrusted": @(untrusted), @"profile": profileDirectory }];
+    [pending_opens_ addObject:@{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy], @"external": @(external), @"untrusted": @(untrusted), @"profile": profileDirectory, @"stamp": @(stamp) }];
+    return YES;
+  }
+  const std::string command_key = base::SysNSStringToUTF8(commandId);
+  if (!external && stamp && !history_results_.contains(command_key)) {
+    [pending_opens_ insertObject:@{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy], @"external": @(external), @"untrusted": @(untrusted), @"profile": profileDirectory, @"stamp": @(stamp) } atIndex:0];
+    loading_history_ = YES;
+    history_epochs_[command_key] = ararat::tab_history::TabHistory::Get().Epoch(profile_name_value);
+    __weak ARWindowHost* host = self;
+    NSString* command = [commandId copy];
+    ararat::tab_history::TabHistory::Get().Read(profile_name_value, base::SysNSStringToUTF8(itemId),
+        base::SysNSStringToUTF8(url), base::BindOnce(^(std::optional<ararat::tab_history::Restore> result) {
+          [host historyLoaded:std::move(result) command:command];
+        }));
     return YES;
   }
   BOOL new_browser = !existing_window;
@@ -2409,7 +2432,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   ProfileManager* manager = g_browser_process->profile_manager();
   Profile* profile = new_browser ? manager->GetProfileByPath(manager->user_data_dir().Append(profile_name)) : nullptr;
   if (new_browser && !profile) {
-    [pending_opens_ addObject:@{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy], @"external": @(external), @"untrusted": @(untrusted), @"profile": profileDirectory }];
+    NSDictionary* open = @{ @"url": [url copy], @"command": [commandId copy], @"item": [itemId copy], @"external": @(external), @"untrusted": @(untrusted), @"profile": profileDirectory, @"stamp": @(stamp) };
+    if (draining_opens_) [pending_opens_ insertObject:open atIndex:0];
+    else [pending_opens_ addObject:open];
     if (!loading_profile_) {
       loading_profile_ = YES;
       __weak ARWindowHost* host = self;
@@ -2422,11 +2447,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
   command_id_ = commandId;
   opening_item_ = itemId;
+  opening_stamp_ = stamp;
   emitted_change_ = NO;
   if (new_browser) {
     if (GetBrowserWindowCreationStatusForProfile(*profile) != BrowserWindowInterface::CreationStatus::kOk) {
       if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-create-denied\n");
-      command_id_ = nil; opening_item_ = nil;
+      command_id_ = nil; opening_item_ = nil; opening_stamp_ = 0;
+      history_results_.erase(command_key); history_epochs_.erase(command_key);
       [self emitOpenFailure:commandId];
       return YES;
     }
@@ -2435,21 +2462,26 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     if (!browser || !core_->windowForProfile(profile_name_value)) {
       if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-create-failed\n");
       core_->ClearPending();
-      command_id_ = nil; opening_item_ = nil;
+      command_id_ = nil; opening_item_ = nil; opening_stamp_ = 0;
+      history_results_.erase(command_key); history_epochs_.erase(command_key);
       [self emitOpenFailure:commandId];
       return YES;
     }
     [self browserCreated:browser];
   } else if (!strip_observers_.contains(closing_browser)) {
     NSString* item = opening_item_;
+    uint64_t saved_stamp = opening_stamp_;
     opening_item_ = nil;
+    opening_stamp_ = 0;
     [self browserCreated:closing_browser];
     opening_item_ = item;
+    opening_stamp_ = saved_stamp;
   }
   auto* target_window = core_->windowForProfile(profile_name_value);
   BrowserWindowInterface* target = target_window ? target_window->browser() : nullptr;
   if (!target || target->IsDeleteScheduled()) {
-    command_id_ = nil; opening_item_ = nil;
+    command_id_ = nil; opening_item_ = nil; opening_stamp_ = 0;
+    history_results_.erase(command_key); history_epochs_.erase(command_key);
     [self emitOpenFailure:commandId];
     return YES;
   }
@@ -2463,8 +2495,21 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     Navigate(&params);
     contents = params.navigated_or_inserted_contents;
   } else {
-    contents = chrome::AddAndReturnTabAt(target, parsed_url, -1, true);
+    auto found = history_results_.find(command_key);
+    if (found != history_results_.end() &&
+        !ararat::tab_history::TabHistory::Get().Allows(profile_name_value, history_epochs_[command_key]))
+      found->second.reset();
+    if (found != history_results_.end() && found->second) {
+      auto& history = *found->second;
+      contents = chrome::AddRestoredTab(target, history.entries, target->GetTabStripModel()->count(),
+          history.selected, std::string(), std::nullopt, true, false, base::TimeTicks::Now(),
+          base::Time::Now(), nullptr, sessions::SerializedUserAgentOverride(), {}, true, std::nullopt);
+    } else {
+      contents = chrome::AddAndReturnTabAt(target, parsed_url, -1, true);
+    }
   }
+  history_results_.erase(command_key);
+  history_epochs_.erase(command_key);
   [self syncTabs];
   ARTab* tab = tabs_[[NSValue valueWithPointer:contents]];
   if (!emitted_change_) {
@@ -2473,6 +2518,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
   command_id_ = nil;
   opening_item_ = nil;
+  opening_stamp_ = 0;
   return YES;
 }
 
@@ -2482,15 +2528,17 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   while (pending_opens_.count && !core_->closed()) {
     NSDictionary* open = pending_opens_.firstObject;
     auto* pending_window = core_->windowForProfile([open[@"profile"] UTF8String]);
-    if (loading_profile_ || (pending_window && pending_window->browser()->IsDeleteScheduled())) break;
+    if (loading_profile_ || loading_history_ || (pending_window && pending_window->browser()->IsDeleteScheduled())) break;
     [pending_opens_ removeObjectAtIndex:0];
     id<ARWindowHostDelegate> delegate = self.delegate;
     if (!delegate || ([delegate respondsToSelector:@selector(windowHost:shouldOpenCommand:itemId:)] &&
         ![delegate windowHost:self shouldOpenCommand:open[@"command"] itemId:open[@"item"]])) {
+      history_results_.erase(base::SysNSStringToUTF8(open[@"command"]));
+      history_epochs_.erase(base::SysNSStringToUTF8(open[@"command"]));
       [self emitOpenFailure:open[@"command"]];
       continue;
     }
-    [self openURL:open[@"url"] commandId:open[@"command"] itemId:open[@"item"] external:[open[@"external"] boolValue] untrusted:[open[@"untrusted"] boolValue] profile:open[@"profile"]];
+    [self openURL:open[@"url"] commandId:open[@"command"] itemId:open[@"item"] external:[open[@"external"] boolValue] untrusted:[open[@"untrusted"] boolValue] profile:open[@"profile"] historyStamp:[open[@"stamp"] unsignedLongLongValue]];
   }
   draining_opens_ = NO;
   if (core_->closed()) [self discardPendingOpens];
@@ -2499,11 +2547,24 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (BOOL)cancelPendingOpen:(NSString*)commandId {
   for (NSUInteger index = 0; index < pending_opens_.count; ++index) {
     if ([pending_opens_[index][@"command"] isEqualToString:commandId]) {
+      history_results_.erase(base::SysNSStringToUTF8(commandId));
+      history_epochs_.erase(base::SysNSStringToUTF8(commandId));
       [pending_opens_ removeObjectAtIndex:index];
       return YES;
     }
   }
   return NO;
+}
+
+- (void)historyLoaded:(std::optional<ararat::tab_history::Restore>)result command:(NSString*)command {
+  loading_history_ = NO;
+  for (NSDictionary* open in pending_opens_) {
+    if ([open[@"command"] isEqualToString:command]) {
+      history_results_[base::SysNSStringToUTF8(command)] = std::move(result);
+      break;
+    }
+  }
+  [self drainPendingOpens];
 }
 
 - (void)profileLoaded:(BOOL)loaded {
@@ -2519,6 +2580,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     [self emitOpenFailure:open[@"command"]];
   }
   [pending_opens_ removeAllObjects];
+  history_results_.clear();
+  history_epochs_.clear();
 }
 
 - (void)activateTab:(ARTab*)tab commandId:(NSString*)commandId {
@@ -2557,13 +2620,23 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)setItemId:(NSString*)itemId forTab:(ARTab*)tab {
   if (!g_epoch || !tab.contents) return;
   auto* identity = static_cast<TabIdentity*>(tab.contents->GetUserData(kTabIdentityKey));
-  if (identity) identity->item_id = [itemId copy];
+  if (identity) {
+    if (identity->history && [identity->item_id isEqualToString:itemId]) return;
+    identity->item_id = [itemId copy];
+    identity->history = itemId ? ararat::tab_history::TabHistory::Get().Bind(tab.contents, base::SysNSStringToUTF8(itemId), 0) : nullptr;
+  }
 }
 
 - (NSString*)itemIdForTab:(ARTab*)tab {
   if (!tab.contents) return nil;
   auto* identity = static_cast<TabIdentity*>(tab.contents->GetUserData(kTabIdentityKey));
   return identity ? identity->item_id : nil;
+}
+
+- (void)checkFlushHistoryForTab:(ARTab*)tab completion:(void (^)(BOOL))completion {
+  auto* identity = tab.contents ? static_cast<TabIdentity*>(tab.contents->GetUserData(kTabIdentityKey)) : nullptr;
+  if (!identity || !identity->history) { completion(NO); return; }
+  identity->history->Save(base::BindOnce(^(bool ok) { completion(ok); }));
 }
 
 - (BOOL)isActiveTab:(ARTab*)tab {
@@ -2583,7 +2656,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     NSValue* old_key = [NSValue valueWithPointer:old_contents];
     ARTab* tab = tabs_[old_key];
     auto data = old_contents->TakeUserData(kTabIdentityKey);
-    if (data) new_contents->SetUserData(kTabIdentityKey, std::move(data));
+    if (data) {
+      auto* identity = static_cast<TabIdentity*>(data.get());
+      if (identity->history) identity->history->ReplaceContents(new_contents);
+      new_contents->SetUserData(kTabIdentityKey, std::move(data));
+    }
     if (tab) {
       [tabs_ removeObjectForKey:old_key];
       [tab replaceContents:new_contents];
@@ -2665,10 +2742,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* identity = static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey));
     if (!identity) {
       NSString* live = opening_item_ && command_id_ ? command_id_ : [@"chrome-" stringByAppendingString:NSUUID.UUID.UUIDString];
-      auto data = std::make_unique<TabIdentity>(live, opening_item_);
+      auto data = std::make_unique<TabIdentity>(live, opening_item_, opening_stamp_);
+      if (opening_item_) data->history = ararat::tab_history::TabHistory::Get().Bind(contents, base::SysNSStringToUTF8(opening_item_), opening_stamp_);
       identity = data.get();
       contents->SetUserData(kTabIdentityKey, std::move(data));
       opening_item_ = nil;
+      opening_stamp_ = 0;
     }
     if (!tabs_[key]) tabs_[key] = [[ARTab alloc] initWithContents:contents liveId:identity->live_id host:self];
     NSView* view = contents->GetNativeView().GetNativeNSView();

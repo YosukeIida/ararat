@@ -129,7 +129,7 @@ pub struct Workspace {
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
-    pub history_purges: HashMap<Id, (Profile, Id)>,
+    pub history_purges: HashMap<Id, (Profile, Id, u64)>,
     pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
     pub favorites: HashMap<Profile, Id>,
@@ -192,7 +192,7 @@ pub enum Record {
     Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
-    HistoryPurge { id: Id, profile: Profile, item: Id },
+    HistoryPurge { id: Id, profile: Profile, item: Id, changed_at: u64 },
     HistoryProfile { item: Id, profile: Profile },
 }
 
@@ -245,7 +245,7 @@ impl Record {
                 order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone(),
                 profile: rule.profile.clone() }),
             Record::RoutingDefault { destination } => serde_json::to_string(destination),
-            Record::HistoryPurge { profile, item, .. } => serde_json::to_string(&(profile, item)),
+            Record::HistoryPurge { profile, item, changed_at, .. } => serde_json::to_string(&(profile, item, changed_at)),
             Record::HistoryProfile { profile, .. } => serde_json::to_string(profile),
         }
         .expect("model types serialise")
@@ -276,8 +276,8 @@ impl Record {
             }
             Kind::RoutingDefault => Record::RoutingDefault { destination: serde_json::from_str(body)? },
             Kind::HistoryPurge => {
-                let (profile, item) = serde_json::from_str(body)?;
-                Record::HistoryPurge { id: id.into(), profile, item }
+                let (profile, item, changed_at) = serde_json::from_str(body)?;
+                Record::HistoryPurge { id: id.into(), profile, item, changed_at }
             },
             Kind::HistoryProfile => Record::HistoryProfile { item: id.into(), profile: serde_json::from_str(body)? },
         })
@@ -373,7 +373,7 @@ impl Workspace {
             // Default records changed since the last sync: a tombstone resets ours to the
             // built-in default the same way rule deletes remove their rule.
             Op::Delete(Kind::RoutingDefault, _) => { self.routing_default = crate::routing::Destination::default(); },
-            Op::Put(Record::HistoryPurge { id, profile, item }) => { self.history_purges.insert(id.clone(), (profile.clone(), item.clone())); },
+            Op::Put(Record::HistoryPurge { id, profile, item, changed_at }) => { self.history_purges.insert(id.clone(), (profile.clone(), item.clone(), *changed_at)); },
             Op::Delete(Kind::HistoryPurge, id) => { self.history_purges.remove(id); },
             Op::Put(Record::HistoryProfile { item, profile }) => { self.history_profiles.insert(item.clone(), profile.clone()); },
             Op::Delete(Kind::HistoryProfile, id) => { self.history_profiles.remove(id); },
@@ -392,7 +392,7 @@ impl Workspace {
         // (Workspace::default().to_ops() stays empty).
         let default = (self.routing_default != crate::routing::Destination::default())
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
-        let purges = self.history_purges.iter().map(|(id, (profile, item))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone() });
+        let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
         spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()

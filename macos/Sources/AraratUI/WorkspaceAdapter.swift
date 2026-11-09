@@ -25,6 +25,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     func enqueue<T: Sendable>(_ operation: @escaping @Sendable () throws -> T, completion: @escaping Completion<T>) {
         queue.async {
             let result = Result(catching: operation)
+            self.session.drainHistoryPurges()
             // Why not dispatch main: AppKit's terminateLater loop cannot reenter its drain.
             RunLoop.main.perform(inModes: [.common, .modalPanel]) {
                 MainActor.assumeIsolated { completion(result) }

@@ -15,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSUInteger entryCount;
 @property(nonatomic, readonly) BOOL canGoBack;
 @property(nonatomic, readonly) BOOL crashed;
+- (void)checkFlushHistory:(void (^)(BOOL written))completion;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
@@ -117,7 +118,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkCreateRestoreBrowser;
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId;
 - (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted;
-- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted;
+- (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted historyStamp:(uint64_t)stamp;
 - (BOOL)cancelPendingOpen:(NSString*)commandId;
 - (NSArray*)tabs;
 - (BOOL)hasActiveTab;
@@ -184,6 +185,18 @@ __attribute__((visibility("default")))
 void AraratStartMeasure(id<ARWindowHostAPI> host, NSString* scenario);
 __attribute__((visibility("default")))
 NSString* _Nullable AraratUserDataDirectory(void);
+__attribute__((visibility("default")))
+void AraratPurgeTabHistory(NSString* profile, NSString* itemId, uint64_t changedAt, void (^completion)(BOOL ok));
+__attribute__((visibility("default")))
+void AraratFinishCrashRecovery(void);
+__attribute__((visibility("default")))
+NSDictionary* AraratCheckCrashState(NSString* profile);
+__attribute__((visibility("default")))
+void AraratCheckCommitProfilePrefs(NSString* profile, void (^completion)(BOOL done));
+__attribute__((visibility("default")))
+void AraratCheckTabHistoryFile(NSString* profile, NSString* itemId, void (^completion)(NSDictionary* state));
+__attribute__((visibility("default")))
+void AraratCheckDeleteHistory(NSString* profile, NSInteger mode, void (^completion)(BOOL done));
 __attribute__((visibility("default")))
 NSUInteger AraratBrowserCount(void);
 __attribute__((visibility("default")))

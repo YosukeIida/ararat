@@ -1,5 +1,5 @@
 # Written independently against Chromium; U17 cites an Ardia guard as precedent.
-# Ardia's source was not examined and no Ardia code was copied.
+# Ardia's matching guard is in engine/ardiacore/apply.sh; no Ardia code was copied.
 --- a/chrome/browser/ui/sad_tab_controller.cc
 +++ b/chrome/browser/ui/sad_tab_controller.cc
 @@ -29,7 +29,9 @@ ContentsWebView* FindContentsWebView(content::WebContents* web_contents) {

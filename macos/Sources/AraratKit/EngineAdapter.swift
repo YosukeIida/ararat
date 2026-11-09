@@ -18,6 +18,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private let card: NSView
     private weak var host: (any ARWindowHostAPI)?
     private var selectionGeneration = 0
+    private var restoringSelection = false
+    private var recoveryDispatched = false
     private var openingSelections: [String: SelectionContext] = [:]
     private var pendingSelectionCommands: Set<String> = []
     public private(set) var crashedItems: Set<String> = []
@@ -91,6 +93,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         self.host = host
         let profile = queue.sync { self.shownProfileDirectory() }
         host.delegate = self
+        queue.async { self.session.drainHistoryPurges() }
         if let profile { _ = host.setProfileDirectory(profile) }
         publish()
     }
@@ -114,15 +117,29 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func restoreSelection() {
         precondition(Thread.isMainThread)
         let generation = selectionGeneration
-        guard let host else { return }
+        guard let host else { session.finishCrashRecovery?(); return }
+        restoringSelection = true
         queue.async {
-            guard let candidate = self.store?.restorationCandidate(windowId: self.windowID) else { return }
+            guard let candidate = self.store?.restorationCandidate(windowId: self.windowID) else {
+                DispatchQueue.main.async { self.finishCrashRecovery() }
+                return
+            }
             DispatchQueue.main.async {
                 guard let current = self.host, (current as AnyObject) === (host as AnyObject),
-                      !current.isClosing(), !current.isClosingAll(), self.selectionGeneration == generation else { return }
+                      !current.isClosing(), !current.isClosingAll(), self.selectionGeneration == generation else {
+                    self.finishCrashRecovery()
+                    return
+                }
                 self.select(id: candidate.id, url: candidate.url, restoring: candidate)
             }
         }
+    }
+
+    private func finishCrashRecovery() {
+        guard restoringSelection else { return }
+        restoringSelection = false
+        recoveryDispatched = false
+        session.finishCrashRecovery?()
     }
 
     public func select(id: String, url: String, restoring: RestorationCandidate? = nil) {
@@ -156,6 +173,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                             return
                         }
                         self.checkSelectionCommand?(id, command.id, needsOpen)
+                        if restoring != nil { self.recoveryDispatched = true }
                         self.execute(command, selection: SelectionContext(generation: generation, space: selectedSpace, profile: selectedProfile, restoring: restoring))
                     }
                 }
@@ -244,6 +262,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func close(id: String, archive: Bool = false, expectedLive: String? = nil) {
         queue.async {
+            defer { self.session.drainHistoryPurges() }
             do {
                 guard let store = self.store else { return }
                 if let expectedLive, store.liveTab(item: id) != expectedLive { return }
@@ -377,6 +396,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let transaction = LiveTransaction(epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
         let crashed = crashedItems
         queue.async {
+            defer { self.session.drainHistoryPurges() }
             do {
                 guard let store = self.store else { return }
                 let outcome = try store.liveApply(transaction: transaction)
@@ -389,7 +409,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         self.tab(adopted.liveId)?.itemId = adopted.item
                     }
                     for command in outcome.commands { self.execute(command) }
-                    if outcome.applied { self.crashedItems = crashed }
+                    if outcome.applied {
+                        self.crashedItems = crashed
+                        if self.recoveryDispatched { self.finishCrashRecovery() }
+                    }
                     self.deliverIfCurrent(snapshot)
                     self.onTransaction?(transaction, outcome.applied)
                     if outcome.applied { self.onWorkspaceChange?() }
@@ -465,19 +488,22 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         switch command.kind {
         case .open:
-            let profile: String? = queue.sync {
+            let opening: (String, HistoryAdmission)? = queue.sync {
                 guard self.pendingSelectionCommands.remove(command.id) != nil else { return nil }
-                guard let profile = self.store?.itemProfile(itemId: command.item) else { return nil }
-                switch profile { case .default: return "Default"; case .named(let name): return name }
+                guard let store = self.store, let profile = store.itemProfile(itemId: command.item) else { return nil }
+                let directory: String
+                switch profile { case .default: directory = "Default"; case .named(let name): directory = name }
+                return (directory, store.historyAdmission(item: command.item))
             }
-            guard let profile, !host.isClosing(), !host.isClosingAll() else {
+            guard let (profile, admission) = opening, !host.isClosing(), !host.isClosingAll() else {
                 cancelSelectionCommand(command)
                 return
             }
             if let url = command.url {
                 if let selection { openingSelections[command.id] = selection }
+                for purge in admission.purges { session.submitHistoryPurge(purge) }
                 let accepted = host.openURL(url, commandId: command.id, itemId: command.item, profile: profile,
-                                            external: external != nil, untrusted: external ?? false)
+                                            external: external != nil, untrusted: external ?? false, historyStamp: admission.stamp)
                 if accepted { return }
                 openingSelections.removeValue(forKey: command.id)
             }

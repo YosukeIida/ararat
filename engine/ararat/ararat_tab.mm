@@ -153,6 +153,10 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSUInteger)entryCount { DCHECK([NSThread isMainThread]); return contents_ ? contents_->GetController().GetEntryCount() : 0; }
 - (BOOL)canGoBack { DCHECK([NSThread isMainThread]); return contents_ && contents_->GetController().CanGoBack(); }
 - (BOOL)crashed { DCHECK([NSThread isMainThread]); return contents_ && contents_->IsCrashed(); }
+- (void)checkFlushHistory:(void (^)(BOOL))completion {
+  if (!host_) { completion(NO); return; }
+  [host_ checkFlushHistoryForTab:self completion:completion];
+}
 - (BOOL)checkCrashRenderer {
   if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "sadtab") return NO;
   auto* frame = contents_->GetPrimaryMainFrame();

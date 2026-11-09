@@ -21,16 +21,22 @@
      "//chrome/browser/accessibility",
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -29,5 +29,20 @@
+@@ -29,5 +29,26 @@
  # Entry point for the web app shortcut copier.
  _ChromeWebAppShortcutCopierMain
  
 +# Ararat
 +_AraratBrowserCount
++_AraratCheckCommitProfilePrefs
++_AraratCheckCrashState
++_AraratCheckDeleteHistory
++_AraratCheckTabHistoryFile
 +_AraratEngineVersion
 +_AraratExclusiveInputCount
++_AraratFinishCrashRecovery
 +_AraratFinishSliceCheck
 +_AraratMain
++_AraratPurgeTabHistory
 +_AraratQuit
 +_AraratStartMeasure
 +_AraratUserDataDirectory

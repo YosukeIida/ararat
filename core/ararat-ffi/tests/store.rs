@@ -108,6 +108,20 @@ fn store_failures_cross_the_ffi_boundary() {
 }
 
 #[test]
+fn empty_purge_query_does_not_flush_unrelated_pending_changes() {
+    let path = fresh_db("empty-purge-no-flush");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    store.select_item("test".into(), "tab-a".into()).unwrap();
+    assert!(store.pending_history_purges().unwrap().is_empty());
+    assert!(matches!(store.flush(), Err(CoreError::Store { .. })));
+    blocker.execute_batch("ROLLBACK").unwrap();
+    store.flush().unwrap();
+}
+
+#[test]
 fn set_tab_url_flushes_and_reports_a_write_error() {
     let path = fresh_db("set-url");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
