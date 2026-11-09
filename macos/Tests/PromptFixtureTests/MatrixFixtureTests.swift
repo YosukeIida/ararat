@@ -368,7 +368,7 @@ func matrixCommittedSwitchDoesNotDispatchAfterSupersessionOrClose() async throws
 }
 
 @Test @MainActor
-func matrixEmptyAndUnloadedSpacesHideRetainedPage() async throws {
+func matrixUnloadedSpaceLoadsItsRowAndEmptySpaceHidesRetainedPage() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -397,20 +397,39 @@ func matrixEmptyAndUnloadedSpacesHideRetainedPage() async throws {
     engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "empty", epoch: 1, rev: 1, command: fake.opened[0]))
     try await matrixWait { applied }
     let live = fake.opened[0]
-    for destination in ["unloaded", "empty-space"] {
-        let snapshot = try session.queue.sync { try session.store!.showSpaceSelecting(windowId: "empty", spaceId: destination) }
-        let space = try #require(snapshot.spaces.first(where: { $0.id == destination }))
-        #expect(space.profileName == "Default" && snapshot.selectedId == nil)
-        if destination == "unloaded" {
-            let row = try #require(space.today.first)
-            #expect(row.id == ids.1 && row.unloaded && row.url != nil)
-        } else { #expect(space.today.isEmpty && space.pinned.isEmpty && space.favorites.isEmpty) }
-        runtime.show(snapshot)
-        #expect(fake.hidden && !fake.hasActiveTab() && fake.navigationTarget() == nil)
-        #expect(fake.presentation(live)["presented"] as? Bool == false)
-        #expect(fake.active == ids.0 && fake.entries.count == 1)
-        #expect(session.queue.sync { session.store?.liveTab(item: ids.0) } == live)
-    }
+    // A space whose rows are all Unloaded is eligible (Arc's behaviour, the owner's
+    // choice 2026-11-09): the switch picks the window's row for it, the tab this window
+    // selected in that space before the engine unloaded everything, and that selection
+    // loads it through the ordinary select path (Unloaded -> Open). showAndSelect is the
+    // step switchWorkspaceSpace runs after showSpaceSelecting: show the snapshot, then
+    // let the adapter open the selected row because it has no live tab yet.
+    let unloadedSnapshot = try session.queue.sync { try session.store!.showSpaceSelecting(windowId: "empty", spaceId: "unloaded") }
+    let unloadedSpace = try #require(unloadedSnapshot.spaces.first(where: { $0.id == "unloaded" }))
+    let unloadedRow = try #require(unloadedSpace.today.first)
+    #expect(unloadedSpace.profileName == "Default" && unloadedSnapshot.selectedId == ids.1)
+    #expect(unloadedRow.id == ids.1 && unloadedRow.unloaded == false && unloadedRow.url != nil)
+    runtime.showAndSelect(.success(unloadedSnapshot), expectedSpace: "unloaded")
+    try await matrixWait { fake.opened.count == 2 }
+    let unloadedLive = fake.opened[1]
+    #expect(fake.active == ids.1 && fake.entries.count == 2 && !fake.hidden && fake.hasActiveTab())
+    #expect((fake.navigationTarget()?["item"] as? String) == ids.1)
+    #expect(fake.presentation(unloadedLive)["presented"] as? Bool == true)
+    #expect(fake.presentation(live)["presented"] as? Bool == false)
+    #expect(session.queue.sync { session.store?.liveTab(item: ids.1) } == unloadedLive)
+    // An empty space has no eligible row: the switch clears the selection, the retained
+    // page of the previous space stays hidden, and the switch issues no engine command of
+    // its own, so the unloaded space's live tab is still the active one.
+    let emptySnapshot = try session.queue.sync { try session.store!.showSpaceSelecting(windowId: "empty", spaceId: "empty-space") }
+    let emptySpace = try #require(emptySnapshot.spaces.first(where: { $0.id == "empty-space" }))
+    #expect(emptySpace.profileName == "Default" && emptySnapshot.selectedId == nil)
+    #expect(emptySpace.today.isEmpty && emptySpace.pinned.isEmpty && emptySpace.favorites.isEmpty)
+    runtime.show(emptySnapshot)
+    #expect(fake.hidden && !fake.hasActiveTab() && fake.navigationTarget() == nil)
+    #expect(fake.presentation(live)["presented"] as? Bool == false)
+    #expect(fake.presentation(unloadedLive)["presented"] as? Bool == false)
+    #expect(fake.active == ids.1 && fake.entries.count == 2)
+    #expect(session.queue.sync { session.store?.liveTab(item: ids.0) } == live)
+    #expect(session.queue.sync { session.store?.liveTab(item: ids.1) } == unloadedLive)
     let strip = LiveStrip(window: "empty", tabs: [LiveTab(profile: .default, liveId: live, item: ids.0, opener: nil, navigated: false, url: nil, title: nil)], active: nil)
     let after = try session.queue.sync { () -> WorkspaceSnapshot in
         let store = try #require(session.store)

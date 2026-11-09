@@ -222,11 +222,15 @@ impl WorkspaceStore {
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
         let view = snapshot(next.clone(), &window_id);
+        // An Unloaded tab with a URL is eligible: selecting it runs the ordinary select
+        // path, whose record_active flips it to Open, so the switch loads it. The rule is
+        // the owner's choice (2026-11-09), taken to match Arc, which was not measured
+        // here; only a split still needs an Open member.
         let rows: Vec<_> = view.spaces.iter().find(|space| space.id == space_id)
             .into_iter().flat_map(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites))
-            .filter(|row| !row.unloaded && (row.url.is_some() || (row.kind == RowKind::Split && next.outline(&row.id).iter().any(|(_, item)| {
+            .filter(|row| row.url.is_some() || (row.kind == RowKind::Split && next.outline(&row.id).iter().any(|(_, item)| {
                 item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. })
-            })))).collect();
+            }))).collect();
         let selected = view.selected_id.as_ref().filter(|id| rows.iter().any(|row| &row.id == *id))
             .or_else(|| next.windows.get(&window_id).and_then(|state| state.history.iter().find(|id| rows.iter().any(|row| &row.id == *id))))
             .or_else(|| rows.first().map(|row| &row.id)).cloned();
@@ -234,7 +238,10 @@ impl WorkspaceStore {
             return Err(CoreError::UnsupportedSplit);
         }
         match selected {
-            Some(id) if next.selected(&window_id) != Some(id.as_str()) => ops.extend(next.select_item(&window_id, &id)?),
+            // A row already recorded as selected still has to be selected again when the
+            // engine left it Unloaded: record_active is what flips it to Open (loads it).
+            Some(id) if next.selected(&window_id) != Some(id.as_str())
+                || !next.items.get(&id).is_some_and(|item| item.lifecycle == Lifecycle::Open) => ops.extend(next.select_item(&window_id, &id)?),
             None => ops.extend(next.clear_selection(&window_id)),
             _ => {}
         }
