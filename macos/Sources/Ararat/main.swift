@@ -355,6 +355,8 @@ final class Runtime: NSObject {
   var profileFocusEventCount = 0
   var profileFocusNoneObserved = false
   var profileNewFocusNoneEvent = false
+  var profileFocusPhaseTicks = 0
+  var profileFocusEventsAtReturn: [Int] = []
   var keyboardSettingsTabs = Set<String>()
   weak var keyboardSettingsWindow: NSWindow?
   var keyboardLiveID = ""
@@ -5063,6 +5065,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let windowTabID = windowTabs.first?["id"] as? Int, tabID == windowTabID else { return false }
       return true
     }
+    func newFocusEvents() -> [Int] {
+      let events = report("Profile 1")?["focusEvents"] as? [Int] ?? []
+      return Array(events.dropFirst(profileFocusEventCount))
+    }
+    let focusWaitTicks = 50
+    if browserCheckPhase == 4 || browserCheckPhase == 5 { profileFocusPhaseTicks += 1 }
     if browserCheckAttempts % 10 == 0 && browserCheckPhase <= 2 {
       for profile in ["Default", "Profile 1"] where report(profile) == nil {
         tab(profile)?.checkReloadExtensionWindow()
@@ -5164,26 +5172,64 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       } else {
         guard let events = report("Profile 1")?["focusEvents"] as? [Int] else { return }
         profileFocusEventCount = events.count
+        profileFocusPhaseTicks = 0
         NSApp.hide(nil)
         browserCheckPhase = 4
       }
     } else if screen, browserCheckPhase == 4, NSApp.isHidden, !NSApp.isActive {
       profileFocusNoneObserved = NSApp.keyWindow == nil
-      let events = report("Profile 1")?["focusEvents"] as? [Int] ?? []
-      profileNewFocusNoneEvent = events.dropFirst(profileFocusEventCount).contains(-1)
-      NSApp.unhide(nil)
-      NSApp.activate(ignoringOtherApps: true)
-      host.window().makeKeyAndOrderFront(nil)
-      browserCheckPhase = 5
+      let events = newFocusEvents()
+      if events.contains(-1) {
+        profileNewFocusNoneEvent = events.filter { $0 == -1 }.count == 1
+        profileFocusPhaseTicks = 0
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        host.window().makeKeyAndOrderFront(nil)
+        browserCheckPhase = 5
+      } else if profileFocusPhaseTicks > focusWaitTicks {
+        finishBrowserCheck(ok: false, values: ["profiles": profileCheckStates,
+          "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
+          "focus_none": profileFocusNoneObserved, "new_focus_none_event": false,
+          "new_focus_events": events, "app_deactivated": true, "focus_wait_ticks": profileFocusPhaseTicks,
+          "stock_browsers": host.checkStockBrowsers()])
+      }
+    } else if screen, browserCheckPhase == 4, profileFocusPhaseTicks > focusWaitTicks {
+      finishBrowserCheck(ok: false, values: ["profiles": profileCheckStates,
+        "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
+        "new_focus_none_event": false, "new_focus_events": newFocusEvents(), "app_deactivated": false,
+        "application_active": NSApp.isActive, "application_hidden": NSApp.isHidden,
+        "focus_wait_ticks": profileFocusPhaseTicks, "stock_browsers": host.checkStockBrowsers()])
     } else if screen, browserCheckPhase == 5, !NSApp.isHidden, NSApp.isActive {
       let window = host.window()
+      if profileFocusPhaseTicks > focusWaitTicks {
+        let events = newFocusEvents()
+        let target = extensionFocusProbe["targetId"] as? Int
+        finishBrowserCheck(ok: false, values: ["profiles": profileCheckStates,
+          "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
+          "new_focus_none_event": false, "new_focus_events": events,
+          "focus_returned": target != nil && events.last == target, "app_deactivated": true,
+          "window_key": window.isKeyWindow, "focus_wait_ticks": profileFocusPhaseTicks,
+          "stock_browsers": host.checkStockBrowsers()])
+        return
+      }
       guard window.isKeyWindow else { window.makeKeyAndOrderFront(nil); return }
+      let events = newFocusEvents()
+      guard let target = extensionFocusProbe["targetId"] as? Int, events.last == target else { return }
+      profileNewFocusNoneEvent = events.filter { $0 == -1 }.count == 1
+      profileFocusEventsAtReturn = events
       if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: host.window().windowNumber,
           context: nil, characters: "n", charactersIgnoringModifiers: "N", isARepeat: false, keyCode: 45) {
         NSApp.sendEvent(event)
       }
       browserCheckPhase = 6
+    } else if screen, browserCheckPhase == 5, profileFocusPhaseTicks > focusWaitTicks {
+      finishBrowserCheck(ok: false, values: ["profiles": profileCheckStates,
+        "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
+        "new_focus_none_event": false, "new_focus_events": newFocusEvents(), "app_deactivated": true,
+        "application_active": NSApp.isActive, "application_hidden": NSApp.isHidden,
+        "window_key": host.window().isKeyWindow, "focus_wait_ticks": profileFocusPhaseTicks,
+        "stock_browsers": host.checkStockBrowsers()])
     } else if screen, browserCheckPhase == 6, let popup = popups.first?.host,
               (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
@@ -5194,9 +5240,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         browserCheckPhase = 61
         return
       }
-      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
+      finishBrowserCheck(ok: profileFocusNoneObserved && profileNewFocusNoneEvent && host.checkStockBrowsers() == 0, values: ["profiles": profileCheckStates,
         "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
-        "new_focus_none_event": profileNewFocusNoneEvent, "app_deactivated": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
+        "new_focus_none_event": profileNewFocusNoneEvent, "new_focus_events": newFocusEvents(),
+        "focus_events_at_return": profileFocusEventsAtReturn,
+        "app_deactivated": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
     } else if screen, browserCheckPhase == 61, let popup = popups.first?.host,
               popup.window().isKeyWindow,
               let tab = (popup.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
@@ -5214,9 +5262,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
       let unchanged = captureCheckRows() == quitBefore
-      finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+      finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
           "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
+          "new_focus_events": newFocusEvents(),
+          "focus_events_at_return": profileFocusEventsAtReturn,
           "app_deactivated": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
           "stock_browsers": host.checkStockBrowsers()])
     }

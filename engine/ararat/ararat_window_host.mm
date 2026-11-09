@@ -46,6 +46,7 @@
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/devtools/devtools_contents_resizing_strategy.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
@@ -634,6 +635,54 @@ void AraratCheckRevokeChangedDocument(const std::string& live, content::WebConte
 }
 
 uint64_t AraratCheckDocumentRevision() { return g_check_document_generation; }
+
+// Uptime of the last NSWindowDidResignKeyNotification, or -1. AppController
+// schedules its deferred -checkForAnyKeyWindows from that notification, so the
+// age tells whether Chrome's own path was triggered around a deactivation.
+static NSTimeInterval g_ararat_last_window_resign_key = -1;
+
+// Why not rely on -[AppController checkForAnyKeyWindows]: on app deactivation
+// it did not notify WINDOW_ID_NONE (VM, focusnone exit-2); its deferred check
+// runs before AppKit clears the key window (unconfirmed). KeyWindowNotifier is
+// process-wide and WindowsEventRouter deduplicates the focused window id, so
+// notify once per process instead of once per host.
+static void AraratInstallAppFocusNotifications() {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [NSNotificationCenter.defaultCenter
+        addObserverForName:NSWindowDidResignKeyNotification object:nil queue:nil
+        usingBlock:^(NSNotification*) {
+          g_ararat_last_window_resign_key = NSProcessInfo.processInfo.systemUptime;
+        }];
+    [NSNotificationCenter.defaultCenter
+        addObserverForName:NSApplicationDidResignActiveNotification object:NSApp queue:nil
+        usingBlock:^(NSNotification*) {
+          const BOOL key_window_nil = NSApp.keyWindow == nil;
+          const double resign_key_ms_ago = g_ararat_last_window_resign_key < 0
+              ? -1
+              : (NSProcessInfo.processInfo.systemUptime - g_ararat_last_window_resign_key) * 1000.0;
+          if (IsProfileCheck()) {
+            // Samples [NSApp keyWindow] one run-loop turn after resign-active,
+            // i.e. after AppKit has settled. It is not the instant AppController
+            // samples (its deferred check is scheduled from resign-key, before
+            // this notification), so it says when the key window is cleared,
+            // not what Chrome's check saw.
+            [NSTimer scheduledTimerWithTimeInterval:0 repeats:NO block:^(NSTimer*) {
+              std::fprintf(stderr,
+                           "ararat-trace: focus resign-active key_window_nil=%d "
+                           "resign_key_ms_ago=%.0f key_window_nil_next_turn=%d\n",
+                           key_window_nil ? 1 : 0, resign_key_ms_ago, NSApp.keyWindow == nil ? 1 : 0);
+            }];
+          }
+          // Hosts can outlive the BrowserProcess and its platform part during
+          // teardown, so both are checked before the notifier is used.
+          BrowserProcess* browser_process = g_browser_process;
+          if (!browser_process || browser_process->IsShuttingDown()) return;
+          if (BrowserProcessPlatformPart* platform_part = browser_process->platform_part())
+            platform_part->key_window_notifier().NotifyNoKeyWindow();
+        }];
+  });
+}
 
 void AraratInstallWindowFactory() {
   g_ararat_create_browser_window = &AraratCreateBrowserWindowForPendingHost;
@@ -1229,6 +1278,7 @@ void StripObserver::OnTabCloseCancelled(const tabs::TabInterface* tab) {
 
 __attribute__((visibility("default"))) id<ARWindowHostAPI>
 AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
+  AraratInstallAppFocusNotifications();
   return [[ARWindowHost alloc] initWithContentView:contentView windowId:windowId];
 }
 

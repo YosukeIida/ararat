@@ -154,6 +154,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 - ウィンドウはタイトル付きで、close、最小化、リサイズができ、content は全体に広がる。タイトルバーは透明で、タイトルは表示しない。サイドバーにボタンを置き、AppKit 自身のボタンはフルスクリーン以外では隠す（我々の規則）。
 - ウィンドウに表示する各プロファイルは、それぞれ専用の Chrome の `Browser` を持つ。その `BrowserWindow` は独自のオブジェクトであり、`BrowserView`、フレーム、タブストリップ、ツールバーを持たない。
 - 拡張からは、プロファイルごとの `Browser` が別のウィンドウ id に見える。キーウィンドウに表示された Browser がアクティブとなり、ほかのアプリウィンドウの表示中 Browser はフォーカスされず、最小化もされない。非表示の Browser は非アクティブ、不可視、最小化されていない状態と host ウィンドウの bounds を報告する。アプリを非アクティブにすると、すべての Browser のフォーカスが外れる。拡張自身のコンテキストの `currentWindow` はそのコンテキストが属する Browser であり、バックグラウンドではフォーカス中の Browser、アプリが非アクティブな間は最後にフォーカスされた Browser である。非表示プロファイルへの `windows.update({focused: true})` は、そのウィンドウで最後に表示した当該プロファイルの space に切り替える。Arc の拡張から同一プロファイルの全タブが見えるか、現在の space のタブだけが見えるかは未確認である（我々の規則）。
+- アプリが非アクティブになると、`windows.onFocusChanged` は `WINDOW_ID_NONE` を通知する。ウィンドウが再びキーになると、その Browser のウィンドウ id を通知する。Ararat のウィンドウ間の切り替え自体ではアプリの非アクティブ化を通知しない。別プロファイルのウィンドウへの切り替えでは、直前のプロファイルの拡張に `WINDOW_ID_NONE` を通知する（Chrome と同じ）。プロファイルと incognito の可視性には Chromium の規則を適用する（我々の規則。エンジンでの検証は未了）。
 - 拡張のポップアップウィンドウ（`windows.create({type: "popup"})`）は実際のポップアップウィンドウのままとする（Cra ledger 10）。独自の内部用ヘルパーウィンドウは拡張から隠す（Ardia ledger 1.7）。プロファイルの `Browser` は内部用ではなく、拡張から見える。
 
 現在の `AraratBrowserWindow` は表示、アクティベーション、bounds、タイトル、native window の操作を host Widget に委ね、close は Chromium の unload controller に渡す。toolbar、location bar など未実装の UI の処理は空の結果を返すか、何もしない。タブモーダルダイアログは page card の host を使う（我々の規則）。`ARWindowHost` は受け取った `NSView` を `NativeViewHost` に配置し、アプリは Browser の破棄まで host を保持する（我々の規則）。
@@ -472,7 +473,7 @@ U13 では `deferred` を更新し、DevTools ウィンドウを閉じた後に�
 
 表示する `--ararat-screen=devtools` にも同じスクラッチ領域の制約を適用する。リサイズと redock の前後に window ID を指定して撮影し、空白ページと DevTools 領域の色の変化を検査する。フォーカスを確認してプロセス内から Esc と ⌘F を送り、フロントエンドの要素の表示状態から drawer と検索欄を確認する。リサイズと redock の後は矩形も検査し、c2 では両領域の hit test も確認する。画素の検査が検出するのは DevTools 領域が空白または単色の場合であり、全画素の正しさは検査しない。画面での実行は未確認である（我々の規則）。
 
-U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込む。画面上の検査ではアプリの非表示と再表示を行い、非アクティブ化と再アクティブ化を観測してから incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
+U11 の検査も同じ制限を使う。`--ararat-check=profiles|ext-windows|incognito` と `--ararat-screen=profiles` を用意する。拡張の検査は `engine/ararat/test_extensions/windows` を `--load-extension` で読み込む。画面上の検査ではアプリを非表示・再表示し、新たな `WINDOW_ID_NONE` の通知が 1 回あり、その後に復帰したウィンドウの id が通知されることを確認する。incognito のメニューショートカットも試す。エンジンでの実行は未確認である（我々の規則）。
 
 split と close の fixture は profiles または quit-cancel の検査に `--ararat-split-close-check` を加えて使う。`--ararat-empty-close-check` を加えると同じ profile の空の space から close を始め、`--ararat-selection-race=registered|resolved` を加えると live 選択の二つの dispatch 境界のいずれかで処理を止める。空 space と選択競合は別々の scratch 実行で検査する。ダイアログの対象タブとページの接続状態を記録する。エンジンでの実行は未確認である（我々の規則）。
 

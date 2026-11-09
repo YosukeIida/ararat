@@ -66,6 +66,7 @@ source_set("entry") {
     "//components/remote_cocoa/common:mojo",
     "//components/remote_cocoa/app_shim",
     "//chrome/browser:browser_process",
+    "//chrome/browser:browser_process_platform_part",
     "//chrome/browser:chrome_browser_application_mac",
     "//chrome/browser:chrome_browser_main",
     "//chrome/browser:global_features",
