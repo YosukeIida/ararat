@@ -11,17 +11,19 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   row Open, the strip marks it and selecting it reloads (sad-tab guard patch). Hidden checks
   `relaunch`, `crash` (two-run driver) and `sadtab` pass on the host with the full suite,
   `cargo test` and `swift test`. Navigation history files, their restore, physical deletion
-  and the clear-data barrier are U17b. The keyboard check is not part of this exit: its U16
-  fixes are in progress on `fix/u16-keyboard-check`.
-- Phase 3 U16 committed with native acceptance deferred: keyboard routing through the native
-  window host, workspace New Tab / Edit URL / Search / Close Tab interception, the Developer
-  menu, the find bar, the viewless location bar, extension action shortcuts, hidden-dialog
-  containment and keyboard/IME diagnostics. Source review, 96 Rust/Swift tests against a
-  rebuilt FFI, the engine build (build-7) and the release Swift build with eight matrix tests
-  (build-8) pass. The hidden checks, screen checks, IME delivery and real dialog containment
-  have not run: they wait for the guest-isolation gate (owner), because earlier scratch runs
-  raised Leave-site dialogs on the host desktop whose cause is not established. Evidence is in
-  the design session's reports (`design-u16-*`).
+  and the clear-data barrier are U17b.
+- Phase 3 U16 checks pass (8229e80): all 63 U16 coverage cases (C1/C2, default/RTL,
+  hidden/screen) pass on one host build, with the 22 exit checks (`design/exitchecks.sh`,
+  each with its fixture), `cargo test` and 368 Swift tests. Running them exposed and fixed
+  shifted core shortcuts, Chrome accelerator collisions on redispatch, app-menu Settings,
+  C2 find-bar stacking, beforeunload-cancel state and find-command state. Acceptance stays
+  open for the reasons architecture lists. Screen checks on the host fail whenever another
+  app comes to the front; a test VM `ararat-test` (Lume, macOS 26.4, auto-login, bundle
+  shared read-only, runner `design/vm-u16matrix.sh`) exists, but there ⌘S with the page
+  focused does not toggle the sidebar (phase 404), so the VM is not yet a substitute.
+  Follow-ups: that macOS 26 difference; unloaded-only cross-profile space; extension
+  focus-none on app hide; C2 find re-stack on tab switch; one unidentified `cargo test`
+  timing flake.
 - Phase 3 U15 done: tab and browser fullscreen use the native window, with sidebar
   behavior and exclusive access integrated into the host. Hidden fullscreen checks pass
   under C1 and C2. The unlocked screen check passed native entry, Escape, the menu,
