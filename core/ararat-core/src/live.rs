@@ -139,6 +139,17 @@ impl Live {
         }
     }
 
+    /// One Activate for a row the window keeps, in flight with the transaction that asked for
+    /// it: both the close successor and an off-space strip's re-assertion answer with this.
+    fn reactivate(&self, workspace: &Workspace, pending: &mut HashMap<Id, (CommandKind, Id)>, item: &str) -> Command {
+        let command = Command {
+            id: self.fresh_command_id(workspace), kind: CommandKind::Activate,
+            item: item.into(), url: None,
+        };
+        pending.insert(command.id.clone(), (CommandKind::Activate, command.item.clone()));
+        command
+    }
+
     /// Opens a live tab for a workspace row: the flip rides the returned ops, and the
     /// command comes back. The map and the in-flight marker land in `command_sent` —
     /// after the caller's flush succeeded, so a failed flush leaves no engine-facing
@@ -441,6 +452,10 @@ impl Live {
             next_map.remove(&item);
             next_reverse.remove(&live);
             next_windows.remove(&live);
+            // A row that left the map cannot answer an Activate any more, and the engine may
+            // swallow one without replying (no contents, or a tab closed in between). Drop the
+            // in-flight ones for the row, so a reopened row is not silenced by a stale entry.
+            next_pending.retain(|_, (kind, pending)| !(*kind == CommandKind::Activate && pending == &item));
             if transaction.cause == Cause::Chrome {
                 if let Some(window) = window {
                     let before = next.selected(&window).map(str::to_string);
@@ -453,12 +468,7 @@ impl Live {
                             // for this window.
                             changed_windows.insert(window.clone());
                             if let Some(successor) = after {
-                                let command = Command {
-                                    id: self.fresh_command_id(&next), kind: CommandKind::Activate,
-                                    item: successor, url: None,
-                                };
-                                next_pending.insert(command.id.clone(), (CommandKind::Activate, command.item.clone()));
-                                outcome.commands.push(command);
+                                outcome.commands.push(self.reactivate(&next, &mut next_pending, &successor));
                             }
                         }
                     }
@@ -523,6 +533,39 @@ impl Live {
             if matches!(transaction.cause, Cause::Engine) || changed_windows.contains(&strip.window) { continue; }
             if let Some(active) = &strip.active {
                 if let Some(item) = next_reverse.get(active).cloned() {
+                    // A strip can arrive after the window showed another space: a selection
+                    // made before the switch completes late, and its active tab belongs to
+                    // the space the window no longer shows. Recording it would select a row
+                    // outside the shown space, leaving the page empty; the strip's other
+                    // effects (map, metadata) stand.
+                    let shown_space = next.shown_space(&strip.window).map(str::to_string);
+                    let in_shown_space = shown_space.as_deref()
+                        .is_none_or(|space| next.is_in_space(&item, space));
+                    if !in_shown_space {
+                        // Chrome's active tab would otherwise stay on the space the window
+                        // left, and the page follows Chrome, so the sidebar would name one
+                        // row while the other space's page showed. The answer is the close
+                        // successor's re-activation of the row the window keeps: the reply
+                        // names a tab of the shown space, its strip passes this guard and
+                        // records nothing new, so the exchange ends there. Only a selection
+                        // the window shows is re-activated; one outside it is left for the
+                        // next strip of its own space to record. A strip that still names the
+                        // off-space tab while the Activate is in flight finds the in-flight
+                        // entry and asks for nothing, so a run of Chrome strips does not mint
+                        // one command each.
+                        if let Some(selected) = next.selected(&strip.window).map(str::to_string)
+                            && shown_space.as_deref().is_some_and(|space| next.is_in_space(&selected, space))
+                            && selected != item && next_map.contains_key(&selected)
+                            && !outcome.commands.iter().any(|command| {
+                                command.kind == CommandKind::Activate && command.item == selected
+                            })
+                            && !next_pending.values().any(|(kind, pending_item)| {
+                                *kind == CommandKind::Activate && pending_item == &selected
+                            }) {
+                            outcome.commands.push(self.reactivate(&next, &mut next_pending, &selected));
+                        }
+                        continue;
+                    }
                     if next.selected(&strip.window) != Some(item.as_str())
                         || next.items.get(&item).is_some_and(|item| item.lifecycle == Lifecycle::Unloaded) {
                         if let Ok(mut selection_ops) = next.record_active(&strip.window, &item, next.lifecycle_time()) {

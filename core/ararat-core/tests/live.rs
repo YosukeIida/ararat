@@ -76,12 +76,20 @@ fn engine_metadata_does_not_replace_a_space_switch_selection() {
     assert!(outcome.applied);
     assert_eq!(ws.selected("one"), Some("c2"));
     assert!(live.live_tab("a").is_some());
+    // The Chrome half depends on the shown space being "other" (create_space showed it and
+    // select_item leaves the shown space alone).
+    assert_eq!(ws.shown_space("one"), Some("other"));
+    // A Chrome activation records only from the space the window shows, so the activation
+    // this fixture reports is a tab of "other" (d2), not one of the space just left.
+    tab(&mut ws, "d2", "other:today", "https://d.example");
+    let (_, command) = live.open(&mut ws, "d2", "u").unwrap();
+    live.command_sent(&command);
     let (_, outcome) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 2, cause: Cause::Chrome,
-        strips: vec![strip(&live, &["a", "b"], Some("b"))],
+        strips: vec![strip(&live, &["a", "b", "d2"], Some("d2"))],
     });
     assert!(outcome.applied);
-    assert_eq!(ws.selected("one"), Some("b"));
+    assert_eq!(ws.selected("one"), Some("d2"));
 }
 
 #[test]
@@ -427,6 +435,168 @@ fn chrome_activation_updates_the_windows_selection() {
     assert!(outcome.applied);
     assert_eq!(ws.selected("one"), Some("b"));
     assert!(ws.windows["one"].history.contains(&"b".to_string()));
+}
+
+#[test]
+fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() {
+    let mut ws = workspace();
+    ws.create_space("one", "Other", "other").unwrap();
+    tab(&mut ws, "d", "other:today", "https://d.example");
+    ws.show_space("one", "space-work").unwrap();
+    let mut live = Live::new();
+    for item in ["a", "d"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "d"], Some("a"))]));
+    assert_eq!(ws.selected("one"), Some("a"));
+    // The user selects a in the space the window shows; its activation is still in flight.
+    let late = live.activate(&ws, "a").unwrap();
+    live.command_sent(&late);
+    // The user then shows the other space, where d is activated and its reply lands.
+    ws.show_space("one", "other").unwrap();
+    let shown = live.activate(&ws, "d").unwrap();
+    live.command_sent(&shown);
+    live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Command(shown.id.clone()),
+        strips: vec![strip(&live, &["a", "d"], Some("d"))],
+    });
+    assert_eq!(ws.selected("one"), Some("d"));
+    // The late activation of a completes with a as the active tab, but a is in the space the
+    // window left: the strip keeps its mapping and must not take the selection back.
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(late.id.clone()),
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("one"), Some("d"));
+    assert_eq!(ws.windows["one"].history.first().map(String::as_str), Some("d"));
+    assert!(live.live_tab("a").is_some());
+    assert!(live.item_for(&late.id).is_none());
+    assert!(!ops.iter().any(|op| matches!(op, Op::Put(Record::Window(_)))));
+    // Chrome stays on a, and the page follows Chrome, so the core answers with one Activate
+    // for the row the window keeps — the close successor's shape. The command names the tab,
+    // not the window; its strip is the one that reported the off-space active tab.
+    assert_eq!(outcome.commands.len(), 1);
+    let reassert = outcome.commands[0].clone();
+    assert_eq!(reassert.kind, CommandKind::Activate);
+    assert_eq!(reassert.item, "d");
+    assert!(reassert.url.is_none());
+    assert!(reassert.id.starts_with("cmd-"));
+    assert!(live.item_for(&reassert.id).is_none());
+    // While that Activate is in flight, another Chrome strip that still names a must not mint
+    // a second one: the in-flight entry covers it as well as this transaction's.
+    let (_, second) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 3, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert!(second.commands.is_empty());
+    assert_eq!(ws.selected("one"), Some("d"));
+    // The reply names d: its strip passes the guard, the selection is already d, so it records
+    // nothing and asks for no further command. The exchange ends here.
+    let (reply_ops, reply) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 4, cause: Cause::Command(reassert.id.clone()),
+        strips: vec![strip(&live, &["a", "d"], Some("d"))],
+    });
+    assert!(reply.applied);
+    assert!(reply.commands.is_empty());
+    assert!(reply_ops.is_empty());
+    assert_eq!(ws.selected("one"), Some("d"));
+    // A Chrome-caused strip is answered the same way. A selection cancels that Activate, and
+    // the cancel clears the in-flight entry, so the next strip asks again instead of finding a
+    // stale one.
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 5, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert_eq!(ws.selected("one"), Some("d"));
+    assert_eq!(outcome.commands.len(), 1);
+    assert_eq!(outcome.commands[0].kind, CommandKind::Activate);
+    assert_eq!(outcome.commands[0].item, "d");
+    let (cancelled, cancel_ops) = live.cancel(&mut ws, &outcome.commands[0].id);
+    assert!(cancelled);
+    assert!(cancel_ops.is_empty());
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 6, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert_eq!(outcome.commands.len(), 1);
+    assert_eq!(outcome.commands[0].item, "d");
+    // The shown space's own active tab records once the window shows that space again, and
+    // the strip asks for nothing.
+    ws.show_space("one", "space-work").unwrap();
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 7, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert_eq!(ws.selected("one"), Some("a"));
+    assert!(outcome.commands.is_empty());
+    // A selection the window does not show is not re-activated: both tabs are outside the
+    // shown space there, so the core asserts nothing and the next strip of the shown space
+    // records instead. Applying that strip does not loop either.
+    ws.show_space("one", "other").unwrap();
+    let (_, b) = live.open(&mut ws, "b", "u").unwrap();
+    live.command_sent(&b);
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 8, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "b", "d"], Some("b"))],
+    });
+    assert_eq!(ws.selected("one"), Some("a"));
+    assert!(outcome.commands.is_empty());
+}
+
+#[test]
+fn a_swallowed_activation_does_not_silence_the_reopened_row() {
+    let mut ws = workspace();
+    ws.create_space("one", "Other", "other").unwrap();
+    tab(&mut ws, "d", "other:today", "https://d.example");
+    ws.show_space("one", "space-work").unwrap();
+    let mut live = Live::new();
+    for item in ["a", "d"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "d"], Some("a"))]));
+    // The window shows other with d selected; an off-space strip asks for d once.
+    ws.show_space("one", "other").unwrap();
+    ws.select_item("one", "d").unwrap();
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert_eq!(outcome.commands.len(), 1);
+    assert_eq!(outcome.commands[0].item, "d");
+    let dropped = outcome.commands[0].id.clone();
+    // The engine swallows it and reports a strip without d: the tab leaves the map, and its
+    // in-flight Activate must leave with it.
+    let act_a = live.activate(&ws, "a").unwrap();
+    live.command_sent(&act_a);
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 2, cause: Cause::Command(act_a.id.clone()),
+        strips: vec![strip(&live, &["a"], Some("a"))],
+    });
+    assert!(outcome.commands.is_empty());
+    assert!(live.live_tab("d").is_none());
+    // The row is opened again; an off-space strip must be free to ask for it again.
+    let (_, reopened) = live.open(&mut ws, "d", "u").unwrap();
+    live.command_sent(&reopened);
+    let (_, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 3, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+    });
+    assert_eq!(ws.selected("one"), Some("d"));
+    assert_eq!(outcome.commands.len(), 1);
+    assert_eq!(outcome.commands[0].kind, CommandKind::Activate);
+    assert_eq!(outcome.commands[0].item, "d");
+    // A reply for the dropped id names no command in flight: the transaction is dropped whole.
+    let before = ws.clone();
+    let (ops, outcome) = live.apply(&mut ws, Transaction {
+        epoch: 1, rev: 4, cause: Cause::Command(dropped),
+        strips: vec![strip(&live, &["a", "d"], Some("d"))],
+    });
+    assert!(!outcome.applied);
+    assert!(ops.is_empty());
+    assert_eq!(ws, before);
 }
 
 #[test]

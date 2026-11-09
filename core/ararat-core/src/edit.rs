@@ -787,7 +787,9 @@ impl Workspace {
         }).or_else(|| self.favorites.values().find(|root| **root == item.id).map(|root| (root.as_str(), false)))
     }
 
-    fn is_in_space(&self, id: &str, space: &str) -> bool {
+    // The selection's own test for "does this row belong to the space the window shows",
+    // shared with the live coordinator: the row's outermost container decides.
+    pub(crate) fn is_in_space(&self, id: &str, space: &str) -> bool {
         let Some(space) = self.spaces.iter().find(|entry| entry.id == space) else { return false };
         self.list_for(id).is_some_and(|(root, _)| root == space.today || root == space.pinned || self.favorites.get(&space.profile).is_some_and(|id| id == root))
     }

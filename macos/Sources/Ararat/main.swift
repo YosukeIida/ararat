@@ -500,6 +500,10 @@ final class Runtime: NSObject {
   var browserCheckPhase = 0
   var browserCheckAttempts = 0
   var browserCheckTracedPhase = -1
+  var keyboardCommandTx = 0
+  var keyboardCommandActive: String?
+  var keyboardSelectionMark = 0
+  var keyboardDevToolsReadyState: [String: Any] = [:]
   var browserCheckRows: [Row] = []
   var browserCheckSeedID: String?
   var historyClearCheck: HistoryClearCheck?
@@ -782,6 +786,10 @@ final class Runtime: NSObject {
       guard let self else { return }
       self.recordMatrixTransaction(transaction, applied: applied, usableHost: self.hasUsableHost)
       self.sliceTransactions += 1
+      if case .command = transaction.cause, applied, let strip = transaction.strips.first {
+        self.keyboardCommandTx += 1
+        self.keyboardCommandActive = strip.tabs.first { $0.liveId == strip.active }?.item
+      }
       self.sliceLastRev = transaction.rev
       for strip in transaction.strips {
         self.sliceActive = strip.tabs.first { $0.liveId == strip.active }?.item
@@ -1588,6 +1596,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       timeoutValues["visible_windows"] = NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map { ["number": $0.windowNumber, "visible": $0.isVisible, "key": $0.isKeyWindow] as [String: Any] }
       timeoutValues["host_window_number"] = host?.window().windowNumber ?? 0
       timeoutValues["selection_diagnostics"] = checkSelectionDiagnostics(item: browserCheckSeedID)
+      timeoutValues["keyboard_command_active"] = keyboardCommandActive as Any? ?? NSNull()
+      timeoutValues["keyboard_command_tx"] = keyboardCommandTx
+      timeoutValues["keyboard_selection_mark"] = keyboardSelectionMark
+      timeoutValues["selection_state"] = adapter?.checkSelectionState() ?? [:]
+      timeoutValues["devtools_ready_state"] = keyboardDevToolsReadyState
       if browserCheckAttempts > 900 && CommandLine.arguments.contains("--ararat-space-matrix-check") {
         timeoutValues["matrix_diagnostics"] = matrixDiagnostics()
       }
@@ -2607,6 +2620,17 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
+  // Why not host.activeItemId() alone: it flips when Chrome activates the tab, while the command
+  // transaction reporting it is still in flight, and a space switch issued before it lands lets that late
+  // report re-select the old space's tab (record_active). Why not any strip's active tab: setProfileDirectory
+  // emits an engine strip with the Browser's old active tab before the selection's activate runs.
+  // The mark is set where the selection is issued, so a transaction from an earlier one cannot satisfy this.
+  func keyboardSelectionSettled(_ item: String?) -> Bool {
+    guard let item, keyboardCommandTx > keyboardSelectionMark, keyboardCommandActive == item,
+          (adapter?.checkSelectionState()["pending_commands"] as? [String])?.isEmpty == true else { return false }
+    return true
+  }
+
   func keyboardRead(_ tab: any ARTabAPI, script: Int) {
     guard !keyboardScriptPending else { return }
     keyboardScriptPending = true
@@ -3273,6 +3297,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 19
     case 19:
       guard host.checkKeyboardDevTools() else { return }
+      if screen, CommandLine.arguments.contains("--ararat-compositor=c2") {
+        // Why not assert right after the open: the docked frontend becomes a hit-test target only after its first layout.
+        let ready = host.checkDevToolsState()
+        keyboardDevToolsReadyState = ready
+        guard ready["page_hit"] as? Bool == true, ready["devtools_hit"] as? Bool == true else { return }
+      }
       keyboardResults["devtools"] = true
       host.checkKeyboardCommand("find")
       guard let find = container?.findBar, !find.isHidden else { fail("find with DevTools"); return }
@@ -3442,6 +3472,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first, row.url != nil else { fail("named profile seed"); return }
       keyboardOtherItem = row.id
       guard let workspace else { fail("named profile workspace"); return }
+      keyboardSelectionMark = keyboardCommandTx
       selectionGeneration += 1
       workspace.cancelPendingSpaceSwitches()
       let generation = selectionGeneration
@@ -3458,17 +3489,23 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
     case 369:
       guard snapshot.shownSpaceId == "named", snapshot.selectedId == keyboardOtherItem,
-            host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+            host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem,
+            (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem })?.isLoading == false,
+            keyboardSelectionSettled(keyboardOtherItem) else { return }
+      keyboardSelectionMark = keyboardCommandTx
       switchWorkspaceSpace("default")
       browserCheckPhase = 3690
     case 3690:
       guard snapshot.shownSpaceId == "default", snapshot.selectedId == browserCheckSeedID,
-            host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+            host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID,
+            keyboardSelectionSettled(browserCheckSeedID) else { return }
+      keyboardSelectionMark = keyboardCommandTx
       if screen { keyboardSend(host, command: "", key: "2", code: 19, flags: .control, screen: true) }
       else { performWorkspaceCommand("show_space_2") }
       browserCheckPhase = 360
     case 360:
-      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem,
+            keyboardSelectionSettled(keyboardOtherItem) else { return }
       keyboardResults["default_space_cross_profile"] = true
       if screen { keyboardResults["core_menu_space"] = true }
       send("find", "f", 3)
@@ -3483,29 +3520,37 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["find_profile_guard"] = true
       openCommandBar(.newTab)
       guard let bar = commandPresenter?.controller else { fail("space suggestion panel"); return }
+      keyboardSelectionMark = keyboardCommandTx
       bar.commit(Suggestion(title: "Default", subtitle: "", url: nil, key: nil, target: .space(id: "default"), score: 0))
       browserCheckPhase = 361
     case 361:
-      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID,
+            keyboardSelectionSettled(browserCheckSeedID) else { return }
       openCommandBar(.newTab)
       guard let bar = commandPresenter?.controller else { fail("space suggestion return panel"); return }
+      keyboardSelectionMark = keyboardCommandTx
       bar.commit(Suggestion(title: "Named", subtitle: "", url: nil, key: nil, target: .space(id: "named"), score: 0))
       browserCheckPhase = 362
     case 362:
-      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem,
+            keyboardSelectionSettled(keyboardOtherItem) else { return }
       keyboardResults["suggestion_space_cross_profile"] = true
       openCommandBar(.newTab)
       guard let bar = commandPresenter?.controller else { fail("show space command suggestion"); return }
+      keyboardSelectionMark = keyboardCommandTx
       bar.commit(Suggestion(title: "Show Space 1", subtitle: "", url: nil, key: nil, target: .command(id: "show_space_1"), score: 0))
       browserCheckPhase = 3621
     case 3621:
-      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID else { return }
+      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default", host.activeItemId() == browserCheckSeedID,
+            keyboardSelectionSettled(browserCheckSeedID) else { return }
       openCommandBar(.newTab)
       guard let bar = commandPresenter?.controller else { fail("return space command suggestion"); return }
+      keyboardSelectionMark = keyboardCommandTx
       bar.commit(Suggestion(title: "Show Space 2", subtitle: "", url: nil, key: nil, target: .command(id: "show_space_2"), score: 0))
       browserCheckPhase = 3622
     case 3622:
-      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem else { return }
+      guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1", host.activeItemId() == keyboardOtherItem,
+            keyboardSelectionSettled(keyboardOtherItem) else { return }
       keyboardResults["suggestion_space_commands"] = true
       adapter?.openCommandURL(baseURL + "?restore", expectedSpace: "named", profile: "Profile 1")
       browserCheckPhase = 363
@@ -4277,6 +4322,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     if browserCheckPhase == 680 {
       guard let workspace, let seed = browserCheckSeedID else { return }
+      keyboardSelectionMark = keyboardCommandTx
       selectionGeneration += 1
       workspace.cancelPendingSpaceSwitches()
       let generation = selectionGeneration
@@ -4290,7 +4336,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckPhase == 681 {
       guard snapshot.selectedId == browserCheckSeedID, host.activeItemId() == browserCheckSeedID,
             let seed = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
-            !seed.isLoading, seed.url == keyboardSavedURL else { return }
+            !seed.isLoading, seed.url == keyboardSavedURL, keyboardSelectionSettled(browserCheckSeedID) else { return }
       host.checkKeyboardCommand("duplicate")
       browserCheckPhase = 24
       return
@@ -5859,9 +5905,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       browserCheckPhase = 2
       let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
-      for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-        if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-          windowNumber: host.window().windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.sendEvent(event) }
+      func click(_ type: NSEvent.EventType) -> NSEvent? {
+        NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+          windowNumber: host.window().windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+      }
+      // Why not send the mouseUp after the mouseDown: NSButtonCell's tracking loop inside sendEvent(mouseDown)
+      // returns only after it dequeues a mouseUp, so on macOS 26 it never returned. The down is built first so
+      // the timestamps run forwards; only the posting order is up before down.
+      if let down = click(.leftMouseDown), let up = click(.leftMouseUp) {
+        NSApp.postEvent(up, atStart: false)
+        NSApp.sendEvent(down)
       }
     } else if browserCheckPhase == 2, linkMenuChosen, state["loaded"] as? Int == 1,
               let popup = state["window"] as? NSWindow, popup.isVisible,
