@@ -10,9 +10,9 @@ Write repository files (README, AGENTS.md, everything under `docs/`, code commen
 
 Every unit of work is split between design, orchestrator, implementation and review seats:
 
-1. Scope and design: Codex `gpt-6.1-terra`, effort high, on the personal account. It writes what to build, the files it touches, the invariants and the edge cases. The orchestrator uses the same model, effort and account.
-2. Implementation: two seats run in parallel on separate worktrees: Codex `gpt-6.1-terra`, effort high, on the personal account, and GLM-5.3-Flash, effort max, on OpenCode Go (`opencode-go/glm-5.3-flash`), using `opencode/glm-5.3-flash-free` only when Go quota is exhausted. When the personal Codex weekly quota is exhausted, continue only work GLM can do and wait for the quota to reset. Codex uses `CODEX_HOME=$HOME/.codex-personal`; Ararat never uses labteam.
-3. Review: Codex `gpt-6.1-sol`, effort high, on the personal account. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
+1. Scope and design: Claude Opus, effort medium. It writes what to build, the files it touches, the invariants and the edge cases. The orchestrator is Claude Sonnet, effort medium.
+2. Implementation: two seats run in parallel on separate worktrees: Codex `gpt-6.1-terra`, effort high, on the personal account, and DeepSeek V4.1 Flash, variant high, on OpenCode Go (`opencode-go/deepseek-v4.1-flash#high`). When the personal Codex weekly quota is exhausted, continue only work the OpenCode seat can do and wait for the quota to reset. Codex uses `CODEX_HOME=$HOME/.codex-personal`; Ararat never uses labteam.
+3. Review: Claude Opus, effort medium. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
 
 For a hard edge-case bug the order is reversed: implementation investigates, design gives a second opinion, implementation fixes it, and review checks it.
 
