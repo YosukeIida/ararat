@@ -1330,7 +1330,10 @@ extension SidebarView {
     }
 
     private func pressDrag(row: Row, view: NSView?, windowPoint: CGPoint) {
-        guard row.kind != .folder, let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
+        guard let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
+        window?.makeFirstResponder(self)
+        tooltip.dismiss()
+        guard row.kind != .folder else { return }
         finishRowMotion()
         clearScrollPresentation()
         var item = row
@@ -1343,8 +1346,6 @@ extension SidebarView {
         let source = rowViews[item.id] ?? view
         let point = dragPoint(windowPoint)
         drag = SidebarDragState(row: item, origin: point, originFrame: dragRect(source), position: point)
-        tooltip.dismiss()
-        window?.makeFirstResponder(self)
         if row.kind != .folder { select(row); listScroll.stopReveal() }
     }
 
@@ -1678,6 +1679,7 @@ extension SidebarView: NSMenuDelegate {
     }
 
     public func organize(command: String) {
+        guard pageCommandsAllowed, !libraryOpen else { return }
         guard let space = snapshotSpace else { return }
         let focused = (window?.firstResponder as? SidebarRowView)?.row
         let rows = space.favorites + space.pinned + space.today

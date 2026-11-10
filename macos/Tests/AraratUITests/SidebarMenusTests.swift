@@ -153,6 +153,75 @@ func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
 }
 
 @Test @MainActor
+func organizeCommandsActOnSelectedRowsAndRespectHiddenOrEditingStates() throws {
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: "tab-spec")
+        f.sidebar.organize(command: "duplicate")
+        #expect(f.edits.count == 1 && f.space.pinned.filter { $0.url == "https://docs.example.com/spec" }.count == 2)
+        f.sidebar.updateSelection(id: "tab-mail")
+        f.sidebar.organize(command: "duplicate")
+        #expect(f.edits.count == 1)
+        f.sidebar.updateSelection(id: "tab-spec")
+        f.sidebar.organize(command: "rename")
+        let row = try f.view("tab-spec")
+        #expect(row.renameField != nil)
+        f.sidebar.organize(command: "duplicate")
+        f.sidebar.organize(command: "new_folder")
+        #expect(f.edits.count == 1)
+        row.finishRename(commit: false)
+        f.sidebar.organize(command: "delete_folder")
+        #expect(f.edits.count == 1)
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 50, height: 20))
+        f.sidebar.addSubview(text)
+        #expect(f.window.makeFirstResponder(text))
+        f.sidebar.organize(command: "duplicate")
+        f.sidebar.organize(command: "new_folder")
+        #expect(f.edits.count == 1)
+        #expect(f.window.makeFirstResponder(f.sidebar))
+        f.sidebar.setLibraryOpen(true)
+        f.sidebar.organize(command: "duplicate")
+        f.sidebar.organize(command: "new_folder")
+        #expect(f.edits.count == 1)
+        f.sidebar.setLibraryOpen(false)
+        f.sidebar.setCreateSpaceOpen(true)
+        f.sidebar.organize(command: "duplicate")
+        f.sidebar.organize(command: "new_folder")
+        #expect(f.edits.count == 1)
+        f.sidebar.setCreateSpaceOpen(false)
+    }
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.confirmFolderDeletion = { _, completion in completion(true) }
+        #expect(f.window.makeFirstResponder(try f.view("folder-docs")))
+        f.sidebar.organize(command: "delete_folder")
+        #expect(!f.space.pinned.contains { $0.id == "folder-docs" })
+    }
+    for origin in ["today", "pinned", "favorite", "foreign"] {
+        let f = try MenuFixture(); defer { f.dispose() }
+        if origin != "foreign" { _ = try f.store.moveSpace(windowId: "menus", spaceId: "other", index: 1) }
+        var id = "tab-spec"
+        if origin == "today" { _ = try f.store.moveItem(windowId: "menus", id: id, container: "today-work", index: 0, openFolder: false) }
+        if origin == "favorite" { id = "tab-mail" }
+        f.sidebar.update(snapshot: f.snapshot)
+        f.sidebar.updateSelection(id: id)
+        f.sidebar.organize(command: "move_to_space_2")
+        if origin == "foreign" { #expect(f.moves.isEmpty) }
+        else {
+            let other = try #require(f.snapshot.spaces.first { $0.id == "other" })
+            #expect(f.moves.count == 1 && f.moves[0].1 == (origin == "today" ? other.todayId : other.pinnedId))
+        }
+    }
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: "tab-spec")
+        f.sidebar.organize(command: "new_folder")
+        let id = try #require(f.sidebar.renamingID)
+        #expect(try f.row(id).parentId == f.space.pinnedId)
+    }
+}
+
+@Test @MainActor
 func renameCommitsCancelsClearsAndRefusesEmptyFolder() throws {
     let f = try MenuFixture(); defer { f.dispose() }
     let row = try f.view("tab-spec")

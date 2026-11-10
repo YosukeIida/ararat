@@ -362,6 +362,7 @@ final class Runtime: NSObject {
   var commandPresenter: CommandBarPresenter?
   var coreMenuInstalled = false
   var organizeConditions: [String: Bool] = [:]
+  var organizeCancelStarted = false
   var organizeImage: String?
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
@@ -6410,10 +6411,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 6
     case 6:
       organizeConditions["folder_drag_refused"] = organizeConditions["folder_drag_refused"] == true && space.pinned.contains { $0.id == "organize-outer" && $0.parentId == space.pinnedId }
-      guard sidebar.organizeCheckIdle, begin("cancel", "organize-outer") else { return }
-      let started = sidebar.organizeCheckDragging
+      guard sidebar.organizeCheckIdle, begin("cancel", "organize-inner") else { return }
+      organizeCancelStarted = sidebar.organizeCheckDragging
       guard sidebar.organizeCheckEnd(cancel: true) else { return }
-      organizeConditions["escape_cancel"] = started
       browserCheckPhase = 7
     case 7:
       guard sidebar.organizeCheckIdle else { return }
@@ -6421,7 +6421,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 8
     case 8:
       guard sidebar.organizeCheckIdle else { return }
-      organizeConditions["escape_cancel"] = organizeConditions["escape_cancel"] == true && row("cancel")?.parentId == space.pinnedId
+      organizeConditions["escape_cancel"] = organizeCancelStarted && row("cancel")?.parentId == space.pinnedId
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
       var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
       if let organizeImage { values["image"] = organizeImage }
