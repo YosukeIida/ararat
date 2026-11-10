@@ -23,7 +23,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - E2E checks run only in the `ararat-test` VM now (the owner works on the host): `design/vm-u16matrix.sh
   <wt> <bundle> <out> <id> . all` runs the 22 exit checks and all 63 U16 cases. The guest re-signs
   each build with `ararat-test-sign` (Screen Recording is granted to that identity) and launches
-  through `disclaim` so TCC attributes capture to Ararat, not sshd. 85/85 pass on main.
+  through `disclaim` so TCC attributes capture to Ararat, not sshd. 92/92 pass on main.
 - Phase 3 U18 done (86badef): every split shape renders (N panes, nested, free ratios, 240 pt minimum,
   frozen divider drag), live pages move between windows without reload, a failed partial handoff
   cancels the close. Full VM suite passes: 63 U16 cases (rater `u16-coverage.jq`; `u16_complete`
@@ -31,6 +31,18 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   Unverified: drag dropped frames and presented-frame timestamps (`--ararat-measure=split` not run;
   the VM is not representative and the host is the owner's), real 30 s recovery/orphan drain,
   the extension `chrome.tabs.move` path (`transfer-ext` uses `TabListInterface`).
+- Phase 3 U19 rehearsal done on branch `practice-rebase-158` (5967411, not on main) and root
+  `~/chromium-build-next`: 158.0.8127.18 builds, smoke passes, the VM suite passes (63 U16, 22 exit checks,
+  split, transfer, transfer-ext). Five generic patches are hand-ported (ungoogled had no 158). Measurements in
+  architecture §4.7 (6f17c17). **Open for the owner: make 158 the pin or not** (conditions in §4.9; review
+  Low: the new `--google-base-suggestion-url` switch stays live). Discarding = deleting that root and branch.
+- screenfix (67db1bc): the U9-U12 screen checks (quit, links, profiles, prompts) pass in the VM; quit checks
+  print JSON before teardown and name failed conditions; the window calls
+  `TearDownPreBrowserWindowDestruction()` first (latent use-after-free on 157, crash on 158). All 92 VM runs
+  pass with exit 0.
+- VM runner reboots `ararat-test` before each run: after ~10 h its paravirtual GPU wedges the GPU process at
+  exit (teardown watchdog, exit 2) and checks slow down; a fresh guest runs the full suite in minutes.
+  `exit.sh` passes `TOOLCHAINS` because xcrun stopped resolving the installed Metal toolchain (2026-11-10).
 - vmkeys (d46224a): a late selection report no longer selects a tab outside the shown space (core
   re-activates the selected tab); keyboard checks wait for their own selection to apply.
 - focusnone (a3cafc3): extensions get `windows.onFocusChanged(WINDOW_ID_NONE)` when Ararat loses focus.
@@ -56,10 +68,8 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Phase 3 U14 done: extension actions are listed in the sidebar header and open Chrome's real
   action popup; `chrome.action.openPopup()` uses the same host and anchor. Extension-created app
   popups use our page-only host. Hidden extension checks and the wide floating-menu screen check
-  pass; the API-opened popup's own on-screen placement remains unverified. `screen-quit` and
-  `screen-links` also passed on U13. A separate `screenfix` worktree holds reviewed fixes for
-  `screen-prompts` (passed, including WebAuthn cancellation without registration) and the still
-  failing `screen-profiles`; neither fix is on main yet.
+  pass; the API-opened popup's own on-screen placement remains unverified. The U9-U12 screen checks pass
+  on main (see the screenfix entry).
 - Phase 3 U13 done: docked DevTools in the page card under C1 and C2; undocked DevTools uses a
   page-only host, including when only a popup remains. Hidden and screen DevTools checks pass for
   both compositors, including resize and redock; `screen-links` also passes through process exit.
@@ -72,7 +82,6 @@ Read `AGENTS.md` and `docs/architecture.md` first.
   current page card; autofill save bubbles (address, card) come through our handler. Hidden checks
   `permissions`, `dialogs` (incl. a resize), `protocol`, `autofill` need `--disable-features=SystemNotifications`.
   WebAuthn is screen-only (Bluetooth may be touched before the dialog; no `NSBluetoothAlwaysUsageDescription`).
-  `--ararat-screen=prompts` has not been run (screen locked), nor U9–U11's screens.
 - Phase 3 U11 done (hidden checks): two profiles share one window; showing a space loads its profile and
   creates that profile's Browser in the host (one Browser per profile per host), extension windows APIs see
   each profile's own windows, off-the-record Browsers are hosted, Chrome's session restore is off for every
@@ -240,7 +249,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 1. Owner: try units 16b–24 in the harness; decide the gradient direction and docked Glass (questions kept outside the repo by the design session).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
-3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U18 are done (C1 chosen, §4.6). Next: U19 (specs `transfer-split-55`, `practice-rebase-56`); finish the separate `screenfix` checks. The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
+3. Phase 3 (vertical slice), plan in `phase3-plan` (kept with the design session's envelopes). U1–U19 are done (C1 chosen, §4.6). Phase 3 is complete except the owner's 158 pin decision (U19). The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
 ## Known loose ends
 
