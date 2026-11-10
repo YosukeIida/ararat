@@ -66,6 +66,35 @@ private func openBindings(_ directory: URL) async throws -> (WorkspaceAdapter, W
 }
 
 @Test @MainActor
+func registeredCoreMenuPreservesShiftedShortcutsAcrossLoadsAndRebinding() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openBindings(directory)
+    let model = KeyBindingsModel(adapter: adapter)
+    let target = ShortcutTarget()
+    let menu = NSMenu()
+    let item = menu.addItem(withTitle: "Toggle Library", action: #selector(ShortcutTarget.toggle(_:)), keyEquivalent: "")
+    item.target = target
+    item.identifier = NSUserInterfaceItemIdentifier("toggle_library")
+    let event = try routingEvent(keyCode: 37, characters: "l", charactersIgnoringModifiers: "L", flags: [.command, .shift])
+    model.registerCore(menu)
+    #expect(menu.performKeyEquivalent(with: event))
+    #expect(menu.performKeyEquivalent(with: event))
+    #expect(target.calls == 2)
+    try await bindingValue { model.load(completion: $0) }
+    #expect(menu.performKeyEquivalent(with: event) && target.calls == 3)
+    let rebound = KeyCombination(key: "j", command: true, control: false, option: false, shift: true)
+    try await bindingValue { model.set(command: "toggle_library", key: rebound, completion: $0) }
+    let newEvent = try routingEvent(keyCode: 38, characters: "j", charactersIgnoringModifiers: "J", flags: [.command, .shift])
+    #expect(!menu.performKeyEquivalent(with: event))
+    #expect(menu.performKeyEquivalent(with: newEvent) && target.calls == 4)
+    try await bindingValue { model.reset(command: "toggle_library", completion: $0) }
+    #expect(menu.performKeyEquivalent(with: event) && target.calls == 5)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func everyMenuShortcutComesFromTheCoreIncludingPinAndFavoriteClose() throws {
     _ = NSApplication.shared
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "binding-defaults"))

@@ -1308,7 +1308,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
-    keyBindings?.register(core)
+    keyBindings?.registerCore(core)
   }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
