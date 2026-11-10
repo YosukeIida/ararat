@@ -240,12 +240,12 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 
 ### 4.7 ビルドと成果物の同一性
 
-- ビルドはリポジトリ外の `~/chromium-build` に置く。通常の作業中はインクリメンタルビルドのみを行う。
+- ビルドはリポジトリ外に置き、通常は `~/chromium-build` を使う。通常の作業中はインクリメンタルビルドのみを行う。
 - Ardia の数値: M5 Pro で初回ビルドに約 2〜2.5 時間、インクリメンタルビルドに約 7 分（コンパイルと ThinLTO の再リンク）、ディスクは約 45 GB。こちらの数値（2026-11-04、Mac Studio M3 Ultra、28 コア。素の Chromium 157.0.8103.39 の Release で `symbol_level=0` とプロプライエタリのコーデックを有効にし、ThinLTO と PGO は使わない。テストの席と CPU を分け合っていた）: 浅いソースの取得に 9.5 分、依存の取得に約 9 分（gclient の既定の並列数では googlesource が 429 を返し、`-j 4` で通った）、初回ビルドに 1 時間 16 分（57,508 手順）、`chrome/browser/ui/browser.cc` を変えた後のインクリメンタルビルドに 36 秒、ディスクは 39 GB。エンジンのビルドは nix の devshell の外で行う。devshell の `MACOSX_DEPLOYMENT_TARGET` が Chromium の rustc に渡り、ビルド用のツールのリンクを壊すからである。
 - phase 2 の正式なビルド（2026-11-05、同じ機体。`engine/args.gn` は official、ThinLTO、`chrome_pgo_phase=0`、Xcode 27.2、series は 27 件）: 156.0.8078.79 の初回のフルビルドは、リンクエラーで止まるまでに 1 時間 31 分（56,691 手順）であった。series にパッチを 1 本足すと、当たっているファイルをすべて戻して書き直すため、再ビルドに 3,343 秒（50,522 手順）かかった。`chrome/browser/ui/browser.cc` を変えた後のインクリメンタルビルドは 155 秒（6 手順で、ほとんどが ThinLTO の再リンク）、`out/Ararat` は 24 GB である。157.0.8103.39 のフルビルドは 4,821 秒（57,021 手順）であった。`smoke` は両方で通った。157 では、ビルド直後の初回の起動が 1 度失敗し、その後の 4 回は通った（`smoke` が終了コードと stderr を出す前の計測である）。
 - phase 3 の日々の作業は out/Dev で行う。`gen --dev` が書き、`build --dev` がビルドする（我々の規則。2026-11-05 に 157 で計測）。`engine/args.gn` に `is_official_build=false`、`use_thin_lto=false`、`symbol_level=0`、`blink_symbol_level=0`、`dcheck_always_on=false`、`enable_precompiled_headers=false` を加える（このツールチェーンでは base の `precompile.h` が module interface unit としてコンパイルされて失敗するため、precompiled header を切る）。フルビルドは 8,154 手順目で 1 度中断し、再開した分が 2,673 秒（36,301 手順）であった。ディスクは 7.2 GB、変更なしのビルドは 6 秒、`chrome/browser/ui/browser.cc` を変えた後は 31 秒（9 手順）である。配る版は `out/Ararat` で作る。こちらの層をリンクした後（2026-11-05）: 層を加えた後の最初の `build --dev` は 205 秒（1,374 手順）、変更なしの `build --dev` は 6 秒であった。`engine/ararat/` の 1 行を変えると、`apply` に 28 秒、`gen --dev` に 3 秒、`build --dev` に 28 秒（5 手順）かかる。
 - ビルドが使う CPU は 95 % までとし、ビルド中も機体を使えるようにする（owner の規則、2026-11-05）。siso は `-j` を受け付けないので、`build` は `hw.ncpu` の 95 % を切り捨てた数（28 のうち 26）を `-local_jobs` で渡す。
-- エンジンのビルドはロックのもとで一度に 1 つだけ実行する。ロックは `~/chromium-build/.engine.lock` の mkdir(2) ロック（持ち主の pid を `pid` ファイルに置き、exit と INT/TERM で外す）である。`fetch`、`apply`、`gen`、`build` が取り、取れないときは断る。pid が空または読めないロックは奪わずに断り、エンジンコマンドが動いていないのを確かめてから `rmdir "$ARARAT_ENGINE_LOCK"` で手で外す。持ち主が死んでいるロックはアトミックに奪い直す。手でロックを持ちたいときは、ディレクトリを作って `pid` に生きている pid を書く（我々の規則）。
+- エンジンのビルドは共有ロックのもとで一度に 1 つだけ実行する。ロックの既定値は `<build root>/.engine.lock` であり、複数の root では `ARARAT_ENGINE_LOCK` で同じ場所を指定する。mkdir(2) ロックで、持ち主の pid を `pid` ファイルに置き、exit と INT/TERM で外す。`fetch`、`apply`、`gen`、`build` が取り、取れないときは断る。pid が空または読めないロックは奪わずに断り、エンジンコマンドが動いていないのを確かめてから `rmdir "$ARARAT_ENGINE_LOCK"` で手で外す。持ち主が死んでいるロックはアトミックに奪い直す。手でロックを持ちたいときは、ディレクトリを作って `pid` に生きている pid を書く（我々の規則）。
 - エンジンの環境は `engine/scripts/env.sh` が整える: `MACOSX_DEPLOYMENT_TARGET` と `SDKROOT` を外し、`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` を置き、`DEPOT_TOOLS_UPDATE=0` を置き、PATH を depot_tools と `/usr/bin:/bin:/usr/sbin:/sbin` に限定する。`/nix` からも呼び出し元の PATH からも何も流さない。nix の xcbuild の `xcrun` は MobileAsset の Metal ツールチェーンを見つけられず、引き継いだ PATH のままでは ANGLE のシェーダーのアクションが "missing Metal Toolchain" で失敗するからである。gclient は `-j 4`（既定の並列数では googlesource が 429 を返す）（我々の規則）。
 - `fetch` は shallow にタグを取得して `gclient sync -D --no-history --shallow -j 4 --force` を行い、工程ごとに所要時間を出力する。
 - `gen` は `engine/args.gn`（ハッシュを `engine/build-inputs.toml` の記録と照合する）を `out/Ararat/args.gn` に書き、`ararat_engine_version` のスタンプ（ビルドした Chromium のバージョンと、series・パッチ・レイヤーを合わせたマニフェストのハッシュ）を付け加え、`gn gen` を実行する。すべてエンジンのロックのもとで行う（ビルド中に args を書き換えたり `gn gen` を実行したりすると、実行中のビルドの下で ninja が再生成を行う）。スタンプはレイヤーの編集のたびに変わるので、レイヤーの編集は配布用の args を変え、次の `out/Ararat` のビルドは再生成と再リンクを行う。args.gn のスタンプがツリーより古いとき、`build` は「`gen` を実行せよ」と言って止まる（我々の規則）。
@@ -255,6 +255,9 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 - `engine/build-inputs.toml` は、バイナリを決定するすべての要素を固定する: Chromium のコミット、ベースのパッチセットのタグ、解決済みの DEPS のハッシュ、GN args、Xcode と SDK のバージョン、アーキテクチャ。エンジンの成果物のキーは、このマニフェストのハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
 - CI ではエンジンをビルドしない。エンジンはローカルでビルドし、このキーのもとで prerelease として公開する。
 - 各リリースの Corresponding Source（GPL が定める対応ソース）は、タグ、`build-inputs.toml`、パッチの series、および固定した upstream を取得してツリーを再現するスクリプトである。
+
+- U19 の 157.0.8103.39 から 158.0.8127.18 への練習リベース（2026-11-10、第 2 の root）: `out` を除く `src` のクローンに 221 秒かかり、論理サイズ約 50 GB に対して空き容量は 0.84 GB 減った。APFS は extent を共有したが、ツールでは clone と copyfile の fallback を区別できなかった。タグの取得に 328 秒、`gclient sync` に 526 秒かかった。順次適用では series 42 件中 8 件（generic 5 件、我々のパッチ 3 件）が失敗した。dry run の予測は 6 件で、`viewless-bubble-anchor` と `sad-tab-viewless` は予測できなかった。`add-credits` は残存ファイルだけが原因で失敗した。ungoogled の 158 リリースがなかったため、generic 5 件は手作業で移植しており、upstream とバイト単位では一致しない。
+- 最初の移植ではその 8 パッチと `WindowOpenDisposition` の 9 箇所を修正した。その後の各回で ScreenAI の text detection に関する GN assertion、ホストの Metal toolchain（`TOOLCHAINS`）、PDF searchify の WebUI lint、`IDS_PDF_SEARCHIFY_IN_PROGRESS` のコンパイルエラー、captions の speech model installer のコンパイルエラー、`TearDownPreBrowserWindowDestruction()` の呼び出しによる Browser 破棄時のクラッシュを修正した。パッチごとの時間は記録していない。新規の `out/Dev` のビルド時間は中断を挟んだ各回の合計 440 + 2,248 + 395 + 650 + 31 = 3,764 秒であり、連続したフルビルドの時間ではない。上記の 157 の比較値も中断を含む。`out/Dev` は 7.4 GiB。`smoke --dev` の dump-dom は成功し、Chromium 158.0.8127.18 を報告した。再起動した `ararat-test` VM では U16 の 63 ケースが rater を通過し、22 件の終了検査、split、transfer、transfer-ext、screen-links、screen-profiles が終了コード 0 で通った。screen-quit と screen-prompts は 157 main と同様に失敗した。取得開始から最後の検査までは他の作業単位の待ち時間を含め約 2 時間 36 分、root・sync・ビルドによる空き容量の減少は 164 GB から 139 GB であった。
 
 ### 4.8 初日からのセキュリティとデータの完全性
 
@@ -271,6 +274,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 - パッチの遅延の上限は、upstream の stable リリースの時点から数える。実際に悪用されている脆弱性の修正は 48 時間以内に出荷し、それ以外の High と Critical の修正は 7 日以内に出荷する。
 - 同じ Chromium の milestone 上でのセキュリティ修正のみの再ビルドはインクリメンタルとし、事前に承認済みとする。milestone の更新にはフルビルドが必要であり、それを事前承認とするかはオーナーの判断である（14）。
 - ベースのパッチセットが上限を超えて Chromium から遅れた場合は、自らより新しい Chromium にリベースし、ベースのパッチを引き継ぐ。
+- リベースは第 2 の build root で行う。`out` を除いて `src` をクローンし、gclient の状態をコピーし、既存の root と depot_tools およびエンジンのロックを共有する。パッチの manifest を分離するため、Ararat の別ブランチを使う。第 2 の root でビルドと検査を行い、固定する版はオーナーが決める。練習を破棄するときは、オーナーの承認を得て第 2 の root とブランチを削除する（我々の規則）。次のリベースでは、手作業で移植した `disable-google-host-detection` の差異を確認する。新しい suggestion URL getter は対応するコマンドラインスイッチを渡すと有効のままである。M162 では `sad_tab_controller` と `bubble_anchor_util_views` の CHECK が fatal になるため、sad tab のガードを維持し、bubble anchor の不変条件を確認する。
 - オーナーを含め、誰かが日常的に使用するには、次の 2 点が必要である: 機能する更新の経路（Sparkle）と、URL とダウンロードの評判の検査（Safe Browsing、または選定した同等のもの、14）。
 
 ## 5. 状態の所有
@@ -456,6 +460,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 | 同期サーバーのホスティング | 自前の VPS / Cloudflare（Workers + R2）/ その他 | phase 8 で決定する |
 
 ## 15. ロードマップ
+
+U19 は別のブランチと root で練習リベースを完了した。158 を固定するかどうかはオーナーの判断待ちである（我々の規則）。
 
 U18 の検査: `--ararat-check=split` は 2、3、および nested の配置を検査し、C2 は未対応を返す。`--ararat-check=transfer` は往復移動と surface capture を検査する。`transfer-ext` は現在 `TabListInterface` の経路を検査し、拡張 API そのものの実行は未確認である。`--ararat-measure=split` は rAF、focus 切替時の gap、ドラッグ中の resize と frame を記録する。実表示時刻は取得できておらず null とする。`split`、`transfer`、`transfer-ext` は `ararat-test` の VM で通過した。`split` はドラッグ中に各 pane が新しい枠に clip されることも検査する。split の計測は未実施である（我々の規則）。
 
