@@ -457,7 +457,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 15. ロードマップ
 
-U18 の検査: `--ararat-check=split` は 2、3、および nested の配置を検査し、C2 は未対応を返す。`--ararat-check=transfer` は往復移動と surface capture を検査する。`transfer-ext` は現在 `TabListInterface` の経路を検査し、拡張 API そのものの実行は未確認である。`--ararat-measure=split` は rAF、focus 切替時の gap、ドラッグ中の resize と frame を記録する。実表示時刻は取得できておらず null とする。これらの engine・画面での実行は未検証である（我々の規則）。
+U18 の検査: `--ararat-check=split` は 2、3、および nested の配置を検査し、C2 は未対応を返す。`--ararat-check=transfer` は往復移動と surface capture を検査する。`transfer-ext` は現在 `TabListInterface` の経路を検査し、拡張 API そのものの実行は未確認である。`--ararat-measure=split` は rAF、focus 切替時の gap、ドラッグ中の resize と frame を記録する。実表示時刻は取得できておらず null とする。`split`、`transfer`、`transfer-ext` は `ararat-test` の VM で通過した。`split` はドラッグ中に各 pane が新しい枠に clip されることも検査する。split の計測は未実施である（我々の規則）。
 
 
 各 phase は、動作するビルドとサンドイッチ型のレビューで終える。

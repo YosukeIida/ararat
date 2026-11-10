@@ -452,7 +452,7 @@ Each unit of work: Opus 5.5 sets the scope → two implementation seats run in p
 
 ## 15. Roadmap
 
-U18 checks: `--ararat-check=split` checks two, three and nested pane layouts; C2 reports unsupported. `--ararat-check=transfer` checks a round trip and surface capture. `transfer-ext` currently exercises the `TabListInterface` path, not the extension API itself. `--ararat-measure=split` records rAF, focus-switch gaps, drag resize events and frames. Presentation timestamps are unavailable and reported as null. Engine and screen runs remain unverified (ours).
+U18 checks: `--ararat-check=split` checks two, three and nested pane layouts; C2 reports unsupported. `--ararat-check=transfer` checks a round trip and surface capture. `transfer-ext` currently exercises the `TabListInterface` path, not the extension API itself. `--ararat-measure=split` records rAF, focus-switch gaps, drag resize events and frames. Presentation timestamps are unavailable and reported as null. `split`, `transfer` and `transfer-ext` pass in the `ararat-test` VM; `split` also checks that every pane is clipped to its new frame during a drag. The split measurement has not been run (ours).
 
 
 Each phase ends with a working build and a sandwich review.
