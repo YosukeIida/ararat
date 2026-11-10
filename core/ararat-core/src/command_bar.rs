@@ -65,8 +65,9 @@ impl Index {
         // of the same space is the common case), dropping only the folder the tab is already in.
         let can_move_to = |space: &crate::model::Space| current_profile == Some(&space.profile) && current_space.is_some_and(|current| current.id != space.id);
         let can_move_folder_to = |space: &crate::model::Space| current_profile == Some(&space.profile);
+        let current_split = current.and_then(|id| ws.outermost_split(id));
         let excluded = |item: &crate::model::Item| Some(item.id.as_str()) == current ||
-            item.membership.parent.as_deref().is_some_and(|parent| Some(parent) == current && ws.items.get(parent).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. })));
+            current_split.as_ref().is_some_and(|split| ws.outermost_split(&item.id).as_ref() == Some(split));
         let mut seen = HashSet::new();
         for space in &ws.spaces {
             for (root, pinned) in [(&space.pinned, true), (&space.today, false)] {

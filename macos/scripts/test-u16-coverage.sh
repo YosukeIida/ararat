@@ -134,7 +134,7 @@ fixture=$(jq -n '
   [{profile:"Default",item:"a",live:"la",active:true,presented:true},
    {profile:"Profile 1",item:"b",live:"lb",active:true,presented:true}] as $pages |
   {check:"profiles",case:"close-split",compositor:"c1",requested_direction:"default",check_flags:["--ararat-split-close-check"],ok:true,exit:0,process_exit:0,build_id:"fixture",
-   expected_dialog_items:$expected,split_panel_preserved:true,selection_confirm_race:true,stock_browsers:0,
+   expected_dialog_items:$expected,split_panel_selected:true,selection_confirm_race:true,stock_browsers:0,
    rows_unchanged_after_close:true,window_removed:true,widget_closed:true,
    cancel_run:{dialogs:2,close_cancelled:1,closed:false,closing:false,host_open:true,rows_unchanged:true,split_cancel_restored:true,dialog_pages:$pages},
    close_run:{dialogs:2,close_cancelled:1,closed:true,browsers:0,dialog_pages:$pages}}')
@@ -146,9 +146,25 @@ printf '%s\n' "$fixture" | jq '[.cancel_run.dialog_pages |= map(.attachment={com
   jq -e '.coverage[] | select(.case == "close-split") | .status == "failed"' >/dev/null
 printf '%s\n' "$fixture" | jq '[.cancel_run.dialog_pages |= map(.live="same-live") | .close_run.dialog_pages |= map(.live="same-live")]' | jq -f "$script_dir/u16-coverage.jq" |
   jq -e '.coverage[] | select(.case == "close-split") | .status != "passed"' >/dev/null
-for path in '.split_panel_preserved' '.cancel_run.dialogs' '.cancel_run.close_cancelled' '.cancel_run.closed' '.cancel_run.closing' '.cancel_run.host_open' '.cancel_run.rows_unchanged' '.cancel_run.split_cancel_restored' '.cancel_run.dialog_pages[0].item' '.cancel_run.dialog_pages[0].live' '.cancel_run.dialog_pages[0].active' '.cancel_run.dialog_pages[0].presented' '.close_run.dialogs' '.close_run.close_cancelled' '.close_run.closed' '.close_run.browsers' '.close_run.dialog_pages' '.rows_unchanged_after_close' '.window_removed' '.widget_closed' '.selection_confirm_race' '.stock_browsers'; do
+for path in '.split_panel_selected' '.cancel_run.dialogs' '.cancel_run.close_cancelled' '.cancel_run.closed' '.cancel_run.closing' '.cancel_run.host_open' '.cancel_run.rows_unchanged' '.cancel_run.split_cancel_restored' '.cancel_run.dialog_pages[0].item' '.cancel_run.dialog_pages[0].live' '.cancel_run.dialog_pages[0].active' '.cancel_run.dialog_pages[0].presented' '.close_run.dialogs' '.close_run.close_cancelled' '.close_run.closed' '.close_run.browsers' '.close_run.dialog_pages' '.rows_unchanged_after_close' '.window_removed' '.widget_closed' '.selection_confirm_race' '.stock_browsers'; do
   printf '%s\n' "$fixture" | jq "[del($path)]" | jq -f "$script_dir/u16-coverage.jq" |
     jq -e '.coverage[] | select(.case == "close-split") | .status != "passed"' >/dev/null
+done
+
+for variant in close-empty supersede-registered supersede-resolved; do
+  for compositor in c1 c2; do
+    scope="$variant"
+    if [[ "$compositor" == c2 ]]; then scope="c2-$variant"; fi
+    for reconciled in true false; do
+      printf '%s\n' "$fixture" | jq --arg v "$variant" --arg c "$compositor" --argjson reconciled "$reconciled" '
+        [.compositor=$c | .case=(if $v == "close-empty" then "close-empty" else null end) |
+         .check_flags += [(if $v == "close-empty" then "--ararat-empty-close-check" else "--ararat-selection-supersede=" + ($v | ltrimstr("supersede-")) end)] |
+         .selection_supersession=true | .cancel_run.rows_unchanged=false | .cancel_run.profile_reconciled=$reconciled |
+         .cancel_run.dialog_pages |= map(.attachment={compositor:$c,live:.live,target:true,host:true,window:true,visible:true,bounds:true,presented:true}) |
+         .close_run.dialog_pages=.cancel_run.dialog_pages]' | jq -f "$script_dir/u16-coverage.jq" |
+        jq -e --arg scope "$scope" --argjson reconciled "$reconciled" '.coverage[] | select(.case == $scope) | .status == (if $reconciled then "passed" else "failed" end)' >/dev/null
+    done
+  done
 done
 
 multi_fixture=$(jq -n '
@@ -194,7 +210,7 @@ printf '%s\n' "$fixture" | jq '[.compositor="c2" | .cancel_run.dialog_pages |= m
   jq -e '(.coverage | map(select(.case == "c2-close-split"))[0].status) == "passed" and (.coverage | map(select(.case == "close-split"))[0].status) == "missing"' >/dev/null
 printf '%s\n' "$fixture" | jq '[.compositor="c2" | .cancel_run.dialog_pages |= map(.attachment={compositor:"c2",live:.live,target:true,host:true,window:true,visible:true,bounds:false,presented:true}) | .close_run.dialog_pages=.cancel_run.dialog_pages]' | jq -f "$script_dir/u16-coverage.jq" |
   jq -e '.coverage[] | select(.case == "c2-close-split") | .status != "passed"' >/dev/null
-printf '%s\n' "$fixture" | jq '[.case="close-empty" | .check_flags += ["--ararat-empty-close-check"]]' | jq -f "$script_dir/u16-coverage.jq" |
+printf '%s\n' "$fixture" | jq '[.case="close-empty" | .check_flags += ["--ararat-empty-close-check"] | .cancel_run.rows_unchanged=false | .cancel_run.profile_reconciled=true]' | jq -f "$script_dir/u16-coverage.jq" |
   jq -e '.coverage[] | select(.case == "close-empty") | .status == "passed"' >/dev/null
 
 quit_fixture=$(jq -n '

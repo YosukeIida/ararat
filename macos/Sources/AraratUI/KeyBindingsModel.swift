@@ -165,7 +165,6 @@ public final class KeyBindingsModel: ObservableObject {
             if let core = error as? CoreError {
                 switch core {
                 case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): self.error = message
-                case .UnsupportedSplit: self.error = "The selected split cannot be shown yet."
                 }
             } else { self.error = error.localizedDescription }
             completion(.failure(error))

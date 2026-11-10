@@ -130,23 +130,23 @@ fn unloading_the_last_loaded_split_member_unloads_its_group() {
     ws.select_item("one", "y4").unwrap(); ws.select_item("one", "split-1").unwrap();
     ws.close_item("tab-a").unwrap();
     assert_eq!(ws.items["split-1"].lifecycle, Lifecycle::Open);
-    assert_eq!(ws.selected("one"), Some("split-1"));
+    assert_eq!(ws.selected("one"), Some("tab-b"));
     ws.close_item("tab-b").unwrap();
     assert_eq!(ws.items["split-1"].lifecycle, Lifecycle::Unloaded);
     assert_eq!(ws.selected("one"), Some("y4"));
     ws.select_item("one", "tab-b").unwrap();
     assert_eq!(ws.items["split-1"].lifecycle, Lifecycle::Open);
-    assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Unloaded);
+    assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Open);
     ws.select_item("one", "split-1").unwrap();
     assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Open);
 }
 
 #[test]
-fn a_recent_split_member_selects_its_group_after_another_tab_closes() {
+fn a_recent_split_member_is_selected_after_another_tab_closes() {
     let mut ws = workspace();
     ws.select_item("one", "tab-a").unwrap(); ws.select_item("one", "y4").unwrap();
     ws.close_item("y4").unwrap();
-    assert_eq!(ws.selected("one"), Some("split-1"));
+    assert_eq!(ws.selected("one"), Some("tab-a"));
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn selected_today_member_keeps_its_surviving_split_before_older_history() {
     ws.close_item("tab-a").unwrap();
     assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Closed);
     assert_eq!(ws.items["split-1"].lifecycle, Lifecycle::Open);
-    assert_eq!(ws.selected("one"), Some("split-1"));
+    assert_eq!(ws.selected("one"), Some("tab-b"));
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn selected_pinned_member_keeps_its_surviving_split_before_older_history() {
     ws.close_item("tab-a").unwrap();
     assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Unloaded);
     assert_eq!(ws.items["split-1"].lifecycle, Lifecycle::Open);
-    assert_eq!(ws.selected("one"), Some("split-1"));
+    assert_eq!(ws.selected("one"), Some("tab-b"));
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn closing_walks_history_then_falls_back_only_in_the_shown_space() {
 
 #[test]
 fn pinned_and_favorite_unloads_skip_history_from_another_space() {
-    for (id, expected) in [("tab-spec", Some("split-1")), ("tab-mail", None)] {
+    for (id, expected) in [("tab-spec", Some("tab-a")), ("tab-mail", None)] {
         let mut ws = workspace();
         ws.items.get_mut("y0").unwrap().membership.parent = Some("today-home".into());
         ws.select_item("one", "y0").unwrap(); ws.select_item("one", id).unwrap();

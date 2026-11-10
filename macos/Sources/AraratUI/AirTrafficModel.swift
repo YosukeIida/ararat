@@ -177,7 +177,6 @@ public final class AirTrafficModel: ObservableObject {
         if let core = error as? CoreError {
             switch core {
             case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): return message
-            case .UnsupportedSplit: return "The selected split cannot be shown yet."
             }
         }
         return error.localizedDescription

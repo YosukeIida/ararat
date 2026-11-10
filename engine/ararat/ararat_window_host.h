@@ -23,6 +23,9 @@ class Profile;
 namespace content { class WebContents; class RenderFrameHost; }
 namespace input { class NativeWebKeyboardEvent; }
 
+std::string AraratLiveIdForContents(content::WebContents* contents);
+void AraratClearDetachedTransfers();
+bool AraratCheckRecoveryBarrier();
 bool AraratCheckDialogIntegrity();
 bool AraratCheckRegisterBeforeUnload(const std::string& live, content::WebContents* contents);
 void AraratCheckUnregisterBeforeUnload(const std::string& live, content::WebContents* contents);
@@ -119,6 +122,9 @@ class AraratWindowHostCore {
   std::map<std::string, raw_ptr<AraratBrowserWindow>> windows_;
   std::set<std::string> close_warnings_confirmed_;
   bool closing_ = false;
+  bool close_handoff_pending_ = false;
+  bool close_handoff_complete_ = false;
+  uint64_t close_generation_ = 0;
   bool closed_ = false;
   bool popup_ = false;
   bool devtools_ = false;

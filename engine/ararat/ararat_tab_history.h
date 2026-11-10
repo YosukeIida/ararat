@@ -31,6 +31,7 @@ class TabHistory {
   bool Blocked(const std::string& profile);
   void Remove(Writer* writer);
   std::string Generation(const std::string& profile);
+  Writer* FindWriter(const std::string& profile, const std::string& item) const;
   FileSequence& sequence() { return sequence_; }
 
  private:
@@ -59,6 +60,7 @@ class Writer : public content::WebContentsObserver {
   const std::string& profile() const { return profile_; }
   const std::string& item() const { return item_; }
   uint64_t admitted_at() const { return admitted_at_; }
+  bool fenced() const { return fenced_; }
 
  private:
   void SaveSoon();

@@ -30,6 +30,7 @@
 - (void)start;
 - (void)tick:(NSTimer*)timer;
 - (void)sample:(NSArray<ARTab*>*)tabs completion:(void (^)(NSArray*))completion;
+- (void)sampleSplit:(NSArray<ARTab*>*)tabs completion:(void (^)(NSArray*))completion;
 - (void)finishRun:(NSDictionary*)values;
 @end
 
@@ -84,7 +85,37 @@ void ReadFrameTimes(ARTab* tab, void (^completion)(NSString*)) {
   BOOL pending_;
   NSInteger switch_ms_;
   NSInteger refresh_rate_;
+  NSInteger split_count_;
+  NSArray* split_visible_;
+  NSArray* split_after_visible_;
+  NSArray* split_after_switch_;
+  NSArray* split_after_drag_;
+  double split_drag_seconds_;
+  double split_open_epoch_;
+  double split_release_epoch_;
   std::unique_ptr<base::StatisticsRecorder::ScopedHistogramSampleObserver> observer_;
+}
+
+- (void)sampleSplit:(NSArray<ARTab*>*)tabs completion:(void (^)(NSArray*))completion {
+  if (pending_) return;
+  pending_ = YES;
+  NSInteger generation = generation_;
+  NSMutableArray* values = [NSMutableArray arrayWithCapacity:tabs.count];
+  for (NSUInteger i = 0; i < tabs.count; ++i) [values addObject:NSNull.null];
+  if (!tabs.count) { pending_ = NO; completion(values); return; }
+  __block NSUInteger remaining = tabs.count;
+  __weak ARMeasure* weakSelf = self;
+  for (NSUInteger i = 0; i < tabs.count; ++i) {
+    ExecutePage(tabs[i], u"(()=>{let d=document.documentElement.dataset;let s=JSON.stringify({raf:Number(d.raf||0),resize:Number(d.resize||0),gap:Number(d.gap||0),frames:d.frames||''});d.reset='1';return s})()", ^(base::Value value) {
+      ARMeasure* strongSelf = weakSelf;
+      if (!strongSelf || strongSelf->generation_ != generation) return;
+      const std::string* text = value.GetIfString();
+      NSData* data = text ? [[NSString stringWithUTF8String:text->c_str()] dataUsingEncoding:NSUTF8StringEncoding] : nil;
+      id parsed = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+      values[i] = [parsed isKindOfClass:NSDictionary.class] ? parsed : (id)NSNull.null;
+      if (--remaining == 0) { strongSelf->pending_ = NO; completion(values); }
+    });
+  }
 }
 
 - (instancetype)initWithHost:(ARWindowHost*)host scenario:(NSString*)scenario {
@@ -134,9 +165,9 @@ void ReadFrameTimes(ARTab* tab, void (^completion)(NSString*)) {
     return;
   }
   NSInteger count = [scenario_ isEqualToString:@"background"] ? 10 :
-                    [scenario_ isEqualToString:@"switch"] ? 3 : 1;
-  BOOL record_times = [scenario_ isEqualToString:@"occlusion"] || [scenario_ isEqualToString:@"display"];
-  NSString* url = [NSString stringWithFormat:@"data:text/html,<style>div{width:100px;height:100px;background:red;animation:a 1s infinite alternate}@keyframes a{from{transform:translateX(0)}to{transform:translateX(200px)}}</style><div></div><script>let n=0,q=[];function f(t){document.documentElement.dataset.raf=String(++n);if(%@){q.push(performance.timeOrigin+t);if(q.length>32)q.shift();document.documentElement.dataset.frames=q.join(',')}requestAnimationFrame(f)}requestAnimationFrame(f)</script>", record_times ? @"true" : @"false"];
+                    ([scenario_ isEqualToString:@"switch"] || [scenario_ isEqualToString:@"split"]) ? 3 : 1;
+  BOOL record_times = [scenario_ isEqualToString:@"occlusion"] || [scenario_ isEqualToString:@"display"] || [scenario_ isEqualToString:@"split"];
+  NSString* url = [NSString stringWithFormat:@"data:text/html,<style>div{width:100px;height:100px;background:red;animation:a 1s infinite alternate}@keyframes a{from{transform:translateX(0)}to{transform:translateX(200px)}}</style><div></div><script>let n=0,q=[],last=0,gap=0,r=0;addEventListener('resize',()=>document.documentElement.dataset.resize=String(++r));function f(t){let d=document.documentElement.dataset;if(d.reset){gap=0;delete d.reset}if(last)gap=Math.max(gap,t-last);last=t;d.gap=String(gap);d.raf=String(++n);if(%@){q.push(performance.timeOrigin+t);if(q.length>32)q.shift();d.frames=q.join(',')}requestAnimationFrame(f)}requestAnimationFrame(f)</script>", record_times ? @"true" : @"false"];
   for (NSInteger i = 0; i < count; ++i) {
     NSString* identifier = [NSString stringWithFormat:@"measure-%ld", (long)i];
     [host_ openURL:url commandId:identifier itemId:identifier];
@@ -193,7 +224,7 @@ void ReadFrameTimes(ARTab* tab, void (^completion)(NSString*)) {
 - (void)tick:(NSTimer*)timer {
   double elapsed = (base::TimeTicks::Now() - stage_start_).InSecondsF();
   if (stage_ == 0) {
-    NSInteger needed = [scenario_ isEqualToString:@"background"] ? 10 : [scenario_ isEqualToString:@"switch"] ? 3 : 1;
+    NSInteger needed = [scenario_ isEqualToString:@"background"] ? 10 : ([scenario_ isEqualToString:@"switch"] || [scenario_ isEqualToString:@"split"]) ? 3 : 1;
     tabs_ = host_.tabs;
     BOOL ready = tabs_.count >= needed;
     for (ARTab* tab in tabs_) if (tab.isLoading || !tab.contents) ready = NO;
@@ -215,6 +246,105 @@ void ReadFrameTimes(ARTab* tab, void (^completion)(NSString*)) {
       self->uncover_epoch_ms_ = base::Time::Now().InMillisecondsFSinceUnixEpochIgnoringNull();
       [self setStage:6];
     }];
+    return;
+  }
+  if ([scenario_ isEqualToString:@"split"]) {
+    if (stage_ == 1) {
+      split_count_ = (run_ % 2) ? 2 : 3;
+      id<ARWindowHostDelegate> delegate = host_.delegate;
+      split_open_epoch_ = base::Time::Now().InMillisecondsFSinceUnixEpochIgnoringNull();
+      if (![delegate respondsToSelector:@selector(windowHost:installSplitMeasurement:)] ||
+          ![delegate windowHost:host_ installSplitMeasurement:split_count_]) {
+        [self finishRun:@{ @"unsupported": @YES }]; return;
+      }
+      [tabs_[0] activateWithCommandId:@"split-measure-focus"];
+      [self setStage:20]; return;
+    }
+    NSArray<ARTab*>* observed = [tabs_ subarrayWithRange:NSMakeRange(0, split_count_)];
+    if (stage_ == 20 && elapsed >= 0.2) {
+      [self setStage:21];
+      [self sampleSplit:observed completion:^(NSArray* stats) { self->split_visible_ = stats; [self setStage:22]; }];
+      return;
+    }
+    if (stage_ == 22 && elapsed >= 5) {
+      [self setStage:23];
+      [self sampleSplit:observed completion:^(NSArray* stats) {
+        self->split_after_visible_ = stats;
+        [self->tabs_[1] activateWithCommandId:@"split-measure-switch-1"];
+        [self setStage:24];
+      }];
+      return;
+    }
+    if (stage_ == 24 && elapsed >= 0.5) {
+      [tabs_[0] activateWithCommandId:@"split-measure-switch-2"];
+      [self setStage:25]; return;
+    }
+    if (stage_ == 25 && elapsed >= 0.5) {
+      [self setStage:26];
+      [self sampleSplit:observed completion:^(NSArray* stats) { self->split_after_switch_ = stats; [self setStage:27]; }];
+      return;
+    }
+    if (stage_ == 27) {
+      BOOL finished = elapsed >= 1;
+      CGFloat delta = 60 * sin(std::min(1.0, elapsed) * 6.28318530718);
+      id<ARWindowHostDelegate> delegate = host_.delegate;
+      if (finished) split_release_epoch_ = base::Time::Now().InMillisecondsFSinceUnixEpochIgnoringNull();
+      if (![delegate respondsToSelector:@selector(windowHost:dragSplitMeasurement:finished:)] ||
+          ![delegate windowHost:host_ dragSplitMeasurement:delta finished:finished]) {
+        [self finishRun:@{ @"error": @"divider unavailable" }]; return;
+      }
+      if (!finished) return;
+      split_drag_seconds_ = elapsed;
+      [self setStage:28];
+      [self sampleSplit:observed completion:^(NSArray* stats) { self->split_after_drag_ = stats; [self setStage:29]; }];
+      return;
+    }
+    if (stage_ == 29 && elapsed >= 0.2) {
+      [self setStage:30];
+      [self sampleSplit:observed completion:^(NSArray* afterRelease) {
+        NSMutableArray* visibleRaf = [NSMutableArray array];
+        NSMutableArray* switchGaps = [NSMutableArray array];
+        NSMutableArray* dragResize = [NSMutableArray array];
+        NSMutableArray* releaseResize = [NSMutableArray array];
+        NSMutableArray* dragDropped = [NSMutableArray array];
+        NSMutableArray* openRaf = [NSMutableArray array];
+        NSMutableArray* releaseRaf = [NSMutableArray array];
+        for (NSInteger i = 0; i < self->split_count_; ++i) {
+          id start = self->split_visible_[i], end = self->split_after_visible_[i];
+          id switched = self->split_after_switch_[i], dragged = self->split_after_drag_[i], released = afterRelease[i];
+          BOOL valid = [start isKindOfClass:NSDictionary.class] && [end isKindOfClass:NSDictionary.class] &&
+              [switched isKindOfClass:NSDictionary.class] && [dragged isKindOfClass:NSDictionary.class] && [released isKindOfClass:NSDictionary.class];
+          if (!valid) {
+            [visibleRaf addObject:NSNull.null]; [switchGaps addObject:NSNull.null]; [dragResize addObject:NSNull.null];
+            [releaseResize addObject:NSNull.null];
+            [dragDropped addObject:NSNull.null]; [openRaf addObject:NSNull.null]; [releaseRaf addObject:NSNull.null]; continue;
+          }
+          [visibleRaf addObject:@([end[@"raf"] integerValue] - [start[@"raf"] integerValue])];
+          [switchGaps addObject:switched[@"gap"] ?: (id)NSNull.null];
+          [dragResize addObject:@([dragged[@"resize"] integerValue] - [switched[@"resize"] integerValue])];
+          [releaseResize addObject:@([released[@"resize"] integerValue] - [dragged[@"resize"] integerValue])];
+          NSInteger raf = [dragged[@"raf"] integerValue] - [switched[@"raf"] integerValue];
+          [dragDropped addObject:@(std::max<NSInteger>(0, std::lround(self->refresh_rate_ * self->split_drag_seconds_) - raf))];
+          NSNumber* (^firstAfter)(NSDictionary*, double) = ^NSNumber*(NSDictionary* stats, double epoch) {
+            for (NSString* value in [stats[@"frames"] componentsSeparatedByString:@","]) {
+              double timestamp = value.doubleValue;
+              if (timestamp >= epoch) return @(timestamp - epoch);
+            }
+            return nil;
+          };
+          [openRaf addObject:firstAfter(start, self->split_open_epoch_) ?: (id)NSNull.null];
+          [releaseRaf addObject:firstAfter(released, self->split_release_epoch_) ?: (id)NSNull.null];
+        }
+        [self finishRun:@{ @"panes": @(self->split_count_), @"visible_raf_5s": visibleRaf,
+          @"switch_max_gap_ms": switchGaps, @"drag_resize_events": dragResize, @"release_resize_events": releaseResize, @"drag_dropped_frames": dragDropped,
+          @"open_first_raf_ms": openRaf, @"release_first_raf_ms": releaseRaf,
+          @"open_presented_ms": NSNull.null, @"release_presented_ms": NSNull.null,
+          @"drag_kind": @"synthetic-divider-events" }];
+      }];
+      return;
+    }
+    if ((stage_ == 21 || stage_ == 23 || stage_ == 26 || stage_ == 28 || stage_ == 30) && elapsed > 10)
+      [self finishRun:@{ @"timeout": @"split sampling" }];
     return;
   }
   if ([scenario_ isEqualToString:@"switch"]) {

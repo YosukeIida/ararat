@@ -19,6 +19,39 @@ impl WindowState {
 }
 
 impl Workspace {
+    pub fn split_factors(&self, id: &str) -> Option<Vec<(Id, f64)>> {
+        let ItemKind::Split { width_factors, .. } = &self.items.get(id)?.kind else { return None };
+        let children: Vec<_> = self.children(id).into_iter()
+            .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).collect();
+        if children.is_empty() { return Some(Vec::new()); }
+        let values: Vec<_> = children.iter().map(|child| {
+            let mut matches = width_factors.iter().filter(|(key, _)| key == &child.id);
+            let value = matches.next().map(|(_, value)| *value);
+            if matches.next().is_some() { None } else { value.filter(|v| v.is_finite() && *v > 0.0) }
+        }).collect();
+        let max = values.iter().flatten().copied().fold(0.0_f64, f64::max);
+        let scaled = |v: f64| (v / max).max(f64::MIN_POSITIVE);
+        let valid: Vec<_> = values.iter().flatten().map(|v| scaled(*v)).collect();
+        let mean = if valid.is_empty() { 1.0 } else { valid.iter().sum::<f64>() / valid.len() as f64 };
+        let weights: Vec<_> = values.iter().map(|value| value.map_or(mean, scaled)).collect();
+        let total: f64 = weights.iter().sum();
+        Some(children.into_iter().zip(weights).map(|(child, weight)| (child.id.clone(), weight / total)).collect())
+    }
+
+    pub fn set_split_factors(&mut self, id: &str, factors: Vec<(Id, f64)>) -> Result<Vec<Op>, EditError> {
+        let children = self.split_factors(id).ok_or_else(|| EditError(format!("item {id} is not a split")))?;
+        if factors.len() != children.len() || factors.iter().any(|(key, value)|
+            !value.is_finite() || *value <= 0.0 || !children.iter().any(|(child, _)| child == key)
+                || factors.iter().filter(|(other, _)| other == key).count() != 1) {
+            return Err(EditError("invalid split factors".into()));
+        }
+        let mut item = self.items[id].clone();
+        let ItemKind::Split { width_factors, .. } = &mut item.kind else { unreachable!() };
+        width_factors.retain(|(key, _)| !children.iter().any(|(child, _)| child == key));
+        width_factors.extend(factors);
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
     pub fn duplicate_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let original = self.movable_item(id)?;
@@ -618,10 +651,37 @@ impl Workspace {
         if matches!(item.kind, ItemKind::Split { .. }) && !self.has_open_tab(id) {
             return Err(EditError(format!("item {id} cannot be selected")));
         }
+        let group = self.outermost_split(id);
+        let selected = if matches!(item.kind, ItemKind::Split { .. }) {
+            self.focused_member(window, group.as_deref().unwrap_or(id), &HashSet::new())
+                .ok_or_else(|| EditError(format!("item {id} cannot be selected")))?
+        } else { id.to_string() };
         let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
         for op in &ops { self.apply(op); }
-        ops.extend(self.record_active(window, id, now)?);
+        if let Some(group) = group {
+            ops.extend(self.flip_active(&group, now));
+            ops.extend(self.stamp_selection(&group, now));
+        }
+        ops.extend(self.record_active(window, &selected, now)?);
         Ok(ops)
+    }
+
+    pub fn outermost_split(&self, id: &str) -> Option<Id> {
+        let mut item = self.items.get(id)?;
+        let mut split = matches!(item.kind, ItemKind::Split { .. }).then(|| item.id.clone());
+        for _ in 0..self.items.len() {
+            let Some(parent) = item.membership.parent.as_ref().and_then(|id| self.items.get(id)) else { break };
+            if matches!(parent.kind, ItemKind::Split { .. }) { split = Some(parent.id.clone()); }
+            item = parent;
+        }
+        split
+    }
+
+    fn focused_member(&self, window: &str, split: &str, excluded: &HashSet<Id>) -> Option<Id> {
+        let members: Vec<_> = self.outline(split).into_iter().filter(|(_, item)|
+            matches!(item.kind, ItemKind::Tab { .. }) && !excluded.contains(&item.id)).map(|(_, item)| item.id.clone()).collect();
+        self.windows.get(window).and_then(|state| state.history.iter().find(|id| members.contains(id)).cloned())
+            .or_else(|| members.into_iter().next())
     }
 
     // The load-side write the selection shares with the coordinator: an active row is
@@ -727,7 +787,7 @@ impl Workspace {
                 while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
                     if matches!(ancestor.kind, ItemKind::Split { .. }) && ancestor.lifecycle == Lifecycle::Open
                         && !changing.contains(&ancestor.id) && self.is_selectable(&ancestor.id) {
-                        split = Some(ancestor.id.clone());
+                        split = self.focused_member(&state.id, &ancestor.id, &changing);
                         break;
                     }
                     parent = ancestor.membership.parent.as_ref();
@@ -751,7 +811,10 @@ impl Workspace {
         for op in &ops { self.apply(op); }
         let mut selected: Vec<_> = selected.into_iter().collect();
         selected.sort();
-        for id in selected { ops.extend(self.stamp_selection(&id, changed_at)); }
+        for id in selected {
+            ops.extend(self.flip_active(&id, changed_at));
+            ops.extend(self.stamp_selection(&id, changed_at));
+        }
         Ok(ops)
     }
 
@@ -796,17 +859,7 @@ impl Workspace {
 
     fn successor_group(&self, id: &str, excluded: &HashSet<Id>) -> Option<Id> {
         if excluded.contains(id) || !self.is_open_visible(id) { return None; }
-        if matches!(self.items[id].kind, ItemKind::Split { .. }) && !self.outline(id).iter().any(|(_, item)| {
-            matches!(item.kind, ItemKind::Tab { .. }) && item.lifecycle == Lifecycle::Open && !excluded.contains(&item.id)
-        }) { return None; }
-        let mut item = &self.items[id];
-        while let Some(ancestor) = item.membership.parent.as_ref().and_then(|id| self.items.get(id)) {
-            if matches!(ancestor.kind, ItemKind::Split { .. }) {
-                return (!excluded.contains(&ancestor.id)).then(|| ancestor.id.clone());
-            }
-            item = ancestor;
-        }
-        Some(id.into())
+        matches!(self.items[id].kind, ItemKind::Tab { .. }).then(|| id.into())
     }
 }
 
@@ -822,8 +875,8 @@ impl Workspace {
         let mut protected = HashSet::new();
         for id in self.windows.values().filter_map(|w| w.selected.as_ref()) {
             protected.insert(id.clone());
-            if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. })) {
-                protected.extend(self.outline_entries(id).into_iter().map(|(_, i, _)| i.id.clone()));
+            if let Some(split) = self.outermost_split(id) {
+                protected.extend(self.outline_entries(&split).into_iter().map(|(_, i, _)| i.id.clone()));
             }
         }
         let mut expired = Vec::new();

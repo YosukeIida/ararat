@@ -318,7 +318,7 @@ func incognitoFailureScopeUsesInvocationFlags() {
 }
 
 @Test @MainActor
-func splitSwitchFromSidebarDefaultAndSuggestionKeepsThePreviousSpace() async throws {
+func splitSwitchReturnsTheFocusedMember() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -329,30 +329,26 @@ func splitSwitchFromSidebarDefaultAndSuggestionKeepsThePreviousSpace() async thr
     try await splitValue { adapter.showSpace(id: "space-work", completion: $0) }
     _ = try await splitValue { adapter.select(id: "split-1", completion: $0) }
     let before = try await splitValue { adapter.showSpaceSelecting(id: "space-home", completion: $0) }
+    #expect(before.shownSpaceId == "space-home")
     let runtime = Runtime(windowID: "split-switch")
     runtime.workspace = adapter
     runtime.snapshot = before
     let sidebar = SidebarView(snapshot: before)
     runtime.sidebar = sidebar
     sidebar.onShowSpace = { [weak runtime] in runtime?.switchWorkspaceSpace($0) }
-    let original = try #require(before.spaces.firstIndex { $0.id == "space-home" })
     let target = try #require(before.spaces.firstIndex { $0.id == "space-work" })
     sidebar.showSpace(at: target)
-    for _ in 0..<100 where runtime.unsupportedSplitCount < 1 { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(runtime.unsupportedSplitCount == 1 && sidebar.spaceShown == original)
-    #expect(try await splitValue { adapter.snapshot(completion: $0) } == before)
-    runtime.performWorkspaceCommand("show_space_\(target + 1)")
-    for _ in 0..<100 where runtime.unsupportedSplitCount < 2 { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(runtime.unsupportedSplitCount == 2 && sidebar.spaceShown == original)
-    #expect(try await splitValue { adapter.snapshot(completion: $0) } == before)
-    runtime.showSuggestedSpace("space-work")
-    for _ in 0..<100 where runtime.unsupportedSplitCount < 3 { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(runtime.unsupportedSplitCount == 3 && sidebar.spaceShown == original)
-    #expect(try await splitValue { adapter.snapshot(completion: $0) } == before)
+    for _ in 0..<100 {
+        if try await splitValue({ adapter.snapshot(completion: $0) }).shownSpaceId == "space-work" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let selected = try await splitValue { adapter.snapshot(completion: $0) }
+    #expect(selected.shownSpaceId == "space-work" && selected.selectedId == "tab-a")
+    #expect(sidebar.spaceShown == target)
 }
 
 @Test @MainActor
-func rejectedSecondSwitchRestoresTheEarlierCommittedSwitch() async throws {
+func secondSwitchSelectsTheSplitMember() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -362,22 +358,11 @@ func rejectedSecondSwitchRestoresTheEarlierCommittedSwitch() async throws {
     _ = try await splitValue { adapter.open(path: directory.appendingPathComponent("workspace.sqlite").path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     try await splitValue { adapter.showSpace(id: "space-work", completion: $0) }
     let initial = try await splitValue { adapter.select(id: "split-1", completion: $0) }
-    let runtime = Runtime(windowID: "split-race")
-    runtime.workspace = adapter
-    runtime.snapshot = initial
-    let sidebar = SidebarView(snapshot: initial)
-    runtime.sidebar = sidebar
-    sidebar.onShowSpace = { [weak runtime] in runtime?.switchWorkspaceSpace($0) }
-    let work = try #require(initial.spaces.firstIndex { $0.id == "space-work" })
-    let home = try #require(initial.spaces.firstIndex { $0.id == "space-home" })
-    sidebar.showSpace(at: home)
-    let committed = try await splitValue { adapter.snapshot(completion: $0) }
+    #expect(initial.selectedId == "tab-a")
+    let committed = try await splitValue { adapter.showSpaceSelecting(id: "space-home", completion: $0) }
     #expect(committed.shownSpaceId == "space-home")
-    sidebar.showSpace(at: work)
-    for _ in 0..<100 where runtime.unsupportedSplitCount < 1 || sidebar.spaceShown != home { try await Task.sleep(for: .milliseconds(10)) }
-    let current = try await splitValue { adapter.snapshot(completion: $0) }
-    #expect(runtime.unsupportedSplitCount == 1 && current.shownSpaceId == "space-home")
-    #expect(sidebar.spaceShown == home)
+    let current = try await splitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
+    #expect(current.shownSpaceId == "space-work" && current.selectedId == "tab-a")
 }
 
 @Test @MainActor

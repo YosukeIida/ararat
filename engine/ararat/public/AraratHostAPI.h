@@ -16,6 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL canGoBack;
 @property(nonatomic, readonly) BOOL crashed;
 - (void)checkFlushHistory:(void (^)(BOOL written))completion;
+- (void)captureSnapshot:(void (^)(NSImage* _Nullable image))completion;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
@@ -85,6 +86,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host shouldOpenCommand:(NSString*)commandId itemId:(NSString*)itemId;
+- (void)windowHost:(id<ARWindowHostAPI>)host prepareCloseHandoff:(void (^)(BOOL ready))completion;
+- (BOOL)windowHost:(id<ARWindowHostAPI>)host installSplitMeasurement:(NSUInteger)count;
+- (BOOL)windowHost:(id<ARWindowHostAPI>)host dragSplitMeasurement:(CGFloat)delta finished:(BOOL)finished;
 @end
 
 @protocol ARWindowHostAPI <NSObject>
@@ -119,10 +123,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId;
 - (BOOL)openExternalURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId untrusted:(BOOL)untrusted;
 - (BOOL)openURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile external:(BOOL)external untrusted:(BOOL)untrusted historyStamp:(uint64_t)stamp;
+- (BOOL)openBackgroundURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile historyStamp:(uint64_t)stamp;
 - (BOOL)cancelPendingOpen:(NSString*)commandId;
 - (NSArray*)tabs;
 - (BOOL)hasActiveTab;
 - (void)setWorkspacePageHidden:(BOOL)hidden;
+- (void)setWorkspaceRemote:(BOOL)remote;
+- (BOOL)setSplitFrames:(NSDictionary<NSString*, NSValue*>*)frames frozen:(BOOL)frozen;
+- (BOOL)transferTab:(id<ARTabAPI>)tab commandId:(NSString*)commandId;
+- (BOOL)handoffTab:(id<ARTabAPI>)tab activate:(BOOL)activate;
+- (void)prepareTransferProfile:(NSString*)profile;
+- (BOOL)checkMoveTab:(id<ARTabAPI>)tab toHost:(id<ARWindowHostAPI>)destination;
 - (nullable NSDictionary<NSString*, id>*)navigationTarget;
 - (BOOL)navigateURL:(NSString*)url target:(NSDictionary<NSString*, id>*)target;
 - (void)findAction:(NSString*)action text:(NSString*)text selection:(NSRange)selection liveId:(NSString*)liveId profile:(NSString*)profile;

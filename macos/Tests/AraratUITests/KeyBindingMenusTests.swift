@@ -132,9 +132,9 @@ func pinCommandMovesTodayTabShowsTimedHintAndUnpinsWithoutHint() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let (adapter, _) = try await openBindings(directory)
-    var snapshot = try await bindingValue { adapter.select(id: "tab-a", completion: $0) }
+    var snapshot = try await bindingValue { adapter.select(id: "tab-spec", completion: $0) }
     let space = snapshot.spaces[0]
-    snapshot = try await bindingValue { adapter.move(id: "tab-a", container: space.todayId, index: 0, openFolder: false, completion: $0) }
+    snapshot = try await bindingValue { adapter.move(id: "tab-spec", container: space.todayId, index: 0, openFolder: false, completion: $0) }
     let harness = HarnessDelegate(adapter: adapter)
     harness.snapshot = snapshot
     let sidebar = SidebarView(snapshot: snapshot)
@@ -157,8 +157,8 @@ func pinCommandMovesTodayTabShowsTimedHintAndUnpinsWithoutHint() async throws {
     let pin = try #require(commandItems(harness.makeMenu()).first { $0.identifier?.rawValue == "pin_tab" })
     #expect(pin.keyEquivalent == "d" && pin.keyEquivalentModifierMask == [.command])
     harness.pinTab(in: window)
-    try await waitUntil { bindingDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.id == "tab-a" && $0.pinned } }
-    let row = try #require(bindingDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "tab-a" })
+    try await waitUntil { bindingDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.id == "tab-spec" && $0.pinned } }
+    let row = try #require(bindingDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "tab-spec" })
     let hint = try #require(bindingDescendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
     #expect(!hint.isHidden && hint.alphaValue == 1)
     now = 103.1
@@ -174,7 +174,7 @@ func pinCommandMovesTodayTabShowsTimedHintAndUnpinsWithoutHint() async throws {
     try await waitUntil { !sidebar.selectedTabIsPinned }
     #expect(moves == 2 && hint.isHidden)
     let result = try await bindingValue { adapter.snapshot(completion: $0) }
-    #expect(result.spaces[0].today.contains { $0.id == "tab-a" })
+    #expect(result.spaces[0].today.contains { $0.id == "tab-spec" })
     #expect(!window.isVisible)
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }
@@ -184,9 +184,9 @@ func nativeTextFieldsAndCreationProtectPageCommandsWithoutChangingFocus() async 
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let (adapter, _) = try await openBindings(directory)
-    var snapshot = try await bindingValue { adapter.select(id: "tab-a", completion: $0) }
+    var snapshot = try await bindingValue { adapter.select(id: "tab-spec", completion: $0) }
     let todayID = snapshot.spaces[0].todayId
-    snapshot = try await bindingValue { adapter.move(id: "tab-a", container: todayID, index: 0, openFolder: false, completion: $0) }
+    snapshot = try await bindingValue { adapter.move(id: "tab-spec", container: todayID, index: 0, openFolder: false, completion: $0) }
     #expect(!WorkspaceCommands.allowsPageCommand(NSTextField()))
     #expect(!WorkspaceCommands.allowsPageCommand(NSSearchField()))
     #expect(!WorkspaceCommands.allowsPageCommand(NSTextView()))

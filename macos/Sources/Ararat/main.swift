@@ -278,7 +278,6 @@ final class Runtime: NSObject {
   var popups: [PopupHost] = []
   var hostClosing = false
   var selectionGeneration = 0
-  var unsupportedSplitCount = 0
   var hasUsableHost: Bool { !hostClosing && host.map { !$0.isClosing() && !$0.isClosingAll() } == true }
   init(windowID: String = UUID().uuidString) { self.windowID = windowID; super.init() }
   func refreshOtherWindows() {
@@ -475,7 +474,6 @@ final class Runtime: NSObject {
   var splitPanelBeforeRows: [[String]]?
   var splitPanelLive = ""
   weak var splitPanelPage: NSView?
-  var splitCloseUnsupportedBefore = 0
   var splitCloseRaceCommand: String?
   var splitCloseRaceSettled = false
   var splitCloseRaceFailed = false
@@ -632,7 +630,7 @@ final class Runtime: NSObject {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
       if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
-      if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
+      if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = checkFrontApplication() }
       if checkName == "fullscreen" {
         popupFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"])
         fullscreenActivationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
@@ -812,18 +810,24 @@ final class Runtime: NSObject {
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.commandPresenter?.close(restoreFocus: false)
     }
-    adapter.onUnsupportedSplit = { [weak self] in self?.reportUnsupportedSplit() }
     let actions = SidebarActions()
     actions.onSelect = { [weak self, weak adapter] row in
       self?.selectionGeneration += 1
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.host?.setWorkspacePageHidden(false)
       if let url = row.url { adapter?.select(id: row.id, url: url) }
+      else if row.kind == .split, let self {
+        let generation = self.selectionGeneration
+        self.workspace?.select(id: row.id) { [weak self] result in
+          guard let self, self.selectionGeneration == generation else { return }
+          self.showAndSelect(result)
+        }
+      }
     }
     actions.configureEditing(adapter: workspace, isActive: { true }, window: { [weak self] in self?.host?.window() }, show: { [weak self] snapshot in self?.show(snapshot) }, record: { [weak self] snapshot in self?.snapshot = snapshot })
     actions.onClose = { [weak self] id in self?.close(id) }
     actions.onCloseSelected = { [weak self] in
-      if let id = self?.snapshot.selectedId { self?.close(id) }
+      if let id = self?.sidebar?.selectedRowID { self?.close(id) }
     }
     actions.onArchive = { [weak self] id in
       self?.adapter?.close(id: id, archive: true)
@@ -989,10 +993,26 @@ final class Runtime: NSObject {
   }
 
   func updatePageVisibility(_ snapshot: WorkspaceSnapshot) {
+    if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-measure=") }) {
+      host?.setWorkspacePageHidden(false)
+      return
+    }
     let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let rows = space.map { $0.today + $0.pinned + $0.favorites } ?? []
     let visible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
     host?.setWorkspacePageHidden(!visible)
+  }
+
+  func splitCheckPagesPresented(_ host: any ARWindowHostAPI) -> Bool {
+    guard let tabs = host.tabs() as? [any ARTabAPI],
+          ["close-split-a", "close-split-b"].allSatisfy({ id in tabs.contains { $0.itemId == id } }) else { return false }
+    if CommandLine.arguments.contains("--ararat-compositor=c2") {
+      guard let focused = tabs.first(where: { $0.itemId == "close-split-a" }) else { return false }
+      return host.checkPagePresentation(focused.liveId)["presented"] as? Bool == true
+    }
+    return ["close-split-a", "close-split-b"].allSatisfy { id in
+      tabs.contains { $0.itemId == id && $0.view?.superview != nil && $0.view?.isHidden == false }
+    }
   }
 
   func selectCheckSeed(_ row: Row) {
@@ -1163,8 +1183,7 @@ final class Runtime: NSObject {
             self.sidebar?.showSpaceWithoutNotification(at: index)
           }
         }
-        if let coreError = error as? CoreError, case .UnsupportedSplit = coreError { self.reportUnsupportedSplit() }
-        else { self.report(error) }
+        self.report(error)
       case .success(let snapshot):
         guard snapshot.shownSpaceId == id else { return }
         self.workspace?.snapshot { [weak self] latest in
@@ -1179,18 +1198,6 @@ final class Runtime: NSObject {
         }
       }
     }
-  }
-
-  func reportUnsupportedSplit() {
-    unsupportedSplitCount += 1
-    FileHandle.standardError.write(Data("workspace: switching to a space with a selected split is not supported yet\n".utf8))
-    guard !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }),
-          let host, hasUsableHost else { return }
-    let alert = NSAlert()
-    alert.messageText = "Cannot open this space yet"
-    alert.informativeText = "The selected split will be available when split view is supported."
-    alert.addButton(withTitle: "OK")
-    alert.beginSheetModal(for: host.window())
   }
 
   func showSuggestedSpace(_ id: String) {
@@ -1834,7 +1841,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       timeoutValues["sidebar_state"] = container?.sidebarState ?? "missing"
     }
     if ["popup", "ext-popup", "ext-windows-popup", "fullscreen", "keyboard"].contains(mode) {
-      let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+      let front = checkFrontApplication()
       let visible = NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
       popupWindowsHidden = popupWindowsHidden && !visible
       if popupFrontChange == nil, let before = popupFrontBefore, let front, before != front {
@@ -2675,7 +2682,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let hiddenWindowSafe = screen || hiddenPopupSafe()
       if !hiddenWindowSafe {
         keyboardResults["front_before_final"] = popupFrontBefore ?? ""
-        keyboardResults["front_after_final"] = commandOutput("/usr/bin/lsappinfo", ["front"]) ?? ""
+        keyboardResults["front_after_final"] = checkFrontApplication() ?? ""
         keyboardResults["front_change_final"] = popupFrontChange ?? [:]
         keyboardResults["windows_hidden_final"] = popupWindowsHidden
         keyboardResults["visible_windows_final"] = NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map {
@@ -4106,7 +4113,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       "failed_assertions": checks.filter { !$0.1 }.map { $0.0 }, "matrix_final_values": finalValues,
       "expected_suggestions": expected, "expected_menu": screen ? expected : [], "expected_commands": expectedCommands,
       "stock_browsers_final": stock, "hidden_safety": hiddenSafe,
-      "front_before_final": popupFrontBefore ?? "", "front_after_final": commandOutput("/usr/bin/lsappinfo", ["front"]) ?? "",
+      "front_before_final": popupFrontBefore ?? "", "front_after_final": checkFrontApplication() ?? "",
       "front_change_final": popupFrontChange ?? [:], "windows_hidden_final": popupWindowsHidden,
       "visible_windows_final": NSApp.windows.filter { $0.isVisible || $0.isKeyWindow }.map { ["number": $0.windowNumber, "visible": $0.isVisible, "key": $0.isKeyWindow] as [String: Any] },
       "c2_matrix_attachment": CommandLine.arguments.contains("--ararat-compositor=c2") && passed,
@@ -4343,17 +4350,19 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 24
       return
     }
-    guard let original = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }),
-          let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }) else { return }
+    guard let original = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == browserCheckSeedID }) else { return }
     switch browserCheckPhase {
     case 40:
-      guard host.profileDirectory() == "Profile 1", !other.isLoading, other.navigationCount > 0 else { return }
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }),
+            host.profileDirectory() == "Profile 1", !other.isLoading, other.navigationCount > 0 else { return }
       host.checkNavigate("http://127.0.0.1:\(port)/keyboard", disposition: "current")
       browserCheckPhase = 41
     case 41:
-      guard other.url.contains("/keyboard"), !other.isLoading, host.checkKeyboardAccelerator(false) else { return }
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }),
+            other.url.contains("/keyboard"), !other.isLoading, host.checkKeyboardAccelerator(false) else { return }
       browserCheckPhase = 42
     case 42:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }) else { return }
       if let result = keyboardScriptResult {
         keyboardScriptResult = nil
         if result == "probe-command" {
@@ -4373,6 +4382,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             host.checkKeyboardAccelerator(false) else { return }
       browserCheckPhase = 45
     case 45:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == keyboardOtherItem }) else { return }
       if let result = keyboardScriptResult {
         keyboardScriptResult = nil
         if result == "probe-command" {
@@ -5631,7 +5641,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       splitPanelBeforeRows = rows
       splitPanelLive = active.liveId
       splitPanelPage = page
-      splitCloseUnsupportedBefore = unsupportedSplitCount
       openCommandBar(.newTab)
       guard let bar = commandPresenter?.controller, bar.isOpen else {
         finishBrowserCheck(ok: false, values: ["split_panel_open": false]); return
@@ -5646,40 +5655,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       bar.moveSelection(by: index - bar.selectedIndex)
       bar.commit(forceNewTab: false)
       browserCheckPhase = 62
-    } else if browserCheckPhase == 62, unsupportedSplitCount > splitCloseUnsupportedBefore,
-              let before = splitCloseBefore, let rows = captureCheckRows() {
-      guard snapshot == before, rows == splitPanelBeforeRows,
-            host.profileDirectory() == "Default", host.activeItemId() == before.selectedId,
-            let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == before.selectedId }),
-            active.liveId == splitPanelLive, active.view === splitPanelPage, host.hasActiveTab() else {
-        finishBrowserCheck(ok: false, values: ["split_panel_preserved": false]); return
-      }
-      profileCheckResult["split_panel_preserved"] = true
-      if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-selection-supersede=") }),
-         let adapter, let target = splitCloseExpected["Profile 1"], let current = splitCloseExpected["Default"],
-         let targetRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == target }), let targetURL = targetRow.url,
-         let currentRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == current }), let currentURL = currentRow.url {
-        let stage = String(argument.dropFirst("--ararat-selection-supersede=".count))
-        guard ["registered", "resolved"].contains(stage), adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: target) != nil }) else {
-          finishBrowserCheck(ok: false, values: ["selection_supersede_setup": false]); return
-        }
-        splitCloseRaceCommand = nil
-        splitCloseRaceSettled = false
-        splitCloseRaceFailed = false
-        splitCloseRaceActivated = false
-        adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
-          guard let self, let adapter else { return }
-          guard actual == stage else { resume(); return }
-          adapter.checkSelectionDispatch = nil
-          self.splitCloseRaceCommand = command
-          adapter.checkSelectionActivated = { [weak self] id in
-            if id == command { self?.splitCloseRaceActivated = true }
-          }
-          adapter.select(id: current, url: currentURL)
-          resume()
-        }
-        adapter.select(id: target, url: targetURL)
-        browserCheckPhase = 66
+    } else if browserCheckPhase == 62, snapshot.shownSpaceId == "named",
+              snapshot.selectedId == "close-split-a", host.activeItemId() == snapshot.selectedId,
+              splitCheckPagesPresented(host), let rows = captureCheckRows() {
+      profileCheckResult["split_panel_selected"] = true
+      if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-supersede=") }), let adapter {
+        adapter.windowHost(host, showProfile: "Default")
+        browserCheckPhase = 67
         return
       }
       if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-committed-switch-race=") }),
@@ -5697,6 +5679,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             }
           } catch { finishBrowserCheck(ok: false, values: ["committed_switch_setup": "\(error)"]); return }
           adapter.refresh()
+        } else {
+          adapter.windowHost(host, showProfile: "Default")
         }
         browserCheckPhase = 64
         return
@@ -5704,16 +5688,51 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if CommandLine.arguments.contains("--ararat-empty-close-check"), let adapter {
         do {
           _ = try adapter.session.queue.sync {
-            try adapter.session.store?.createSpace(windowId: windowID, name: "Empty", spaceId: "close-empty")
+            try adapter.session.store?.showSpace(windowId: windowID, spaceId: "default")
+            return try adapter.session.store?.createSpace(windowId: windowID, name: "Empty", spaceId: "close-empty")
           }
         } catch { finishBrowserCheck(ok: false, values: ["empty_setup_error": "\(error)"]); return }
         adapter.refresh()
         browserCheckPhase = 63
         return
       }
+      splitCloseBefore = snapshot
       profileCloseBefore = rows
       browserCheckPhase = 7
       beginCloseRaceCheck(host) { host.configureProfileCloseCheck(2); host.close() }
+    } else if browserCheckPhase == 67, snapshot.shownSpaceId == "default", host.profileDirectory() == "Default",
+              let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-selection-supersede=") }),
+              let adapter, let target = splitCloseExpected["Profile 1"], let current = splitCloseExpected["Default"],
+              snapshot.selectedId == current, host.activeItemId() == current,
+              let active = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == current }),
+              let page = active.view, let rows = captureCheckRows(),
+              let targetRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == target }), let targetURL = targetRow.url,
+              let currentRow = snapshot.spaces.flatMap(\.today).first(where: { $0.id == current }), let currentURL = currentRow.url {
+      let stage = String(argument.dropFirst("--ararat-selection-supersede=".count))
+      guard ["registered", "resolved"].contains(stage), adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: target) != nil }) else {
+        finishBrowserCheck(ok: false, values: ["selection_supersede_setup": false]); return
+      }
+      splitCloseBefore = snapshot
+      splitPanelBeforeRows = rows
+      splitPanelLive = active.liveId
+      splitPanelPage = page
+      splitCloseRaceCommand = nil
+      splitCloseRaceSettled = false
+      splitCloseRaceFailed = false
+      splitCloseRaceActivated = false
+      adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
+        guard let self, let adapter else { return }
+        guard actual == stage else { resume(); return }
+        adapter.checkSelectionDispatch = nil
+        self.splitCloseRaceCommand = command
+        adapter.checkSelectionActivated = { [weak self] id in
+          if id == command { self?.splitCloseRaceActivated = true }
+        }
+        adapter.select(id: current, url: currentURL)
+        resume()
+      }
+      adapter.select(id: target, url: targetURL)
+      browserCheckPhase = 66
     } else if browserCheckPhase == 66, selectionRaceSettled(), let before = splitCloseBefore,
               let rows = captureCheckRows() {
       guard !splitCloseRaceFailed, snapshot == before, rows == splitPanelBeforeRows,
@@ -5774,20 +5793,29 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard profileCloseAfterPrevious == after else { profileCloseAfterPrevious = after; return }
       guard selectionRaceSettled() else { return }
       let rowsKept = after.filter { $0.first != "window" } == profileCloseBefore?.filter { $0.first != "window" }
-      let expectedProfile = committedSwitchRace ? "Profile 1" : "Default"
-      let splitOK = splitCloseBefore == nil || (after == profileCloseBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
+      let expectedProfile = splitCloseBefore?.spaces.first(where: { $0.id == splitCloseBefore?.shownSpaceId })?.profileName ?? "Default"
+      let splitRendered = splitCloseBefore?.selectedId != "close-split-a" || splitCheckPagesPresented(host)
+      let reconciled = splitCloseBefore != nil && expectedProfile != "Profile 1" &&
+        snapshot.shownSpaceId == "named" && snapshot.selectedId == "close-split-a" &&
+        host.profileDirectory() == "Profile 1" && host.activeItemId() == snapshot.selectedId && splitCheckPagesPresented(host) &&
+        after.filter { !["window", "last_selected"].contains($0.first ?? "") } ==
+          profileCloseBefore?.filter { !["window", "last_selected"].contains($0.first ?? "") } &&
+        after.filter { $0.first == "last_selected" && ![splitCloseBefore?.selectedId, "close-split-a", "close-split-b"].contains($0.dropFirst().first) } ==
+          profileCloseBefore?.filter { $0.first == "last_selected" && ![splitCloseBefore?.selectedId, "close-split-a", "close-split-b"].contains($0.dropFirst().first) }
+      let splitOK = splitCloseBefore == nil || reconciled || (after == profileCloseBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
         snapshot.selectedId == splitCloseBefore?.selectedId && host.profileDirectory() == expectedProfile &&
-        (snapshot.selectedId == nil ? !host.hasActiveTab() : host.activeItemId() == snapshot.selectedId) && splitClosePagesMatch(closeState))
+        (snapshot.selectedId == nil ? !host.hasActiveTab() : host.activeItemId() == snapshot.selectedId) && splitRendered && splitClosePagesMatch(closeState))
       let valid = closeState["browsers"] as? Int == 2 && closeState["closed"] as? Bool == false && splitOK &&
         splitClosePagesMatch(closeState) && !splitCloseRaceFailed &&
         closeState["close_cancelled"] as? Int == 1 &&
-        closeState["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"] && rowsKept
+        closeState["beforeunload_profiles"] as? [String] == ["Default", "Profile 1"] && (rowsKept || reconciled)
       profileCloseCancelled = closeState.merging(["rows_unchanged": rowsKept, "host_open": true,
-        "split_cancel_restored": splitOK,
+        "split_cancel_restored": splitOK, "profile_reconciled": reconciled,
         "selection_race_settled": splitCloseRaceSettled, "selection_race_activated": splitCloseRaceActivated,
         "selection_race_failed": splitCloseRaceFailed]) { _, new in new }
       profileCheckPassed = profileCheckPassed && valid
       if committedSwitchRace { profileCheckResult["committed_switch_race"] = valid }
+      if reconciled { profileCloseBefore = after }
       browserCheckPhase = 8
       beginCloseRaceCheck(host) { host.configureProfileCloseCheck(0); host.close() }
     }
@@ -6134,9 +6162,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func hiddenPopupSafe() -> Bool {
-    let front = commandOutput("/usr/bin/lsappinfo", ["front"])
+    let front = checkFrontApplication()
     return popupWindowsHidden && !NSApp.windows.contains { $0.isVisible || $0.isKeyWindow } &&
       !(popupFrontBefore ?? "").isEmpty && front == popupFrontBefore && popupFrontChange == nil
+  }
+
+  func checkFrontApplication() -> String? {
+    if browserCheckMode == "keyboard" {
+      return NSWorkspace.shared.frontmostApplication.map { String($0.processIdentifier) }
+    }
+    return commandOutput("/usr/bin/lsappinfo", ["front"])
   }
 
   func resetFullscreenProbe() {
@@ -6765,7 +6800,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "screen-quit", screenDialogs == 0 { _ = clickScreenDialog(stay: true); return }
       let seen = mode == "screen-quit" ? screenDialogs : Int(host.checkDialogCount())
       let expectedBrowsers = mode == "quit-cancel" ? 2 : 1
-      guard seen >= 1, !host.checkTryingToQuit(), host.tabs().count == expectedBrowsers,
+      let splitCheck = CommandLine.arguments.contains("--ararat-split-close-check") && !sameProfileEmpty
+      guard seen >= 1, !host.checkTryingToQuit(), (splitCheck ? host.tabs().count >= expectedBrowsers : host.tabs().count == expectedBrowsers),
             let symbol = dlsym(Launcher.handle, "AraratBrowserCount") else { return }
       let closing = host.checkClosingEvents().map(\.boolValue)
       guard closing.last == false else { return }
@@ -6785,9 +6821,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let duringDiff = checkRecordDiff(quitBefore, quitDuringProfileSwitch)
       let outgoingItem = checkWindowSelection(quitBefore, windowID: windowID)
       let allowedWindowFields: Set<String> = ["shown_space", "space_history", "changed_at", "selected", "history"]
-      let allowedSelections = Set([outgoingItem, activeItem].compactMap { $0 })
+      let allowedSelections = Set([outgoingItem, activeItem].compactMap { $0 } +
+        (splitCheck ? ["close-split-a", "close-split-b"] + Array(splitCloseExpected.values) : []))
       let windowRecordsChanged = cancelDiff.filter { $0["kind"] as? String == "window" }.count
-      let onlyWindowSpaceChanged = outgoingItem != nil && activeItem != nil && windowRecordsChanged == 1 &&
+      let onlyWindowSpaceChanged = (outgoingItem != nil || splitCheck) && activeItem != nil && windowRecordsChanged == 1 &&
         cancelDiff.contains { ($0["fields"] as? [String] ?? []).contains("shown_space") } && cancelDiff.allSatisfy { entry in
         if entry["kind"] as? String == "window" && entry["id"] as? String == windowID {
           return Set(entry["fields"] as? [String] ?? []).isSubset(of: allowedWindowFields)
@@ -6800,9 +6837,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         page["profile"] as? String == quitPromptProfile && page["item"] as? String == splitCloseExpected[quitPromptProfile] &&
           page["active"] as? Bool == true && page["presented"] as? Bool == true
       }) == true
-      let splitCancel = splitCloseBefore != nil && !splitCloseRaceFailed && rows == quitBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
-        snapshot.selectedId == splitCloseBefore?.selectedId && host.profileDirectory() == "Default" && selectedMatches &&
-        quitPromptPage
+      let splitRendered = splitCheck && snapshot.shownSpaceId == "named" && snapshot.selectedId == "close-split-a" && splitCheckPagesPresented(host)
+      let splitCancel = splitCloseBefore != nil && !splitCloseRaceFailed && selectedMatches && quitPromptPage &&
+        (splitCheck ? onlyWindowSpaceChanged && host.profileDirectory() == "Profile 1" && splitRendered :
+          rows == quitBefore && snapshot.shownSpaceId == splitCloseBefore?.shownSpaceId &&
+            snapshot.selectedId == splitCloseBefore?.selectedId && host.profileDirectory() == "Default")
       quitFirst = ["trying_to_quit": host.checkTryingToQuit(), "browsers": browsers,
                    "host_alive": true, "tabs": host.tabs().count,
                    "rows_unchanged": mode == "quit-cancel" ? (splitCloseBefore == nil ? onlyWindowSpaceChanged && selectedMatches : splitCancel) : rows == quitBefore,

@@ -15,7 +15,6 @@ pub enum CoreError {
     Store { message: String },
     Edit { message: String },
     Live { message: String },
-    UnsupportedSplit,
 }
 
 impl std::fmt::Display for CoreError {
@@ -25,7 +24,6 @@ impl std::fmt::Display for CoreError {
             CoreError::Store { message } => write!(f, "store failed: {message}"),
             CoreError::Edit { message } => write!(f, "edit failed: {message}"),
             CoreError::Live { message } => write!(f, "live failed: {message}"),
-            CoreError::UnsupportedSplit => write!(f, "Switching to a space with a selected split is not supported yet"),
         }
     }
 }
@@ -115,6 +113,21 @@ impl WorkspaceStore {
     pub fn snapshot(&self, window_id: String) -> WorkspaceSnapshot {
         let workspace = self.workspace.lock().unwrap().clone();
         snapshot(workspace, &window_id)
+    }
+
+    pub fn split_layout(&self, item_id: String) -> Option<SplitPane> {
+        let mut workspace = self.workspace.lock().unwrap().clone();
+        workspace.repair_tree();
+        let id = workspace.outermost_split(&item_id)?;
+        split_pane(&workspace, &id, 1.0)
+    }
+
+    pub fn set_split_factors(&self, split_id: String, factors: Vec<SplitFactor>) -> Result<(), CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_split_factors(&split_id, factors.into_iter().map(|f| (f.id, f.factor)).collect())?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(())
     }
 
     pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
@@ -222,26 +235,20 @@ impl WorkspaceStore {
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
         let view = snapshot(next.clone(), &window_id);
-        // An Unloaded tab with a URL is eligible: selecting it runs the ordinary select
-        // path, whose record_active flips it to Open, so the switch loads it. The rule is
-        // the owner's choice (2026-11-09), taken to match Arc, which was not measured
-        // here; only a split still needs an Open member.
         let rows: Vec<_> = view.spaces.iter().find(|space| space.id == space_id)
             .into_iter().flat_map(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites))
             .filter(|row| row.url.is_some() || (row.kind == RowKind::Split && next.outline(&row.id).iter().any(|(_, item)| {
-                item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. })
+                matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) && matches!(item.kind, ItemKind::Tab { .. })
             }))).collect();
         let selected = view.selected_id.as_ref().filter(|id| rows.iter().any(|row| &row.id == *id))
             .or_else(|| next.windows.get(&window_id).and_then(|state| state.history.iter().find(|id| rows.iter().any(|row| &row.id == *id))))
             .or_else(|| rows.first().map(|row| &row.id)).cloned();
-        if selected.as_ref().is_some_and(|id| rows.iter().any(|row| &row.id == id && row.kind == RowKind::Split)) {
-            return Err(CoreError::UnsupportedSplit);
-        }
         match selected {
             // A row already recorded as selected still has to be selected again when the
             // engine left it Unloaded: record_active is what flips it to Open (loads it).
             Some(id) if next.selected(&window_id) != Some(id.as_str())
-                || !next.items.get(&id).is_some_and(|item| item.lifecycle == Lifecycle::Open) => ops.extend(next.select_item(&window_id, &id)?),
+                || !next.items.get(&id).is_some_and(|item| item.lifecycle == Lifecycle::Open)
+                || next.outermost_split(&id).is_some() => ops.extend(next.select_item(&window_id, &id)?),
             None => ops.extend(next.clear_selection(&window_id)),
             _ => {}
         }
@@ -327,7 +334,7 @@ impl WorkspaceStore {
             let Some(parent) = current.membership.parent.as_ref() else { break };
             current = workspace.items.get(parent)?;
             if !matches!(current.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
-                || matches!(current.kind, ItemKind::Split { .. } | ItemKind::Tab { .. }) { return None; }
+                || matches!(current.kind, ItemKind::Tab { .. }) { return None; }
         }
         if current.membership.parent.is_some() || !(current.id == space.today || current.id == space.pinned
             || workspace.favorites.get(&space.profile) == Some(&current.id)) { return None; }
@@ -501,11 +508,19 @@ impl WorkspaceStore {
         Ok(command.into())
     }
 
+    pub fn live_selection_intent(&self, command_id: String, window_id: String) -> bool {
+        self.live.lock().unwrap().selection_intent(&command_id, &window_id)
+    }
+
     pub fn live_cancel(&self, command_id: String) -> bool {
         let mut workspace = self.workspace.lock().unwrap();
         let (cancelled, ops) = self.live.lock().unwrap().cancel(&mut workspace, &command_id);
         self.store.write(ops);
         cancelled
+    }
+
+    pub fn live_settle_close(&self, command_id: String) -> bool {
+        self.live.lock().unwrap().settle_close(&command_id)
     }
 
     pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {
@@ -516,6 +531,15 @@ impl WorkspaceStore {
         self.store.flush()?;
         live.command_sent(&command);
         Ok(command.into())
+    }
+
+    pub fn live_close_split(&self, item: String) -> Result<Vec<LiveCloseTarget>, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, commands) = live.close_split(&mut workspace, &item)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(commands.into_iter().map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect())
     }
 
     pub fn live_archive(&self, item: String) -> Result<LiveCommand, CoreError> {
@@ -533,12 +557,17 @@ impl WorkspaceStore {
         let mut live = self.live.lock().unwrap();
         let (ops, outcome) = live.apply(&mut workspace, transaction.into());
         self.store.write(ops);
-        self.store.flush()?;
-        Ok(outcome.into())
+        let mut outcome: LiveApplyOutcome = outcome.into();
+        outcome.persistence_error = self.store.flush().err().map(|error| error.0);
+        Ok(outcome)
     }
 
     pub fn live_tab(&self, item: String) -> Option<String> {
         self.live.lock().unwrap().live_tab(&item)
+    }
+
+    pub fn live_window(&self, item: String) -> Option<String> {
+        self.live.lock().unwrap().live_window(&item)
     }
 
     pub fn item_for_live(&self, live_id: String) -> Option<String> {
@@ -555,6 +584,22 @@ pub enum RowKind {
     Tab,
     Folder,
     Split,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SplitPaneKind { Tab, SplitHorizontal, SplitVertical, Placeholder }
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SplitFactor { pub id: String, pub factor: f64 }
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SplitPane {
+    pub id: String,
+    pub factor: f64,
+    pub kind: SplitPaneKind,
+    pub unloaded: bool,
+    pub url: Option<String>,
+    pub children: Vec<SplitPane>,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]
@@ -897,6 +942,12 @@ pub struct LiveCommand {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveCloseTarget {
+    pub live_id: String,
+    pub command: LiveCommand,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LiveCause {
     /// The engine's reply to the command with this id.
@@ -947,6 +998,7 @@ pub struct LiveApplyOutcome {
     pub commands: Vec<LiveCommand>,
     /// Live tabs the apply adopted, beside the items it created for them.
     pub adopted: Vec<LiveAdoptedTab>,
+    pub persistence_error: Option<String>,
 }
 
 impl From<ararat_core::live::Command> for LiveCommand {
@@ -1008,6 +1060,7 @@ impl From<ararat_core::live::ApplyOutcome> for LiveApplyOutcome {
             commands: outcome.commands.into_iter().map(Into::into).collect(),
             adopted: outcome.adopted.into_iter()
                 .map(|(live_id, item)| LiveAdoptedTab { live_id, item }).collect(),
+            persistence_error: None,
         }
     }
 }
@@ -1036,6 +1089,19 @@ pub fn arc_link_routing(json: String, profile: Option<Profile>, spaces: Vec<Spac
 pub struct SpaceProfile {
     pub id: String,
     pub profile: Profile,
+}
+
+fn split_pane(ws: &Workspace, id: &str, factor: f64) -> Option<SplitPane> {
+    let item = ws.items.get(id)?;
+    let (kind, url) = match &item.kind {
+        ItemKind::Tab { url, .. } => (SplitPaneKind::Tab, Some(url.clone())),
+        ItemKind::Split { orientation: ararat_core::model::Orientation::Horizontal, .. } => (SplitPaneKind::SplitHorizontal, None),
+        ItemKind::Split { orientation: ararat_core::model::Orientation::Vertical, .. } => (SplitPaneKind::SplitVertical, None),
+        _ => (SplitPaneKind::Placeholder, None),
+    };
+    let children = ws.split_factors(id).unwrap_or_default().into_iter()
+        .filter_map(|(child, factor)| split_pane(ws, &child, factor)).collect();
+    Some(SplitPane { id: id.into(), factor, kind, unloaded: item.lifecycle == Lifecycle::Unloaded, url, children })
 }
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
@@ -1192,7 +1258,7 @@ mod tests {
             folder.lifecycle = Lifecycle::Open;
             folder.kind = ItemKind::Split { orientation: ararat_core::model::Orientation::Horizontal, width_factors: vec![] };
         }
-        assert_eq!(store.restoration_candidate("one".into()), None);
+        assert!(store.restoration_candidate("one".into()).is_some());
         {
             let mut workspace = store.workspace.lock().unwrap();
             let profile = workspace.spaces.iter().find(|s| s.id == "space-home").unwrap().profile.clone();
@@ -1260,7 +1326,7 @@ mod tests {
     }
 
     #[test]
-    fn showing_space_rejects_split_atomically_and_allows_favorite() {
+    fn showing_space_selects_split_member_and_allows_favorite() {
         let path = std::env::temp_dir().join(format!("ararat-ffi-space-groups-{}.sqlite", std::process::id()));
         assert!(!path.exists());
         let store = WorkspaceStore::open(path.to_string_lossy().into_owned()).unwrap();
@@ -1268,10 +1334,8 @@ mod tests {
         store.show_space("one".into(), "space-work".into()).unwrap();
         store.select_item("one".into(), "split-1".into()).unwrap();
         store.show_space_selecting("one".into(), "space-home".into()).unwrap();
+        assert_eq!(store.show_space_selecting("one".into(), "space-work".into()).unwrap().selected_id.as_deref(), Some("tab-a"));
         let before = store.snapshot("one".into());
-        let error = store.show_space_selecting("one".into(), "space-work".into()).unwrap_err();
-        assert!(error.to_string().contains("selected split"));
-        assert_eq!(store.snapshot("one".into()), before);
         assert!(store.show_space_selecting_tab("one".into(), "space-work".into(), "missing-tab".into()).is_err());
         assert_eq!(store.snapshot("one".into()), before);
         assert_eq!(store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-mail".into()).unwrap().selected_id.as_deref(), Some("tab-mail"));

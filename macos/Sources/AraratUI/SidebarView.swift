@@ -135,7 +135,7 @@ public final class SidebarView: NSView {
 
     public init(snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
-        self.selectedID = snapshot.selectedId
+        self.selectedID = Self.sidebarSelection(snapshot)
         self.spaceIndex = snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
         super.init(frame: .zero)
         build()
@@ -228,6 +228,19 @@ public final class SidebarView: NSView {
     public var spaceShown: Int { spaceIndex }
     public var selectedRowID: String? { selectedID }
 
+    private static func sidebarSelection(_ snapshot: WorkspaceSnapshot) -> String? {
+        guard let selected = snapshot.selectedId else { return nil }
+        let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+        var current = rows.first { $0.id == selected }
+        var result = selected
+        for _ in rows.indices {
+            guard let row = current, let parent = rows.first(where: { $0.id == row.parentId }) else { break }
+            if parent.kind == .split { result = parent.id }
+            current = parent
+        }
+        return result
+    }
+
     public func update(snapshot: WorkspaceSnapshot) {
         finishRowMotion()
         replaceSnapshot(snapshot)
@@ -266,8 +279,12 @@ public final class SidebarView: NSView {
 
     public func applySelection(snapshot: WorkspaceSnapshot) {
         let snapshot = keepingLookPreview(snapshot)
-        let selectionChanged = selectedID != snapshot.selectedId
-        if self.snapshot.spaces == snapshot.spaces { self.snapshot = snapshot; updateSelection(id: snapshot.selectedId) }
+        let selected = Self.sidebarSelection(snapshot)
+        let selectionChanged = selectedID != selected
+        if self.snapshot.spaces == snapshot.spaces {
+            self.snapshot = snapshot
+            if selectionChanged { selectedID = selected; reload() }
+        }
         else { replaceSnapshot(snapshot) }
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
@@ -289,7 +306,7 @@ public final class SidebarView: NSView {
         self.snapshot = snapshot
         spaceListOrigins = spaceListOrigins.filter { id, _ in snapshot.spaces.contains { $0.id == id } }
         spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
-        selectedID = snapshot.selectedId
+        selectedID = Self.sidebarSelection(snapshot)
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
         reload()
@@ -301,7 +318,7 @@ public final class SidebarView: NSView {
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
-        let selectionChanged = selectedID != snapshot.selectedId
+        let selectionChanged = selectedID != Self.sidebarSelection(snapshot)
         clearScrollPresentation()
         layoutSubtreeIfNeeded()
         let oldFrames = rowViews.mapValues { presentedFrame($0) }

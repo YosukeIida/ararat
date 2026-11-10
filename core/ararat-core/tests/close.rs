@@ -84,12 +84,12 @@ fn successor_skips_unloaded_tabs() {
 }
 
 #[test]
-fn successor_selects_a_split_as_a_group() {
+fn successor_selects_a_split_member() {
     let mut ws = workspace();
     add(&mut ws, "split", "today-work", "ba", ItemKind::Split { orientation: Orientation::Horizontal, width_factors: vec![] });
     ws.items.get_mut("c").unwrap().membership.parent = Some("split".into());
     ws.close_item("b").unwrap();
-    assert_eq!(ws.selected("test"), Some("split"));
+    assert_eq!(ws.selected("test"), Some("c"));
 }
 
 #[test]

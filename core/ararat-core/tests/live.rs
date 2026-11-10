@@ -41,6 +41,100 @@ fn strip_empty(window: &str) -> Strip {
 }
 
 #[test]
+fn remote_selection_survives_detach_until_explicit_local_activation() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let mut moved = strip(&live, &["a"], Some("a"));
+    moved.window = "two".into();
+    let (_, result) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["b"], Some("b")), moved] });
+    assert!(result.applied);
+    assert_eq!(ws.selected("one"), Some("a"));
+    let command = live.activate(&ws, "b").unwrap();
+    live.command_sent(&command);
+    assert!(live.selection_intent(&command.id, "one"));
+    let (_, result) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(command.id),
+        strips: vec![strip(&live, &["b"], Some("b"))] });
+    assert!(result.applied);
+    assert_eq!(ws.selected("one"), Some("b"));
+}
+
+#[test]
+fn a_remote_selection_does_not_reactivate_an_off_space_strip() {
+    let mut ws = workspace();
+    ws.create_space("one", "Other", "other").unwrap();
+    ws.items.get_mut("b").unwrap().membership.parent = Some("other:today".into());
+    ws.show_space("one", "space-work").unwrap();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let mut moved = strip(&live, &["a"], Some("a"));
+    moved.window = "two".into();
+    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![strip(&live, &["b"], Some("b")), moved] });
+    assert!(outcome.applied);
+    assert!(outcome.commands.is_empty());
+    assert_eq!(ws.selected("one"), Some("a"));
+}
+
+#[test]
+fn an_explicit_activation_cannot_restore_a_space_the_window_left() {
+    let mut ws = workspace();
+    ws.create_space("one", "Other", "other").unwrap();
+    ws.items.get_mut("b").unwrap().membership.parent = Some("other:today".into());
+    ws.show_space("one", "space-work").unwrap();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let command = live.activate(&ws, "a").unwrap();
+    live.command_sent(&command);
+    assert!(live.selection_intent(&command.id, "one"));
+    ws.show_space("one", "other").unwrap();
+    ws.select_item("one", "b").unwrap();
+    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(command.id),
+        strips: vec![strip(&live, &["a", "b"], Some("a"))] });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("one"), Some("b"));
+    assert_eq!(outcome.commands.len(), 1);
+    assert_eq!(outcome.commands[0].item, "b");
+}
+
+#[test]
+fn newer_selection_intent_rejects_a_late_completion() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b", "c"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b", "c"], Some("a"))]));
+    let old = live.activate(&ws, "b").unwrap();
+    live.command_sent(&old);
+    assert!(live.selection_intent(&old.id, "one"));
+    let new = live.activate(&ws, "c").unwrap();
+    live.command_sent(&new);
+    assert!(live.selection_intent(&new.id, "one"));
+    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(new.id),
+        strips: vec![strip(&live, &["a", "b", "c"], Some("c"))] });
+    assert!(outcome.applied);
+    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(old.id),
+        strips: vec![strip(&live, &["a", "b", "c"], Some("b"))] });
+    assert!(!outcome.applied);
+    assert_eq!(ws.selected("one"), Some("c"));
+}
+
+#[test]
 fn replaying_the_same_active_strip_preserves_workspace_rows() {
     let mut ws = workspace();
     let mut live = Live::new();
@@ -1335,11 +1429,10 @@ fn a_chrome_transaction_before_a_close_completes_leaves_the_unload_alone() {
 }
 
 #[test]
-fn a_snapshot_keeps_the_map_one_to_one_by_live_id() {
+fn a_snapshot_rejects_duplicate_live_ids() {
     let mut ws = workspace();
     let mut live = Live::new();
-    // One live id claimed for two items: a wins the claim, and the loser b is unloaded
-    // instead of sharing the live tab.
+    let before = ws.clone();
     let (_, outcome) = live.apply(&mut ws, Transaction {
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![Strip {
@@ -1351,12 +1444,35 @@ fn a_snapshot_keeps_the_map_one_to_one_by_live_id() {
             active: Some("L1".into()),
         }],
     });
-    assert!(outcome.applied);
-    assert_eq!(live.live_tab("a").as_deref(), Some("L1"));
+    assert!(!outcome.applied);
+    assert_eq!(ws, before);
+    assert_eq!(live.live_tab("a"), None);
     assert_eq!(live.live_tab("b"), None);
-    assert_eq!(ws.items["b"].lifecycle, Lifecycle::Unloaded);
+    assert_eq!(live.item_for("L1"), None);
+    let (_, outcome) = live.apply(&mut ws, snapshot_tx(vec![strip_empty("one")]));
+    assert!(outcome.applied);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Unloaded);
+}
+
+#[test]
+fn paired_strips_move_ownership_and_reject_duplicate_claims() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let tab = LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) };
+    let source = Strip { window: "one".into(), tabs: vec![tab.clone()], active: None };
+    let destination = Strip { window: "two".into(), tabs: vec![], active: None };
+    assert!(live.apply(&mut ws, snapshot_tx(vec![source.clone(), destination])).1.applied);
+    assert_eq!(live.live_window("a").as_deref(), Some("one"));
+    let target = Strip { window: "two".into(), tabs: vec![tab], active: None };
+    let before = ws.clone();
+    assert!(!live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![source, target.clone()] }).1.applied);
+    assert_eq!(ws, before);
+    assert_eq!(live.live_window("a").as_deref(), Some("one"));
+    assert!(live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Chrome, strips: vec![strip_empty("one"), target] }).1.applied);
+    assert_eq!(live.live_window("a").as_deref(), Some("two"));
     assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
-    assert_eq!(live.item_for("L1").as_deref(), Some("a"));
+    assert!(ws.history_purges.is_empty());
+    assert!(!live.apply(&mut ws, Transaction { epoch: 1, rev: 3, cause: Cause::Engine, strips: vec![strip_empty("one"), strip_empty("one")] }).1.applied);
 }
 
 

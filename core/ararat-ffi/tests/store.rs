@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ararat_core::{import, storage::Store};
-use ararat_ffi::{CoreError, Profile, WorkspaceStore, import_arc_sidebar};
+use ararat_ffi::{CoreError, LiveCause, LiveStrip, LiveTab, LiveTransaction, Profile, SplitFactor, SplitPaneKind, WorkspaceStore, import_arc_sidebar};
 use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json");
@@ -202,6 +202,30 @@ fn a_failed_close_flush_keeps_the_edit_for_retry() {
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), expected);
 }
 
+#[test]
+fn live_apply_delivers_adoption_when_flush_fails_and_storage_retries() {
+    let path = fresh_db("live-busy");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap();
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let transaction = LiveTransaction { epoch:  1, rev: 0, cause: LiveCause::Chrome,
+        strips: vec![LiveStrip { window: "test".into(), active: Some("live-new".into()), tabs: vec![LiveTab {
+            profile: Profile::Default, live_id: "live-new".into(), item: None, opener: None, navigated: true,
+            url: Some("https://example.com/".into()), title: None,
+        }] }] };
+    let outcome = store.live_apply(transaction.clone()).unwrap();
+    assert!(outcome.applied);
+    assert!(outcome.persistence_error.is_some());
+    assert_eq!(outcome.adopted.len(), 1);
+    let adopted = outcome.adopted[0].item.clone();
+    assert!(!store.live_apply(transaction).unwrap().applied);
+    blocker.execute_batch("ROLLBACK").unwrap();
+    store.flush().unwrap();
+    let (_, disk) = Store::open(&path).unwrap();
+    assert!(disk.items.contains_key(&adopted));
+}
+
 fn split_today_fixture() -> String {
     FIXTURE.replace("\"childrenIds\": [\"folder-docs\", \"split-1\"]", "\"childrenIds\": [\"folder-docs\"]")
         .replace("\"id\": \"split-1\", \"parentID\": \"pin-work\"", "\"id\": \"split-1\", \"parentID\": \"today-work\"")
@@ -218,8 +242,92 @@ fn a_surviving_split_with_an_unloaded_member_stays_selected_and_can_be_closed() 
     let (disk, _) = Store::open(&path).unwrap();
     disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    assert_eq!(store.close_item("test".into(), "tab-a".into()).unwrap().selected_id.as_deref(), Some("split-1"));
+    assert_eq!(store.close_item("test".into(), "tab-a".into()).unwrap().selected_id.as_deref(), Some("tab-b"));
+    let reopened = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(reopened.snapshot("test".into()).selected_id.as_deref(), Some("tab-b"));
+    drop(reopened);
     assert_eq!(store.close_item("test".into(), "split-1".into()).unwrap().selected_id.as_deref(), Some("tab-spec"));
+}
+
+#[test]
+fn split_layout_projects_nested_panes_and_persists_factors() {
+    use ararat_core::model::{ItemKind, Orientation};
+    let path = fresh_db("split-layout");
+    let mut ws = import::arc_sidebar(&split_today_fixture(), None, None, None, None).unwrap().0;
+    let mut nested = ws.items["tab-a"].clone();
+    nested.id = "nested".into();
+    nested.kind = ItemKind::Split { orientation: Orientation::Vertical, width_factors: vec![] };
+    ws.items.get_mut("tab-a").unwrap().membership.parent = Some("nested".into());
+    ws.items.insert(nested.id.clone(), nested);
+    let (disk, _) = Store::open(&path).unwrap();
+    disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let layout = store.split_layout("tab-a".into()).unwrap();
+    assert_eq!(layout.kind, SplitPaneKind::SplitHorizontal);
+    let nested = layout.children.iter().find(|pane| pane.id == "nested").unwrap();
+    assert_eq!(nested.kind, SplitPaneKind::SplitVertical);
+    assert_eq!(nested.children[0].id, "tab-a");
+    let factors = layout.children.iter().map(|pane| SplitFactor { id: pane.id.clone(), factor: if pane.id == "nested" { 3.0 } else { 1.0 } }).collect();
+    store.set_split_factors("split-1".into(), factors).unwrap();
+    drop(store);
+    let layout = WorkspaceStore::open(path.display().to_string()).unwrap().split_layout("tab-b".into()).unwrap();
+    assert_eq!(layout.children.iter().find(|pane| pane.id == "nested").unwrap().factor, 0.75);
+}
+
+#[test]
+fn space_switch_reopens_a_split_with_only_unloaded_members() {
+    let path = fresh_db("unloaded-split-switch");
+    let mut ws = import::arc_sidebar(&split_today_fixture(), None, None, None, None).unwrap().0;
+    for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().lifecycle = ararat_core::model::Lifecycle::Unloaded; }
+    let (disk, _) = Store::open(&path).unwrap();
+    disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let selected = store.show_space_selecting("test".into(), "space-work".into()).unwrap();
+    assert_eq!(selected.selected_id.as_deref(), Some("tab-a"));
+    assert!(!selected.spaces[0].today.iter().find(|row| row.id == "tab-b").unwrap().unloaded);
+}
+
+#[test]
+fn space_switch_reopens_unloaded_siblings_of_the_selected_member() {
+    let path = fresh_db("unloaded-split-sibling");
+    let mut ws = import::arc_sidebar(&split_today_fixture(), None, None, None, None).unwrap().0;
+    ws.select_item("test", "tab-a").unwrap();
+    ws.items.get_mut("tab-b").unwrap().lifecycle = ararat_core::model::Lifecycle::Unloaded;
+    let (disk, _) = Store::open(&path).unwrap();
+    disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let selected = store.show_space_selecting("test".into(), "space-work".into()).unwrap();
+    assert_eq!(selected.selected_id.as_deref(), Some("tab-a"));
+    assert!(!selected.spaces[0].today.iter().find(|row| row.id == "tab-b").unwrap().unloaded);
+}
+
+#[test]
+fn restoration_candidate_keeps_the_selected_split_member() {
+    let path = fresh_db("restore-split-member");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), split_today_fixture(), None, None, None, None).unwrap();
+    store.select_item("test".into(), "tab-b".into()).unwrap();
+    store.flush().unwrap();
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.restoration_candidate("test".into()).unwrap().id, "tab-b");
+}
+
+#[test]
+fn closing_a_live_split_returns_close_commands_for_all_members() {
+    let path = fresh_db("close-live-split");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), split_today_fixture(), None, None, None, None).unwrap();
+    store.select_item("test".into(), "split-1".into()).unwrap();
+    let a = store.live_open("tab-a".into(), "https://a.example.com".into()).unwrap();
+    let b = store.live_open("tab-b".into(), "https://b.example.com".into()).unwrap();
+    let targets = store.live_close_split("split-1".into()).unwrap();
+    assert_eq!(targets.len(), 2);
+    assert!(targets.iter().any(|target| target.live_id == a.id && target.command.item == "tab-a"));
+    assert!(targets.iter().any(|target| target.live_id == b.id && target.command.item == "tab-b"));
+    assert!(store.snapshot("test".into()).spaces[0].today.iter().all(|row| row.id != "split-1"));
+    drop(store);
+    assert!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()).spaces[0].today.iter().all(|row| row.id != "split-1"));
 }
 
 #[test]

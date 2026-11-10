@@ -21,6 +21,11 @@ def multi_pages($expected; $defaults; $count):
 def multi_cancel_ok($n; $quit):
   .dialogs == $n and .closing == false and (if $quit then .trying_to_quit == false else .close_cancelled == $n end) and
   .selected_matches_active == true and .child_unchanged == true and .workspace_rows_unchanged == true;
+def split_cancel_rows($s):
+  if (($s.flags | index("--ararat-empty-close-check")) != null or
+      ($s.flags | any(startswith("--ararat-selection-supersede=")))) then
+    .profile_reconciled == true
+  else .rows_unchanged == true end;
 def contains_window($id):
   type == "array" and any(.[]; type == "array" and .[0] == "window" and .[1] == $id);
 def presentation_ok($mode; $live):
@@ -156,9 +161,9 @@ def state_ok($s):
      $r.multiple_final.dialogs == 3 and $r.multiple_final.close_cancelled == 2 and $r.multiple_final.closed == true
    elif ($s.name == "close-split" or $s.name == "close-empty") then
      . as $r | $r.expected_dialog_items as $expected |
-     $r.split_panel_preserved == true and $r.cancel_run.dialogs == 2 and $r.cancel_run.close_cancelled == 1 and
+     $r.split_panel_selected == true and $r.cancel_run.dialogs == 2 and $r.cancel_run.close_cancelled == 1 and
      $r.cancel_run.closed == false and $r.cancel_run.closing == false and $r.cancel_run.host_open == true and
-     $r.cancel_run.rows_unchanged == true and $r.cancel_run.split_cancel_restored == true and
+     ($r.cancel_run | split_cancel_rows($s)) and $r.cancel_run.split_cancel_restored == true and
      ($r.cancel_run.dialog_pages | valid_pages($expected; 2)) and
      ($r.cancel_run.dialog_pages | map(.profile) | sort) == ["Default", "Profile 1"] and
      ($r.cancel_run.dialog_pages | map(.item) | unique | length) == 2 and
@@ -182,9 +187,9 @@ def state_ok($s):
   (if ($s.flags | index("--ararat-split-close-check")) then
      . as $r |
      if $s.check == "profiles" then
-       $r.split_panel_preserved == true and $r.cancel_run.dialogs == 2 and $r.cancel_run.close_cancelled == 1 and
+       $r.split_panel_selected == true and $r.cancel_run.dialogs == 2 and $r.cancel_run.close_cancelled == 1 and
        $r.cancel_run.closed == false and $r.cancel_run.closing == false and $r.cancel_run.host_open == true and
-       $r.cancel_run.rows_unchanged == true and $r.cancel_run.split_cancel_restored == true and
+       ($r.cancel_run | split_cancel_rows($s)) and $r.cancel_run.split_cancel_restored == true and
        ($r.cancel_run.dialog_pages | valid_pages($r.expected_dialog_items; 2)) and
        ($r.cancel_run.dialog_pages | map(.profile) | sort) == ["Default", "Profile 1"] and
        ($r.cancel_run.dialog_pages | map(.item) | unique | length) == 2 and

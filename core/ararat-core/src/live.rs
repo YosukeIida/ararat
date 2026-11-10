@@ -92,18 +92,27 @@ pub struct Live {
     reverse: HashMap<Id, Id>,
     windows: HashMap<Id, Id>,
     pending: HashMap<Id, (CommandKind, Id)>,
+    selection_intents: HashMap<Id, Id>,
     epoch: Option<u64>,
     last_rev: u64,
     dropped: u64,
 }
 
 impl Live {
+    fn selection_allowed(workspace: &Workspace, map: &HashMap<Id, Id>, windows: &HashMap<Id, Id>, window: &str, explicit: bool) -> bool {
+        explicit || !workspace.selected(window).and_then(|item| map.get(item))
+            .and_then(|live| windows.get(live)).is_some_and(|owner| owner != window)
+    }
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn live_tab(&self, item: &str) -> Option<Id> {
         self.map.get(item).cloned()
+    }
+
+    pub fn live_window(&self, item: &str) -> Option<Id> {
+        self.map.get(item).and_then(|live| self.windows.get(live)).cloned()
     }
 
     pub fn item_for(&self, live_id: &str) -> Option<Id> {
@@ -187,7 +196,20 @@ impl Live {
         self.pending.insert(command.id.clone(), (command.kind, command.item.clone()));
     }
 
+    pub fn selection_intent(&mut self, command_id: &str, window: &str) -> bool {
+        if !self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Activate) { return false; }
+        let superseded: Vec<_> = self.selection_intents.iter().filter(|(id, owner)| owner.as_str() == window && id.as_str() != command_id)
+            .map(|(id, _)| id.clone()).collect();
+        for id in superseded {
+            self.selection_intents.remove(&id);
+            self.pending.remove(&id);
+        }
+        self.selection_intents.insert(command_id.into(), window.into());
+        true
+    }
+
     pub fn cancel(&mut self, workspace: &mut Workspace, command_id: &str) -> (bool, Vec<Op>) {
+        self.selection_intents.remove(command_id);
         if self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Activate) {
             self.pending.remove(command_id);
             return (true, Vec::new());
@@ -196,6 +218,13 @@ impl Live {
         let cancelled = Self::cancel_open(workspace, command_id, &mut self.map, &mut self.reverse,
                           &mut self.windows, &mut self.pending, &mut ops);
         (cancelled, ops)
+    }
+
+    pub fn settle_close(&mut self, command_id: &str) -> bool {
+        if self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Close) {
+            self.pending.remove(command_id);
+            true
+        } else { false }
     }
 
     fn cancel_open(
@@ -244,6 +273,35 @@ impl Live {
         self.finish(workspace, item, false)
     }
 
+    pub fn close_split(&mut self, workspace: &mut Workspace, split: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+        workspace.check_tree().map_err(LiveError)?;
+        if !workspace.items.get(split).is_some_and(|item| matches!(item.kind, ItemKind::Split { .. })) {
+            return Err(LiveError(format!("item {split} is not a split")));
+        }
+        let mut stack = vec![split.to_string()];
+        let mut items = Vec::new();
+        while let Some(id) = stack.pop() {
+            for child in workspace.children(&id) {
+                if matches!(child.kind, ItemKind::Tab { .. }) {
+                    if let Some(live) = self.map.get(&child.id) { items.push((child.id.clone(), live.clone())); }
+                } else { stack.push(child.id.clone()); }
+            }
+        }
+        let ops = workspace.close_item(split)?;
+        let mut commands = Vec::new();
+        for (item, live) in items {
+            self.pending.retain(|_, (kind, pending)| !(*kind == CommandKind::Activate && pending == &item));
+            self.map.remove(&item);
+            self.reverse.remove(&live);
+            self.windows.remove(&live);
+            let command = Command { id: self.fresh_command_id(workspace), kind: CommandKind::Close, item: item.clone(), url: None };
+            self.pending.insert(command.id.clone(), (CommandKind::Close, item));
+            commands.push((live, command));
+        }
+        self.selection_intents.retain(|id, _| self.pending.contains_key(id));
+        Ok((ops, commands))
+    }
+
     pub fn archive(&mut self, workspace: &mut Workspace, item: &str) -> Result<(Vec<Op>, Command), LiveError> {
         self.finish(workspace, item, true)
     }
@@ -284,14 +342,17 @@ impl Live {
                 return (Vec::new(), outcome);
             }
         }
-        // A dropped transaction keeps consuming its rev (design): a later transaction
-        // with the same rev is the engine's bug, not a retry.
         let is_new_epoch = self.epoch != Some(transaction.epoch);
-        self.epoch = Some(transaction.epoch);
-        self.last_rev = transaction.rev;
-        outcome.applied = true;
+        if !is_new_epoch { self.last_rev = transaction.rev; }
 
-        if transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| {
+        let mut windows = HashSet::new();
+        let mut lives = HashSet::new();
+        let mut items = HashSet::new();
+        if transaction.strips.iter().any(|strip| {
+            !windows.insert(&strip.window) || strip.tabs.iter().any(|tab| {
+                !lives.insert(&tab.live_id) || tab.item.as_ref().is_some_and(|item| !items.insert(item))
+            })
+        }) || transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| {
             tab.item.as_deref().and_then(|id| workspace.item_profile(id))
                 .is_some_and(|profile| profile != &tab.profile)
         }) {
@@ -299,6 +360,9 @@ impl Live {
             outcome.applied = false;
             return (Vec::new(), outcome);
         }
+        self.epoch = Some(transaction.epoch);
+        self.last_rev = transaction.rev;
+        outcome.applied = true;
 
         // Validate and compute on clones; the workspace and the maps commit only when the
         // transaction is accepted (the way auto_archive commits) — a dropped one leaves
@@ -308,12 +372,14 @@ impl Live {
         let mut next_reverse = self.reverse.clone();
         let mut next_windows = self.windows.clone();
         let mut next_pending = self.pending.clone();
+        let mut next_intents = self.selection_intents.clone();
         let mut ops = Vec::new();
 
         if is_new_epoch {
             // A new epoch clears the commands in flight, and the map is rebuilt from the
             // snapshot, not merged.
             next_pending.clear();
+            next_intents.clear();
             next_map.clear();
             next_reverse.clear();
             next_windows.clear();
@@ -399,8 +465,10 @@ impl Live {
             for strip in &transaction.strips {
                 if let Some(active) = &strip.active {
                     if let Some(item) = next_reverse.get(active).cloned() {
-                        if let Ok(mut selection_ops) = next.record_active(&strip.window, &item, next.lifecycle_time()) {
+                        if Self::selection_allowed(&next, &next_map, &next_windows, &strip.window, false) {
+                          if let Ok(mut selection_ops) = next.record_active(&strip.window, &item, next.lifecycle_time()) {
                             ops.append(&mut selection_ops);
+                          }
                         }
                     }
                 }
@@ -412,6 +480,7 @@ impl Live {
             self.reverse = next_reverse;
             self.windows = next_windows;
             self.pending = next_pending;
+            self.selection_intents = next_intents;
             return (ops, outcome);
         }
 
@@ -421,6 +490,9 @@ impl Live {
         let carried: HashSet<&Id> = transaction.strips.iter().map(|strip| &strip.window).collect();
         let reported: HashSet<&Id> = transaction.strips.iter()
             .flat_map(|strip| strip.tabs.iter().map(|tab| &tab.live_id)).collect();
+        let intent = if let Cause::Command(id) = &transaction.cause {
+            next_intents.remove(id).and_then(|window| self.pending.get(id).map(|(_, item)| (window, item.clone())))
+        } else { None };
         if let Cause::Command(id) = &transaction.cause {
             if !reported.contains(id) && next_pending.get(id).is_some_and(|(kind, _)| *kind == CommandKind::Open) {
                 Self::cancel_open(&mut next, id, &mut next_map, &mut next_reverse,
@@ -533,6 +605,8 @@ impl Live {
             if matches!(transaction.cause, Cause::Engine) || changed_windows.contains(&strip.window) { continue; }
             if let Some(active) = &strip.active {
                 if let Some(item) = next_reverse.get(active).cloned() {
+                    let explicit = intent.as_ref().is_some_and(|(window, target)| window == &strip.window && target == &item);
+                    if !Self::selection_allowed(&next, &next_map, &next_windows, &strip.window, explicit) { continue; }
                     // A strip can arrive after the window showed another space: a selection
                     // made before the switch completes late, and its active tab belongs to
                     // the space the window no longer shows. Recording it would select a row
@@ -577,6 +651,7 @@ impl Live {
         }
 
         Self::update_metadata(&mut next, &transaction.strips, &next_reverse, &mut ops);
+        next_intents.retain(|id, _| next_pending.contains_key(id));
 
         // Commit: the workspace and the maps take the accepted transaction in one step.
         *workspace = next;
@@ -584,6 +659,7 @@ impl Live {
         self.reverse = next_reverse;
         self.windows = next_windows;
         self.pending = next_pending;
+        self.selection_intents = next_intents;
         (ops, outcome)
     }
 

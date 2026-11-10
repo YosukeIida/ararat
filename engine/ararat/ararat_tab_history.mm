@@ -102,6 +102,11 @@ void TabHistory::Remove(Writer* writer) {
   if (it != writers_.end() && it->second == writer) writers_.erase(it);
 }
 
+Writer* TabHistory::FindWriter(const std::string& profile, const std::string& item) const {
+  auto it = writers_.find({profile, item});
+  return it == writers_.end() ? nullptr : it->second;
+}
+
 void TabHistory::Purge(std::string profile, std::string item, uint64_t changed_at,
                        base::OnceCallback<void(bool)> reply) {
   auto it = writers_.find({profile, item});

@@ -48,6 +48,8 @@ AraratCallbacks g_ararat_callbacks = {};
 std::atomic<bool> g_quit_requested{false};
 std::atomic<bool> g_ui_ready{false};
 bool g_check_tabs = false;
+bool g_check_split = false;
+bool g_check_transfer = false;
 bool g_check_slice = false;
 bool g_slice_passed = false;
 bool g_shared_compositor = false;
@@ -124,6 +126,7 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
 
   void PostMainMessageLoopRun() override {
     if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: main message loop returned\n");
+    AraratClearDetachedTransfers();
     observation_.Reset();
     ChromeBrowserMainExtraParts::PostMainMessageLoopRun();
     if (g_ararat_callbacks.will_shut_down) {
@@ -145,6 +148,15 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
     }
     if (command_line->GetSwitchValueASCII("ararat-check") == "tabs") {
       AraratCheckTabs();
+      return;
+    }
+    if (command_line->GetSwitchValueASCII("ararat-check") == "split") {
+      AraratCheckSplit();
+      return;
+    }
+    if (command_line->GetSwitchValueASCII("ararat-check") == "transfer" ||
+        command_line->GetSwitchValueASCII("ararat-check") == "transfer-ext") {
+      AraratCheckTransfer(command_line->GetSwitchValueASCII("ararat-check") == "transfer-ext");
       return;
     }
     if (command_line->GetSwitchValueASCII("ararat-check") != "started") {
@@ -209,7 +221,7 @@ void CheckGuards(int argc, const char** argv) {
       has_measure = true;
       std::string_view name(arg + 17);
       valid_measure = name == "switch" || name == "background" ||
-                      name == "occlusion" || name == "resize" || name == "display";
+                      name == "occlusion" || name == "resize" || name == "display" || name == "split";
     } else if (strcmp(arg, "--ararat-measure") == 0) {
       has_measure = true;
       valid_measure = false;
@@ -238,9 +250,11 @@ void CheckGuards(int argc, const char** argv) {
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
                            name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
       g_check_tabs = name == "tabs";
+      g_check_split = name == "split";
+      g_check_transfer = name == "transfer" || name == "transfer-ext";
       check_slice = name == "slice";
       g_check_slice = check_slice;
-      check_started = name == "started" || name == "window" || name == "tabs" ||
+      check_started = name == "started" || name == "window" || name == "tabs" || name == "split" || g_check_transfer ||
                       name == "slice" || name == "quit" || name == "quit-cancel" ||
                       name == "close" || browser_check;
       check_slice = check_slice || name == "quit" || name == "quit-cancel" ||
@@ -386,7 +400,7 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   browser_args.push_back(nullptr);
   int result = ChromeMain(browser_argc, browser_args.data());
   if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: ChromeMain returned=%d\n", result);
-  return result == 0 && (!AraratCheckDialogIntegrity() || !AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) ||
+  return result == 0 && (!AraratCheckDialogIntegrity() || !AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) || (g_check_split && !AraratSplitCheckPassed()) || (g_check_transfer && !AraratTransferCheckPassed()) ||
                          (g_check_slice && !g_slice_passed)) ? 1 : result;
 }
 

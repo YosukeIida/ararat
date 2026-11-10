@@ -383,13 +383,13 @@ func folderDoubleClickTogglesTwiceWithoutRenaming() throws {
 @Test @MainActor
 func pinFromTodayShowsTimedHintWithSeparatedTextAndRestarts() throws {
     let f = try MenuFixture(); defer { f.dispose() }
-    _ = try f.store.moveItem(windowId: "menus", id: "tab-a", container: f.space.todayId, index: 0, openFolder: false)
-    _ = try f.store.selectItem(windowId: "menus", id: "tab-a")
+    _ = try f.store.moveItem(windowId: "menus", id: "tab-spec", container: f.space.todayId, index: 0, openFolder: false)
+    _ = try f.store.selectItem(windowId: "menus", id: "tab-spec")
     f.sidebar.update(snapshot: f.snapshot)
     var now: CFTimeInterval = 100
     f.sidebar.renameHintClock = { now }
     f.sidebar.dragReduceMotion = { false }
-    let row = try f.view("tab-a")
+    let row = try f.view("tab-spec")
     let hint = try #require(descendants(row).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Double-click to rename" })
     func pin() throws {
         _ = try f.store.moveItem(windowId: "menus", id: row.row.id, container: f.space.pinnedId, index: 0, openFolder: false)
@@ -426,7 +426,7 @@ func pinFromTodayShowsTimedHintWithSeparatedTextAndRestarts() throws {
     now += 2
     row.refreshRenameHint()
     #expect(!hint.isHidden)
-    f.sidebar.updateSelection(id: "tab-spec")
+    f.sidebar.updateSelection(id: "tab-mail")
     #expect(hint.isHidden)
     f.sidebar.updateSelection(id: row.row.id)
     #expect(hint.isHidden)

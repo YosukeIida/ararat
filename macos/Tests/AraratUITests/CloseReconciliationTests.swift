@@ -4,7 +4,7 @@ import Testing
 @testable import AraratKit
 
 @Test
-func cancelledCloseKeepsTheWorkspaceWhenTheForcedProfileResolvesToASplit() throws {
+func cancelledCloseSelectsTheSplitMemberInTheForcedProfile() throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -14,10 +14,9 @@ func cancelledCloseKeepsTheWorkspaceWhenTheForcedProfileResolvesToASplit() throw
     try store.showSpace(windowId: "one", spaceId: "space-work")
     _ = try store.selectItem(windowId: "one", id: "split-1")
     try store.showSpace(windowId: "one", spaceId: "space-home")
-    let before = try store.createTab(windowId: "one", url: "https://home.example")
-    let rejected = try EngineAdapter.snapshotAfterCloseCancellation(store: store, windowID: "one", forcedProfile: "Default")
-    #expect(rejected == before)
-    #expect(store.snapshot(windowId: "one") == before)
+    _ = try store.createTab(windowId: "one", url: "https://home.example")
+    let restored = try EngineAdapter.snapshotAfterCloseCancellation(store: store, windowID: "one", forcedProfile: "Default")
+    #expect(restored.shownSpaceId == "space-work" && restored.selectedId == "tab-a")
     _ = try store.showSpaceSelectingTab(windowId: "one", spaceId: "space-work", itemId: "tab-spec")
     try store.showSpace(windowId: "one", spaceId: "space-home")
     let accepted = try EngineAdapter.snapshotAfterCloseCancellation(store: store, windowID: "one", forcedProfile: "Default")
@@ -26,7 +25,7 @@ func cancelledCloseKeepsTheWorkspaceWhenTheForcedProfileResolvesToASplit() throw
 
 @Test
 @MainActor
-func splitCloseCheckFixtureRejectsTheNamedSpaceAfterSelectingItsSplit() throws {
+func splitCloseCheckFixtureSelectsTheNamedSpaceSplitMember() throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let adapter = try EngineAdapter(path: directory.appendingPathComponent("split-close.sqlite").path,
@@ -36,8 +35,7 @@ func splitCloseCheckFixtureRejectsTheNamedSpaceAfterSelectingItsSplit() throws {
         try store.showSpace(windowId: "one", spaceId: "named")
         _ = try store.selectItem(windowId: "one", id: "close-split")
         try store.showSpace(windowId: "one", spaceId: "default")
-        let before = store.snapshot(windowId: "one")
-        #expect(throws: CoreError.UnsupportedSplit) { try store.showSpaceSelecting(windowId: "one", spaceId: "named") }
-        #expect(store.snapshot(windowId: "one") == before)
+        let selected = try store.showSpaceSelecting(windowId: "one", spaceId: "named")
+        #expect(selected.shownSpaceId == "named" && selected.selectedId == "close-split-a")
     }
 }

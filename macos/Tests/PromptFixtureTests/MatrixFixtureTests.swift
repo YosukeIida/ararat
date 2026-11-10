@@ -1,6 +1,6 @@
 import AppKit
 import AraratEngineAPI
-import AraratKit
+@testable import AraratKit
 import AraratUI
 import ObjectiveC.runtime
 import Testing
@@ -20,6 +20,8 @@ private final class MatrixFakeTab: NSObject {
         owner?.active = itemId
         owner?.activated.append(command)
     }
+    @objc(closeWithCommandId:) func close(_ command: String) { owner?.closed.append(command) }
+    @objc(captureSnapshot:) func capture(_ completion: @escaping (NSImage?) -> Void) { owner?.captureCompletions.append(completion) }
 }
 
 @MainActor
@@ -29,19 +31,39 @@ private final class MatrixFakeHost: NSObject {
     var active: String?
     var shownProfile = "Default"
     var closing = false
+    var closingAll = false
     var hidden = false
     var activated: [String] = []
+    var closed: [String] = []
     var opened: [String] = []
+    var backgroundOpened: [String] = []
+    var refuseBackground = false
+    var splitFrames: [String: NSValue] = [:]
+    var splitFrameCalls = 0
+    var transferFailures = 0
+    var transferAttempts = 0
+    var handoffAttempts = 0
+    var failHandoffAt = 0
+    var captureCompletions: [(NSImage?) -> Void] = []
+    var remotePlaceholder = false
+    private lazy var fakeWindow: NSWindow = {
+        _ = NSApplication.shared
+        return NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: false)
+    }()
+    var profileReady = true
+    var preparedProfiles: [String] = []
     var deferOpen = false
     var pendingOpens: [String: String] = [:]
     var presentationOverride: [String: Any]?
     @objc func isClosing() -> Bool { closing }
-    @objc func isClosingAll() -> Bool { closing }
+    @objc func isClosingAll() -> Bool { closingAll }
+    @objc func window() -> NSWindow { fakeWindow }
     @objc func profileDirectory() -> String { shownProfile }
     @objc(setProfileDirectory:) func setProfile(_ name: String) -> Bool { shownProfile = name; return true }
     @objc func activeItemId() -> String? { active }
     @objc func tabs() -> [Any] { entries }
     @objc func setWorkspacePageHidden(_ value: Bool) { hidden = value }
+    @objc(setWorkspaceRemote:) func setWorkspaceRemote(_ value: Bool) { remotePlaceholder = value }
     @objc func hasActiveTab() -> Bool { !hidden && active != nil }
     @objc func navigationTarget() -> [String: Any]? { hasActiveTab() ? ["item": active!] : nil }
     @objc(checkPagePresentation:) func presentation(_ live: String) -> [String: Any] {
@@ -65,6 +87,36 @@ private final class MatrixFakeHost: NSObject {
     }
     @objc(cancelPendingOpen:) func cancelPendingOpen(_ command: String) -> Bool {
         pendingOpens.removeValue(forKey: command) != nil
+    }
+    @objc(setSplitFrames:frozen:) func setSplitFrames(_ frames: [String: NSValue], frozen: Bool) -> Bool { splitFrameCalls += 1; splitFrames = frames; return true }
+    @objc(transferTab:commandId:) func transfer(_ value: AnyObject, command: String) -> Bool {
+        transferAttempts += 1
+        if transferFailures > 0 { transferFailures -= 1; return false }
+        return move(value, activate: true, command: command)
+    }
+    @objc(handoffTab:activate:) func handoff(_ value: AnyObject, activate: Bool) -> Bool {
+        handoffAttempts += 1
+        if handoffAttempts == failHandoffAt { return false }
+        return move(value, activate: activate, command: "handoff")
+    }
+    private func move(_ value: AnyObject, activate: Bool, command: String) -> Bool {
+        guard let tab = value as? MatrixFakeTab, let source = tab.owner else { return false }
+        source.entries.removeAll { $0 === tab }
+        if source.active == tab.itemId { source.active = source.entries.first?.itemId }
+        tab.owner = self
+        entries.append(tab)
+        if activate { active = tab.itemId }
+        activated.append(command)
+        return true
+    }
+    @objc(prepareTransferProfile:) func prepareProfile(_ profile: String) { preparedProfiles.append(profile) }
+    @objc(hasBrowserForProfile:) func hasBrowserForProfile(_ profile: String) -> Bool { profileReady }
+    @objc(openBackgroundURL:commandId:itemId:profile:historyStamp:)
+    func openBackground(_ url: String, command: String, item: String, profile: String, historyStamp: UInt64) -> Bool {
+        if refuseBackground { return false }
+        entries.append(MatrixFakeTab(item: item, live: command, profile: profile, owner: self))
+        backgroundOpened.append(command)
+        return true
     }
 }
 
@@ -95,6 +147,426 @@ private func matrixTransaction(_ fake: MatrixFakeHost, window: String, epoch: UI
             "cause": command.map { ["Command": $0] } as Any? ?? "Engine",
             "strips": [["window": window, "tabs": tabs,
                          "active": fake.entries.first(where: { $0.itemId == fake.active })?.liveId as Any? ?? NSNull()]]]
+}
+
+@Test @MainActor
+func closeFromAnotherWindowReachesTheOwningHost() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let owner = try EngineAdapter(path: path, windowID: "owner", card: NSView(), seedProfiles: true, session: session)
+    let requester = try EngineAdapter(path: path, windowID: "requester", card: NSView(), session: session)
+    let (source, sourceHost) = matrixFake()
+    let (target, targetHost) = matrixFake()
+    owner.attach(sourceHost)
+    requester.attach(targetHost)
+    let item = try session.queue.sync { () -> String in
+        let store = try #require(session.store)
+        return try #require(store.snapshot(windowId: "owner").spaces.first(where: { $0.id == "default" })?.today.first).id
+    }
+    owner.select(id: item, url: "about:blank")
+    try await matrixWait { source.opened.count == 1 }
+    var applied = false
+    owner.onTransaction = { _, accepted in applied = accepted }
+    owner.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "owner", epoch: 1, rev: 0, command: source.opened[0]))
+    try await matrixWait { applied }
+    requester.close(id: item)
+    try await matrixWait { source.closed.count == 1 }
+    #expect(target.closed.isEmpty)
+    owner.shutdown()
+    requester.shutdown()
+}
+
+@Test @MainActor
+func selectingRemotePageTransfersItsLiveIdentity() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let owner = try EngineAdapter(path: path, windowID: "owner", card: NSView(), seedProfiles: true, session: session)
+    let destination = try EngineAdapter(path: path, windowID: "destination", card: NSView(), session: session)
+    let (source, sourceHost) = matrixFake()
+    let (target, targetHost) = matrixFake()
+    owner.attach(sourceHost); destination.attach(targetHost)
+    let item = try session.queue.sync { () -> String in
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "destination", spaceId: "default")
+        return try #require(store.snapshot(windowId: "owner").spaces.first(where: { $0.id == "default" })?.today.first).id
+    }
+    owner.select(id: item, url: "about:blank")
+    try await matrixWait { source.opened.count == 1 }
+    var applied = false
+    owner.onTransaction = { _, accepted in applied = accepted }
+    owner.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "owner", epoch: 1, rev: 0, command: source.opened[0]))
+    try await matrixWait { applied }
+    let live = source.opened[0]
+    target.transferFailures = 2
+    destination.select(id: item, url: "about:blank")
+    try await matrixWait { target.activated.count == 1 }
+    #expect(target.transferAttempts == 3)
+    #expect(source.entries.isEmpty && target.entries.first?.liveId == live)
+    let left = matrixTransaction(source, window: "owner", epoch: 1, rev: 1, command: nil)["strips"] as! [[String: Any]]
+    let right = matrixTransaction(target, window: "destination", epoch: 1, rev: 1, command: nil)["strips"] as! [[String: Any]]
+    var paired = matrixTransaction(target, window: "destination", epoch: 1, rev: 1, command: target.activated[0])
+    paired["strips"] = left + right
+    var moved = false
+    destination.onTransaction = { _, accepted in moved = accepted }
+    destination.windowHost(targetHost, didReceiveTransaction: paired)
+    try await matrixWait { moved }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        #expect(store.liveWindow(item: item) == "destination")
+        #expect(store.snapshot(windowId: "owner").selectedId == item)
+        #expect(store.snapshot(windowId: "destination").selectedId == item)
+        #expect(try store.pendingHistoryPurges().isEmpty)
+    }
+    #expect(source.captureCompletions.count >= 2)
+    source.captureCompletions[0](NSImage(size: NSSize(width: 2, height: 2)))
+    await Task.yield()
+    #expect(session.snapshot(live) == nil)
+    source.captureCompletions[1](NSImage(size: NSSize(width: 2, height: 2)))
+    try await matrixWait { session.snapshot(live) != nil }
+    session.invalidateSnapshot(live)
+    let movedTab = try #require(target.entries.first) as! any ARTabAPI
+    session.captureSnapshot(movedTab, item: item)
+    #expect(target.captureCompletions.count == 1)
+    target.captureCompletions[0](nil)
+    await Task.yield()
+    #expect(session.snapshot(live) == nil)
+    session.captureSnapshot(movedTab, item: item)
+    #expect(target.captureCompletions.count == 2)
+    session.invalidateSnapshot(live)
+    target.captureCompletions[1](NSImage(size: NSSize(width: 2, height: 2)))
+    await Task.yield()
+    #expect(session.snapshot(live) == nil)
+    owner.refresh()
+    try await matrixWait { source.remotePlaceholder }
+    source.transferFailures = 100
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: source.window())
+    try await matrixWait { source.transferAttempts > 0 }
+    source.closing = true
+    try await matrixWait { (owner.checkSelectionState()["pending_commands"] as? [String] ?? []).isEmpty }
+    #expect(target.entries.first?.liveId == live)
+    #expect(session.queue.sync { session.store?.liveWindow(item: item) } == "destination")
+    source.closing = false
+    owner.shutdown(); destination.shutdown()
+}
+
+@Test @MainActor
+func acceptedCloseHandsSharedPageToMostRecentEligibleWindow() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let sourceEngine = try EngineAdapter(path: path, windowID: "source", card: NSView(), seedProfiles: true, session: session)
+    let first = try EngineAdapter(path: path, windowID: "first", card: NSView(), session: session)
+    let recent = try EngineAdapter(path: path, windowID: "recent", card: NSView(), session: session)
+    let (source, sourceHost) = matrixFake()
+    let (firstFake, firstHost) = matrixFake()
+    let (recentFake, recentHost) = matrixFake()
+    sourceEngine.attach(sourceHost); first.attach(firstHost); recent.attach(recentHost)
+    let item = try session.queue.sync { () -> String in
+        let store = try #require(session.store)
+        return try #require(store.snapshot(windowId: "source").spaces.first(where: { $0.id == "default" })?.today.first).id
+    }
+    sourceEngine.select(id: item, url: "about:blank")
+    try await matrixWait { source.opened.count == 1 }
+    var applied = false
+    sourceEngine.onTransaction = { _, accepted in applied = accepted }
+    sourceEngine.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "source", epoch: 1, rev: 0, command: source.opened[0]))
+    try await matrixWait { applied }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        for window in ["first", "recent"] {
+            try store.showSpace(windowId: window, spaceId: "default")
+            _ = try store.selectItem(windowId: window, id: item)
+        }
+    }
+    session.noteKey(window: "first"); session.noteKey(window: "recent")
+    source.closing = true
+    sourceEngine.windowHostWillBeginClosing(sourceHost)
+    #expect(source.entries.count == 1 && firstFake.entries.isEmpty && recentFake.entries.isEmpty)
+    recentFake.profileReady = false
+    var finished: Bool?
+    sourceEngine.windowHost(sourceHost, prepareCloseHandoff: { finished = $0 })
+    #expect(finished == nil && source.entries.count == 1)
+    #expect(recentFake.preparedProfiles == ["Default"])
+    recentFake.closing = true
+    try await matrixWait { finished != nil }
+    #expect(finished == false && source.entries.count == 1 && recentFake.entries.isEmpty)
+    recentFake.closing = false
+    finished = nil
+    sourceEngine.windowHost(sourceHost, prepareCloseHandoff: { finished = $0 })
+    recentFake.profileReady = true
+    try await matrixWait { finished != nil }
+    #expect(finished == true && source.entries.isEmpty && firstFake.entries.isEmpty)
+    #expect(recentFake.entries.first?.itemId == item)
+    source.closing = false
+    sourceEngine.shutdown(); first.shutdown(); recent.shutdown()
+}
+
+@Test @MainActor
+func cancelledDividerGestureStaysCancelledUntilMouseUp() throws {
+    let divider = SplitDividerView(frame: NSRect(x: 0, y: 0, width: 4, height: 100))
+    var moves: [CGFloat] = []
+    divider.onMove = { delta, _ in moves.append(delta) }
+    func event(_ type: NSEvent.EventType, _ x: CGFloat) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 0), modifierFlags: [], timestamp: 0,
+                                        windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    divider.mouseDown(with: try event(.leftMouseDown, 0))
+    divider.mouseDragged(with: try event(.leftMouseDragged, 10))
+    divider.cancelDrag()
+    divider.mouseDragged(with: try event(.leftMouseDragged, 20))
+    divider.mouseUp(with: try event(.leftMouseUp, 20))
+    #expect(moves == [10])
+    divider.mouseDown(with: try event(.leftMouseDown, 20))
+    divider.mouseDragged(with: try event(.leftMouseDragged, 25))
+    #expect(moves == [10, 5])
+}
+
+@Test @MainActor
+func partialHandoffFailureKeepsBothPagesAndCancelsClose() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let sourceEngine = try EngineAdapter(path: path, windowID: "source", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let targetEngine = try EngineAdapter(path: path, windowID: "target", card: NSView(), session: session)
+    let (source, sourceHost) = matrixFake()
+    let (target, targetHost) = matrixFake()
+    sourceEngine.attach(sourceHost); targetEngine.attach(targetHost)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        for window in ["source", "target"] {
+            try store.showSpace(windowId: window, spaceId: "named")
+            _ = try store.selectItem(windowId: window, id: "close-split-a")
+        }
+    }
+    source.shownProfile = "Profile 1"
+    sourceEngine.select(id: "close-split-a", url: "about:blank")
+    try await matrixWait { source.opened.count == 1 }
+    sourceEngine.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "source", epoch: 1, rev: 0, command: source.opened[0]))
+    try await matrixWait { source.backgroundOpened.count == 1 }
+    sourceEngine.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "source", epoch: 1, rev: 1, command: source.backgroundOpened[0]))
+    try await matrixWait { session.queue.sync { session.store?.liveTab(item: "close-split-b") != nil } }
+    for tab in source.entries { tab.liveId = tab.itemId == "close-split-a" ? "live-a" : "live-b" }
+    sourceEngine.windowHost(sourceHost, didReceiveTransaction: matrixTransaction(source, window: "source", epoch: 2, rev: 0, command: nil))
+    try await matrixWait { session.queue.sync { session.store?.liveTab(item: "close-split-a") == "live-a" && session.store?.liveTab(item: "close-split-b") == "live-b" } }
+    target.failHandoffAt = 2
+    source.closing = true
+    sourceEngine.windowHostWillBeginClosing(sourceHost)
+    var finished: Bool?
+    sourceEngine.windowHost(sourceHost, prepareCloseHandoff: { finished = $0 })
+    try await matrixWait { finished != nil }
+    #expect(finished == false && source.entries.count == 1 && target.entries.count == 1)
+    #expect(Set((source.entries + target.entries).compactMap(\.itemId)) == ["close-split-a", "close-split-b"])
+    let movedItem = try #require(target.entries.first?.itemId)
+    #expect(movedItem == "close-split-a")
+    let sourceStrip = matrixTransaction(source, window: "source", epoch: 2, rev: 1, command: nil)["strips"] as! [[String: Any]]
+    let targetStrip = matrixTransaction(target, window: "target", epoch: 2, rev: 1, command: nil)["strips"] as! [[String: Any]]
+    var paired = matrixTransaction(target, window: "target", epoch: 2, rev: 1, command: nil)
+    paired["strips"] = sourceStrip + targetStrip
+    paired["cause"] = "Chrome"
+    var applied = false
+    targetEngine.onTransaction = { _, accepted in applied = accepted }
+    targetEngine.windowHost(targetHost, didReceiveTransaction: paired)
+    try await matrixWait { applied }
+    applied = false
+    var later = matrixTransaction(source, window: "source", epoch: 2, rev: 2, command: nil)
+    later["cause"] = "Chrome"
+    sourceEngine.onTransaction = { _, accepted in applied = accepted }
+    sourceEngine.windowHost(sourceHost, didReceiveTransaction: later)
+    try await matrixWait { applied }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        #expect(store.liveWindow(item: movedItem) == "target")
+        #expect(store.snapshot(windowId: "source").selectedId == "close-split-a")
+        #expect(try store.pendingHistoryPurges().isEmpty)
+        let rows = store.snapshot(windowId: "source").spaces.flatMap(\.pinned)
+        #expect(rows.contains { $0.id == "close-split" })
+        #expect(["close-split-a", "close-split-b"].allSatisfy { id in rows.contains { $0.id == id && !$0.unloaded } })
+    }
+    source.closing = false
+    sourceEngine.shutdown(); targetEngine.shutdown()
+}
+
+@Test @MainActor
+func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let card = NSView(frame: NSRect(x: 0, y: 0, width: 804, height: 600))
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "split", card: card, seedProfiles: true, seedSplitCheck: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "split", spaceId: "named")
+        _ = try store.selectItem(windowId: "split", id: "close-split-a")
+    }
+    fake.shownProfile = "Profile 1"
+    engine.select(id: "close-split-a", url: "about:blank")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "split", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { fake.backgroundOpened.count == 1 }
+    #expect(fake.active == "close-split-a")
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "split", epoch: 1, rev: 1, command: fake.backgroundOpened[0]))
+    try await matrixWait { fake.splitFrames.count == 2 }
+    #expect(Set(fake.splitFrames.keys) == ["close-split-a", "close-split-b"])
+    #expect(fake.active == "close-split-a")
+    engine.close(id: "close-split")
+    try await matrixWait { fake.closed.count == 2 }
+    #expect(fake.closed[0] != fake.closed[1])
+    engine.shutdown()
+}
+
+@Test @MainActor
+func splitRestorationFinishesAfterAllMembersHaveOpened() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("db").path
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: path, windowID: "restore-split", card: NSView(frame: NSRect(x: 0, y: 0, width: 804, height: 600)), seedProfiles: true, seedSplitCheck: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "restore-split", spaceId: "named")
+        _ = try store.selectItem(windowId: "restore-split", id: "close-split-a")
+        try store.flush()
+    }
+    fake.shownProfile = "Profile 1"
+    var completed = 0
+    session.finishCrashRecovery = { completed += 1 }
+    engine.restoreSelection()
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "restore-split", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { fake.backgroundOpened.count == 1 }
+    #expect(completed == 0)
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "restore-split", epoch: 1, rev: 1, command: fake.backgroundOpened[0]))
+    try await matrixWait { completed == 1 }
+    #expect(fake.active == "close-split-a")
+    engine.shutdown()
+}
+
+@Test @MainActor
+func failedSplitSiblingOpenKeepsTheFocusedPaneAndPlaceholder() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let card = NSView(frame: NSRect(x: 0, y: 0, width: 804, height: 600))
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "split-failure", card: card, seedProfiles: true, seedSplitCheck: true, session: session)
+    let (fake, host) = matrixFake()
+    fake.refuseBackground = true
+    engine.attach(host)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "split-failure", spaceId: "named")
+        _ = try store.selectItem(windowId: "split-failure", id: "close-split-a")
+    }
+    fake.shownProfile = "Profile 1"
+    engine.select(id: "close-split-a", url: "about:blank")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "split-failure", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait {
+        card.subviews.contains { ($0 as? RemotePlaceholderView)?.accessibilityLabel() == "Page unavailable" } &&
+        session.queue.sync { session.store?.liveTab(item: "close-split-b") == nil }
+    }
+    #expect(fake.active == "close-split-a")
+    #expect(fake.backgroundOpened.isEmpty)
+    engine.shutdown()
+}
+
+@Test @MainActor
+func closingSplitCancelsItsDeferredMemberOpens() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "split-cancel", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let (fake, host) = matrixFake()
+    fake.deferOpen = true
+    engine.attach(host)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "split-cancel", spaceId: "named")
+        _ = try store.selectItem(windowId: "split-cancel", id: "close-split-a")
+    }
+    fake.shownProfile = "Profile 1"
+    engine.select(id: "close-split-a", url: "about:blank")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.close(id: "close-split")
+    try await matrixWait {
+        fake.pendingOpens.isEmpty && session.queue.sync {
+            session.store?.liveTab(item: "close-split-a") == nil && session.store?.liveTab(item: "close-split-b") == nil &&
+            session.store?.snapshot(windowId: "split-cancel").spaces.flatMap(\.pinned).first(where: { $0.id == "close-split" })?.unloaded == true
+        }
+    }
+    #expect(fake.closed.isEmpty)
+    engine.shutdown()
+}
+
+@Test @MainActor
+func selectingNestedSplitOpensAllThreeMembers() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("db").path
+    let json = #"{"sidebar":{"containers":[{}, {"spaces":["work",{"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["split"],"data":{"itemContainer":{}}},"split",{"id":"split","parentID":"today","childrenIds":["nested","c"],"data":{"splitView":{"layoutOrientation":"horizontal"}}},"nested",{"id":"nested","parentID":"split","childrenIds":["a","b"],"data":{"splitView":{"layoutOrientation":"vertical"}}},"a",{"id":"a","parentID":"nested","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}},"b",{"id":"b","parentID":"nested","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"split","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}}]}]}}"#
+    let store = try WorkspaceStore.open(path: path)
+    _ = try store.importArcSidebar(windowId: "nested", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+    _ = try store.selectItem(windowId: "nested", id: "a")
+    let session = WorkspaceSession()
+    session.store = store
+    let card = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
+    let engine = try EngineAdapter(path: path, windowID: "nested", card: card, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    var appliedTransactions = 0
+    engine.onTransaction = { _, accepted in if accepted { appliedTransactions += 1 } }
+    engine.select(id: "a", url: "https://a.example")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "nested", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { fake.backgroundOpened.count == 2 }
+    for (index, command) in fake.backgroundOpened.enumerated() {
+        engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "nested", epoch: 1, rev: UInt64(index + 1), command: command))
+    }
+    try await matrixWait { fake.splitFrames.count == 3 && appliedTransactions == 3 }
+    #expect(Set(fake.splitFrames.keys) == ["a", "b", "c"])
+    let a = try #require(fake.splitFrames["a"]).rectValue
+    let b = try #require(fake.splitFrames["b"]).rectValue
+    let c = try #require(fake.splitFrames["c"]).rectValue
+    #expect(a.minX == b.minX && a.maxY <= b.minY && b.maxX < c.minX)
+    #expect(fake.active == "a")
+    let divider = try #require(card.subviews.compactMap { $0 as? SplitDividerView }.first { !$0.horizontal })
+    func mouse(_ type: NSEvent.EventType, _ y: CGFloat) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: divider.frame.midX, y: y), modifierFlags: [], timestamp: 0,
+                                       windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    }
+    let start = divider.frame.midY
+    divider.mouseDown(with: try mouse(.leftMouseDown, start))
+    divider.mouseDragged(with: try mouse(.leftMouseDragged, start + 30))
+    #expect(fake.splitFrames["c"]?.rectValue == c)
+    #expect(fake.splitFrames["a"]?.rectValue != a)
+    var stored = false
+    engine.onWorkspaceChange = { stored = true }
+    divider.mouseUp(with: try mouse(.leftMouseUp, start + 30))
+    let callsAtRelease = fake.splitFrameCalls
+    try await matrixWait { stored }
+    #expect(fake.splitFrameCalls == callsAtRelease)
+    let persisted = try session.queue.sync { try #require(session.store?.splitLayout(itemId: "a")) }
+    let nested = try #require(persisted.children.first { $0.id == "nested" })
+    #expect(nested.children[0].factor != nested.children[1].factor)
+    engine.shutdown()
 }
 
 @Test @MainActor

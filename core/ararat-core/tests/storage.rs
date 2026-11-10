@@ -266,7 +266,7 @@ fn selection_time_and_window_selection_stay_local() {
     assert_eq!(journal_count(), before);
     assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'window'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     drop(store);
-    assert_eq!(Store::open(&path).unwrap().1.selected("test"), Some("split-1"));
+    assert_eq!(Store::open(&path).unwrap().1.selected("test"), Some("tab-a"));
 }
 
 #[test]

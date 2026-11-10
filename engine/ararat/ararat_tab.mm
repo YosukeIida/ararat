@@ -16,6 +16,8 @@
 #include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
@@ -34,6 +36,7 @@
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "base/no_destructor.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_notification_details.h"
@@ -55,6 +58,7 @@
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
+#include "ui/gfx/image/image.h"
 
 @interface NSObject (AraratCheckInputObservation)
 - (int)textInputType;
@@ -106,6 +110,7 @@ class TabContentsObserver : public content::WebContentsObserver {
     [tab_ rendererCrashed];
   }
   void TitleWasSet(content::NavigationEntry*) override { [tab_ refresh]; }
+  void OnWebContentsFocused(content::RenderWidgetHost*) override { [tab_ pageFocused]; }
   void WebContentsDestroyed() override { [tab_ invalidate]; }
 
  private:
@@ -122,7 +127,6 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSString* url_;
   BOOL loading_;
   NSUInteger navigation_count_;
-  BOOL navigation_pending_;
   BOOL check_opener_alive_;
   NSMutableArray<NSDictionary*>* check_ime_observations_;
   std::string screen_address_guid_;
@@ -163,6 +167,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   return frame && frame->GetProcess()->Shutdown(1);
 }
 - (content::WebContents*)contents { return contents_; }
+- (ARWindowHost*)ownerHost { return host_; }
 
 - (NSDictionary<NSString*, id>*)checkNavigationState {
   auto* args = base::CommandLine::ForCurrentProcess();
@@ -513,7 +518,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (NSView*)view {
   DCHECK([NSThread isMainThread]);
-  if (!contents_ || ![host_ isActiveTab:self]) return nil;
+  if (!contents_ || (![host_ isActiveTab:self] && ![host_ isVisibleSplitTab:self])) return nil;
   NSView* view = contents_->GetNativeView().GetNativeNSView();
   return view.superview ? view : nil;
 }
@@ -625,7 +630,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (void)navigationFinished {
   ++navigation_count_;
-  navigation_pending_ = YES;
+  [host_ noteNavigationForTab:self];
   [self refresh];
   [host_ tabMetadataChanged];
 }
@@ -634,10 +639,29 @@ class TabContentsObserver : public content::WebContentsObserver {
   [host_ tabMetadataChanged];
 }
 
+- (void)pageFocused {
+  [host_ focusSplitTab:self];
+}
+
+- (void)captureSnapshot:(void (^)(NSImage*))completion {
+  auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
+  if (!view || !view->IsSurfaceAvailableForCopy()) { completion(nil); return; }
+  auto runner = base::SingleThreadTaskRunner::GetCurrentDefault();
+  auto contents = contents_->GetWeakPtr();
+  std::string live = base::SysNSStringToUTF8(live_id_);
+  view->CopyFromSurface(gfx::Rect(), gfx::Size(320, 200), base::Milliseconds(250),
+      base::BindOnce(^(const content::CopyFromSurfaceResult& result) {
+        SkBitmap bitmap = result.has_value() ? result->bitmap : SkBitmap();
+        runner->PostTask(FROM_HERE, base::BindOnce(^{
+        NSImage* image = !contents || AraratLiveIdForContents(contents.get()) != live || bitmap.empty()
+              ? nil : gfx::Image::CreateFrom1xBitmap(bitmap).ToNSImage();
+          completion(image);
+        }));
+      }));
+}
+
 - (BOOL)takePendingNavigation {
-  BOOL pending = navigation_pending_;
-  navigation_pending_ = NO;
-  return pending;
+  return [host_ takePendingNavigationForTab:self];
 }
 
 - (void)refresh {

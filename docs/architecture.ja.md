@@ -125,7 +125,7 @@ U17b は `openURL:commandId:itemId:profile:external:untrusted:historyStamp:`、`
 open コマンドは項目のプロファイルを運ぶ。エンジンに届く前にユーザーが space を切り替えても、項目のプロファイルで開く。host delegate の `showProfile` 要求は、そのウィンドウで最後に表示した当該プロファイルの space に切り替える（我々の規則）。
 
 - framework は `//ararat/core` に Objective-C クラスを実装する（たとえば `ARWindowHost`、`ARTab`、および予定している `ARProfile`、`ARExtensions`、`ARDownloads`、`ARAutocomplete`、`ARPasswords`）。Swift はアプリ向け protocol を SwiftPM 経由でインポートし、読み込んだ framework から `AraratWindowHostCreate(contentView, windowId)` を `dlsym` で取得する。host とタブは protocol を通して操作する（我々の規則）。
-- 独自レイヤーは page card 上に配置する modal dialog host を提供する。既定の c1 compositor では card にアクティブなページの view と modal host の位置を追う view を置く。後続の unit では他の subview も追加する。c2 ではページに共有 compositor を使う。`g_ararat_create_permission_prompt` は独自の tab-modal `PermissionPrompt` sheet を設定する。この sheet は phase 4 で Swift UI に置き換える。各 Browser は住所とカードの保存プロンプト用の Autofill bubble handler を unowned user data に登録する（我々の規則）。
+- 独自レイヤーは page card 上に配置する modal dialog host を提供する。既定の c1 compositor では card に表示対象のページ、divider、placeholder、および modal host の位置を追う view を置く。c2 ではページに共有 compositor を使う。`g_ararat_create_permission_prompt` は独自の tab-modal `PermissionPrompt` sheet を設定する。この sheet は phase 4 で Swift UI に置き換える。各 Browser は住所とカードの保存プロンプト用の Autofill bubble handler を unowned user data に登録する（我々の規則）。
 - 独自の `DevtoolsUIController` は空の container list を持ち、`devtools-hook.patch` が `DevtoolsUIController::UpdateDevtools` から `g_ararat_devtools_changed` を呼ぶ。ドッキング時のレイアウトはエンジンのレイヤーが担う。DevTools の view は全面の大きさを保ち、ページは y 軸を反転した strategy の矩形に配置する。c2 ではページがアプリの view より下の共有 compositor にあるため、DevTools の view からページの矩形をクリップする。リサイズ時と hook の呼び出しごとに再配置する。`AraratHostAPI.h` の検査用エントリは DevTools の開閉、状態とタブの状態の取得、undock と redock、host 数の取得、Inspect Element の実行を行う（我々の規則）。
 - タブ API は coordinator の ID を受け取る。アプリは `AraratWindowHostCreate` に workspace の window ID を渡す。`openURL:commandId:itemId:` は open が受け付けられたか（完了またはキューに積まれた）を返し、開いたタブは `-tabs` から live ID（command ID）で探す。`activateWithCommandId:`、`closeWithCommandId:`、`setItemId:` はそのタブを操作する。Browser の破棄中の open は FIFO でキューに入る。完了の transaction にその live ID が含まれない open は失敗したと見なす。受け付けた open が失敗したときは transaction として報告する。それは次の revision で、cause は `Command(<その open の ID>)` であり、strip は現状のままで、Browser が無いウィンドウでは空の strip を運ぶ。拒否された open（host が閉じている、epoch が無い、URL が不正など）は `NO` を返し、何も報告しない。Chrome が作成したタブには `chrome-` を先頭に付けた UUID を割り当て、item ID は付けない。`ARWindowHost` は delegate から page card を取得し、`{epoch, rev, cause, strips}` を delegate に報告する（我々の規則）。
 - `pageCardForWindowHost:` は値を返すだけの getter とし、KVO の observer はタブコマンドを非同期に dispatch する（我々の規則）。
@@ -161,12 +161,12 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 
 **タブ。**
 
-- C1 では、アクティブなタブの `WebContentsViewCocoa` を page card に配置する。非アクティブなビューはツリーから外し、対応する `WebContents` を hidden にする。最後のタブを閉じると Browser は破棄されるが host は残り、次の open で同じ epoch の Browser を作る（我々の規則）。
+- C1 では、選択中のタブ、または split の表示対象の全タブの `WebContentsViewCocoa` を page card に配置する。それ以外のビューはツリーから外し、対応する `WebContents` を hidden にする。最後のタブを閉じると Browser は破棄されるが host は残り、次の open で同じ epoch の Browser を作る（我々の規則）。
 
 - タブの `WebContentsViewCocoa` をどの compositor（描画の合成を担う機構）が所有するか（タブのビューごと、プロファイルごと、ウィンドウごとの共有）は spike で決定する。Ardia は、ビューごとの compositor がタブの切り替えのたびに 1〜2 回のリフレッシュ分の遅延を生むこと、および後から変更すると描画の書き直しを要することを見出したためである（Ardia ledger 1.3、1.6）。spike では、各候補について、切り替え時の最初のフレームまでの遅延、バックグラウンドのページの活動、オクルージョン、リサイズ、分割ペイン、ディスプレイの変更を計測する。
-  `--ararat-compositor=c1`（既定）ではアクティブなタブビューを page card に置く。`--ararat-compositor=c2` ではウィンドウの Views compositor に置き、page card の位置に合わせる。
+  `--ararat-compositor=c1`（既定）では表示対象のタブビューを page card に置く。`--ararat-compositor=c2` ではウィンドウの Views compositor に置き、page card の位置に合わせる。
   C2 ではページのレイヤーがアプリの NSView ツリーの下に置かれ、アプリのビューが透明な場所にだけページが見えるため、画面上の最初の確認ではページが見えるかどうかを確かめる。
-  `--ararat-measure=switch|background|occlusion|resize|display` は、表示したウィンドウで各場面を 10 回実行し、1 回ごとに JSON を 1 行出力する。
+  `--ararat-measure=switch|background|occlusion|resize|display|split` は、表示したウィンドウで各場面を 10 回実行し、1 回ごとに JSON を 1 行出力する。
 
   2026-11-07 に official のビルド（out/Ararat、157.0.8103.39）で計測した。機体は Mac Studio、ディスプレイは 1 台（3440×1440、165 Hz。1 回のリフレッシュは 6.1 ms。条件の 120 Hz のリフレッシュは 8.3 ms）である。各場面の実行の中央値と最悪値を示す。
 
@@ -179,12 +179,12 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
   | 5 秒のライブリサイズ：約 826 フレーム中の欠落 | 0 / 24 | 0 / 2 | — |
   | バックグラウンド：隠したタブの 30 秒間の rAF | 一度も実行されない | 一度も実行されない | 0 |
   | ディスプレイの変更 | 省略：ディスプレイ 1 台 | 省略：ディスプレイ 1 台 | — |
-  | 分割ペイン | 未計測：U18 を待つ | 未計測 | — |
+  | 分割ペイン | 未計測：画面計測待ち | 未計測 | — |
 
   選択：**C1** を維持する（我々の規則）。タブの切り替えの条件を満たすのは C1 だけである。C2 は切り替えのたびに約 2 回のリフレッシュ分を要し、共有の経路についての Ardia の知見と一致する。C1 が最初の条件を満たすため、C3 は計測しない。覆われているあいだに描画を止める候補はない。rAF は 0 ではなく毎秒約 18 回に下がる（覆われていないウィンドウでは 165 回）。したがってオクルージョンは両方に共通の不足であり、選択の理由にはならない。ウィンドウのオクルージョンを接続する unit で扱う。バックグラウンドでは、隠した 8 つのタブのカウンタが一度も書かれなかった（`null`）。これは rAF が一度も実行されなかったことを意味する。CPU の標本は 0.0 % であったが、`ps` のパターンを helper の名前と照合していないため、CPU は未確認とする。C1 のリサイズの 1 回目では 24 フレームが欠落し、残りの 9 回では欠落がなかった。原因は分かっていない。
 - 新しいコンテンツ: renderer が生成したウィンドウは、既存の `WebContents` と保留中のナビゲーションの状態を保持したまま、`AddNewContents` を経由して独自レイヤーに届く。修飾キー付きのクリックやフォームの target は別の経路（`OpenURLFromTab`）を通る場合がある。常時有効な Browser コンストラクタの hook は、通常ウィンドウと popup を独自 host に渡す。host は表示中の space が名指す profile（`Space.profile`）で開き、開いている profile の通常 Browser と popup を受け取る。off-the-record はページだけの専用 host に渡す。Runtime がないとき（`started` の前、起動に失敗した後、`will_shut_down` の後）は factory は nullptr を返す。Browser は標準のウィンドウを受け取り数えられ、検査の実行のときは `ararat-trace:` を 1 行 stderr に出す。その他は下表のとおり標準のままにする。POST の target、ブロックされた popup、残りの経路は個別の検査が必要である（我々の規則）。
-- 1 つのページは 1 か所にだけ表示する。live のページは、ちょうど 1 つのペインにだけ表示する。2 つ目のウィンドウやペインが同じ workspace のタブを選択した場合、key になったウィンドウがページを取得し、もう一方のウィンドウは再び key になるまで、ぼかしたスナップショットのプレースホルダーを表示する（Arc の挙動、Cra ledger 19）。1 つのウィンドウの中では、フォーカスを取ったペインがページを取得し、もう一方のペインはプレースホルダーを表示する。分割ペインの spike でこれを確かめる。ウィンドウを閉じるときは、別のウィンドウがまだ表示しているページを再読み込みせずに移動する（Cra ledger 20）。
-- 分割ペイン: 各ペインは 1 つのタブを保持する。フォーカスのあるペインのタブが、その `Browser` における Chrome の active タブである。他のペインは表示されているが非 active である。区切り線のドラッグ中はページのサイズを固定し、ドラッグを離したときに 1 回だけリサイズする（Cra ledger 21）。
+- 1 つの live ページは 1 か所にだけ表示する。別のウィンドウが選択すると、同じ profile の `TabModel` を移し、元のペインに短時間保持する snapshot、または中立色のプレースホルダーを表示する。ウィンドウが key になると選択中のページを取り戻す。handoff の途中で失敗した場合は close を中止して移動元を開いたままにし、すでに移動したページは移動先に残す。閉じるウィンドウのページを別のウィンドウが表示している場合は、close 確認後に移す。移動元と移動先の strip はまとめて報告し、移動途中の一時的な消失を close として扱わない（我々の規則。native 検証は未実施）。
+- 分割ペイン: C1 では再帰的な split の表示対象をすべて配置し、focused member を Chrome の active タブとする。各分割軸の最小幅は 240 pt とし、カードが小さい場合は比例縮小する。divider のドラッグ中はページのサイズを固定して clipping pane を動かし、解放時に最終サイズを適用して factor を保存する。ウィンドウのリサイズではドラッグを取り消す。DevTools と fullscreen は focused pane を対象とする。C2 の split は未対応として報告する（我々の規則。native 検証は未実施）。
 
 **Chrome の UI から引き継ぐ責務。** `BrowserView` を用いないため、`BrowserView` が担っていたすべての責務に所有者が必要である。spike でこの表を完成させる。最初の項目は次のとおりである。
 
@@ -288,7 +288,7 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 
 - 読み込まれていない workspace のタブは `WebContents` を持たない。
 - コアの coordinator は id を付けて live タブのコマンドを発行する。エンジンはトランザクション `{epoch, rev, cause, strips}` で応答する。`epoch` はエンジンの起動時に変わる。`rev` は 1 つの epoch の中で単調に増加する。`cause` は、独自のコマンドの id、独自のエンジン呼び出し、Chrome 自身のいずれかである。1 つのトランザクションに複数の cause を混在させない。エコーを抑制する時間窓や、「自分が起こした変更か」を示すフラグは設けない。コマンドは、発行されてから、その id を名指すトランザクションが届くまで飛行中にあり、飛行中のコマンドは新しい epoch の始まりで消去され、飛行中のコマンドを名指さない完了は落とす（我々の規則）。
-- Chrome が自ら行う変更（拡張によるタブの移動、クローズ後の後継タブ）は差分を取り、コアの規則によって workspace に適用する。後継タブは、Chrome の選択ではなくコアの規則（split の連続性、折りたたんだタブと読み込まれていないタブのスキップ）に従う。後継は、Arc と同じく、そのウィンドウで表示している space のタブのうち、最も最近に選んだもので、まだ開いていて表示されているものとする（閉じる操作でサイドバーを別の space へ移さない。Arc で計測した）（2026-11-01 に ⌘W と AppleScript で計測した。閉じると選択の履歴をさかのぼり、隣のタブには移らなかった。`docs/research/arc-ardia-observed.ja.md` の 7 節）。該当するタブが無ければ、同じ一覧で閉じたタブより下にある最も近い表示中の開いたタブ、無ければ上、それも無ければ何も選ばない（我々の規則）。split の中のタブの後継はその split とし、split は最後に開いていたタブを閉じると一緒に閉じる。pinned のタブと favorites で ⌘W を押すと、そのタブを読み込んでいない状態にし、行は残し、同じ規則で後継へ移る。選択の履歴はウィンドウごとにローカルに持ち、同期しない。
+- Chrome が自ら行う変更（拡張によるタブの移動、クローズ後の後継タブ）は差分を取り、コアの規則によって workspace に適用する。後継タブは、Chrome の選択ではなくコアの規則（split の連続性、折りたたんだタブと読み込まれていないタブのスキップ）に従う。後継は、Arc と同じく、そのウィンドウで表示している space のタブのうち、最も最近に選んだもので、まだ開いていて表示されているものとする（閉じる操作でサイドバーを別の space へ移さない。Arc で計測した）（2026-11-01 に ⌘W と AppleScript で計測した。閉じると選択の履歴をさかのぼり、隣のタブには移らなかった。`docs/research/arc-ardia-observed.ja.md` の 7 節）。該当するタブが無ければ、同じ一覧で閉じたタブより下にある最も近い表示中の開いたタブ、無ければ上、それも無ければ何も選ばない（我々の規則）。split の選択は member を正とし、表示は最も外側の split を用いる。split 行を閉じると、その member をまとめて閉じる。pinned のタブと favorites で ⌘W を押すと、そのタブを読み込んでいない状態にし、行は残し、同じ規則で後継へ移る。選択の履歴はウィンドウごとにローカルに持ち、同期しない。
 - トランザクションの strips は、運ぶウィンドウを名指し、coordinator の gone パスはそのウィンドウだけを見る。トランザクションが名指さないウィンドウから消えたタブはそのままにする（我々の規則）。閉じたウィンドウは空の strip として届くので、そのタブは消えたものとして見える。
 - 採用したタブは、そのウィンドウで最後に表示した当該プロファイルの space の Today の末尾に置く。リンクから開いたタブの Arc での位置は未確認である。active な採用タブは選択するが、epoch の初回 snapshot より後の Engine による strip では選択しない。background のタブには選択時刻と後継の履歴を付けない。コアは報告された URL とページタイトルを保存し、ユーザーが付けたタイトルを保持する。ただし URL とタイトルが動くのは Today の行だけである。pinned と favorite の行は保存した URL とタイトルを保つ。Arc が pinned タブの URL を保つのと同じで、「pinned URL へ戻る」は後の unit の仕事である。opener の ID は strip で運ぶが、配置にはまだ使わない（我々の規則）。
 - epoch の初回 snapshot の後は、コマンドの確認と Chrome による変更の strip がウィンドウごとの選択を更新する。Engine による strip はタブの状態と metadata を更新し、選択は変えない。プロファイル切り替え時には、要求したタブの activation より先に、その Browser で以前 active だったタブが報告されることがあるためである。Chrome による close でウィンドウの選択が変わったときは、そのウィンドウの strips の active タブは記録せず、規則が選んだ後継を残す（我々の規則）。コマンドによる strip と Chrome による strip の active タブが、そのウィンドウが今表示している space に属さないときも、そのタブは記録しない。ただし live の対応と metadata の効果は残す。space を切り替える前にした選択が切り替えの後に届くことがあり、それを記録すると表示していない space のタブを選んでページが空になるためである。このときコーディネータは、そのウィンドウが選んでいる行を、後継の再 activation と同じ形でもう一度 activate する。ページは Chrome の active タブに従うので、そうしないと表示中の space のサイドバーの下に、ウィンドウが離れた space のページが出るためである。その activation に答える strip は表示中の space のタブを名指すので、何も記録せず、次のコマンドも要求しない（我々の規則）。
@@ -297,12 +297,12 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 
 ### 5.2 クラッシュ時の一貫性
 
-- live タブの同一性と live id の対応は再起動後に残らない。Chrome のセッション復元は無効であり、エンジンの最初の空のスナップショットは、存在しない行を未読み込みにする。最初のウィンドウは最新の保存済み Window を引き継ぎ、検証した選択中のタブを項目 id と保存済み URL で開く。他の行は未読み込みのままである。選択がない、閉じた、アーカイブ済み、split またはその子孫、表示中の space に属さない、祖先か URL が無効、または Open が失敗・取消された場合はカードを空にする。Arc の再起動時の動作は未計測である（我々の規則）。
+- live タブの同一性と live id の対応は再起動後に残らない。Chrome のセッション復元は無効であり、エンジンの最初の空のスナップショットは、存在しない行を未読み込みにする。最初のウィンドウは最新の保存済み Window を引き継ぎ、検証した選択中のタブを項目 id と保存済み URL で開く。選択が split に属する場合は、focused member と他の表示対象 member を開く。他の行は未読み込みのままである。選択がない、閉じた、アーカイブ済み、表示中の space に属さない、祖先か URL が無効、または Open が失敗・取消された場合はカードを空にする。Arc の再起動時の動作は未計測である（我々の規則）。
 - 起動時、エンジンは新しい epoch の完全なスナップショットを報告し、coordinator はそれを workspace と照合する。workspace を正とし、各項目のライフサイクル状態を変更と同じトランザクションで記録する。閉じる操作とアーカイブは、coordinator がエンジンに伝える前に commit する。項目が閉じた、アーカイブした、または削除した状態のエンジンのタブは、取り込まずに閉じ直す。epoch の途中で項目なしで届いたタブ（⌘ クリック、`window.open`）は、そのウィンドウで最後に表示した当該プロファイルの space の Today に取り込む。URL は commit 済みのナビゲーションが報告されるまで空とする。採用した live タブと項目の対応は WebContents の user data に保持する。エンジンが live と報告した未読み込みの行は open に変わる（我々の規則）。
 - 落とされたトランザクションは rev を消費する。同じ rev の後のトランザクションは、再送ではなくエンジンのバグである（我々の規則）。
 - コマンドの完了は発行時の epoch を持ち、現在の epoch でなければ捨てる。
 - クラッシュの確認には `CrashedLock` と `AraratFinishCrashRecovery` を使う。復旧前にプロファイルが破棄された場合は、確認済みにせず lock を放棄する（4.6）。確認は crash の check で検査し、放棄の経路は native では検査していない。
-- クラッシュ時に失われうる範囲: workspace の変更は SQLite トランザクションのコミット時に永続化される。大半の編集と live の照合は成功を返す前に flush するが、選択と space の変更は 1 秒ごとのバッチを待つ。書き込みが失敗すると、再試行が成功するまで失われうる範囲が広がる。workspace の変更と送信用の同期ログは同じトランザクションで書く。
+- クラッシュ時に失われうる範囲: workspace の変更は SQLite トランザクションのコミット時に永続化される。大半の編集は成功を返す前に flush するが、選択と space の変更は 1 秒ごとのバッチを待つ。live の照合は flush が失敗した場合もメモリ上の結果と永続化エラーを返し、書き込みを再試行する。書き込みが失敗すると、再試行が成功するまで失われうる範囲が広がる。workspace の変更と送信用の同期ログは同じトランザクションで書く。
 - ディスクの容量不足や書き込みの失敗の場合は、メモリ上の状態を保持し、バックオフ付きで再試行し、ユーザーに通知する。データベースを切り詰めることはしない。
 - close、archive、delete（archive の項目、folder、space）は workspace の変更とともに、ローカルの永続的な履歴削除 outbox を記録する。unload では記録しない。U17b は consumer と admission stamp を追加し、古い purge が新しい writer のファイルを消さないようにする。エンジンとの接続は history-purge の check で native に検査する。復元にはファイルの URL と行の URL の一致を要求する。
 - 明示的な履歴削除ではプロファイルの generation を無効化し、既存の writer を停止する。自動的な期限切れは対象外とする。marker とファイルの削除は履歴用シーケンスで行う。marker の永続化前のクラッシュや削除失敗では古いファイルが残ることがある。通常のファイル削除であり、復元不能な消去は保証しない。失敗はログに記録して再試行し、ユーザーへの表示は phase 4 に残す（未検証）。
@@ -356,9 +356,9 @@ workspace、archive、同期のジャーナルには SQLite（WAL）を用いる
 
 U16 は command panel を harness とアプリで共有する。Edit URL は対象の live tab を固定して移動する。Today はコミット済みの navigation を反映し、pinned と favorite は保存先を維持する。Focus Search は入力文字列をそのまま検索する。find 欄はページ上に置き、DevTools を除いたページの矩形に追従する。変換中の文字列は Return、⌘Return、矢印キー、Escape より優先する。ユーザーのキー再割り当てと Chrome メニューの同期は未対応である。core メニューのショートカットは重複する Chrome メニューのショートカットを退避し、ページが処理しなかったキーの再配送時も Chrome の accelerator より優先する。これらのエンジンと画面の経路は U16 の検査で検証済みである（我々の規則）。
 
-workspace の space を切り替えると、その space で表示されるタブまたは split のうち、そのウィンドウで最後に選んだものを選ぶ。履歴になければ最初の対象を選ぶ。URL のある未読み込み（Unloaded）の行も開いている行と同じく対象とし、選ぶと通常の選択の経路で読み込む（Unloaded → Open）。split は開いているタブを必要とする。この規則はオーナーの選択、2026-11-09 であり、Arc に合わせたものだが、この場合の Arc の挙動は未計測である（我々の規則。エンジンでの検証は未了）。対象が split なら、現在の space とページを変えずに切り替えを断る。split の表示は phase 5 で実装する。対象がなければ、タブを選ぶまでページを隠す（我々の規則。エンジンでの検証は未了）。
+workspace の space を切り替えると、その space で表示されるタブのうち、そのウィンドウで最後に選んだものを選ぶ。履歴になければ最初の対象を選ぶ。未読み込み（Unloaded）のタブも対象とし、選ぶと読み込む。split は、その中で最後に選んだ表示対象のタブ、履歴になければ最初の表示対象に解決する。選択時には、表示対象の全メンバーを core 上で開く。対象がなければ、タブを選ぶまでページを隠す。split の同時表示は実装済みだが、エンジンでは未検証である（我々の規則）。
 
-ウィンドウの close または終了時には、workspace の切り替えを行わず、beforeunload を発した profile とページを表示する。キャンセル時には、その profile の space を表示できる場合はそこに合わせ、選択対象が未対応の split の場合は元の space とページを維持する。close の開始時には、保留中の選択と切り替えを無効にする（我々の規則。エンジンでの検証は未了）。
+ウィンドウの close または終了時には、workspace の切り替えを行わず、beforeunload を発した profile とページを表示する。キャンセル時には、その profile の space を表示できる場合はそこに合わせる。選択対象が split のメンバーの場合も同様である。close の開始時には、保留中の選択と切り替えを無効にする（我々の規則。エンジンでの検証は未了）。
 
 beforeunload ダイアログで navigation をキャンセルしたときは、Chromium が保留中の entry を破棄した後、タブに保持した visible URL と loading 状態を更新する（我々の規則。エンジンでの検証は未了）。
 
@@ -456,6 +456,9 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 | 同期サーバーのホスティング | 自前の VPS / Cloudflare（Workers + R2）/ その他 | phase 8 で決定する |
 
 ## 15. ロードマップ
+
+U18 の検査: `--ararat-check=split` は 2、3、および nested の配置を検査し、C2 は未対応を返す。`--ararat-check=transfer` は往復移動と surface capture を検査する。`transfer-ext` は現在 `TabListInterface` の経路を検査し、拡張 API そのものの実行は未確認である。`--ararat-measure=split` は rAF、focus 切替時の gap、ドラッグ中の resize と frame を記録する。実表示時刻は取得できておらず null とする。これらの engine・画面での実行は未検証である（我々の規則）。
+
 
 各 phase は、動作するビルドとサンドイッチ型のレビューで終える。
 

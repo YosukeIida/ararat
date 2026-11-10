@@ -186,7 +186,7 @@ func staleLiveMoveDoesNotChangeWorkspace() async throws {
 }
 
 @Test @MainActor
-func rejectedSplitSwitchRestoresTheSidebarAndLeavesTheWorkspaceUntouched() async throws {
+func splitSwitchSelectsTheFocusedMember() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let (_, adapter) = try await commitHarness(directory)
@@ -194,21 +194,14 @@ func rejectedSplitSwitchRestoresTheSidebarAndLeavesTheWorkspaceUntouched() async
     _ = try await commitValue { adapter.select(id: "split-1", completion: $0) }
     let before = try await commitValue { adapter.showSpaceSelecting(id: "space-home", completion: $0) }
     let sidebar = SidebarView(snapshot: before)
-    let oldIndex = try #require(before.spaces.firstIndex { $0.id == "space-home" })
     let targetIndex = try #require(before.spaces.firstIndex { $0.id == "space-work" })
     var calls = 0
     sidebar.onShowSpace = { _ in calls += 1 }
     sidebar.showSpace(at: targetIndex)
     #expect(sidebar.spaceShown == targetIndex && calls == 1)
-    do {
-        _ = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
-        Issue.record("A selected split must reject the space switch")
-    } catch {
-        #expect((error as? CoreError) == .UnsupportedSplit)
-        sidebar.restoreShownSpace()
-    }
-    let after = try await commitValue { adapter.snapshot(completion: $0) }
-    #expect(after == before && sidebar.spaceShown == oldIndex && calls == 1)
+    let after = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
+    #expect(after.shownSpaceId == "space-work" && after.selectedId == "tab-a")
+    #expect(sidebar.spaceShown == targetIndex && calls == 1)
 }
 
 @Test @MainActor
