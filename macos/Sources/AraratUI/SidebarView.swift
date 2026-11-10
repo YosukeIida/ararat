@@ -1403,7 +1403,10 @@ extension SidebarView {
             }
         }
         var favoriteFrame = dragRect(favorites)
-        favoriteFrame.size.height = max(47, favoriteFrame.height)
+        if space.favorites.isEmpty {
+            let top = dragRect(urlField).maxY
+            favoriteFrame = CGRect(x: favoriteFrame.minX, y: top, width: favoriteFrame.width, height: max(0, favoriteFrame.maxY - top))
+        }
         return SidebarDragGeometry(bounds: CGRect(origin: .zero, size: bounds.size), list: dragRect(listScroll), pinnedArea: dragRect(header.superview!),
             favorites: favoriteFrame, rows: entries,
             dock: zip(snapshot.spaces, dock.subviews).map { ($0, dragRect($1)) }, space: space)
@@ -1678,6 +1681,22 @@ extension SidebarView: NSMenuDelegate {
         }
     }
 
+    private var organizeFolder: Row? {
+        guard let space = snapshotSpace else { return nil }
+        let rows = space.favorites + space.pinned + space.today
+        if let focused = window?.firstResponder as? SidebarRowView,
+           let folder = rows.first(where: { $0.id == focused.row.id && $0.kind == .folder }) { return folder }
+        guard let selected = rows.first(where: { $0.id == selectedID && $0.kind == .tab }) else { return nil }
+        var parent = selected.parentId
+        while let item = rows.first(where: { $0.id == parent }) {
+            if item.kind == .folder { return item }
+            parent = item.parentId
+        }
+        return nil
+    }
+
+    public var canDeleteOrganizeFolder: Bool { pageCommandsAllowed && !libraryOpen && organizeFolder != nil }
+
     public func organize(command: String) {
         guard pageCommandsAllowed, !libraryOpen else { return }
         guard let space = snapshotSpace else { return }
@@ -1694,10 +1713,10 @@ extension SidebarView: NSMenuDelegate {
             guard row.kind != .split, !space.favorites.contains(where: { $0.id == row.id }) else { return }
             performEdit(.duplicate(id: row.id))
         case "rename":
-            guard row.kind != .split else { return }
-            beginRename(id: row.id)
+            guard let target = (focused?.kind == .folder ? rows.first { $0.id == focused?.id } : rows.first { $0.id == selectedID && $0.kind == .tab }) else { return }
+            beginRename(id: target.id)
         case "delete_folder":
-            if row.kind == .folder { deleteFolder(row) }
+            if let folder = organizeFolder { deleteFolder(folder) }
         default:
             guard command.hasPrefix("move_to_space_"),
                   let number = Int(command.dropFirst("move_to_space_".count)),

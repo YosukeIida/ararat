@@ -322,6 +322,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(organize(_:)), menuItem.representedObject as? String == "delete_folder" {
+            return sidebar?.canDeleteOrganizeFolder == true
+        }
         if menuItem.action == #selector(closeSelectedTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
         if menuItem.action == #selector(pinSelectedTab(_:)) {
             menuItem.title = sidebar?.selectedTabIsPinned == true ? "Unpin Tab" : "Pin Tab"

@@ -160,6 +160,59 @@ private func startDrag(_ sidebar: SidebarView, id: String) throws -> SidebarRowV
 }
 
 @Test @MainActor
+func emptyFavoritesDoNotCoverPinnedDropTargets() throws {
+    for hasPin in [false, true] {
+        let original = dragSpace(pinned: hasPin ? [dragRow("pin", "ps")] : [], today: [dragRow("a", "ts")])
+        let space = SpaceSnapshot(pinnedCount: original.pinnedCount, todayCount: original.todayCount, profileKey: original.profileKey, pinnedId: original.pinnedId, todayId: original.todayId, favoritesId: nil, archiveAfter: original.archiveAfter, profileName: original.profileName, profile: original.profile, id: original.id, title: original.title, icon: original.icon, look: original.look, favorites: original.favorites, pinned: original.pinned, today: original.today)
+        let (window, sidebar) = dragWindow(space)
+        defer { window.contentView = nil }
+        let row = try startDrag(sidebar, id: "a")
+        let g = try #require(sidebar.dragGeometry())
+        let point = hasPin ? CGPoint(x: 30, y: try #require(g.rows.first { $0.row.id == "pin" }).frame.minY + 0.5) : CGPoint(x: g.pinnedArea.midX, y: g.pinnedArea.midY)
+        #expect(!g.favorites.contains(point))
+        row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+        guard case .insert(let container, let index, _, _) = sidebar.dropTarget else { Issue.record("expected pinned insertion"); continue }
+        #expect(container == space.pinnedId && index == 0)
+        sidebar.cancelOperation(nil)
+    }
+}
+
+@Test @MainActor
+func firstFavoriteDropCreatesContainerAndSettles() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "first-favorite", card: NSView(), session: session)
+    let initial = try session.queue.sync { try #require(session.store).createTab(windowId: "first-favorite", url: "about:blank?favorite") }
+    let space = try #require(initial.spaces.first)
+    let id = try #require(initial.selectedId)
+    #expect(space.favoritesId == nil)
+    let sidebar = SidebarView(snapshot: initial)
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 700), styleMask: [], backing: .buffered, defer: false)
+    window.contentView = sidebar
+    defer { window.contentView = nil }
+    sidebar.dragReduceMotion = { true }
+    let adapter = WorkspaceAdapter(windowID: "first-favorite", session: session)
+    let actions = SidebarActions()
+    actions.configureEditing(adapter: adapter, isActive: { true }, window: { window }, show: { _ in }, record: { _ in })
+    actions.bind(to: sidebar)
+    sidebar.layoutSubtreeIfNeeded()
+    let row = try startDrag(sidebar, id: id)
+    let zone = try #require(sidebar.dragGeometry()?.favorites)
+    #expect(zone.height > 0 && zone.height <= 8.5)
+    let point = CGPoint(x: zone.midX, y: zone.midY)
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+    sidebar.stepDrag()
+    #expect(sidebar.dropTarget == .favorites(container: nil, index: 0))
+    row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
+    try await waitUntil { sidebar.drag == nil && sidebar.dragCopyView == nil }
+    let result = try session.queue.sync { try #require(session.store).snapshot(windowId: "first-favorite") }
+    let updated = try #require(result.spaces.first)
+    #expect(updated.favoritesId != nil && updated.favorites.first?.id == id)
+    #expect(dragDescendants(sidebar).compactMap { $0 as? FavoriteTile }.contains { $0.row.id == id })
+}
+
+@Test @MainActor
 func inProcessDragsMapEveryTargetOnceAndKeepOtherRowsStill() throws {
     for target in 0..<5 {
         let (window, sidebar) = dragWindow()

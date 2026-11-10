@@ -3,6 +3,7 @@ import AraratKit
 import Testing
 import SQLite3
 @testable import AraratUI
+@testable import AraratHarness
 
 @MainActor
 private final class MenuFixture {
@@ -149,6 +150,61 @@ func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
             }
             #expect(!f.space.today.contains { $0.id == "tab-mail" })
         }
+    }
+}
+
+@Test @MainActor
+func organizeRenameAndDeleteResolveFolderFocusOrSelectedTab() throws {
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: "tab-spec")
+        let folder = try f.view("folder-docs")
+        #expect(f.window.makeFirstResponder(folder))
+        #expect(f.sidebar.canDeleteOrganizeFolder)
+        f.sidebar.organize(command: "rename")
+        #expect(folder.renameField != nil)
+        folder.finishRename(commit: false)
+    }
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: "tab-spec")
+        let unrelated = try f.view("tab-a")
+        #expect(f.window.makeFirstResponder(unrelated))
+        f.sidebar.organize(command: "rename")
+        #expect(try f.view("tab-spec").renameField != nil && unrelated.renameField == nil)
+        try f.view("tab-spec").finishRename(commit: false)
+    }
+    for focused in [true, false] {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: focused ? "tab-mail" : "tab-spec")
+        #expect(f.window.makeFirstResponder(focused ? try f.view("folder-docs") : f.sidebar))
+        #expect(f.sidebar.canDeleteOrganizeFolder)
+        f.sidebar.confirmFolderDeletion = { _, done in done(true) }
+        f.sidebar.organize(command: "delete_folder")
+        #expect(!f.space.pinned.contains { $0.id == "folder-docs" })
+    }
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        #expect(f.window.makeFirstResponder(try f.view("folder-docs")))
+        f.sidebar.organize(command: "new_folder")
+        let id = try #require(f.sidebar.renamingID)
+        #expect(try f.row(id).parentId == "folder-docs")
+    }
+    do {
+        let f = try MenuFixture(); defer { f.dispose() }
+        f.sidebar.updateSelection(id: "tab-mail")
+        #expect(f.window.makeFirstResponder(f.sidebar))
+        #expect(!f.sidebar.canDeleteOrganizeFolder)
+        let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "menu-validation"))
+        harness.sidebar = f.sidebar
+        let menu = harness.makeMenu()
+        let item = try #require(menu.items.compactMap(\.submenu).flatMap(\.items).first { $0.identifier?.rawValue == "delete_folder" })
+        #expect(!harness.validateMenuItem(item))
+        f.sidebar.updateSelection(id: "tab-spec")
+        #expect(harness.validateMenuItem(item))
+        f.sidebar.updateSelection(id: "tab-mail")
+        f.sidebar.organize(command: "delete_folder")
+        #expect(f.edits.isEmpty)
     }
 }
 

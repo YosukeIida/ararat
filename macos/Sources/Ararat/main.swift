@@ -286,7 +286,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
 }
 
 @MainActor
-final class Runtime: NSObject {
+final class Runtime: NSObject, NSMenuItemValidation {
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
@@ -1331,6 +1331,13 @@ final class Runtime: NSObject {
       return
     }
     target.performWorkspaceCommand(command)
+  }
+
+  func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    guard item.action == #selector(coreMenuCommand(_:)), item.representedObject as? String == "delete_folder" else { return true }
+    let owner = root ?? self
+    let target = ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }
+    return target?.sidebar?.canDeleteOrganizeFolder == true
   }
 
   func openCommandBar(_ requested: CommandBarMode) {
