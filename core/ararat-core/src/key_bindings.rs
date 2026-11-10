@@ -51,6 +51,10 @@ pub fn commands() -> Vec<Command> {
         ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false)),
         ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false)),
         ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false)),
+        ("duplicate", "Duplicate", "Tabs", "Duplicate the selected row.", None),
+        ("new_folder", "New Folder", "Tabs", "Create a folder in pinned.", None),
+        ("rename", "Rename", "Tabs", "Rename the selected row.", None),
+        ("delete_folder", "Delete Folder", "Tabs", "Delete the selected folder.", None),
         ("toggle_sidebar", "Toggle Sidebar", "View", "Show or hide the sidebar.", key("s", true, false, false)),
         ("toggle_library", "Toggle Library", "View", "Show or hide the Library.", key("l", true, false, true)),
         ("reset_sidebar_width", "Reset Sidebar Width", "View", "Reset the sidebar width.", None),
@@ -60,6 +64,10 @@ pub fn commands() -> Vec<Command> {
     commands.extend((1..=9).map(|n| Command {
         id: format!("show_space_{n}"), title: format!("Show Space {n}"), menu: "View".into(),
         description: format!("Show space {n} in sidebar order."), default_key: key(&n.to_string(), false, true, false),
+    }));
+    commands.extend((1..=9).map(|n| Command {
+        id: format!("move_to_space_{n}"), title: format!("Move to Space {n}"), menu: "Tabs".into(),
+        description: format!("Move the selected row to space {n}."), default_key: None,
     }));
     commands
 }

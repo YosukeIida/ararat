@@ -450,6 +450,20 @@ impl Workspace {
         Ok(ops)
     }
 
+    pub fn ensure_favorites(&mut self, space_id: &str, id: &str) -> Result<Vec<Op>, EditError> {
+        let profile = self.spaces.iter().find(|space| space.id == space_id)
+            .ok_or_else(|| EditError(format!("unknown space {space_id}")))?.profile.clone();
+        if self.favorites.contains_key(&profile) { return Ok(Vec::new()); }
+        if id.trim().is_empty() || self.items.contains_key(id) || self.spaces.iter().any(|space| space.id == id) {
+            return Err(EditError("container id already exists or is empty".into()));
+        }
+        let item = crate::model::Item {
+            id: id.into(), membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
+            title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: self.lifecycle_time(),
+        };
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item)), Op::Put(Record::Favorites { profile, container: id.into() })]))
+    }
+
     pub fn create_space(&mut self, window: &str, name: &str, id: &str) -> Result<Vec<Op>, EditError> {
         let name = name.trim();
         if name.is_empty() { return Err(EditError("space name is empty".into())); }

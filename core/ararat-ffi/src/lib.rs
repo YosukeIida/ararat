@@ -421,6 +421,14 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn ensure_favorites(&self, window_id: String, space_id: String, container_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.ensure_favorites(&space_id, &container_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn move_item(&self, window_id: String, id: String, container: String, index: u32, open_folder: bool) -> Result<WorkspaceSnapshot, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.move_item(&id, &container, index as usize, open_folder)?;

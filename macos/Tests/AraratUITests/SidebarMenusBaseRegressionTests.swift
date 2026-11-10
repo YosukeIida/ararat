@@ -24,7 +24,7 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
         #expect(row.menu(for: event)?.items.map(\.title) == titles)
     }
     let favorite = try #require(views(sidebar).compactMap { $0 as? FavoriteTile }.first)
-    #expect(favorite.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Close Tab", "Remove Favorite"])
+    #expect(favorite.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"])
     let folder = try #require(rows.first { $0.row.id == "folder-docs" })
     #expect(folder.accessibilityCustomActions()?.map(\.name) == ["Collapse"])
     sidebar.updateSelection(id: "tab-spec")

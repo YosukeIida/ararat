@@ -19,7 +19,11 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
         assert_eq!(ws.key_binding(&format!("show_space_{n}")).unwrap(), Some(key));
     }
     assert_eq!(ws.key_binding("reset_sidebar_width").unwrap(), None);
-    assert_eq!(commands().len(), 18);
+    assert_eq!(commands().len(), 31);
+    for id in ["duplicate", "new_folder", "rename", "delete_folder"].into_iter().map(String::from)
+        .chain((1..=9).map(|n| format!("move_to_space_{n}"))) {
+        assert_eq!(ws.key_binding(&id).unwrap(), None);
+    }
     assert!(ws.to_ops().is_empty());
 }
 

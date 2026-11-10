@@ -72,6 +72,11 @@ func everyMenuShortcutComesFromTheCoreIncludingPinAndFavoriteClose() throws {
     let menu = harness.makeMenu()
     let items = commandItems(menu)
     let defaults = defaultKeyBindings()
+    for command in ["duplicate", "new_folder", "rename", "delete_folder"] + (1...9).map({ "move_to_space_\($0)" }) {
+        let binding = try #require(defaults.first { $0.command == command })
+        #expect(binding.key == nil)
+        #expect(items.contains { $0.identifier?.rawValue == command && $0.action != nil })
+    }
     #expect(items.filter { $0.identifier != nil }.count == defaults.count)
     #expect(items.filter { !$0.keyEquivalent.isEmpty }.allSatisfy { $0.identifier != nil })
     for row in defaults {

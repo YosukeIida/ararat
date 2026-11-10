@@ -55,7 +55,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -64,10 +64,24 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
-            if seedProfiles {
+            if seedOrganize {
+                _ = try opened.createSpace(windowId: windowID, name: "Work", spaceId: "organize-work")
+                _ = try opened.createSpace(windowId: windowID, name: "Other", spaceId: "organize-other")
+                try opened.showSpace(windowId: windowID, spaceId: "organize-work")
+                _ = try opened.ensureFavorites(windowId: windowID, spaceId: "organize-work", containerId: "organize-favorites")
+                _ = try opened.createFolder(windowId: windowID, id: "organize-outer", name: "Outer", container: "organize-work:pinned", index: 0, wrapping: [])
+                _ = try opened.createFolder(windowId: windowID, id: "organize-inner", name: "Inner", container: "organize-outer", index: 0, wrapping: [])
+                _ = try opened.setFolderCollapsed(windowId: windowID, id: "organize-inner", collapsed: true)
+                for (index, name) in ["folder", "favorite", "dock", "cancel", "fav1", "fav2", "today"].enumerated() {
+                    let snapshot = try opened.createTab(windowId: windowID, url: "about:blank?organize-\(name)")
+                    guard let id = snapshot.selectedId else { throw NSError(domain: "Ararat.organize", code: 1) }
+                    if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
+                    if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
+                }
+            } else if seedProfiles {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """

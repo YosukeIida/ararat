@@ -283,6 +283,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         pin.identifier = NSUserInterfaceItemIdentifier("pin_tab")
         pin.target = self
         pin.toolTip = "Pin or unpin the selected tab."
+        for binding in defaultKeyBindings().filter({ ["duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
+            let item = tabsMenu.addItem(withTitle: binding.title, action: #selector(organize(_:)), keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(binding.command)
+            item.representedObject = binding.command
+            item.target = self
+        }
         menu.addItem(withTitle: "Tabs", action: nil, keyEquivalent: "").submenu = tabsMenu
         let viewMenu = NSMenu(title: "View")
         let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "")
@@ -331,6 +337,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     @objc func pinSelectedTab(_ sender: Any?) { pinTab(in: NSApp.keyWindow) }
+    @objc func organize(_ sender: NSMenuItem) {
+        if let command = sender.representedObject as? String { sidebar?.organize(command: command) }
+    }
 
     func pinTab(in keyWindow: NSWindow?) {
         guard canCloseTab(keyWindow: keyWindow) else { return }
@@ -664,10 +673,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         case "new_tab": openCommandBar(.newTab)
         case "edit_url": openCommandBar(.editURL)
         case "pin_tab": pinTab(in: window)
+        case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
         case "toggle_sidebar": toggleSidebar(nil)
         case "toggle_library": sidebar?.toggleLibrary(nil)
         case "reset_sidebar_width": resetSidebarWidth(nil)
         default:
+            if command.hasPrefix("move_to_space_") { sidebar?.organize(command: command); return }
             if command.hasPrefix("show_space_"), let number = Int(command.dropFirst("show_space_".count)), snapshot.spaces.indices.contains(number - 1) {
                 sidebar?.showSpace(at: number - 1)
             }

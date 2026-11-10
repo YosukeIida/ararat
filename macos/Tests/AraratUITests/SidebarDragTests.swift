@@ -29,6 +29,13 @@ private func pureGeometry(_ space: SpaceSnapshot = dragFixture()) -> SidebarDrag
                (dragSpace("foreign", profile: "named"), CGRect(x: 84, y: 650, width: 34, height: 32))], space: space)
 }
 
+@Test @MainActor
+func favoriteDropAcceptsAnAbsentContainer() {
+    let original = dragSpace(today: [dragRow("a", "ts")])
+    let space = SpaceSnapshot(pinnedCount: original.pinnedCount, todayCount: original.todayCount, profileKey: original.profileKey, pinnedId: original.pinnedId, todayId: original.todayId, favoritesId: nil, archiveAfter: original.archiveAfter, profileName: original.profileName, profile: original.profile, id: original.id, title: original.title, icon: original.icon, look: original.look, favorites: original.favorites, pinned: original.pinned, today: original.today)
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 100), geometry: pureGeometry(space), dragged: space.today[0]) == .favorites(container: nil, index: 0))
+}
+
 @Test
 func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     let g = pureGeometry()
@@ -86,6 +93,60 @@ private func dragEvent(_ type: NSEvent.EventType, sidebar: SidebarView, position
     return try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
 }
 
+@Test @MainActor
+func organizeCheckUsesMouseAndEscapeInput() {
+    let (window, sidebar) = dragWindow()
+    defer { window.contentView = nil }
+    #expect(sidebar.organizeCheckBegin(id: "a", destination: "pin"))
+    #expect(sidebar.organizeCheckDragging && sidebar.organizeCheckDropLine)
+    #expect(sidebar.organizeCheckEnd(cancel: true))
+    #expect(sidebar.organizeCheckIdle)
+    #expect(sidebar.organizeCheckEnd())
+    #expect(sidebar.organizeCheckBegin(id: "folder", destination: "today"))
+    #expect(!sidebar.organizeCheckDragging)
+    #expect(sidebar.organizeCheckEnd())
+}
+
+@Test @MainActor
+func organizeCheckDrivesSeedThroughCore() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "organize", card: NSView(), seedOrganize: true, session: session)
+    let store = try #require(session.store)
+    let sidebar = SidebarView(snapshot: store.snapshot(windowId: "organize"))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 700), styleMask: [], backing: .buffered, defer: false)
+    window.contentView = sidebar
+    defer { window.contentView = nil }
+    sidebar.dragReduceMotion = { true }
+    sidebar.onSelect = { row in
+        do { sidebar.applySelection(snapshot: try store.selectItem(windowId: "organize", id: row.id)) }
+        catch { Issue.record("select: \(error)") }
+    }
+    sidebar.onMove = { id, container, index, open, completion in
+        do { completion(try store.moveItem(windowId: "organize", id: id, container: container, index: UInt32(index), openFolder: open)) }
+        catch { Issue.record("move: \(error)"); completion(nil) }
+    }
+    sidebar.layoutSubtreeIfNeeded()
+    func space() -> SpaceSnapshot { store.snapshot(windowId: "organize").spaces.first { $0.id == "organize-work" }! }
+    func row(_ name: String) throws -> Row { try #require((space().pinned + space().today + space().favorites).first { $0.url == "about:blank?organize-\(name)" }) }
+    let today = try row("today")
+    #expect(sidebar.organizeCheckBegin(id: today.id, destination: "organize-outer"))
+    #expect(sidebar.organizeCheckDropLine && sidebar.organizeCheckEnd())
+    #expect(try row("today").parentId == space().pinnedId && sidebar.organizeCheckHint(id: today.id))
+    #expect(try sidebar.organizeCheckBegin(id: row("folder").id, destination: "organize-inner"))
+    #expect(sidebar.organizeCheckEnd())
+    #expect(try row("folder").parentId == "organize-inner")
+    #expect(try sidebar.organizeCheckBegin(id: row("favorite").id, destination: "favorites"))
+    #expect(sidebar.organizeCheckEnd())
+    #expect(try row("favorite").parentId == "organize-favorites")
+    #expect(try sidebar.organizeCheckBegin(id: row("dock").id, destination: "dock"))
+    #expect(sidebar.organizeCheckEnd())
+    let result = store.snapshot(windowId: "organize")
+    #expect(result.shownSpaceId == "organize-work")
+    #expect(result.spaces.first { $0.id == "organize-other" }?.pinned.contains { $0.url == "about:blank?organize-dock" } == true)
+}
+
 @MainActor
 private func startDrag(_ sidebar: SidebarView, id: String) throws -> SidebarRowView {
     let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id })
@@ -93,7 +154,8 @@ private func startDrag(_ sidebar: SidebarView, id: String) throws -> SidebarRowV
     row.mouseDown(with: try dragEvent(.leftMouseDown, sidebar: sidebar, position: CGPoint(x: frame.midX, y: frame.midY)))
     #expect(sidebar.selectedRowID == id || row.row.kind == .folder)
     row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: CGPoint(x: frame.midX + 4, y: frame.midY)))
-    #expect(sidebar.drag?.active == true)
+    if row.row.kind == .folder { #expect(sidebar.drag == nil) }
+    else { #expect(sidebar.drag?.active == true) }
     return row
 }
 

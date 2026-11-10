@@ -84,7 +84,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let favorite = try f.row("tab-mail")
     let folder = try f.row("folder-docs")
     let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
-    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
+    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
     for (menu, expected) in zip(menus, titles) {
         #expect(menu.items.map(\.title) == expected)
         #expect(menu.items.allSatisfy { $0.isEnabled })
@@ -92,7 +92,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
         #expect(menu.items.allSatisfy { $0.title == "Move to" || ($0.target != nil && $0.action != nil) })
         #expect(menu.items.contains { $0.title == "Duplicate" } == (menu !== menus[2]))
     }
-    #expect(menus[2].items[2].keyEquivalent == "w")
+    #expect(menus[2].items[3].keyEquivalent == "w")
     #expect(menus[2].items[2].keyEquivalentModifierMask == .command)
     #expect(menus[0].items[3].submenu?.items.map(\.title) == ["Other"])
     #expect(f.sidebar.emptyAreaMenu().items.map(\.title) == ["New Folder"])
@@ -114,7 +114,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
 
 @Test @MainActor
 func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
-    for action in ["Remove Pin", "Move pinned", "Move today", "Move folder", "Archive Tab", "Close Tab", "Remove Favorite"] {
+    for action in ["Remove Pin", "Move pinned", "Move today", "Move folder", "Move favorite", "Archive Tab", "Close Tab", "Remove Favorite"] {
         let f = try MenuFixture(); defer { f.dispose() }
         let pin = try f.row("tab-spec")
         if action == "Remove Pin" {
@@ -124,11 +124,12 @@ func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
         } else if action.hasPrefix("Move") {
             var row = pin
             if action == "Move folder" { row = try f.row("folder-docs") }
+            if action == "Move favorite" { row = try f.row("tab-mail") }
             if action == "Move today" {
                 let result = try f.store.moveItem(windowId: "menus", id: pin.id, container: "today-work", index: 0, openFolder: false)
                 f.sidebar.update(snapshot: result); row = try f.row(pin.id)
             }
-            let menu = row.kind == .folder ? f.sidebar.folderMenu(row: row) : action == "Move today" ? f.sidebar.todayMenu(row: row) : f.sidebar.pinnedMenu(row: row)
+            let menu = row.kind == .folder ? f.sidebar.folderMenu(row: row) : action == "Move today" ? f.sidebar.todayMenu(row: row) : action == "Move favorite" ? f.sidebar.favoriteMenu(row: row) : f.sidebar.pinnedMenu(row: row)
             try invoke(try #require(menu.items.first { $0.title == "Move to" }?.submenu), "Other")
             let other = try #require(f.snapshot.spaces.first { $0.id == "other" })
             #expect(f.moves.count == 1)

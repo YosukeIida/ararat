@@ -57,6 +57,21 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
+if CommandLine.arguments.contains(where: { $0 == "--ararat-check=organize" || $0 == "--ararat-screen=organize" }) {
+  let args = CommandLine.arguments
+  let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
+  func scratch(_ argument: String) -> Bool {
+    guard let value = args.first(where: { $0.hasPrefix(argument) }).map({ String($0.dropFirst(argument.count)) }), !value.isEmpty else { return false }
+    let path = URL(fileURLWithPath: value).resolvingSymlinksInPath().path
+    return temporary.contains { path.hasPrefix($0) }
+  }
+  guard args.contains("--use-mock-keychain"), scratch("--user-data-dir="), scratch("--ararat-db=") else {
+    let result: [String: Any] = ["check": "organize", "ok": false, "error": "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
+    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
+    exit(1)
+  }
+}
+
 if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" }) {
   exit(runRelaunchDriver(String(check.dropFirst(15))))
 }
@@ -346,6 +361,8 @@ final class Runtime: NSObject {
   var airTraffic: AirTrafficModel?
   var commandPresenter: CommandBarPresenter?
   var coreMenuInstalled = false
+  var organizeConditions: [String: Bool] = [:]
+  var organizeImage: String?
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
@@ -627,10 +644,10 @@ final class Runtime: NSObject {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = checkFrontApplication() }
       if checkName == "fullscreen" {
@@ -646,6 +663,7 @@ final class Runtime: NSObject {
       if screenName == "extensions" { browserCheckMode = "screen-extensions" }
       if screenName == "fullscreen" { browserCheckMode = "screen-fullscreen" }
       if screenName == "keyboard" { browserCheckMode = "screen-keyboard" }
+      if screenName == "organize" { browserCheckMode = "screen-organize" }
       if ["permissions", "dialogs", "protocol", "autofill", "keyboard"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -668,6 +686,7 @@ final class Runtime: NSObject {
     typealias UserData = @convention(c) () -> UnsafeMutableRawPointer?
     let userData = unsafeBitCast(pathSymbol, to: UserData.self)
     let requested = arguments.first { $0.hasPrefix("--ararat-db=") }.map { String($0.dropFirst(12)) }
+    let organize = browserCheckMode == "organize" || browserCheckMode == "screen-organize"
     let directory: String
     if let requested {
       directory = (requested as NSString).deletingLastPathComponent
@@ -714,12 +733,12 @@ final class Runtime: NSObject {
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
     let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
-    let singleCheck = (browserCheckMode != nil && !profileCheck && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
+    let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), seedOrganize: check && organize, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -868,7 +887,7 @@ final class Runtime: NSObject {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1231,10 +1250,12 @@ final class Runtime: NSObject {
     case "search": openCommandBar(.search)
     case "close_tab": if selectedIsVisible, let id = snapshot.selectedId { close(id) }
     case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
+    case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
     case "toggle_sidebar": container?.toggleSidebar()
     case "toggle_library": sidebar?.toggleLibrary(nil)
     case "reset_sidebar_width": container?.resizeHandle.resetWidth()
     default:
+      if command.hasPrefix("move_to_space_") { sidebar?.organize(command: command); return }
       if command.hasPrefix("show_space_"), let index = Int(command.dropFirst("show_space_".count)), snapshot.spaces.indices.contains(index - 1) {
         sidebar?.showSpace(at: index - 1)
       }
@@ -1265,7 +1286,7 @@ final class Runtime: NSObject {
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
-    let ids = ["pin_tab", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).map { "show_space_\($0)" }
+    let ids = ["pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
@@ -1280,11 +1301,13 @@ final class Runtime: NSObject {
       let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")
       item.target = self
       item.representedObject = binding.command
+      item.identifier = NSUserInterfaceItemIdentifier(binding.command)
       KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
     }
     let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
+    keyBindings?.register(core)
   }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
@@ -1302,7 +1325,7 @@ final class Runtime: NSObject {
     }) ?? (owner.settings?.window?.isKeyWindow == true ? owner.settingsOwner : nil)
        ?? (command == "settings" ? ([owner] + owner.children).first(where: { $0.popups.contains { $0.host?.window().isKeyWindow == true } }) : nil) else { return }
     if let event = NSApp.currentEvent, let window = NSApp.keyWindow,
-       WorkspaceCommands.yieldsToOwnField(defaultKeyBindings(), event: event, in: window) {
+       WorkspaceCommands.yieldsToOwnField(target.keyBindings?.bindings ?? defaultKeyBindings(), event: event, in: window) {
       window.firstResponder?.keyDown(with: event)
       return
     }
@@ -1598,6 +1621,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if mode == "organize" || mode == "screen-organize" {
+      timeoutValues["conditions"] = organizeConditions
+      timeoutValues["failed_conditions"] = organizeConditionNames(screen: mode == "screen-organize").filter { organizeConditions[$0] != true }
+    }
     if mode == "keyboard" || mode == "screen-keyboard" {
       timeoutValues.merge(keyboardResults) { _, new in new }
       timeoutValues["phase"] = browserCheckPhase
@@ -1999,6 +2026,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "protocol" { protocolCheckTick(host); return }
     if mode == "relaunch-seed" || mode == "relaunch-verify" { relaunchCheckTick(host, mode: mode); return }
     if mode == "autofill" { autofillCheckTick(host); return }
+    if mode == "organize" || mode == "screen-organize" { organizeCheckTick(host, screen: mode == "screen-organize"); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
     if mode == "empty" { emptyCheckTick(host); return }
@@ -6327,6 +6355,81 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
+  func organizeConditionNames(screen: Bool) -> [String] {
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel"] + (screen ? ["drop_line_image"] : [])
+  }
+
+  func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    guard let sidebar, let session = adapter?.session else { return }
+    let current = session.queue.sync { session.store?.snapshot(windowId: windowID) }
+    guard let current, let space = current.spaces.first(where: { $0.id == "organize-work" }),
+          let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
+    func row(_ name: String) -> Row? {
+      current.spaces.flatMap { $0.pinned + $0.today + $0.favorites }.first { $0.url == "about:blank?organize-\(name)" }
+    }
+    func begin(_ name: String, _ destination: String) -> Bool {
+      guard sidebar.organizeCheckIdle, let id = row(name)?.id else { return false }
+      return sidebar.organizeCheckBegin(id: id, destination: destination)
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard space.favorites.count == 2, space.today.count == 1, space.pinned.contains(where: { $0.id == "organize-inner" }) else { return }
+      organizeConditions["seed"] = true
+      guard begin("today", "organize-outer") else { return }
+      organizeConditions["drop_line_image"] = !screen || sidebar.organizeCheckDropLine
+      if screen, sidebar.organizeCheckDropLine { organizeImage = promptScreenScreenshot(host.window(), name: "organize-drop", withoutShadow: true) }
+      if screen { organizeConditions["drop_line_image"] = organizeImage != nil }
+      browserCheckPhase = 1
+    case 1:
+      guard sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 2
+    case 2:
+      guard let today = row("today"), today.parentId == space.pinnedId, sidebar.organizeCheckIdle else { return }
+      organizeConditions["today_to_pinned"] = true
+      organizeConditions["pin_hint"] = sidebar.organizeCheckHint(id: today.id)
+      guard begin("folder", "organize-inner") else { return }
+      guard sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 3
+    case 3:
+      guard row("folder")?.parentId == "organize-inner", space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false,
+            sidebar.organizeCheckIdle else { return }
+      organizeConditions["folder_open_nested_insert"] = true
+      guard begin("favorite", "favorites"), sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 4
+    case 4:
+      guard let favorite = row("favorite"), favorite.parentId == space.favoritesId, sidebar.organizeCheckIdle else { return }
+      organizeConditions["pinned_to_favorites"] = true
+      guard begin("dock", "dock"), sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 5
+    case 5:
+      guard row("dock")?.parentId == other.pinnedId, sidebar.organizeCheckIdle else { return }
+      organizeConditions["dock_no_switch"] = current.shownSpaceId == "organize-work" && sidebar.spaceShown == 0
+      guard sidebar.organizeCheckBegin(id: "organize-outer", destination: "today") else { return }
+      organizeConditions["folder_drag_refused"] = !sidebar.organizeCheckDragging
+      guard sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 6
+    case 6:
+      organizeConditions["folder_drag_refused"] = organizeConditions["folder_drag_refused"] == true && space.pinned.contains { $0.id == "organize-outer" && $0.parentId == space.pinnedId }
+      guard sidebar.organizeCheckIdle, begin("cancel", "organize-outer") else { return }
+      let started = sidebar.organizeCheckDragging
+      guard sidebar.organizeCheckEnd(cancel: true) else { return }
+      organizeConditions["escape_cancel"] = started
+      browserCheckPhase = 7
+    case 7:
+      guard sidebar.organizeCheckIdle else { return }
+      guard sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 8
+    case 8:
+      guard sidebar.organizeCheckIdle else { return }
+      organizeConditions["escape_cancel"] = organizeConditions["escape_cancel"] == true && row("cancel")?.parentId == space.pinnedId
+      let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
+      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
+      if let organizeImage { values["image"] = organizeImage }
+      finishBrowserCheck(ok: failed.isEmpty, values: values)
+    default: break
+    }
+  }
+
   func fullscreenScreenTick(_ host: any ARWindowHostAPI, tabs: [any ARTabAPI], state: [String: Any]) {
     let window = host.window()
     let full = state["window"] as? Bool == true
@@ -6497,6 +6600,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["menu_dispatch"] = fullscreenMenuDispatch
     }
     if browserCheckMode == "screen-keyboard" { result["check"] = "keyboard"; result["screen"] = "keyboard" }
+    if browserCheckMode == "screen-organize" { result["check"] = "organize"; result["screen"] = "organize" }
+    if browserCheckMode == "organize" || browserCheckMode == "screen-organize" {
+      let names = organizeConditionNames(screen: browserCheckMode == "screen-organize")
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, organizeConditions[$0] == true) })
+      result["failed_conditions"] = names.filter { organizeConditions[$0] != true }
+    }
     if browserCheckMode == "incognito" {
       result.merge(incognitoResultIdentity(check: "incognito", arguments: CommandLine.arguments)) { _, new in new }
     }

@@ -7,6 +7,17 @@ use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json");
 
+#[test]
+fn favorites_container_survives_reopen() {
+    let path = fresh_db("new-favorites").display().to_string();
+    let store = WorkspaceStore::open(path.clone()).unwrap();
+    store.create_space("window".into(), "Work".into(), "work".into()).unwrap();
+    let snapshot = store.ensure_favorites("window".into(), "work".into(), "favorites".into()).unwrap();
+    assert_eq!(snapshot.spaces[0].favorites_id.as_deref(), Some("favorites"));
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("window".into()).spaces[0].favorites_id.as_deref(), Some("favorites"));
+}
+
 fn fresh_db(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("ffi-{name}.sqlite"));
     for suffix in ["", "-wal", "-shm"] {
@@ -799,7 +810,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 18);
+    assert_eq!(defaults.len(), 31);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     let key = KeyCombination { key: "s".into(), command: true, control: false, option: false, shift: false };
     let changed = store.set_key_binding("close_tab".into(), Some(key.clone())).unwrap();

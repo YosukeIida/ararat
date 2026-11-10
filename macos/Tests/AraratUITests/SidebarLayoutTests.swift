@@ -9,14 +9,14 @@ private func descendants(of view: NSView) -> [NSView] {
 }
 
 @Test @MainActor
-func favoritesUseFourTwoOrOneColumns() {
+func favoritesUseColumnsThatFit() {
     let favorites = (0..<5).map {
         Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: [favorites[0]], today: [])
     ])
-    for (width, columns) in [(240.0, 4), (228, 4), (227, 2), (118, 2), (117, 1)] {
+    for (width, columns) in [(240.0, 4), (228, 4), (227, 3), (164, 2)] {
         let sidebar = SidebarView(snapshot: snapshot)
         let rowBeforeLayout = descendants(of: sidebar).first { $0 is SidebarRowView }!
         sidebar.frame = NSRect(x: 0, y: 0, width: width, height: 720)
@@ -185,11 +185,12 @@ func rowFocusSurvivesWidthChanges() {
     let handle = SidebarResizeHandle(widthConstraint: width)
     content.addSubview(handle)
     content.layoutSubtreeIfNeeded()
-    let focused = descendants(of: sidebar).first { $0 is SidebarRowView }!
-    #expect(window.makeFirstResponder(focused))
-    for value in [164.0, 500, 200, 240] {
-        handle.sidebarWidth = value
-        #expect(abs(sidebar.frame.width - value) < 0.01)
-        #expect(window.firstResponder === focused)
+    for focused in [descendants(of: sidebar).first { $0 is SidebarRowView }!, descendants(of: sidebar).first { $0 is FavoriteTile }!] {
+        #expect(window.makeFirstResponder(focused))
+        for value in [164.0, 500, 200, 240] {
+            handle.sidebarWidth = value
+            #expect(abs(sidebar.frame.width - value) < 0.01)
+            #expect(window.firstResponder === focused)
+        }
     }
 }

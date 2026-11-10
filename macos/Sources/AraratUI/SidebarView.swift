@@ -44,6 +44,7 @@ public final class SidebarView: NSView {
     }
 
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    public var onFirstFavorite: ((String, String, Int, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     private(set) var drag: SidebarDragState?
     private(set) var dropTarget = SidebarDrop.refused
@@ -75,6 +76,8 @@ public final class SidebarView: NSView {
     private var retiringRows: [String: SidebarRowView] = [:]
     private var fadeFrame: (id: String, frame: NSRect)?
     private var favoriteTiles: [String: FavoriteTile] = [:]
+    private weak var organizeCheckSource: SidebarRowView?
+    private var organizeCheckPoint = CGPoint.zero
     private var rowDivider: NSBox?
     private let dock = SpaceDockView()
     private let spaceViewport = NSView()
@@ -227,6 +230,53 @@ public final class SidebarView: NSView {
 
     public var spaceShown: Int { spaceIndex }
     public var selectedRowID: String? { selectedID }
+
+    public func organizeCheckBegin(id: String, destination: String) -> Bool {
+        layoutSubtreeIfNeeded()
+        guard let window, let source = rowViews[id], let geometry = dragGeometry(),
+              let origin = geometry.rows.first(where: { $0.row.id == id })?.frame else { return false }
+        let target: CGPoint
+        if destination == "favorites" { target = CGPoint(x: geometry.favorites.midX, y: geometry.favorites.midY) }
+        else if destination == "today" { target = CGPoint(x: geometry.list.midX, y: geometry.list.maxY - 2) }
+        else if destination == "dock" {
+            guard let cell = geometry.dock.first(where: { $0.space.id == "organize-other" }) else { return false }
+            target = CGPoint(x: cell.frame.midX, y: cell.frame.midY)
+        } else {
+            guard let entry = geometry.rows.first(where: { $0.row.id == destination }) else { return false }
+            target = destination == "organize-inner" ? CGPoint(x: entry.frame.midX, y: entry.frame.midY) : CGPoint(x: entry.frame.midX, y: entry.frame.minY + 0.5)
+        }
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent? {
+            let native = convert(CGPoint(x: point.x, y: bounds.height - point.y), to: nil)
+            return NSEvent.mouseEvent(with: type, location: native, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        let start = CGPoint(x: origin.midX, y: origin.midY)
+        guard let down = event(.leftMouseDown, start), let moved = event(.leftMouseDragged, CGPoint(x: start.x + 4, y: start.y)), let over = event(.leftMouseDragged, target) else { return false }
+        organizeCheckSource = source
+        organizeCheckPoint = target
+        source.mouseDown(with: down)
+        source.mouseDragged(with: moved)
+        source.mouseDragged(with: over)
+        return true
+    }
+
+    public var organizeCheckDragging: Bool { drag?.active == true }
+    public var organizeCheckIdle: Bool { drag == nil && !dragSettling }
+    public var organizeCheckDropLine: Bool { dropIndicator.superlayer != nil }
+    public func organizeCheckHint(id: String) -> Bool { rowViews[id]?.hintTimer != nil }
+
+    public func organizeCheckEnd(cancel: Bool = false) -> Bool {
+        guard let source = organizeCheckSource, let window else { return false }
+        if cancel {
+            guard let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) else { return false }
+            interpretKeyEvents([key])
+            return true
+        }
+        let native = convert(CGPoint(x: organizeCheckPoint.x, y: bounds.height - organizeCheckPoint.y), to: nil)
+        guard let up = NSEvent.mouseEvent(with: .leftMouseUp, location: native, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return false }
+        source.mouseUp(with: up)
+        organizeCheckSource = nil
+        return true
+    }
 
     private static func sidebarSelection(_ snapshot: WorkspaceSnapshot) -> String? {
         guard let selected = snapshot.selectedId else { return nil }
@@ -668,8 +718,7 @@ public final class SidebarView: NSView {
             clearScrollPresentation()
             laidOutSidebarWidth = bounds.width
         }
-        let width = bounds.width - 16
-        let columns = width >= 4 * 47 + 3 * 8 ? 4 : width >= 2 * 47 + 8 ? 2 : 1
+        let columns = SidebarDragMetrics.favoriteColumns(width: bounds.width - 16, slots: 4)
         if columns != favoriteColumns {
             favoriteColumns = columns
             reloadFavorites()
@@ -747,9 +796,10 @@ public final class SidebarView: NSView {
         for id in Array(favoriteTiles.keys) where !ids.contains(id) {
             favoriteTiles.removeValue(forKey: id)?.removeFromSuperview()
         }
-        let columns = dragFavoriteIndex == nil ? max(1, favoriteColumns) : min(max(1, Int((bounds.width - 8) / 55)), min(4, max(1, models.count)))
+        let columns = SidebarDragMetrics.favoriteColumns(width: bounds.width - 16, slots: dragFavoriteIndex == nil ? 4 : models.count)
         let lineCount = (models.count + columns - 1) / columns
         favoritesHeight.constant = CGFloat(lineCount * 47 + max(0, lineCount - 1) * 8)
+        spaceColumn.setCustomSpacing(models.isEmpty ? 0 : 22, after: favorites)
         var lines = favorites.arrangedSubviews.compactMap { $0 as? NSStackView }
         while lines.count < lineCount {
             let line = NSStackView()
@@ -1280,7 +1330,7 @@ extension SidebarView {
     }
 
     private func pressDrag(row: Row, view: NSView?, windowPoint: CGPoint) {
-        guard let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
+        guard row.kind != .folder, let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
         finishRowMotion()
         clearScrollPresentation()
         var item = row
@@ -1420,7 +1470,7 @@ extension SidebarView {
 
     @discardableResult
     func releaseDrag(at position: CGPoint) -> Bool {
-        guard let state = drag else { return true }
+        guard let state = drag else { return false }
         guard state.active else {
             drag = nil
             refreshPointer()
@@ -1432,7 +1482,14 @@ extension SidebarView {
         let target = dropTarget
         dropIndicator.removeFromSuperlayer()
         dragSettling = true
-        if let move = target.move, let onMove {
+        if case .favorites(nil, let index) = target, let space = snapshotSpace, let onFirstFavorite {
+            let generation = dragGeneration
+            onFirstFavorite(state.row.id, space.id, index) { [weak self] snapshot in
+                guard let self, self.dragGeneration == generation else { return }
+                if let snapshot { self.replaceSnapshot(snapshot) }
+                self.settleDrag(accepted: snapshot != nil)
+            }
+        } else if let move = target.move, let onMove {
             let pinSpace = pinFromTodaySpace(id: state.row.id, container: move.container)
             let generation = dragGeneration
             onMove(state.row.id, move.container, move.index, { if case .folder = target { true } else { false } }()) { [weak self] snapshot in
@@ -1554,7 +1611,7 @@ extension SidebarView: NSMenuDelegate {
         for target in targets {
             menu.addItem(SidebarMenuItem(target.title) { [weak self] in
                 guard let self else { return }
-                let pinned = row.kind == .folder || self.snapshotSpace?.pinned.contains { $0.id == row.id } == true
+                let pinned = row.kind == .folder || self.snapshotSpace?.pinned.contains { $0.id == row.id } == true || self.snapshotSpace?.favorites.contains { $0.id == row.id } == true
                 let container = pinned ? target.pinnedId : target.todayId
                 let index = Int(pinned ? target.pinnedCount : target.todayCount)
                 self.menuMove(row.id, container: container, index: index)
@@ -1584,7 +1641,7 @@ extension SidebarView: NSMenuDelegate {
             self?.onClose?(row.id)
         }
         close.identifier = NSUserInterfaceItemIdentifier("close_tab")
-        return itemMenu([copyItem(row), renameItem(row), close,
+        return itemMenu([copyItem(row), renameItem(row), moveItem(row), close,
                   SidebarMenuItem("Remove Favorite") { [weak self] in self?.onArchive?(row.id) }])
     }
 
@@ -1617,6 +1674,37 @@ extension SidebarView: NSMenuDelegate {
     private func menuMove(_ id: String, container: String, index: Int) {
         onMove?(id, container, index, false) { [weak self] snapshot in
             if let snapshot { self?.replaceSnapshot(snapshot) }
+        }
+    }
+
+    public func organize(command: String) {
+        guard let space = snapshotSpace else { return }
+        let focused = (window?.firstResponder as? SidebarRowView)?.row
+        let rows = space.favorites + space.pinned + space.today
+        let row = rows.first { $0.id == focused?.id } ?? rows.first { $0.id == selectedID }
+        if command == "new_folder" {
+            createFolder(in: row?.kind == .folder ? row!.id : space.pinnedId)
+            return
+        }
+        guard let row else { return }
+        switch command {
+        case "duplicate":
+            guard row.kind != .split, !space.favorites.contains(where: { $0.id == row.id }) else { return }
+            performEdit(.duplicate(id: row.id))
+        case "rename":
+            guard row.kind != .split else { return }
+            beginRename(id: row.id)
+        case "delete_folder":
+            if row.kind == .folder { deleteFolder(row) }
+        default:
+            guard command.hasPrefix("move_to_space_"),
+                  let number = Int(command.dropFirst("move_to_space_".count)),
+                  snapshot.spaces.indices.contains(number - 1) else { return }
+            let target = snapshot.spaces[number - 1]
+            guard target.id != space.id, target.profileKey == space.profileKey else { return }
+            let pinned = !space.today.contains { $0.id == row.id }
+            menuMove(row.id, container: pinned ? target.pinnedId : target.todayId,
+                     index: Int(pinned ? target.pinnedCount : target.todayCount))
         }
     }
 

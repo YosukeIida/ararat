@@ -14,6 +14,22 @@ fn refused(ws: &mut Workspace, f: impl FnOnce(&mut Workspace) -> Result<Vec<Op>,
     let before = ws.clone(); assert!(f(ws).is_err()); assert_eq!(*ws, before);
 }
 #[test]
+fn creates_favorites_once_and_moves_tabs_back() {
+    let mut ws = workspace();
+    let profile = ws.spaces[0].profile.clone();
+    let old = ws.favorites.remove(&profile).unwrap();
+    ws.items.remove(&old);
+    for item in ws.items.values_mut().filter(|item| item.membership.parent.as_deref() == Some(&old)) {
+        item.membership.parent = Some("today-work".into());
+    }
+    let ops = edit(&mut ws, |ws| ws.ensure_favorites("space-work", "new-favorites").unwrap());
+    assert_eq!(ops.len(), 2);
+    assert!(ws.ensure_favorites("space-work", "another").unwrap().is_empty());
+    ws.move_item("tab-spec", "new-favorites", 0, false).unwrap();
+    ws.move_item("tab-spec", "pin-work", 0, false).unwrap();
+    assert_eq!(ws.items["tab-spec"].membership.parent.as_deref(), Some("pin-work"));
+}
+#[test]
 fn moves_pin_unpin_favorite_cross_space_and_reorder_at_both_ends() {
     let mut ws = workspace(); ws.select_item_at("window", "tab-spec", 42).unwrap();
     let windows = ws.windows.clone(); let changed_at = ws.items["tab-spec"].lifecycle_changed_at;
