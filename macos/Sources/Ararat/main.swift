@@ -454,6 +454,8 @@ final class Runtime: NSObject {
   var quitDockEmpty = false
   var quitStock: UInt = 0
   var quitTimedOut = false
+  var quitResultPrinted = false
+  var quitResultOK = false
   var screenDialogs = 0
   var quitStyleMask: UInt = 0
   var screenSidebarLights = false
@@ -4802,7 +4804,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       tab.checkScreenWebAuthn(false)
       browserCheckPhase = 15
     case 15:
-      guard capture("webauthn_get"), tab.checkCloseModalDialogs() else { return }
+      // Why not the first visible child: any other child window that happens to be visible first would
+      // take the call and the phase would spin; the cancel helper validates the window itself before acting.
+      guard capture("webauthn_get"),
+            host.window().childWindows?.contains(where: { $0.isVisible && tab.checkCancelScreenDialog($0) }) == true
+      else { return }
       browserCheckPhase = 16
     case 16:
       guard promptScreenResults["get"] == "NotAllowedError" else { return }
@@ -4810,7 +4816,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       tab.checkScreenWebAuthn(true)
       browserCheckPhase = 17
     case 17:
-      guard capture("webauthn_create"), tab.checkCloseModalDialogs() else { return }
+      guard capture("webauthn_create"),
+            host.window().childWindows?.contains(where: { $0.isVisible && tab.checkCancelScreenDialog($0) }) == true
+      else { return }
       browserCheckPhase = 18
     case 18:
       guard promptScreenResults["create"] == "NotAllowedError" else { return }
@@ -6903,38 +6911,74 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     let firstPassed = (quitFirst["rows_unchanged"] as? Bool) == true &&
       (quitFirst["trying_to_quit"] as? Bool) == false && (quitFirst["browsers"] as? UInt) == (mode == "quit-cancel" ? 2 : 1)
     let events = quitEvents.map(\.boolValue)
-    let modePassed: Bool
+    // The engine notifies closing=true twice per quit attempt: chrome::AttemptExit() reaches
+    // AttemptExitInternal(), which notifies before platform_part()->AttemptExit() ends in
+    // -[AppController tryToTerminateApplication] and notifies again. So one attempt reads
+    // [true, true], its beforeunload cancel adds [false] (UnloadController::CancelWindowClose),
+    // and the retry adds another [true, true]. The raw shape is asserted rather than a collapse of
+    // it, so a doubled close or a doubled cancel cannot pass; closingTransitions is reported only.
+    let closingAfterOffset = Array(events.dropFirst(screenClosingOffset))
+    var closingTransitions: [Bool] = []
+    for value in closingAfterOffset where closingTransitions.last != value { closingTransitions.append(value) }
+    // Why the named conditions: "ok" alone cannot say which predicate of a quit mode failed.
+    // Every mode reports the same terms it asserts on, and failed_conditions names them.
+    var conditions: [String: Bool] = [:]
     switch mode {
-    case "quit": modePassed = unchanged && events == [true]
+    case "quit":
+      conditions = ["rows_unchanged": unchanged, "closing_events": events == [true]]
     case "devtools":
       let front = commandOutput("/usr/bin/lsappinfo", ["front"])
       let frontUnchanged = devtoolsFrontBefore != nil && front != nil && front == devtoolsFrontBefore
       devtoolsResults["front_unchanged"] = frontUnchanged
       devtoolsResults["hidden"] = true
-      modePassed = unchanged && events == [true] && frontUnchanged &&
-        ["initial_docked", "background_hidden", "tab_restored", "undocked_host", "redocked", "closed_full_page", "inspected_tab_closed", "inspect_docked", "open_at_quit"].allSatisfy { devtoolsResults[$0] as? Bool == true }
+      conditions = ["rows_unchanged": unchanged, "closing_events": events == [true],
+        "front_unchanged": frontUnchanged,
+        "devtools_results": ["initial_docked", "background_hidden", "tab_restored", "undocked_host", "redocked",
+          "closed_full_page", "inspected_tab_closed", "inspect_docked", "open_at_quit"].allSatisfy { devtoolsResults[$0] as? Bool == true }]
     case "quit-cancel":
       if CommandLine.arguments.contains("--ararat-multiple-quit-check") {
         let rootKept = after?.contains(where: { $0.count >= 2 && $0[0] == "window" && $0[1] == windowID }) == true
         let childKept = after?.contains(where: { $0.count >= 2 && $0[0] == "window" && $0[1] == multiCloseChildWindowID }) == true
-        modePassed = unchanged && rootKept && childKept && !multiQuitFirst.isEmpty && !multiQuitSecond.isEmpty &&
-          dialogSeen == 3 && events == [true, false, true, false, true] &&
-          multipleClosePagesValid(quitDialogPages, defaultCount: 2, namedCount: 1)
+        conditions = ["rows_unchanged": unchanged, "root_window_kept": rootKept, "child_window_kept": childKept,
+          "first_cancel": !multiQuitFirst.isEmpty, "second_cancel": !multiQuitSecond.isEmpty,
+          "dialog_seen": dialogSeen == 3, "closing_events": events == [true, false, true, false, true],
+          "dialog_pages": multipleClosePagesValid(quitDialogPages, defaultCount: 2, namedCount: 1)]
       } else {
-        modePassed = unchanged && firstPassed && splitCloseConfirmRaceOK && dialogSeen == 2 && events == [true, false, true] &&
-          quitFirst["prompt_page"] as? Bool == true && quitDialogPages.count == 2 && quitDialogPages.allSatisfy { page in
-            page["profile"] as? String == quitPromptProfile && page["item"] as? String == splitCloseExpected[quitPromptProfile] &&
-              page["active"] as? Bool == true && page["presented"] as? Bool == true
-          } &&
-          quitFirst["rows_unchanged_during_switch"] as? Bool == true &&
-          (splitCloseBefore == nil ? quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["window_written_after_cancel"] as? Bool == true :
-            quitFirst["split_cancel_restored"] as? Bool == true)
+        let pagesValid = quitDialogPages.count == 2 && quitDialogPages.allSatisfy { page in
+          page["profile"] as? String == quitPromptProfile && page["item"] as? String == splitCloseExpected[quitPromptProfile] &&
+            page["active"] as? Bool == true && page["presented"] as? Bool == true
+        }
+        conditions = ["rows_unchanged": unchanged, "first_passed": firstPassed,
+          "selection_race": splitCloseConfirmRaceOK, "dialog_seen": dialogSeen == 2,
+          "closing_events": events == [true, false, true],
+          "prompt_page": quitFirst["prompt_page"] as? Bool == true, "dialog_pages": pagesValid,
+          "rows_unchanged_during_switch": quitFirst["rows_unchanged_during_switch"] as? Bool == true,
+          "cancel_restored": splitCloseBefore == nil
+            ? quitFirst["hidden_profile_shown"] as? Bool == true && quitFirst["window_written_after_cancel"] as? Bool == true
+            : quitFirst["split_cancel_restored"] as? Bool == true]
       }
-    case "close": modePassed = firstPassed && closedRowsUnchanged && windowRemoved && quitReopened && quitDockEmpty && dialogSeen == 2
-    case "screen-quit": modePassed = unchanged && firstPassed && dialogSeen == 2 && Array(events.dropFirst(screenClosingOffset)) == [true, false, true] && screenSidebarLights && screenAppKitLightsHidden
-    default: modePassed = false
+    case "close":
+      conditions = ["first_passed": firstPassed, "rows_unchanged_after_close": closedRowsUnchanged,
+        "window_removed": windowRemoved, "reopened": quitReopened, "dock_empty": quitDockEmpty,
+        "dialog_seen": dialogSeen == 2]
+    case "screen-quit":
+      // Why the raw shape and not the collapsed one: a collapse would also accept two attempts before
+      // the Stay or a cancel notified twice. closingTransitions stays in the result as a diagnostic.
+      conditions = ["rows_unchanged": unchanged, "first_passed": firstPassed, "dialog_seen": dialogSeen == 2,
+        "closing_after_offset": closingAfterOffset == [true, true, false, true, true],
+        "sidebar_lights": screenSidebarLights, "appkit_lights_hidden": screenAppKitLightsHidden]
+    default:
+      conditions = ["known_mode": false]
     }
-    let ok = exitCode == 0 && !quitTimedOut && quitWillShutDown && quitStock == 0 && modePassed && (host?.checkDialogIntegrity() ?? true)
+    // Every input of ok is named here, so a false ok always has at least one entry in
+    // failed_conditions; modePassed keeps the mode's own terms for the devtools result.
+    let modePassed = conditions.values.allSatisfy { $0 }
+    conditions["engine_exit_zero"] = exitCode == 0
+    conditions["not_timed_out"] = !quitTimedOut
+    conditions["will_shut_down"] = quitWillShutDown
+    conditions["stock_browsers_zero"] = quitStock == 0
+    conditions["dialog_integrity"] = host?.checkDialogIntegrity() ?? true
+    let ok = conditions.values.allSatisfy { $0 }
     var result: [String: Any] = ["check": mode == "screen-quit" ? "quit" : mode,
       "closing": quitEvents, "will_shut_down": quitWillShutDown,
       "stock_browsers": quitStock, "rows_before": quitBefore ?? [], "rows_after": after ?? [],
@@ -6942,6 +6986,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       "timeout": quitTimedOut, "phase": quitPhase, "attempts": quitAttempts, "style_mask": quitStyleMask]
     result["check_flags"] = coverageFlags()
     result["compositor"] = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+    result["conditions"] = conditions
+    result["failed_conditions"] = conditions.filter { $0.value == false }.keys.sorted()
+    if mode == "screen-quit" {
+      result["closing_offset"] = screenClosingOffset
+      result["closing_after_offset"] = closingAfterOffset
+      result["closing_transitions"] = closingTransitions
+    }
     if mode == "quit-cancel", CommandLine.arguments.contains("--ararat-split-close-check"),
        !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-race=") }) {
       result["case"] = CommandLine.arguments.contains("--ararat-same-profile-empty-quit-check") ? "quit-empty-same-profile" :
@@ -7024,8 +7075,18 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["reopened"] = quitReopened
       result["dock_empty"] = quitDockEmpty
     }
-    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
-       let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+    // Why the gate: the result must not wait for Chromium's teardown. The
+    // engine can exceed its shutdown deadline after the loop has returned
+    // (chrome/browser/shutdown_watchdog_mac.cc) and kill the process before the
+    // line reaches stdout. will_shut_down already has every value the check
+    // asserts on, so it emits first; a later call only prints when the verdict
+    // it can now compute differs (a nonzero engine exit code, say).
+    if !quitResultPrinted || quitResultOK != ok {
+      if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+         let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+      quitResultPrinted = true
+      quitResultOK = ok
+    }
     return ok
   }
 
@@ -7126,6 +7187,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     keyBindings = nil
     sidebar = nil
     container = nil
+    if quitMode != nil { finishQuitCheck(exitCode: 0) }
   }
 }
 

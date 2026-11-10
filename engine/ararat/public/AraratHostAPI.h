@@ -47,6 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkScreenFocusAddress;
 - (NSDictionary<NSString*, id>*)checkProtocol:(NSString*)scheme launch:(BOOL)launch;
 - (BOOL)checkCloseModalDialogs;
+- (BOOL)checkCancelScreenDialog:(NSWindow*)window;
 - (NSUInteger)checkPermissionShownCount;
 - (BOOL)checkPermissionDecision:(NSInteger)decision;
 - (NSDictionary<NSString*, id>*)checkPermissionBlockButton;

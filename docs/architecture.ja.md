@@ -474,7 +474,7 @@ U17b は非表示の `--ararat-check=history-clear` と `--ararat-check=history-
 
 slice の検査は `--ararat-check=slice`、`$TMPDIR` 下の新しい `--ararat-db`、一時的な user data directory、mock keychain を使う。3 行のうち 2 行を開き、2 行目を選び直す。画面上の検査は U8 で行う（我々の規則）。
 
-U9 の検査も一時的な profile、database、mock keychain を使う。`--ararat-check=quit` は終了前後の保存済み行を比較する。`--ararat-check=quit-cancel` は beforeunload で Stay と Leave を選ぶ。`--ararat-check=close` はウィンドウの close、再オープン、Dock メニューを検査する。`--ararat-screen=quit` はウィンドウを表示し、⌘Q と Cocoa の beforeunload ダイアログを検査する（我々の規則）。
+U9 の検査も一時的な profile、database、mock keychain を使う。`--ararat-check=quit` は終了前後の保存済み行を比較する。`--ararat-check=quit-cancel` は beforeunload で Stay と Leave を選ぶ。`--ararat-check=close` はウィンドウの close、再オープン、Dock メニューを検査する。`--ararat-screen=quit` はウィンドウを表示し、⌘Q と Cocoa の beforeunload ダイアログを検査する。quit の検査は、エンジンのメインループが戻った時点で Chromium 自身の teardown より前に JSON の 1 行を出力する。エンジンの終了期限を過ぎた teardown（`chrome/browser/shutdown_watchdog_mac.cc` が `RESULT_CODE_HUNG` で終了する）が結果を持ち去ることはないが、その失敗はプロセスの終了コードに残る。その時点より後に失敗した実行は 2 行目を出力するので、最後の行が有効な結果である。quit の結果は、`ok` の入力すべてを名前付きの条件として持つ（`conditions`、`failed_conditions`）。`ok` だけでは、どの条件が落ちたのか分からないためである。`--ararat-screen=quit` は offset 以降の closing all browsers の生の並び（`[true, true, false, true, true]`）を検査し、畳んだ遷移は診断として出力する。1 回の ⌘Q は `chrome::AttemptExit()` を経て `-[AppController tryToTerminateApplication]` に届くため `true` を 2 回通知し、beforeunload の Stay が `false` を 1 回加える（我々の規則）。
 
 U10 の検査も同じ一時 profile・database・mock keychain を使う。`--ararat-check=newtab|popup|menu|deferred` は Chrome が作るタブ、popup、メニューと外部 URL、後続 unit に残す Browser の種別を検査する。`--ararat-screen=links` はウィンドウを表示し、リンクの入力と popup の配置を検査する（我々の規則）。
 
@@ -531,7 +531,7 @@ for CHECK in permissions dialogs protocol autofill; do
 done
 ```
 
-`--ararat-screen=prompts` は表示ありの U12 検査である。権限 sheet、JavaScript ダイアログ、Autofill のドロップダウン、HTTP 認証、WebAuthn の get/create ダイアログについて、位置とスクリーンショットを記録する。権限の検査では、プロセス内のマウスクリックを sheet の Block ボタンに送り、その frame をダイアログウィンドウの座標で記録する。オーナーは Bluetooth の TCC を監視する。この画面検査は未実行である。画面のロックを解除し、新しい使い捨てディレクトリで実行する（我々の規則）。
+`--ararat-screen=prompts` は表示ありの U12 検査である。権限 sheet、JavaScript ダイアログ、Autofill のドロップダウン、HTTP 認証、WebAuthn の get/create ダイアログについて、位置とスクリーンショットを記録する。WebAuthn のリクエストは、ダイアログのウィジェットを閉じるのではなくダイアログ自身の取り消し経路で拒否する。リクエストはその経路で確定するため、閉じるだけではページが `NotAllowedError` を永久に待つ。権限の検査では、プロセス内のマウスクリックを sheet の Block ボタンに送り、その frame をダイアログウィンドウの座標で記録する。オーナーは Bluetooth の TCC を監視する。この画面検査は quit、links、profiles の画面検査とともに `ararat-test` の VM で通過し、プロセスは正常に終了した。そこで Bluetooth の TCC の確認が出たかは観察していない。画面のロックを解除し、新しい使い捨てディレクトリで実行する（我々の規則）。
 
 ```sh
 CHECK_TMP="$(mktemp -d "${TMPDIR%/}/ararat-screen-prompts.XXXXXX")"

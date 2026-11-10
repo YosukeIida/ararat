@@ -416,6 +416,20 @@ class TabContentsObserver : public content::WebContentsObserver {
   return YES;
 }
 
+// Why not CloseAllDialogs: closing a widget only tears the dialog down. A
+// WebAuthn request settles on the dialog's cancel path, so a closed widget
+// leaves its promise pending and the page never sees NotAllowedError.
+- (BOOL)checkCancelScreenDialog:(NSWindow*)window {
+  if (!IsPromptScreen() || ![self checkDialogHostIsOurs] || !window ||
+      window.parentWindow != [host_ window]) return NO;
+  auto* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
+  auto* delegate = widget && widget->widget_delegate() ? widget->widget_delegate()->AsDialogDelegate() : nullptr;
+  auto* button = delegate ? delegate->GetCancelButton() : nullptr;
+  if (!button || !button->GetVisible() || !button->GetEnabled()) return NO;
+  delegate->CancelDialog();
+  return YES;
+}
+
 - (NSDictionary<NSString*, id>*)checkProtocol:(NSString*)scheme launch:(BOOL)launch {
   if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "protocol") return @{};
   const std::string name = base::SysNSStringToUTF8(scheme);

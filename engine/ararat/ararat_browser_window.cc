@@ -16,6 +16,7 @@
 #include "chrome/browser/global_keyboard_shortcuts_mac.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
@@ -273,6 +274,12 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
   }
 }
 AraratBrowserWindow::~AraratBrowserWindow() {
+  // Why here and not left implicit: BrowserWidget (~BrowserWidget) and
+  // WebUIBrowserWindow both call this hook before their widget and features go
+  // away, and BrowserWindowFeatures may read window state while it tears its
+  // members down. Ararat's window is Browser::window_ itself and its widget
+  // belongs to the host, so this is the same lifecycle point as theirs.
+  browser_->GetFeatures().TearDownPreBrowserWindowDestruction();
   if (host_->window() == this) host_->SetShortcutWindow(nullptr, false);
   extensions_registration_.reset();
   extensions_.reset();
