@@ -13,6 +13,7 @@ final class LookScreenCheck {
     var menuItems: [String]?
     var menuObserver: NSObjectProtocol?
     var menuSending = false
+    var menuSkipLogged = false
     var cancelMenu: (NSMenu) -> Void = { $0.cancelTracking() }
     var initialPrepared = false
     var count = 0
@@ -83,11 +84,16 @@ final class LookScreenCheck {
         menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] note in
             guard let menu = note.object as? NSMenu else { return }
             MainActor.assumeIsolated {
-                self?.menuItems = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden }.map(\.title)
+                let items = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden }.map(\.title)
+                self?.menuItems = items
+                FileHandle.standardError.write(Data("ararat-trace: look-menu began items=\(String(reflecting: items))\n".utf8))
                 self?.stopWatchingMenu()
                 RunLoop.main.perform(inModes: [.eventTracking]) { [weak self, weak menu] in
                     MainActor.assumeIsolated {
-                        if let menu { self?.cancelMenu(menu) }
+                        if let self, let menu {
+                            self.cancelMenu(menu)
+                            FileHandle.standardError.write(Data("ararat-trace: look-menu cancel ran\n".utf8))
+                        }
                     }
                 }
             }
@@ -141,7 +147,15 @@ extension Runtime {
     }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if lookCheck == nil { lookCheck = LookScreenCheck() }
-        guard let check = lookCheck, !check.menuSending, let sidebarContainer = container, let session = adapter?.session else { return }
+        guard let check = lookCheck else { return }
+        if check.menuSending {
+            if !check.menuSkipLogged {
+                check.menuSkipLogged = true
+                FileHandle.standardError.write(Data("ararat-trace: look tick skipped while menu open\n".utf8))
+            }
+            return
+        }
+        guard let sidebarContainer = container, let session = adapter?.session else { return }
         func stored() -> Look? {
             session.queue.sync { session.store?.snapshot(windowId: windowID).spaces.first { $0.id == snapshot.shownSpaceId }?.look }
         }
@@ -186,7 +200,10 @@ extension Runtime {
             check.menuSending = true
             defer { check.menuSending = false }
             let point = NSPoint(x: menuFrame.midX, y: menuFrame.midY)
-            guard check.event(.leftMouseDown, screen: point, window: popup), check.event(.leftMouseUp, screen: point, window: popup) else { check.stopWatchingMenu(); end(false, "menu_open"); return }
+            let down = check.event(.leftMouseDown, screen: point, window: popup)
+            let up = down && check.event(.leftMouseUp, screen: point, window: popup)
+            FileHandle.standardError.write(Data("ararat-trace: look-menu click returned down=\(down) up=\(up)\n".utf8))
+            guard down && up else { check.stopWatchingMenu(); end(false, "menu_open"); return }
             end(true, "menu_open")
         case 3:
             guard let items = check.menuItems else { return }
