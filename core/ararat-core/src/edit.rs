@@ -342,8 +342,8 @@ impl Workspace {
         Ok(self.commit_edit(vec![Op::Put(Record::FolderState { item: id.into(), collapsed })]))
     }
 
-    // The pinned section's chevron (D1): the record is per space, so it rides with the
-    // space rather than the window.
+    // The pinned section's chevron (D1): the record is per space, not per window, and stays
+    // on the device like FolderState (design, review 1).
     pub fn set_section_collapsed(&mut self, space: &str, collapsed: bool) -> Result<Vec<Op>, EditError> {
         if !self.spaces.iter().any(|entry| entry.id == space) {
             return Err(EditError(format!("unknown space {space}")));
@@ -459,6 +459,11 @@ impl Workspace {
             }
         }
         ops.push(Op::Delete(crate::model::Kind::Space, id.into()));
+        // The section's record names the space, so it goes with it (a device-only row, but
+        // one that would otherwise outlive what it names).
+        if self.section_collapsed.contains_key(id) {
+            ops.push(Op::Delete(crate::model::Kind::SectionState, id.into()));
+        }
         for op in &ops { self.apply(op); }
         Ok(ops)
     }
@@ -792,9 +797,11 @@ impl Workspace {
         let now = self.lifecycle_time();
         let mut next = self.clone();
         let mut ops = Vec::new();
-        // Last row first, so each row's successor search cannot land on a row that is still
-        // to be archived in this batch.
-        for id in ids.iter().rev() {
+        // Each row takes the ordinary close rule for its successor. The order only decides
+        // which rows are marked selected on the way; by the last row every other row is
+        // archived, so the close rule sees the cleared list. The intermediate selections are
+        // Window and LastSelected puts, which stay on the device.
+        for id in &ids {
             ops.extend(next.finish_item(id, true, now)?);
         }
         *self = next;

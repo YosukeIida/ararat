@@ -987,10 +987,11 @@ fn a_collapsed_pinned_section_survives_reopen_and_keeps_the_current_pin_visible(
     // Favourites and Today are other containers and draw the same rows as before.
     assert_eq!(collapsed.spaces[0].favorites, imported.spaces[0].favorites);
     assert_eq!(collapsed.spaces[0].today, imported.spaces[0].today);
-    // The record syncs: it reaches the journal beside the space's own records.
+    // The record is device-only like FolderState: it stays out of the journal, so a sync
+    // does not carry it, while the records table brings it back on reopen.
     let conn = Connection::open(&path).unwrap();
     let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'section_state'", [], |row| row.get(0)).unwrap();
-    assert_eq!(journalled, 1);
+    assert_eq!(journalled, 0);
     drop(conn);
     drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
@@ -1092,5 +1093,49 @@ fn the_new_tab_row_setting_reads_through_the_ffi_and_survives_reopen() {
     let conn = Connection::open(&path).unwrap();
     let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
     assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// Design's review-1 decision 3: selection ignores the section's collapse, so the candidates
+// are the space's rows as if the section were open; the holder rule then keeps the chosen
+// pin visible.
+#[test]
+fn choosing_a_row_ignores_the_sections_collapse() {
+    let path = fresh_db("section-selection");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap().snapshot;
+    assert_eq!(imported.spaces[0].today_count, 0);
+    store.select_item("one".into(), "tab-mail".into()).unwrap();
+    store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
+    // A link routed to a pin under the collapsed section selects it and the pin shows.
+    let routed = store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-spec".into()).unwrap();
+    assert_eq!(routed.selected_id.as_deref(), Some("tab-spec"));
+    assert_eq!(routed.spaces[0].pinned.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["folder-docs", "tab-spec"]);
+    // Switching to the space with an empty Today keeps a selection instead of clearing it.
+    store.show_space("one".into(), "space-home".into()).unwrap();
+    let back = store.show_space_selecting("one".into(), "space-work".into()).unwrap();
+    let selected = back.selected_id.expect("a pin stays selected");
+    assert!(back.spaces[0].pinned.iter().any(|row| row.id == selected));
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// Review 1, 6b: the section record names the space, so deleting the space deletes it.
+#[test]
+fn deleting_a_space_removes_its_section_record() {
+    let path = fresh_db("section-delete");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
+    assert!(store.section_collapsed("space-work".into()));
+    store.delete_space("one".into(), "space-work".into()).unwrap();
+    assert!(!store.section_collapsed("space-work".into()));
+    assert!(!records(&path).iter().any(|(kind, id, _)| kind == "section_state" && id == "space-work"));
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.section_collapsed("space-work".into()));
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "section_state"));
+    drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

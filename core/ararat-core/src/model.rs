@@ -126,10 +126,10 @@ pub struct WindowState {
 pub struct Workspace {
     pub key_binding_overrides: HashMap<String, Option<crate::key_bindings::KeyCombination>>,
     pub folder_collapsed: HashMap<Id, bool>,
-    // The pinned section's collapsed state is per space and synced with the space, not kept
-    // by the window: another device opens the section the way this one last left it, and the
-    // core can keep the current pin's row visible (outline_keeping) the way it does for a
-    // collapsed folder.
+    // The pinned section's collapsed state is per space but stays on the device, like
+    // FolderState: collapsing on one Mac does not collapse another. The core reads it to
+    // keep the current pin's row visible (outline_keeping) the way it does for a collapsed
+    // folder.
     pub section_collapsed: HashMap<Id, bool>,
     // The workspace's own preferences (D5), one record that syncs.
     pub settings: Settings,
@@ -337,9 +337,11 @@ impl Workspace {
 
     // The rows a sidebar draws for a container, with the window's current row kept in view:
     // a collapsed folder and a collapsed pinned section both hold their children back, but
-    // the row the window is on stays (the one holder rule, D1). Editing reads
-    // outline_entries instead — a collapse is a display state and never hides an item from
-    // an edit.
+    // the row the window is on stays (the one holder rule, D1). A row kept only by that path
+    // holds its own children back too, so an open folder on the path shows the pin it holds
+    // and nothing else; a split shows all its members, since the current row may be one of
+    // them. Editing reads outline_entries instead — a collapse is a display state and never
+    // hides an item from an edit.
     pub fn outline_keeping(&self, container: &str, current: Option<&str>) -> Vec<(usize, &Item)> {
         self.outline_entries_keeping(container, current).into_iter().filter(|(_, _, visible)| *visible)
             .map(|(depth, item, _)| (depth, item)).collect()
@@ -350,14 +352,16 @@ impl Workspace {
         let section_hidden = self.section_hidden(container);
         let mut rows = Vec::new();
         let mut stack: Vec<_> = self.children(container).into_iter().rev()
-            .map(|item| (0, item, !section_hidden || keep.contains(&item.id))).collect();
-        while let Some((depth, item, parent_visible)) = stack.pop() {
+            .map(|item| (0, item, !section_hidden || keep.contains(&item.id), section_hidden)).collect();
+        while let Some((depth, item, parent_visible, held)) = stack.pop() {
             let visible = parent_visible && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
                 && (!matches!(item.kind, ItemKind::Split { .. }) || self.has_open_tab(&item.id));
             rows.push((depth, item, visible));
             let collapsed = self.folder_collapsed.get(&item.id).copied().unwrap_or(false);
+            let held = held && !matches!(item.kind, ItemKind::Split { .. });
+            let children_held = collapsed || held;
             stack.extend(self.children(&item.id).into_iter().rev()
-                .map(|child| (depth + 1, child, visible && (!collapsed || keep.contains(&child.id)))));
+                .map(|child| (depth + 1, child, visible && (!children_held || keep.contains(&child.id)), children_held)));
         }
         rows
     }

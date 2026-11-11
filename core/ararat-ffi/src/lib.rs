@@ -234,7 +234,7 @@ impl WorkspaceStore {
         let mut workspace = self.workspace.lock().unwrap();
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
-        let view = snapshot(next.clone(), &window_id);
+        let view = selection_view(&next, &window_id);
         let rows: Vec<_> = view.spaces.iter().find(|space| space.id == space_id)
             .into_iter().flat_map(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites))
             .filter(|row| row.url.is_some() || (row.kind == RowKind::Split && next.outline(&row.id).iter().any(|(_, item)| {
@@ -261,7 +261,7 @@ impl WorkspaceStore {
         let mut workspace = self.workspace.lock().unwrap();
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
-        let view = snapshot(next.clone(), &window_id);
+        let view = selection_view(&next, &window_id);
         let valid = view.spaces.iter().find(|space| space.id == space_id)
             .is_some_and(|space| space.today.iter().chain(&space.pinned).chain(&space.favorites)
                 .any(|row| row.id == item_id && row.kind == RowKind::Tab && row.url.is_some()));
@@ -1160,6 +1160,16 @@ fn split_pane(ws: &Workspace, id: &str, factor: f64) -> Option<SplitPane> {
     let children = ws.split_factors(id).unwrap_or_default().into_iter()
         .filter_map(|(child, factor)| split_pane(ws, &child, factor)).collect();
     Some(SplitPane { id: id.into(), factor, kind, unloaded: item.lifecycle == Lifecycle::Unloaded, url, children })
+}
+
+// Choosing a row ignores the pinned section's collapse (design, review 1): the candidates
+// are the space's rows as if the section were open, and the holder rule keeps the chosen pin
+// visible in the snapshot the caller gets back. Folder collapse stays as it is — a closed
+// folder's tabs are not candidates, the same rule the close successor uses.
+fn selection_view(workspace: &Workspace, window_id: &str) -> WorkspaceSnapshot {
+    let mut view = workspace.clone();
+    view.section_collapsed.clear();
+    snapshot(view, window_id)
 }
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
