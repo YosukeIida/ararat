@@ -64,6 +64,7 @@ private func measuredButtonsWindow(selected: Bool = false) -> NSWindow {
         ])
     ]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.reduceMotion = { false }
     container.frame = content.bounds
     container.autoresizingMask = [.width, .height]
     content.addSubview(container)
