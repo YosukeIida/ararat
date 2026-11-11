@@ -166,6 +166,7 @@
 
 @interface ARWindowHost (CloseHandoff)
 - (void)prepareCloseHandoff:(void (^)(BOOL))completion;
+- (NSRect)modalPageRectForContents:(content::WebContents*)contents;
 @end
 
 @interface NSObject (AraratCommandDispatch)
@@ -743,7 +744,9 @@ void AraratOpenOffTheRecordURLs(Profile* profile, NSArray* urls) {
 class AraratModalDialogHost : public web_modal::WebContentsModalDialogHost,
                               public views::WidgetObserver {
  public:
-  explicit AraratModalDialogHost(AraratWindowHostCore* host) : host_(host) {
+  explicit AraratModalDialogHost(AraratWindowHostCore* host,
+                                 content::WebContents* contents = nullptr)
+      : host_(host), contents_(contents ? contents->GetWeakPtr() : nullptr) {
     host_->widget()->AddObserver(this);
   }
   ~AraratModalDialogHost() override {
@@ -754,7 +757,7 @@ class AraratModalDialogHost : public web_modal::WebContentsModalDialogHost,
     return host_->widget()->GetNativeView();
   }
   gfx::Point GetDialogPosition(const gfx::Size& size) override {
-    const auto& page = host_->page_rect();
+    const auto page = PageRect();
     int x = std::max(page.x() + (page.width() - size.width()) / 2, 0);
     x = std::min(x, std::max(0, host_->widget()->GetWindowBoundsInScreen().width() - size.width()));
     return gfx::Point(x, page.y());
@@ -764,7 +767,7 @@ class AraratModalDialogHost : public web_modal::WebContentsModalDialogHost,
     auto* window = host_->window();
     return window && GetLastActiveBrowserWindowInterfaceWithAnyProfile() == window->browser();
   }
-  gfx::Size GetMaximumDialogSize() override { return host_->page_rect().size(); }
+  gfx::Size GetMaximumDialogSize() override { return PageRect().size(); }
   void AddObserver(web_modal::ModalDialogHostObserver* observer) override {
     observers_.AddObserver(observer);
   }
@@ -781,8 +784,19 @@ class AraratModalDialogHost : public web_modal::WebContentsModalDialogHost,
     widget->RemoveObserver(this);
     observing_ = false;
   }
+  bool Matches(content::WebContents* contents) const {
+    return contents_.get() == contents;
+  }
+  bool HasContents() const { return !!contents_; }
  private:
+  gfx::Rect PageRect() const {
+    if (!contents_) return host_->page_rect();
+    NSRect rect = [(__bridge ARWindowHost*)host_->owner() modalPageRectForContents:contents_.get()];
+    return gfx::Rect(static_cast<int>(NSMinX(rect)), static_cast<int>(NSMinY(rect)),
+                     static_cast<int>(NSWidth(rect)), static_cast<int>(NSHeight(rect)));
+  }
   raw_ptr<AraratWindowHostCore> host_;
+  base::WeakPtr<content::WebContents> contents_;
   bool observing_ = true;
   base::ObserverList<web_modal::ModalDialogHostObserver> observers_;
 };
@@ -827,6 +841,19 @@ AraratWindowHostCore::AraratWindowHostCore(gfx::NativeView app_content_view,
 
 web_modal::WebContentsModalDialogHost* AraratWindowHostCore::modal_dialog_host() const {
   return modal_dialog_host_.get();
+}
+
+web_modal::WebContentsModalDialogHost* AraratWindowHostCore::modal_dialog_host_for(
+    content::WebContents* contents) {
+  if (!contents) return modal_dialog_host();
+  for (auto it = modal_dialog_hosts_.begin(); it != modal_dialog_hosts_.end();) {
+    if (!it->second->HasContents()) it = modal_dialog_hosts_.erase(it);
+    else ++it;
+  }
+  auto& host = modal_dialog_hosts_[contents];
+  if (host && !host->Matches(contents)) host.reset();
+  if (!host) host = std::make_unique<AraratModalDialogHost>(this, contents);
+  return host.get();
 }
 
 AraratWindowHostCore::~AraratWindowHostCore() {
@@ -942,8 +969,14 @@ void AraratWindowHostCore::AttachPage(gfx::NativeView view) {
 
 void AraratWindowHostCore::PositionPage(const gfx::Rect& rect) {
   page_rect_ = rect;
-  modal_dialog_host_->NotifyPositionRequiresUpdate();
+  NotifyModalPositions();
   if (page_host_) page_host_->SetBoundsRect(rect);
+}
+
+void AraratWindowHostCore::NotifyModalPositions() {
+  modal_dialog_host_->NotifyPositionRequiresUpdate();
+  for (const auto& [contents, host] : modal_dialog_hosts_)
+    host->NotifyPositionRequiresUpdate();
 }
 
 void AraratWindowHostCore::SetExtensionAnchor(const gfx::Rect& bounds) {
@@ -1849,7 +1882,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (BOOL)checkDialogHostForContents:(content::WebContents*)contents {
   auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents);
   return manager && manager->delegate() &&
-      manager->delegate()->GetWebContentsModalDialogHost(contents) == core_->modal_dialog_host();
+      manager->delegate()->GetWebContentsModalDialogHost(contents) == core_->modal_dialog_host_for(contents);
 }
 - (void)configureProfileCloseCheck:(NSUInteger)cancelDialog {
   const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
@@ -2729,6 +2762,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   split_frozen_ = frozen;
   split_frames_ = [frames copy];
   [self syncTabs];
+  core_->NotifyModalPositions();
   return YES;
 }
 
@@ -2792,7 +2826,40 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (index == TabStripModel::kNoTab || !list) return NO;
   auto* model = strip->GetTabAtIndex(index);
   if (!model) return NO;
+  auto* contents = tab.contents;
+  const bool dialogs = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs";
+  auto* targetStrip = targetBrowser->GetTabStripModel();
+  if (dialogs) std::fprintf(stderr, "ararat-trace: dialogs transfer before source_active=%d target_count=%d target_current=%d visibility=%d\n",
+                            strip->GetActiveWebContents() == contents, targetStrip->count(),
+                            targetHost->browser_ == targetBrowser, static_cast<int>(contents->GetVisibility()));
   list->MoveTabToWindow(model->GetHandle(), targetBrowser->GetSessionID(), targetBrowser->GetTabStripModel()->count());
+  if (dialogs) {
+    int movedIndex = targetStrip->GetIndexOfWebContents(contents);
+    if (movedIndex == TabStripModel::kNoTab) return NO;
+    std::fprintf(stderr, "ararat-trace: dialogs transfer inserted active=%d visibility=%d\n",
+                 targetStrip->GetActiveWebContents() == contents, static_cast<int>(contents->GetVisibility()));
+    targetStrip->ActivateTabAt(movedIndex);
+    auto* widget = AraratCheckPermissionWidget(contents);
+    auto* modal = web_modal::WebContentsModalDialogManager::FromWebContents(contents);
+    auto* delegate = modal ? modal->delegate() : nullptr;
+    auto* dialogHost = delegate ? delegate->GetWebContentsModalDialogHost(contents) : nullptr;
+    auto* permission = permissions::PermissionRequestManager::FromWebContents(contents);
+    NSWindow* dialogWindow = widget ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
+    NSWindow* targetWindow = targetHost->core_->GetNativeWindow().GetNativeNSWindow();
+    auto* nativeHost = widget ? views::NativeWidgetMacNSWindowHost::GetFromNativeWindow(widget->GetNativeWindow()) : nullptr;
+    auto* targetNativeHost = views::NativeWidgetMacNSWindowHost::GetFromNativeWindow(targetHost->core_->GetNativeWindow());
+    std::fprintf(stderr, "ararat-trace: dialogs transfer activated contents=%p active=%d visibility=%d widget_visible=%d modal_active=%d delegate=%p dialog_host=%p target_host=%d pending=%d in_progress=%d prompt=%d\n",
+                 static_cast<void*>(contents),
+                 targetStrip->GetActiveWebContents() == contents, static_cast<int>(contents->GetVisibility()),
+                 widget && widget->IsVisible(), modal && modal->IsDialogActive(), static_cast<void*>(delegate),
+                 static_cast<void*>(dialogHost), dialogHost && dialogHost == targetHost->core_->modal_dialog_host_for(contents),
+                 permission && permission->has_pending_requests(), permission && permission->IsRequestInProgress(),
+                 permission && permission->GetCurrentPrompt());
+    std::fprintf(stderr, "ararat-trace: dialogs transfer parent sheet=%ld parent=%ld target=%ld target_visible=%d native_parent_matches=%d\n",
+                 (long)dialogWindow.windowNumber, dialogWindow.parentWindow ? (long)dialogWindow.parentWindow.windowNumber : -1L,
+                 (long)targetWindow.windowNumber, targetWindow.isVisible,
+                 nativeHost && nativeHost->parent() == targetNativeHost);
+  }
   return YES;
 }
 
@@ -3237,6 +3304,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       NSValue* key = [NSValue valueWithPointer:entry.contents.get()];
       if (entry.remove_reason == TabRemovedReason::kInsertedIntoOtherTabStrip && entry.contents && strip) {
         auto* identity = static_cast<TabIdentity*>(entry.contents->GetUserData(kTabIdentityKey));
+        if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs" &&
+            identity && [identity->item_id isEqualToString:@"close-split-b"]) {
+          std::fprintf(stderr, "ararat-trace: dialogs transfer detach visibility=%d\n",
+                       static_cast<int>(entry.contents->GetVisibility()));
+        }
+        entry.contents->WasHidden();
         if (identity && identity->live_id) {
           ARTab* tab = tabs_[key];
           const GURL& url = entry.contents->GetLastCommittedURL();
@@ -3364,6 +3437,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       if (view.superview == card) [view removeFromSuperview];
       contents->WasHidden();
     }
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs") {
+      auto* permission = permissions::PermissionRequestManager::FromWebContents(contents);
+      if ([identity->item_id isEqualToString:@"close-split-b"] || (permission && permission->IsRequestInProgress())) {
+      auto* widget = AraratCheckPermissionWidget(contents);
+      std::fprintf(stderr, "ararat-trace: dialogs sync item=%s contents=%p active=%d strip_active=%d card=%d hidden=%d remote=%d split_count=%lu in_split=%d visibility=%d widget_visible=%d pending=%d prompt=%d\n",
+                   identity->item_id ? identity->item_id.UTF8String : "nil", static_cast<void*>(contents),
+                   contents == active, strip->GetActiveWebContents() == contents, card != nil,
+                   workspace_page_hidden_, workspace_remote_, (unsigned long)split_frames_.count,
+                   identity->item_id && split_frames_[identity->item_id] != nil,
+                   static_cast<int>(contents->GetVisibility()), widget && widget->IsVisible(),
+                   permission && permission->has_pending_requests(), permission && permission->GetCurrentPrompt());
+      }
+    }
    }
   }
   for (NSValue* key in [tabs_.allKeys copy]) {
@@ -3428,6 +3514,21 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                                 static_cast<int>(NSMinY(rect)),
                                 static_cast<int>(NSWidth(rect)),
                                 static_cast<int>(NSHeight(rect))));
+}
+
+- (NSRect)modalPageRectForContents:(content::WebContents*)contents {
+  NSView* card = page_position_view_.superview;
+  NSView* root = core_->GetNativeWindow().GetNativeNSWindow().contentView;
+  auto* identity = contents ? static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey)) : nullptr;
+  NSValue* frame = identity && identity->item_id ? split_frames_[identity->item_id] : nil;
+  content::WebContents* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  if ((contents != active || split_frozen_) && card && root && frame && card.window == root.window) {
+    NSRect rect = [card convertRect:frame.rectValue toView:root];
+    if (!root.isFlipped) rect.origin.y = NSHeight(root.bounds) - NSMaxY(rect);
+    return rect;
+  }
+  const auto& rect = core_->page_rect();
+  return NSMakeRect(rect.x(), rect.y(), rect.width(), rect.height());
 }
 
 - (NSDictionary*)stripSnapshot:(BOOL)consumeNavigation {

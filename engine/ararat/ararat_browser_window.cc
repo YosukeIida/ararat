@@ -525,7 +525,7 @@ AraratBrowserWindow::GetWebContentsModalDialogHost() {
 web_modal::WebContentsModalDialogHost*
 AraratBrowserWindow::GetWebContentsModalDialogHostFor(
     content::WebContents* web_contents) {
-  return host_->modal_dialog_host();
+  return host_->modal_dialog_host_for(web_contents);
 }
 
 void AraratBrowserWindow::ShowAvatarBubbleFromAvatarButton(

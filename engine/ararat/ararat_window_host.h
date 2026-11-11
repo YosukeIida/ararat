@@ -62,6 +62,7 @@ class AraratWindowHostCore {
   bool HasProfile(const std::string& name) const;
   const std::map<std::string, raw_ptr<AraratBrowserWindow>>& windows() const { return windows_; }
   views::Widget* widget() const { return widget_.get(); }
+  void* owner() const { return owner_; }
   views::View* extension_anchor() const { return extension_anchor_; }
   void SetExtensionAnchor(const gfx::Rect& bounds);
   bool closing() const { return closing_; }
@@ -83,7 +84,9 @@ class AraratWindowHostCore {
   void AttachPage(gfx::NativeView view);
   views::NativeViewHost* page_host() const { return page_host_; }
   void PositionPage(const gfx::Rect& rect);
+  void NotifyModalPositions();
   web_modal::WebContentsModalDialogHost* modal_dialog_host() const;
+  web_modal::WebContentsModalDialogHost* modal_dialog_host_for(content::WebContents* contents);
   const gfx::Rect& page_rect() const { return page_rect_; }
   void ShowBrowserProfile(BrowserWindowInterface* browser);
   void DevToolsChanged(content::WebContents* inspected);
@@ -117,6 +120,7 @@ class AraratWindowHostCore {
   raw_ptr<views::View> extension_anchor_ = nullptr;
   gfx::Rect page_rect_;
   std::unique_ptr<AraratModalDialogHost> modal_dialog_host_;
+  std::map<content::WebContents*, std::unique_ptr<AraratModalDialogHost>> modal_dialog_hosts_;
   std::unique_ptr<ExtensionKeybindingRegistryViews> shortcut_registry_;
   raw_ptr<AraratBrowserWindow> shortcut_window_ = nullptr;
   std::map<std::string, raw_ptr<AraratBrowserWindow>> windows_;
