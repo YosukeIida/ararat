@@ -162,11 +162,14 @@ struct LookPopoverView: View {
 @MainActor
 struct TransparencyInteraction {
     var detent = false
+    var previousPosition: Double?
     var haptic: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     mutating func drag(_ position: Double, model: LookEditorModel) {
         model.begin()
-        detent = position > 1 && position <= 1.06
-        let glass = position > 1.06
+        let canSnap = model.look.glass || (previousPosition.map { $0 >= 1 && $0 != position } ?? (model.transparency >= 100))
+        let glass = position > 1.06 && canSnap
+        detent = position > 1 && !glass
+        previousPosition = position
         if glass && !model.look.glass { haptic() }
         model.setTransparency(min(100, max(0, position * 100)), glass: glass)
     }
@@ -177,10 +180,10 @@ struct TransparencyInteraction {
     static func adjust(_ direction: AccessibilityAdjustmentDirection, model: LookEditorModel) {
         switch direction {
         case .increment:
-            if !model.look.glass { model.setTransparency(model.transparency + 1, glass: model.transparency >= 100) }
+            if !model.look.glass { model.setTransparency(model.transparency.rounded() + 1, glass: model.transparency.rounded() >= 100) }
         case .decrement:
             if model.look.glass { model.setTransparency(100) }
-            else { model.setTransparency(model.transparency - 1) }
+            else { model.setTransparency(model.transparency.rounded() - 1) }
         @unknown default: break
         }
     }
@@ -222,7 +225,7 @@ struct TransparencyControl: View {
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
                         interaction.drag(value.location.x / width, model: model)
-                    }.onEnded { _ in dragging = false; interaction.detent = false; model.end() })
+                    }.onEnded { _ in dragging = false; interaction.detent = false; interaction.previousPosition = nil; model.end() })
             }.frame(height: 30)
         }
         .accessibilityElement(children: .ignore).accessibilityLabel("Transparency")
@@ -238,7 +241,21 @@ struct TransparencyControl: View {
 @MainActor
 struct GrainInteraction {
     static func adjust(_ amount: Double, model: LookEditorModel) {
-        model.change { $0.grain = min(1, max(0, ($0.grain * 20 + amount).rounded() / 20)) }
+        model.change { $0.grain = min(1, max(0, (amount > 0 ? floor($0.grain * 20 + 1e-9) + 1 : ceil($0.grain * 20 - 1e-9) - 1) / 20)) }
+    }
+    var previous: Double?
+    var continuous = 0.0
+    mutating func drag(_ value: Double, model: LookEditorModel) {
+        model.begin()
+        defer { previous = value }
+        guard let previous else { continuous = model.look.grain; return }
+        var delta = value - previous
+        if delta > 0.5 { delta -= 1 }
+        if delta < -0.5 { delta += 1 }
+        guard delta != 0 else { return }
+        continuous = min(1, max(0, continuous + delta))
+        let grain = (continuous * 20).rounded() / 20
+        if grain != model.look.grain { model.change { $0.grain = grain } }
     }
     static func value(at point: CGPoint, size: CGSize) -> Double {
         let angle = atan2(point.x - size.width / 2, size.height / 2 - point.y)
@@ -248,8 +265,7 @@ struct GrainInteraction {
 
 struct GrainControl: View {
     @ObservedObject var model: LookEditorModel
-    @State private var previous: Double?
-    @State private var continuous = 0.0
+    @State private var interaction = GrainInteraction()
     var body: some View {
         HStack {
             GeometryReader { geometry in
@@ -259,17 +275,8 @@ struct GrainControl: View {
                     Circle().fill(Color.primary).frame(width: 4, height: 4)
                         .offset(y: -12).rotationEffect(.degrees(model.look.grain * 360))
                 }.contentShape(Circle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
-                    let value = GrainInteraction.value(at: event.location, size: geometry.size)
-                    model.begin()
-                    if let previous {
-                        var delta = value - previous
-                        if delta > 0.5 { delta -= 1 }
-                        if delta < -0.5 { delta += 1 }
-                        continuous = min(1, max(0, continuous + delta))
-                    } else { continuous = model.look.grain }
-                    model.change { $0.grain = (continuous * 20).rounded() / 20 }
-                    previous = value
-                }.onEnded { _ in previous = nil; model.end() })
+                    interaction.drag(GrainInteraction.value(at: event.location, size: geometry.size), model: model)
+                }.onEnded { _ in interaction.previous = nil; model.end() })
             }.frame(width: 36, height: 36)
             Text("Grain \(Int((model.look.grain * 100).rounded()))%").font(.caption)
             Spacer()

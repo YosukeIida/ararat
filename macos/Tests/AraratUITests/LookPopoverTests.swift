@@ -497,3 +497,98 @@ func lookFieldBackgroundResolvesByAppearance() throws {
     let control = try #require(sRGB(.controlBackgroundColor, appearance: lightAppearance))
     #expect(light.redComponent == control.redComponent && light.greenComponent == control.greenComponent && light.blueComponent == control.blueComponent)
 }
+
+@Test @MainActor
+func lookAdjustmentsWriteGridValuesAndEnterGlass() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    editor.setTransparency(99)
+    var writes = try await fixture.writes()
+    TransparencyInteraction.adjust(.increment, model: editor)
+    var stored = try await fixture.stored().spaces[0].look
+    #expect(try await fixture.writes() == writes + 1)
+    #expect(stored?.glass == false && stored?.opacity == 0)
+    writes += 1
+    TransparencyInteraction.adjust(.increment, model: editor)
+    stored = try await fixture.stored().spaces[0].look
+    #expect(try await fixture.writes() == writes + 1)
+    #expect(stored?.glass == true && stored?.opacity == 0)
+    writes += 1
+    TransparencyInteraction.adjust(.decrement, model: editor)
+    stored = try await fixture.stored().spaces[0].look
+    #expect(try await fixture.writes() == writes + 1)
+    #expect(stored?.glass == false && stored?.opacity == 0)
+    editor.setTransparency(99.6)
+    TransparencyInteraction.adjust(.increment, model: editor)
+    #expect(try await fixture.stored().spaces[0].look?.glass == true)
+    editor.setTransparency(55.3)
+    TransparencyInteraction.adjust(.decrement, model: editor)
+    #expect(abs(editor.transparency - 54) < 0.00001)
+    editor.change { $0.grain = 0.07 }
+    writes = try await fixture.writes()
+    GrainInteraction.adjust(-1, model: editor)
+    #expect(try await fixture.writes() == writes + 1)
+    #expect(try await fixture.stored().spaces[0].look?.grain == 0.05)
+    editor.change { $0.grain = 0.07 }
+    GrainInteraction.adjust(1, model: editor)
+    #expect(try await fixture.stored().spaces[0].look?.grain == 0.1)
+    try await fixture.close()
+}
+
+@Test @MainActor
+func grainDragPreservesClicksAndWrapsAndClamps() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    let size = CGSize(width: 100, height: 100)
+    #expect(GrainInteraction.value(at: CGPoint(x: 50, y: 0), size: size) == 0)
+    #expect(GrainInteraction.value(at: CGPoint(x: 100, y: 50), size: size) == 0.25)
+    #expect(GrainInteraction.value(at: CGPoint(x: 50, y: 100), size: size) == 0.5)
+    editor.change { $0.grain = 0.07 }
+    let count = try await fixture.writes()
+    var knob = GrainInteraction()
+    knob.drag(0.9, model: editor)
+    knob.drag(0.9, model: editor)
+    editor.end()
+    #expect(try await fixture.writes() == count)
+    #expect(editor.look.grain == 0.07)
+    knob.previous = nil
+    knob.drag(0.9, model: editor)
+    knob.drag(0.1, model: editor)
+    #expect(editor.look.grain == 0.25)
+    knob.drag(0.45, model: editor)
+    knob.drag(0.8, model: editor)
+    knob.drag(0.1, model: editor)
+    #expect(editor.look.grain == 1)
+    knob.drag(0.8, model: editor)
+    knob.drag(0.45, model: editor)
+    knob.drag(0.1, model: editor)
+    knob.drag(0.8, model: editor)
+    #expect(editor.look.grain == 0)
+    editor.end()
+    #expect(try await fixture.writes() == count + 1)
+    try await fixture.close()
+}
+
+@Test @MainActor
+func socketRequiresTheHundredPercentDetentFirst() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    editor.setTransparency(30)
+    var interaction = TransparencyInteraction(haptic: {})
+    interaction.drag(1.1, model: editor)
+    interaction.drag(1.1, model: editor)
+    #expect(editor.transparency == 100 && !editor.look.glass && interaction.detent)
+    editor.end()
+    #expect(try await fixture.stored().spaces[0].look?.glass == false)
+    interaction.previousPosition = nil
+    interaction.drag(1.1, model: editor)
+    #expect(editor.look.glass)
+    editor.end()
+    editor.setTransparency(30)
+    interaction.previousPosition = nil
+    interaction.drag(1.1, model: editor)
+    interaction.drag(1.11, model: editor)
+    #expect(editor.look.glass)
+    editor.end()
+    try await fixture.close()
+}
