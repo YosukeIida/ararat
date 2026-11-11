@@ -22,6 +22,7 @@
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
+#include "chrome/browser/ui/views/download/download_in_progress_dialog_view.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -479,7 +480,8 @@ void AraratBrowserWindow::ConfirmBrowserCloseWithPendingDownloads(
     int download_count,
     UnloadController::DownloadCloseType dialog_type,
     base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(false);
+  DownloadInProgressDialogView::Show(GetNativeWindow(), download_count,
+                                     dialog_type, std::move(callback));
 }
 
 void AraratBrowserWindow::ShowAppMenu() {}

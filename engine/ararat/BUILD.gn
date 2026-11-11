@@ -108,6 +108,7 @@ source_set("entry") {
     "//chrome/browser/ui:browser_command_controller",
     "//chrome/browser/ui/cocoa",
     "//chrome/browser/ui/dialogs:browser_dialogs",
+    "//chrome/browser/ui/views/download",
     "//chrome/browser/ui/views/file_system_access",
     "//chrome/browser/ui/views/file_system_access:impl",
     "//chrome/browser/ui/views/permissions:impl",
