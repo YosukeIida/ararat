@@ -139,7 +139,7 @@ func theHarnessMenuCarriesForceReloadWithItsDefaultKey() throws {
     // to that form).
     let shifted = item.keyEquivalent == "r" && item.keyEquivalentModifierMask == [.command, .shift]
     let shiftedUppercase = item.keyEquivalent == "R" && item.keyEquivalentModifierMask == [.command]
-    #expect(item.keyEquivalent.lowercased() == "r" && (shifted || shiftedUppercase), "Force Reload carries ⇧⌘R")
+    #expect(shifted || shiftedUppercase, "Force Reload carries ⇧⌘R")
 }
 
 @Test @MainActor

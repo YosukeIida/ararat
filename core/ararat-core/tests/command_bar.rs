@@ -471,10 +471,49 @@ fn an_exact_command_title_follows_the_typed_row_ahead_of_matching_tabs() {
     assert!(matches!(&rows[0].target, Target::Search { .. }));
     assert!(matches!(&rows[1].target, Target::Command { id } if id == "settings"), "an exact command title follows the typed row");
     assert!(rows[2..].iter().all(|row| matches!(row.target, Target::Tab { .. })), "the tabs follow the command");
-    // A word start inside a command's title promotes it too: "tab" reaches Close Tab, which no
-    // tab of this fixture has in its title.
+    assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1, "one command is promoted");
+    // A multi-word title prefix promotes too ("Close Tab" starts with "close t").
     let rows = Index::new(&ws, "one", 1000).query("close t", &[]).rows;
     assert!(matches!(&rows[1].target, Target::Command { id } if id == "close_tab"));
+    // And a word start inside a command's title: "tab" reaches "Close Tab" without matching the
+    // title's first word. The table's order breaks the tie with New Tab and Pin Tab.
+    let rows = Index::new(&ws, "one", 1000).query("tab", &[]).rows;
+    assert!(matches!(&rows[1].target, Target::Command { id } if id == "close_tab"), "the word branch promotes a title's inner word");
+}
+
+#[test]
+fn only_one_command_is_promoted_so_short_queries_keep_their_tabs() {
+    // Review 2: nine Show Space rows (and for "sp" the nine Move to Space rows as well) used to
+    // fill tier 0 and crowd every tab out. One command is promoted; the tabs that fit follow it.
+    let mut ws = fixture();
+    let template = ws.items["tab-a"].clone();
+    for (id, title, selected) in [("shop-tab", "Shopping", 900), ("shop-receipts", "Shop receipts", 800), ("shell-docs", "Shell docs", 700),
+                                  ("spotify-tab", "Spotify", 600), ("spreadsheet-tab", "Spreadsheet", 500), ("sports-tab", "Sports scores", 400)] {
+        let mut item = template.clone();
+        item.id = id.into();
+        item.title = Some(title.into());
+        if let ItemKind::Tab { url, .. } = &mut item.kind { *url = format!("https://{id}.test/"); }
+        item.membership.parent = Some("today-work".into());
+        item.lifecycle = Lifecycle::Open;
+        ws.last_selected.insert(id.into(), selected);
+        ws.items.insert(id.into(), item);
+    }
+    let index = Index::new(&ws, "one", 1000);
+    for (query, tabs) in [("sh", 3), ("sp", 3)] {
+        let rows = index.query(query, &[]).rows;
+        assert_eq!(rows.len(), 5, "{query}: the five rows are full");
+        assert!(matches!(&rows[0].target, Target::Search { .. }), "{query}: the typed row leads");
+        // Exactly one promoted command: the highest score, then the command table's order. Every
+        // Show Space and Move to Space row scores alike, so Show Space 1 leads.
+        assert!(matches!(&rows[1].target, Target::Command { id } if id == "show_space_1"), "{query}: one command at row 2");
+        assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1, "{query}: no second command");
+        assert_eq!(rows[2..].iter().filter(|row| matches!(row.target, Target::Tab { .. })).count(), tabs, "{query}: the tabs show after it");
+    }
+    // "sho" matches the three Sh tabs (the third by fuzzy title) and they all follow the one
+    // command, which is what the old unlimited promotion broke.
+    let rows = index.query("sho", &[]).rows;
+    assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Tab { .. })).count(), 3, "sho keeps the matching tabs");
+    assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1);
 }
 
 #[test]

@@ -351,8 +351,9 @@ pub struct CommandBarResult {
 
 /// The typed text is a row of its own and always first, even when an open tab matches (D1);
 /// it counts inside the five. Behind it the rows follow D2's order: open tabs, history, then
-/// commands (and the Space / Folder / Move rows filed with them), except that a command whose
-/// title starts with the typed text at a word start takes the second row. Ties keep source order.
+/// commands (and the Space / Folder / Move rows filed with them), except that the one best
+/// command whose title starts with the typed text at a word start takes the second row. Ties
+/// keep source order.
 pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -> CommandBarResult {
     let query = query.trim();
     let mut results: Vec<_> = sources.iter().flat_map(|s| s.candidates(query)).collect();
@@ -360,22 +361,25 @@ pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -
         results.truncate(ROW_LIMIT);
         return CommandBarResult { rows: results, private_window };
     }
-    results.sort_by(|a, b| tier(a, query).cmp(&tier(b, query)).then_with(|| b.score.total_cmp(&a.score)));
+    // Within a group the score decides; equal scores keep source order, so the commands stay in
+    // the table's order and the first one below is the highest-scoring, then the earliest.
+    results.sort_by(|a, b| a.target.group().cmp(&b.target.group()).then_with(|| b.score.total_cmp(&a.score)));
     let mut seen = HashSet::new();
     results.retain(|s| s.url.as_ref().is_none_or(|u| seen.insert(u.clone())));
+    if let Some(index) = results.iter().position(|s| is_promoted_command(s, query)) {
+        let promoted = results.remove(index);
+        results.insert(0, promoted);
+    }
     results.truncate(ROW_LIMIT.saturating_sub(1));
     results.insert(0, typed_row(query));
     CommandBarResult { rows: results, private_window }
 }
 
-/// D2's one exception: an exact command title must not be crowded out by four weak tab matches,
-/// so a command that starts with the typed text goes right after the typed row — ahead of the
-/// tab group. The rest keeps tabs, history, commands.
-fn tier(suggestion: &Suggestion, query: &str) -> u8 {
-    if matches!(suggestion.target, Target::Command { .. }) && starts_with_at_word_start(&suggestion.title, query) {
-        return 0;
-    }
-    suggestion.target.group() + 1
+/// D2's one exception: an exact command title must not be crowded out by weak tab matches, so
+/// the best command that starts with the typed text goes right after the typed row. Only one is
+/// promoted: nine `Show Space` rows ahead of every tab were the worse fault (review 2).
+fn is_promoted_command(suggestion: &Suggestion, query: &str) -> bool {
+    matches!(suggestion.target, Target::Command { .. }) && starts_with_at_word_start(&suggestion.title, query)
 }
 
 /// The title starts with the query, compared case-insensitively, or one of its words does: both
