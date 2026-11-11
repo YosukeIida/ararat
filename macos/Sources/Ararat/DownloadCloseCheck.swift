@@ -6,6 +6,11 @@ extension Runtime {
     func trace(_ step: String) {
       FileHandle.standardError.write(Data("ararat-trace: download-close \(step)\n".utf8))
     }
+    func startDownload(_ popup: any ARWindowHostAPI, port: UInt16) {
+      trace("start fixture download")
+      popup.checkNavigate("http://127.0.0.1:\(port)/slow-download", disposition: "current")
+      browserCheckPhase = 3
+    }
     switch browserCheckPhase {
     case 0:
       guard let row = sliceRows.first, let url = row.url else { return }
@@ -13,7 +18,7 @@ extension Runtime {
       adapter?.select(id: row.id, url: url)
       browserCheckPhase = 1
     case 1:
-      guard host.hasBrowser(), host.hasActiveTab(), promptFixturePort != nil else { return }
+      guard host.hasBrowser(), promptFixturePort != nil else { return }
       trace("create private window")
       host.checkCreateIncognito()
       browserCheckPhase = 2
@@ -26,9 +31,19 @@ extension Runtime {
       guard popup.prepareCheckDownload() else {
         finishBrowserCheck(ok: false, values: ["error": "cannot configure private download fixture"]); return
       }
-      trace("start fixture download")
-      popup.checkNavigate("http://127.0.0.1:\(port)/slow-download", disposition: "current")
-      browserCheckPhase = 3
+      if !errorPageConditions.isEmpty {
+        trace("simulate private offline error")
+        popup.checkNavigate("chrome://network-error/-106", disposition: "current")
+        browserCheckPhase = 21
+      } else {
+        startDownload(popup, port: port)
+      }
+    case 21:
+      guard let port = promptFixturePort, let privateHost = popups.first, let popup = privateHost.host,
+            let tab = (popup.tabs() as? [any ARTabAPI])?.first,
+            tab.networkError == -106, privateHost.checkFailureState["heading"] as? String == "You’re offline" else { return }
+      errorPageConditions["private_offline"] = true
+      startDownload(popup, port: port)
     case 3:
       guard let popup = popups.first?.host, popup.checkInProgressDownloadCount() == 1 else { return }
       downloadCloseConditions["download_pending"] = true
@@ -59,6 +74,15 @@ extension Runtime {
       downloadCloseConditions["window_closed"] = true
       let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed"]
       let failed = names.filter { downloadCloseConditions[$0] != true }
+      if !errorPageConditions.isEmpty {
+        errorPageConditions["download_close"] = failed.isEmpty
+        errorPageConditions["no_stock_browsers"] = host.checkStockBrowsers() == 0
+        let pageFailed = errorPageConditionNames.filter { errorPageConditions[$0] != true }
+        browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
+        finishBrowserCheck(ok: pageFailed.isEmpty, values: ["conditions": errorPageConditions, "failed_conditions": pageFailed,
+          "download_conditions": downloadCloseConditions, "download_failed_conditions": failed, "dialog_fallback": downloadCloseFallback, "screenshots": errorPageImages])
+        return
+      }
       finishBrowserCheck(ok: failed.isEmpty, values: ["conditions": downloadCloseConditions, "failed_conditions": failed, "dialog_fallback": downloadCloseFallback])
     default: break
     }

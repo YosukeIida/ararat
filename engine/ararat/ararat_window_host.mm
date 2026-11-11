@@ -252,8 +252,8 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" ||
-         command->GetSwitchValueASCII("ararat-screen") == "profiles";
+  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "errorpages" ||
+         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
 }
 
 void PinStartupPref(Profile* profile) {
@@ -2084,7 +2084,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -2190,7 +2190,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)checkKeyboardCommand:(NSString*)command {
   auto* args = base::CommandLine::ForCurrentProcess();
-  if (args->GetSwitchValueASCII("ararat-check") == "download-close" && [command isEqualToString:@"accept-download-close"]) {
+  if ((args->GetSwitchValueASCII("ararat-check") == "download-close" || args->GetSwitchValueASCII("ararat-check") == "errorpages" || args->GetSwitchValueASCII("ararat-screen") == "errorpages") && [command isEqualToString:@"accept-download-close"]) {
     NSWindow* parent = self.window;
     NSWindow* sheet = parent.attachedSheet;
     auto trace_window = [](const char* role, NSWindow* window) {

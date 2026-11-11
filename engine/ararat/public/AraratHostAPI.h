@@ -16,6 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSUInteger entryCount;
 @property(nonatomic, readonly) BOOL canGoBack;
 @property(nonatomic, readonly) BOOL crashed;
+@property(nonatomic, readonly) NSInteger networkError;
+- (void)reload;
+- (void)focus;
 - (void)checkFlushHistory:(void (^)(BOOL written))completion;
 - (void)captureSnapshot:(void (^)(NSImage* _Nullable image))completion;
 @property(nonatomic, readonly, nullable) NSView* view;

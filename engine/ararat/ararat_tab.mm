@@ -54,6 +54,7 @@
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/navigation_handle.h"
+#include "net/base/net_errors.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -99,6 +100,8 @@ class TabContentsObserver : public content::WebContentsObserver {
   void Stop() { Observe(nullptr); }
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
+      const auto error = navigation->GetNetErrorCode();
+      [tab_ setNetworkError:(navigation->IsErrorPage() && (error == net::ERR_NAME_NOT_RESOLVED || error == net::ERR_NAME_RESOLUTION_FAILED || error == net::ERR_INTERNET_DISCONNECTED)) ? error : 0];
       if (!navigation->IsSameDocument() && tab_ && web_contents())
         AraratCheckRevokeChangedDocument(base::SysNSStringToUTF8([tab_ liveId]), web_contents());
       [tab_ navigationFinished];
@@ -127,6 +130,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSString* title_;
   NSString* url_;
   BOOL loading_;
+  NSInteger network_error_;
   NSUInteger navigation_count_;
   BOOL check_opener_alive_;
   NSMutableArray<NSDictionary*>* check_ime_observations_;
@@ -162,12 +166,25 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSUInteger)entryCount { DCHECK([NSThread isMainThread]); return contents_ ? contents_->GetController().GetEntryCount() : 0; }
 - (BOOL)canGoBack { DCHECK([NSThread isMainThread]); return contents_ && contents_->GetController().CanGoBack(); }
 - (BOOL)crashed { DCHECK([NSThread isMainThread]); return contents_ && contents_->IsCrashed(); }
+- (NSInteger)networkError { DCHECK([NSThread isMainThread]); return network_error_; }
+- (void)setNetworkError:(NSInteger)error { network_error_ = error; }
+- (void)reload {
+  DCHECK([NSThread isMainThread]);
+  if (contents_) contents_->GetController().Reload(content::ReloadType::NORMAL, true);
+}
+- (void)focus {
+  DCHECK([NSThread isMainThread]);
+  if (contents_) contents_->Focus();
+}
 - (void)checkFlushHistory:(void (^)(BOOL))completion {
   if (!host_) { completion(NO); return; }
   [host_ checkFlushHistoryForTab:self completion:completion];
 }
 - (BOOL)checkCrashRenderer {
-  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "sadtab") return NO;
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "sadtab" &&
+                     args->GetSwitchValueASCII("ararat-check") != "errorpages" &&
+                     args->GetSwitchValueASCII("ararat-screen") != "errorpages")) return NO;
   auto* frame = contents_->GetPrimaryMainFrame();
   return frame && frame->GetProcess()->Shutdown(1);
 }
@@ -563,7 +580,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 }
 
 - (void)focusCheckPage {
-  if (contents_) contents_->Focus();
+  [self focus];
 }
 
 - (void)openCheckPopup {
@@ -718,6 +735,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (void)replaceContents:(content::WebContents*)contents {
   AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];
+  network_error_ = 0;
   observer_.reset();
   contents_ = contents;
   observer_ = std::make_unique<TabContentsObserver>(contents, self);
