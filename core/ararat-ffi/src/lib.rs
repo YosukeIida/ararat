@@ -595,6 +595,21 @@ impl WorkspaceStore {
         Ok(command.into())
     }
 
+    // Clear Today in one batch, with a Close command in flight for every mapped live row it
+    // archives, so the engine's replies match commands (U25b D6).
+    pub fn live_clear_today(&self, window_id: String, space_id: String) -> Result<LiveClearToday, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, targets) = live.clear_today(&mut workspace, &space_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(LiveClearToday {
+            snapshot: snapshot(workspace.clone(), &window_id),
+            targets: targets.into_iter()
+                .map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect(),
+        })
+    }
+
     pub fn live_apply(&self, transaction: LiveTransaction) -> Result<LiveApplyOutcome, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
@@ -759,6 +774,9 @@ pub struct SpaceSnapshot {
     pub title: String,
     pub icon: Option<String>,
     pub look: Option<Look>,
+    // U25b D1: the space.s pinned section, seeded with the space so every window shows the
+    // same chevron without a second read.
+    pub pinned_collapsed: bool,
     pub favorites: Vec<Row>,
     pub pinned: Vec<Row>,
     pub today: Vec<Row>,
@@ -1006,6 +1024,14 @@ pub struct LiveCloseTarget {
     pub command: LiveCommand,
 }
 
+// Clear Today: the batch's snapshot, with the live tabs whose pages the caller closes (each
+// beside a Close command the core has in flight).
+#[derive(Debug, PartialEq, uniffi::Record)]
+pub struct LiveClearToday {
+    pub snapshot: WorkspaceSnapshot,
+    pub targets: Vec<LiveCloseTarget>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LiveCause {
     /// The engine's reply to the command with this id.
@@ -1202,6 +1228,7 @@ fn space(ws: &Workspace, s: &Space, current: Option<&str>) -> SpaceSnapshot {
         title: s.title.clone(),
         icon: s.icon.clone(),
         look: s.look.clone().map(Into::into),
+        pinned_collapsed: ws.is_section_collapsed(&s.id),
         // The pinned list is the one container a collapse record governs, and the one that
         // keeps the current row visible when it is collapsed; Today holds no folders.
         favorites: ws.favorites.get(&s.profile).map_or_else(Vec::new, |container| rows(ws, container, None)),

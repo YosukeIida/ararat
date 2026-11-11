@@ -1514,3 +1514,43 @@ fn a_tab_claiming_an_item_from_another_profile_is_rejected_without_row_changes()
     assert!(ops.is_empty());
     assert_eq!(ws, before);
 }
+
+// U25b D6: Clear archives Today's rows in one batch and, in the same step, puts a Close in
+// flight for every mapped live row, so the engine's replies are accepted (an unknown command
+// is dropped whole) and the map forgets them. Two rows are loaded, one is unloaded.
+#[test]
+fn clearing_today_puts_a_close_in_flight_for_each_live_row() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "https://example.test/").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    {
+        let item = ws.items.get_mut("c").unwrap();
+        item.lifecycle = Lifecycle::Unloaded;
+        item.lifecycle_changed_at = 1;
+    }
+    let (ops, targets) = live.clear_today(&mut ws, "space-work").unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets.iter().map(|(_, command)| command.item.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+    // One batch archives the loaded and the unloaded row alike.
+    let archived: Vec<_> = ops.iter().filter_map(|op| match op {
+        Op::Put(Record::Item(item)) if item.lifecycle == Lifecycle::Archived => Some(item.id.as_str()),
+        _ => None,
+    }).collect();
+    assert_eq!(archived, ["a", "b", "c"]);
+    for item in ["a", "b", "c"] { assert_eq!(ws.items[item].lifecycle, Lifecycle::Archived, "{item}"); }
+    // The snapshot apply unloads rows the engine lacks; a pin is never archived by Clear.
+    assert_ne!(ws.items["pinned"].lifecycle, Lifecycle::Archived);
+    // The engine answers each close with the command's id: the replies name commands in
+    // flight, so they are applied and the map lets the rows go.
+    let (_, first) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(targets[0].1.id.clone()),
+        strips: vec![strip_empty("one")] });
+    assert!(first.applied);
+    let (_, second) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(targets[1].1.id.clone()),
+        strips: vec![strip_empty("one")] });
+    assert!(second.applied);
+    for item in ["a", "b"] { assert_eq!(live.live_tab(item), None, "{item}"); }
+}
