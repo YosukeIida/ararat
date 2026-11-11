@@ -810,7 +810,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 31);
+    assert_eq!(defaults.len(), 34);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     let key = KeyCombination { key: "s".into(), command: true, control: false, option: false, shift: false };
     let changed = store.set_key_binding("close_tab".into(), Some(key.clone())).unwrap();
@@ -921,25 +921,38 @@ fn the_snapshot_carries_each_spaces_profile() {
 fn command_bar_session_keeps_a_snapshot_and_can_be_dropped() {
     let store = WorkspaceStore::open(fresh_db("command-bar").display().to_string()).unwrap();
     store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None, None).unwrap();
-    let session = store.command_bar_session("test".into());
-    assert!(session.query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings")));
+    let session = store.command_bar_session("test".into(), false);
+    assert!(session.query("settings".into(), vec![]).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings")));
     store.set_key_binding("settings".into(), None).unwrap();
-    assert!(session.query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_some()));
+    assert!(session.query("settings".into(), vec![]).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_some()));
     drop(session);
-    assert!(store.command_bar_session("test".into()).query("settings".into()).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_none()));
+    assert!(store.command_bar_session("test".into(), false).query("settings".into(), vec![]).rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Command { id } if id == "settings") && s.key.is_none()));
 }
 
 #[test]
-fn command_bar_query_returns_the_inline_completion_and_store_creates_and_edits_tabs() {
+fn command_bar_query_takes_history_rows_and_the_store_creates_and_edits_tabs() {
     let store = WorkspaceStore::open(fresh_db("command-bar-actions").display().to_string()).unwrap();
     store.import_arc_sidebar("test".into(), FIXTURE.into(), None, None, None, None).unwrap();
     store.rename_tab("test".into(), "tab-a".into(), "GitHub".into()).unwrap();
 
-    // The completion comes from the core: the top row's bare host when the query prefixes it.
-    let result = store.command_bar_session("test".into()).query("docs".into());
+    // The typed row leads (D1) and the workspace rows follow.
+    let result = store.command_bar_session("test".into(), false).query("docs".into(), vec![]);
+    assert!(matches!(result.rows[0].target, ararat_ffi::SuggestionTarget::Search { .. }), "the typed row is first");
     assert!(result.rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::Tab { id, .. } if id == "tab-spec")));
-    assert_eq!(result.inline_completion.as_deref(), Some("docs.example.com"));
-    assert_eq!(store.command_bar_session("test".into()).query("settings".into()).inline_completion, None);
+    assert!(!result.private_window);
+
+    // History arrives from the engine per query (D5): the core scores it and the row says History.
+    let history = vec![ararat_ffi::HistoryEntry {
+        title: "Design tokens reference".into(),
+        url: "https://docs.example.org/design/tokens".into(),
+        last_visit: 0,
+    }];
+    let rows = store.command_bar_session("test".into(), false).query("design tokens".into(), history.clone()).rows;
+    assert!(rows.iter().any(|s| matches!(&s.target, ararat_ffi::SuggestionTarget::History { url } if url == "https://docs.example.org/design/tokens") && s.subtitle == "History"));
+    // A private window withholds them and marks the result so the bar can show its note (D7).
+    let private = store.command_bar_session("test".into(), true).query("design tokens".into(), history);
+    assert!(private.private_window);
+    assert!(!private.rows.iter().any(|s| matches!(s.target, ararat_ffi::SuggestionTarget::History { .. })));
 
     // create_tab puts a selected tab in the shown space's Today; set_tab_url edits it.
     let before = store.snapshot("test".into());

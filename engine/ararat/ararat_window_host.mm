@@ -31,6 +31,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/supports_user_data.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_frame_host.h"
@@ -39,6 +40,9 @@
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/history/history_service_factory.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/history/core/browser/history_types.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/sessions/session_service.h"
@@ -1446,6 +1450,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
   BrowserWindowInterface* browser_;
+  base::CancelableTaskTracker history_queries_;
   BOOL workspace_page_hidden_;
   BOOL workspace_remote_;
   NSMutableDictionary<NSValue*, ARTab*>* tabs_;
@@ -1497,7 +1502,22 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   else if (command == IDC_FOCUS_SEARCH) name = @"search";
   else if (command == IDC_CLOSE_TAB) name = @"close_tab";
   else if (command == IDC_OPTIONS) name = @"settings";
+  else if (command == IDC_CYCLE_TO_NEXT_TAB) name = @"cycle_tabs_next";
+  else if (command == IDC_CYCLE_TO_PREV_TAB) name = @"cycle_tabs_previous";
+  else if (command == IDC_RELOAD_BYPASSING_CACHE) {
+    NSEvent* event = NSApp.currentEvent;
+    if (event.type == NSEventTypeKeyDown) {
+      NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+      NSMenuItem* item = [menu cr_menuItemForKeyEquivalentEvent:event];
+      if (![item.identifier isEqualToString:@"force_reload"]) return YES;
+    }
+    name = @"force_reload";
+  }
   if (!name) return NO;
+  if ((command == IDC_CYCLE_TO_NEXT_TAB || command == IDC_CYCLE_TO_PREV_TAB) && NSApp.currentEvent.type == NSEventTypeKeyDown) {
+    NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+    if (![[menu cr_menuItemForKeyEquivalentEvent:NSApp.currentEvent].identifier isEqualToString:name]) return YES;
+  }
   [self.delegate windowHost:self performWorkspaceCommand:name];
   return YES;
 }
@@ -2049,7 +2069,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -2091,6 +2111,38 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (check == "menu") std::fprintf(stderr, "ararat-trace: menu-command returned tag=%ld target=window\n", static_cast<long>(item.tag));
   if (tracing) std::fprintf(stderr, "ararat-trace: empty-new-tab returned browser=%p tabs_after=%d\n",
                             static_cast<void*>(browser_), browser_ ? browser_->GetTabStripModel()->count() : -1);
+}
+
+- (BOOL)isPrivateWindow {
+  return browser_ && browser_->GetProfile()->IsOffTheRecord();
+}
+
+- (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {
+  history_queries_.TryCancelAll();
+  if (!browser_ || browser_->IsDeleteScheduled() || [self isPrivateWindow] || !text.length) {
+    auto* args = base::CommandLine::ForCurrentProcess();
+    if (!browser_ && (args->GetSwitchValueASCII("ararat-check") == "commandbar" || args->GetSwitchValueASCII("ararat-screen") == "commandbar"))
+      std::fprintf(stderr, "ararat-trace: history query skipped, no browser\n");
+    completion(@[]); return;
+  }
+  auto* service = HistoryServiceFactory::GetForProfile(browser_->GetProfile(), ServiceAccessType::IMPLICIT_ACCESS);
+  if (!service) { completion(@[]); return; }
+  history::QueryOptions options;
+  options.max_count = 50;
+  service->QueryHistory(base::SysNSStringToUTF16(text), options,
+    base::BindOnce(^(history::QueryResults results) {
+      NSMutableArray* rows = [NSMutableArray array];
+      for (const auto& row : results) {
+        [rows addObject:@{ @"title": base::SysUTF16ToNSString(row.title()) ?: @"",
+                           @"url": base::SysUTF8ToNSString(row.url().spec()),
+                           @"lastVisit": @(std::max<int64_t>(0, row.last_visit().InMillisecondsSinceUnixEpoch())) }];
+      }
+      completion(rows);
+    }), &history_queries_);
+}
+
+- (void)forceReload {
+  if (browser_ && !browser_->IsDeleteScheduled()) chrome::ExecuteCommand(browser_, IDC_RELOAD_BYPASSING_CACHE);
 }
 
 - (void)checkKeyboardCommand:(NSString*)command {

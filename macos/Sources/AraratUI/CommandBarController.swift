@@ -11,9 +11,9 @@ public enum CommandBarMode: Equatable {
 /// Answered by the per-open core session (built once per open, dropped on close).
 @MainActor
 public protocol CommandBarStore: AnyObject {
-    /// Pure query against the session's index; the ranking and the inline completion come
-    /// from the core, never derived here.
-    func query(_ text: String) -> CommandBarResult
+    /// Pure query against the session's index; the ranking and the typed row come from the core,
+    /// never derived here. History rows are the engine's answer to the same text (U23 D5).
+    func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult
     func searchURL(_ text: String) -> String
 }
 
@@ -22,7 +22,7 @@ public final class CommandBarSessionStore: CommandBarStore {
     private let session: CommandBarSession
 
     public init(session: CommandBarSession) { self.session = session }
-    public func query(_ text: String) -> CommandBarResult { session.query(text: text) }
+    public func query(_ text: String, history: [HistoryEntry] = []) -> CommandBarResult { session.query(text: text, history: history) }
     public func searchURL(_ text: String) -> String { session.searchUrl(text: text) }
 }
 
@@ -51,8 +51,8 @@ public enum CommandBarMetrics {
 
     /// Centred horizontally; the field stays put and shorter lists hang down: the top edge sits
     /// at the window's midY + full-height/2 + 40 [Cra, MainWindowController.swift:1835-1843].
-    public static func panelFrame(windowFrame: NSRect, width: CGFloat, rows: Int) -> NSRect {
-        let barHeight = height(forRows: rows)
+    public static func panelFrame(windowFrame: NSRect, width: CGFloat, rows: Int, privateWindow: Bool = false) -> NSRect {
+        let barHeight = height(forRows: rows) + (privateWindow ? 32 : 0)
         let top = windowFrame.midY + height(forRows: maxRows) / 2 + 40
         return NSRect(x: windowFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
     }
@@ -66,14 +66,13 @@ public final class CommandBarController {
     public private(set) var isOpen = false
     public private(set) var mode: CommandBarMode = .newTab
     public private(set) var query = ""
-    public private(set) var result = CommandBarResult(rows: [], inlineCompletion: nil)
+    public private(set) var result = CommandBarResult(rows: [], privateWindow: false)
     public private(set) var selectedIndex = 0
     /// Text pushed into the field from outside (prefill); bump version to apply.
     public var fieldText = ""
     public var fieldTextVersion = 0
     /// Pushed text arrives selected (a prefill); false puts the caret after it.
     public var fieldTextSelected = true
-    public var allowCompletion = true
     /// Text shown in the field while arrowing through rows; nil shows what was typed.
     public var previewText: String?
     public var previewVersion = 0
@@ -96,6 +95,10 @@ public final class CommandBarController {
     public var now: () -> Date = { Date() }
     public private(set) var openedAt: Date?
     private var store: CommandBarStore?
+    public var privateWindow = false
+    public var onQuery: (String, Int) -> Void = { _, _ in }
+    public private(set) var queryGeneration = 0
+    private var history: [HistoryEntry] = []
     /// Return (or ⌘Return) pressed while the store is pending: the bar stays open and the
     /// commit runs when `applyStore` lands, so the typed text is not dropped in the adapter
     /// round trip. nil when nothing is pending; the last key wins.
@@ -123,54 +126,67 @@ public final class CommandBarController {
     /// and field key at once and `applyStore` replays the typed text when it arrives.
     public func open(mode: CommandBarMode, prefill: String?, store: CommandBarStore?) {
         self.store = store
+        history = []
         self.mode = mode
         query = prefill ?? ""
         fieldText = query
         fieldTextSelected = true
         fieldTextVersion += 1
-        allowCompletion = false
         selectedIndex = 0
         previewText = nil
         pendingCommitForceNewTab = nil
         isOpen = true
         openedAt = now()
-        relist(allowCompletion: false)
+        relist()
+        queryGeneration += 1
+        onQuery(query, queryGeneration)
     }
 
     /// The session that arrived after the open applies: the typed text replays as the query
-    /// against the new index (no completion until the user types again, as at open). A Return
-    /// pressed while the session was pending commits here, with the typed text.
+    /// against the new index. A Return pressed while the session was pending commits here, with
+    /// the typed text.
     public func applyStore(_ store: CommandBarStore) {
         self.store = store
         selectedIndex = 0
-        relist(allowCompletion: false)
+        relist()
         if let forceNewTab = pendingCommitForceNewTab {
             pendingCommitForceNewTab = nil
             commit(forceNewTab: forceNewTab)
         }
     }
 
-    public func update(query newQuery: String, allowCompletion: Bool) {
+    public func update(query newQuery: String) {
         query = newQuery
-        self.allowCompletion = allowCompletion
         selectedIndex = 0
         previewText = nil
-        relist(allowCompletion: allowCompletion)
+        relist()
+        queryGeneration += 1
+        onQuery(newQuery, queryGeneration)
     }
 
-    private func relist(allowCompletion: Bool) {
+    public func updateHistory(_ entries: [HistoryEntry], for text: String) {
+        guard isOpen, query == text, !privateWindow else { return }
+        let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex].target : nil
+        history = entries
+        relist(preserving: selected)
+    }
+
+    private func relist(preserving selected: SuggestionTarget? = nil) {
         var result: CommandBarResult
         if mode == .search, let store, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let url = store.searchURL(query)
-            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], inlineCompletion: nil)
+            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], privateWindow: privateWindow)
         } else if mode == .search {
-            result = CommandBarResult(rows: [], inlineCompletion: nil)
+            result = CommandBarResult(rows: [], privateWindow: privateWindow)
         } else {
-            result = store?.query(query) ?? CommandBarResult(rows: [], inlineCompletion: nil)
+            result = store?.query(query, history: history) ?? CommandBarResult(rows: [], privateWindow: privateWindow)
         }
-        if !allowCompletion { result.inlineCompletion = nil }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
         self.result = result
+        if let selected {
+            if let index = result.rows.firstIndex(where: { $0.target == selected }) { selectedIndex = index }
+            else { selectedIndex = 0; previewText = nil; previewVersion += 1 }
+        }
         onChange()
         onRowsChange()
     }
@@ -180,7 +196,7 @@ public final class CommandBarController {
         guard !result.rows.isEmpty else { return }
         let count = result.rows.count
         selectedIndex = ((selectedIndex + delta) % count + count) % count
-        // The top row is what was typed (plus its inline completion).
+        // The top row is what was typed.
         previewText = selectedIndex == 0 ? nil : fillText(for: result.rows[selectedIndex])
         previewVersion += 1
         onChange()
@@ -194,7 +210,7 @@ public final class CommandBarController {
             return query
         case .command, .space, .folder, .moveToSpace, .moveToFolder:
             return suggestion.title
-        case .tab, .archive:
+        case .tab, .history:
             guard let url = suggestion.url else { return suggestion.title }
             var text = url
             for prefix in ["https://www.", "http://www.", "https://", "http://"] where text.hasPrefix(prefix) { text = String(text.dropFirst(prefix.count)); break }
@@ -213,16 +229,6 @@ public final class CommandBarController {
         let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex] : nil
         close()
         onCommit(selected, mode, forceNewTab)
-    }
-
-    /// Commits with a shown inline completion applied first, as Return does: the completion is
-    /// re-queried before the commit, so the selected row targets the full text (Cra F:126-135).
-    /// ⌘Return shares this step and then forces a new tab.
-    public func commit(forceNewTab: Bool, applyingCompletion completion: String?) {
-        if mode == .search { return commit(forceNewTab: forceNewTab) }
-        guard let completion else { return commit(forceNewTab: forceNewTab) }
-        update(query: completion, allowCompletion: false)
-        commit(forceNewTab: forceNewTab)
     }
 
     /// A click on a row commits it (Cra's commit(_ suggestion:)).

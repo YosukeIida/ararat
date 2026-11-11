@@ -12,7 +12,6 @@ pub fn search_url(query: &str) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Tab { id: String, space_id: Option<String> },
-    Archive { id: String },
     OpenUrl { url: String },
     Search { url: String },
     Command { id: String },
@@ -20,6 +19,21 @@ pub enum Target {
     Folder { id: String, space_id: String },
     MoveToSpace { id: String },
     MoveToFolder { id: String, space_id: String },
+    /// A page from the browser's history, supplied per query by the engine (D5). The core
+    /// ranks it; Chromium's `HistoryService` is the only store.
+    History { url: String },
+}
+
+impl Target {
+    /// The order after the typed row (D2): open tabs, then history, then commands. The Space,
+    /// Folder and Move rows the boards draw are filed with the commands, as they are commands.
+    fn group(&self) -> u8 {
+        match self {
+            Target::Tab { .. } => 0,
+            Target::History { .. } => 1,
+            _ => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +46,15 @@ pub struct Suggestion {
     pub score: f64,
 }
 
+/// One page of the browser's history, as the engine's `HistoryService` query returns it (D5).
+/// `last_visit` is milliseconds since the epoch, or 0 when the engine does not report one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    pub title: String,
+    pub url: String,
+    pub last_visit: u64,
+}
+
 pub trait Source {
     fn candidates(&self, query: &str) -> Vec<Suggestion>;
 }
@@ -41,12 +64,15 @@ struct Entry {
     suggestion: Suggestion,
     custom_title: bool,
     selected: Option<u64>,
-    archived: bool,
 }
 
 pub struct Index {
     entries: Vec<(Entry, Option<SearchKey>)>,
+    /// The shown space's most recent tabs, built once per open: the empty query's list (D4) is
+    /// the same list the ⌃Tab switcher shows.
+    recent: Vec<Suggestion>,
     now: u64,
+    private_window: bool,
 }
 
 // Scoring and the per-open index are adapted from Cra's MIT-licensed SuggestionEngine.swift.
@@ -78,13 +104,13 @@ impl Index {
                     match &item.kind {
                         ItemKind::Tab { url, .. } if !excluded(item) => {
                             seen.insert(item.id.clone());
-                            entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: if pinned { format!("{} · Pinned", space.title) } else { space.title.clone() }, url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied(), archived: false });
+                            entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: if pinned { format!("{} · Pinned", space.title) } else { space.title.clone() }, url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied() });
                         }
                         ItemKind::Folder => {
                             for (title, target) in [(format!("Go to {}", item.display_title()), Target::Folder { id: item.id.clone(), space_id: space.id.clone() }), (format!("Move Tab to {}", item.display_title()), Target::MoveToFolder { id: item.id.clone(), space_id: space.id.clone() })] {
                                 let skip = match &target { Target::MoveToFolder { id, .. } => !can_move_folder_to(space) || Some(id.as_str()) == current_folder.as_deref(), _ => false };
                                 if skip { continue; }
-                                entries.push(Entry { suggestion: Suggestion { title, subtitle: "Folder".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None, archived: false });
+                                entries.push(Entry { suggestion: Suggestion { title, subtitle: "Folder".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None });
                             }
                         }
                         _ => {}
@@ -101,30 +127,25 @@ impl Index {
                 stack.extend(ws.children(&item.id).into_iter().rev());
                 if let ItemKind::Tab { url, .. } = &item.kind {
                     if !excluded(item) && seen.insert(item.id.clone()) {
-                        entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: "Favorite".into(), url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: None }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied(), archived: false });
+                        entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: "Favorite".into(), url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: None }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied() });
                     }
                 }
             }
         }
-        for item in ws.archive().into_iter().take(400) {
-            if let ItemKind::Tab { url, .. } = &item.kind {
-                entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: "Archived".into(), url: Some(url.clone()), key: None, target: Target::Archive { id: item.id.clone() }, score: 0.0 }, custom_title: false, selected: None, archived: true });
-            }
-        }
         for binding in ws.key_bindings() {
-            entries.push(Entry { suggestion: Suggestion { title: binding.command.title, subtitle: "Command".into(), url: None, key: binding.key, target: Target::Command { id: binding.command.id }, score: 0.0 }, custom_title: false, selected: None, archived: false });
+            entries.push(Entry { suggestion: Suggestion { title: binding.command.title, subtitle: "Command".into(), url: None, key: binding.key, target: Target::Command { id: binding.command.id }, score: 0.0 }, custom_title: false, selected: None });
         }
         for space in &ws.spaces {
             for (title, target) in [(format!("Switch to {}", space.title), Target::Space { id: space.id.clone() }), (format!("Move Tab to {}", space.title), Target::MoveToSpace { id: space.id.clone() })] {
                 if matches!(target, Target::Space { .. }) && Some(space.id.as_str()) == shown_space { continue; }
                 if matches!(target, Target::MoveToSpace { .. }) && !can_move_to(space) { continue; }
-                entries.push(Entry { suggestion: Suggestion { title, subtitle: "Space".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None, archived: false });
+                entries.push(Entry { suggestion: Suggestion { title, subtitle: "Space".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None });
             }
         }
         let entries = entries.into_iter().map(|entry| {
             let key = entry.suggestion.url.as_ref().map(|url| {
                 let mut key = SearchKey::new(&entry.suggestion.title, url);
-                let id = match &entry.suggestion.target { Target::Tab { id, .. } | Target::Archive { id } => Some(id), _ => None };
+                let id = match &entry.suggestion.target { Target::Tab { id, .. } => Some(id), _ => None };
                 key.saved_title = id.and_then(|id| ws.items.get(id)).and_then(|item| match &item.kind {
                     ItemKind::Tab { saved_title, .. } => saved_title.as_ref().map(|s| s.to_lowercase()), _ => None,
                 });
@@ -132,32 +153,34 @@ impl Index {
             });
             (entry, key)
         }).collect();
-        Self { entries, now }
+        Self { entries, recent: recent_tabs(ws, window, ROW_LIMIT), now, private_window: false }
     }
 
-    pub fn query(&self, query: &str) -> CommandBarResult { rank_with_completion(query, &[self]) }
+    /// A private window suggests no history and the bar shows the note (D7). The core withholds
+    /// the rows itself, so a caller that passes history anyway cannot leak it.
+    pub fn private_window(mut self, private: bool) -> Self {
+        self.private_window = private;
+        self
+    }
+
+    pub fn query(&self, query: &str, history: &[HistoryEntry]) -> CommandBarResult {
+        let history = HistorySource::new(history, self.now);
+        let sources: Vec<&dyn Source> = if self.private_window { vec![self] } else { vec![self, &history] };
+        rank_result(query, &sources, self.private_window)
+    }
 }
 
 impl Source for Index {
     fn candidates(&self, query: &str) -> Vec<Suggestion> {
         let q = query.to_lowercase();
-        let mut entries = self.entries.clone();
-        if q.is_empty() {
-            entries.retain(|(e, _)| matches!(e.suggestion.target, Target::Tab { .. }));
-            entries.sort_by(|(a, _), (b, _)| b.selected.cmp(&a.selected));
-            return entries.into_iter().map(|(e, _)| e.suggestion).collect();
-        }
-        entries.into_iter().filter_map(|(mut e, key)| {
+        if q.is_empty() { return self.recent.clone(); }
+        self.entries.iter().filter_map(|(e, key)| {
             let title = e.suggestion.title.to_lowercase();
             let score = if let Some(key) = key {
-                let mut score = score_key(&q, &key);
-                if e.archived { score *= 0.85; }
-                else if e.custom_title && title.starts_with(&q) { score += 40.0; }
+                let mut score = score_key(&q, key);
+                if e.custom_title && title.starts_with(&q) { score += 40.0; }
                 if score < 30.0 { return None; }
-                if !e.archived {
-                    let age = e.selected.map(|at| self.now.saturating_sub(at));
-                    score += match age { Some(a) if a < 600_000 => 30.0, Some(a) if a < 3_600_000 => 22.0, Some(a) if a < 86_400_000 => 14.0, Some(a) if a < 604_800_000 => 7.0, _ => 0.0 };
-                }
+                score += recency_boost(e.selected.map(|at| self.now.saturating_sub(at)));
                 score
             } else {
                 if q.chars().count() < 2 { return None; }
@@ -169,8 +192,40 @@ impl Source for Index {
                 };
                 if title.starts_with(&q) { 80.0 } else if title.split_whitespace().any(|w| w.starts_with(&q)) { 68.0 } else if trigger.is_some_and(|t| t.starts_with(&q)) { 70.0 } else if title.contains(&q) { 50.0 } else { return None; }
             };
-            e.suggestion.score = score;
-            Some(e.suggestion)
+            let mut suggestion = e.suggestion.clone();
+            suggestion.score = score;
+            Some(suggestion)
+        }).collect()
+    }
+}
+
+/// The browser's history, one page per row (D5). Chromium's `HistoryService` owns the store;
+/// the engine passes what its query returned and the core does the matching and the scoring.
+pub struct HistorySource<'a> {
+    entries: &'a [HistoryEntry],
+    now: u64,
+}
+
+impl<'a> HistorySource<'a> {
+    pub fn new(entries: &'a [HistoryEntry], now: u64) -> Self { Self { entries, now } }
+}
+
+impl Source for HistorySource<'_> {
+    fn candidates(&self, query: &str) -> Vec<Suggestion> {
+        let q = query.to_lowercase();
+        if q.is_empty() { return Vec::new(); }
+        self.entries.iter().filter_map(|entry| {
+            let score = score_key(&q, &SearchKey::new(&entry.title, &entry.url));
+            if score < 30.0 { return None; }
+            let last_visit = (entry.last_visit > 0).then_some(entry.last_visit);
+            Some(Suggestion {
+                title: entry.title.clone(),
+                subtitle: "History".into(),
+                url: Some(entry.url.clone()),
+                key: None,
+                target: Target::History { url: entry.url.clone() },
+                score: score + recency_boost(last_visit.map(|at| self.now.saturating_sub(at))),
+            })
         }).collect()
     }
 }
@@ -212,6 +267,12 @@ fn score_title(q: &str, title: &str, human: &str, host: &str) -> f64 {
     score
 }
 
+/// The age steps a tab and a history page share, so recent visits rank alike. A page never
+/// selected or visited has no age and takes none.
+fn recency_boost(age: Option<u64>) -> f64 {
+    match age { Some(a) if a < 600_000 => 30.0, Some(a) if a < 3_600_000 => 22.0, Some(a) if a < 86_400_000 => 14.0, Some(a) if a < 604_800_000 => 7.0, _ => 0.0 }
+}
+
 fn fuzzy(q: &str, title: &str) -> f64 {
     let count = q.chars().count();
     if count < 3 { return 0.0; }
@@ -240,24 +301,94 @@ pub fn looks_like_url(input: &str) -> bool {
     host.contains('.') && host.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'))
 }
 
+/// The bar shows at most five rows, the typed row included (D1).
+pub const ROW_LIMIT: usize = 5;
+
+/// The empty query's list and the ⌃Tab switcher's list (D4): the shown space's most recently
+/// selected tabs, newest first, with the selected tab and the shown split's members left out.
+/// Unloaded tabs take part; favourites belong to the profile and do not.
+pub fn recent_tabs(ws: &Workspace, window: &str, limit: usize) -> Vec<Suggestion> {
+    let current = ws.selected(window);
+    let current_split = current.and_then(|id| ws.outermost_split(id));
+    let shown_space = ws.shown_space(window);
+    let mut rows: Vec<(Option<u64>, Suggestion)> = Vec::new();
+    for space in ws.spaces.iter().filter(|space| Some(space.id.as_str()) == shown_space) {
+        for (root, pinned) in [(&space.pinned, true), (&space.today, false)] {
+            let mut stack = ws.children(root).into_iter().rev().collect::<Vec<_>>();
+            while let Some(item) = stack.pop() {
+                if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue; }
+                stack.extend(ws.children(&item.id).into_iter().rev());
+                let ItemKind::Tab { url, .. } = &item.kind else { continue };
+                if Some(item.id.as_str()) == current
+                    || current_split.as_ref().is_some_and(|split| ws.outermost_split(&item.id).as_ref() == Some(split)) { continue; }
+                rows.push((ws.last_selected.get(&item.id).copied(), Suggestion {
+                    title: item.display_title().into(),
+                    subtitle: if pinned { format!("{} · Pinned", space.title) } else { space.title.clone() },
+                    url: Some(url.clone()), key: None,
+                    target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) },
+                    score: 0.0,
+                }));
+            }
+        }
+    }
+    rows.sort_by(|(a, _), (b, _)| b.cmp(a));
+    rows.into_iter().take(limit).map(|(_, suggestion)| suggestion).collect()
+}
+
 pub fn rank(query: &str, sources: &[&dyn Source]) -> Vec<Suggestion> {
-    rank_with_completion(query, sources).rows
+    rank_result(query, sources, false).rows
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandBarResult {
     pub rows: Vec<Suggestion>,
-    pub inline_completion: Option<String>,
+    /// The window is private: history rows are withheld and the bar shows its note (D7).
+    pub private_window: bool,
 }
 
-pub fn rank_with_completion(query: &str, sources: &[&dyn Source]) -> CommandBarResult {
+/// The typed text is a row of its own and always first, even when an open tab matches (D1);
+/// it counts inside the five. Behind it the rows follow D2's order: open tabs, history, then
+/// commands (and the Space / Folder / Move rows filed with them), except that the one best
+/// command whose title starts with the typed text at a word start takes the second row. Ties
+/// keep source order.
+pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -> CommandBarResult {
     let query = query.trim();
     let mut results: Vec<_> = sources.iter().flat_map(|s| s.candidates(query)).collect();
-    if query.is_empty() { results.truncate(5); return CommandBarResult { rows: results, inline_completion: None }; }
-    results.sort_by(|a, b| b.score.total_cmp(&a.score));
+    if query.is_empty() {
+        results.truncate(ROW_LIMIT);
+        return CommandBarResult { rows: results, private_window };
+    }
+    // Within a group the score decides; equal scores keep source order, so the commands stay in
+    // the table's order and the first one below is the highest-scoring, then the earliest.
+    results.sort_by(|a, b| a.target.group().cmp(&b.target.group()).then_with(|| b.score.total_cmp(&a.score)));
     let mut seen = HashSet::new();
     results.retain(|s| s.url.as_ref().is_none_or(|u| seen.insert(u.clone())));
-    let inline_completion = inline_completion(query, &results);
+    if let Some(index) = results.iter().position(|s| is_promoted_command(s, query)) {
+        let promoted = results.remove(index);
+        results.insert(0, promoted);
+    }
+    results.truncate(ROW_LIMIT.saturating_sub(1));
+    results.insert(0, typed_row(query));
+    CommandBarResult { rows: results, private_window }
+}
+
+/// D2's one exception: an exact command title must not be crowded out by weak tab matches, so
+/// the best command that starts with the typed text goes right after the typed row. Only one is
+/// promoted: nine `Show Space` rows ahead of every tab were the worse fault (review 2).
+fn is_promoted_command(suggestion: &Suggestion, query: &str) -> bool {
+    matches!(suggestion.target, Target::Command { .. }) && starts_with_at_word_start(&suggestion.title, query)
+}
+
+/// The title starts with the query, compared case-insensitively, or one of its words does: both
+/// start at a word start, so `set` finds `Settings…` and `tab` finds `Close Tab` and `New Tab`.
+fn starts_with_at_word_start(title: &str, query: &str) -> bool {
+    let query = query.to_lowercase();
+    if query.is_empty() { return false; }
+    let title = title.to_lowercase();
+    title.starts_with(&query) || title.split(|c: char| !c.is_alphanumeric()).any(|word| !word.is_empty() && word.starts_with(&query))
+}
+
+fn typed_row(query: &str) -> Suggestion {
     let url_like = looks_like_url(query);
     let target = if url_like {
         let host = query.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
@@ -266,28 +397,5 @@ pub fn rank_with_completion(query: &str, sources: &[&dyn Source]) -> CommandBarR
     } else {
         Target::Search { url: search_url(query) }
     };
-    let typed = Suggestion { title: query.into(), subtitle: if url_like { "Open URL" } else { "Search" }.into(), url: None, key: None, target, score: 0.0 };
-    results.insert(if url_like || results.is_empty() { 0 } else { 1 }, typed);
-    results.truncate(5);
-    CommandBarResult { rows: results, inline_completion }
-}
-
-// Cra's MIT SuggestionEngine.swift:461-470: the bare host of a high-scoring candidate that the
-// query prefixes, so Tab and → can accept it in the field. The query compares lowercased, and a
-// host-less row (about:, file: and kin) is skipped, not the end of the search (Cra S:463).
-fn inline_completion(query: &str, rows: &[Suggestion]) -> Option<String> {
-    let query = query.to_lowercase();
-    if query.contains(' ') || query.chars().count() < 2 { return None; }
-    if looks_like_url(&query) && query.contains('/') { return None; }
-    for row in rows {
-        let Some(url) = &row.url else { continue };
-        if row.score < 90.0 { continue; }
-        let Ok(parsed) = url::Url::parse(url) else { continue };
-        let Some(host) = parsed.host_str() else { continue };
-        let host = host.to_lowercase();
-        let bare = host.strip_prefix("www.").unwrap_or(&host);
-        if bare.starts_with(&query) && bare != query { return Some(bare.into()); }
-        if host.starts_with(&query) && host != query { return Some(host.into()); }
-    }
-    None
+    Suggestion { title: query.into(), subtitle: if url_like { "Open URL" } else { "Search" }.into(), url: None, key: None, target, score: 0.0 }
 }

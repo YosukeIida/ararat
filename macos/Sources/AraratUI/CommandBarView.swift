@@ -15,6 +15,7 @@ public final class CommandBarView: NSView {
     private let leadingIcon = NSImageView()
     private let text: CommandTextField
     private let divider = NSView()
+    private let privateNote = NSTextField(labelWithString: "Nothing is added to history in a private window.")
     private var rows: [CommandBarRowView] = []
 
     public init(controller: CommandBarController) {
@@ -32,7 +33,10 @@ public final class CommandBarView: NSView {
         leadingIcon.wantsLayer = true
         leadingIcon.layer?.cornerCurve = .continuous
         divider.wantsLayer = true
-        for view in [material, tint, leadingIcon, text.field, divider] as [NSView] { addSubview(view) }
+        privateNote.font = .systemFont(ofSize: 12)
+        privateNote.textColor = .secondaryLabelColor
+        privateNote.alignment = .center
+        for view in [material, tint, leadingIcon, text.field, divider, privateNote] as [NSView] { addSubview(view) }
         layer?.addSublayer(border)
         border.zPosition = 10
         controller.onChange = { [weak self] in self?.sync() }
@@ -82,6 +86,7 @@ public final class CommandBarView: NSView {
         border.strokeColor = NSColor.labelColor.withAlphaComponent(dark ? 0.12 : 0.08).cgColor // [Cra, V:106,177]
         divider.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
         divider.isHidden = items.isEmpty
+        privateNote.isHidden = !controller.result.privateWindow
         // The field's leading icon: a magnifying glass (favicon when the engine brings a cache) [Cra, F:35-41, V:138-145].
         leadingIcon.imageScaling = .scaleNone
         leadingIcon.image = NSImage(systemSymbolName: controller.mode == .editURL ? "info.circle" : "magnifyingglass", accessibilityDescription: nil)?
@@ -126,6 +131,7 @@ public final class CommandBarView: NSView {
         leadingIcon.frame = NSRect(x: 22, y: (fieldHeight - iconSize) / 2, width: iconSize, height: iconSize)
         text.field.frame = NSRect(x: 22 + 22 + 14, y: (fieldHeight - 30) / 2 + 2, width: max(0, bounds.width - 22 - 22 - 14 - 22), height: 30)
         divider.frame = NSRect(x: 16, y: fieldHeight, width: max(0, bounds.width - 32), height: 1)
+        privateNote.frame = NSRect(x: 10, y: bounds.height - 32, width: bounds.width - 20, height: 32)
         var y: CGFloat = fieldHeight + CommandBarMetrics.rowInset
         for row in rows where !row.isHidden {
             row.frame = NSRect(x: CommandBarMetrics.rowInset, y: y, width: bounds.width - 2 * CommandBarMetrics.rowInset, height: CommandBarMetrics.rowHeight)
@@ -204,13 +210,21 @@ final class CommandBarRowView: NSView {
         if isTab {
             // "Switch to Tab" is 14 pt medium, with an arrow [Cra, V:305-307].
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
-            trailing.stringValue = queryEmpty ? suggestion.subtitle : "Switch to Tab"
+            trailing.stringValue = "Switch to Tab"
         } else if case .command = suggestion.target, let key = suggestion.key {
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
             trailing.stringValue = Self.keycap(key)
         } else {
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
-            trailing.stringValue = suggestion.subtitle
+            switch suggestion.target {
+            case .openUrl: trailing.stringValue = "Open URL"
+            case .search: trailing.stringValue = "Search"
+            case .history: trailing.stringValue = "History"
+            case .space: trailing.stringValue = "Switch to Space"
+            case .folder: trailing.stringValue = "Open Folder"
+            case .moveToSpace, .moveToFolder: trailing.stringValue = "Move Tab"
+            default: trailing.stringValue = suggestion.subtitle
+            }
         }
         arrowBox.isHidden = !isTab
         arrow.isHidden = !isTab
@@ -223,7 +237,8 @@ final class CommandBarRowView: NSView {
     /// [ours] No favicon cache yet, so every kind gets a symbol by target.
     private static func symbol(_ suggestion: Suggestion) -> String {
         switch suggestion.target {
-        case .tab, .archive, .openUrl: return "globe"
+        case .tab, .openUrl: return "globe"
+        case .history: return "clock"
         case .search: return "magnifyingglass"
         case .command: return "command"
         case .space, .moveToSpace: return "square.grid.2x2"
@@ -243,10 +258,8 @@ final class CommandBarRowView: NSView {
 
     private static func detail(_ suggestion: Suggestion) -> String {
         switch suggestion.target {
-        case .openUrl, .search, .command, .space, .folder, .moveToSpace, .moveToFolder:
+        case .openUrl, .search, .command, .space, .folder, .moveToSpace, .moveToFolder, .history:
             return "" // the trailing text names these rows (Cra's detail for the same kinds)
-        case .archive:
-            return suggestion.subtitle.isEmpty ? "" : " — \(suggestion.subtitle)" // [Cra, V:322]
         case .tab:
             guard let url = suggestion.url else { return "" }
             let human = humanURL(url)

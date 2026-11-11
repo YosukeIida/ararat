@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) NSString* itemId;
 @property(nonatomic, readonly, copy) NSString* title;
 @property(nonatomic, readonly, copy) NSString* url;
+@property(nonatomic, readonly, nullable) NSImage* favicon;
 @property(nonatomic, readonly) BOOL isLoading;
 @property(nonatomic, readonly) NSUInteger navigationCount;
 @property(nonatomic, readonly) NSUInteger entryCount;
@@ -170,6 +171,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkNavigateOffTheRecord;
 - (NSDictionary<NSString*, id>*)checkFullscreenState;
 - (void)checkFullscreenAction:(NSInteger)action;
+- (void)forceReload;
+- (BOOL)isPrivateWindow;
+- (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
 - (void)checkSetFindPasteboard:(NSString*)text;
 - (BOOL)checkCloseFindEnabled;

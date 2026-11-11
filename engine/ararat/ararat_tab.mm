@@ -45,6 +45,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/favicon_status.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -152,6 +153,10 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSString*)itemId { DCHECK([NSThread isMainThread]); return [host_ itemIdForTab:self]; }
 - (NSString*)title { DCHECK([NSThread isMainThread]); return title_; }
 - (NSString*)url { DCHECK([NSThread isMainThread]); return url_; }
+- (NSImage*)favicon {
+  auto* entry = contents_ ? contents_->GetController().GetVisibleEntry() : nullptr;
+  return entry && !entry->GetFavicon().image.IsEmpty() ? entry->GetFavicon().image.ToNSImage() : nil;
+}
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }
 - (NSUInteger)entryCount { DCHECK([NSThread isMainThread]); return contents_ ? contents_->GetController().GetEntryCount() : 0; }

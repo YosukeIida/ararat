@@ -137,7 +137,7 @@ func recorderRefusesAModifierlessKeyAndAReservedKeyAndKeepsTheOldKey() async thr
     try await waitUntil { harness.keyBindings.error == "a shortcut needs Command, Control or Option" }
     #expect(harness.keyBindings.recording == nil)
     #expect(harness.keyBindings.binding(command: "toggle_library")?.key == recorderBinding(key: "l", command: true, shift: true))
-    #expect(library.keyEquivalent == "l" && library.keyEquivalentModifierMask == [.command, .shift])
+    #expect(library.keyEquivalent == "L" && library.keyEquivalentModifierMask == [.command])
 
     // A reserved system key is refused the same way, with the menus untouched: ⌥⌘Esc is reserved
     // and held by no command, so the first press goes to the core and comes back with the reason.
@@ -146,7 +146,7 @@ func recorderRefusesAModifierlessKeyAndAReservedKeyAndKeepsTheOldKey() async thr
     try await waitUntil { harness.keyBindings.error == "this shortcut is reserved by the system" }
     #expect(harness.keyBindings.recording == nil)
     #expect(harness.keyBindings.binding(command: "toggle_library")?.key == recorderBinding(key: "l", command: true, shift: true))
-    #expect(close.keyEquivalent == "w" && library.keyEquivalent == "l")
+    #expect(close.keyEquivalent == "w" && library.keyEquivalent == "L")
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }
 
@@ -452,7 +452,7 @@ func screenshotKeysAreRefusedByKeyCodeOnAnyLayout() async throws {
         #expect(harness.keyBindings.error == "this shortcut is reserved by the system")
         #expect(harness.keyBindings.recording == nil)
         #expect(try #require(harness.keyBindings.binding(command: "toggle_library")).key == recorderBinding(key: "l", command: true, shift: true))
-        #expect(library.keyEquivalent == "l" && library.keyEquivalentModifierMask == [.command, .shift])
+        #expect(library.keyEquivalent == "L" && library.keyEquivalentModifierMask == [.command])
     }
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }

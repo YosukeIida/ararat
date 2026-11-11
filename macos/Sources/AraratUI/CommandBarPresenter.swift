@@ -48,7 +48,7 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
     private func position() {
         guard let parent else { return }
         panel.setFrame(CommandBarMetrics.panelFrame(windowFrame: parent.frame, width: controller.panelWidth,
-                                                    rows: controller.result.rows.count), display: visible)
+                                                    rows: controller.result.rows.count, privateWindow: controller.result.privateWindow), display: visible)
     }
 
     private func finish() {

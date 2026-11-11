@@ -4,6 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SidebarView: NSView {
+    public var onEditURL: (() -> Void)?
     public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
     public var onDeleteSpace: ((String) -> Void)?
     public var onSpaceSettings: ((String) -> Void)?
@@ -75,7 +76,7 @@ public final class SidebarView: NSView {
     private var selectedID: String?
 
     private let header = NSTextField(labelWithString: "")
-    private let urlField = NSView()
+    let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
     private let favorites = NSStackView()
     private var favoriteColumns = 0
@@ -508,16 +509,25 @@ public final class SidebarView: NSView {
         if notify { onShowSpace?(snapshot.spaces[index].id) }
     }
 
+    public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
+    public func clickURLForCheck() { urlField.performClick(nil) }
+    @objc private func editURLClicked() { onEditURL?() }
+
     private func build() {
         wantsLayer = true
         layer?.masksToBounds = true
         library.onScroll = { [weak self] event, scroll in self?.handleSpaceScroll(event, from: scroll) ?? false }
+        urlField.title = ""
+        urlField.isBordered = false
+        urlField.target = self
+        urlField.action = #selector(editURLClicked)
+        urlField.setAccessibilityLabel("Edit URL")
         urlField.wantsLayer = true
         urlField.layer?.cornerRadius = 11
         urlField.layer?.cornerCurve = .continuous
         host.font = .systemFont(ofSize: 13)
         host.lineBreakMode = .byTruncatingTail
-        host.setAccessibilityLabel("Selected tab host")
+        host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
         header.font = .systemFont(ofSize: 14, weight: .medium)
@@ -775,6 +785,7 @@ public final class SidebarView: NSView {
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
         host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
+        urlField.setAccessibilityValue(host.stringValue)
 
         reloadFavorites()
 
