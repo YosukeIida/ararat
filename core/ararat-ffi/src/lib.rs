@@ -1162,13 +1162,16 @@ fn split_pane(ws: &Workspace, id: &str, factor: f64) -> Option<SplitPane> {
     Some(SplitPane { id: id.into(), factor, kind, unloaded: item.lifecycle == Lifecycle::Unloaded, url, children })
 }
 
-// Choosing a row ignores the pinned section's collapse (design, review 1): the candidates
-// are the space's rows as if the section were open, and the holder rule keeps the chosen pin
-// visible in the snapshot the caller gets back. Folder collapse stays as it is — a closed
-// folder's tabs are not candidates, the same rule the close successor uses.
+// Choosing a row ignores collapse (design's decision 3, read by review 2 as everything):
+// the candidates are the space's rows as if nothing were folded — the pinned section's
+// record and the folders' — and the holder rule keeps the chosen pin's path visible in the
+// snapshot the caller gets back. Selection is the user's explicit pick; the close successor
+// is an automatic one and still skips a closed folder's tabs (is_open_visible reads the
+// folder state).
 fn selection_view(workspace: &Workspace, window_id: &str) -> WorkspaceSnapshot {
     let mut view = workspace.clone();
     view.section_collapsed.clear();
+    view.folder_collapsed.clear();
     snapshot(view, window_id)
 }
 

@@ -104,5 +104,7 @@ fn a_collapsed_section_shows_only_the_path_to_the_current_pin() {
     assert_eq!(ids(&ws, "pin-work", Some("tab-spec")), ["folder-docs", "tab-spec"]);
     // A split as the current row keeps its segments: the row itself is the pin.
     assert_eq!(ids(&ws, "pin-work", Some("split-1")), ["split-1", "tab-a", "tab-b"]);
+    // A member of that split as the current row keeps the split and its members too.
+    assert_eq!(ids(&ws, "pin-work", Some("tab-a")), ["split-1", "tab-a", "tab-b"]);
     assert!(ws.outline_keeping("pin-work", None).is_empty());
 }

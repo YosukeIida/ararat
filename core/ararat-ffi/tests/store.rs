@@ -1139,3 +1139,32 @@ fn deleting_a_space_removes_its_section_record() {
     drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
+
+// Design's review-1 decision 3 as review 2 read it: choosing a row ignores collapse, closed
+// folders included.
+#[test]
+fn choosing_a_row_ignores_a_closed_folder() {
+    let path = fresh_db("folder-selection");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.select_item("one".into(), "tab-mail".into()).unwrap();
+    store.set_folder_collapsed("one".into(), "folder-docs".into(), true).unwrap();
+    // A link routed to a pin inside the closed folder selects it. Selecting a hidden row
+    // opens its ancestors (the existing rule), so the folder shows open with its pin.
+    let routed = store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-spec".into()).unwrap();
+    assert_eq!(routed.selected_id.as_deref(), Some("tab-spec"));
+    let folder = routed.spaces[0].pinned.iter().find(|row| row.id == "folder-docs").unwrap();
+    assert!(!folder.collapsed);
+    assert!(routed.spaces[0].pinned.iter().any(|row| row.id == "tab-spec"));
+    // A space switch keeps a last selection inside a closed folder without opening it: the
+    // pin's row is there while its folder is still collapsed, so only the path shows it.
+    store.set_folder_collapsed("one".into(), "folder-docs".into(), true).unwrap();
+    store.show_space("one".into(), "space-home".into()).unwrap();
+    let back = store.show_space_selecting("one".into(), "space-work".into()).unwrap();
+    assert_eq!(back.selected_id.as_deref(), Some("tab-spec"));
+    let pinned = &back.spaces[0].pinned;
+    assert!(pinned.iter().find(|row| row.id == "folder-docs").unwrap().collapsed);
+    assert!(pinned.iter().any(|row| row.id == "tab-spec"));
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}

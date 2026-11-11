@@ -797,10 +797,8 @@ impl Workspace {
         let now = self.lifecycle_time();
         let mut next = self.clone();
         let mut ops = Vec::new();
-        // Each row takes the ordinary close rule for its successor. The order only decides
-        // which rows are marked selected on the way; by the last row every other row is
-        // archived, so the close rule sees the cleared list. The intermediate selections are
-        // Window and LastSelected puts, which stay on the device.
+        // Each row takes the ordinary close rule for its successor. The intermediate
+        // selections are Window and LastSelected puts, which stay on the device.
         for id in &ids {
             ops.extend(next.finish_item(id, true, now)?);
         }
