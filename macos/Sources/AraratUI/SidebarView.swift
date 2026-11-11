@@ -1184,11 +1184,26 @@ public final class SidebarView: NSView {
         }
     }
 
-    @objc private func sampleLook() {
+    private var pagePresentationOffset: Double {
         let view: NSView = libraryOpen ? library : createSpaceOpen ? creation : spaceColumn
-        let offset = Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0)
+        return Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0)
+    }
+
+    @objc private func sampleLook() {
+        let offset = pagePresentationOffset
         refreshLook(offset: offset)
         updateDockSelection(offset: offset)
+    }
+
+    // Check hook: the sampler above runs from a display link, which delivers no callbacks on a VM
+    // display, so the dock screen check pumps the same sampler from its own timer. Returns the
+    // offset just read, so a failed run shows whether presentation frames existed at all.
+    @discardableResult
+    public func dockCheckSampleLook() -> Double {
+        guard CommandLine.arguments.contains("--ararat-screen=dock") else { return 0 }
+        let offset = pagePresentationOffset
+        sampleLook()
+        return offset
     }
 
     private func settleScroll(from offset: Double, switched: Bool) {

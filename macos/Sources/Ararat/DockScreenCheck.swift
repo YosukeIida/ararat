@@ -9,12 +9,14 @@ final class DockScreenCheck {
     var images: [String: String] = [:]
     var timer: Timer?
     var mid: [CGFloat]?
+    var midTrace: [[String: Any]] = []
+    var wheelTicks = 0
     var otherWindow: NSWindow?
     var folderCount = 0
     var selectedSpace = ""
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused"] : ["follow_mid", "wheel_start"])
+        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused"] : ["follow_mid"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -36,6 +38,7 @@ extension Runtime {
                 "cell_states": dock?.cellStates.map { ["state": String(describing: $0.state), "open": $0.openFraction, "refused": $0.refused] as [String: Any] } ?? [],
                 "cell_widths": dock?.subviews.map { $0.frame.width } ?? [],
                 "cell_alphas": dock?.subviews.map { $0.alphaValue } ?? [], "mid_fractions": check?.mid ?? [],
+                "mid_trace": check?.midTrace ?? [], "wheel_ticks": check?.wheelTicks ?? 0,
                 "cursor_not_allowed": NSCursor.current == NSCursor.operationNotAllowed,
                 "cursor": String(describing: NSCursor.current),
                 "tint_visible": container?.spaceTintVisible as Any? ?? NSNull(),
@@ -74,11 +77,18 @@ extension Runtime {
             if input.isDirectionInvertedFromDevice, let inverse = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: 5, wheel3: 0), let corrected = NSEvent(cgEvent: inverse) { input = corrected }
             FileHandle.standardError.write(Data("ararat-trace: dock send wheel\n".utf8))
             if screen {
+                // Why the check pumps the dock sampler: SidebarView moves the dock from a display
+                // link, and the VM run landed the switch with no sample in between (mid_fractions
+                // empty while cell 1 was open), so the display link delivered no callbacks there.
+                // The offset the pump reads is still the page layer's presentation value.
+                check.midTrace.removeAll()
                 let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self, weak check] _ in
                     MainActor.assumeIsolated {
                         guard let self, let check, let sidebar = self.sidebar,
                               let dock = self.dockDescendants(sidebar).compactMap({ $0 as? SpaceDockView }).first else { return }
+                        let offset = sidebar.dockCheckSampleLook()
                         let values = dock.cellStates.map(\.openFraction)
+                        if check.midTrace.count < 60 { check.midTrace.append(["offset": offset, "fractions": values.map { Double($0) }]) }
                         guard values.count > 1, values[0] > 0.05, values[0] < 0.95, values[1] > 0.05, values[1] < 0.95 else { return }
                         check.mid = values
                         FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
@@ -90,11 +100,11 @@ extension Runtime {
                 RunLoop.main.add(timer, forMode: .common)
             }
             sidebar.scrollWheel(with: input)
-            if !screen {
-                // Why not assert the wheel fade: an unordered window has no presentation frames, so only the screen check can detect its removal.
-                let states = dock.cellStates
-                check.report("wheel_start", sidebar.spaceShown == 1 && states.count > 1 && states[0].openFraction > 0.999 && states[1].openFraction < 0.001)
-            }
+            // Both variants: the switch must start from the departing cell, so a switch that snapped
+            // the dock fill to the destination fails here. Only the screen variant can also see the
+            // fade itself (wheel_mid), and only with presentation frames to sample.
+            let states = dock.cellStates
+            check.report("wheel_start", sidebar.spaceShown == 1 && states.count > 1 && states[0].openFraction > 0.999 && states[1].openFraction < 0.001)
             check.report("wheel_input", true)
             browserCheckPhase = 1
         }
@@ -131,10 +141,24 @@ extension Runtime {
             guard dock.cellStates.count > 1, dock.cellStates[0].openFraction > 0.999 else { return }
             sendWheel()
         case 1:
-            guard sidebar.spaceShown == 1, dock.cellStates.count == 13, dock.cellStates[1].openFraction > 0.999, (!screen || check.mid != nil) else { return }
+            check.wheelTicks += 1
+            guard sidebar.spaceShown == 1, dock.cellStates.count == 13, dock.cellStates[1].openFraction > 0.999 else {
+                // A 0.25 s spring plus one engine round trip; past three seconds the switch is not
+                // coming, and the tick count and mid trace below name what did happen.
+                guard check.wheelTicks >= 30 else { return }
+                FileHandle.standardError.write(Data("ararat-trace: dock wheel did not land after \(check.wheelTicks) ticks shown=\(sidebar.spaceShown) open=\(dock.cellStates.map(\.openFraction))\n".utf8))
+                if screen { check.report("wheel_mid", check.mid != nil) }
+                check.report("wheel_settled", false)
+                finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen))
+                return
+            }
+            // The pump writes the mid sample; once the landing is visible no later sample can be
+            // mid, so an empty mid here is the answer rather than a reason to wait for the timeout.
             check.timer?.invalidate(); check.timer = nil
-            if screen { check.report("wheel_mid", true); check.report("capture_mid", check.images["mid"] != nil) }
-            check.report("wheel_settled", dock.cellStates[0].openFraction < 0.001)
+            if screen { check.report("wheel_mid", check.mid != nil); check.report("capture_mid", check.images["mid"] != nil) }
+            let landed = dock.cellStates[0].openFraction < 0.001
+            check.report("wheel_settled", landed)
+            guard landed else { finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen)); return }
             sidebar.setLibraryOpen(true)
             end("library_open", sidebar.libraryOpen && sidebar.libraryOpenFraction == 1)
         case 2:

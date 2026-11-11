@@ -150,3 +150,13 @@ func hiddenDockCheckObservesFollowThenWheelLanding() async throws {
     fixture.sidebar.finishScrollPresentation()
     #expect(dock.cellStates[1].openFraction == 1)
 }
+
+@Test @MainActor
+func dockCheckSampleLookStaysOffOutsideTheScreenCheck() throws {
+    let fixture = try LibraryScrollFixture(space: 0, floating: false)
+    defer { fixture.window.contentView = nil }
+    let dock = try #require(libraryScrollDescendants(fixture.sidebar).compactMap { $0 as? SpaceDockView }.first)
+    let before = dock.cellStates.map(\.openFraction)
+    #expect(fixture.sidebar.dockCheckSampleLook() == 0)
+    #expect(dock.cellStates.map(\.openFraction) == before)
+}
