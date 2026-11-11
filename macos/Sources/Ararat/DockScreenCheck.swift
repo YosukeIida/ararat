@@ -11,6 +11,9 @@ final class DockScreenCheck {
     var mid: [CGFloat]?
     var midTrace: [[String: Any]] = []
     var wheelTicks = 0
+    // Set while the fade image is being written: the screenshot spins the run loop, so a check tick
+    // can run inside the capture before the image path exists.
+    var capturing = false
     var otherWindow: NSWindow?
     var folderCount = 0
     var selectedSpace = ""
@@ -47,6 +50,11 @@ final class DockScreenCheck {
         if let postFlush { row["post_flush"] = postFlush.map { Double($0) } }
         return row
     }
+    // Phase 1 may advance only when the switch has landed and the capture is not in flight: the
+    // screenshot spins the run loop, so a tick can arrive there before the image path is assigned.
+    static func wheelPhaseLanded(shown: Int, fractions: [CGFloat], capturing: Bool) -> Bool {
+        !capturing && shown == 1 && fractions.count == 13 && fractions[1] > 0.999
+    }
     // Reads the pump trace: an offset of 0 means either no animation (a paging fault) or an
     // animation this display never presented (a frame limit), and the trace carries which.
     var midReading: String {
@@ -76,7 +84,7 @@ extension Runtime {
                 "cell_widths": dock?.subviews.map { $0.frame.width } ?? [],
                 "cell_alphas": dock?.subviews.map { $0.alphaValue } ?? [], "mid_fractions": check?.mid ?? [],
                 "mid_trace": check?.midTrace ?? [], "wheel_ticks": check?.wheelTicks ?? 0,
-                "mid_reading": check?.midReading ?? "",
+                "mid_reading": check?.midReading ?? "", "capturing": check?.capturing ?? false,
                 "cursor_not_allowed": NSCursor.current == NSCursor.operationNotAllowed,
                 "cursor": String(describing: NSCursor.current),
                 "tint_visible": container?.spaceTintVisible as Any? ?? NSNull(),
@@ -145,7 +153,11 @@ extension Runtime {
                             postFlush = dock.cellStates.map(\.openFraction)
                             check.mid = values
                             FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
+                            // Set around the wait, not just the call: screencapture is waited for by
+                            // spinning the run loop, so a phase-1 tick runs before this returns.
+                            check.capturing = true
                             if let path = self.promptScreenScreenshot(window, name: "dock-mid", withoutShadow: true) { check.images["mid"] = path }
+                            check.capturing = false
                             captured = check.images["mid"] != nil
                             check.timer?.invalidate(); check.timer = nil
                         }
@@ -202,7 +214,13 @@ extension Runtime {
             sendWheel()
         case 1:
             check.wheelTicks += 1
-            guard sidebar.spaceShown == 1, dock.cellStates.count == 13, dock.cellStates[1].openFraction > 0.999 else {
+            guard DockScreenCheck.wheelPhaseLanded(shown: sidebar.spaceShown,
+                                                   fractions: dock.cellStates.map(\.openFraction),
+                                                   capturing: check.capturing) else {
+                // Why the flag and not a re-ordering: promptScreenScreenshot waits for screencapture
+                // by spinning the run loop, so this tick can run inside the capture, before
+                // check.images["mid"] is assigned; nothing can be assigned before the call returns.
+                guard !check.capturing else { return }
                 // A 0.25 s spring plus one engine round trip; past three seconds the switch is not
                 // coming, and the tick count and mid trace below name what did happen.
                 guard check.wheelTicks >= 30 else { return }

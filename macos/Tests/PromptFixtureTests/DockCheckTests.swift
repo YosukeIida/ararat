@@ -37,6 +37,17 @@ func dockCheckMidBandAndCrossFadeAcceptWhatEachSideCanPresent() {
 }
 
 @Test @MainActor
+func dockCheckWheelPhaseWaitsWhileTheFadeImageIsBeingWritten() {
+    #expect(DockScreenCheck.wheelPhaseLanded(shown: 1, fractions: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], capturing: false))
+    // The screenshot spins the run loop, so the tick that runs inside it must leave phase 1 alone
+    // even though the switch has already landed and the image path is not assigned yet.
+    #expect(!DockScreenCheck.wheelPhaseLanded(shown: 1, fractions: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], capturing: true))
+    #expect(!DockScreenCheck.wheelPhaseLanded(shown: 0, fractions: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], capturing: false))
+    #expect(!DockScreenCheck.wheelPhaseLanded(shown: 1, fractions: [0, 0.99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], capturing: false))
+    #expect(!DockScreenCheck.wheelPhaseLanded(shown: 1, fractions: [0, 1], capturing: false))
+}
+
+@Test @MainActor
 func dockCheckMidTraceRowKeepsTheAcceptedFrameAndTheReReadApart() {
     let row = DockScreenCheck.midTraceRow(scroll: ["animation": true], offset: 40,
                                           fractions: [0.9, 0.1], captured: true, postFlush: [1, 0])
