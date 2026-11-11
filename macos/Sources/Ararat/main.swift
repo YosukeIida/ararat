@@ -1631,9 +1631,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
-    if mode == "look" || mode == "screen-look" {
-      timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
-    }
     if mode == "organize" || mode == "screen-organize" {
       timeoutValues["conditions"] = organizeConditions
       timeoutValues["failed_conditions"] = organizeConditionNames(screen: mode == "screen-organize").filter { organizeConditions[$0] != true }
@@ -1932,7 +1929,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
     }
     let limit = mode == "keyboard" || mode == "screen-keyboard" ? 900 : 300
-    if browserCheckAttempts > limit { finishBrowserCheck(ok: false, values: timeoutValues); return }
+    if browserCheckAttempts > limit {
+      if mode == "look" || mode == "screen-look" {
+        timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
+      }
+      finishBrowserCheck(ok: false, values: timeoutValues); return
+    }
     if mode == "profiles", CommandLine.arguments.contains("--ararat-multiple-close-check"), host == nil,
        let symbol = dlsym(Launcher.handle, "AraratBrowserCount") {
       let count = unsafeBitCast(symbol, to: (@convention(c) () -> UInt).self)()

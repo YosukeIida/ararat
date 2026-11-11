@@ -16,7 +16,7 @@ final class LookScreenCheck {
     var count = 0
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["open", "accessibility", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "grain_focus", "keyboard_down", "transparency_focus_return", "keyboard_grain", "reduced_transparency", "ax_transparency_input", "ax_grain_input", "adjustable_elements"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] : [])
+        ["open", "accessibility", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency", "ax_transparency_input", "ax_grain_input", "adjustable_elements"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] : [])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -220,24 +220,30 @@ extension Runtime {
         case 12:
             guard let look = stored(), look.glass, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
+            check.report("keyboard_glass", one)
+            guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
-            end(one && check.key(125), "keyboard_glass")
+            end(check.key(125), "keyboard_down_input")
         case 13:
             guard let look = stored(), !look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
+            check.report("keyboard_down", one)
+            guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
             let focused = check.focus("Grain")
             check.report("grain_focus", focused)
             guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
-            end(one && check.key(126), "keyboard_down")
+            end(check.key(126), "grain_up_input")
         case 14:
             guard let look = stored(), abs(look.grain - 0.1) < 0.001, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
+            check.report("keyboard_grain", one)
+            guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
             let focused = check.focus("Transparency")
             check.report("transparency_focus_return", focused)
             guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
-            end(one && check.key(126), "keyboard_grain")
+            end(check.key(126), "transparency_up_input")
         case 15:
             guard let look = stored(), look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let rendering = sidebarContainer.lookCheckRendering(reduced: true)

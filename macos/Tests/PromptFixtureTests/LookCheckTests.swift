@@ -29,3 +29,16 @@ func lookMenuObserverStopsAfterCapturingTheFirstMenu() {
     NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: other)
     #expect(check.menuItems == ["Use for All Spaces", "Reset Look"])
 }
+
+@Test @MainActor
+func successfulKeyboardWriteRemainsRecordedWhenNextFocusFails() {
+    let check = LookScreenCheck()
+    check.report("keyboard_down", true)
+    check.report("grain_focus", false)
+    let result = LookScreenCheck.conditionResults(check.conditions, screen: false)
+    #expect(result.values["keyboard_down"] == true)
+    #expect(result.values["grain_focus"] == false)
+    #expect(!result.failed.contains("keyboard_down"))
+    #expect(result.failed.contains("grain_focus"))
+    #expect(result.failed.contains("grain_up_input"))
+}
