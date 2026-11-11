@@ -39,7 +39,7 @@ public final class SidebarView: NSView {
     private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
     var dockCursor: (Bool) -> Void = { refused in (refused ? NSCursor.operationNotAllowed : NSCursor.arrow).set() }
-    private(set) var libraryOpenFraction: CGFloat = 0
+    public private(set) var libraryOpenFraction: CGFloat = 0
     private var mainColumn: NSStackView!
     var libraryPage: String { library.page.rawValue }
     public var onShowSpace: ((String) -> Void)?
@@ -252,8 +252,9 @@ public final class SidebarView: NSView {
         let target: CGPoint
         if destination == "favorites" { target = CGPoint(x: geometry.favorites.midX, y: geometry.favorites.midY) }
         else if destination == "today" { target = CGPoint(x: geometry.list.midX, y: geometry.list.maxY - 2) }
-        else if destination == "dock" {
-            guard let cell = geometry.dock.first(where: { $0.space.id == "organize-other" }) else { return false }
+        else if destination == "dock" || destination.hasPrefix("dock:") {
+            let id = destination == "dock" ? "organize-other" : String(destination.dropFirst(5))
+            guard let cell = geometry.dock.first(where: { $0.space.id == id }) else { return false }
             target = CGPoint(x: cell.frame.midX, y: cell.frame.midY)
         } else {
             guard let entry = geometry.rows.first(where: { $0.row.id == destination }) else { return false }
@@ -273,6 +274,11 @@ public final class SidebarView: NSView {
         return true
     }
 
+    public func dockCheckEnableDragAnimation() {
+        guard CommandLine.arguments.contains(where: { $0 == "--ararat-check=dock" || $0 == "--ararat-screen=dock" }) else { return }
+        dragReduceMotion = { false }
+    }
+    public var organizeCheckSettleDuration: CFTimeInterval? { dragCopyView?.layer?.animation(forKey: "drag.settle")?.duration }
     public var organizeCheckDragging: Bool { drag?.active == true }
     public var organizeCheckIdle: Bool { drag == nil && !dragSettling }
     public var organizeCheckDropLine: Bool { dropIndicator.superlayer != nil }

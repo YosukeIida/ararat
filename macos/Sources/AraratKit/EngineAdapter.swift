@@ -55,7 +55,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -64,7 +64,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -81,7 +81,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
                     if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
                 }
-            } else if seedProfiles {
+            } else if seedProfiles || seedDock {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """
@@ -103,6 +103,18 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     _ = try opened.createTab(windowId: windowID, url: profileCheckURL)
                 }
                 try opened.showSpace(windowId: windowID, spaceId: "default")
+                if seedDock {
+                    let look = Look(colors: [LookColor(red: 0.4, green: 0.3, blue: 0.8, x: 0.7, y: 0.5)], opacity: 0.5, grain: 0, glass: false, appearance: .auto)
+                    _ = try opened.setSpaceLook(windowId: windowID, spaceId: "default", look: look)
+                    for index in 0..<11 {
+                        let id = "dock-\(index)"
+                        _ = try opened.createSpace(windowId: windowID, name: "Space \(index + 1)", spaceId: id)
+                        _ = try opened.setSpaceLook(windowId: windowID, spaceId: id, look: look)
+                        if index == 0 { _ = try opened.createTab(windowId: windowID, url: "about:blank?dock-drag") }
+                    }
+                    _ = try opened.moveSpace(windowId: windowID, spaceId: "named", index: 12)
+                    try opened.showSpace(windowId: windowID, spaceId: "default")
+                }
             } else if empty {
                 _ = try opened.createSpace(windowId: windowID, name: "Space", spaceId: UUID().uuidString)
             }

@@ -80,6 +80,13 @@ public final class SidebarContainerView: NSView {
         else { glass = false }
         return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
     }
+    public var spaceTintVisible: Bool { !panel.coating.isHidden }
+    public func dockCheckSetMain(_ main: Bool) {
+        guard CommandLine.arguments.contains("--ararat-check=dock") else { return }
+        applicationActive = { true }
+        windowMain = { main }
+        if let window { NotificationCenter.default.post(name: main ? NSWindow.didBecomeMainNotification : NSWindow.didResignMainNotification, object: window) }
+    }
     public var sidebarState: String { state.mode.rawValue }
     public var sidebarAnimating: Bool { moving }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }

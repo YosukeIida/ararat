@@ -129,3 +129,23 @@ func swipeFeedsDockAndLibraryBeforeAndAfterSettleWithoutLookObserver() throws {
         }
     }
 }
+
+@Test @MainActor
+func hiddenDockCheckObservesFollowThenWheelLanding() async throws {
+    let fixture = try LibraryScrollFixture(space: 0, floating: false)
+    defer { fixture.window.contentView = nil }
+    let dock = try #require(libraryScrollDescendants(fixture.sidebar).compactMap { $0 as? SpaceDockView }.first)
+    fixture.send(-144, phase: .began, time: 100)
+    #expect(abs(dock.cellStates[0].openFraction - 0.7) < 0.01)
+    #expect(abs(dock.cellStates[1].openFraction - 0.3) < 0.01)
+    fixture.send(0, phase: .cancelled, time: 100.02)
+    for _ in 0..<100 where dock.cellStates[0].openFraction < 0.999 {
+        try await Task.sleep(for: .milliseconds(10))
+        CATransaction.flush()
+    }
+    #expect(dock.cellStates[0].openFraction > 0.999)
+    fixture.send(-5, phase: nil, time: 101)
+    #expect(fixture.sidebar.spaceShown == 1)
+    fixture.sidebar.finishScrollPresentation()
+    #expect(dock.cellStates[1].openFraction == 1)
+}

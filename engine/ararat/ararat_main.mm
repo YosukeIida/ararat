@@ -229,8 +229,8 @@ void CheckGuards(int argc, const char** argv) {
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
       screen_prompts = std::string_view(arg + 16) == "prompts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock") g_check_slice = true;
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -248,7 +248,7 @@ void CheckGuards(int argc, const char** argv) {
       check_devtools = name == "devtools";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "dock" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";
