@@ -12,6 +12,8 @@ final class LookScreenCheck {
     var images: [String: String] = [:]
     var menuItems: [String]?
     var menuObserver: NSObjectProtocol?
+    var menuSending = false
+    var cancelMenu: (NSMenu) -> Void = { $0.cancelTracking() }
     var initialPrepared = false
     var count = 0
 
@@ -78,12 +80,16 @@ final class LookScreenCheck {
         }
     }
     func watchMenu() {
-        menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] note in
+        menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { [weak self] note in
             guard let menu = note.object as? NSMenu else { return }
             MainActor.assumeIsolated {
                 self?.menuItems = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden }.map(\.title)
                 self?.stopWatchingMenu()
-                menu.cancelTracking()
+                RunLoop.main.perform(inModes: [.eventTracking]) { [weak self, weak menu] in
+                    MainActor.assumeIsolated {
+                        if let menu { self?.cancelMenu(menu) }
+                    }
+                }
             }
         }
     }
@@ -113,7 +119,9 @@ extension Runtime {
         let probe: [String: Any] = ["look": LookScreenCheck.lookFields(check?.probe?.look),
             "editing": check?.probe?.editing as Any? ?? NSNull(),
             "transparency_tag": check?.probe?.transparencyTag as Any? ?? NSNull(),
-            "haptics": check?.probe?.haptics as Any? ?? NSNull()]
+            "haptics": check?.probe?.haptics as Any? ?? NSNull(),
+            "transparency_has_focus": check?.probe?.hasFocus("Transparency") as Any? ?? NSNull(),
+            "grain_has_focus": check?.probe?.hasFocus("Grain") as Any? ?? NSNull()]
         return ["conditions": result.values, "failed_conditions": result.failed,
             "phase": check?.phase ?? browserCheckPhase, "menu_items": check?.menuItems as Any? ?? NSNull(),
             "probe": probe, "stored_look": LookScreenCheck.lookFields(stored ?? nil),
@@ -133,7 +141,7 @@ extension Runtime {
     }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if lookCheck == nil { lookCheck = LookScreenCheck() }
-        guard let check = lookCheck, let sidebarContainer = container, let session = adapter?.session else { return }
+        guard let check = lookCheck, !check.menuSending, let sidebarContainer = container, let session = adapter?.session else { return }
         func stored() -> Look? {
             session.queue.sync { session.store?.snapshot(windowId: windowID).spaces.first { $0.id == snapshot.shownSpaceId }?.look }
         }
@@ -175,6 +183,8 @@ extension Runtime {
             guard capture("55") else { end(false, "capture_55"); return }
             if screen { check.report("capture_55", true) }
             check.watchMenu()
+            check.menuSending = true
+            defer { check.menuSending = false }
             let point = NSPoint(x: menuFrame.midX, y: menuFrame.midY)
             guard check.event(.leftMouseDown, screen: point, window: popup), check.event(.leftMouseUp, screen: point, window: popup) else { check.stopWatchingMenu(); end(false, "menu_open"); return }
             end(true, "menu_open")

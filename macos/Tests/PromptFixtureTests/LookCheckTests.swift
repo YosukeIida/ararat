@@ -56,3 +56,36 @@ func lookCheckSendsKeysOnlyAfterFocusArrives() {
     let sent = LookScreenCheck.sendWhenFocused(true) { sends += 1; return true }
     #expect(sent == true && sends == 1)
 }
+
+@MainActor
+private final class LookMenuRunLoopFixture {
+    let menu = NSMenu()
+}
+
+@Test @MainActor
+func lookMenuCancelsFromEventTrackingRunLoop() {
+    _ = NSApplication.shared
+    let check = LookScreenCheck()
+    let fixture = LookMenuRunLoopFixture()
+    let menu = fixture.menu
+    menu.addItem(withTitle: "Use for All Spaces", action: nil, keyEquivalent: "")
+    menu.addItem(withTitle: "Reset Look", action: nil, keyEquivalent: "")
+    var cancelled = 0
+    check.cancelMenu = { observed in
+        #expect(observed === menu)
+        cancelled += 1
+    }
+    check.watchMenu()
+    RunLoop.main.perform(inModes: [.eventTracking]) {
+        MainActor.assumeIsolated {
+            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: fixture.menu)
+            #expect(check.menuItems == ["Use for All Spaces", "Reset Look"])
+            #expect(check.menuObserver == nil && cancelled == 0)
+        }
+    }
+    let deadline = Date(timeIntervalSinceNow: 1)
+    while cancelled == 0 && Date() < deadline {
+        RunLoop.main.run(mode: .eventTracking, before: deadline)
+    }
+    #expect(cancelled == 1)
+}
