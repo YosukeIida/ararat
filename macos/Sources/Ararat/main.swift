@@ -327,6 +327,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
             if CommandLine.arguments.contains("--ararat-check=popup") {
               FileHandle.standardError.write(Data("ararat-trace: popup window destroyed\n".utf8))
             }
+            if self?.browserCheckMode == "download-close" {
+              FileHandle.standardError.write(Data("ararat-trace: download-close popup removed\n".utf8))
+            }
             self?.popups.removeAll { $0 === value }
           }
         }
@@ -550,6 +553,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var promptFixture: PromptFixtureServer?
   var promptFixturePort: UInt16?
   var promptFixtureError: String?
+  var downloadCloseConditions: [String: Bool] = [:]
+  var downloadCloseFallback = false
   var permissionResults: [String: String] = [:]
   var permissionReadPending = false
   var dialogResults: [String: String] = [:]
@@ -654,10 +659,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "download-close", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
       if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = checkFrontApplication() }
       if checkName == "fullscreen" {
@@ -677,7 +683,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "look" { browserCheckMode = "screen-look" }
       if screenName == "dock" { browserCheckMode = "screen-dock" }
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" || screenName == "commandbar" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "download-close"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" || screenName == "commandbar" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1702,6 +1708,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if mode == "download-close" {
+      let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed"]
+      timeoutValues.merge(["phase": browserCheckPhase, "conditions": downloadCloseConditions,
+        "failed_conditions": names.filter { downloadCloseConditions[$0] != true },
+        "dialog_fallback": downloadCloseFallback,
+        "download_count": popups.first?.host?.checkInProgressDownloadCount() as Any? ?? NSNull(),
+        "fixture_error": promptFixtureError as Any? ?? NSNull()]) { _, new in new }
+    }
     if mode == "organize" || mode == "screen-organize" {
       timeoutValues["conditions"] = organizeConditions
       timeoutValues["failed_conditions"] = organizeConditionNames(screen: mode == "screen-organize").filter { organizeConditions[$0] != true }
@@ -2127,6 +2141,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "empty" { emptyCheckTick(host); return }
     if mode == "profiles" { profileCheckTick(host); return }
     if mode == "incognito" { incognitoCheckTick(host); return }
+    if mode == "download-close" { downloadCloseCheckTick(host); return }
     if mode == "ext-windows" || mode == "screen-profiles" { extensionCheckTick(host, screen: mode == "screen-profiles"); return }
     if mode == "ext-windows-popup" { extensionPopupWindowCheckTick(host); return }
     if mode == "ext-popup" { extensionActionCheckTick(host); return }

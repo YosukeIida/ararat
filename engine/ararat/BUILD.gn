@@ -75,6 +75,7 @@ source_set("entry") {
     "//chrome/browser/browsing_data:constants",
     "//chrome/browser/autofill",
     "//chrome/browser/devtools",
+    "//chrome/browser/download",
     "//chrome/browser/extensions",
     "//chrome/browser/history",
     "//chrome/browser/devtools:devtools_contents_resizing_strategy",

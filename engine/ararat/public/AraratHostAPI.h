@@ -173,6 +173,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkFullscreenAction:(NSInteger)action;
 - (void)forceReload;
 - (BOOL)isPrivateWindow;
+- (int)checkInProgressDownloadCount;
+- (BOOL)prepareCheckDownload;
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
 - (void)checkSetFindPasteboard:(NSString*)text;

@@ -21,6 +21,7 @@
 #include "base/check.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
@@ -33,6 +34,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
+#include "base/threading/thread_restrictions.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_frame_host.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -55,6 +57,8 @@
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
 #include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
@@ -99,6 +103,7 @@
 #include "chrome/browser/ui/views/extensions/extension_popup.h"
 #include "chrome/browser/ui/views/extensions/extension_keybinding_registry_views.h"
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
+#include "chrome/browser/ui/views/download/download_in_progress_dialog_view.h"
 #include "chrome/browser/ui/views/file_system_access/file_system_access_restore_permission_bubble_view.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "content/public/browser/web_contents.h"
@@ -149,6 +154,8 @@
 #import "ui/base/cocoa/find_pasteboard.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/view_utils.h"
+#include "ui/views/window/dialog_delegate.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -245,7 +252,7 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" ||
+  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" ||
          command->GetSwitchValueASCII("ararat-screen") == "profiles";
 }
 
@@ -986,6 +993,8 @@ void AraratWindowHostCore::ConfirmClose() {
     auto weak = weak_factory_.GetWeakPtr();
     std::string profile_name = name;
     auto result = controller->MaybeWarnBeforeClosing(base::BindOnce(^(UnloadController::WarnBeforeClosingResult answer) {
+      if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")
+        std::fprintf(stderr, "ararat-trace: download-close warning callback answer=%d host=%d\n", static_cast<int>(answer), !!weak);
       if (log) std::fprintf(stderr, "ararat-teardown: warning callback deny=%d\n", answer == UnloadController::WarnBeforeClosingResult::kDoNotClose);
       if (!weak || !weak->closing()) return;
       if (answer == UnloadController::WarnBeforeClosingResult::kDoNotClose) {
@@ -1035,7 +1044,11 @@ void AraratWindowHostCore::ConfirmClose() {
   if (windows_.empty()) { closed_ = true; widget_->Close(); return; }
   std::vector<AraratBrowserWindow*> windows;
   for (const auto& [name, window] : windows_) windows.push_back(window);
-  for (auto* window : windows) window->RequestClose();
+  for (auto* window : windows) {
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")
+      std::fprintf(stderr, "ararat-trace: download-close requesting browser close\n");
+    window->RequestClose();
+  }
 }
 
 void AraratWindowHostCore::CloseConfirmed(bool proceed) {
@@ -1110,6 +1123,8 @@ bool AraratWindowHostCore::ShortcutActivationMatches(bool active) const {
 }
 
 void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")
+    std::fprintf(stderr, "ararat-trace: download-close browser destroyed\n");
   if (popup_ && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "popup")
     std::fprintf(stderr, "ararat-trace: popup browser destroyed\n");
   if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-destroyed closing=%d\n", closing_);
@@ -2117,6 +2132,34 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return browser_ && browser_->GetProfile()->IsOffTheRecord();
 }
 
+- (int)checkInProgressDownloadCount {
+  if (!browser_) return 0;
+  auto* service = DownloadCoreServiceFactory::GetForBrowserContext(browser_->GetProfile());
+  return service ? service->BlockingShutdownCount() : 0;
+}
+
+- (BOOL)prepareCheckDownload {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || !browser_->GetProfile()->IsOffTheRecord() ||
+      (args->GetSwitchValueASCII("ararat-check") != "download-close" &&
+       args->GetSwitchValueASCII("ararat-check") != "errorpages" &&
+       args->GetSwitchValueASCII("ararat-screen") != "errorpages")) return NO;
+  Profile* profile = browser_->GetProfile();
+  auto* service = DownloadCoreServiceFactory::GetForBrowserContext(profile);
+  if (!service || !service->GetDownloadManagerDelegate()) return NO;
+  const base::FilePath directory = profile->GetPath().AppendASCII("ararat-download-check")
+      .AppendASCII(NSUUID.UUID.UUIDString.UTF8String);
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    if (!base::CreateDirectory(directory)) return NO;
+  }
+  PrefService* prefs = profile->GetPrefs();
+  prefs->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  prefs->SetBoolean(prefs::kPromptForDownload, false);
+  return !prefs->GetBoolean(prefs::kPromptForDownload) &&
+         prefs->GetFilePath(prefs::kDownloadDefaultDirectory) == directory;
+}
+
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {
   history_queries_.TryCancelAll();
   if (!browser_ || browser_->IsDeleteScheduled() || [self isPrivateWindow] || !text.length) {
@@ -2147,6 +2190,33 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)checkKeyboardCommand:(NSString*)command {
   auto* args = base::CommandLine::ForCurrentProcess();
+  if (args->GetSwitchValueASCII("ararat-check") == "download-close" && [command isEqualToString:@"accept-download-close"]) {
+    NSWindow* parent = self.window;
+    NSWindow* sheet = parent.attachedSheet;
+    auto trace_window = [](const char* role, NSWindow* window) {
+      NSString* name = window ? NSStringFromClass(window.class) : @"nil";
+      NSString* parent_name = window.parentWindow ? NSStringFromClass(window.parentWindow.class) : @"nil";
+      NSString* sheet_parent_name = window.sheetParent ? NSStringFromClass(window.sheetParent.class) : @"nil";
+      std::fprintf(stderr, "ararat-trace: download-close window role=%s class=%s parent=%s sheet_parent=%s children=%lu sheets=%lu\n",
+                   role, name.UTF8String, parent_name.UTF8String, sheet_parent_name.UTF8String,
+                   static_cast<unsigned long>(window.childWindows.count), static_cast<unsigned long>(window.sheets.count));
+    };
+    trace_window("host", parent);
+    trace_window("sheet", sheet);
+    for (NSWindow* child in parent.childWindows) trace_window("host-child", child);
+    for (NSWindow* child in parent.sheets) trace_window("host-sheet", child);
+    for (NSWindow* child in sheet.childWindows) trace_window("sheet-child", child);
+    for (NSWindow* child in sheet.sheets) trace_window("sheet-sheet", child);
+    auto* widget = sheet ? views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(sheet)) : nullptr;
+    auto* delegate = widget ? widget->widget_delegate() : nullptr;
+    auto* dialog = delegate ? views::AsViewClass<DownloadInProgressDialogView>(delegate->GetContentsView()) : nullptr;
+    std::fprintf(stderr, "ararat-trace: download-close sheet=%d widget=%d dialog=%d\n", sheet != nil, widget != nullptr, dialog != nullptr);
+    if (dialog) {
+      std::fprintf(stderr, "ararat-trace: download-close accepting dialog\n");
+      dialog->AcceptDialog();
+    }
+    return;
+  }
   if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && args->GetSwitchValueASCII("ararat-check") != "empty" && args->GetSwitchValueASCII("ararat-check") != "incognito" && args->GetSwitchValueASCII("ararat-check") != "popup" && args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup" && args->GetSwitchValueASCII("ararat-check") != "history-purge") return;
   NSDictionary<NSString*, NSNumber*>* commands = @{
     @"new": @(IDC_NEW_TAB), @"location": @(IDC_FOCUS_LOCATION), @"search": @(IDC_FOCUS_SEARCH),
