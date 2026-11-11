@@ -1184,9 +1184,10 @@ public final class SidebarView: NSView {
         }
     }
 
+    private var pageView: NSView { libraryOpen ? library : createSpaceOpen ? creation : spaceColumn }
+
     private var pagePresentationOffset: Double {
-        let view: NSView = libraryOpen ? library : createSpaceOpen ? creation : spaceColumn
-        return Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0)
+        Double(pageView.layer?.presentation()?.transform.m41 ?? pageView.layer?.transform.m41 ?? 0)
     }
 
     @objc private func sampleLook() {
@@ -1204,6 +1205,18 @@ public final class SidebarView: NSView {
         let offset = pagePresentationOffset
         sampleLook()
         return offset
+    }
+
+    // Check hook: the page slide's layer state, so an offset of 0 in the trace can be told apart —
+    // no animation at all is a paging fault, an animation whose presentation stays 0 means this
+    // display presents no frames.
+    public var dockCheckScrollState: [String: Any] {
+        guard CommandLine.arguments.contains("--ararat-screen=dock") else { return [:] }
+        let layer = pageView.layer
+        var state: [String: Any] = ["animation": layer?.animation(forKey: "space.scroll") != nil,
+                                    "model": Double(layer?.transform.m41 ?? 0)]
+        if let presentation = layer?.presentation() { state["presentation"] = Double(presentation.transform.m41) }
+        return state
     }
 
     private func settleScroll(from offset: Double, switched: Bool) {

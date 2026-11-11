@@ -22,6 +22,22 @@ final class DockScreenCheck {
         let names = conditionNames(screen: screen)
         return (Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }), names.filter { conditions[$0] != true })
     }
+    // Both cells must be visibly between the two pages; a landed or unstarted page cannot pass.
+    static func midBand(_ values: [CGFloat]) -> Bool {
+        values.count > 1 && values[0] > 0.05 && values[0] < 0.95 && values[1] > 0.05 && values[1] < 0.95
+    }
+    // Reads the pump trace: an offset of 0 means either no animation (a paging fault) or an
+    // animation this display never presented (a frame limit), and the trace carries which.
+    var midReading: String {
+        guard !midTrace.isEmpty else { return "no samples" }
+        let animated = midTrace.contains { $0["animation"] as? Bool == true }
+        guard animated else { return "no space.scroll animation in \(midTrace.count) samples: the paging did not animate" }
+        let offsets = midTrace.compactMap { ($0["presentation"] as? NSNumber)?.doubleValue }
+        guard offsets.contains(where: { $0 != 0 }) else {
+            return "animation present, presentation stayed 0 in \(midTrace.count) samples: this display presents no frames"
+        }
+        return "animation and frames seen in \(midTrace.count) samples"
+    }
     func report(_ name: String, _ value: Bool) {
         conditions[name] = value
         FileHandle.standardError.write(Data("ararat-trace: dock \(name)=\(value)\n".utf8))
@@ -39,6 +55,7 @@ extension Runtime {
                 "cell_widths": dock?.subviews.map { $0.frame.width } ?? [],
                 "cell_alphas": dock?.subviews.map { $0.alphaValue } ?? [], "mid_fractions": check?.mid ?? [],
                 "mid_trace": check?.midTrace ?? [], "wheel_ticks": check?.wheelTicks ?? 0,
+                "mid_reading": check?.midReading ?? "",
                 "cursor_not_allowed": NSCursor.current == NSCursor.operationNotAllowed,
                 "cursor": String(describing: NSCursor.current),
                 "tint_visible": container?.spaceTintVisible as Any? ?? NSNull(),
@@ -87,13 +104,33 @@ extension Runtime {
                         guard let self, let check, let sidebar = self.sidebar,
                               let dock = self.dockDescendants(sidebar).compactMap({ $0 as? SpaceDockView }).first else { return }
                         let offset = sidebar.dockCheckSampleLook()
-                        let values = dock.cellStates.map(\.openFraction)
-                        if check.midTrace.count < 60 { check.midTrace.append(["offset": offset, "fractions": values.map { Double($0) }]) }
-                        guard values.count > 1, values[0] > 0.05, values[0] < 0.95, values[1] > 0.05, values[1] < 0.95 else { return }
-                        check.mid = values
-                        FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
-                        if let path = self.promptScreenScreenshot(window, name: "dock-mid", withoutShadow: true) { check.images["mid"] = path }
-                        check.timer?.invalidate(); check.timer = nil
+                        let scroll = sidebar.dockCheckScrollState
+                        var values = dock.cellStates.map(\.openFraction)
+                        var captured = false
+                        if DockScreenCheck.midBand(values) {
+                            // Draw the sample before imaging it: the pump only marks the cells for
+                            // display and screencapture blocks the main thread, so without this the
+                            // image is the previous pass. Re-read after the flush so the image and
+                            // the recorded mid are the same fill.
+                            window.displayIfNeeded()
+                            CATransaction.flush()
+                            let drawn = dock.cellStates.map(\.openFraction)
+                            if DockScreenCheck.midBand(drawn) {
+                                values = drawn
+                                captured = true
+                                check.mid = drawn
+                                FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
+                                if let path = self.promptScreenScreenshot(window, name: "dock-mid", withoutShadow: true) { check.images["mid"] = path }
+                                check.timer?.invalidate(); check.timer = nil
+                            }
+                        }
+                        if check.midTrace.count < 60 {
+                            var entry = scroll
+                            entry["offset"] = offset
+                            entry["fractions"] = values.map { Double($0) }
+                            entry["captured"] = captured
+                            check.midTrace.append(entry)
+                        }
                     }
                 }
                 check.timer = timer
@@ -131,7 +168,7 @@ extension Runtime {
                 sidebar.scrollWheel(with: followEvent)
                 let values = dock.cellStates.map(\.openFraction)
                 check.mid = values
-                check.report("follow_mid", values.count > 1 && values[0] > 0.05 && values[0] < 0.95 && values[1] > 0.05 && values[1] < 0.95)
+                check.report("follow_mid", DockScreenCheck.midBand(values))
                 sidebar.scrollWheel(with: cancelEvent)
                 browserCheckPhase = 10
                 return
@@ -146,7 +183,7 @@ extension Runtime {
                 // A 0.25 s spring plus one engine round trip; past three seconds the switch is not
                 // coming, and the tick count and mid trace below name what did happen.
                 guard check.wheelTicks >= 30 else { return }
-                FileHandle.standardError.write(Data("ararat-trace: dock wheel did not land after \(check.wheelTicks) ticks shown=\(sidebar.spaceShown) open=\(dock.cellStates.map(\.openFraction))\n".utf8))
+                FileHandle.standardError.write(Data("ararat-trace: dock wheel did not land after \(check.wheelTicks) ticks shown=\(sidebar.spaceShown) open=\(dock.cellStates.map(\.openFraction)) mid=\(check.midReading)\n".utf8))
                 if screen { check.report("wheel_mid", check.mid != nil) }
                 check.report("wheel_settled", false)
                 finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen))
@@ -155,7 +192,10 @@ extension Runtime {
             // The pump writes the mid sample; once the landing is visible no later sample can be
             // mid, so an empty mid here is the answer rather than a reason to wait for the timeout.
             check.timer?.invalidate(); check.timer = nil
-            if screen { check.report("wheel_mid", check.mid != nil); check.report("capture_mid", check.images["mid"] != nil) }
+            if screen {
+                if check.mid == nil { FileHandle.standardError.write(Data("ararat-trace: dock no mid sample, mid=\(check.midReading)\n".utf8)) }
+                check.report("wheel_mid", check.mid != nil); check.report("capture_mid", check.images["mid"] != nil)
+            }
             let landed = dock.cellStates[0].openFraction < 0.001
             check.report("wheel_settled", landed)
             guard landed else { finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen)); return }
