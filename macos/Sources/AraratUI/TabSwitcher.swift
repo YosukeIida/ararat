@@ -17,12 +17,10 @@ public final class TabSwitcher {
     private var awaitingRows = true
     private var commitPending = false
     private let favicon: (String) -> NSImage?
-    private let visible: Bool
 
-    public init(parent: NSWindow, backwards: Bool, visible: Bool = true, favicon: @escaping (String) -> NSImage?) {
+    public init(parent: NSWindow, backwards: Bool, favicon: @escaping (String) -> NSImage?) {
         self.parent = parent
         self.favicon = favicon
-        self.visible = visible
         offset = backwards ? -1 : 0
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -87,6 +85,7 @@ public final class TabSwitcher {
 
     private func draw() {
         guard let parent else { cancel(); return }
+        guard parent.isVisible else { return }
         let width = CGFloat(rows.count) * 144 + CGFloat(max(0, rows.count - 1)) * 8 + 24
         let frame = NSRect(x: parent.frame.midX - width / 2, y: parent.frame.midY - 68, width: width, height: 136)
         let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: frame.size))
@@ -105,6 +104,7 @@ public final class TabSwitcher {
             if case .tab(let id, _) = row.target { icon.image = favicon(id) }
             if icon.image == nil { icon.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) }
             let title = NSTextField(labelWithString: row.title)
+            title.textColor = index == selectedIndex ? .alternateSelectedControlTextColor : .labelColor
             title.alignment = .center
             title.lineBreakMode = .byTruncatingTail
             title.frame = NSRect(x: 8, y: 17, width: 128, height: 24)

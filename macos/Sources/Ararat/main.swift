@@ -1359,7 +1359,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if let switcher = tabSwitcher, switcher.isOpen { switcher.advance(backwards: backwards); return }
     guard hasUsableHost, let host, let workspace else { return }
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, visible: browserCheckMode != "commandbar") { [weak host] id in
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
@@ -1684,6 +1684,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "organize" || mode == "screen-organize" {
       timeoutValues["conditions"] = organizeConditions
       timeoutValues["failed_conditions"] = organizeConditionNames(screen: mode == "screen-organize").filter { organizeConditions[$0] != true }
+    }
+    if mode == "commandbar" || mode == "screen-commandbar" {
+      timeoutValues.merge(commandBarCheckDiagnostics()) { _, new in new }
     }
     if mode == "keyboard" || mode == "screen-keyboard" {
       timeoutValues.merge(keyboardResults) { _, new in new }

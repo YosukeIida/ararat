@@ -357,3 +357,16 @@ func rebindingsWithoutCommandYieldToOurOwnTextFields() async throws {
     browser.contentView = nil
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }
+
+@Test @MainActor
+func controlTabYieldsToCustomTextFieldsButNotPageResponders() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: false)
+    let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+    window.contentView?.addSubview(field)
+    let event = try routingEvent(keyCode: 48, characters: "\t", charactersIgnoringModifiers: "\t", flags: [.control])
+    #expect(window.makeFirstResponder(field))
+    #expect(WorkspaceCommands.yieldsToOwnField(defaultKeyBindings(), event: event, in: window))
+    #expect(window.makeFirstResponder(nil))
+    #expect(!WorkspaceCommands.yieldsToOwnField(defaultKeyBindings(), event: event, in: window))
+}
