@@ -647,3 +647,41 @@ func lookTrackProbeMeasuresTheActualTrackWithoutAccessibility() async throws {
     window.contentView = nil
     try await fixture.close()
 }
+
+@Test @MainActor
+func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
+    let fixture = try await LookFixture()
+    let host = NSHostingView(rootView: LookPopoverView(model: fixture.editor))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 288, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    let track = try #require(fixture.editor.checkTrackView)
+    let grain = try #require(fixture.editor.checkGrainView)
+    #expect(!track.acceptsFirstResponder && !grain.acceptsFirstResponder)
+    fixture.editor.checkFocusEnabled = true
+    #expect(fixture.editor.checkMenuView != nil)
+    func arrow(_ code: UInt16) throws {
+        let character = String(UnicodeScalar(code == 126 ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!)
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
+        window.sendEvent(event)
+    }
+    #expect(window.makeFirstResponder(track))
+    try await Task.sleep(for: .milliseconds(100))
+    try arrow(126)
+    #expect(abs(fixture.editor.transparency - 56) < 0.001)
+    fixture.editor.setTransparency(100)
+    try arrow(126)
+    #expect(fixture.editor.look.glass)
+    try arrow(125)
+    #expect(!fixture.editor.look.glass && fixture.editor.look.opacity == 0)
+    #expect(window.makeFirstResponder(grain))
+    try await Task.sleep(for: .milliseconds(100))
+    try arrow(126)
+    #expect(abs(fixture.editor.look.grain - 0.1) < 0.001)
+    #expect(window.makeFirstResponder(track))
+    try await Task.sleep(for: .milliseconds(100))
+    try arrow(126)
+    #expect(fixture.editor.look.glass)
+    window.contentView = nil
+    try await fixture.close()
+}

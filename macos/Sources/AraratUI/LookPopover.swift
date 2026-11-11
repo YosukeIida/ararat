@@ -89,7 +89,7 @@ struct LookPopoverView: View {
                         Button("Use for All Spaces") { model.useForAll() }
                         Button("Reset Look") { model.reset() }
                     } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
-                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Look options")
+                    .menuStyle(.borderlessButton).fixedSize().background(LookTrackProbe(model: model, target: .menu)).accessibilityLabel("Look options")
                 }.padding(.horizontal, 5)
             }
             HStack {
@@ -191,6 +191,7 @@ struct TransparencyInteraction {
 
 struct TransparencyControl: View {
     @ObservedObject var model: LookEditorModel
+    @FocusState private var keyboardFocused: Bool
     @State private var interaction = TransparencyInteraction()
     @State private var dragging = false
     var body: some View {
@@ -222,7 +223,7 @@ struct TransparencyControl: View {
                         .frame(width: 20, height: 20).offset(x: width + 14)
                     Circle().fill(Color.primary).frame(width: 12, height: 12).offset(x: thumb - 6)
                 }.frame(width: geometry.size.width, height: 30, alignment: .leading)
-                    .background(LookTrackProbe(model: model)).contentShape(Rectangle())
+                    .background(LookTrackProbe(model: model, target: .transparency, focus: { keyboardFocused = true })).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
                         interaction.haptic = model.alignmentHaptic
@@ -234,7 +235,7 @@ struct TransparencyControl: View {
         .accessibilityElement(children: .ignore).accessibilityLabel("Transparency")
         .accessibilityValue(model.look.glass ? "Liquid Glass" : "\(Int(model.transparency.rounded())) percent")
         .accessibilityAdjustableAction { TransparencyInteraction.adjust($0, model: model) }
-        .focusable().onMoveCommand { direction in
+        .focusable().focused($keyboardFocused).onMoveCommand { direction in
             if direction == .right || direction == .up { TransparencyInteraction.adjust(.increment, model: model) }
             if direction == .left || direction == .down { TransparencyInteraction.adjust(.decrement, model: model) }
         }
@@ -270,22 +271,42 @@ struct GrainInteraction {
 }
 
 struct LookTrackProbe: NSViewRepresentable {
+    enum Target { case transparency, grain, menu }
     let model: LookEditorModel
-    func makeNSView(context: Context) -> NSView {
+    var target: Target = .transparency
+    var focus: (() -> Void)?
+    func makeNSView(context: Context) -> LookTrackProbeView {
         let view = LookTrackProbeView()
-        model.checkTrackView = view
+        updateNSView(view, context: context)
         return view
     }
-    func updateNSView(_ view: NSView, context: Context) { model.checkTrackView = view }
+    func updateNSView(_ view: LookTrackProbeView, context: Context) {
+        view.focus = focus
+        view.canFocus = { [weak model] in model?.checkFocusEnabled == true }
+        switch target {
+        case .transparency: model.checkTrackView = view
+        case .grain: model.checkGrainView = view
+        case .menu: model.checkMenuView = view
+        }
+    }
 }
 
 final class LookTrackProbeView: NSView {
+    var focus: (() -> Void)?
+    var canFocus: (() -> Bool)?
+    override var acceptsFirstResponder: Bool { focus != nil && canFocus?() == true }
+    override func becomeFirstResponder() -> Bool {
+        guard let focus else { return false }
+        focus()
+        return true
+    }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func isAccessibilityElement() -> Bool { false }
 }
 
 struct GrainControl: View {
     @ObservedObject var model: LookEditorModel
+    @FocusState private var keyboardFocused: Bool
     @State private var interaction = GrainInteraction()
     var body: some View {
         HStack {
@@ -298,7 +319,7 @@ struct GrainControl: View {
                 }.contentShape(Circle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                     interaction.drag(GrainInteraction.value(at: event.location, size: geometry.size), model: model)
                 }.onEnded { _ in interaction.previous = nil; model.end() })
-            }.frame(width: 36, height: 36)
+            }.frame(width: 36, height: 36).background(LookTrackProbe(model: model, target: .grain, focus: { keyboardFocused = true }))
             Text("Grain \(Int((model.look.grain * 100).rounded()))%").font(.caption)
             Spacer()
         }.accessibilityElement(children: .ignore).accessibilityLabel("Grain")
@@ -309,7 +330,7 @@ struct GrainControl: View {
                 case .decrement: GrainInteraction.adjust(-1, model: model)
                 @unknown default: break
                 }
-            }.focusable().onMoveCommand { direction in
+            }.focusable().focused($keyboardFocused).onMoveCommand { direction in
                 if direction == .right || direction == .up { GrainInteraction.adjust(1, model: model) }
                 if direction == .left || direction == .down { GrainInteraction.adjust(-1, model: model) }
             }
@@ -323,15 +344,23 @@ public final class LookCheckProbe {
     init(_ anchor: LookPopoverAnchor) {
         self.anchor = anchor
         if !anchor.popover.isShown { anchor.performClick(nil) }
+        anchor.editor?.checkFocusEnabled = true
         anchor.editor?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
     }
     public var window: NSWindow? { anchor.popover.contentViewController?.view.window }
     public var look: Look? { anchor.editor?.look }
     public var editing: Bool { anchor.editor?.editing == true }
     public var transparencyTag: String? { anchor.editor?.checkTransparencyTag }
-    public var trackFrame: NSRect? {
-        guard let view = anchor.editor?.checkTrackView, let window = view.window else { return nil }
+    private func frame(_ view: NSView?) -> NSRect? {
+        guard let view, let window = view.window else { return nil }
         return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+    public var trackFrame: NSRect? { frame(anchor.editor?.checkTrackView) }
+    public var menuFrame: NSRect? { frame(anchor.editor?.checkMenuView) }
+    public func focus(_ label: String) -> Bool {
+        let view = label == "Transparency" ? anchor.editor?.checkTrackView : anchor.editor?.checkGrainView
+        guard let view, let window = view.window else { return false }
+        return window.makeFirstResponder(view)
     }
 }
 

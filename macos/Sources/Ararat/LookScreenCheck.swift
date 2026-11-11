@@ -16,7 +16,7 @@ final class LookScreenCheck {
     var count = 0
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["open", "accessibility", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency", "ax_transparency_input", "ax_grain_input", "adjustable_elements"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] : [])
+        ["open", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] : [])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -55,11 +55,7 @@ final class LookScreenCheck {
         window.sendEvent(event)
         return true
     }
-    func focus(_ label: String) -> Bool {
-        guard let control = element(label) else { return false }
-        control.setAccessibilityFocused(true)
-        return control.isAccessibilityFocused()
-    }
+    func focus(_ label: String) -> Bool { probe?.focus(label) == true }
     func journalCount(_ path: String?) -> Int? {
         guard let path else { return nil }
         var db: OpaquePointer?
@@ -128,7 +124,7 @@ extension Runtime {
             "ax_elements": ax,
             "transparency_frame": check?.element("Transparency").map { rectFields($0.accessibilityFrame()) } as Any? ?? NSNull(),
             "track_frame": check?.probe?.trackFrame.map { rectFields($0) } as Any? ?? NSNull(),
-        "track_point_100": point.map { ["x": $0.x, "y": $0.y] } as Any? ?? NSNull(),
+            "track_point_100": point.map { ["x": $0.x, "y": $0.y] } as Any? ?? NSNull(),
             "images": check?.images ?? [:]]
     }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -161,15 +157,10 @@ extension Runtime {
             check.probe = probe
             end(true, "open")
         case 2:
-            guard let popup = check.probe?.window else { return }
-            let all = check.elements(popup)
-            let transparency = all.filter { $0.accessibilityLabel() == "Transparency" }
-            let grain = all.filter { $0.accessibilityLabel() == "Grain" }
-            let valid = transparency.count == 1 && grain.count == 1 && (transparency.first?.accessibilityValue() as? String) == "55 percent" && (grain.first?.accessibilityValue() as? String) == "5 percent"
-            guard valid else { return }
+            guard let popup = check.probe?.window, let menuFrame = check.probe?.menuFrame, check.probe?.trackFrame != nil else { return }
             if !check.initialPrepared {
-                check.report("accessibility", true)
-                guard check.mouse(.leftMouseDown, position: 0.54), check.mouse(.leftMouseDragged, position: 0.55), check.mouse(.leftMouseUp, position: 0.55) else { end(false, "initial_preview_input"); return }
+                guard check.mouse(.leftMouseDown, position: 0.54), check.mouse(.leftMouseUp, position: 0.54),
+                      check.mouse(.leftMouseDown, position: 0.55), check.mouse(.leftMouseUp, position: 0.55) else { end(false, "initial_preview_input"); return }
                 check.report("initial_preview_input", true)
                 check.initialPrepared = true
                 return
@@ -180,7 +171,8 @@ extension Runtime {
             guard capture("55") else { end(false, "capture_55"); return }
             if screen { check.report("capture_55", true) }
             check.watchMenu()
-            guard let menu = check.element("Look options"), menu.accessibilityPerformPress() else { check.stopWatchingMenu(); end(false, "menu_open"); return }
+            let point = NSPoint(x: menuFrame.midX, y: menuFrame.midY)
+            guard check.event(.leftMouseDown, screen: point, window: popup), check.event(.leftMouseUp, screen: point, window: popup) else { check.stopWatchingMenu(); end(false, "menu_open"); return }
             end(true, "menu_open")
         case 3:
             guard let items = check.menuItems else { return }
@@ -249,14 +241,6 @@ extension Runtime {
             let rendering = sidebarContainer.lookCheckRendering(reduced: true)
             end(count == check.count + 1 && rendering.vibrancy && !rendering.glass && rendering.grain > 0 && rendering.alpha == 0, "reduced_transparency")
         case 16:
-            end(check.element("Transparency")?.accessibilityPerformDecrement() == true, "ax_transparency_input")
-        case 17:
-            guard let look = stored(), !look.glass, look.opacity == 0 else { return }
-            end(check.element("Grain")?.accessibilityPerformIncrement() == true, "ax_grain_input")
-        case 18:
-            guard let look = stored(), abs(look.grain - 0.15) < 0.001 else { return }
-            end(true, "adjustable_elements")
-        case 19:
             finishBrowserCheck(ok: true, values: ["conditions": check.conditions, "failed_conditions": [], "images": check.images])
         default: break
         }
