@@ -3,6 +3,7 @@ import AraratKit
 
 @MainActor
 public final class SidebarView: NSView {
+    public var onEditURL: (() -> Void)?
     public var onCreateSpace: ((String) -> Void)?
     public var onCreatePageChanged: (() -> Void)?
     private(set) public var createSpaceOpen = false
@@ -63,7 +64,7 @@ public final class SidebarView: NSView {
     private var selectedID: String?
 
     private let header = NSTextField(labelWithString: "")
-    private let urlField = NSView()
+    let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
     private let favorites = NSStackView()
     private var favoriteColumns = 0
@@ -487,10 +488,17 @@ public final class SidebarView: NSView {
         if notify { onShowSpace?(snapshot.spaces[index].id) }
     }
 
+    @objc private func editURLClicked() { onEditURL?() }
+
     private func build() {
         wantsLayer = true
         layer?.masksToBounds = true
         library.onScroll = { [weak self] event, scroll in self?.handleSpaceScroll(event, from: scroll) ?? false }
+        urlField.title = ""
+        urlField.isBordered = false
+        urlField.target = self
+        urlField.action = #selector(editURLClicked)
+        urlField.setAccessibilityLabel("Edit URL")
         urlField.wantsLayer = true
         urlField.layer?.cornerRadius = 11
         urlField.layer?.cornerCurve = .continuous
@@ -748,6 +756,7 @@ public final class SidebarView: NSView {
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
         host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
+        urlField.setAccessibilityValue(host.stringValue)
 
         reloadFavorites()
 

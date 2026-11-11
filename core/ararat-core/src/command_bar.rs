@@ -12,9 +12,6 @@ pub fn search_url(query: &str) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Tab { id: String, space_id: Option<String> },
-    /// No longer produced: the bar dropped archive rows (design, U23 D2) and the Library owns
-    /// the archive. The case stays until the app's bar drops its arms with the D9/D10 pass.
-    Archive { id: String },
     OpenUrl { url: String },
     Search { url: String },
     Command { id: String },
@@ -148,7 +145,7 @@ impl Index {
         let entries = entries.into_iter().map(|entry| {
             let key = entry.suggestion.url.as_ref().map(|url| {
                 let mut key = SearchKey::new(&entry.suggestion.title, url);
-                let id = match &entry.suggestion.target { Target::Tab { id, .. } | Target::Archive { id } => Some(id), _ => None };
+                let id = match &entry.suggestion.target { Target::Tab { id, .. } => Some(id), _ => None };
                 key.saved_title = id.and_then(|id| ws.items.get(id)).and_then(|item| match &item.kind {
                     ItemKind::Tab { saved_title, .. } => saved_title.as_ref().map(|s| s.to_lowercase()), _ => None,
                 });

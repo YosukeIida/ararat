@@ -51,8 +51,8 @@ public enum CommandBarMetrics {
 
     /// Centred horizontally; the field stays put and shorter lists hang down: the top edge sits
     /// at the window's midY + full-height/2 + 40 [Cra, MainWindowController.swift:1835-1843].
-    public static func panelFrame(windowFrame: NSRect, width: CGFloat, rows: Int) -> NSRect {
-        let barHeight = height(forRows: rows)
+    public static func panelFrame(windowFrame: NSRect, width: CGFloat, rows: Int, privateWindow: Bool = false) -> NSRect {
+        let barHeight = height(forRows: rows) + (privateWindow ? 32 : 0)
         let top = windowFrame.midY + height(forRows: maxRows) / 2 + 40
         return NSRect(x: windowFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
     }
@@ -95,6 +95,10 @@ public final class CommandBarController {
     public var now: () -> Date = { Date() }
     public private(set) var openedAt: Date?
     private var store: CommandBarStore?
+    public var privateWindow = false
+    public var onQuery: (String, Int) -> Void = { _, _ in }
+    public private(set) var queryGeneration = 0
+    private var history: [HistoryEntry] = []
     /// Return (or ⌘Return) pressed while the store is pending: the bar stays open and the
     /// commit runs when `applyStore` lands, so the typed text is not dropped in the adapter
     /// round trip. nil when nothing is pending; the last key wins.
@@ -122,6 +126,7 @@ public final class CommandBarController {
     /// and field key at once and `applyStore` replays the typed text when it arrives.
     public func open(mode: CommandBarMode, prefill: String?, store: CommandBarStore?) {
         self.store = store
+        history = []
         self.mode = mode
         query = prefill ?? ""
         fieldText = query
@@ -133,6 +138,8 @@ public final class CommandBarController {
         isOpen = true
         openedAt = now()
         relist()
+        queryGeneration += 1
+        onQuery(query, queryGeneration)
     }
 
     /// The session that arrived after the open applies: the typed text replays as the query
@@ -152,6 +159,15 @@ public final class CommandBarController {
         query = newQuery
         selectedIndex = 0
         previewText = nil
+        history = []
+        relist()
+        queryGeneration += 1
+        onQuery(newQuery, queryGeneration)
+    }
+
+    public func updateHistory(_ entries: [HistoryEntry], for text: String) {
+        guard isOpen, query == text, !privateWindow else { return }
+        history = entries
         relist()
     }
 
@@ -159,11 +175,11 @@ public final class CommandBarController {
         var result: CommandBarResult
         if mode == .search, let store, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let url = store.searchURL(query)
-            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], privateWindow: false)
+            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], privateWindow: privateWindow)
         } else if mode == .search {
-            result = CommandBarResult(rows: [], privateWindow: false)
+            result = CommandBarResult(rows: [], privateWindow: privateWindow)
         } else {
-            result = store?.query(query, history: []) ?? CommandBarResult(rows: [], privateWindow: false)
+            result = store?.query(query, history: history) ?? CommandBarResult(rows: [], privateWindow: privateWindow)
         }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
         self.result = result
@@ -190,7 +206,7 @@ public final class CommandBarController {
             return query
         case .command, .space, .folder, .moveToSpace, .moveToFolder:
             return suggestion.title
-        case .tab, .archive, .history:
+        case .tab, .history:
             guard let url = suggestion.url else { return suggestion.title }
             var text = url
             for prefix in ["https://www.", "http://www.", "https://", "http://"] where text.hasPrefix(prefix) { text = String(text.dropFirst(prefix.count)); break }

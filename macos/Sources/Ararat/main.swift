@@ -768,6 +768,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     bindings.load { [weak self] result in
       if case .failure(let error) = result { self?.report(error) }
     }
+    sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
     self.sidebar = sidebar
     self.container = container
     adapter.onPageFullscreenChanged = { [weak container] in container?.pageFullscreen = $0 }
@@ -1389,7 +1390,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
             }
           }
         } else if let url = row.url { adapter.select(id: id, url: url) }
-      case .archive(let id): self.restoreWorkspaceItem(id)
       case .space(let id):
         self.showSuggestedSpace(id)
       case .folder(let id, let space):
@@ -1433,8 +1433,24 @@ final class Runtime: NSObject, NSMenuItemValidation {
         }
       }
     }
+    presenter.controller.privateWindow = host.isPrivateWindow()
+    presenter.controller.onQuery = { [weak self, weak presenter, weak host] text, generation in
+      guard let presenter, let host, !presenter.controller.privateWindow, presenter.controller.mode != .search else { return }
+      host.queryHistory(text) { [weak presenter, weak self] rows in
+        let entries = rows.compactMap { row -> HistoryEntry? in
+          guard let title = row["title"] as? String, let url = row["url"] as? String,
+                let lastVisit = row["lastVisit"] as? NSNumber else { return nil }
+          return HistoryEntry(title: title, url: url, lastVisit: lastVisit.uint64Value)
+        }
+        MainActor.assumeIsolated {
+          guard let presenter, let self, self.host?.profileDirectory() == capturedProfile,
+                presenter.controller.queryGeneration == generation else { return }
+          presenter.controller.updateHistory(entries, for: text)
+        }
+      }
+    }
     presenter.open(mode: spec.mode, prefill: spec.prefill)
-    workspace.commandBarSession { [weak self, weak presenter] result in
+    workspace.commandBarSession(privateWindow: presenter.controller.privateWindow) { [weak self, weak presenter] result in
       guard let self, let presenter, self.commandPresenter === presenter,
             let session = try? result.get() else { return }
       presenter.applyStore(CommandBarSessionStore(session: session))
@@ -3619,9 +3635,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 364:
       guard snapshot.archive.contains(where: { $0.id == keyboardRestoreItem }),
             !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }) else { return }
-      openCommandBar(.newTab)
-      guard let bar = commandPresenter?.controller else { fail("archive suggestion panel"); return }
-      bar.commit(Suggestion(title: "Restore", subtitle: "", url: nil, key: nil, target: .archive(id: keyboardRestoreItem), score: 0))
+      restoreWorkspaceItem(keyboardRestoreItem)
       browserCheckPhase = 365
     case 365:
       guard snapshot.selectedId == keyboardRestoreItem, host.activeItemId() == keyboardRestoreItem,

@@ -162,6 +162,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         background.blendingMode = .behindWindow
 
         let sidebar = SidebarView(snapshot: snapshot)
+        sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
         self.sidebar = sidebar
         let card = PlaceholderCard()
         self.card = card
@@ -584,7 +585,6 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         guard let row else { return } // an empty query leaves nothing to commit
         switch row.target {
         case .tab(let id, let spaceId): switchToCommandBarTab(id: id, spaceId: spaceId)
-        case .archive(let id): restore(id: id) { _ in }
         case .openUrl(let url), .search(let url), .history(let url): commitCommandBarURL(url, mode: mode, forceNewTab: forceNewTab)
         case .command(let id): perform(command: id)
         case .space(let id): switchToCommandBarSpace(id: id)

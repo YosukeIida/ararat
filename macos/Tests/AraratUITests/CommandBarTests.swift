@@ -28,9 +28,11 @@ private func barRow(_ title: String, target: SuggestionTarget, url: String? = ni
 private final class FakeCommandBarStore: CommandBarStore {
     var results: [String: CommandBarResult] = [:]
     var queries: [String] = []
+    var lastHistory: [HistoryEntry] = []
 
     func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult {
         queries.append(text)
+        lastHistory = history
         return results[text] ?? CommandBarResult(rows: [], privateWindow: false)
     }
     func searchURL(_ text: String) -> String { "search:" + text }
@@ -519,15 +521,10 @@ func editingPinnedTabKeepsItsSavedDestination() async throws {
 }
 
 @Test @MainActor
-func archiveMoveAndCommandRowsReachTheCore() async throws {
+func moveAndCommandRowsReachTheCore() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let (harness, adapter) = try await commitHarness(directory)
-
-    // Restore from archive brings the archived tab back selected.
-    _ = try await commitValue { adapter.archive(id: "tab-b", completion: $0) }
-    harness.commitCommandBar(barRow("Unique Beta", target: .archive(id: "tab-b")), mode: .newTab, forceNewTab: false)
-    try await waitUntil { harness.snapshot.selectedId == "tab-b" }
 
     // Selecting a tab through the bar first, so the move commits have a current selection.
     harness.commitCommandBar(barRow("Unique Alpha", target: .tab(id: "tab-a", spaceId: "space-work")), mode: .newTab, forceNewTab: false)
@@ -784,3 +781,31 @@ func returnBeforeTheSessionArrivesCommitsWhenItLands() throws {
     #expect(forcedCommits[0] == true && !forced.isOpen)
 }
 
+
+@Test @MainActor
+func historyRepliesFollowTheCurrentQueryAndPrivateSearchKeepsItsNote() {
+    let controller = CommandBarController()
+    let store = FakeCommandBarStore()
+    controller.open(mode: .newTab, prefill: nil, store: store)
+    controller.update(query: "first")
+    controller.update(query: "second")
+    let page = HistoryEntry(title: "First", url: "https://example.test", lastVisit: 1)
+    controller.updateHistory([page], for: "first")
+    #expect(store.lastHistory.isEmpty)
+    controller.updateHistory([page], for: "second")
+    #expect(store.lastHistory.count == 1)
+    controller.privateWindow = true
+    controller.open(mode: .search, prefill: nil, store: store)
+    controller.update(query: "private")
+    #expect(controller.result.privateWindow)
+    controller.close()
+}
+
+@Test @MainActor
+func clickingTheURLFieldRequestsEditURL() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    var requests = 0
+    sidebar.onEditURL = { requests += 1 }
+    sidebar.urlField.performClick(nil)
+    #expect(requests == 1)
+}

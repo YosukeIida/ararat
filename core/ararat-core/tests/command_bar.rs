@@ -111,7 +111,6 @@ fn archive_rows_are_gone_and_the_visible_rows_keep_their_scores() {
     }
     // D2: the bar draws no archive rows at all — the Library owns the archive.
     let rows = Index::new(&ws, "one", 1000).query("archive probe", &[]).rows;
-    assert!(!rows.iter().any(|s| matches!(s.target, Target::Archive { .. })));
     assert!(!rows.iter().any(|s| s.url.as_deref() == Some("https://a.example.com")));
     assert!(matches!(&rows[0].target, Target::Search { .. }));
 }

@@ -391,14 +391,14 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
         (element as? NSView) ?? (element as? NSCell)?.controlView
     }
     let before = descendants(window)
-    #expect(before.filter { view($0)?.accessibilityLabel() == "Selected tab host" }.count == 1)
+    #expect(before.filter { view($0)?.accessibilityLabel() == "Edit URL" }.count == 1)
     let buttons = before.filter { $0.accessibilityRole() == .button }
-    #expect(buttons.count == spaces.count + 3)
+    #expect(buttons.count == spaces.count + 4)
     sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100))
     let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
     #expect(previews.count == 2)
     let during = descendants(window)
-    #expect(during.filter { view($0)?.accessibilityLabel() == "Selected tab host" }.count == 1)
+    #expect(during.filter { view($0)?.accessibilityLabel() == "Edit URL" }.count == 1)
     #expect(during.filter { $0.accessibilityRole() == .button }.count == buttons.count)
     for element in during {
         guard let view = view(element) else { continue }

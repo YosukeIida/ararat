@@ -1780,8 +1780,6 @@ pub struct CommandBarSession {
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum SuggestionTarget {
     Tab { id: String, space_id: Option<String> },
-    /// No longer produced: the bar dropped archive rows (U23 D2); the Library owns the archive.
-    Archive { id: String },
     OpenUrl { url: String },
     Search { url: String },
     Command { id: String },
@@ -1790,6 +1788,23 @@ pub enum SuggestionTarget {
     MoveToSpace { id: String },
     MoveToFolder { id: String, space_id: String },
     History { url: String },
+}
+
+impl From<ararat_core::command_bar::Target> for SuggestionTarget {
+    fn from(target: ararat_core::command_bar::Target) -> Self {
+        use ararat_core::command_bar::Target;
+        match target {
+            Target::Tab { id, space_id } => Self::Tab { id, space_id },
+            Target::OpenUrl { url } => Self::OpenUrl { url },
+            Target::Search { url } => Self::Search { url },
+            Target::Command { id } => Self::Command { id },
+            Target::Space { id } => Self::Space { id },
+            Target::Folder { id, space_id } => Self::Folder { id, space_id },
+            Target::MoveToSpace { id } => Self::MoveToSpace { id },
+            Target::MoveToFolder { id, space_id } => Self::MoveToFolder { id, space_id },
+            Target::History { url } => Self::History { url },
+        }
+    }
 }
 
 /// One page from Chromium's `HistoryService`, passed in per query (U23 D5): the engine owns the
@@ -1825,7 +1840,6 @@ impl CommandBarSession {
     }
 
     pub fn query(&self, text: String, history: Vec<HistoryEntry>) -> CommandBarResult {
-        use ararat_core::command_bar::Target;
         let history: Vec<_> = history.into_iter().map(|entry| ararat_core::command_bar::HistoryEntry {
             title: entry.title, url: entry.url, last_visit: entry.last_visit,
         }).collect();
@@ -1834,18 +1848,7 @@ impl CommandBarSession {
             private_window: result.private_window,
             rows: result.rows.into_iter().map(|s| Suggestion {
                 title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
-                target: match s.target {
-                    Target::Tab { id, space_id } => SuggestionTarget::Tab { id, space_id },
-                    Target::Archive { id } => SuggestionTarget::Archive { id },
-                    Target::OpenUrl { url } => SuggestionTarget::OpenUrl { url },
-                    Target::Search { url } => SuggestionTarget::Search { url },
-                    Target::Command { id } => SuggestionTarget::Command { id },
-                    Target::Space { id } => SuggestionTarget::Space { id },
-                    Target::Folder { id, space_id } => SuggestionTarget::Folder { id, space_id },
-                    Target::MoveToSpace { id } => SuggestionTarget::MoveToSpace { id },
-                    Target::MoveToFolder { id, space_id } => SuggestionTarget::MoveToFolder { id, space_id },
-                    Target::History { url } => SuggestionTarget::History { url },
-                },
+                target: s.target.into(),
             }).collect(),
         }
     }
@@ -1865,23 +1868,11 @@ impl WorkspaceStore {
     /// The shown space's most recently selected tabs, newest first, for the ⌃Tab switcher
     /// (U23 D4, D8): the same list an empty command bar shows.
     pub fn recent_tabs(&self, window_id: String, limit: u32) -> Vec<Suggestion> {
-        use ararat_core::command_bar::Target;
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
         ararat_core::command_bar::recent_tabs(&workspace, &window_id, limit as usize).into_iter().map(|s| Suggestion {
             title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
-            target: match s.target {
-                Target::Tab { id, space_id } => SuggestionTarget::Tab { id, space_id },
-                Target::Archive { id } => SuggestionTarget::Archive { id },
-                Target::OpenUrl { url } => SuggestionTarget::OpenUrl { url },
-                Target::Search { url } => SuggestionTarget::Search { url },
-                Target::Command { id } => SuggestionTarget::Command { id },
-                Target::Space { id } => SuggestionTarget::Space { id },
-                Target::Folder { id, space_id } => SuggestionTarget::Folder { id, space_id },
-                Target::MoveToSpace { id } => SuggestionTarget::MoveToSpace { id },
-                Target::MoveToFolder { id, space_id } => SuggestionTarget::MoveToFolder { id, space_id },
-                Target::History { url } => SuggestionTarget::History { url },
-            },
+            target: s.target.into(),
         }).collect()
     }
 
