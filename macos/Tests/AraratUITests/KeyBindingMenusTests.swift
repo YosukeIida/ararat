@@ -137,12 +137,7 @@ func theHarnessMenuCarriesForceReloadWithItsDefaultKey() throws {
     #expect(item.title == "Force Reload")
     #expect(item.menu?.title == "View")
     #expect(item.action == #selector(HarnessDelegate.forceReload(_:)))
-    // ⇧⌘R, in either encoding AppKit is given today: the letter with Shift in the mask, or the
-    // uppercase letter with no Shift (what `setCoreMenuShortcut` writes; S1 moves every menu
-    // to that form).
-    let shifted = item.keyEquivalent == "r" && item.keyEquivalentModifierMask == [.command, .shift]
-    let shiftedUppercase = item.keyEquivalent == "R" && item.keyEquivalentModifierMask == [.command]
-    #expect(shifted || shiftedUppercase, "Force Reload carries ⇧⌘R")
+    #expect(item.keyEquivalent == "R" && item.keyEquivalentModifierMask == [.command])
 }
 
 @Test @MainActor
