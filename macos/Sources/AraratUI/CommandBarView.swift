@@ -224,6 +224,7 @@ final class CommandBarRowView: NSView {
     private static func symbol(_ suggestion: Suggestion) -> String {
         switch suggestion.target {
         case .tab, .archive, .openUrl: return "globe"
+        case .history: return "clock"
         case .search: return "magnifyingglass"
         case .command: return "command"
         case .space, .moveToSpace: return "square.grid.2x2"
@@ -243,7 +244,7 @@ final class CommandBarRowView: NSView {
 
     private static func detail(_ suggestion: Suggestion) -> String {
         switch suggestion.target {
-        case .openUrl, .search, .command, .space, .folder, .moveToSpace, .moveToFolder:
+        case .openUrl, .search, .command, .space, .folder, .moveToSpace, .moveToFolder, .history:
             return "" // the trailing text names these rows (Cra's detail for the same kinds)
         case .archive:
             return suggestion.subtitle.isEmpty ? "" : " — \(suggestion.subtitle)" // [Cra, V:322]

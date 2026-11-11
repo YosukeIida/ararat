@@ -1780,6 +1780,7 @@ pub struct CommandBarSession {
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum SuggestionTarget {
     Tab { id: String, space_id: Option<String> },
+    /// No longer produced: the bar dropped archive rows (U23 D2); the Library owns the archive.
     Archive { id: String },
     OpenUrl { url: String },
     Search { url: String },
@@ -1788,6 +1789,16 @@ pub enum SuggestionTarget {
     Folder { id: String, space_id: String },
     MoveToSpace { id: String },
     MoveToFolder { id: String, space_id: String },
+    History { url: String },
+}
+
+/// One page from Chromium's `HistoryService`, passed in per query (U23 D5): the engine owns the
+/// store, the core matches and scores. `last_visit` is milliseconds since the epoch, 0 if unknown.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct HistoryEntry {
+    pub title: String,
+    pub url: String,
+    pub last_visit: u64,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -1803,7 +1814,8 @@ pub struct Suggestion {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct CommandBarResult {
     pub rows: Vec<Suggestion>,
-    pub inline_completion: Option<String>,
+    /// The window is private: no history rows, and the bar shows its note (U23 D7).
+    pub private_window: bool,
 }
 
 #[uniffi::export]
@@ -1812,11 +1824,14 @@ impl CommandBarSession {
         ararat_core::command_bar::search_url(&text)
     }
 
-    pub fn query(&self, text: String) -> CommandBarResult {
+    pub fn query(&self, text: String, history: Vec<HistoryEntry>) -> CommandBarResult {
         use ararat_core::command_bar::Target;
-        let result = self.index.query(&text);
+        let history: Vec<_> = history.into_iter().map(|entry| ararat_core::command_bar::HistoryEntry {
+            title: entry.title, url: entry.url, last_visit: entry.last_visit,
+        }).collect();
+        let result = self.index.query(&text, &history);
         CommandBarResult {
-            inline_completion: result.inline_completion,
+            private_window: result.private_window,
             rows: result.rows.into_iter().map(|s| Suggestion {
                 title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
                 target: match s.target {
@@ -1829,6 +1844,7 @@ impl CommandBarSession {
                     Target::Folder { id, space_id } => SuggestionTarget::Folder { id, space_id },
                     Target::MoveToSpace { id } => SuggestionTarget::MoveToSpace { id },
                     Target::MoveToFolder { id, space_id } => SuggestionTarget::MoveToFolder { id, space_id },
+                    Target::History { url } => SuggestionTarget::History { url },
                 },
             }).collect(),
         }
@@ -1837,11 +1853,36 @@ impl CommandBarSession {
 
 #[uniffi::export]
 impl WorkspaceStore {
-    pub fn command_bar_session(&self, window_id: String) -> Arc<CommandBarSession> {
+    /// `private_window` withholds history rows and marks the result so the bar shows its note
+    /// (U23 D7); the private window's own workspace is a later slice (5.3).
+    pub fn command_bar_session(&self, window_id: String, private_window: bool) -> Arc<CommandBarSession> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
-        Arc::new(CommandBarSession { index: ararat_core::command_bar::Index::new(&workspace, &window_id, now) })
+        Arc::new(CommandBarSession { index: ararat_core::command_bar::Index::new(&workspace, &window_id, now).private_window(private_window) })
+    }
+
+    /// The shown space's most recently selected tabs, newest first, for the ⌃Tab switcher
+    /// (U23 D4, D8): the same list an empty command bar shows.
+    pub fn recent_tabs(&self, window_id: String, limit: u32) -> Vec<Suggestion> {
+        use ararat_core::command_bar::Target;
+        let mut workspace = self.workspace.lock().unwrap().clone();
+        workspace.repair_tree();
+        ararat_core::command_bar::recent_tabs(&workspace, &window_id, limit as usize).into_iter().map(|s| Suggestion {
+            title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
+            target: match s.target {
+                Target::Tab { id, space_id } => SuggestionTarget::Tab { id, space_id },
+                Target::Archive { id } => SuggestionTarget::Archive { id },
+                Target::OpenUrl { url } => SuggestionTarget::OpenUrl { url },
+                Target::Search { url } => SuggestionTarget::Search { url },
+                Target::Command { id } => SuggestionTarget::Command { id },
+                Target::Space { id } => SuggestionTarget::Space { id },
+                Target::Folder { id, space_id } => SuggestionTarget::Folder { id, space_id },
+                Target::MoveToSpace { id } => SuggestionTarget::MoveToSpace { id },
+                Target::MoveToFolder { id, space_id } => SuggestionTarget::MoveToFolder { id, space_id },
+                Target::History { url } => SuggestionTarget::History { url },
+            },
+        }).collect()
     }
 
     pub fn create_tab(&self, window_id: String, url: String) -> Result<WorkspaceSnapshot, CoreError> {

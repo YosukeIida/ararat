@@ -31,10 +31,12 @@ impl Source for Extra {
     }
 }
 #[test]
-fn extra_source_is_ranked_deduplicated_and_typed_row_is_placed() {
+fn extra_source_is_ranked_deduplicated_and_typed_row_comes_first() {
     let rows = command_bar::rank("extra", &[&Extra]);
-    assert_eq!(rows.len(), 2); assert_eq!(rows[0].score, 90.0);
-    assert!(matches!(rows[1].target, Target::Search { .. }));
+    // The typed row is always first (D1); the source's rows follow, deduplicated by URL.
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(rows[0].target, Target::Search { .. }));
+    assert_eq!(rows[1].score, 90.0);
     assert!(matches!(command_bar::rank("extra.test", &[&Extra])[0].target, Target::OpenUrl { .. }));
 }
 #[test]
@@ -49,20 +51,20 @@ fn index_covers_sources_and_excludes_the_current_tab() {
     ws.show_space("one", "space-work").unwrap();
     ws.last_selected.insert("tab-a".into(), 100); ws.last_selected.insert("tab-b".into(), 200);
     let idx = Index::new(&ws, "one", 200);
-    assert!(matches!(&idx.query("").rows[0].target, Target::Tab { id, .. } if id == "tab-b"));
-    assert!(idx.query("unique alpha").rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-a")));
-    assert!(idx.query("settings").rows.iter().any(|s| matches!(&s.target, Target::Command { id } if id == "settings") && s.key.is_some()));
-    assert!(idx.query("switch to").rows.iter().any(|s| matches!(&s.target, Target::Space { .. })));
-    assert!(idx.query("go to").rows.iter().any(|s| matches!(&s.target, Target::Folder { .. })));
+    assert!(matches!(&idx.query("", &[]).rows[0].target, Target::Tab { id, .. } if id == "tab-b"));
+    assert!(idx.query("unique alpha", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-a")));
+    assert!(idx.query("settings", &[]).rows.iter().any(|s| matches!(&s.target, Target::Command { id } if id == "settings") && s.key.is_some()));
+    assert!(idx.query("switch to", &[]).rows.iter().any(|s| matches!(&s.target, Target::Space { .. })));
+    assert!(idx.query("go to", &[]).rows.iter().any(|s| matches!(&s.target, Target::Folder { .. })));
     ws.select_item("one", "tab-a").unwrap();
     let idx = Index::new(&ws, "one", 200);
-    assert!(!idx.query("unique alpha").rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-a")));
+    assert!(!idx.query("unique alpha", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-a")));
     let moves = idx.candidates("move tab");
     assert!(moves.iter().any(|s| matches!(&s.target, Target::MoveToSpace { .. })));
     assert!(moves.iter().any(|s| matches!(&s.target, Target::MoveToFolder { .. })));
     ws.items.get_mut("tab-b").unwrap().lifecycle = Lifecycle::Archived;
     let idx = Index::new(&ws, "one", 200);
-    assert!(idx.query("unique beta").rows.iter().any(|s| matches!(&s.target, Target::Archive { id } if id == "tab-b")));
+    assert!(!idx.query("unique beta", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-b")));
 }
 
 fn fixture() -> ararat_core::model::Workspace {
@@ -74,7 +76,7 @@ fn every_default_command_is_reachable_by_its_full_title() {
     let workspace = fixture();
     let index = Index::new(&workspace, "one", 0);
     for command in ararat_core::key_bindings::commands() {
-        let rows = index.query(&command.title).rows;
+        let rows = index.query(&command.title, &[]).rows;
         assert!(rows.iter().take(5).any(|row| matches!(&row.target, Target::Command { id } if id == &command.id)), "{}", command.id);
     }
 }
@@ -96,10 +98,10 @@ fn recency_boundaries() {
 }
 
 #[test]
-fn archive_limit_and_discount() {
+fn archive_rows_are_gone_and_the_visible_rows_keep_their_scores() {
     let mut ws = fixture();
     let template = ws.items["tab-a"].clone();
-    for n in 0..401 {
+    for n in 0..3 {
         let mut item = template.clone();
         item.id = format!("arch-{n:03}");
         item.title = Some("Archive probe".into());
@@ -107,11 +109,11 @@ fn archive_limit_and_discount() {
         item.lifecycle_changed_at = n;
         ws.items.insert(item.id.clone(), item);
     }
-    let rows: Vec<_> = Index::new(&ws, "one", 1000).candidates("archive probe").into_iter().filter(|s| matches!(s.target, Target::Archive { .. })).collect();
-    assert_eq!(rows.len(), 400);
-    assert!(rows.iter().all(|s| s.score == 80.75));
-    assert!(rows.iter().any(|s| matches!(&s.target, Target::Archive { id } if id == "arch-400")));
-    assert!(!rows.iter().any(|s| matches!(&s.target, Target::Archive { id } if id == "arch-000")));
+    // D2: the bar draws no archive rows at all — the Library owns the archive.
+    let rows = Index::new(&ws, "one", 1000).query("archive probe", &[]).rows;
+    assert!(!rows.iter().any(|s| matches!(s.target, Target::Archive { .. })));
+    assert!(!rows.iter().any(|s| s.url.as_deref() == Some("https://a.example.com")));
+    assert!(matches!(&rows[0].target, Target::Search { .. }));
 }
 
 #[test]
@@ -158,22 +160,52 @@ fn empty_query_orders_recent_tabs_and_limits_to_five() {
         ws.last_selected.insert(item.id.clone(), n + 1);
         ws.items.insert(item.id.clone(), item);
     }
-    let rows = Index::new(&ws, "one", 10).query("").rows;
+    let rows = Index::new(&ws, "one", 10).query("", &[]).rows;
     assert_eq!(rows.len(), 5);
     let ids: Vec<_> = rows.iter().map(|s| match &s.target { Target::Tab { id, .. } => id.as_str(), _ => panic!("not a tab") }).collect();
     assert_eq!(ids, ["recent-5", "recent-4", "recent-3", "recent-2", "recent-1"]);
 }
 
 #[test]
-fn typed_placement_and_deduplication() {
+fn empty_query_is_the_shown_space_s_own_recents_without_the_current_tab_or_favourites() {
+    let mut ws = fixture();
+    // A tab of the other space (space-home) and a favourite (tab-mail) are outside the list.
+    let mut home = ws.items["tab-a"].clone();
+    home.id = "tab-home".into();
+    home.membership.parent = Some("today-home".into());
+    home.title = Some("Home probe".into());
+    ws.items.insert(home.id.clone(), home);
+    ws.last_selected.insert("tab-home".into(), 900);
+    ws.last_selected.insert("tab-mail".into(), 800);
+    ws.last_selected.insert("tab-spec".into(), 700);
+    ws.show_space("one", "space-work").unwrap();
+    let rows = Index::new(&ws, "one", 1000).query("", &[]).rows;
+    let ids: Vec<_> = rows.iter().map(|s| match &s.target { Target::Tab { id, .. } => id.as_str(), _ => panic!("not a tab") }).collect();
+    assert_eq!(ids, ["tab-spec", "tab-a", "tab-b"]);
+    // The favourite and the other space stay reachable once something is typed.
+    assert!(Index::new(&ws, "one", 1000).query("mail", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-mail")));
+    assert!(Index::new(&ws, "one", 1000).query("home probe", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-home")));
+    // The shown space's own list shrinks when it has fewer tabs than five (no filling in).
+    ws.show_space("one", "space-home").unwrap();
+    assert_eq!(Index::new(&ws, "one", 1000).query("", &[]).rows.iter().filter(|s| matches!(s.target, Target::Tab { .. })).count(), 1);
+}
+
+#[test]
+fn typed_row_is_always_first_over_a_matching_row() {
     let search = command_bar::rank("query", &[&Extra]);
-    assert!(matches!(&search[0].target, Target::Tab { id, .. } if id == "90"));
-    assert!(matches!(search[1].target, Target::Search { .. }));
+    assert!(matches!(&search[0].target, Target::Search { .. }), "the typed row leads");
+    assert!(matches!(&search[1].target, Target::Tab { id, .. } if id == "90"));
     assert_eq!(search.len(), 2);
     let url = command_bar::rank("example.org", &[&Extra]);
     assert!(matches!(url[0].target, Target::OpenUrl { .. }));
     assert!(matches!(&url[1].target, Target::Tab { id, .. } if id == "90"));
     assert_eq!(url.len(), 2);
+    // D1: a tab that matches better than the typed text still comes second.
+    let workspace = fixture();
+    let index = Index::new(&workspace, "one", 0);
+    let rows = index.query("Spec (renamed)", &[]).rows;
+    assert!(matches!(&rows[0].target, Target::Search { .. }));
+    assert!(matches!(&rows[1].target, Target::Tab { id, .. } if id == "tab-spec"));
 }
 
 #[test]
@@ -232,7 +264,7 @@ fn pinned_and_saved_titles_are_searchable() {
 }
 
 #[test]
-fn nonempty_results_are_limited_to_five() {
+fn nonempty_results_are_limited_to_five_and_the_typed_row_counts() {
     struct Many;
     impl Source for Many {
         fn candidates(&self, _: &str) -> Vec<Suggestion> {
@@ -241,8 +273,10 @@ fn nonempty_results_are_limited_to_five() {
     }
     let rows = command_bar::rank("query", &[&Many]);
     assert_eq!(rows.len(), 5);
-    assert!(matches!(&rows[0].target, Target::Command { id } if id == "7"));
-    assert!(matches!(&rows[1].target, Target::Search { .. }));
+    // The typed row takes one of the five (D1), so four candidates follow it.
+    assert!(matches!(&rows[0].target, Target::Search { .. }));
+    assert!(matches!(&rows[1].target, Target::Command { id } if id == "7"));
+    assert!(matches!(&rows[4].target, Target::Command { id } if id == "4"));
 }
 
 #[test]
@@ -257,9 +291,13 @@ fn unloaded_tabs_in_pinned_today_and_favorites_are_searchable_and_recent() {
     }
     let idx = Index::new(&ws, "one", 3);
     for id in ["tab-a", "tab-b", "tab-mail"] {
-        assert!(idx.query("unloaded").rows.iter().any(|s| matches!(&s.target, Target::Tab { id: found, .. } if found == id)), "search {id}");
-        assert!(idx.query("").rows.iter().any(|s| matches!(&s.target, Target::Tab { id: found, .. } if found == id)), "recent {id}");
+        assert!(idx.query("unloaded", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id: found, .. } if found == id)), "search {id}");
     }
+    // Unloaded in-space tabs stay in the empty list; a favourite does not (D4).
+    for id in ["tab-a", "tab-b"] {
+        assert!(idx.query("", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id: found, .. } if found == id)), "recent {id}");
+    }
+    assert!(!idx.query("", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id: found, .. } if found == "tab-mail")));
 }
 
 #[test]
@@ -338,56 +376,6 @@ fn favorite_move_destinations_use_favorites_profile_and_shown_space() {
     assert!(!rows.iter().any(|s| matches!(&s.target, Target::MoveToSpace { id } if id == "space-work" || id == "space-home")));
 }
 
-struct Host;
-impl Source for Host {
-    fn candidates(&self, query: &str) -> Vec<Suggestion> {
-        let row = |title: &str, url: &str, score: f64| Suggestion {
-            title: title.into(), subtitle: String::new(), url: Some(url.into()), key: None,
-            target: Target::Tab { id: "t".into(), space_id: None }, score,
-        };
-        if query.starts_with('g') { return vec![row("GitHub", "https://github.com/a", 95.0)]; }
-        if query.starts_with('w') { return vec![row("Hub", "https://www.github.com/a", 100.0)]; }
-        if query.starts_with('l') { return vec![row("Low", "https://lowhost.test/", 80.0)]; }
-        vec![]
-    }
-}
-
-// A host-less row first (about: and kin) must not end the completion search; Cra skips it
-// (SuggestionEngine.swift:463).
-struct HostlessFirst;
-impl Source for HostlessFirst {
-    fn candidates(&self, _: &str) -> Vec<Suggestion> {
-        vec![
-            Suggestion { title: "Blank".into(), subtitle: String::new(), url: Some("about:blank".into()), key: None, target: Target::Tab { id: "t".into(), space_id: None }, score: 100.0 },
-            Suggestion { title: "Netflix".into(), subtitle: String::new(), url: Some("https://www.netflix.com/".into()), key: None, target: Target::Tab { id: "t".into(), space_id: None }, score: 95.0 },
-        ]
-    }
-}
-
-#[test]
-fn inline_completion_is_the_top_rows_host() {
-    let completion = |query: &str| command_bar::rank_with_completion(query, &[&Host]).inline_completion;
-    assert_eq!(completion("git").as_deref(), Some("github.com"));
-    assert_eq!(completion("githu").as_deref(), Some("github.com"));
-    // A www host completes as its bare host, and as the full host when the query keeps www.
-    assert_eq!(completion("gith").as_deref(), Some("github.com"));
-    assert_eq!(completion("www.git").as_deref(), Some("www.github.com"));
-    let rows = command_bar::rank_with_completion("git", &[&Host]).rows;
-    assert_eq!(rows.len(), 2);
-    assert!(matches!(&rows[0].target, Target::Tab { id, .. } if id == "t"));
-    // Guards: no completion below a 90 score, for one character, with a space, or a URL with a path.
-    assert_eq!(completion("low"), None);
-    assert_eq!(completion("g"), None);
-    assert_eq!(completion("gi t"), None);
-    assert_eq!(completion("github.com/a"), None);
-    assert_eq!(completion("git.h"), None);
-    // A host-less row first does not end the search, and the query compares lowercased
-    // (Cra S:463 lowercases the query).
-    let mixed = |query: &str| command_bar::rank_with_completion(query, &[&HostlessFirst]).inline_completion;
-    assert_eq!(mixed("ne"), Some("netflix.com".into()));
-    assert_eq!(mixed("Ne"), Some("netflix.com".into()));
-}
-
 #[test]
 fn create_tab_adds_a_selected_open_tab_to_the_shown_space_today() {
     let mut ws = fixture();
@@ -423,4 +411,103 @@ fn set_tab_url_updates_an_open_tab_and_refuses_others() {
     ws.items.get_mut("tab-a").unwrap().lifecycle = Lifecycle::Archived;
     assert!(ws.set_tab_url("tab-a", "https://x.example.org/").is_err());
     assert!(ws.set_tab_url("folder-docs", "https://x.example.org/").is_err());
+}
+
+fn history(title: &str, url: &str, last_visit: u64) -> command_bar::HistoryEntry {
+    command_bar::HistoryEntry { title: title.into(), url: url.into(), last_visit }
+}
+
+#[test]
+fn rows_group_as_open_tabs_then_history_then_commands() {
+    // D2: a group outranks a score. The history page scores 130 and the command 80, and the tab
+    // (40) still leads them both; the command stays last although it beats the tab on score.
+    struct Fixed;
+    impl Source for Fixed {
+        fn candidates(&self, _: &str) -> Vec<Suggestion> {
+            vec![
+                Suggestion { title: "Probe command".into(), subtitle: "Command".into(), url: None, key: None, target: Target::Command { id: "c".into() }, score: 80.0 },
+                Suggestion { title: "Probe tab".into(), subtitle: "Work".into(), url: Some("https://tab.test/".into()), key: None,
+                    target: Target::Tab { id: "t".into(), space_id: Some("space-work".into()) }, score: 40.0 },
+            ]
+        }
+    }
+    let entries = [history("Probe history", "https://history.test/", 900_000)];
+    let history = command_bar::HistorySource::new(&entries, 1_000_000);
+    let rows = command_bar::rank_result("probe", &[&Fixed, &history], false).rows;
+    let kinds: Vec<&str> = rows.iter().map(|s| match s.target {
+        Target::Search { .. } => "typed",
+        Target::Tab { .. } => "tab",
+        Target::History { .. } => "history",
+        Target::Command { .. } => "command",
+        _ => "other",
+    }).collect();
+    assert_eq!(kinds, ["typed", "tab", "history", "command"]);
+    let row = &rows[2];
+    assert_eq!(row.subtitle, "History");
+    assert_eq!(row.url.as_deref(), Some("https://history.test/"));
+    assert_eq!(row.score, 100.0 + 30.0, "the shared recency steps apply to a visit");
+}
+
+#[test]
+fn history_rows_score_like_a_tab_and_never_take_the_empty_list() {
+    let ws = fixture();
+    let index = Index::new(&ws, "one", 1_000_000).private_window(false);
+    let entries = [history("Design tokens reference", "https://docs.example.org/design/tokens", 0)];
+    // The title prefix scores 100; no visit time means no recency boost.
+    let rows = index.query("design tokens", &entries).rows;
+    let row = rows.iter().find(|s| matches!(s.target, Target::History { .. })).unwrap();
+    assert_eq!(row.score, 95.0, "a two-word prefix scores 95, as a tab's does");
+    // A weak match is cut like a weak tab match.
+    assert!(!index.query("zz", &[history("Design tokens reference", "https://docs.example.org/design/tokens", 0)]).rows.iter().any(|s| matches!(s.target, Target::History { .. })));
+    // Nothing typed: the five recent tabs only, no history rows.
+    assert!(!index.query("", &entries).rows.iter().any(|s| matches!(s.target, Target::History { .. })));
+}
+
+#[test]
+fn a_history_page_of_an_open_tab_is_dropped_in_the_tab_s_favour() {
+    // The fixture's pinned tab-spec is https://docs.example.com/spec; history holds the same page.
+    let ws = fixture();
+    let entries = [history("Spec", "https://docs.example.com/spec", 1_000_000)];
+    let rows = Index::new(&ws, "one", 1_000_000).query("spec", &entries).rows;
+    // One row for the URL: the open tab's, never both.
+    let spec: Vec<_> = rows.iter().filter(|s| s.url.as_deref() == Some("https://docs.example.com/spec")).collect();
+    assert_eq!(spec.len(), 1);
+    assert!(matches!(spec[0].target, Target::Tab { .. }));
+}
+
+#[test]
+fn a_private_query_withholds_history_and_says_so() {
+    let ws = fixture();
+    let entries = [history("Design tokens reference", "https://docs.example.org/design/tokens", 0)];
+    let private = Index::new(&ws, "one", 1_000_000).private_window(true);
+    let result = private.query("design tokens", &entries);
+    assert!(result.private_window);
+    assert!(!result.rows.iter().any(|s| matches!(s.target, Target::History { .. })), "no history rows in a private window");
+    assert!(result.rows.iter().any(|s| matches!(s.target, Target::Tab { .. } | Target::Search { .. })));
+    // The same query in a regular window keeps them.
+    assert!(Index::new(&ws, "one", 1_000_000).private_window(false).query("design tokens", &entries).rows.iter().any(|s| matches!(s.target, Target::History { .. })));
+    assert!(!command_bar::rank("design tokens", &[]).iter().any(|s| matches!(s.target, Target::History { .. })));
+}
+
+#[test]
+fn recent_tabs_are_the_shown_space_s_mru_minus_the_current_tab_and_favourites() {
+    let mut ws = fixture();
+    ws.show_space("one", "space-work").unwrap();
+    ws.last_selected.insert("tab-a".into(), 10);
+    ws.last_selected.insert("tab-b".into(), 30);
+    ws.last_selected.insert("tab-spec".into(), 20);
+    ws.last_selected.insert("tab-mail".into(), 40);
+    let ids = |rows: Vec<Suggestion>| rows.into_iter().map(|s| match s.target { Target::Tab { id, .. } => id, _ => panic!("not a tab") }).collect::<Vec<_>>();
+    assert_eq!(ids(command_bar::recent_tabs(&ws, "one", 5)), ["tab-b", "tab-spec", "tab-a"]);
+    // The selected tab leaves the list; a shown split leaves as a whole, and a tab outside it stays.
+    ws.select_item("one", "tab-spec").unwrap();
+    assert_eq!(ids(command_bar::recent_tabs(&ws, "one", 5)), ["tab-b", "tab-a"]);
+    ws.select_item("one", "split-1").unwrap();
+    assert_eq!(ids(command_bar::recent_tabs(&ws, "one", 5)), ["tab-spec"]);
+    // A favourite is not one of the space's tabs, and the limit is honoured.
+    ws.clear_selection("one");
+    assert!(!ids(command_bar::recent_tabs(&ws, "one", 5)).contains(&"tab-mail".to_string()));
+    assert_eq!(command_bar::recent_tabs(&ws, "one", 2).len(), 2);
+    // The empty command-bar list and the switcher share the rule.
+    assert_eq!(ids(command_bar::recent_tabs(&ws, "one", 5)), ids(Index::new(&ws, "one", 0).query("", &[]).rows));
 }

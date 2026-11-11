@@ -29,9 +29,9 @@ private final class FakeCommandBarStore: CommandBarStore {
     var results: [String: CommandBarResult] = [:]
     var queries: [String] = []
 
-    func query(_ text: String) -> CommandBarResult {
+    func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult {
         queries.append(text)
-        return results[text] ?? CommandBarResult(rows: [], inlineCompletion: nil)
+        return results[text] ?? CommandBarResult(rows: [], privateWindow: false)
     }
     func searchURL(_ text: String) -> String { "search:" + text }
 }
@@ -71,10 +71,10 @@ func searchModeCommitsLiteralQueryAfterSessionArrives() {
     let controller = CommandBarController()
     let store = FakeCommandBarStore()
     controller.open(mode: .search, prefill: nil, store: nil)
-    controller.update(query: "example.com & 日本", allowCompletion: true)
+    controller.update(query: "example.com & 日本")
     var target: SuggestionTarget?
     controller.onCommit = { row, _, _ in target = row?.target }
-    controller.commit(forceNewTab: false, applyingCompletion: "example.com")
+    controller.commit(forceNewTab: false)
     #expect(controller.isOpen)
     controller.applyStore(store)
     #expect(target == .search(url: "search:example.com & 日本"))
@@ -121,7 +121,7 @@ func commandBarCommitSurvivesPresenterReleaseOnClose() {
     presenter?.onCommit = { _, _, _ in committed = true }
     presenter?.open(mode: .search, prefill: nil)
     let controller = presenter!.controller
-    controller.update(query: "example.com", allowCompletion: true)
+    controller.update(query: "example.com")
     presenter?.applyStore(FakeCommandBarStore())
     controller.commit(forceNewTab: false)
     #expect(presenter == nil && committed)
@@ -230,7 +230,7 @@ func commandBarGeometryFollowsTheDesignFormula() throws {
     // The laid-out view: field row 60 tall, then rows 50 tall, 2 apart, inset 10.
     let store = FakeCommandBarStore()
     store.results[""] = CommandBarResult(rows: [barRow("Alpha", target: .tab(id: "a", spaceId: nil), url: "https://a.test/"),
-                                                barRow("Beta", target: .tab(id: "b", spaceId: nil), url: "https://b.test/")], inlineCompletion: nil)
+                                                barRow("Beta", target: .tab(id: "b", spaceId: nil), url: "https://b.test/")], privateWindow: false)
     let (_, view, layoutWindow) = try mountedBar(store)
     defer { _ = layoutWindow }
     view.layoutSubtreeIfNeeded()
@@ -289,7 +289,7 @@ func arrowKeysWrapAndTheFieldShowsTheSelectedRow() throws {
     let rows = [barRow("GitHub", target: .tab(id: "t1", spaceId: nil), url: "https://github.test/x"),
                 barRow("Search docs", target: .command(id: "c1")),
                 barRow("Go to Docs", target: .folder(id: "f1", spaceId: "s1"))]
-    store.results["git"] = CommandBarResult(rows: rows, inlineCompletion: nil)
+    store.results["git"] = CommandBarResult(rows: rows, privateWindow: false)
     let (controller, view, window) = try mountedBar(store)
     defer { _ = window }
     let editor = try #require(view.field.currentEditor())
@@ -318,7 +318,7 @@ func returnCommitsTheSelectedRowCommandReturnForcesANewTabAndEscapeCloses() thro
     let store = FakeCommandBarStore()
     let rows = [barRow("GitHub", target: .tab(id: "t1", spaceId: nil), url: "https://github.test/"),
                 barRow("Open docs", target: .command(id: "c1"))]
-    store.results["git"] = CommandBarResult(rows: rows, inlineCompletion: nil)
+    store.results["git"] = CommandBarResult(rows: rows, privateWindow: false)
 
     // Return commits the selected row, not what is in the field.
     let (controller, view, window) = try mountedBar(store)
@@ -348,7 +348,7 @@ func returnCommitsTheSelectedRowCommandReturnForcesANewTabAndEscapeCloses() thro
 
     // Esc closes the bar.
     let (escapable, escapeView, escapeWindow) = try mountedBar(store)
-    escapable.update(query: "git", allowCompletion: true)
+    escapable.update(query: "git")
     var escapableClosed = 0
     escapable.onClose = { escapableClosed += 1 }
     let escapeEditor = try #require(escapeView.field.currentEditor())
@@ -357,49 +357,17 @@ func returnCommitsTheSelectedRowCommandReturnForcesANewTabAndEscapeCloses() thro
     for window in [window, forcedWindow, escapeWindow] { #expect(!window.isVisible) } // never ordered
 }
 
+/// D3: no inline completion. Tab and → stay in the field, and ⌘Return commits the selected row.
 @Test @MainActor
-func tabAndRightArrowAcceptTheInlineCompletion() async throws {
+func tabAndRightArrowNoLongerAcceptACompletion() throws {
     let store = FakeCommandBarStore()
-    store.results["exa"] = CommandBarResult(rows: [barRow("Example", target: .tab(id: "t1", spaceId: nil), url: "https://example.com/page", score: 95)],
-                                            inlineCompletion: "example.com")
+    store.results["exa"] = CommandBarResult(rows: [barRow("Example", target: .tab(id: "t1", spaceId: nil), url: "https://example.com/page", score: 95)], privateWindow: false)
     let (controller, view, window) = try mountedBar(store)
     defer { _ = window }
     let editor = try #require(view.field.currentEditor())
-    // Typing brings the completion from the core result: the suffix sits selected.
     editor.insertText("exa")
-    try await waitUntil { editor.selectedRange.length == "mple.com".count }
-    #expect(view.field.stringValue == "exa" + "mple.com")
-    // Tab accepts: the full text stays, the suffix is no longer selected, and the accepted
-    // text is re-queried with completion off so the suffix does not reappear.
+    #expect(view.field.stringValue == "exa")
     editor.keyDown(with: try barKeyEvent("\t", keyCode: 48))
-    #expect(view.field.stringValue == "example.com")
-    #expect(controller.query == "example.com")
-    #expect(editor.selectedRange.length == 0)
-    #expect(controller.result.inlineCompletion == nil)
-
-    // → accepts the same way on a fresh bar.
-    let (arrowed, arrowView, arrowWindow) = try mountedBar(store)
-    defer { _ = arrowWindow }
-    let arrowEditor = try #require(arrowView.field.currentEditor())
-    arrowEditor.insertText("exa")
-    try await waitUntil { arrowEditor.selectedRange.length == "mple.com".count }
-    arrowEditor.keyDown(with: try barKeyEvent("\u{F703}", keyCode: 124))
-    #expect(arrowed.query == "example.com")
-    #expect(arrowView.field.stringValue == "example.com")
-}
-
-@Test @MainActor
-func backspaceOnACompletionKeepsWhatWasTyped() async throws {
-    let store = FakeCommandBarStore()
-    store.results["exa"] = CommandBarResult(rows: [barRow("Example", target: .tab(id: "t1", spaceId: nil), url: "https://example.com/page", score: 95)],
-                                            inlineCompletion: "example.com")
-    let (controller, view, window) = try mountedBar(store)
-    defer { _ = window }
-    let editor = try #require(view.field.currentEditor())
-    editor.insertText("exa")
-    try await waitUntil { editor.selectedRange.length == "mple.com".count }
-    // Backspace removes the suggestion and keeps what was typed (Cra F:154-164).
-    editor.keyDown(with: try barKeyEvent("\u{7f}", keyCode: 51))
     #expect(view.field.stringValue == "exa")
     #expect(controller.query == "exa")
 }
@@ -409,10 +377,10 @@ func returnAndArrowsGoToTheInputMethodWhileTextIsMarked() throws {
     let store = FakeCommandBarStore()
     let rows = [barRow("GitHub", target: .tab(id: "t1", spaceId: nil), url: "https://github.test/"),
                 barRow("Other", target: .command(id: "c1"))]
-    store.results["こ"] = CommandBarResult(rows: rows, inlineCompletion: nil)
+    store.results["こ"] = CommandBarResult(rows: rows, privateWindow: false)
     let (controller, view, window) = try mountedBar(store)
     defer { _ = window }
-    controller.update(query: "こ", allowCompletion: true)
+    controller.update(query: "こ")
     let editor = try #require(view.field.currentEditor() as? NSTextView)
     var commits: [Suggestion?] = []
     controller.onCommit = { row, _, _ in commits.append(row) }
@@ -439,8 +407,8 @@ func returnAndArrowsGoToTheInputMethodWhileTextIsMarked() throws {
     // The unhandled keys may have edited the field text (there is no real IME here); the
     // result for whatever the field holds now brings the rows back.
     let settled = controller.query
-    store.results[settled] = CommandBarResult(rows: rows, inlineCompletion: nil)
-    controller.update(query: settled, allowCompletion: false)
+    store.results[settled] = CommandBarResult(rows: rows, privateWindow: false)
+    controller.update(query: settled)
     editor.keyDown(with: try barKeyEvent("\r", keyCode: 36))
     // A regression fails here instead of trapping on the index.
     try #require(commits.count == 1)
@@ -456,7 +424,7 @@ func theSessionIsBuiltOncePerOpenAndDroppedOnClose() throws {
     let controller = CommandBarController()
     let view = CommandBarView(controller: controller)
     if let held = store {
-        held.results[""] = CommandBarResult(rows: [barRow("Recent", target: .tab(id: "t1", spaceId: nil))], inlineCompletion: nil)
+        held.results[""] = CommandBarResult(rows: [barRow("Recent", target: .tab(id: "t1", spaceId: nil))], privateWindow: false)
         controller.open(mode: .newTab, prefill: nil, store: held)
         weakStore = held
         store = nil // only the controller holds the store now
@@ -603,7 +571,7 @@ func theRealSessionAnswersQueriesAndRecentTabsWithoutTyping() async throws {
     #expect(controller.result.rows.allSatisfy { row in
         switch row.target { case .tab: return true; default: return false }
     })
-    controller.update(query: "docs", allowCompletion: true)
+    controller.update(query: "docs")
     #expect(controller.result.rows.contains { $0.target == .folder(id: "folder-docs", spaceId: "space-work") })
     controller.close()
     _ = try await commitValue { adapter.shutdown(completion: $0) }
@@ -622,10 +590,10 @@ func thePanelFollowsTheRowCountOnEveryQuery() throws {
     panel.contentView = view
     controller.panelWidth = 500
     let store = FakeCommandBarStore()
-    store.results[""] = CommandBarResult(rows: [barRow("Recent", target: .tab(id: "t1", spaceId: nil))], inlineCompletion: nil)
+    store.results[""] = CommandBarResult(rows: [barRow("Recent", target: .tab(id: "t1", spaceId: nil))], privateWindow: false)
     let five = (1...5).map { barRow("Row \($0)", target: .tab(id: "t\($0)", spaceId: nil), url: "https://\($0).test/") }
-    store.results["five"] = CommandBarResult(rows: five, inlineCompletion: nil)
-    store.results["one"] = CommandBarResult(rows: [barRow("Solo", target: .tab(id: "s1", spaceId: nil), url: "https://s.test/")], inlineCompletion: nil)
+    store.results["five"] = CommandBarResult(rows: five, privateWindow: false)
+    store.results["one"] = CommandBarResult(rows: [barRow("Solo", target: .tab(id: "s1", spaceId: nil), url: "https://s.test/")], privateWindow: false)
     let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "commandbar-position"))
     harness.window = window
     harness.commandPanel = panel
@@ -654,36 +622,32 @@ func thePanelFollowsTheRowCountOnEveryQuery() throws {
 }
 
 @Test @MainActor
-func commandReturnAppliesTheShownCompletionAsReturnDoes() async throws {
-    // Rows as the core returns them for the typed query: the row's target carries the typed URL
-    // until the completion re-queries.
+func commandReturnAndReturnCommitTheSelectedRowWithoutACompletionStep() throws {
+    // D3: the typed row is the selected row, and Return/⌘Return commit it as it stands; nothing
+    // is re-queried first. ⌘Return still forces a new tab.
     let store = FakeCommandBarStore()
-    store.results["netflix.c"] = CommandBarResult(rows: [barRow("netflix.c", target: .openUrl(url: "https://netflix.c"))], inlineCompletion: "netflix.com")
-    store.results["netflix.com"] = CommandBarResult(rows: [barRow("netflix.com", target: .openUrl(url: "https://netflix.com"))], inlineCompletion: nil)
-    // ⌘Return shares Return's completion step and then forces a new tab.
+    store.results["netflix.c"] = CommandBarResult(rows: [barRow("netflix.c", target: .openUrl(url: "https://netflix.c"))], privateWindow: false)
     let (forced, forcedView, forcedWindow) = try mountedBar(store)
     defer { _ = forcedWindow }
     let forcedEditor = try #require(forcedView.field.currentEditor())
     forcedEditor.insertText("netflix.c")
-    try await waitUntil { forcedEditor.selectedRange.length == "om".count }
     var forcedCommits: [(Suggestion?, CommandBarMode, Bool)] = []
     forced.onCommit = { forcedCommits.append(($0, $1, $2)) }
     #expect(forcedView.performKeyEquivalent(with: try barKeyEvent("\r", keyCode: 36, flags: [.command])))
     try #require(forcedCommits.count == 1)
-    #expect(forcedCommits[0].0?.target == .openUrl(url: "https://netflix.com"))
+    #expect(forcedCommits[0].0?.target == .openUrl(url: "https://netflix.c"))
     #expect(forcedCommits[0].1 == .newTab && forcedCommits[0].2 == true)
 
-    // Return takes the same step through the field editor.
+    // Return through the field editor commits the same row and does not force a new tab.
     let (plain, plainView, plainWindow) = try mountedBar(store)
     defer { _ = plainWindow }
     let plainEditor = try #require(plainView.field.currentEditor())
     plainEditor.insertText("netflix.c")
-    try await waitUntil { plainEditor.selectedRange.length == "om".count }
     var commits: [(Suggestion?, CommandBarMode, Bool)] = []
     plain.onCommit = { commits.append(($0, $1, $2)) }
     plainEditor.keyDown(with: try barKeyEvent("\r", keyCode: 36))
     try #require(commits.count == 1)
-    #expect(commits[0].0?.target == .openUrl(url: "https://netflix.com"))
+    #expect(commits[0].0?.target == .openUrl(url: "https://netflix.c"))
     #expect(commits[0].1 == .newTab && commits[0].2 == false)
 }
 
@@ -759,7 +723,7 @@ func theSessionAppliesWhenItArrivesAndReplaysTheTypedText() throws {
     // fix was chosen over building the session synchronously: the workspace clone and the index
     // build keep the adapter's queue discipline off the main thread.
     let store = FakeCommandBarStore()
-    store.results["do"] = CommandBarResult(rows: [barRow("Docs", target: .folder(id: "f1", spaceId: "s1"))], inlineCompletion: nil)
+    store.results["do"] = CommandBarResult(rows: [barRow("Docs", target: .folder(id: "f1", spaceId: "s1"))], privateWindow: false)
     let (controller, view, window) = try mountedBar(nil)
     defer { _ = window }
     #expect(controller.isOpen && controller.result.rows.isEmpty) // keyed before any session
@@ -780,7 +744,7 @@ func returnBeforeTheSessionArrivesCommitsWhenItLands() throws {
     // The gap is one adapter round trip; a paste followed by Return right
     // after ⌘T can hit it.
     let store = FakeCommandBarStore()
-    store.results["https://a.test"] = CommandBarResult(rows: [barRow("https://a.test", target: .openUrl(url: "https://a.test"))], inlineCompletion: nil)
+    store.results["https://a.test"] = CommandBarResult(rows: [barRow("https://a.test", target: .openUrl(url: "https://a.test"))], privateWindow: false)
 
     // Type, Return, then deliver the store: the commit happens once, with the typed text.
     let (controller, view, window) = try mountedBar(nil)

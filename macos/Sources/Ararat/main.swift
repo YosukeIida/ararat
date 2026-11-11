@@ -1369,6 +1369,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
         if mode == .search && !forceNew && missingTarget { return }
         if mode != .newTab && !forceNew, let target { _ = adapter.navigateCommandURL(url, target: target) }
         else { adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile) }
+      // A history row is a page, not an edit of the current tab: it opens in a new tab (U23 D10).
+      case .history(let url): adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile)
       case .tab(let id, let space):
         if let space {
           self.selectionGeneration += 1
@@ -2185,7 +2187,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       host.checkMenuCommand(false)
     } else if mode == "menu", browserCheckPhase == 8, commandPresenter?.controller.isOpen == true {
       let bar = commandPresenter?.controller
-      bar?.update(query: "https://example.test/menu-empty", allowCompletion: false)
+      bar?.update(query: "https://example.test/menu-empty")
       bar?.commit(forceNewTab: false)
       browserCheckPhase = 13
     } else if mode == "menu", browserCheckPhase == 13, host.hasBrowser(), !host.tabs().isEmpty {
@@ -2360,7 +2362,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 32
     } else if browserCheckPhase == 32, commandPresenter?.controller.isOpen == true {
       let bar = commandPresenter?.controller
-      bar?.update(query: "https://example.test/empty", allowCompletion: false)
+      bar?.update(query: "https://example.test/empty")
       bar?.commit(forceNewTab: false)
       browserCheckPhase = 4
     } else if browserCheckPhase == 4, host.hasBrowser(),
@@ -3076,7 +3078,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
         keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
       } else {
-        presenter.controller.update(query: baseURL + "?second", allowCompletion: false)
+        presenter.controller.update(query: baseURL + "?second")
         presenter.controller.commit(forceNewTab: false)
       }
       browserCheckPhase = 10
@@ -3102,7 +3104,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 102
     case 102:
       guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
-      presenter.controller.update(query: baseURL + "?pinned", allowCompletion: false)
+      presenter.controller.update(query: baseURL + "?pinned")
       presenter.controller.commit(forceNewTab: false)
       browserCheckPhase = 103
     case 103:
@@ -3470,7 +3472,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         keyboardSend(host, command: "", key: "v", code: 9, flags: .command, screen: true)
         keyboardSend(host, command: "", key: "\r", code: 36, flags: [], screen: true)
       } else {
-        presenter.controller.update(query: "example.com", allowCompletion: true)
+        presenter.controller.update(query: "example.com")
         guard let row = presenter.controller.result.rows.first else { return }
         guard case .search(let url) = row.target, url == "https://www.google.com/search?q=example.com" else {
           fail("forced search URL"); return
@@ -3851,7 +3853,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             matrixCurrentTargetReady(host, index: 8, live: live) else { return }
       openCommandBar(.newTab)
       guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
-      bar.update(query: "Show Space \(spaceMatrixNumber)", allowCompletion: false)
+      bar.update(query: "Show Space \(spaceMatrixNumber)")
       spaceMatrixPhase = 2
     } else if spaceMatrixPhase == 2, let bar = commandPresenter?.controller, bar.isOpen {
       let expected = "show_space_\(spaceMatrixNumber)"
@@ -3869,7 +3871,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         spaceMatrixNumber += 1
         openCommandBar(.newTab)
         guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
-        bar.update(query: "Show Space \(spaceMatrixNumber)", allowCompletion: false)
+        bar.update(query: "Show Space \(spaceMatrixNumber)")
         spaceMatrixPhase = 2
       } else if screen {
         spaceMatrixNumber = 1
@@ -3910,7 +3912,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       openCommandBar(.newTab)
       guard matrixPanelIsSafe(host, screen: screen), let bar = commandPresenter?.controller else { finishBrowserCheck(ok: false, values: ["space_matrix_panel": false]); return }
-      bar.update(query: binding.title, allowCompletion: false)
+      bar.update(query: binding.title)
       spaceMatrixPhase = 7
     } else if spaceMatrixPhase == 7, let bar = commandPresenter?.controller, bar.isOpen {
       let commands = ["new_tab", "edit_url", "toggle_sidebar", "toggle_sidebar", "toggle_library", "toggle_library", "reset_sidebar_width", "pin_tab", "pin_tab", "settings", "close_tab"]
@@ -4274,7 +4276,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let bar = commandPresenter?.controller, bar.isOpen else { return }
       keyboardNavigation = original.navigationCount
       adapter?.windowHost(host, showProfile: "Profile 1")
-      bar.update(query: "http://127.0.0.1:\(port)/keyboard?stale", allowCompletion: false)
+      bar.update(query: "http://127.0.0.1:\(port)/keyboard?stale")
       bar.commit(forceNewTab: false)
       browserCheckPhase = 59
       return
@@ -4316,7 +4318,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let bar = commandPresenter?.controller else { return }
       keyboardLiveID = reopened.liveId
       keyboardNavigation = reopened.navigationCount
-      bar.update(query: "example.com", allowCompletion: true)
+      bar.update(query: "example.com")
       bar.commit(forceNewTab: false)
       browserCheckPhase = 64
       return
@@ -4345,7 +4347,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let bar = commandPresenter?.controller, bar.isOpen, bar.mode == .editURL,
             let target = host.navigationTarget(), target["item"] as? String == browserCheckSeedID else { return }
       let rejectedURL = "http://127.0.0.1:\(port)/keyboard?rejected"
-      bar.update(query: rejectedURL, allowCompletion: false)
+      bar.update(query: rejectedURL)
       guard let row = bar.result.rows.first else { return }
       guard case .openUrl(let url) = row.target, url == rejectedURL else {
         finishBrowserCheck(ok: false, values: ["error": "beforeunload location target"]); return
@@ -5697,7 +5699,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let bar = commandPresenter?.controller, bar.isOpen else {
         finishBrowserCheck(ok: false, values: ["split_panel_open": false]); return
       }
-      bar.update(query: "Profile 1", allowCompletion: false)
+      bar.update(query: "Profile 1")
       browserCheckPhase = 61
     } else if browserCheckPhase == 61, let bar = commandPresenter?.controller, bar.isOpen {
       guard let index = bar.result.rows.firstIndex(where: { row in
@@ -6851,7 +6853,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         if CommandLine.arguments.contains("--ararat-quit-suggestion-check") {
           openCommandBar(.newTab)
           guard let bar = commandPresenter?.controller, bar.isOpen else { quitTimedOut = true; finishQuitCheck(exitCode: 1); return }
-          bar.update(query: "Quit", allowCompletion: false)
+          bar.update(query: "Quit")
           quitPhase = 15
           return
         }

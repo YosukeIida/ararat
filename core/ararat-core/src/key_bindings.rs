@@ -57,6 +57,9 @@ pub fn commands() -> Vec<Command> {
         ("delete_folder", "Delete Folder", "Tabs", "Delete the selected folder.", None),
         ("toggle_sidebar", "Toggle Sidebar", "View", "Show or hide the sidebar.", key("s", true, false, false)),
         ("toggle_library", "Toggle Library", "View", "Show or hide the Library.", key("l", true, false, true)),
+        // Chrome already performs the cache-bypassing reload at this key (IDC_RELOAD_BYPASSING_CACHE,
+        // accelerators_cocoa.mm:95-97); the entry exists so the pane lists and rebinds it (U23 D6).
+        ("force_reload", "Force Reload", "View", "Reload the page, ignoring the cache.", key("r", true, false, true)),
         ("reset_sidebar_width", "Reset Sidebar Width", "View", "Reset the sidebar width.", None),
     ].into_iter().map(|(id, title, menu, description, default_key)| Command {
         id: id.into(), title: title.into(), menu: menu.into(), description: description.into(), default_key,

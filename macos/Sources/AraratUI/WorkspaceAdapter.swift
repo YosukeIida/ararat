@@ -207,8 +207,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     /// The command bar's per-open session: the index is built once per open and dropped with it.
-    public func commandBarSession(completion: @escaping Completion<CommandBarSession>) {
-        enqueue({ try self.opened().commandBarSession(windowId: self.windowID) }, completion: completion)
+    /// A private window's session withholds history rows and marks its results (U23 D7).
+    public func commandBarSession(privateWindow: Bool = false, completion: @escaping Completion<CommandBarSession>) {
+        enqueue({ try self.opened().commandBarSession(windowId: self.windowID, privateWindow: privateWindow) }, completion: completion)
+    }
+
+    /// The shown space's most recently selected tabs, newest first: the ⌃Tab switcher's list.
+    public func recentTabs(limit: UInt32 = 5, completion: @escaping Completion<[Suggestion]>) {
+        enqueue({ try self.opened().recentTabs(windowId: self.windowID, limit: limit) }, completion: completion)
     }
 
     public func createTab(url: String, completion: @escaping Completion<WorkspaceSnapshot>) {
