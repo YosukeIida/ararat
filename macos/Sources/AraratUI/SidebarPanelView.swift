@@ -13,6 +13,13 @@ final class SidebarPanelView: NSView {
     private var fraction = 0.0
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var systemAppearance: () -> NSAppearance = { NSApp.effectiveAppearance }
+    /// False while the window is not the active one: the space's colour and grain are dropped, the vibrancy and Glass stay.
+    var active = true {
+        didSet {
+            guard active != oldValue else { return }
+            renderLook()
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -113,7 +120,9 @@ final class SidebarPanelView: NSView {
         }
         // Why not force Auto's backdrop appearance: its vibrancy must keep following the system.
         vibrancy.appearance = mode == .auto ? nil : backgroundAppearance
-        let textAppearance = !hasLook ? nil : NSAppearance(named: dark ? .darkAqua : .aqua)
+        // While inactive the colour layer is hidden, so the text must follow the backdrop that is drawn (the
+        // vibrancy's or Glass's appearance) rather than the Look's colour; for Auto that is the system's.
+        let textAppearance = !hasLook ? nil : !active ? vibrancy.appearance : NSAppearance(named: dark ? .darkAqua : .aqua)
         for view in subviews where view !== vibrancy && view !== coating && view !== glass {
             if view.appearance != textAppearance { view.appearance = textAppearance }
         }
@@ -141,7 +150,7 @@ final class SidebarPanelView: NSView {
             gradient.colors = colors.map(\.cgColor)
         }
         grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
-        coating.isHidden = !hasLook
+        coating.isHidden = !hasLook || !active
         CATransaction.commit()
     }
 
