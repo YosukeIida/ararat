@@ -5,6 +5,11 @@ public final class PermissionDim {
 
     public init() {}
 
+    public func isVisible(_ identifier: String) -> Bool {
+        guard let view = views[identifier] else { return false }
+        return view.superview != nil && !view.isHiddenOrHasHiddenAncestor
+    }
+
     public func update(_ identifier: String, container: NSView, frame: NSRect, visible: Bool) {
         guard visible else {
             views.removeValue(forKey: identifier)?.removeFromSuperview()

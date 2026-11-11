@@ -55,8 +55,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSUInteger)checkPermissionShownCount;
 - (BOOL)checkPermissionDecision:(NSInteger)decision;
 - (NSDictionary<NSString*, id>*)checkPermissionBlockButton;
+- (BOOL)checkPermissionWidgetVisible;
+- (NSDictionary<NSString*, id>*)checkPermissionWidgetState;
 - (BOOL)checkPermissionPending;
 - (void)checkRequestPermission:(NSInteger)request;
+- (void)checkActivateSplitPane;
 - (void)checkPermissionResults:(void (^)(NSString*))completion;
 - (BOOL)checkAutofillBubble:(BOOL)card decline:(BOOL)decline;
 - (NSDictionary<NSString*, id>*)checkAutofillState;

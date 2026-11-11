@@ -37,6 +37,7 @@ public final class SidebarView: NSView {
     private var libraryNeedsFocus = false
     private let library = LibraryView(frame: .zero)
     private let libraryButton = SidebarDockButton()
+    public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
     private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
     var dockCursor: (Bool) -> Void = { refused in (refused ? NSCursor.operationNotAllowed : NSCursor.arrow).set() }

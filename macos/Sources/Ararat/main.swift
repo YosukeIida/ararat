@@ -594,6 +594,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var errorPageItem: String?
   var errorPageNavigationCount: UInt = 0
   var permissionResults: [String: String] = [:]
+  var permissionWidgetState: [String: Any] = [:]
+  var permissionNavigationCleared = false
   var permissionReadPending = false
   var dialogResults: [String: String] = [:]
   var dialogReadPending = false
@@ -635,6 +637,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var promptScreenSeeded = false
   var promptScreenBlockClicks = 0
   var promptScreenBlockTicks = 0
+  var dialogsScreenCapturing = false
+  var dialogsScreenChecks: [String: Bool] = [:]
+  var dialogsScreenSteps: [String: [String: Any]] = [:]
+  var dialogsScreenTicks = 0
+  var dialogsScreenFirstLive = ""
+  var dialogsScreenTransferID = ""
+  var dialogNavigationBefore = 0
+  var dialogNavigationCleared = false
   var emptyProbe: [String: Any] = [:]
   var emptyMenuCount: UInt = 0
   var emptyMenuEnabled: [NSNumber] = []
@@ -714,6 +724,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "links" { browserCheckMode = "screen-links" }
       if screenName == "profiles" { browserCheckMode = "screen-profiles" }
       if screenName == "prompts" { browserCheckMode = "screen-prompts" }
+      if screenName == "dialogs" { browserCheckMode = "screen-dialogs" }
       if screenName == "devtools" { browserCheckMode = "screen-devtools" }
       if screenName == "extensions" { browserCheckMode = "screen-extensions" }
       if screenName == "fullscreen" { browserCheckMode = "screen-fullscreen" }
@@ -723,7 +734,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "dock" { browserCheckMode = "screen-dock" }
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
       if screenName == "errorpages" { browserCheckMode = "screen-errorpages" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "download-close", "errorpages"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" || screenName == "commandbar" || screenName == "errorpages" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "download-close", "errorpages"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "errorpages" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -792,13 +803,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let card = NSView()
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), seedOrganize: check && organize, seedDock: check && dockCheckMode, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedOrganize: check && organize, seedDock: check && dockCheckMode, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    if check && browserCheckMode == "screen-dialogs" {
+      let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
+      let rows = seeded?.spaces.map { space in
+        "\(space.id):profile=\(space.profileName):today=\(space.today.map(\.id)):pinned=\(space.pinned.map(\.id))"
+      } ?? []
+      FileHandle.standardError.write(Data("ararat-trace: dialogs seed db=\(path) shown=\(seeded?.shownSpaceId ?? "nil") rows=\(rows)\n".utf8))
+    }
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -861,11 +879,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
         if self?.browserCheckMode == "keyboard" || self?.browserCheckMode == "screen-keyboard" {
           self?.sliceRows = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today ?? []
         }
+        if self?.browserCheckMode == "screen-dialogs" { self?.sliceRows = Self.dialogSeedRows(snapshot) }
         if extensionPopupCheck { self?.sliceRows = rows.filter { $0.url?.contains("/probe.html") == true } }
       }
     }
     adapter.onTransaction = { [weak self] transaction, applied in
       guard let self else { return }
+      if self.browserCheckMode == "screen-dialogs" && self.sliceTransactions == 0 {
+        let strips = transaction.strips.map { "window=\($0.window) active=\($0.active ?? "nil") items=\($0.tabs.map { $0.item ?? "nil" })" }
+        FileHandle.standardError.write(Data("ararat-trace: dialogs first-transaction rev=\(transaction.rev) cause=\(transaction.cause) applied=\(applied) strips=\(strips)\n".utf8))
+      }
       self.recordMatrixTransaction(transaction, applied: applied, usableHost: self.hasUsableHost)
       self.sliceTransactions += 1
       if case .command = transaction.cause, applied, let strip = transaction.strips.first {
@@ -967,7 +990,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-errorpages" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-errorpages" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1139,6 +1162,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
   static func checkSeedSelectionMatches(_ snapshot: WorkspaceSnapshot, item: String, space: String?) -> Bool {
     snapshot.shownSpaceId == space && snapshot.selectedId == item &&
       snapshot.spaces.first(where: { $0.id == space })?.today.contains(where: { $0.id == item }) == true
+  }
+
+  static func dialogSeedRows(_ snapshot: WorkspaceSnapshot) -> [Row] {
+    snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today ?? []
   }
 
   static func popupTabMappings(_ tabs: [(live: String, item: String?)]) -> [String: String]? {
@@ -1945,6 +1972,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       if let error = promptFixtureError { finishBrowserCheck(ok: false, values: timeoutValues.merging(["error": error]) { _, new in new }); return }
     }
+    if mode == "screen-dialogs" {
+      timeoutValues["conditions"] = dialogsScreenChecks
+      timeoutValues["steps"] = dialogsScreenSteps
+      timeoutValues["failed_conditions"] = ["permission_position", "return_keeps_prompt", "sidebar_click", "escape_dismisses", "long_origin_wrapped", "javascript_before_permission", "permission_after_javascript", "split_pane_after_activation", "transfer_dim"].filter { dialogsScreenChecks[$0] != true }
+    }
     if mode == "protocol" {
       let tab = (host?.tabs() as? [any ARTabAPI])?.first
       timeoutValues.merge(["fixture_port": promptFixturePort as Any? ?? NSNull(),
@@ -2191,6 +2223,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "commandbar" || mode == "screen-commandbar" { commandBarCheckTick(host, screen: mode == "screen-commandbar"); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
+    if mode == "screen-dialogs" { dialogsScreenTick(host); return }
     if mode == "empty" { emptyCheckTick(host); return }
     if mode == "profiles" { profileCheckTick(host); return }
     if mode == "incognito" { incognitoCheckTick(host); return }
@@ -2792,7 +2825,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       tab.checkRequestPermission(0)
       browserCheckPhase = 2
     case 2:
-      guard tab.checkPermissionShownCount() == 1, tab.checkPermissionDecision(0) else { return }
+      guard tab.checkPermissionShownCount() == 1 else { return }
+      permissionWidgetState = tab.checkPermissionWidgetState()
+      guard tab.checkPermissionDecision(0) else { return }
       browserCheckPhase = 3
     case 3:
       guard permissionResults["notifications"] == "granted", !tab.checkPermissionPending() else { return }
@@ -2811,14 +2846,28 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 7:
       guard permissionResults["midiResult"] == "NotAllowedError", permissionResults["midiState"] == "prompt",
             !tab.checkPermissionPending() else { return }
+      tab.checkRequestPermission(2)
+      browserCheckPhase = 8
+    case 8:
+      guard tab.checkPermissionShownCount() == 4, let port = promptFixturePort else { return }
+      host.checkNavigate("http://127.0.0.1:\(port)/auth", disposition: "current")
+      browserCheckPhase = 9
+    case 9:
+      guard tab.checkIsDialogActive(), !tab.checkPermissionPending(), tab.checkDialogHostIsOurs() else { return }
+      permissionNavigationCleared = true
+      guard tab.checkCloseModalDialogs() else { return }
+      browserCheckPhase = 10
+    case 10:
+      guard !tab.checkIsDialogActive(), tab.url.contains("/auth"), !tab.isLoading else { return }
       let stock = host.checkStockBrowsers()
       let viewlessAnchor = host.checkViewlessBubbleAnchor()
       let anchorGeometry = host.checkViewlessBubbleAnchorGeometry()
       let geometryOK = anchorGeometry["initial"] as? Bool == true && anchorGeometry["negative_origin"] as? Bool == true && anchorGeometry["missing_host"] as? Bool == true
-      finishBrowserCheck(ok: stock == 0 && tab.checkPermissionShownCount() == 3 && viewlessAnchor && geometryOK,
+      let sheetOK = permissionWidgetState["no_default"] as? Bool == true && permissionWidgetState["escape_closes"] as? Bool == true && abs((permissionWidgetState["width"] as? Int ?? 0) - 340) <= 8
+      finishBrowserCheck(ok: stock == 0 && tab.checkPermissionShownCount() == 4 && viewlessAnchor && geometryOK && sheetOK && permissionNavigationCleared,
         values: ["notifications": "granted", "location": "1", "midi_result": "NotAllowedError",
                  "midi_state": "prompt", "prompt_shown": tab.checkPermissionShownCount(),
-                 "pending": false, "viewless_anchor_empty": viewlessAnchor, "anchor_geometry": anchorGeometry, "stock_browsers": stock])
+                 "pending": false, "viewless_anchor_empty": viewlessAnchor, "anchor_geometry": anchorGeometry, "permission_widget": permissionWidgetState, "same_site_permission_cleared_auth_shown": permissionNavigationCleared, "stock_browsers": stock])
     default: break
     }
   }
@@ -4851,10 +4900,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     ["x": r.minX, "y": r.minY, "width": r.width, "height": r.height]
   }
 
-  func promptScreenCapture(_ host: any ARWindowHostAPI, name: String) -> [String: Any]? {
+  func promptScreenCapture(_ host: any ARWindowHostAPI, name: String, dialogWindow: NSWindow? = nil) -> [String: Any]? {
     let window = host.window()
     guard let card = promptPageCard,
-          let dialog = window.childWindows?.first(where: { $0.isVisible }),
+          let dialog = dialogWindow ?? window.childWindows?.first(where: { $0.isVisible }),
           let path = promptScreenScreenshot(window, name: name),
           let dialogPath = promptScreenScreenshot(dialog, name: "\(name)-dialog") else { return nil }
     let cardFrame = card.convert(card.bounds, to: nil)
@@ -4870,6 +4919,275 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
       context: nil, characters: characters, charactersIgnoringModifiers: characters,
       isARepeat: false, keyCode: code) { NSApp.sendEvent(event) }
+  }
+
+  func dialogsScreenTick(_ host: any ARWindowHostAPI) {
+    guard !dialogsScreenCapturing, preparePromptFixture(host, name: "permissions"),
+          let tabs = host.tabs() as? [any ARTabAPI],
+          let tab = dialogsScreenFirstLive.isEmpty ? tabs.first : tabs.first(where: { $0.liveId == dialogsScreenFirstLive }) else { return }
+    func clickLibrary() -> Bool {
+      guard let sidebar else { return false }
+      let frame = sidebar.convert(sidebar.checkLibraryButtonFrame, to: nil)
+      let location = NSPoint(x: frame.midX, y: frame.midY)
+      let window = host.window()
+      guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, eventNumber: 0, clickCount: 1, pressure: 0) else { return false }
+      NSApp.postEvent(down, atStart: false)
+      NSApp.postEvent(up, atStart: false)
+      return true
+    }
+    func capture(_ name: String, dialog: NSWindow? = nil) -> [String: Any]? {
+      dialogsScreenCapturing = true
+      defer { dialogsScreenCapturing = false }
+      return promptScreenCapture(host, name: "dialogs-\(name)", dialogWindow: dialog)
+    }
+    switch browserCheckPhase {
+    case 1:
+      guard NSApp.isActive, host.window().isKeyWindow, tab.url.contains("/permissions"), !tab.isLoading else { return }
+      dialogsScreenFirstLive = tab.liveId
+      tab.checkRequestPermission(2)
+      browserCheckPhase = 2
+    case 2:
+      guard tab.checkPermissionWidgetVisible(), let dialog = tab.checkPermissionBlockButton()["window"] as? NSWindow,
+            dialog.isKeyWindow,
+            let step = capture("permission", dialog: dialog) else { return }
+      FileHandle.standardError.write(Data("ararat-trace: dialogs permission window=\(dialog.windowNumber) class=\(type(of: dialog)) frame=\(NSStringFromRect(dialog.frame)) visible=\(dialog.isVisible) key=\(dialog.isKeyWindow)\n".utf8))
+      dialogsScreenSteps["permission"] = step
+      let width = (step["dialog_frame"] as? [String: Double])?["width"] ?? 0
+      dialogsScreenChecks["permission_position"] = step["inside_card"] as? Bool == true && step["centered"] as? Bool == true && abs(width - 340) <= 8
+      promptScreenKey(dialog, code: 36, characters: "\r")
+      dialogsScreenTicks = 0
+      browserCheckPhase = 3
+      FileHandle.standardError.write(Data("ararat-trace: dialogs screen return sent\n".utf8))
+    case 3:
+      dialogsScreenTicks += 1
+      guard dialogsScreenTicks >= 4 else { return }
+      dialogsScreenChecks["return_keeps_prompt"] = tab.checkPermissionWidgetVisible() && tab.checkPermissionPending()
+      guard clickLibrary() else { return }
+      browserCheckPhase = 4
+    case 4:
+      guard sidebar?.libraryOpen == true else { return }
+      dialogsScreenChecks["sidebar_click"] = tab.checkPermissionWidgetVisible()
+      guard clickLibrary() else { return }
+      browserCheckPhase = 5
+    case 5:
+      guard sidebar?.libraryOpen == false, let dialog = tab.checkPermissionBlockButton()["window"] as? NSWindow else { return }
+      dialog.makeKeyAndOrderFront(nil)
+      guard dialog.isKeyWindow else { return }
+      promptScreenKey(dialog, code: 53, characters: "\u{1b}")
+      browserCheckPhase = 6
+      FileHandle.standardError.write(Data("ararat-trace: dialogs screen escape sent\n".utf8))
+    case 6:
+      guard !tab.checkPermissionPending(), !tab.checkIsDialogActive() else { return }
+      if !permissionReadPending {
+        permissionReadPending = true
+        tab.checkPermissionResults { [weak self] json in
+          MainActor.assumeIsolated {
+            guard let self else { return }
+            self.permissionReadPending = false
+            if let data = json.data(using: .utf8), let values = try? JSONDecoder().decode([String: String].self, from: data) { self.permissionResults = values }
+          }
+        }
+      }
+      guard permissionResults["midiResult"] == "NotAllowedError", permissionResults["midiState"] == "prompt",
+            let port = promptFixturePort else { return }
+      dialogsScreenChecks["escape_dismisses"] = true
+      host.checkNavigate("http://a-very-long-subdomain-that-exceeds-the-sheet-width-by-itself.example.localhost:\(port)/permissions", disposition: "current")
+      browserCheckPhase = 61
+    case 61:
+      guard tab.url.contains("example.localhost"), !tab.isLoading else { return }
+      tab.checkRequestPermission(2)
+      browserCheckPhase = 62
+    case 62:
+      let state = tab.checkPermissionBlockButton()
+      guard tab.checkPermissionWidgetVisible(), let dialog = state["window"] as? NSWindow,
+            dialog.isKeyWindow, let step = capture("long-origin", dialog: dialog) else { return }
+      dialogsScreenChecks["long_origin_wrapped"] = state["origin_wrapped"] as? Bool == true
+      dialogsScreenSteps["long_origin"] = step
+      promptScreenKey(dialog, code: 53, characters: "\u{1b}")
+      browserCheckPhase = 63
+    case 63:
+      guard !tab.checkPermissionPending(), !tab.checkIsDialogActive(), let port = promptFixturePort else { return }
+      host.checkNavigate("http://127.0.0.1:\(port)/dialogs", disposition: "current")
+      browserCheckPhase = 7
+    case 7:
+      guard tab.url.contains("/dialogs"), !tab.isLoading else { return }
+      tab.checkRunJavaScriptDialog(0)
+      browserCheckPhase = 8
+    case 8:
+      guard tab.checkIsDialogActive(), tab.checkDialogHostIsOurs() else { return }
+      tab.checkRequestPermission(3)
+      browserCheckPhase = 9
+    case 9:
+      guard tab.checkPermissionShownCount() >= 3, !tab.checkPermissionWidgetVisible() else { return }
+      dialogsScreenChecks["javascript_before_permission"] = true
+      guard let step = capture("javascript") else { return }
+      dialogsScreenSteps["javascript"] = step
+      guard tab.checkAcceptJavaScriptDialog("") else { return }
+      browserCheckPhase = 10
+    case 10:
+      guard tab.checkPermissionWidgetVisible(),
+            let dialog = tab.checkPermissionBlockButton()["window"] as? NSWindow, dialog.isKeyWindow,
+            let step = capture("queued-permission", dialog: dialog) else { return }
+      dialogsScreenSteps["queued_permission"] = step
+      dialogsScreenChecks["permission_after_javascript"] = true
+      promptScreenKey(dialog, code: 53, characters: "\u{1b}")
+      browserCheckPhase = 11
+    case 11:
+      guard !tab.checkPermissionPending() else { return }
+      if CommandLine.arguments.contains("--ararat-compositor=c2") {
+        let names = ["permission_position", "return_keeps_prompt", "sidebar_click", "escape_dismisses", "long_origin_wrapped", "javascript_before_permission", "permission_after_javascript"]
+        let values = Dictionary(uniqueKeysWithValues: names.map { ($0, dialogsScreenChecks[$0] == true) })
+        let failed = names.filter { values[$0] != true }
+        finishBrowserCheck(ok: failed.isEmpty, values: ["conditions": values, "failed_conditions": failed,
+          "steps": dialogsScreenSteps, "compositor": "c2", "split_supported": false])
+        return
+      }
+      guard let index = snapshot.spaces.firstIndex(where: { $0.id == "named" }) else { return }
+      sidebar?.showSpace(at: index)
+      browserCheckPhase = 111
+    case 111:
+      guard snapshot.shownSpaceId == "named", let adapter else { return }
+      adapter.select(id: "close-split-a", url: "about:blank")
+      browserCheckPhase = 112
+    case 112:
+      guard host.activeItemId() == "close-split-a", splitCheckPagesPresented(host),
+            let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" }) else { return }
+      other.checkActivateSplitPane()
+      browserCheckPhase = 113
+      FileHandle.standardError.write(Data("ararat-trace: dialogs split activate B requested tabs=\(host.tabs().count)\n".utf8))
+    case 113:
+      guard host.activeItemId() == "close-split-b", let port = promptFixturePort else { return }
+      host.checkNavigate("http://127.0.0.1:\(port)/permissions?split", disposition: "current")
+      browserCheckPhase = 114
+    case 114:
+      guard let tabs = host.tabs() as? [any ARTabAPI],
+            let other = tabs.first(where: { $0.itemId == "close-split-b" }),
+            other.url.contains("/permissions"), !other.isLoading,
+            let first = tabs.first(where: { $0.itemId == "close-split-a" }) else { return }
+      first.checkActivateSplitPane()
+      browserCheckPhase = 115
+      FileHandle.standardError.write(Data("ararat-trace: dialogs split activate A requested tabs=\(tabs.count)\n".utf8))
+    case 115:
+      guard host.activeItemId() == "close-split-a",
+            let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" }) else { return }
+      other.checkRequestPermission(3)
+      dialogsScreenTicks = 0
+      browserCheckPhase = 13
+      FileHandle.standardError.write(Data("ararat-trace: dialogs inactive B permission requested active=\(host.activeItemId() ?? "nil") tabs=\(host.tabs().count)\n".utf8))
+    case 13:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" }),
+            host.activeItemId() != other.itemId, other.checkPermissionPending() else { return }
+      dialogsScreenTicks += 1
+      guard dialogsScreenTicks >= 4 else { return }
+      dialogsScreenChecks["split_inactive_hidden"] = !other.checkPermissionWidgetVisible()
+      other.checkActivateSplitPane()
+      browserCheckPhase = 131
+      FileHandle.standardError.write(Data("ararat-trace: dialogs split activate pending B requested tabs=\(host.tabs().count)\n".utf8))
+    case 131:
+      dialogsScreenTicks += 1
+      if dialogsScreenTicks == 5 || dialogsScreenTicks % 20 == 0 {
+        let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" })
+        FileHandle.standardError.write(Data("ararat-trace: dialogs split pending active=\(host.activeItemId() ?? "nil") tabs=\(host.tabs().count) present=\(other != nil) pending=\(other?.checkPermissionPending() ?? false) visible=\(other?.checkPermissionWidgetVisible() ?? false) shown=\(other?.checkPermissionShownCount() ?? 0)\n".utf8))
+      }
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" }),
+            other.checkPermissionWidgetVisible(), let view = other.view,
+            let dialog = other.checkPermissionBlockButton()["window"] as? NSWindow,
+            let step = capture("split", dialog: dialog) else { return }
+      let pane = view.convert(view.bounds, to: nil)
+      let actual = host.window().convertFromScreen(dialog.frame)
+      dialogsScreenChecks["split_pane_after_activation"] = host.activeItemId() == other.itemId && abs(actual.midX - pane.midX) <= 4 && pane.insetBy(dx: -4, dy: -4).contains(actual)
+      dialogsScreenSteps["split"] = step
+      dialog.makeKeyAndOrderFront(nil)
+      guard dialog.isKeyWindow else { return }
+      promptScreenKey(dialog, code: 53, characters: "\u{1b}")
+      browserCheckPhase = 132
+    case 132:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == "close-split-b" }),
+            !other.checkPermissionPending(), let adapter,
+            let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
+            let url = row.url else { return }
+      dialogsScreenTransferID = row.id
+      adapter.select(id: row.id, url: url)
+      browserCheckPhase = 133
+    case 133:
+      guard host.activeItemId() == dialogsScreenTransferID, let port = promptFixturePort else { return }
+      host.checkNavigate("http://127.0.0.1:\(port)/permissions?transfer", disposition: "current")
+      browserCheckPhase = 134
+    case 134:
+      guard let plain = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
+            plain.url.contains("/permissions?transfer"), !plain.isLoading else { return }
+      plain.checkRequestPermission(3)
+      browserCheckPhase = 135
+    case 135:
+      guard let plain = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
+            plain.checkPermissionPending(), plain.checkPermissionWidgetVisible() else { return }
+      guard let adapter else { return }
+      let child = Runtime(windowID: UUID().uuidString)
+      child.root = self
+      do { try child.start(session: adapter.session, shownSpace: "named") }
+      catch { finishBrowserCheck(ok: false, values: ["error": "transfer child: \(error)"]); return }
+      children.append(child)
+      child.host?.window().makeKeyAndOrderFront(nil)
+      browserCheckPhase = 14
+    case 14:
+      guard let other = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
+            let destination = children.last?.host, destination.window().isVisible,
+            destination.profileDirectory() == "Profile 1",
+            host.checkMoveTab(other, toHost: destination) else { return }
+      dialogsScreenTicks = 0
+      browserCheckPhase = 15
+    case 15:
+      guard let child = children.last, let destination = child.host,
+            let moved = (destination.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
+            let childAdapter = child.adapter, let childWorkspace = child.workspace,
+            childAdapter.session.queue.sync(execute: { childAdapter.session.store?.liveWindow(item: moved.itemId ?? "") }) == child.windowID else { return }
+      browserCheckPhase = 150
+      childWorkspace.select(id: dialogsScreenTransferID) { [weak self, weak child] result in
+        guard let self, let child else { return }
+        guard case .success(let selected) = result, selected.shownSpaceId == "named",
+              selected.selectedId == self.dialogsScreenTransferID else {
+          self.finishBrowserCheck(ok: false, values: ["error": "transfer destination selection: \(result)"])
+          return
+        }
+        child.show(selected)
+        child.adapter?.refresh()
+        FileHandle.standardError.write(Data("ararat-trace: dialogs transfer selected destination=\(child.windowID) item=\(selected.selectedId ?? "nil")\n".utf8))
+        self.browserCheckPhase = 151
+      }
+    case 151:
+      dialogsScreenTicks += 1
+      if dialogsScreenTicks == 1 || dialogsScreenTicks % 20 == 0 {
+        let destination = children.last?.host
+        let moved = (destination?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID })
+        let state = moved?.checkPermissionWidgetState() ?? [:]
+        FileHandle.standardError.write(Data("ararat-trace: dialogs transfer wait item=\(dialogsScreenTransferID) selected=\(children.last?.snapshot.selectedId ?? "nil") active=\(destination?.activeItemId() ?? "nil") pending=\(moved?.checkPermissionPending() ?? false) modal=\(moved?.checkIsDialogActive() ?? false) host_ours=\(moved?.checkDialogHostIsOurs() ?? false) window=\(destination?.window().windowNumber ?? -1) window_visible=\(destination?.window().isVisible ?? false) sheet=\(state["window_number"] ?? -1) parent=\(state["parent_window_number"] ?? -1) delegate_visible=\(state["delegate_visible"] ?? false) widget=\(moved?.checkPermissionWidgetVisible() ?? false) dim=\(moved.map { children.last?.adapter?.checkPermissionDim($0.liveId) == true } ?? false)\n".utf8))
+      }
+      guard let child = children.last, let destination = child.host,
+            let moved = (destination.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
+            child.snapshot.selectedId == moved.itemId, destination.activeItemId() == moved.itemId,
+            moved.checkPermissionPending(), moved.checkIsDialogActive(), moved.checkDialogHostIsOurs(),
+            moved.checkPermissionWidgetVisible(), child.adapter?.checkPermissionDim(moved.liveId) == true,
+            let sheet = moved.checkPermissionBlockButton()["window"] as? NSWindow,
+            sheet.parent === destination.window(),
+            moved.checkPermissionWidgetState()["delegate_visible"] as? Bool == true else { return }
+      dialogsScreenCapturing = true
+      let transferImage = promptScreenScreenshot(destination.window(), name: "dialogs-transfer", withoutShadow: true)
+      dialogsScreenCapturing = false
+      guard let transferImage else { return }
+      dialogsScreenChecks["transfer_dim"] = true
+      dialogsScreenSteps["transfer"] = ["screenshot": transferImage]
+      let names = ["permission_position", "return_keeps_prompt", "sidebar_click", "escape_dismisses", "long_origin_wrapped", "javascript_before_permission", "permission_after_javascript", "split_inactive_hidden", "split_pane_after_activation", "transfer_dim"]
+      let values = Dictionary(uniqueKeysWithValues: names.map { ($0, dialogsScreenChecks[$0] == true) })
+      let failed = names.filter { values[$0] != true }
+      let compositor = CommandLine.arguments.contains("--ararat-compositor=c2") ? "c2" : "c1"
+      finishBrowserCheck(ok: failed.isEmpty, values: ["conditions": values, "failed_conditions": failed, "steps": dialogsScreenSteps, "compositor": compositor])
+    default: break
+    }
   }
 
   func promptScreenTick(_ host: any ARWindowHostAPI) {
@@ -5068,10 +5386,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         } else if index < 4 {
           tab.checkRunJavaScriptDialog(index + 1)
           browserCheckPhase += 1
-        } else if let port = promptFixturePort {
-          dialogResults = [:]
-          host.checkNavigate("http://127.0.0.1:\(port)/auth", disposition: "current")
-          browserCheckPhase = 12
+        } else {
+          tab.checkRunJavaScriptDialog(0)
+          browserCheckPhase = 17
         }
       }
     } else if browserCheckPhase == 14 {
@@ -5110,8 +5427,18 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard !tab.checkIsDialogActive(), dialogResults["alert"] == "done" else { return }
       tab.checkRunJavaScriptDialog(1)
       browserCheckPhase = 4
-    } else if browserCheckPhase == 12 {
-      guard tab.checkIsDialogActive(), tab.checkDialogHostIsOurs() else { return }
+    } else if browserCheckPhase == 17 {
+      guard tab.checkIsDialogActive(), let port = promptFixturePort else { return }
+      dialogNavigationBefore = Int(tab.navigationCount)
+      host.checkNavigate("http://127.0.0.1:\(port)/auth", disposition: "current")
+      browserCheckPhase = 18
+    } else if browserCheckPhase == 18 {
+      guard Int(tab.navigationCount) > dialogNavigationBefore, tab.checkIsDialogActive(), tab.checkDialogHostIsOurs() else { return }
+      guard !tab.checkAcceptJavaScriptDialog("") else {
+        finishBrowserCheck(ok: false, values: ["same_site_navigation_cleared": false]); return
+      }
+      dialogNavigationCleared = true
+      dialogResults = [:]
       authShown = true
       guard tab.checkCloseModalDialogs() else { return }
       authCancelled = true
@@ -5120,12 +5447,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard !tab.checkIsDialogActive(), tab.url.contains("/auth"), !tab.isLoading,
             dialogResults["auth"] == "body" else { return }
       let stock = host.checkStockBrowsers()
-      finishBrowserCheck(ok: stock == 0, values: ["shown": dialogShown, "answered": dialogAnswered,
+      finishBrowserCheck(ok: stock == 0 && dialogNavigationCleared, values: ["shown": dialogShown, "answered": dialogAnswered,
         "alert": "done", "confirm_ok": "true", "confirm_cancel": "false", "prompt_text": "Ararat text",
         "prompt_cancel": "null", "auth_shown": authShown, "auth_cancelled": authCancelled,
         "auth_body": true, "card_before": rectFields(dialogCardBefore), "card_after": rectFields(dialogCardAfter),
         "dialog_frame": rectFields(dialogResizedFrame), "inside_card": true, "centered": true,
-        "stock_browsers": stock])
+        "same_site_navigation_cleared": dialogNavigationCleared, "stock_browsers": stock])
     }
   }
 
@@ -6753,6 +7080,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
     if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }
+    if browserCheckMode == "screen-dialogs" { result["check"] = "dialogs"; result["screen"] = "dialogs" }
     if browserCheckMode == "screen-devtools" { result["screen"] = "devtools" }
     if browserCheckMode == "screen-extensions" { result["check"] = "extensions"; result["screen"] = "extensions" }
     if browserCheckMode == "screen-fullscreen" {
@@ -7608,7 +7936,7 @@ let checksPassed = MainActor.assumeIsolated {
     return runtime.finishQuitCheck(exitCode: result)
   }
   if let argument = CommandLine.arguments.first(where: {
-    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=ext-popup", "--ararat-check=ext-windows-popup", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=devtools", "--ararat-screen=extensions"].contains($0)
+    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=ext-popup", "--ararat-check=ext-windows-popup", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=dialogs", "--ararat-screen=devtools", "--ararat-screen=extensions"].contains($0)
   }) {
     Launcher.startupWatchdog?.cancel()
     let screen = argument.hasPrefix("--ararat-screen=")

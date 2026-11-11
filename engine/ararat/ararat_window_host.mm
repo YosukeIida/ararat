@@ -2187,7 +2187,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "dialogs" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -2879,7 +2879,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (BOOL)checkMoveTab:(id<ARTabAPI>)value toHost:(id<ARWindowHostAPI>)destination {
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "transfer-ext" ||
+  if ((base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "transfer-ext" &&
+       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "dialogs") ||
       ![value isKindOfClass:ARTab.class] || ![destination isKindOfClass:ARWindowHost.class]) return NO;
   ARTab* tab = (ARTab*)value;
   ARWindowHost* targetHost = (ARWindowHost*)destination;

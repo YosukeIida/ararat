@@ -56,6 +56,7 @@ bool IsPermissionCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   return command->GetSwitchValueASCII("ararat-check") == "permissions" ||
          command->GetSwitchValueASCII("ararat-screen") == "prompts" ||
+         command->GetSwitchValueASCII("ararat-screen") == "dialogs" ||
          command->GetSwitchValueASCII("ararat-check") == "keyboard" ||
          command->GetSwitchValueASCII("ararat-screen") == "keyboard";
 }
@@ -266,7 +267,9 @@ bool AraratCheckPermissionDecision(content::WebContents* contents, int decision)
 
 views::Widget* AraratCheckPermissionWidget(content::WebContents* contents) {
   auto& state = GetCheckState();
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "prompts" &&
+  const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
+  return (screen == "prompts" || screen == "dialogs" ||
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "permissions") &&
                  state.contents.get() == contents && state.prompt
              ? state.prompt->CheckWidget() : nullptr;
 }

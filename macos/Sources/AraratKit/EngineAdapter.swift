@@ -377,6 +377,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
+    public func checkPermissionDim(_ identifier: String) -> Bool { permissionDim.isVisible(identifier) }
 
     public func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,
                            container: NSView, frame: NSRect, visible: Bool) {
