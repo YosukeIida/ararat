@@ -113,11 +113,12 @@ func rowAccessibilityActionsWorkWithoutThePointer() throws {
             row.pointerLocation = { nil }; row.refreshHover()
             #expect(row.closeButton.isHidden)
             let action = try #require(row.accessibilityCustomActions()?.first)
-            #expect(action.name == (pinned && id == "t0" ? "Close and Keep Pinned" : "Archive this tab"))
+            // R1/D2: a loaded pin closes; a Today tab archives.
+            #expect(action.name == (pinned ? "Close Tab" : "Archive Tab"))
             #expect(action.handler?() == true)
         }
-        #expect(closed == (pinned ? ["t0"] : ["t0", "t1"]))
-        #expect(archived == (pinned ? ["t1"] : []))
+        #expect(closed == (pinned ? ["t0", "t1"] : []))
+        #expect(archived == (pinned ? [] : ["t0", "t1"]))
     }
 }
 

@@ -158,7 +158,7 @@ final class HistoryPurgeCheck {
       phase = 100
       tab.checkFlushHistory { written in MainActor.assumeIsolated {
         guard written else { self.fail("pinned flush failed"); return }
-        self.phase = 9; runtime.adapter?.close(id: self.pinned)
+        self.phase = 9; runtime.adapter?.close(id: self.pinned, archive: false)
       } }
     } else if phase == 9, !live(pinned), !tabs.contains(where: { $0.itemId == pinned }) {
       guard !pending(pinned) else { fail("unload queued purge"); return }
@@ -175,7 +175,7 @@ final class HistoryPurgeCheck {
       phase = 100
       tab.checkFlushHistory { written in MainActor.assumeIsolated {
         guard written else { self.fail("pinned moved flush failed"); return }
-        self.phase = 12; runtime.adapter?.close(id: self.pinned)
+        self.phase = 12; runtime.adapter?.close(id: self.pinned, archive: false)
       } }
     } else if phase == 12, !live(pinned), !tabs.contains(where: { $0.itemId == pinned }) {
       phase = 13; selectPinned()
@@ -185,7 +185,7 @@ final class HistoryPurgeCheck {
       phase = 100
       tab.checkFlushHistory { written in MainActor.assumeIsolated {
         guard written else { self.fail("corrupt fixture setup failed"); return }
-        self.phase = 14; runtime.adapter?.close(id: self.pinned)
+        self.phase = 14; runtime.adapter?.close(id: self.pinned, archive: false)
       } }
     } else if phase == 14, !live(pinned), !tabs.contains(where: { $0.itemId == pinned }) {
       guard let directory = historyDirectory() else { fail("missing history directory"); return }
@@ -222,7 +222,7 @@ final class HistoryPurgeCheck {
         self.directory = dir
         do { try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir) }
         catch { self.fail("cannot restrict directory: \(error)"); return }
-        self.phase = 17; runtime.adapter?.close(id: self.failedItem)
+        self.phase = 17; runtime.adapter?.close(id: self.failedItem, archive: false)
       } }
     } else if phase == 17, purgeFailed, pending(failedItem), !live(failedItem), !tabs.contains(where: { $0.itemId == failedItem }) {
       do { try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory) }

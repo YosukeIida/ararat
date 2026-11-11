@@ -95,8 +95,10 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
         let line = max(0, Int((position.y - g.favorites.minY) / 55))
         return .favorites(container: g.space.favoritesId, index: min(count, line * columns + column))
     }
-    if g.space.pinned.isEmpty && g.pinnedArea.contains(position) {
-        return insertion(g.space.pinnedId, index: 0, lineY: g.list.minY)
+    if g.pinnedArea.contains(position) {
+        // A row dropped on the space name pins at the top of pinned, with or without pins; the
+        // 2 pt line under the name is its indicator (no extra drop zone).
+        return insertion(g.space.pinnedId, index: 0, lineY: max(g.list.minY, g.pinnedArea.maxY))
     }
     guard g.list.contains(position) else { return .refused }
     let entries = g.rows.sorted { $0.frame.minY < $1.frame.minY }
@@ -106,7 +108,8 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
         var ancestorID = above.parentId
         while let ending = byID[ancestorID], ending.kind == .folder, !ending.collapsed,
               entries.last(where: { descendant($0.row.id, of: ending.id) })?.row.id == above.id {
-            let index = folder.map { Int($0.siblingIndex) + 1 } ?? Int(above.siblingIndex) + 1
+            // A marker under a closed folder ends that folder: there is nothing above to count.
+            let index = above.kind == .noTabs ? 0 : (folder.map { Int($0.siblingIndex) + 1 } ?? Int(above.siblingIndex) + 1)
             candidates.append((container: ending.id, index: index, depth: ending.depth + 1))
             folder = ending
             ancestorID = ending.parentId
@@ -123,6 +126,11 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
         }
         guard let chosen = candidates.first(where: { SidebarDragMetrics.lineLeading + 16 * CGFloat($0.depth) <= position.x }) ?? candidates.last else { return nil }
         return insertion(chosen.container, index: chosen.index, lineY: lineY)
+    }
+    if let entry = entries.first(where: { $0.frame.contains(position) }), entry.row.kind == .noTabs {
+        // F3: the empty folder's line is a drop target for that folder.
+        guard !descendant(entry.row.parentId, of: dragged.id) else { return .refused }
+        return .folder(entry.row.parentId)
     }
     if let entry = entries.first(where: { $0.frame.contains(position) }), entry.row.kind == .folder,
        position.y > entry.frame.minY + SidebarDragMetrics.rowBoundaryInset,
@@ -159,10 +167,7 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
     }
     if let last = entries.last {
         if g.space.today.isEmpty {
-            if position.y <= last.frame.maxY + 20 {
-                if let drop = boundary(above: last.row, next: nil, lineY: last.frame.maxY) { return drop }
-                return insertion(g.space.pinnedId, index: Int(g.space.pinnedCount), lineY: last.frame.maxY)
-            }
+            // T2: no 20 pt empty-Today zone; below the last row is Today itself.
             return insertion(g.space.todayId, index: 0, lineY: last.frame.maxY)
         }
         return insertion(g.space.todayId, index: Int(g.space.todayCount), lineY: last.frame.maxY)

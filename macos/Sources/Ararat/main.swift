@@ -359,6 +359,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var keyBindings: KeyBindingsModel?
   var settings: SettingsWindowController?
   var airTraffic: AirTrafficModel?
+  // R7: the unread dot is app state from the live strip, never stored or synced.
+  var unread = UnreadTracker()
+  var seededNewTabRow: String?
   var commandPresenter: CommandBarPresenter?
   var tabSwitcher: TabSwitcher?
   var commandBarConditions: [String: Bool] = [:]
@@ -805,6 +808,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
       sidebar?.update(snapshot: snapshot)
+      self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
       if check {
         let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
@@ -830,6 +834,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       for strip in transaction.strips {
         self.sliceActive = strip.tabs.first { $0.liveId == strip.active }?.item
       }
+      self.recordUnread(transaction)
+      // R5: a crashed renderer is reported by the strip, not by a snapshot.
+      self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
       if CommandLine.arguments.contains("--ararat-space-matrix-check"), self.browserCheckMode != nil {
         self.spaceMatrixLastTransaction = ["epoch": transaction.epoch, "rev": transaction.rev,
           "cause": String(describing: transaction.cause), "strips": transaction.strips.prefix(10).map { strip in
@@ -863,12 +870,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     actions.configureEditing(adapter: workspace, isActive: { true }, window: { [weak self] in self?.host?.window() }, show: { [weak self] snapshot in self?.show(snapshot) }, record: { [weak self] snapshot in self?.snapshot = snapshot })
     actions.onClose = { [weak self] id in self?.close(id) }
-    actions.onCloseSelected = { [weak self] in
-      if let id = self?.sidebar?.selectedRowID { self?.close(id) }
-    }
+    actions.onCloseSelected = { [weak self] in self?.adapter?.closeSelected() }
     actions.onArchive = { [weak self] id in
       self?.adapter?.close(id: id, archive: true)
     }
+    actions.onNewTab = { [weak self] in self?.performWorkspaceCommand("new_tab") }
+    actions.onClearToday = { [weak self] in self?.clearToday() }
     actions.onShowSpace = { [weak self] id in
       self?.switchWorkspaceSpace(id)
     }
@@ -1043,6 +1050,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     updatePageVisibility(snapshot)
     if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
     sidebar?.update(snapshot: snapshot)
+    refreshSidebarRowState(snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
   }
@@ -1268,7 +1276,43 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func close(_ id: String) {
-    adapter?.close(id: id)
+    // A row's ✕/− showed its action; the rowwise buttons pass it through this default.
+    adapter?.close(id: id, archive: false)
+  }
+
+  // D6: one core batch (live_clear_today) with a Close in flight for every mapped live row,
+  // so the engine's replies are accepted; the pages it names are closed beside it.
+  func clearToday() {
+    guard let spaceID = snapshot.shownSpaceId else { return }
+    adapter?.clearToday(spaceID: spaceID) { [weak self] snapshot in
+      guard let self, let snapshot else { return }
+      self.snapshot = snapshot
+      self.show(snapshot)
+    }
+  }
+
+  // R7: the unread dot is app state. A loaded tab the window is not showing gets one when its
+  // title changes; showing it clears the dot; an id that leaves the strip is forgotten with
+  // its title. Nothing here is stored or synced.
+  func recordUnread(_ transaction: LiveTransaction) {
+    guard let strip = transaction.strips.first(where: { $0.window == windowID }) else { return }
+    unread.apply(strip: strip)
+    sidebar?.unreadItems = unread.unread
+  }
+
+  // The sidebar's per-window row state: the live strip's crashed tabs on every snapshot, its
+  // unread ids, and the settings row switch seeded once (the section's chevron rides in the
+  // space snapshot).
+  func refreshSidebarRowState(_ snapshot: WorkspaceSnapshot) {
+    guard let sidebar else { return }
+    sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
+    sidebar.unreadItems = unread.unread
+    guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }
+    seededNewTabRow = snapshot.shownSpaceId
+    workspace.newTabRowShown { [weak self] result in
+      guard case .success(let shown) = result else { return }
+      self?.sidebar?.newTabRowShown = shown
+    }
   }
 
   func performWorkspaceCommand(_ command: String) {
@@ -1285,7 +1329,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case "new_tab": openCommandBar(.newTab)
     case "edit_url": openCommandBar(.editURL)
     case "search": openCommandBar(.search)
-    case "close_tab": if selectedIsVisible, let id = snapshot.selectedId { close(id) }
+    case "close_tab": if selectedIsVisible { adapter?.closeSelected() }
     case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
     case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
     case "toggle_sidebar": container?.toggleSidebar()
@@ -2647,7 +2691,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard docked, let first = tabs.first(where: { $0.liveId == devtoolsFirstLive }), let item = first.itemId else { return }
       browserCheckPhase = 9
-      adapter?.close(id: item)
+      adapter?.close(id: item, archive: false)
     case 9:
       guard !tabs.contains(where: { $0.liveId == devtoolsFirstLive }),
             tabs.contains(where: { $0.liveId == devtoolsSecondLive }), fullPage,
@@ -3703,7 +3747,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard snapshot.selectedId == keyboardRestoreItem, host.activeItemId() == keyboardRestoreItem,
             (host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem && $0.url == baseURL + "?restore" }) else { return }
       keyboardResults["archive_restore"] = true
-      adapter?.close(id: keyboardRestoreItem)
+      adapter?.close(id: keyboardRestoreItem, archive: false)
       browserCheckPhase = 366
     case 366:
       guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
@@ -4247,7 +4291,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   func keyboardProfileCheckTick(_ host: any ARWindowHostAPI, port: UInt16, screen: Bool) {
     if browserCheckPhase == 641 {
       guard commandPresenter?.controller.isOpen == true, let seed = browserCheckSeedID else { return }
-      adapter?.close(id: seed)
+      adapter?.close(id: seed, archive: false)
       browserCheckPhase = 642
       return
     }

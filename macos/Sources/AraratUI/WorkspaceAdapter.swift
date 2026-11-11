@@ -238,7 +238,12 @@ public final class WorkspaceAdapter: @unchecked Sendable {
             let store = try self.opened()
             let before = store.snapshot(windowId: self.windowID)
             guard let id = before.selectedId else { return (nil, before) }
-            return (id, try store.closeItem(windowId: self.windowID, id: id))
+            let rows = before.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+            let item = splitOwner(id, rows: rows)
+            let row = rows.first { $0.id == item }
+            let space = before.spaces.first { $0.id == before.shownSpaceId }
+            let archive = row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false
+            return (item, try archive ? store.archiveItem(windowId: self.windowID, id: item) : store.closeItem(windowId: self.windowID, id: item))
         }, completion: completion)
     }
 
@@ -291,6 +296,7 @@ public enum SidebarItemEdit: Sendable {
     case rename(id: String, title: String, folder: Bool)
     case collapse(id: String, collapsed: Bool)
     case deleteFolder(id: String)
+    case collapseSection(spaceID: String, collapsed: Bool)
 }
 
 extension WorkspaceAdapter {
@@ -309,7 +315,15 @@ extension WorkspaceAdapter {
                 return try store.setFolderCollapsed(windowId: self.windowID, id: id, collapsed: collapsed)
             case let .deleteFolder(id):
                 return try store.deleteFolder(windowId: self.windowID, id: id)
+            case let .collapseSection(spaceID, collapsed):
+                return try store.setSectionCollapsed(windowId: self.windowID, spaceId: spaceID, collapsed: collapsed)
             }
         }, completion: completion)
+    }
+}
+
+extension WorkspaceAdapter {
+    public func newTabRowShown(completion: @escaping Completion<Bool>) {
+        enqueue({ try self.opened().settings().newTabRowShown }, completion: completion)
     }
 }

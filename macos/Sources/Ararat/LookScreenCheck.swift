@@ -175,11 +175,11 @@ extension Runtime {
         switch check.phase {
         case 0:
             guard snapshot.shownSpaceId != nil, snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) != nil else { return }
-            openSettings()
-            (root ?? self).settings?.open(shownSpaceID: snapshot.shownSpaceId)
             check.phase = 1; browserCheckPhase = 1
         case 1:
-            guard let settings = (root ?? self).settings, let probe = settings.openLookForCheck(), probe.window != nil else { return }
+            // Preflight check 9: the probe moves to the space name row's Edit Look…, which
+            // opens the same popover the right-click path does (no Settings window needed).
+            guard let probe = sidebar?.openLookForCheck(), probe.window != nil else { return }
             check.probe = probe
             end(true, "open")
         case 2:

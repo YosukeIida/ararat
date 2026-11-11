@@ -53,7 +53,19 @@ public final class SidebarView: NSView {
     private var lookPreview: (spaceID: String, look: Look?)?
     private let shortcutMenus = NSHashTable<NSMenu>.weakObjects()
     public var keyBindings = defaultKeyBindings() {
-        didSet { for menu in shortcutMenus.allObjects { KeyBindingsModel.apply(keyBindings, to: menu) } }
+        didSet {
+            for menu in shortcutMenus.allObjects { KeyBindingsModel.apply(keyBindings, to: menu) }
+            let caps = closeCaps
+            for view in rowViews.values { view.closeCaps = caps }
+        }
+    }
+
+    // The ⌘W caps follow the close_tab binding; the Shortcuts pane can rebind it.
+    private var closeCaps: [String] {
+        // The effective key: a cleared or conflicting binding has none, and then no caps.
+        guard let binding = keyBindings.first(where: { $0.command == "close_tab" }),
+              let key = binding.key else { return [] }
+        return SidebarTooltip.caps(for: key)
     }
 
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
@@ -75,7 +87,7 @@ public final class SidebarView: NSView {
     private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
 
-    private let header = NSTextField(labelWithString: "")
+    let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
     private let favorites = NSStackView()
@@ -86,12 +98,18 @@ public final class SidebarView: NSView {
     private var hintSpaceID: String?
     var renameHintClock: () -> CFTimeInterval = CACurrentMediaTime
     private var rowViews: [String: SidebarRowView] = [:]
+    private var noTabsRows: [String: SidebarNoTabsRow] = [:]
     private var retiringRows: [String: SidebarRowView] = [:]
     private var fadeFrame: (id: String, frame: NSRect)?
     private var favoriteTiles: [String: FavoriteTile] = [:]
     private weak var organizeCheckSource: SidebarRowView?
     private var organizeCheckPoint = CGPoint.zero
-    private var rowDivider: NSBox?
+    private lazy var todayDivider = SidebarTodayDivider(frame: .zero)
+    private lazy var newTabRow: SidebarNewTabRow = {
+        let row = SidebarNewTabRow(frame: .zero)
+        row.onPress = { [weak self] in self?.onNewTab?() }
+        return row
+    }()
     private let dock = SpaceDockView()
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
@@ -101,6 +119,14 @@ public final class SidebarView: NSView {
     var pullClock: () -> CFTimeInterval = CACurrentMediaTime
     private var pullStep: (() -> Void)?
     private var wheelPullPlaying = false
+    // U25b: the app’s per-window row state — the row switch from the core’s settings record
+    // and the live strip’s crashed and unread tabs. The section’s chevron rides in the space
+    // snapshot (pinned_collapsed), so every window shows the same one.
+    public var newTabRowShown = true { didSet { reload() } }
+    public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
+    public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
+    public var onNewTab: (() -> Void)?
+    public var onClearToday: (() -> Void)?
     private enum ScrollOrigin { case page, rail, list }
     private enum ScrollAxis { case horizontal, vertical }
     private var scrollOrigin: ScrollOrigin?
@@ -444,6 +470,8 @@ public final class SidebarView: NSView {
         return true
     }
 
+    // The ⌘W command carries no row: the adapter applies the R1/D2 rule to the core’s
+    // current selection, so presses queued in one run-loop turn act in order.
     @objc public func closeSelectedTab(_ sender: Any?) {
         guard pageCommandsAllowed, let id = selectedID,
               snapshot.spaces.contains(where: { ($0.favorites + $0.pinned + $0.today).contains { $0.id == id && ($0.kind == .tab || $0.kind == .split) } }) else { return }
@@ -530,11 +558,13 @@ public final class SidebarView: NSView {
         host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
-        header.font = .systemFont(ofSize: 14, weight: .medium)
-        header.textColor = .secondaryLabelColor
-        let heading = NSView()
-        header.translatesAutoresizingMaskIntoConstraints = false
-        heading.addSubview(header)
+        spaceNameRow.translatesAutoresizingMaskIntoConstraints = false
+        spaceNameRow.menuProvider = { [weak self] in
+            guard let self, let id = self.snapshotSpace?.id else { return nil }
+            return self.spaceMenu(spaceID: id, anchor: self.spaceNameRow)
+        }
+        spaceNameRow.onToggle = { [weak self] in self?.toggleSection() }
+        spaceNameRow.onRenameEnded = { [weak self] in self?.spaceRenameEnded() }
 
         favorites.orientation = .vertical
         favorites.spacing = 8
@@ -542,7 +572,7 @@ public final class SidebarView: NSView {
 
         rows.orientation = .vertical
         rows.spacing = 0
-        rows.alignment = .leading
+        rows.alignment = .width
 
         let scroll = listScroll
         scroll.onBoundsChanged = { [weak self] in
@@ -567,7 +597,7 @@ public final class SidebarView: NSView {
         spaceColumn.orientation = .vertical
         spaceColumn.alignment = .leading
         spaceColumn.spacing = 0
-        for view in [favorites, heading, scroll] { spaceColumn.addArrangedSubview(view) }
+        for view in [favorites, spaceNameRow, scroll] { spaceColumn.addArrangedSubview(view) }
         spaceColumn.setCustomSpacing(22, after: favorites)
         spaceColumn.translatesAutoresizingMaskIntoConstraints = false
         spaceViewport.addSubview(spaceColumn)
@@ -608,11 +638,7 @@ public final class SidebarView: NSView {
             spaceColumn.bottomAnchor.constraint(equalTo: spaceViewport.bottomAnchor),
             favorites.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             favoritesHeight,
-            heading.widthAnchor.constraint(equalTo: urlField.widthAnchor),
-            heading.heightAnchor.constraint(equalToConstant: 31),
-            header.leadingAnchor.constraint(equalTo: heading.leadingAnchor, constant: 8),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: heading.trailingAnchor, constant: -8),
-            header.firstBaselineAnchor.constraint(equalTo: heading.topAnchor, constant: header.font!.capHeight),
+            spaceNameRow.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             rows.leadingAnchor.constraint(equalTo: document.leadingAnchor),
             rows.topAnchor.constraint(equalTo: document.topAnchor),
@@ -780,7 +806,7 @@ public final class SidebarView: NSView {
             hintSpaceID = space?.id
         }
         lookSettings?.update(snapshot: snapshot)
-        header.stringValue = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
+        spaceNameRow.space = space
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
@@ -791,20 +817,24 @@ public final class SidebarView: NSView {
 
         let ids = Set((pinned + today).map(\.id))
         for id in Array(rowViews.keys) where !ids.contains(id) { removeRow(id: id) }
-        var ordered: [NSView] = (pinned + today).map { rowView(for: $0) }
-        if !pinned.isEmpty && !today.isEmpty {
-            if rowDivider == nil {
-                let divider = NSBox()
-                divider.boxType = .separator
-                rows.addArrangedSubview(divider)
-                divider.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-                rowDivider = divider
-            }
-            ordered.insert(rowDivider!, at: pinned.count)
-        } else {
-            rowDivider?.removeFromSuperview()
-            rowDivider = nil
+        for id in Array(noTabsRows.keys) where !ids.contains(id) {
+            noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
+        var ordered: [NSView] = pinned.map { listView(for: $0) }
+        if today.isEmpty {
+            todayDivider.removeFromSuperview()
+        } else {
+            if todayDivider.superview == nil {
+                todayDivider.onClear = { [weak self] in self?.onClearToday?() }
+            }
+            ordered.append(todayDivider)
+        }
+        if newTabRowShown {
+            ordered.append(newTabRow)
+        } else {
+            newTabRow.removeFromSuperview()
+        }
+        ordered.append(contentsOf: today.map { listView(for: $0) })
         arrange(ordered, in: rows)
 
         if dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
@@ -911,14 +941,42 @@ public final class SidebarView: NSView {
             self.renamingID = nil; self.notifyAutoArchiveReady()
         }
         view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
-        view.onClose = { [weak self, weak view] id in
-            guard let self, let view else { return }
-            if view.pinned && id != self.selectedID { self.onArchive?(id) }
-            else { self.onClose?(id) }
+        view.onClose = { [weak self] id in
+            guard let self, let target = self.closeTarget(for: id) else { return }
+            // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
+            // id it showed, so a stale click cannot be upgraded in the queue.
+            if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
         }
+        view.closeCaps = closeCaps
         view.update(row: row, selected: row.id == selectedID)
+        view.crashed = crashedItems.contains(row.id)
+        view.unread = unreadItems.contains(row.id)
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
+    }
+
+    // F3: the open, empty folder's line. It is not in rowViews: nothing selects, renames or
+    // drags it; SidebarDrag resolves a drop on it into the folder it names.
+    private func noTabsView(for row: Row) -> SidebarNoTabsRow {
+        if let existing = noTabsRows[row.id], existing.row.parentId == row.parentId { return existing }
+        noTabsRows.removeValue(forKey: row.id)?.removeFromSuperview()
+        let view = SidebarNoTabsRow(row: row)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        noTabsRows[row.id] = view
+        return view
+    }
+
+    private func applyRowStatus() {
+        for (id, view) in rowViews {
+            view.crashed = crashedItems.contains(id)
+            view.unread = unreadItems.contains(id)
+        }
+    }
+
+    // The row the core says is a folder's empty line is drawn by its own view, so the rows
+    // stack needs that view instead of a SidebarRowView.
+    private func listView(for row: Row) -> NSView {
+        row.kind == .noTabs ? noTabsView(for: row) : rowView(for: row)
     }
 
     private func removeRow(id: String) {
@@ -964,6 +1022,7 @@ public final class SidebarView: NSView {
     }
 
     private func select(_ row: Row) {
+        if row.kind == .noTabs { return }
         if row.kind == .folder {
             performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
             return
@@ -973,6 +1032,17 @@ public final class SidebarView: NSView {
         reload()
         revealSelection()
         onSelect?(row)
+    }
+
+    // R1/D2: a row's ✕ or middle click acts on the row that showed it (a split member closes
+    // only itself until U25c draws splits as one row); the row-less ⌘W resolves the split in
+    // the adapter.
+    public enum RowCloseAction { case close, archive }
+
+    public func closeTarget(for id: String) -> (id: String, action: RowCloseAction)? {
+        guard let space = snapshotSpace,
+              let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }) else { return nil }
+        return (id, rowCloseArchives(row, in: space) ? .archive : .close)
     }
 
     public func revealSelection(animated: Bool = true) {
@@ -1427,7 +1497,7 @@ extension SidebarView {
         guard let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
         window?.makeFirstResponder(self)
         tooltip.dismiss()
-        guard row.kind != .folder else { return }
+        guard row.kind != .folder, row.kind != .noTabs else { return }
         finishRowMotion()
         clearScrollPresentation()
         var item = row
@@ -1487,7 +1557,7 @@ extension SidebarView {
             return false
         }
         var entries = models.filter { !inSplit($0) }.compactMap { row -> SidebarDragGeometry.Entry? in
-            guard let view = rowViews[row.id] else { return nil }
+            guard let view = rowViews[row.id] ?? noTabsRows[row.id] else { return nil }
             return .init(row: row, frame: dragRect(view))
         }
         for i in entries.indices where entries[i].row.kind == .split {
@@ -1501,7 +1571,7 @@ extension SidebarView {
             let top = dragRect(urlField).maxY
             favoriteFrame = CGRect(x: favoriteFrame.minX, y: top, width: favoriteFrame.width, height: max(0, favoriteFrame.maxY - top))
         }
-        return SidebarDragGeometry(bounds: CGRect(origin: .zero, size: bounds.size), list: dragRect(listScroll), pinnedArea: dragRect(header.superview!),
+        return SidebarDragGeometry(bounds: CGRect(origin: .zero, size: bounds.size), list: dragRect(listScroll), pinnedArea: dragRect(spaceNameRow),
             favorites: favoriteFrame, rows: entries,
             dock: zip(snapshot.spaces, dock.subviews).map { ($0, dragRect($1)) }, space: space)
     }
@@ -1737,11 +1807,20 @@ extension SidebarView: NSMenuDelegate {
     }
 
     func pinnedMenu(row: Row) -> NSMenu {
-        itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
-                  SidebarMenuItem("Remove Pin") { [weak self] in
-                      guard let self, let container = self.snapshotSpace?.todayId else { return }
-                      self.menuMove(row.id, container: container, index: 0)
-                  }])
+        // D2: the mock's close item sits before "Remove Pin", and its words and action follow
+        // the row's load state through the same rule as the hover button.
+        let target = closeTarget(for: row.id)
+        let archives = target?.action == .archive
+        let close = SidebarMenuItem(archives ? "Archive Tab" : "Close Tab") { [weak self] in
+            guard let self, let id = target?.id else { return }
+            if archives { self.onArchive?(id) } else { self.onClose?(id) }
+        }
+        close.identifier = NSUserInterfaceItemIdentifier("close_tab")
+        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row), close,
+                         SidebarMenuItem("Remove Pin") { [weak self] in
+                             guard let self, let container = self.snapshotSpace?.todayId else { return }
+                             self.menuMove(row.id, container: container, index: 0)
+                         }])
     }
 
     func favoriteMenu(row: Row) -> NSMenu {
@@ -1764,11 +1843,11 @@ extension SidebarView: NSMenuDelegate {
         spaceMenu(spaceID: spaceID).items
     }
 
-    func spaceMenu(spaceID: String) -> NSMenu {
+    func spaceMenu(spaceID: String, anchor: NSView? = nil) -> NSMenu {
         let space = snapshot.spaces.first { $0.id == spaceID }
         return itemMenu([
             SidebarMenuItem("Rename Space…", enabled: space != nil) { [weak self] in self?.renameSpace(spaceID) },
-            SidebarMenuItem("Edit Look…", enabled: space != nil) { [weak self] in self?.editDockLook(spaceID) },
+            SidebarMenuItem("Edit Look…", enabled: space != nil) { [weak self] in self?.editLook(spaceID, anchor: anchor) },
             SidebarMenuItem("Space Settings…", enabled: space != nil) { [weak self] in self?.onSpaceSettings?(spaceID) },
             SidebarMenuItem("New Folder", enabled: space != nil && snapshotSpace != nil) { [weak self] in
                 guard let self, let index = self.snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
@@ -1782,30 +1861,39 @@ extension SidebarView: NSMenuDelegate {
     private func renameSpace(_ id: String) {
         guard let index = snapshot.spaces.firstIndex(where: { $0.id == id }) else { return }
         if spaceIndex != index || libraryOpen || createSpaceOpen { dockClicked(dock.subviews[index] as! NSButton) }
-        guard let space = snapshot.spaces.first(where: { $0.id == id }), let heading = header.superview else { return }
-        spaceRenameField?.finish(commit: true)
-        let field = SidebarRenameField(title: space.title, save: { [weak self] title, done in
+        spaceNameRow.finishRename(commit: true)
+        spaceNameRow.beginRename { [weak self] title, done in
             guard let save = self?.onRenameSpace else { done(false); return }
             save(id, title, done)
-        }, ended: { [weak self] in
-            self?.spaceRenameField = nil
-            self?.header.isHidden = false
-            self?.notifyAutoArchiveReady()
-        })
-        spaceRenameField = field
-        header.isHidden = true
-        field.translatesAutoresizingMaskIntoConstraints = false
-        heading.addSubview(field)
-        NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            field.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            field.trailingAnchor.constraint(equalTo: heading.trailingAnchor, constant: -8),
-        ])
-        window?.makeFirstResponder(field)
-        field.currentEditor()?.selectAll(nil)
+        }
+        spaceRenameField = spaceNameRow.renameField
     }
 
-    private func editDockLook(_ id: String) {
+    private func spaceRenameEnded() {
+        spaceRenameField = nil
+        notifyAutoArchiveReady()
+    }
+
+    // S1/S2: the chevron and a click on the row toggle the pinned section; the record is the
+    // core's per-space, device-only one (part 1), and the edit's snapshot carries the new
+    // `pinned_collapsed`, so the chevron follows the core rather than a local copy.
+    public func isSectionCollapsed(_ spaceID: String) -> Bool {
+        snapshot.spaces.first { $0.id == spaceID }?.pinnedCollapsed ?? false
+    }
+
+    public func toggleSection() {
+        guard let space = snapshotSpace else { return }
+        setSectionCollapsed(!isSectionCollapsed(space.id), spaceID: space.id)
+    }
+
+    public func setSectionCollapsed(_ collapsed: Bool, spaceID: String) {
+        guard collapsed != isSectionCollapsed(spaceID) else { return }
+        performEdit(.collapseSection(spaceID: spaceID, collapsed: collapsed))
+    }
+
+    // D13: the popover anchors to the row's … or right-click when the menu came from there,
+    // and to the dock cell when it came from the cell (U22's entry).
+    private func editLook(_ id: String, anchor: NSView?) {
         guard let index = snapshot.spaces.firstIndex(where: { $0.id == id }),
               dock.subviews.indices.contains(index), let settings = lookSettings else { return }
         dockLookPopover.performClose(nil)
@@ -1815,9 +1903,28 @@ extension SidebarView: NSMenuDelegate {
         dockLookPopover.behavior = .transient
         dockLookPopover.delegate = self
         dockLookPopover.contentViewController = NSHostingController(rootView: LookPopoverView(model: editor))
-        let cell = dock.subviews[index]
-        dockLookPopover.show(relativeTo: cell.bounds, of: cell, preferredEdge: .maxY)
+        let view = anchor ?? dock.subviews[index]
+        dockLookPopover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
     }
+
+    // Preflight check 9: the look probe opens the popover from the space name row's Edit
+    // Look… (the right-click path, without a menu tracking loop) instead of the Settings
+    // window's anchor. Settings › Spaces keeps its own anchor.
+    public func openLookForCheck() -> LookCheckProbe? {
+        guard let space = snapshotSpace else { return nil }
+        let menu = spaceMenu(spaceID: space.id, anchor: spaceNameRow)
+        guard let item = menu.items.first(where: { $0.title == "Edit Look…" }), let action = item.action else { return nil }
+        NSApp.sendAction(action, to: item.target, from: item)
+        guard dockLookPopover.isShown else { return nil }
+        return lookCheckProbe()
+    }
+
+    public func lookCheckProbe() -> LookCheckProbe? {
+        guard dockLookPopover.isShown else { return nil }
+        return LookCheckProbe(popover: dockLookPopover, editor: { [weak self] in self?.dockLookEditor })
+    }
+
+    public func showLookFromRow(_ id: String? = nil) { editLook(id ?? snapshotSpace?.id ?? "", anchor: spaceNameRow) }
 
     private func confirmSpaceDelete(_ id: String) {
         guard snapshot.spaces.count > 1, snapshot.spaces.contains(where: { $0.id == id }), let window else { return }

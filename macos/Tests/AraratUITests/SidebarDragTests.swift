@@ -68,6 +68,7 @@ func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     #expect(resolveSidebarDrop(position: CGPoint(x: 40, y: 330), geometry: g, dragged: a) == .insert(container: "folder", index: 2, lineY: 344, depth: 1))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 261), geometry: g, dragged: a) == .insert(container: "folder", index: 0, lineY: 262, depth: 1))
     let empty = pureGeometry(dragSpace())
+    // A drop on the space name pins at the top of pinned, with no pins too (design).
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 160), geometry: empty, dragged: a) == .insert(container: "ps", index: 0, lineY: 180, depth: 0))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 200), geometry: empty, dragged: a) == .insert(container: "ts", index: 0, lineY: 180, depth: 0))
 }
@@ -171,7 +172,8 @@ func emptyFavoritesDoNotCoverPinnedDropTargets() throws {
         let point = hasPin ? CGPoint(x: 30, y: try #require(g.rows.first { $0.row.id == "pin" }).frame.minY + 0.5) : CGPoint(x: g.pinnedArea.midX, y: g.pinnedArea.midY)
         #expect(!g.favorites.contains(point))
         row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
-        guard case .insert(let container, let index, _, _) = sidebar.dropTarget else { Issue.record("expected pinned insertion"); continue }
+        guard case .insert(let container, let index, _, _) = sidebar.dropTarget else { Issue.record("expected an insertion"); continue }
+        // A drop on the space name pins at the top of pinned, with no pins too.
         #expect(container == space.pinnedId && index == 0)
         sidebar.cancelOperation(nil)
     }
@@ -402,8 +404,14 @@ func successfulMovePreservesSelectionScrollAndCoreFolderState() throws {
 }
 
 @Test @MainActor
-func middlePressAndPinnedButtonNeverSelectOrStartDragging() throws {
-    let (window, sidebar) = dragWindow()
+func middlePressAndPinnedButtonFollowTheLoadState() throws {
+    // R1/D2: a loaded pin's −/middle click unloads it and keeps the pin; an unloaded pin's
+    // ✕ archives it and the pin goes too. Selection does not decide.
+    let loadedPin = dragRow("pin", "ps")
+    let unloadedPin = Row(folderHasTabs: false, parentId: "ps", siblingIndex: 1, collapsed: false, id: "pin-off",
+                          title: "pin-off", url: "https://pin-off.example", depth: 0, kind: .tab, unloaded: true, lastSelectedAt: nil)
+    let space = dragSpace(pinned: [loadedPin, unloadedPin], today: [dragRow("a", "ts")])
+    let (window, sidebar) = dragWindow(space)
     defer { window.contentView = nil }
     var selections = 0
     var closes: [String] = []
@@ -418,12 +426,13 @@ func middlePressAndPinnedButtonNeverSelectOrStartDragging() throws {
         if type == .otherMouseDown { row.otherMouseDown(with: event) } else { row.otherMouseUp(with: event) }
         #expect(selections == 0 && sidebar.drag == nil)
     }
-    #expect(closes.isEmpty && archives == ["pin"])
+    // The middle click on the loaded pin unloaded it, so the pin stayed.
+    #expect(closes == ["pin"] && archives.isEmpty)
     row.closeButton.performClick(nil)
-    #expect(archives == ["pin", "pin"] && selections == 0 && sidebar.selectedRowID == "b")
-    sidebar.updateSelection(id: "pin")
-    row.closeButton.performClick(nil)
-    #expect(closes == ["pin"] && selections == 0 && sidebar.drag == nil)
+    #expect(closes == ["pin", "pin"] && archives.isEmpty && selections == 0 && sidebar.selectedRowID == "b")
+    let off = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "pin-off" })
+    off.closeButton.performClick(nil)
+    #expect(archives == ["pin-off"] && closes == ["pin", "pin"] && selections == 0 && sidebar.drag == nil)
 }
 
 @Test @MainActor
@@ -668,9 +677,30 @@ func pinnedEndBoundsTheDividerGapAndTheTrailingZone() throws {
         rows: g.rows.prefix(4).map { $0 }, dock: [], space: dragSpace(profile: "default",
             pinned: [dragRow("b", "ps"), dragRow("untitled", "ps", 1, kind: .folder),
                      dragRow("google", "untitled", 0, depth: 1), dragRow("example", "untitled", 1, depth: 1)], today: []))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "ps", index: 2, lineY: 344, depth: 0))
-    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "untitled", index: 2, lineY: 344, depth: 1))
+    // T2: with Today empty, the space below the last pinned row is Today at index 0 — the
+    // old 20 pt pinned zone and the divider gap's level choices are gone.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "ts", index: 0, lineY: 344, depth: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 360), geometry: emptyToday, dragged: dragged) == .insert(container: "ts", index: 0, lineY: 344, depth: 0))
     #expect(resolveSidebarDrop(position: CGPoint(x: 20, y: 390), geometry: emptyToday, dragged: dragged) == .insert(container: "ts", index: 0, lineY: 344, depth: 0))
+}
+
+@Test
+func anEmptyFoldersNoTabsLineAcceptsTheDrop() throws {
+    let dragged = dragRow("a", "ts")
+    let space = dragSpace(pinned: [dragRow("folder", "ps", kind: .folder),
+                                   dragRow("folder/no-tabs", "folder", kind: .noTabs, depth: 1)],
+                          today: [dragged])
+    let g = SidebarDragGeometry(bounds: CGRect(x: 0, y: 0, width: 240, height: 700), list: CGRect(x: 8, y: 180, width: 224, height: 450),
+        pinnedArea: CGRect(x: 8, y: 149, width: 224, height: 31), favorites: CGRect(x: 8, y: 90, width: 224, height: 47),
+        rows: [ .init(row: space.pinned[0], frame: CGRect(x: 8, y: 180, width: 224, height: 41)),
+                .init(row: space.pinned[1], frame: CGRect(x: 8, y: 221, width: 224, height: 24)),
+                .init(row: space.today[0], frame: CGRect(x: 8, y: 300, width: 224, height: 41)) ],
+        dock: [], space: space)
+    // F3: the empty folder’s 24 pt line is a drop target for that folder.
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 233), geometry: g, dragged: dragged) == .folder("folder"))
+    // The gap below a trailing marker ends that folder: index 0, not 1 (review 3a).
+    #expect(resolveSidebarDrop(position: CGPoint(x: 60, y: 255), geometry: g, dragged: dragged)
+        == .insert(container: "folder", index: 0, lineY: 245, depth: 1))
 }
 
 @Test

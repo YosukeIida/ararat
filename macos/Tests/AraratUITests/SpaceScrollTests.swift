@@ -393,7 +393,7 @@ func neighborPreviewsContributeNothingToTheWindowAccessibilityTree() throws {
     let before = descendants(window)
     #expect(before.filter { view($0)?.accessibilityLabel() == "Edit URL" }.count == 1)
     let buttons = before.filter { $0.accessibilityRole() == .button }
-    #expect(buttons.count == spaces.count + 4)
+    #expect(buttons.count == spaces.count + 6)
     sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100))
     let previews = scrollDescendants(sidebar).compactMap { $0 as? SidebarView }
     #expect(previews.count == 2)

@@ -39,6 +39,7 @@ private final class MenuFixture {
                 case let .collapse(id, collapsed): result = try self.store.setFolderCollapsed(windowId: "menus", id: id, collapsed: collapsed)
                 case let .duplicate(id): result = try self.store.duplicateItem(windowId: "menus", id: id)
                 case let .deleteFolder(id): result = try self.store.deleteFolder(windowId: "menus", id: id)
+                case let .collapseSection(spaceID, collapsed): result = try self.store.setSectionCollapsed(windowId: "menus", spaceId: spaceID, collapsed: collapsed)
                 }
                 done(result)
             } catch { Issue.record("edit failed: \(error)"); done(nil) }
@@ -85,7 +86,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let favorite = try f.row("tab-mail")
     let folder = try f.row("folder-docs")
     let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
-    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
+    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
     for (menu, expected) in zip(menus, titles) {
         #expect(menu.items.map(\.title) == expected)
         #expect(menu.items.allSatisfy { $0.isEnabled })
@@ -395,7 +396,7 @@ func rowMenusParticipateInTooltipTrackingWithoutShowingMenus() throws {
     #expect(!f.sidebar.tooltip.menuTracking)
     let row = try f.view("tab-spec")
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"])
+    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"])
 }
 
 @Test @MainActor

@@ -125,10 +125,15 @@ final class SidebarTooltip {
         label.keycaps = []
         let action = (target as? NSControl)?.action
         let shortcutAction: Selector?
+        var explicit: [String]?
         if let row = target.superview as? SidebarRowView, target === row.closeButton {
             shortcutAction = row.closeShortcutAction
+            explicit = row.closeShortcutCaps
         } else { shortcutAction = action }
-        if let shortcutAction, let item = Self.menuItem(for: shortcutAction, in: NSApp.mainMenu), !item.keyEquivalent.isEmpty {
+        if let explicit {
+            // D11: a control with no menu item supplies its caps itself.
+            label.keycaps = explicit.map { TooltipKeycap($0, modifier: Self.modifier(forSymbol: $0)) }
+        } else if let shortcutAction, let item = Self.menuItem(for: shortcutAction, in: NSApp.mainMenu), !item.keyEquivalent.isEmpty {
             label.keycaps = Self.keycaps(for: item)
         }
         let modifiers = modifierFlags()
@@ -156,6 +161,17 @@ final class SidebarTooltip {
             if let found = menuItem(for: action, in: item.submenu) { return found }
         }
         return nil
+    }
+
+    /// The modifier a cap symbol stands for, for the explicit caps of D11.
+    static func modifier(forSymbol symbol: String) -> NSEvent.ModifierFlags {
+        switch symbol {
+        case "⌃": .control
+        case "⌥": .option
+        case "⇧": .shift
+        case "⌘": .command
+        default: []
+        }
     }
 
     static func keycaps(for item: NSMenuItem) -> [TooltipKeycap] {
