@@ -360,6 +360,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var settings: SettingsWindowController?
   var airTraffic: AirTrafficModel?
   var commandPresenter: CommandBarPresenter?
+  var tabSwitcher: TabSwitcher?
+  var commandBarConditions: [String: Bool] = [:]
+  var commandBarFixtureID: String?
+  var commandBarSearchID: String?
+  var commandBarInitialID: String?
+  var commandBarReloadCount: UInt = 0
+  var commandBarPrivateResult: CommandBarResult?
   var coreMenuInstalled = false
   var lookCheck: LookScreenCheck?
   var organizeConditions: [String: Bool] = [:]
@@ -646,10 +653,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
       if ["popup", "ext-popup", "ext-windows-popup", "keyboard"].contains(checkName ?? "") { popupFrontBefore = checkFrontApplication() }
       if checkName == "fullscreen" {
@@ -667,7 +674,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "keyboard" { browserCheckMode = "screen-keyboard" }
       if screenName == "organize" { browserCheckMode = "screen-organize" }
       if screenName == "look" { browserCheckMode = "screen-look" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" {
+      if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar"].contains(checkName ?? "") || screenName == "prompts" || screenName == "keyboard" || screenName == "commandbar" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -834,6 +842,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.selectionGeneration += 1
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.commandPresenter?.close(restoreFocus: false)
+      self?.tabSwitcher?.cancel()
     }
     let actions = SidebarActions()
     actions.onSelect = { [weak self, weak adapter] row in
@@ -891,7 +900,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-commandbar" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1247,6 +1256,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let rows = shown.map { $0.today + $0.pinned + $0.favorites } ?? []
     let selectedIsVisible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
     switch command {
+    case "cycle_tabs_next": cycleTabs(backwards: false)
+    case "cycle_tabs_previous": cycleTabs(backwards: true)
     case "force_reload": host?.forceReload()
     case "settings": openSettings()
     case "quit": NSApp.terminate(nil)
@@ -1291,7 +1302,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
-    let ids = ["force_reload", "pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
@@ -1342,6 +1353,28 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let owner = root ?? self
     let target = ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }
     return target?.sidebar?.canDeleteOrganizeFolder == true
+  }
+
+  func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
+    if let switcher = tabSwitcher, switcher.isOpen { switcher.advance(backwards: backwards); return }
+    guard hasUsableHost, let host, let workspace else { return }
+    let space = snapshot.shownSpaceId
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, visible: browserCheckMode != "commandbar") { [weak host] id in
+      (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
+    }
+    tabSwitcher = switcher
+    switcher.onClose = { [weak self, weak switcher] in
+      if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+    }
+    switcher.onSelect = { [weak self] row in
+      guard let self, self.snapshot.shownSpaceId == space, case .tab(let id, _) = row.target, let url = row.url else { return }
+      self.adapter?.select(id: id, url: url)
+    }
+    workspace.recentTabs { [weak self, weak switcher] result in
+      guard let self, let switcher, self.tabSwitcher === switcher, self.snapshot.shownSpaceId == space else { switcher?.cancel(); return }
+      switcher.load((try? result.get()) ?? [])
+    }
+    if !holdForCheck && NSApp.currentEvent?.modifierFlags.contains(.control) != true { switcher.commit() }
   }
 
   func openCommandBar(_ requested: CommandBarMode) {
@@ -2060,6 +2093,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "autofill" { autofillCheckTick(host); return }
     if mode == "look" || mode == "screen-look" { lookCheckTick(host, screen: mode == "screen-look"); return }
     if mode == "organize" || mode == "screen-organize" { organizeCheckTick(host, screen: mode == "screen-organize"); return }
+    if mode == "commandbar" || mode == "screen-commandbar" { commandBarCheckTick(host, screen: mode == "screen-commandbar"); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
     if mode == "empty" { emptyCheckTick(host); return }
@@ -6632,6 +6666,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-keyboard" { result["check"] = "keyboard"; result["screen"] = "keyboard" }
     if browserCheckMode == "screen-organize" { result["check"] = "organize"; result["screen"] = "organize" }
     if browserCheckMode == "screen-look" { result["check"] = "look"; result["screen"] = "look" }
+    if browserCheckMode == "screen-commandbar" { result["check"] = "commandbar"; result["screen"] = "commandbar" }
+    if browserCheckMode == "commandbar" || browserCheckMode == "screen-commandbar" {
+      result["conditions"] = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
+      result["failed_conditions"] = commandBarConditionNames.filter { commandBarConditions[$0] != true }
+    }
     if browserCheckMode == "look" || browserCheckMode == "screen-look" {
       lookCheck?.stopWatchingMenu()
       let check = LookScreenCheck.conditionResults(lookCheck?.conditions ?? [:], screen: browserCheckMode == "screen-look")

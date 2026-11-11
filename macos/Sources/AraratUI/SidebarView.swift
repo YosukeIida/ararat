@@ -488,6 +488,8 @@ public final class SidebarView: NSView {
         if notify { onShowSpace?(snapshot.spaces[index].id) }
     }
 
+    public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
+    public func clickURLForCheck() { urlField.performClick(nil) }
     @objc private func editURLClicked() { onEditURL?() }
 
     private func build() {

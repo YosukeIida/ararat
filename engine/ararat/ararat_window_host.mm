@@ -1502,6 +1502,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   else if (command == IDC_FOCUS_SEARCH) name = @"search";
   else if (command == IDC_CLOSE_TAB) name = @"close_tab";
   else if (command == IDC_OPTIONS) name = @"settings";
+  else if (command == IDC_CYCLE_TO_NEXT_TAB) name = @"cycle_tabs_next";
+  else if (command == IDC_CYCLE_TO_PREV_TAB) name = @"cycle_tabs_previous";
   else if (command == IDC_RELOAD_BYPASSING_CACHE) {
     NSEvent* event = NSApp.currentEvent;
     if (event.type == NSEventTypeKeyDown) {
@@ -1512,6 +1514,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     name = @"force_reload";
   }
   if (!name) return NO;
+  if ((command == IDC_CYCLE_TO_NEXT_TAB || command == IDC_CYCLE_TO_PREV_TAB) && NSApp.currentEvent.type == NSEventTypeKeyDown) {
+    NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+    if (![[menu cr_menuItemForKeyEquivalentEvent:NSApp.currentEvent].identifier isEqualToString:name]) return YES;
+  }
   [self.delegate windowHost:self performWorkspaceCommand:name];
   return YES;
 }
@@ -2063,7 +2069,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -2113,8 +2119,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {
   history_queries_.TryCancelAll();
-  if (!browser_ || browser_->IsDeleteScheduled() || [self isPrivateWindow] || !text.length) { completion(@[]); return; }
-  auto* service = HistoryServiceFactory::GetForProfile(browser_->GetProfile(), ServiceAccessType::EXPLICIT_ACCESS);
+  if (!browser_ || browser_->IsDeleteScheduled() || [self isPrivateWindow] || !text.length) {
+    auto* args = base::CommandLine::ForCurrentProcess();
+    if (!browser_ && (args->GetSwitchValueASCII("ararat-check") == "commandbar" || args->GetSwitchValueASCII("ararat-screen") == "commandbar"))
+      std::fprintf(stderr, "ararat-trace: history query skipped, no browser\n");
+    completion(@[]); return;
+  }
+  auto* service = HistoryServiceFactory::GetForProfile(browser_->GetProfile(), ServiceAccessType::IMPLICIT_ACCESS);
   if (!service) { completion(@[]); return; }
   history::QueryOptions options;
   options.max_count = 50;

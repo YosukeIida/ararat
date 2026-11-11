@@ -62,6 +62,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var card: PlaceholderCard?
     private var headlessContent: NSView?
     private var commandPresenter: CommandBarPresenter?
+    private var tabSwitcher: TabSwitcher?
     private var mockLiveURLs: [String: String] = [:]
     // Internal for the tests.
     var commandBar: CommandBarController?
@@ -284,8 +285,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         pin.identifier = NSUserInterfaceItemIdentifier("pin_tab")
         pin.target = self
         pin.toolTip = "Pin or unpin the selected tab."
-        for binding in defaultKeyBindings().filter({ ["duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
-            let item = tabsMenu.addItem(withTitle: binding.title, action: #selector(organize(_:)), keyEquivalent: "")
+        for binding in defaultKeyBindings().filter({ ["cycle_tabs_next", "cycle_tabs_previous", "duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
+            let action = binding.command.hasPrefix("cycle_tabs_") ? #selector(cycleRecentTab(_:)) : #selector(organize(_:))
+            let item = tabsMenu.addItem(withTitle: binding.title, action: action, keyEquivalent: "")
             item.identifier = NSUserInterfaceItemIdentifier(binding.command)
             item.representedObject = binding.command
             item.target = self
@@ -347,6 +349,9 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     @objc func pinSelectedTab(_ sender: Any?) { pinTab(in: NSApp.keyWindow) }
+    @objc func cycleRecentTab(_ sender: NSMenuItem) {
+        if let command = sender.representedObject as? String { perform(command: command) }
+    }
     @objc func organize(_ sender: NSMenuItem) {
         if let command = sender.representedObject as? String { sidebar?.organize(command: command) }
     }
@@ -362,6 +367,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     func windowWillClose(_ notification: Notification) {
+        tabSwitcher?.cancel()
         guard let closing = notification.object as? NSWindow, closing === window else { return }
         terminate()
     }
@@ -618,6 +624,26 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
 
     /// Switching to a tab selects it in its space (design note, behaviour).
+    func cycleTabs(backwards: Bool) {
+        if let tabSwitcher, tabSwitcher.isOpen { tabSwitcher.advance(backwards: backwards); return }
+        guard let window, !terminating else { return }
+        let space = shownSpaceID
+        let switcher = TabSwitcher(parent: window, backwards: backwards, favicon: { _ in nil })
+        tabSwitcher = switcher
+        switcher.onClose = { [weak self, weak switcher] in
+            if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+        }
+        switcher.onSelect = { [weak self] row in
+            guard let self, self.shownSpaceID == space, case .tab(let id, let spaceID) = row.target else { return }
+            self.switchToCommandBarTab(id: id, spaceId: spaceID)
+        }
+        adapter.recentTabs { [weak self, weak switcher] result in
+            guard let self, let switcher, self.tabSwitcher === switcher, self.shownSpaceID == space else { switcher?.cancel(); return }
+            switcher.load((try? result.get()) ?? [])
+        }
+        if NSApp.currentEvent?.modifierFlags.contains(.control) != true { switcher.commit() }
+    }
+
     private func switchToCommandBarTab(id: String, spaceId: String?) {
         if let spaceId, let index = snapshot.spaces.firstIndex(where: { $0.id == spaceId }), index != sidebar?.spaceShown {
             sidebar?.showSpace(at: index)
@@ -677,6 +703,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func perform(command: String) {
         switch command {
         case "settings": openSettings(nil)
+        case "cycle_tabs_next": cycleTabs(backwards: false)
+        case "cycle_tabs_previous": cycleTabs(backwards: true)
         case "quit": terminate()
         case "close_tab": closeSelectedTab(nil)
         case "new_tab": openCommandBar(.newTab)

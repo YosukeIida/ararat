@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) NSString* itemId;
 @property(nonatomic, readonly, copy) NSString* title;
 @property(nonatomic, readonly, copy) NSString* url;
+@property(nonatomic, readonly, nullable) NSImage* favicon;
 @property(nonatomic, readonly) BOOL isLoading;
 @property(nonatomic, readonly) NSUInteger navigationCount;
 @property(nonatomic, readonly) NSUInteger entryCount;
