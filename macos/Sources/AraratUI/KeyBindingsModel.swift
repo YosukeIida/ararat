@@ -19,18 +19,12 @@ public final class KeyBindingsModel: ObservableObject {
     public var onChange: (() -> Void)?
     private let adapter: WorkspaceAdapter
     private let menus = NSHashTable<NSMenu>.weakObjects()
-    private let coreMenus = NSHashTable<NSMenu>.weakObjects()
 
     public init(adapter: WorkspaceAdapter) { self.adapter = adapter }
 
     public func register(_ menu: NSMenu) {
         menus.add(menu)
         Self.apply(bindings, to: menu)
-    }
-
-    public func registerCore(_ menu: NSMenu) {
-        coreMenus.add(menu)
-        Self.apply(bindings, to: menu, core: true)
     }
 
     public static func setCoreMenuShortcut(_ key: KeyCombination?, on item: NSMenuItem) {
@@ -46,18 +40,11 @@ public final class KeyBindingsModel: ObservableObject {
         item.keyEquivalentModifierMask = modifiers
     }
 
-    public static func apply(_ bindings: [KeyBinding], to menu: NSMenu, core: Bool = false) {
+    public static func apply(_ bindings: [KeyBinding], to menu: NSMenu) {
         for item in menu.items {
-            if let submenu = item.submenu { apply(bindings, to: submenu, core: core) }
+            if let submenu = item.submenu { apply(bindings, to: submenu) }
             guard let id = item.identifier?.rawValue, let row = bindings.first(where: { $0.command == id }) else { continue }
-            if core { setCoreMenuShortcut(row.key, on: item); continue }
-            item.keyEquivalent = row.key?.key ?? ""
-            var modifiers: NSEvent.ModifierFlags = []
-            if row.key?.command == true { modifiers.insert(.command) }
-            if row.key?.control == true { modifiers.insert(.control) }
-            if row.key?.option == true { modifiers.insert(.option) }
-            if row.key?.shift == true { modifiers.insert(.shift) }
-            item.keyEquivalentModifierMask = modifiers
+            setCoreMenuShortcut(row.key, on: item)
         }
     }
 
@@ -165,7 +152,6 @@ public final class KeyBindingsModel: ObservableObject {
             errorCommand = nil
             self.bindings = bindings
             for menu in menus.allObjects { Self.apply(bindings, to: menu) }
-            for menu in coreMenus.allObjects { Self.apply(bindings, to: menu, core: true) }
             onChange?()
             completion(.success(()))
         case .failure(let error):

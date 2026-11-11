@@ -1497,6 +1497,15 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   else if (command == IDC_FOCUS_SEARCH) name = @"search";
   else if (command == IDC_CLOSE_TAB) name = @"close_tab";
   else if (command == IDC_OPTIONS) name = @"settings";
+else if (command == IDC_RELOAD_BYPASSING_CACHE) {
+  NSEvent* event = NSApp.currentEvent;
+  if (event.type == NSEventTypeKeyDown) {
+    NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+    NSMenuItem* item = [menu cr_menuItemForKeyEquivalentEvent:event];
+    if (![item.identifier isEqualToString:@"force_reload"]) return YES;
+  }
+  name = @"force_reload";
+}
   if (!name) return NO;
   [self.delegate windowHost:self performWorkspaceCommand:name];
   return YES;
@@ -2091,6 +2100,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (check == "menu") std::fprintf(stderr, "ararat-trace: menu-command returned tag=%ld target=window\n", static_cast<long>(item.tag));
   if (tracing) std::fprintf(stderr, "ararat-trace: empty-new-tab returned browser=%p tabs_after=%d\n",
                             static_cast<void*>(browser_), browser_ ? browser_->GetTabStripModel()->count() : -1);
+}
+
+- (void)forceReload {
+  if (browser_ && !browser_->IsDeleteScheduled()) chrome::ExecuteCommand(browser_, IDC_RELOAD_BYPASSING_CACHE);
 }
 
 - (void)checkKeyboardCommand:(NSString*)command {

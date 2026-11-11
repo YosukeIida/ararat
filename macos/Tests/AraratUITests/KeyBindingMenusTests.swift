@@ -78,7 +78,7 @@ func registeredCoreMenuPreservesShiftedShortcutsAcrossLoadsAndRebinding() async 
     item.target = target
     item.identifier = NSUserInterfaceItemIdentifier("toggle_library")
     let event = try routingEvent(keyCode: 37, characters: "l", charactersIgnoringModifiers: "L", flags: [.command, .shift])
-    model.registerCore(menu)
+    model.register(menu)
     #expect(menu.performKeyEquivalent(with: event))
     #expect(menu.performKeyEquivalent(with: event))
     #expect(target.calls == 2)
@@ -110,8 +110,11 @@ func everyMenuShortcutComesFromTheCoreIncludingPinAndFavoriteClose() throws {
     #expect(items.filter { !$0.keyEquivalent.isEmpty }.allSatisfy { $0.identifier != nil })
     for row in defaults {
         let item = try #require(items.first { $0.identifier?.rawValue == row.command })
-        #expect(item.keyEquivalent == row.key?.key ?? "")
-        #expect(item.keyEquivalentModifierMask == bindingFlags(row.key))
+        let shiftedLetter = row.key?.shift == true && (row.key?.key.rangeOfCharacter(from: .letters) != nil)
+        #expect(item.keyEquivalent == (shiftedLetter ? row.key?.key.uppercased() : row.key?.key) ?? "")
+        var flags = bindingFlags(row.key)
+        if shiftedLetter { flags.remove(.shift) }
+        #expect(item.keyEquivalentModifierMask == flags)
     }
     let pin = try #require(items.first { $0.identifier?.rawValue == "pin_tab" })
     #expect(pin.menu?.title == "Tabs" && pin.keyEquivalent == "d")
@@ -143,6 +146,19 @@ func theHarnessMenuCarriesForceReloadWithItsDefaultKey() throws {
 }
 
 @Test @MainActor
+func forceReloadRebindingUpdatesItsMenuShortcut() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openBindings(directory)
+    let harness = HarnessDelegate(adapter: adapter)
+    let menu = harness.makeMenu()
+    let item = try #require(commandItems(menu).first { $0.identifier?.rawValue == "force_reload" })
+    try await bindingValue { harness.keyBindings.set(command: "force_reload", key: KeyCombination(key: "y", command: true, control: false, option: false, shift: false), completion: $0) }
+    #expect(item.keyEquivalent == "y" && item.keyEquivalentModifierMask == [.command])
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func overridingClearingAndResettingUpdateExistingMenusAndSettingsImmediately() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -161,8 +177,8 @@ func overridingClearingAndResettingUpdateExistingMenusAndSettingsImmediately() a
     let key = KeyCombination(key: "x", command: false, control: true, option: true, shift: true)
     try await bindingValue { harness.keyBindings.set(command: "close_tab", key: key, completion: $0) }
     for item in [close, rowClose] {
-        #expect(item.keyEquivalent == "x")
-        #expect(item.keyEquivalentModifierMask == [.control, .option, .shift])
+        #expect(item.keyEquivalent == "X")
+        #expect(item.keyEquivalentModifierMask == [.control, .option])
     }
     #expect(settings.model.shortcuts.contains { $0.title == "Close Tab" && $0.keys == ["⌃", "⌥", "⇧", "X"] })
     #expect(SidebarTooltip.keycaps(for: close).last?.stringValue == "X")
@@ -272,13 +288,13 @@ func loadedOverridesReplaceDefaultsBeforeUseAndErrorsKeepMenuKeys() async throws
     loaded.register(menu)
     #expect(item.keyEquivalent == "d")
     try await bindingValue { loaded.load(completion: $0) }
-    #expect(item.keyEquivalent == "j" && item.keyEquivalentModifierMask == [.command, .shift])
+    #expect(item.keyEquivalent == "J" && item.keyEquivalentModifierMask == [.command])
     do {
         try await bindingValue { loaded.set(command: "pin_tab", key: KeyCombination(key: "q", command: true, control: false, option: false, shift: false), completion: $0) }
         Issue.record("reserved key was accepted")
     } catch {
         #expect(loaded.error == "this shortcut is reserved by the system")
-        #expect(item.keyEquivalent == "j")
+        #expect(item.keyEquivalent == "J")
     }
     _ = try await bindingValue { adapter.shutdown(completion: $0) }
 }

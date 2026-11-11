@@ -1246,6 +1246,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let rows = shown.map { $0.today + $0.pinned + $0.favorites } ?? []
     let selectedIsVisible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
     switch command {
+    case "force_reload": host?.forceReload()
     case "settings": openSettings()
     case "quit": NSApp.terminate(nil)
     case "new_tab": openCommandBar(.newTab)
@@ -1289,7 +1290,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
-    let ids = ["pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+    let ids = ["force_reload", "pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
@@ -1310,7 +1311,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
-    keyBindings?.registerCore(core)
+    keyBindings?.register(core)
   }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
