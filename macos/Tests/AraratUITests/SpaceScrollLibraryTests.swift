@@ -146,6 +146,7 @@ func hiddenDockCheckObservesFollowThenWheelLanding() async throws {
     #expect(dock.cellStates[0].openFraction > 0.999)
     fixture.send(-5, phase: nil, time: 101)
     #expect(fixture.sidebar.spaceShown == 1)
+    #expect(dock.cellStates[0].openFraction > 0.999 && dock.cellStates[1].openFraction < 0.001)
     fixture.sidebar.finishScrollPresentation()
     #expect(dock.cellStates[1].openFraction == 1)
 }

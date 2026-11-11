@@ -14,7 +14,7 @@ final class DockScreenCheck {
     var selectedSpace = ""
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused"] : ["follow_mid"])
+        ["seed", "cells", "wheel_input", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused"] : ["follow_mid", "wheel_start"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -34,7 +34,14 @@ extension Runtime {
         let dock = sidebar.map { dockDescendants($0).compactMap { $0 as? SpaceDockView }.first } ?? nil
         return ["conditions": result.values, "failed_conditions": result.failed, "phase": browserCheckPhase,
                 "cell_states": dock?.cellStates.map { ["state": String(describing: $0.state), "open": $0.openFraction, "refused": $0.refused] as [String: Any] } ?? [],
-                "cell_widths": dock?.subviews.map { $0.frame.width } ?? [], "mid_fractions": check?.mid ?? [],
+                "cell_widths": dock?.subviews.map { $0.frame.width } ?? [],
+                "cell_alphas": dock?.subviews.map { $0.alphaValue } ?? [], "mid_fractions": check?.mid ?? [],
+                "cursor_not_allowed": NSCursor.current == NSCursor.operationNotAllowed,
+                "cursor": String(describing: NSCursor.current),
+                "tint_visible": container?.spaceTintVisible as Any? ?? NSNull(),
+                "content_min_width": host?.window().contentMinSize.width as Any? ?? NSNull(),
+                "sidebar_width": sidebar?.bounds.width as Any? ?? NSNull(),
+                "sidebar_mode": container?.sidebarState as Any? ?? NSNull(),
                 "window_key": host?.window().isKeyWindow ?? false, "window_main": host?.window().isMainWindow ?? false,
                 "first_responder": host?.window().firstResponder.map { NSStringFromClass(type(of: $0)) } as Any? ?? NSNull(),
                 "images": check?.images ?? [:], "activation_simulated": !screen,
@@ -83,6 +90,11 @@ extension Runtime {
                 RunLoop.main.add(timer, forMode: .common)
             }
             sidebar.scrollWheel(with: input)
+            if !screen {
+                // Why not assert the wheel fade: an unordered window has no presentation frames, so only the screen check can detect its removal.
+                let states = dock.cellStates
+                check.report("wheel_start", sidebar.spaceShown == 1 && states.count > 1 && states[0].openFraction > 0.999 && states[1].openFraction < 0.001)
+            }
             check.report("wheel_input", true)
             browserCheckPhase = 1
         }
@@ -149,16 +161,19 @@ extension Runtime {
             FileHandle.standardError.write(Data("ararat-trace: dock begin refused drag\n".utf8))
             guard sidebar.organizeCheckBegin(id: row.id, destination: "dock:named") else { end("refused", false); return }
             let index = current.spaces.firstIndex { $0.id == "named" }!
+            FileHandle.standardError.write(Data("ararat-trace: dock inspect refused cursor=\(String(describing: NSCursor.current)) not_allowed=\(NSCursor.current == NSCursor.operationNotAllowed) alpha=\(dock.subviews[index].alphaValue)\n".utf8))
             let refused = dock.cellStates[index].refused && abs(dock.subviews[index].alphaValue - 0.35) < 0.001 && NSCursor.current == NSCursor.operationNotAllowed
             if screen { check.report("capture_refused", capture("refused")) }
             end("refused", refused)
         case 5:
+            FileHandle.standardError.write(Data("ararat-trace: dock send Escape\n".utf8))
             guard sidebar.organizeCheckEnd(cancel: true) else { end("escape", false); return }
             browserCheckPhase += 1
         case 6:
             guard sidebar.organizeCheckIdle else { return }
             check.report("escape", dock.cellStates.allSatisfy { !$0.refused } && NSCursor.current != NSCursor.operationNotAllowed)
             _ = sidebar.organizeCheckEnd()
+            FileHandle.standardError.write(Data("ararat-trace: dock begin second refused drag and drop\n".utf8))
             guard let row = current.spaces.first(where: { $0.id == check.selectedSpace })?.today.first(where: { $0.url == "about:blank?dock-drag" }),
                   sidebar.organizeCheckBegin(id: row.id, destination: "dock:named"), sidebar.organizeCheckEnd() else { end("drop_refused", false); return }
             check.report("drop_duration", abs((sidebar.organizeCheckSettleDuration ?? -1) - 0.1) < 0.001)
@@ -168,20 +183,28 @@ extension Runtime {
             let space = current.spaces.first { $0.id == check.selectedSpace }
             check.report("drop_refused", space?.today.contains { $0.url == "about:blank?dock-drag" } == true && current.shownSpaceId == check.selectedSpace)
             check.report("minimum_docked", abs(window.contentMinSize.width - (sidebar.bounds.width + 250)) < 0.01)
+            if !screen { container.dockCheckSetMain(true) }
+            browserCheckPhase = 12
+        case 12:
+            guard container.spaceTintVisible, !screen || window.isKeyWindow else { return }
+            check.report("tint_initial", true)
+            FileHandle.standardError.write(Data("ararat-trace: dock switch window inactive\n".utf8))
             if screen {
                 let other = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
                 check.otherWindow = other
                 other.makeKeyAndOrderFront(nil)
             } else { container.dockCheckSetMain(false) }
-            browserCheckPhase += 1
+            browserCheckPhase = 7
         case 7:
             guard !container.spaceTintVisible, !screen || !window.isKeyWindow else { return }
             check.report("tint_inactive", true)
+            FileHandle.standardError.write(Data("ararat-trace: dock switch window active\n".utf8))
             if screen { window.makeKeyAndOrderFront(nil) } else { container.dockCheckSetMain(true) }
             browserCheckPhase += 1
         case 8:
             guard container.spaceTintVisible, !screen || window.isKeyWindow else { return }
             check.report("tint_active", true)
+            FileHandle.standardError.write(Data("ararat-trace: dock toggle sidebar\n".utf8))
             container.toggleSidebar()
             container.layoutSubtreeIfNeeded()
             end("minimum_hidden", abs(window.contentMinSize.width - 260) < 0.01)
