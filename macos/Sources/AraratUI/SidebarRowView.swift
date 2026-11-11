@@ -363,6 +363,9 @@ final class SidebarRowView: NSView {
         case .tab: "globe"
         case .folder: "folder.fill"
         case .split: "rectangle.split.2x1"
+        // The open, empty folder's "No tabs" marker is a 24 pt line drawn by the row
+        // (U25b part 2), not an icon; the symbol only has to exist.
+        case .noTabs: "minus"
         }
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) ?? NSImage()

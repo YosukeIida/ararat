@@ -485,6 +485,41 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn set_section_collapsed(&self, window_id: String, space_id: String, collapsed: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_section_collapsed(&space_id, collapsed)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // Read on its own rather than in SpaceSnapshot: the record is per space and the
+    // snapshot's Swift initialisers are written positionally all over the app's tests.
+    pub fn section_collapsed(&self, space_id: String) -> bool {
+        self.workspace.lock().unwrap().is_section_collapsed(&space_id)
+    }
+
+    // D6: one batch, one store write, so the caller's undo reverses the whole clear.
+    pub fn clear_today(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.clear_today(&space_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn settings(&self) -> WorkspaceSettings {
+        self.workspace.lock().unwrap().settings.clone().into()
+    }
+
+    pub fn set_new_tab_row_shown(&self, window_id: String, shown: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_new_tab_row_shown(shown);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
         self.store.flush().map_err(Into::into)
     }
@@ -592,6 +627,9 @@ pub enum RowKind {
     Tab,
     Folder,
     Split,
+    // The 24 pt line an open, empty folder shows at its child indent; not an item, so no
+    // core call ever names one (its id is derived from the folder's).
+    NoTabs,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -691,6 +729,18 @@ impl From<Look> for ararat_core::model::Look {
                 Appearance::Dark => ararat_core::model::Appearance::Dark,
             },
         }
+    }
+}
+
+// SwiftUI has a `Settings` scene, so the boundary type is named for the workspace it holds.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct WorkspaceSettings {
+    pub new_tab_row_shown: bool,
+}
+
+impl From<ararat_core::model::Settings> for WorkspaceSettings {
+    fn from(settings: ararat_core::model::Settings) -> Self {
+        Self { new_tab_row_shown: settings.new_tab_row_shown }
     }
 }
 
@@ -1118,15 +1168,13 @@ fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
         ItemKind::Tab { url, .. } => Some(ArchiveEntry { id: item.id.clone(), title: item.display_title().into(), url: url.clone(), lifecycle_changed_at: item.lifecycle_changed_at }),
         _ => None,
     }).collect();
-    WorkspaceSnapshot { archive, shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.items.get(*id).is_some_and(|item| item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }))).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s)).collect() }
+    // The window's current row, so a collapsed holder (folder or pinned section) keeps it
+    // visible in this window's rows.
+    let current = view.selected(window_id);
+    WorkspaceSnapshot { archive, shown_space_id: view.shown_space(window_id).map(str::to_string), selected_id: view.selected(window_id).filter(|id| view.items.get(*id).is_some_and(|item| item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. }))).map(str::to_string), spaces: view.spaces.iter().map(|s| space(&view, s, current)).collect() }
 }
 
-fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
-    let rows = |container: Option<&String>| {
-        container.map_or_else(Vec::new, |c| {
-            ws.outline(c).into_iter().filter_map(|(depth, item)| row(ws, depth, item)).collect()
-        })
-    };
+fn space(ws: &Workspace, s: &Space, current: Option<&str>) -> SpaceSnapshot {
     SpaceSnapshot {
         pinned_count: ws.children(&s.pinned).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).count() as u32,
         today_count: ws.children(&s.today).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).count() as u32,
@@ -1141,10 +1189,42 @@ fn space(ws: &Workspace, s: &Space) -> SpaceSnapshot {
         title: s.title.clone(),
         icon: s.icon.clone(),
         look: s.look.clone().map(Into::into),
-        favorites: rows(ws.favorites.get(&s.profile)),
-        pinned: rows(Some(&s.pinned)),
-        today: rows(Some(&s.today)),
+        // The pinned list is the one container a collapse record governs, and the one that
+        // keeps the current row visible when it is collapsed; Today holds no folders.
+        favorites: ws.favorites.get(&s.profile).map_or_else(Vec::new, |container| rows(ws, container, None)),
+        pinned: rows(ws, &s.pinned, current),
+        today: rows(ws, &s.today, None),
     }
+}
+
+// One container's rows for the sidebar, with the "No tabs" marker an open, empty folder
+// shows under itself (its 24 pt line is the UI's).
+fn rows(ws: &Workspace, container: &str, current: Option<&str>) -> Vec<Row> {
+    let entries = ws.outline_keeping(container, current);
+    let mut rows: Vec<Row> = Vec::with_capacity(entries.len());
+    for (index, (depth, item)) in entries.iter().enumerate() {
+        let Some(row) = row(ws, *depth, item) else { continue };
+        let marker = row.kind == RowKind::Folder && !row.collapsed && !row.folder_has_tabs
+            && !entries.get(index + 1).is_some_and(|(next, _)| next > depth);
+        let id = row.id.clone();
+        rows.push(row);
+        if marker {
+            rows.push(Row {
+                folder_has_tabs: false,
+                parent_id: id.clone(),
+                sibling_index: 0,
+                collapsed: false,
+                id: format!("{id}/no-tabs"),
+                title: "No tabs".into(),
+                url: None,
+                depth: (*depth + 1) as u32,
+                kind: RowKind::NoTabs,
+                unloaded: false,
+                last_selected_at: None,
+            });
+        }
+    }
+    rows
 }
 
 fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Profile, Record, WindowState, Workspace};
+use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Profile, Record, Settings, WindowState, Workspace};
 
 pub const HISTORY_LIMIT: usize = 50;
 
@@ -340,6 +340,19 @@ impl Workspace {
             return Err(EditError(format!("item {id} is not a folder")));
         }
         Ok(self.commit_edit(vec![Op::Put(Record::FolderState { item: id.into(), collapsed })]))
+    }
+
+    // The pinned section's chevron (D1): the record is per space, so it rides with the
+    // space rather than the window.
+    pub fn set_section_collapsed(&mut self, space: &str, collapsed: bool) -> Result<Vec<Op>, EditError> {
+        if !self.spaces.iter().any(|entry| entry.id == space) {
+            return Err(EditError(format!("unknown space {space}")));
+        }
+        Ok(self.commit_edit(vec![Op::Put(Record::SectionState { space: space.into(), collapsed })]))
+    }
+
+    pub fn is_section_collapsed(&self, space: &str) -> bool {
+        self.section_collapsed.get(space).copied().unwrap_or(false)
     }
 
     pub fn delete_folder(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
@@ -758,6 +771,36 @@ impl Workspace {
         self.finish_item(id, true, self.lifecycle_time())
     }
 
+    // Clear Today (D6): the space's whole Today list goes to the Archive in one batch —
+    // loaded and unloaded rows, and the tabs inside a split row — so the undo toast reverses
+    // it as one step. Pins and the profile's favourites are other lists and keep their tabs.
+    // Every archived row shares one instant, which is what makes the batch read as one action.
+    pub fn clear_today(&mut self, space: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let today = self.spaces.iter().find(|entry| entry.id == space).map(|entry| entry.today.clone())
+            .ok_or_else(|| EditError(format!("unknown space {space}")))?;
+        let ids: Vec<Id> = self.children(&today).into_iter()
+            .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .filter(|item| match item.kind {
+                ItemKind::Tab { .. } => true,
+                // A split with no open member is not a row the sidebar shows; leave it be.
+                ItemKind::Split { .. } => self.has_open_tab(&item.id),
+                _ => false,
+            })
+            .map(|item| item.id.clone()).collect();
+        if ids.is_empty() { return Ok(Vec::new()); }
+        let now = self.lifecycle_time();
+        let mut next = self.clone();
+        let mut ops = Vec::new();
+        // Last row first, so each row's successor search cannot land on a row that is still
+        // to be archived in this batch.
+        for id in ids.iter().rev() {
+            ops.extend(next.finish_item(id, true, now)?);
+        }
+        *self = next;
+        Ok(ops)
+    }
+
     fn finish_item(&mut self, id: &str, archive: bool, changed_at: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let item = self.items.get(id).ok_or_else(|| EditError(format!("unknown item {id}")))?;
@@ -882,6 +925,20 @@ impl Workspace {
         let ops = vec![Op::Put(Record::ArchiveAfter { profile, value })];
         for op in &ops { self.apply(op); }
         ops
+    }
+
+    // The New Tab row switch (D5). The built-in value (shown) is derived, never stored, so a
+    // reset is a tombstone the way the routing default's reset is.
+    pub fn set_new_tab_row_shown(&mut self, shown: bool) -> Vec<Op> {
+        if self.settings.new_tab_row_shown == shown { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.new_tab_row_shown = shown;
+        let op = if settings == Settings::default() {
+            Op::Delete(Kind::Settings, "workspace".into())
+        } else {
+            Op::Put(Record::Settings(settings))
+        };
+        self.commit_edit(vec![op])
     }
 
     pub fn auto_archive(&mut self, now: u64) -> Result<Vec<Op>, EditError> {

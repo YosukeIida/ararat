@@ -1922,7 +1922,10 @@ extension SidebarView: NSMenuDelegate {
     func createFolder(in container: String) {
         guard let space = snapshotSpace else { return }
         let id = UUID().uuidString
-        let index = container == space.pinnedId ? Int(space.pinnedCount) : (space.pinned.filter { $0.parentId == container }.map { Int($0.siblingIndex) + 1 }.max() ?? 0)
+        // Why not count every row: the open, empty folder's "No tabs" marker is not an item,
+        // so it has no index of its own to land after.
+        let index = container == space.pinnedId ? Int(space.pinnedCount)
+            : (space.pinned.filter { $0.parentId == container && $0.kind != .noTabs }.map { Int($0.siblingIndex) + 1 }.max() ?? 0)
         // Why not use the visible child count: collapsed folders omit their children.
         if let folder = space.pinned.first(where: { $0.id == container }), folder.collapsed {
             performEdit(.collapse(id: container, collapsed: false)) { [weak self] success in

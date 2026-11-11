@@ -126,6 +126,13 @@ pub struct WindowState {
 pub struct Workspace {
     pub key_binding_overrides: HashMap<String, Option<crate::key_bindings::KeyCombination>>,
     pub folder_collapsed: HashMap<Id, bool>,
+    // The pinned section's collapsed state is per space and synced with the space, not kept
+    // by the window: another device opens the section the way this one last left it, and the
+    // core can keep the current pin's row visible (outline_keeping) the way it does for a
+    // collapsed folder.
+    pub section_collapsed: HashMap<Id, bool>,
+    // The workspace's own preferences (D5), one record that syncs.
+    pub settings: Settings,
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
@@ -151,6 +158,8 @@ pub enum Kind {
     ArchiveAfter,
     LastSelected,
     FolderState,
+    SectionState,
+    Settings,
     RoutingRule,
     RoutingDefault,
     HistoryPurge,
@@ -168,6 +177,8 @@ impl Kind {
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
             Kind::FolderState => "folder_state",
+            Kind::SectionState => "section_state",
+            Kind::Settings => "settings",
             Kind::RoutingRule => "routing_rule",
             Kind::RoutingDefault => "routing_default",
             Kind::HistoryPurge => "history_purge",
@@ -176,7 +187,7 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -184,6 +195,8 @@ impl Kind {
 pub enum Record {
     KeyBinding { command: String, key: Option<crate::key_bindings::KeyCombination> },
     FolderState { item: Id, collapsed: bool },
+    SectionState { space: Id, collapsed: bool },
+    Settings(Settings),
     ArchiveAfter { profile: Profile, value: ArchiveAfter },
     LastSelected { item: Id, at: u64 },
     Space(Space),
@@ -203,6 +216,8 @@ impl Record {
             Record::ArchiveAfter { .. } => Kind::ArchiveAfter,
             Record::LastSelected { .. } => Kind::LastSelected,
             Record::FolderState { .. } => Kind::FolderState,
+            Record::SectionState { .. } => Kind::SectionState,
+            Record::Settings(_) => Kind::Settings,
             Record::Space(_) => Kind::Space,
             Record::Window(_) => Kind::Window,
             Record::Item(_) => Kind::Item,
@@ -220,6 +235,8 @@ impl Record {
             Record::ArchiveAfter { profile, .. } => profile_id(profile),
             Record::LastSelected { item, .. } => item.clone(),
             Record::FolderState { item, .. } => item.clone(),
+            Record::SectionState { space, .. } => space.clone(),
+            Record::Settings(_) => "workspace".into(),
             Record::Space(s) => s.id.clone(),
             Record::Window(window) => window.id.clone(),
             Record::Item(i) => i.id.clone(),
@@ -237,6 +254,8 @@ impl Record {
             Record::ArchiveAfter { value, .. } => serde_json::to_string(value),
             Record::LastSelected { at, .. } => serde_json::to_string(at),
             Record::FolderState { collapsed, .. } => serde_json::to_string(collapsed),
+            Record::SectionState { collapsed, .. } => serde_json::to_string(collapsed),
+            Record::Settings(settings) => serde_json::to_string(settings),
             Record::Space(s) => serde_json::to_string(s),
             Record::Window(window) => serde_json::to_string(window),
             Record::Item(i) => serde_json::to_string(i),
@@ -255,6 +274,8 @@ impl Record {
         Ok(match kind {
             Kind::KeyBinding => Record::KeyBinding { command: id.into(), key: serde_json::from_str(body)? },
             Kind::FolderState => Record::FolderState { item: id.into(), collapsed: serde_json::from_str(body)? },
+            Kind::SectionState => Record::SectionState { space: id.into(), collapsed: serde_json::from_str(body)? },
+            Kind::Settings => Record::Settings(serde_json::from_str(body)?),
             Kind::LastSelected => Record::LastSelected { item: id.into(), at: serde_json::from_str(body)? },
             Kind::ArchiveAfter => Record::ArchiveAfter { profile: serde_json::from_str(id)?, value: serde_json::from_str(body)? },
             Kind::Space => Record::Space(serde_json::from_str(body)?),
@@ -314,6 +335,57 @@ impl Workspace {
             .map(|(depth, item, _)| (depth, item)).collect()
     }
 
+    // The rows a sidebar draws for a container, with the window's current row kept in view:
+    // a collapsed folder and a collapsed pinned section both hold their children back, but
+    // the row the window is on stays (the one holder rule, D1). Editing reads
+    // outline_entries instead — a collapse is a display state and never hides an item from
+    // an edit.
+    pub fn outline_keeping(&self, container: &str, current: Option<&str>) -> Vec<(usize, &Item)> {
+        self.outline_entries_keeping(container, current).into_iter().filter(|(_, _, visible)| *visible)
+            .map(|(depth, item, _)| (depth, item)).collect()
+    }
+
+    fn outline_entries_keeping(&self, container: &str, current: Option<&str>) -> Vec<(usize, &Item, bool)> {
+        let keep = self.holder_path(container, current);
+        let section_hidden = self.section_hidden(container);
+        let mut rows = Vec::new();
+        let mut stack: Vec<_> = self.children(container).into_iter().rev()
+            .map(|item| (0, item, !section_hidden || keep.contains(&item.id))).collect();
+        while let Some((depth, item, parent_visible)) = stack.pop() {
+            let visible = parent_visible && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
+                && (!matches!(item.kind, ItemKind::Split { .. }) || self.has_open_tab(&item.id));
+            rows.push((depth, item, visible));
+            let collapsed = self.folder_collapsed.get(&item.id).copied().unwrap_or(false);
+            stack.extend(self.children(&item.id).into_iter().rev()
+                .map(|child| (depth + 1, child, visible && (!collapsed || keep.contains(&child.id)))));
+        }
+        rows
+    }
+
+    // The ids from the current row up to the container it sits in; empty when the row is in
+    // another list, so only its own path survives a collapsed holder.
+    fn holder_path(&self, container: &str, current: Option<&str>) -> std::collections::HashSet<Id> {
+        let mut path = std::collections::HashSet::new();
+        let mut id = current;
+        for _ in 0..self.items.len() {
+            let Some(item) = id.and_then(|id| self.items.get(id)) else { return std::collections::HashSet::new() };
+            if item.membership.parent.as_deref() == Some(container) {
+                path.insert(item.id.clone());
+                return path;
+            }
+            if item.membership.parent.is_none() { return std::collections::HashSet::new(); }
+            path.insert(item.id.clone());
+            id = item.membership.parent.as_deref();
+        }
+        std::collections::HashSet::new()
+    }
+
+    // A space's pinned section, keyed by the space the record names; favourites have none.
+    fn section_hidden(&self, container: &str) -> bool {
+        self.spaces.iter().find(|space| space.pinned == container)
+            .is_some_and(|space| self.section_collapsed.get(&space.id).copied().unwrap_or(false))
+    }
+
     pub(crate) fn outline_entries(&self, container: &str) -> Vec<(usize, &Item, bool)> {
         let mut rows = Vec::new();
         let mut stack: Vec<_> = self.children(container).into_iter().rev().map(|i| (0, i, true)).collect();
@@ -343,6 +415,12 @@ impl Workspace {
             Op::Delete(Kind::KeyBinding, id) => { self.key_binding_overrides.remove(id); },
             Op::Put(Record::FolderState { item, collapsed }) => { self.folder_collapsed.insert(item.clone(), *collapsed); },
             Op::Delete(Kind::FolderState, id) => { self.folder_collapsed.remove(id); },
+            Op::Put(Record::SectionState { space, collapsed }) => { self.section_collapsed.insert(space.clone(), *collapsed); },
+            Op::Delete(Kind::SectionState, id) => { self.section_collapsed.remove(id); },
+            Op::Put(Record::Settings(settings)) => { self.settings = settings.clone(); },
+            // Like the routing default: a tombstone resets the workspace to the built-in
+            // value, so a synced reset is a delete rather than a row restating the default.
+            Op::Delete(Kind::Settings, _) => { self.settings = Settings::default(); },
             Op::Put(Record::LastSelected { item, at }) => { self.last_selected.insert(item.clone(), *at); },
             Op::Delete(Kind::LastSelected, id) => { self.last_selected.remove(id); },
             Op::Put(Record::ArchiveAfter { profile, value }) => { self.archive_after.insert(profile.clone(), *value); },
@@ -394,7 +472,7 @@ impl Workspace {
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 
@@ -473,4 +551,17 @@ impl Item {
 pub enum ArchiveAfter { #[default] Hours12, Hours24, Days7, Days30 }
 impl ArchiveAfter {
     pub fn millis(self) -> u64 { (match self { Self::Hours12 => 12, Self::Hours24 => 24, Self::Days7 => 168, Self::Days30 => 720 }) * 3_600_000 }
+}
+
+// The workspace's own preferences, one synced record (D5). The built-in value is derived
+// rather than stored: to_ops writes a record only for a change from it, so a workspace that
+// never touched a setting emits nothing and a reset is a delete (like the routing default).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub new_tab_row_shown: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self { Self { new_tab_row_shown: true } }
 }

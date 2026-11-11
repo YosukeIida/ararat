@@ -411,9 +411,10 @@ func adapterFolderAndRenameEditsReachTheCoreAndPersist() async throws {
     let path = directory.appendingPathComponent("adapter.sqlite").path
     _ = try await value { adapter.open(path: path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     let created = try await value { adapter.edit(.createFolder(id: "new", container: "pin-work", index: 2), completion: $0) }
-    #expect(created.spaces[0].pinned.last?.id == "new")
+    // The open, empty folder is followed by its "No tabs" marker, which is not a row item.
+    #expect(created.spaces[0].pinned.last(where: { $0.kind != .noTabs })?.id == "new")
     let renamed = try await value { adapter.edit(.rename(id: "new", title: "Named", folder: true), completion: $0) }
-    #expect(renamed.spaces[0].pinned.last?.title == "Named")
+    #expect(renamed.spaces[0].pinned.last(where: { $0.kind != .noTabs })?.title == "Named")
     _ = try await value { adapter.edit(.rename(id: "tab-spec", title: "Custom", folder: false), completion: $0) }
     let cleared = try await value { adapter.edit(.rename(id: "tab-spec", title: "", folder: false), completion: $0) }
     #expect(cleared.spaces[0].pinned.first { $0.id == "tab-spec" }?.title == "Spec")

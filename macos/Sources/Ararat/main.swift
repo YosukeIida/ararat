@@ -1480,7 +1480,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       case .moveToFolder(let id, let spaceID):
         guard let item = capturedItem, self.snapshot.selectedId == item, let target, adapter.isCurrentNavigationTarget(target),
               let space = self.snapshot.spaces.first(where: { $0.id == spaceID }) else { return }
-        let index = space.pinned.filter { $0.parentId == id }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
+        let index = space.pinned.filter { $0.parentId == id && $0.kind != .noTabs }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
         guard let live = target["live"] as? String else { return }
         workspace.moveIfLive(id: item, container: id, index: index, openFolder: false, expectedLive: live) { [weak self] result in
           switch result { case .success(let snapshot): if let snapshot { self?.show(snapshot) }; case .failure(let error): self?.report(error) }
