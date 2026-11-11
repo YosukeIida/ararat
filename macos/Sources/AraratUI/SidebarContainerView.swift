@@ -20,6 +20,9 @@ public final class SidebarContainerView: NSView {
     private var motionGeneration = 0
     private var moving = false
     private var stateBeforeFullscreen: SidebarState?
+    /// The page card's narrowest width: §7 keeps the card itself unclipped, and the window's minimum follows it.
+    private static let minimumPageWidth: CGFloat = 240
+    private var growingWindow = false
     public var windowFullscreen = false {
         didSet {
             guard windowFullscreen != oldValue else { return }
@@ -233,6 +236,33 @@ public final class SidebarContainerView: NSView {
         windowButtons?.isHidden = window?.styleMask.contains(.fullScreen) == true || windowButtons?.sidebarHidden == true
         if let window { WindowChrome.layout(window: window, lights: windowButtons) }
         updateBorder()
+        updateWindowMinimumWidth()
+    }
+
+    /// Docked, the card starts at the sidebar's edge and ends at the card inset; hidden or floating, it sits at
+    /// the card inset on both sides, so the sidebar's own width does not count (architecture §7).
+    private var minimumWindowWidth: CGFloat {
+        state.mode == .docked
+            ? resizeHandle.displayedWidth + SidebarMetrics.cardInset + Self.minimumPageWidth
+            : Self.minimumPageWidth + SidebarMetrics.cardInset * 2
+    }
+
+    private func updateWindowMinimumWidth() {
+        guard let window, let content = window.contentView else { return }
+        let minimum = minimumWindowWidth
+        if window.contentMinSize.width != minimum {
+            window.contentMinSize = NSSize(width: minimum, height: window.contentMinSize.height)
+        }
+        // The window cannot shrink below the rule, but a sidebar widened (or shown) past it has to grow it.
+        guard content.bounds.width < minimum, content.bounds.height > 0, !growingWindow else { return }
+        growingWindow = true
+        window.setContentSize(NSSize(width: minimum, height: content.bounds.height))
+        growingWindow = false
+        needsLayout = true
+    }
+
+    private func updateActive() {
+        panel.active = applicationActive() && (windowKey?() ?? (window?.isKeyWindow == true))
     }
 
     private func layoutFindBar() {
@@ -397,6 +427,8 @@ public final class SidebarContainerView: NSView {
         for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: nil)
         }
+        updateActive()
+        updateWindowMinimumWidth()
         processPointer()
     }
 
@@ -422,7 +454,10 @@ public final class SidebarContainerView: NSView {
     override public func mouseEntered(with event: NSEvent) { processPointer() }
     override public func mouseExited(with event: NSEvent) { processPointer() }
 
-    @objc private func contextChanged() { processPointer() }
+    @objc private func contextChanged() {
+        updateActive()
+        processPointer()
+    }
     @objc private func windowClosed() {
         stopMonitoring()
         NotificationCenter.default.removeObserver(self)

@@ -13,6 +13,13 @@ final class SidebarPanelView: NSView {
     private var fraction = 0.0
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var systemAppearance: () -> NSAppearance = { NSApp.effectiveAppearance }
+    /// False while the window is not the active one: the space's colour and grain are dropped, the vibrancy and Glass stay.
+    var active = true {
+        didSet {
+            guard active != oldValue else { return }
+            renderLook()
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -141,7 +148,7 @@ final class SidebarPanelView: NSView {
             gradient.colors = colors.map(\.cgColor)
         }
         grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
-        coating.isHidden = !hasLook
+        coating.isHidden = !hasLook || !active
         CATransaction.commit()
     }
 

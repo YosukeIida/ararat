@@ -256,3 +256,109 @@ func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
     #expect(page.frame.minX == 164)
     #expect(container.resizeHandle.sidebarWidth == 164)
 }
+
+@MainActor
+private func windowedSidebar(selected: Bool = false, look: Look? = nil, windowWidth: CGFloat = 1100)
+    -> (NSWindow, SidebarView, SidebarContainerView, SidebarPanelView) {
+    _ = NSApplication.shared
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil,
+                  depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: selected ? "tab" : nil, spaces: [
+        SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil,
+                      archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Space",
+                      icon: nil, look: look, favorites: [], pinned: [], today: [row])
+    ]))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.applicationActive = { true }
+    container.windowKey = { true }
+    container.pressedButtons = { 0 }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 720),
+                          styleMask: [], backing: .buffered, defer: false)
+    container.pointerLocation = { NSPoint(x: window.frame.minX + 600, y: window.frame.midY) }
+    window.contentView = container
+    container.layoutSubtreeIfNeeded()
+    container.selectionChanged()
+    let panel = container.subviews.compactMap { $0 as? SidebarPanelView }.first!
+    return (window, sidebar, container, panel)
+}
+
+@Test @MainActor
+func minimumWindowWidthFollowsTheSidebarAndTheHiddenCard() {
+    let (window, _, container, panel) = windowedSidebar()
+    defer { window.contentView = nil }
+    #expect(container.sidebarState == "docked")
+    // The rule is sidebar + the 240 pt card + the 10 pt card inset.
+    #expect(window.contentMinSize.width == 490)
+    #expect(container.frame.width == 1100)
+    for (width, minimum) in [(164, 414), (240, 490), (500, 750)] as [(CGFloat, CGFloat)] {
+        container.resizeHandle.sidebarWidth = width
+        container.layoutSubtreeIfNeeded()
+        #expect(panel.frame.width == width)
+        #expect(window.contentMinSize.width == minimum)
+    }
+    container.toggleSidebar()
+    #expect(container.sidebarState == "floating")
+    // Hidden or floating, the card keeps its 240 pt between two 10 pt insets, so the sidebar's width drops out.
+    #expect(window.contentMinSize.width == 260)
+    container.toggleSidebar()
+    #expect(container.sidebarState == "docked")
+    #expect(window.contentMinSize.width == 750)
+}
+
+@Test @MainActor
+func hiddenSidebarKeepsThePageCardAtItsMinimumWindowWidth() {
+    let (window, _, container, _) = windowedSidebar(selected: true)
+    defer { window.contentView = nil }
+    #expect(container.sidebarState == "docked")
+    #expect(window.contentMinSize.width == 490)
+    container.toggleSidebar()
+    #expect(container.sidebarState == "hidden")
+    #expect(window.contentMinSize.width == 260)
+}
+
+@Test @MainActor
+func aWindowNarrowerThanTheRuleGrowsOnTheNextLayout() {
+    let (window, _, container, panel) = windowedSidebar(windowWidth: 300)
+    defer { window.contentView = nil }
+    #expect(window.contentMinSize.width == 490)
+    #expect(container.frame.width == 490)
+    container.layoutSubtreeIfNeeded()
+    #expect(panel.frame.width == 240)
+    container.resizeHandle.sidebarWidth = 500
+    window.layoutIfNeeded()
+    container.layoutSubtreeIfNeeded()
+    #expect(window.contentMinSize.width == 750)
+    #expect(container.frame.width == 750)
+    #expect(panel.frame.width == 500)
+}
+
+@Test @MainActor
+func inactiveWindowDropsTheSpaceTintAndKeepsTheVibrancy() {
+    let look = Look(colors: [LookColor(red: 1, green: 0, blue: 0, x: 0.5, y: 0.5)],
+                    opacity: 1, grain: 0.5, glass: false, appearance: .auto)
+    let (window, _, container, panel) = windowedSidebar(selected: true, look: look)
+    defer { window.contentView = nil }
+    #expect(panel.active)
+    #expect(!panel.coating.isHidden)
+    var active = true
+    container.applicationActive = { active }
+    active = false
+    NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+    #expect(!panel.active)
+    #expect(panel.coating.isHidden)
+    #expect(!panel.vibrancy.isHidden)
+    #expect(panel.vibrancy.material == .sidebar)
+    active = true
+    NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+    #expect(panel.active)
+    #expect(!panel.coating.isHidden)
+    container.windowKey = { false }
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+    #expect(!panel.active)
+    #expect(panel.coating.isHidden)
+    container.windowKey = { true }
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+    #expect(panel.active)
+    #expect(!panel.coating.isHidden)
+    #expect(!panel.vibrancy.isHidden)
+}
