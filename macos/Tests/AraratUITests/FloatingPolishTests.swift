@@ -253,3 +253,24 @@ func floatingPageMaskTracksRevealAndLibraryWidth() throws {
         #expect(!window.isVisible)
     }
 }
+
+@Test @MainActor
+func reduceMotionRemovesFloatingShowAndHideAnimations() throws {
+    let (window, _, container, _) = floatingFixture()
+    defer { window.contentView = nil }
+    let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
+    var now = 0.0
+    var point = NSPoint(x: window.frame.minX, y: window.frame.midY)
+    container.clock = { now }
+    container.pointerLocation = { point }
+    container.reduceMotion = { true }
+    container.toggleSidebar()
+    now = 0.15
+    container.processPointer()
+    #expect(container.sidebarState == "floating")
+    #expect(panel.layer?.animation(forKey: "sidebar.position") == nil)
+    point.x = window.frame.maxX + 100
+    container.processPointer()
+    #expect(container.sidebarState == "hidden")
+    #expect(panel.layer?.animation(forKey: "sidebar.position") == nil)
+}

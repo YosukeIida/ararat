@@ -683,3 +683,44 @@ func aCollapsedFolderBoundaryDoesNotLevel() throws {
         #expect(resolveSidebarDrop(position: CGPoint(x: x, y: 302), geometry: g, dragged: dragged) == .insert(container: "folder", index: 1, lineY: 303, depth: 1))
     }
 }
+
+@Test @MainActor
+func foreignDockRefusalDimsCellAndRestoresCursor() throws {
+    let (window, sidebar) = dragWindow()
+    defer { window.contentView = nil }
+    var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: "b", spaces: [dragFixture(), dragSpace("foreign", profile: "other")])
+    sidebar.update(snapshot: snapshot)
+    var cursors: [Bool] = []
+    sidebar.dockCursor = { cursors.append($0) }
+    let row = try startDrag(sidebar, id: "a")
+    let geometry = try #require(sidebar.dragGeometry())
+    let foreign = geometry.dock[1].frame
+    let point = CGPoint(x: foreign.midX, y: foreign.midY)
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+    let dock = try #require(dragDescendants(sidebar).compactMap { $0 as? SpaceDockView }.first)
+    #expect(dock.cellStates[1].refused)
+    #expect(dock.subviews[1].alphaValue == 0.35)
+    #expect(cursors.last == true)
+    sidebar.cancelOperation(nil)
+    #expect(!dock.cellStates[1].refused && dock.subviews[1].alphaValue == 1)
+    #expect(cursors.last == false)
+    snapshot.spaces.removeLast()
+}
+
+@Test @MainActor
+func leavingForeignDockRestoresCursorBeforeDrop() throws {
+    let (window, sidebar) = dragWindow()
+    defer { window.contentView = nil }
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: "b", spaces: [dragFixture(), dragSpace("foreign", profile: "other")]))
+    var cursors: [Bool] = []
+    sidebar.dockCursor = { cursors.append($0) }
+    let row = try startDrag(sidebar, id: "a")
+    let geometry = try #require(sidebar.dragGeometry())
+    let foreign = geometry.dock[1].frame
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: CGPoint(x: foreign.midX, y: foreign.midY)))
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: CGPoint(x: geometry.list.midX, y: geometry.list.midY)))
+    #expect(cursors == [true, false])
+    let dock = try #require(dragDescendants(sidebar).compactMap { $0 as? SpaceDockView }.first)
+    #expect(!dock.cellStates[1].refused)
+    sidebar.cancelOperation(nil)
+}

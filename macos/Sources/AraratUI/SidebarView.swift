@@ -1,8 +1,16 @@
 import AppKit
 import AraratKit
+import SwiftUI
 
 @MainActor
 public final class SidebarView: NSView {
+    public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
+    public var onDeleteSpace: ((String) -> Void)?
+    public var onSpaceSettings: ((String) -> Void)?
+    public var lookSettings: SettingsModel?
+    private var spaceRenameField: SidebarRenameField?
+    private let dockLookPopover = NSPopover()
+    private var dockLookEditor: LookEditorModel?
     public var onCreateSpace: ((String) -> Void)?
     public var onCreatePageChanged: (() -> Void)?
     private(set) public var createSpaceOpen = false
@@ -28,6 +36,10 @@ public final class SidebarView: NSView {
     private var libraryNeedsFocus = false
     private let library = LibraryView(frame: .zero)
     private let libraryButton = SidebarDockButton()
+    private let libraryFill = CALayer()
+    private var refusedDockIndex: Int?
+    var dockCursor: (Bool) -> Void = { refused in (refused ? NSCursor.operationNotAllowed : NSCursor.arrow).set() }
+    private(set) var libraryOpenFraction: CGFloat = 0
     private var mainColumn: NSStackView!
     var libraryPage: String { library.page.rawValue }
     public var onShowSpace: ((String) -> Void)?
@@ -105,7 +117,7 @@ public final class SidebarView: NSView {
         // the step that ends the quiet, not to the staleness expiry, whose retry would wait for
         // the next AutoArchive tick (up to 60 s).
         let gestureActive = (scrollGestureActive || momentumQuietTimer != nil) && pullClock() - lastScrollEventAt < 2
-        return renamingID == nil && !tooltip.menuTracking && drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
+        return renamingID == nil && spaceRenameField == nil && !tooltip.menuTracking && drag == nil && !dragSettling && !gestureActive && !showingScrollPages && !wheelPullPlaying && !listScroll.isRevealing
     }
     private func notifyAutoArchiveReady() {
         if canPublishAutoArchive { onAutoArchiveReady?() }
@@ -157,6 +169,7 @@ public final class SidebarView: NSView {
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
         if open { creationLookSpaceID = snapshotSpace?.id }
         createSpaceOpen = open
+        updateDockSelection()
         if open && creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
         if !open && !scrolling { creation.removeFromSuperview() }
         creation.isHidden = !open
@@ -203,6 +216,7 @@ public final class SidebarView: NSView {
         tooltip.capture(in: library)
         mainColumn.isHidden = open || createSpaceOpen
         libraryButton.setAccessibilityValue(open ? 1 : 0)
+        updateDockSelection()
         if open { window?.makeFirstResponder(self) }
         refreshLook()
         onLibraryChanged?(open, scrolling)
@@ -473,6 +487,7 @@ public final class SidebarView: NSView {
     private func showSpace(at index: Int, animatedReveal: Bool, notify: Bool = true) {
         guard snapshot.spaces.indices.contains(index) else { return }
         if drag != nil { cancelDrag() }
+        spaceRenameField?.finish(commit: true)
         listScroll.stopReveal()
         if !isScrollPreview, let id = snapshotSpace?.id { spaceListOrigins[id] = listScroll.contentView.bounds.minY }
         finishRowMotion()
@@ -599,6 +614,9 @@ public final class SidebarView: NSView {
         libraryButton.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: "Library")?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.libraryIconSize, weight: .regular))
         libraryButton.imagePosition = .imageOnly
         libraryButton.isBordered = false
+        libraryButton.wantsLayer = true
+        libraryFill.cornerRadius = 6
+        libraryButton.layer?.insertSublayer(libraryFill, at: 0)
         libraryButton.target = self
         libraryButton.action = #selector(toggleLibrary(_:))
         libraryButton.toolTip = "Library"
@@ -709,6 +727,7 @@ public final class SidebarView: NSView {
     override public func layout() {
         super.layout()
         library.frame = bounds
+        libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
         creation.frame = bounds
         pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
@@ -728,6 +747,7 @@ public final class SidebarView: NSView {
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateFill()
+        updateDockSelection()
     }
 
     private func updateFill() {
@@ -743,6 +763,7 @@ public final class SidebarView: NSView {
             rowViews.values.forEach { $0.hideRenameHint() }
             hintSpaceID = space?.id
         }
+        lookSettings?.update(snapshot: snapshot)
         header.stringValue = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
@@ -769,18 +790,28 @@ public final class SidebarView: NSView {
         }
         arrange(ordered, in: rows)
 
-        dock.subviews.forEach { $0.removeFromSuperview() }
+        if dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
+            dockLookPopover.performClose(nil)
+            dock.subviews.forEach { $0.removeFromSuperview() }
+            for space in snapshot.spaces {
+                let button = SpaceDockButton(title: "", target: self, action: #selector(dockClicked(_:)))
+                button.spaceID = space.id
+                button.isBordered = false
+                button.menuProvider = { [weak self] in self?.spaceMenu(spaceID: space.id) }
+                dock.addSubview(button)
+            }
+        }
         for (index, space) in snapshot.spaces.enumerated() {
-            let title = space.icon ?? String(space.title.prefix(1))
-            let button = SpaceDockButton(title: title, target: self, action: #selector(dockClicked(_:)))
+            let button = dock.subviews[index] as! SpaceDockButton
+            button.title = space.icon ?? String(space.title.prefix(1))
             button.tag = index
-            button.isBordered = false
             button.toolTip = space.title
             button.setAccessibilityLabel(space.title)
+            button.setAccessibilityHelp(space.title)
             button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
-            dock.addSubview(button)
         }
         dock.selectedIndex = spaceIndex
+        updateDockSelection()
         dock.layoutSubtreeIfNeeded()
         tooltip.capture(in: self)
     }
@@ -1036,6 +1067,7 @@ public final class SidebarView: NSView {
             for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
             prepareScrollPages(offset: offset)
             refreshLook(offset: offset)
+            updateDockSelection(offset: offset)
             for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
             pullIndicator.update(excess: spaceScroll.followedExcess)
         case .settle(let index, let offset, let switched):
@@ -1133,15 +1165,31 @@ public final class SidebarView: NSView {
         onLookChanged(look(at: lower), look(at: fraction == 0 ? lower : lower + 1), fraction)
     }
 
+    func updateDockSelection(offset: Double = 0) {
+        let position = CGFloat(scrollPageIndex) - (spacePagePitch > 0 ? CGFloat(offset / spacePagePitch) : 0)
+        dock.selectionPosition = position
+        let fraction = max(0, 1 - abs(position + 1))
+        libraryOpenFraction = fraction
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            libraryFill.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
+        }
+    }
+
     @objc private func sampleLook() {
         let view: NSView = libraryOpen ? library : createSpaceOpen ? creation : spaceColumn
-        refreshLook(offset: Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0))
+        let offset = Double(view.layer?.presentation()?.transform.m41 ?? view.layer?.transform.m41 ?? 0)
+        refreshLook(offset: offset)
+        updateDockSelection(offset: offset)
     }
 
     private func settleScroll(from offset: Double, switched: Bool) {
         refreshLook(offset: offset)
+        updateDockSelection(offset: offset)
         lookSampling?.invalidate()
-        if onLookChanged != nil, window != nil {
+        if window != nil {
             lookSampling = displayLink(target: self, selector: #selector(sampleLook))
             lookSampling?.add(to: .main, forMode: .common)
         }
@@ -1184,6 +1232,7 @@ public final class SidebarView: NSView {
         lookSampling?.invalidate()
         lookSampling = nil
         refreshLook()
+        updateDockSelection()
         stopPullAnimation()
         pullIndicator.update(excess: 0)
         scrollGeneration += 1
@@ -1415,6 +1464,8 @@ extension SidebarView {
     private func resolveDrag() {
         guard let state = drag, state.active, let geometry = dragGeometry() else { return }
         dropTarget = resolveSidebarDrop(position: state.position, geometry: geometry, dragged: state.row)
+        let refused = geometry.dock.firstIndex { $0.frame.contains(state.position) && $0.space.profileKey != geometry.space.profileKey }
+        setRefusedDock(refused)
         let favoriteIndex: Int?
         if case .favorites(_, let index) = dropTarget { favoriteIndex = index } else { favoriteIndex = nil }
         if favoriteIndex != dragFavoriteIndex {
@@ -1447,6 +1498,13 @@ extension SidebarView {
             }
             layer?.addSublayer(dropIndicator)
         }
+    }
+
+    private func setRefusedDock(_ index: Int?) {
+        guard index != refusedDockIndex else { return }
+        refusedDockIndex = index
+        for (i, view) in dock.subviews.enumerated() { (view as? SpaceDockButton)?.refused = i == index }
+        dockCursor(index != nil)
     }
 
     func stepDrag() {
@@ -1520,6 +1578,7 @@ extension SidebarView {
     }
 
     private func settleDrag(accepted: Bool) {
+        setRefusedDock(nil)
         guard let state = drag else { return }
         dragFavoriteIndex = nil
         reloadFavorites()
@@ -1551,6 +1610,7 @@ extension SidebarView {
     }
 
     private func finishDrag() {
+        setRefusedDock(nil)
         dragGeneration += 1
         dragCopyView?.removeFromSuperview()
         dragCopyView = nil
@@ -1653,6 +1713,78 @@ extension SidebarView: NSMenuDelegate {
         itemMenu([SidebarMenuItem("New Nested Folder…") { [weak self] in self?.createFolder(in: row.id) },
                   renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
+    }
+
+    public func dockMenuItems(for spaceID: String) -> [NSMenuItem] {
+        spaceMenu(spaceID: spaceID).items
+    }
+
+    func spaceMenu(spaceID: String) -> NSMenu {
+        let space = snapshot.spaces.first { $0.id == spaceID }
+        return itemMenu([
+            SidebarMenuItem("Rename Space…", enabled: space != nil) { [weak self] in self?.renameSpace(spaceID) },
+            SidebarMenuItem("Edit Look…", enabled: space != nil) { [weak self] in self?.editDockLook(spaceID) },
+            SidebarMenuItem("Space Settings…", enabled: space != nil) { [weak self] in self?.onSpaceSettings?(spaceID) },
+            SidebarMenuItem("New Folder", enabled: space != nil && snapshotSpace != nil) { [weak self] in
+                guard let self, let index = self.snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
+                if self.spaceIndex != index || self.libraryOpen || self.createSpaceOpen { self.dockClicked(self.dock.subviews[index] as! NSButton) }
+                self.newFolder(nil)
+            },
+            SidebarMenuItem("Delete Space…", enabled: space != nil && snapshot.spaces.count > 1) { [weak self] in self?.confirmSpaceDelete(spaceID) },
+        ])
+    }
+
+    private func renameSpace(_ id: String) {
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == id }) else { return }
+        if spaceIndex != index || libraryOpen || createSpaceOpen { dockClicked(dock.subviews[index] as! NSButton) }
+        guard let space = snapshot.spaces.first(where: { $0.id == id }), let heading = header.superview else { return }
+        spaceRenameField?.finish(commit: true)
+        let field = SidebarRenameField(title: space.title, save: { [weak self] title, done in
+            guard let save = self?.onRenameSpace else { done(false); return }
+            save(id, title, done)
+        }, ended: { [weak self] in
+            self?.spaceRenameField = nil
+            self?.header.isHidden = false
+            self?.notifyAutoArchiveReady()
+        })
+        spaceRenameField = field
+        header.isHidden = true
+        field.translatesAutoresizingMaskIntoConstraints = false
+        heading.addSubview(field)
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            field.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            field.trailingAnchor.constraint(equalTo: heading.trailingAnchor, constant: -8),
+        ])
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    private func editDockLook(_ id: String) {
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == id }),
+              dock.subviews.indices.contains(index), let settings = lookSettings else { return }
+        dockLookPopover.performClose(nil)
+        settings.update(snapshot: snapshot)
+        let editor = LookEditorModel(settings: settings, space: snapshot.spaces[index])
+        dockLookEditor = editor
+        dockLookPopover.behavior = .transient
+        dockLookPopover.delegate = self
+        dockLookPopover.contentViewController = NSHostingController(rootView: LookPopoverView(model: editor))
+        let cell = dock.subviews[index]
+        dockLookPopover.show(relativeTo: cell.bounds, of: cell, preferredEdge: .maxY)
+    }
+
+    private func confirmSpaceDelete(_ id: String) {
+        guard snapshot.spaces.count > 1, snapshot.spaces.contains(where: { $0.id == id }), let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete Space?"
+        alert.informativeText = "Its pinned and Today tabs will move to the Archive. Favorites will remain available in their profile. This cannot be undone."
+        let delete = alert.addButton(withTitle: "Delete Space")
+        delete.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        alert.beginSheetModal(for: window) { [weak self] result in
+            if result == .alertFirstButtonReturn { self?.onDeleteSpace?(id) }
+        }
     }
 
     func emptyAreaMenu() -> NSMenu {
@@ -1792,4 +1924,9 @@ extension SidebarView: NSMenuDelegate {
         if row.folderHasTabs { confirmFolderDeletion?(row, remove) }
         else { remove(true) }
     }
+}
+
+@MainActor
+extension SidebarView: NSPopoverDelegate {
+    public func popoverWillClose(_ notification: Notification) { dockLookEditor?.dismiss(); dockLookEditor = nil }
 }

@@ -624,3 +624,35 @@ func duplicateMenusCopyAfterOriginalWithoutChangingSelection() throws {
     #expect(f.space.today.count == 2)
     #expect(f.space.today[1].id != "tab-spec")
 }
+
+@Test @MainActor
+func dockSpaceMenuActionsAndAvailability() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let cell = try #require(descendants(f.sidebar).compactMap { $0 as? SpaceDockButton }.first { $0.spaceID == "space-work" })
+    #expect(cell.accessibilityHelp() == f.space.title)
+    let menu = f.sidebar.spaceMenu(spaceID: "space-work")
+    f.sidebar.update(snapshot: f.snapshot)
+    #expect(descendants(f.sidebar).contains { $0 === cell })
+    #expect(menu.items.map(\.title) == ["Rename Space…", "Edit Look…", "Space Settings…", "New Folder", "Delete Space…"])
+    #expect(f.sidebar.dockMenuItems(for: "space-work").map(\.title) == menu.items.map(\.title))
+    #expect(menu.items.allSatisfy { $0.isEnabled })
+    var settings: String?
+    f.sidebar.onSpaceSettings = { settings = $0 }
+    try invoke(menu, "Space Settings…")
+    #expect(settings == "space-work")
+    var saved: (String, String)?
+    f.sidebar.onRenameSpace = { id, name, done in saved = (id, name); done(true) }
+    try invoke(menu, "Rename Space…")
+    let field = try #require(descendants(f.sidebar).compactMap { $0 as? SidebarRenameField }.first)
+    field.stringValue = "Renamed"
+    field.finish(commit: true)
+    #expect(saved?.0 == "space-work" && saved?.1 == "Renamed")
+    try invoke(menu, "New Folder")
+    #expect(f.edits.count == 1)
+    let missing = f.sidebar.spaceMenu(spaceID: "missing")
+    #expect(missing.items.allSatisfy { !$0.isEnabled })
+    var snapshot = f.snapshot
+    snapshot.spaces = [f.space]
+    f.sidebar.update(snapshot: snapshot)
+    #expect(!f.sidebar.spaceMenu(spaceID: "space-work").items[4].isEnabled)
+}

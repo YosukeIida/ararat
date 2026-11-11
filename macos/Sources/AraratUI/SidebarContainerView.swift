@@ -291,6 +291,8 @@ public final class SidebarContainerView: NSView {
 
     private enum Motion { case dockShow, dockHide, floatingShow, floatingHide, spaceSwitch }
 
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
     private func render(_ motion: Motion, changes: () -> Void = {}) {
         moving = true
         motionGeneration += 1
@@ -309,6 +311,15 @@ public final class SidebarContainerView: NSView {
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
         changes()
         layout()
+        if (motion == .floatingShow || motion == .floatingHide) && reduceMotion() {
+            pageMask.removeAnimation(forKey: "sidebar.mask")
+            for view in views {
+                view.layer?.removeAnimation(forKey: "sidebar.position")
+                view.layer?.removeAnimation(forKey: "sidebar.bounds")
+            }
+            windowButtons?.layer?.removeAnimation(forKey: "sidebar.lights")
+            return
+        }
         if let lights = windowButtons, let layer = lights.layer {
             let previous = layer.presentation()?.opacity ?? 1
             layer.removeAnimation(forKey: "sidebar.lights")

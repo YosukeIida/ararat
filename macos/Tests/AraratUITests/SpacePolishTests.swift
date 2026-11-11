@@ -359,3 +359,62 @@ func spaceSwipeStopsAnEarlierVerticalSelectionReveal() throws {
     list.stepReveal()
     #expect(list.contentView.bounds.minY == landed)
 }
+
+@Test @MainActor
+func dockGlyphsAndFractionalSelectionFollowWidth() {
+    for width in [164.0, 240.0, 500.0] {
+        for count in [4, 8, 12, 19] {
+            let dock = SpaceDockView(frame: NSRect(x: 0, y: 0, width: width - 83, height: 32))
+            for _ in 0..<count { dock.addSubview(SpaceDockButton(title: "S", target: nil, action: nil)) }
+            dock.selectedIndex = 0
+            dock.selectionPosition = 0.3
+            dock.layout()
+            let dense = floor((width - 83) / Double(count) * 2) / 2 < 22
+            #expect(dock.cellStates[0].state == .letter("S"))
+            #expect(dock.cellStates[1].state == (dense ? .dot : .letter("S")))
+            #expect(abs(dock.cellStates[0].openFraction - 0.7) < 0.001)
+            #expect(abs(dock.cellStates[1].openFraction - 0.3) < 0.001)
+        }
+    }
+}
+
+@Test @MainActor
+func dockAndLibraryCrossFadeAtEveryPageOffset() throws {
+    let (window, sidebar) = polishWindow()
+    defer { window.contentView = nil }
+    let dock = try #require(polishViews(sidebar).compactMap { $0 as? SpaceDockView }.first)
+    for fraction in [0.0, 0.3, 0.5, 1.0] {
+        sidebar.updateDockSelection(offset: -fraction * sidebar.bounds.width)
+        #expect(abs(dock.cellStates[0].openFraction - (1 - fraction)) < 0.001)
+        #expect(abs(dock.cellStates[1].openFraction - fraction) < 0.001)
+        sidebar.updateDockSelection(offset: fraction * sidebar.bounds.width)
+        #expect(abs(dock.cellStates[0].openFraction - (1 - fraction)) < 0.001)
+        #expect(abs(sidebar.libraryOpenFraction - fraction) < 0.001)
+        let button = try #require(polishViews(sidebar).compactMap { $0 as? SidebarDockButton }.first { $0.accessibilityLabel() == "Library" })
+        let fill = try #require(button.layer?.sublayers?.first { $0.cornerRadius == 6 })
+        let expectedAlpha = SpaceDockButton.fillAlpha(fraction: fraction, appearance: sidebar.effectiveAppearance)
+        #expect(abs((fill.backgroundColor?.alpha ?? 0) - expectedAlpha) < 0.001)
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = NSAppearance(named: appearanceName)!
+            let base: CGFloat = appearanceName == .aqua ? 0.6 : 0.13
+            #expect(abs(SpaceDockButton.fillAlpha(fraction: fraction, appearance: appearance) - fraction * base) < 0.001)
+        }
+    }
+    sidebar.setLibraryOpen(true)
+    #expect(sidebar.libraryOpenFraction == 1)
+    #expect(dock.cellStates.allSatisfy { $0.openFraction == 0 })
+}
+
+@Test @MainActor
+func dockHoverAndPressUseTheirOwnFillAndTrackPointerExit() {
+    let button = SpaceDockButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+    button.mouseEntered(with: polishMouse(.leftMouseDown, button))
+    #expect(button.backgroundAlpha == 0.045)
+    button.mouseDown(with: polishMouse(.leftMouseDown, button))
+    #expect(button.backgroundAlpha == 0.078)
+    button.mouseExited(with: polishMouse(.leftMouseUp, button, inside: false))
+    button.mouseDragged(with: polishMouse(.leftMouseDragged, button, inside: false))
+    #expect(button.backgroundAlpha == 0)
+    button.mouseUp(with: polishMouse(.leftMouseUp, button, inside: false))
+    #expect(button.backgroundAlpha == 0)
+}

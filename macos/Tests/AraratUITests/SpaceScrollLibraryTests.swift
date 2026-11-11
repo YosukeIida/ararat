@@ -106,3 +106,26 @@ func longDragPlacesLibraryAtItsAbsolutePageIndex() throws {
         #expect(!fixture.sidebar.libraryOpen)
     }
 }
+
+@Test @MainActor
+func swipeFeedsDockAndLibraryBeforeAndAfterSettleWithoutLookObserver() throws {
+    for towardLibrary in [false, true] {
+        let fixture = try LibraryScrollFixture(space: 0, floating: false)
+        defer { fixture.window.contentView = nil }
+        fixture.sidebar.onLookChanged = nil
+        let dock = try #require(libraryScrollDescendants(fixture.sidebar).compactMap { $0 as? SpaceDockView }.first)
+        fixture.send(towardLibrary ? 144 : -144, phase: .began, time: 100)
+        #expect(abs(dock.cellStates[0].openFraction - 0.7) < 0.01)
+        if towardLibrary { #expect(abs(fixture.sidebar.libraryOpenFraction - 0.3) < 0.01) }
+        else { #expect(abs(dock.cellStates[1].openFraction - 0.3) < 0.01) }
+        fixture.send(0, phase: .ended, time: 100.02)
+        fixture.sidebar.finishScrollPresentation()
+        if towardLibrary {
+            #expect(fixture.sidebar.libraryOpenFraction == 1)
+            #expect(dock.cellStates[0].openFraction == 0)
+        } else {
+            #expect(dock.cellStates[1].openFraction == 1)
+            #expect(dock.cellStates[0].openFraction == 0)
+        }
+    }
+}

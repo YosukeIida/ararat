@@ -865,6 +865,24 @@ final class Runtime: NSObject, NSMenuItemValidation {
     actions.onArchiveDelete = { [weak self] id in
       self?.workspace?.deleteArchive(id: id) { [weak self] result in self?.showResult(result) }
     }
+    actions.onRenameSpace = { [weak self, weak workspace] id, name, done in
+      let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !title.isEmpty, let workspace else { done(false); return }
+      workspace.renameSpace(id: id, name: title) { [weak self] result in
+        if case .success = result { done(true) } else { done(false) }
+        self?.showResult(result)
+      }
+    }
+    actions.onDeleteSpace = { [weak self, weak workspace] id in
+      workspace?.deleteSpace(id: id) { [weak self] result in self?.showResult(result) }
+    }
+    actions.onSpaceSettings = { [weak self] id in self?.openSettings(spaceID: id) }
+    if let keyBindings, let airTraffic {
+      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.show($0) },
+        resetWidth: { [weak self] in self?.container?.resizeHandle.resetWidth() },
+        preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) },
+        keyBindings: keyBindings, airTraffic: airTraffic)
+    }
     actions.onCreateSpace = { [weak self] name in
       self?.workspace?.createSpace(name: name) { [weak self] result in self?.showResult(result) }
     }
@@ -1265,7 +1283,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  func openSettings() {
+  func openSettings(spaceID: String? = nil) {
     guard let workspace, let keyBindings, let airTraffic else { return }
     let owner = root ?? self
     let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.show($0) }
@@ -1280,9 +1298,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     owner.settingsOwner = self
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
-      owner.settings?.prepare(shownSpaceID: snapshot.shownSpaceId)
+      owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
     } else {
-      owner.settings?.open(shownSpaceID: snapshot.shownSpaceId)
+      owner.settings?.open(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
     }
   }
 

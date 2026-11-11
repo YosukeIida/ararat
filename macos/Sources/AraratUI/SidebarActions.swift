@@ -16,6 +16,10 @@ public final class SidebarActions {
     public var onRestore: ((String) -> Void)?
     public var onArchiveDelete: ((String) -> Void)?
     public var onCreateSpace: ((String) -> Void)?
+    public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
+    public var onDeleteSpace: ((String) -> Void)?
+    public var onSpaceSettings: ((String) -> Void)?
+    public var lookSettings: SettingsModel?
     public var onCreatePageChanged: (() -> Void)?
 
     public init() {}
@@ -83,6 +87,10 @@ public final class SidebarActions {
     }
 
     public func bind(to sidebar: SidebarView) {
+        sidebar.onRenameSpace = onRenameSpace
+        sidebar.onDeleteSpace = onDeleteSpace
+        sidebar.onSpaceSettings = onSpaceSettings
+        sidebar.lookSettings = lookSettings
         sidebar.onItemEdit = onItemEdit
         sidebar.confirmFolderDeletion = confirmFolderDeletion
         sidebar.onSelect = onSelect
