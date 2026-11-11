@@ -344,6 +344,7 @@ struct GrainControl: View {
 @MainActor
 public final class LookCheckProbe {
     private let popover: NSPopover
+    var popoverForCheck: NSPopover { popover }
     private let model: () -> LookEditorModel?
     public private(set) var haptics = 0
 
@@ -393,4 +394,9 @@ extension SettingsWindowController {
         guard let anchor = find(root), anchor.window != nil else { return nil }
         return LookCheckProbe(anchor)
     }
+}
+
+extension LookCheckProbe {
+    /// Closes the popover a check opened.
+    public func closePopover() { popoverForCheck.performClose(nil) }
 }

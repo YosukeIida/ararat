@@ -465,6 +465,7 @@ final class SidebarNoTabsRow: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     var lineFrameInRow: NSRect { line.frame }
+    var parentIDForCheck: String { row.parentId }
 }
 
 @MainActor

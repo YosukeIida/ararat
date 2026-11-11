@@ -55,7 +55,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -64,7 +64,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -81,6 +81,28 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
                     if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
                 }
+            } else if seedSidebar {
+                _ = try opened.createSpace(windowId: windowID, name: "Sidebar", spaceId: "sidebar-work")
+                try opened.showSpace(windowId: windowID, spaceId: "sidebar-work")
+                _ = try opened.ensureFavorites(windowId: windowID, spaceId: "sidebar-work", containerId: "sidebar-favorites")
+                _ = try opened.createFolder(windowId: windowID, id: "sidebar-folder", name: "Folder", container: "sidebar-work:pinned", index: 0, wrapping: [])
+                _ = try opened.createFolder(windowId: windowID, id: "sidebar-empty", name: "Empty", container: "sidebar-work:pinned", index: 1, wrapping: [])
+                func sidebarTab(_ name: String) throws -> String {
+                    let snapshot = try opened.createTab(windowId: windowID, url: "about:blank?sidebar-\(name)")
+                    guard let id = snapshot.selectedId else { throw NSError(domain: "Ararat.sidebar", code: 1) }
+                    return id
+                }
+                let todayA = try sidebarTab("today-a")
+                _ = try sidebarTab("today-b")
+                _ = try sidebarTab("today-c")
+                let folderTab = try sidebarTab("folder-tab")
+                _ = try opened.moveItem(windowId: windowID, id: folderTab, container: "sidebar-folder", index: 0, openFolder: false)
+                let loadedPin = try sidebarTab("pin")
+                _ = try opened.moveItem(windowId: windowID, id: loadedPin, container: "sidebar-work:pinned", index: 2, openFolder: false)
+                let unloadedPin = try sidebarTab("pin-off")
+                _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
+                _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
+                _ = try opened.selectItem(windowId: windowID, id: todayA)
             } else if seedProfiles || seedDock {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}

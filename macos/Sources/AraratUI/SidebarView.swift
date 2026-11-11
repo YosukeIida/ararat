@@ -87,7 +87,7 @@ public final class SidebarView: NSView {
     private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
 
-    let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
+    public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
     private let favorites = NSStackView()
@@ -2084,4 +2084,99 @@ extension SidebarView: NSMenuDelegate {
 @MainActor
 extension SidebarView: NSPopoverDelegate {
     public func popoverWillClose(_ notification: Notification) { dockLookEditor?.dismiss(); dockLookEditor = nil }
+}
+
+// The check seam (U25b part 2): what a row shows, without making the row view public.
+public struct SidebarRowCheckInfo: Sendable {
+    public let id: String
+    public let kind: RowKind
+    public let unloaded: Bool
+    public let closeLabel: String?
+    public let closeCaps: [String]?
+    public let unreadDot: Bool
+    public let iconDescription: String?
+    public let opacity: Double
+    public let frame: NSRect
+}
+
+extension SidebarView {
+    public var rowCheckIds: [String] { Array(rowViews.keys) }
+
+    public func rowCheckInfo(id: String) -> SidebarRowCheckInfo? {
+        guard let view = rowViews[id] else { return nil }
+        let icon = view.subviews.compactMap { $0 as? NSImageView }.first
+        let label = view.closeButton.accessibilityLabel()
+        return SidebarRowCheckInfo(id: id, kind: view.row.kind, unloaded: view.row.unloaded,
+            closeLabel: view.closeButton.isHidden ? nil : label, closeCaps: view.closeShortcutCaps,
+            unreadDot: view.unreadDotVisible, iconDescription: icon?.image?.accessibilityDescription,
+            opacity: Double(icon?.alphaValue ?? 1),
+            frame: convert(view.bounds, from: view))
+    }
+
+    public func pressCloseButton(id: String) -> Bool {
+        guard let view = rowViews[id], !view.closeButton.isHidden else { return false }
+        view.closeButton.performClick(nil)
+        return true
+    }
+
+    public var noTabsRowsForCheck: [(id: String, parent: String, frame: NSRect, line: NSRect, height: CGFloat)] {
+        noTabsRows.map { id, view in
+            view.layoutSubtreeIfNeeded()
+            return (id, view.parentIDForCheck, convert(view.bounds, from: view), view.lineFrameInRow, view.frame.height)
+        }
+    }
+
+    public var todayDividerForCheck: (frame: NSRect, line: NSRect, clear: NSRect)? {
+        guard todayDivider.superview != nil else { return nil }
+        todayDivider.layoutSubtreeIfNeeded()
+        let frames = todayDivider.checkFrames
+        guard let line = frames["line"], let clear = frames["clear"] else { return nil }
+        return (convert(todayDivider.bounds, from: todayDivider),
+                convert(line, from: todayDivider), convert(clear, from: todayDivider))
+    }
+
+    public var newTabRowForCheck: NSRect? {
+        guard newTabRow.superview != nil, !newTabRow.isHidden else { return nil }
+        return convert(newTabRow.bounds, from: newTabRow)
+    }
+
+    public func pressClearToday() -> Bool {
+        guard todayDivider.superview != nil,
+              let button = SidebarNoTabsRowSelf.find(todayDivider, SidebarClearButton.self) else { return false }
+        button.performClick(nil)
+        return true
+    }
+
+    public var closeCapsForCheck: [String]? { rowViews.values.first?.closeShortcutCaps }
+}
+
+private enum SidebarNoTabsRowSelf {
+    static func find<T: NSView>(_ view: NSView, _ type: T.Type) -> T? {
+        if let match = view as? T { return match }
+        for child in view.subviews { if let match = find(child, type) { return match } }
+        return nil
+    }
+}
+
+// The check seam for a drop: the resolver's answer as plain values, so the check does not
+// reach into the drag types.
+public struct SidebarDropCheck: Sendable {
+    public let kind: String
+    public let container: String?
+    public let index: Int?
+}
+
+extension SidebarView {
+    public func resolveDropForCheck(position: CGPoint, draggedID: String) -> SidebarDropCheck? {
+        guard let space = snapshotSpace,
+              let dragged = (space.today + space.pinned + space.favorites).first(where: { $0.id == draggedID }),
+              let geometry = dragGeometry() else { return nil }
+        switch resolveSidebarDrop(position: position, geometry: geometry, dragged: dragged) {
+        case .refused: return SidebarDropCheck(kind: "refused", container: nil, index: nil)
+        case let .insert(container, index, _, _): return SidebarDropCheck(kind: "insert", container: container, index: index)
+        case let .folder(id): return SidebarDropCheck(kind: "folder", container: id, index: nil)
+        case let .favorites(container, index): return SidebarDropCheck(kind: "favorites", container: container, index: index)
+        case let .dock(_, container, index): return SidebarDropCheck(kind: "dock", container: container, index: index)
+        }
+    }
 }
