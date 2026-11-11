@@ -381,15 +381,15 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (NSDictionary<NSString*, id>*)checkPermissionBlockButton {
   auto* widget = contents_ ? AraratCheckPermissionWidget(contents_) : nullptr;
-  auto* delegate = widget ? widget->widget_delegate()->AsDialogDelegate() : nullptr;
-  auto* button = delegate ? delegate->GetCancelButton() : nullptr;
+  auto* button = contents_ ? AraratCheckPermissionBlockButton(contents_) : nullptr;
   NSWindow* window = widget ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
   if (!button || !window) return @{};
   const auto bounds = button->GetBoundsInScreen();
   if (bounds.IsEmpty()) return @{};
   const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
   NSRect screen = NSMakeRect(bounds.x(), top - bounds.y() - bounds.height(), bounds.width(), bounds.height());
-  return @{ @"window": window, @"frame": [NSValue valueWithRect:[window convertRectFromScreen:screen]] };
+  return @{ @"window": window, @"frame": [NSValue valueWithRect:[window convertRectFromScreen:screen]],
+            @"origin_wrapped": @(AraratCheckPermissionOriginWrapped(contents_)) };
 }
 
 - (BOOL)checkPermissionPending {

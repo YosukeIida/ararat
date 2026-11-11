@@ -3,10 +3,15 @@
 
 namespace content { class WebContents; }
 namespace views { class Widget; }
+namespace views { class View; }
 
 void AraratInstallPermissionPrompt();
+void AraratSetPermissionDim(const void* contents, bool visible);
+void AraratRefreshPermissionDim(content::WebContents* contents);
 unsigned AraratCheckPermissionShownCount();
 bool AraratCheckPermissionDecision(content::WebContents* contents, int decision);
 views::Widget* AraratCheckPermissionWidget(content::WebContents* contents);
+views::View* AraratCheckPermissionBlockButton(content::WebContents* contents);
+bool AraratCheckPermissionOriginWrapped(content::WebContents* contents);
 
 #endif  // ARARAT_ARARAT_PERMISSION_PROMPT_H_

@@ -214,6 +214,7 @@ func checkWindowSelection(_ rows: [[String]]?, windowID: String) -> String? {
 final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   let rootView = NSView()
   let card = NSView()
+  private let permissionDim = PermissionDim()
   let findBar = FindBarView()
   var findPageRect = NSRect.zero
   var host: (any ARWindowHostAPI)?
@@ -225,6 +226,10 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   var checkFailureState: [String: Any] { failureView?.checkState ?? [:] }
   deinit { if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) } }
   func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
+  func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,
+                  container: NSView, frame: NSRect, visible: Bool) {
+    permissionDim.update(identifier, container: container, frame: frame, visible: visible)
+  }
   func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction transaction: [String: Any]) {
     guard let strips = transaction["strips"] as? [[String: Any]],
           let strip = strips.first(where: { $0["window"] as? String == windowID }) else { return }

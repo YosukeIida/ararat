@@ -16,6 +16,7 @@
 #include "ararat/core/ararat_browser_window.h"
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
+#include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_tab.h"
 #include "ararat/core/ararat_tab_history.h"
 #include "base/check.h"
@@ -167,6 +168,9 @@
 @interface ARWindowHost (CloseHandoff)
 - (void)prepareCloseHandoff:(void (^)(BOOL))completion;
 - (NSRect)modalPageRectForContents:(content::WebContents*)contents;
+- (BOOL)hasPermissionContents:(const void*)contents;
+- (void)setPermissionDim:(const void*)contents visible:(BOOL)visible;
+- (void)refreshPermissionDims;
 @end
 
 @interface NSObject (AraratCommandDispatch)
@@ -856,6 +860,35 @@ web_modal::WebContentsModalDialogHost* AraratWindowHostCore::modal_dialog_host_f
   return host.get();
 }
 
+void AraratSetPermissionDim(const void* contents, bool visible) {
+  static NSMapTable<NSValue*, ARWindowHost*>* owners =
+      [NSMapTable strongToWeakObjectsMapTable];
+  NSValue* key = [NSValue valueWithPointer:contents];
+  ARWindowHost* previous = [owners objectForKey:key];
+  ARWindowHost* current = nil;
+  if (visible) {
+    for (AraratWindowHostCore* host : AraratHosts()) {
+      ARWindowHost* candidate = (__bridge ARWindowHost*)host->owner();
+      if (![candidate hasPermissionContents:contents]) continue;
+      for (const auto& [name, window] : host->windows()) {
+        TabStripModel* strip = window->browser()->GetTabStripModel();
+        for (int i = 0; i < strip->count(); ++i) {
+          if (strip->GetWebContentsAt(i) == contents) { current = candidate; break; }
+        }
+        if (current) break;
+      }
+      if (current) break;
+    }
+  }
+  if (previous && previous != current) [previous setPermissionDim:contents visible:NO];
+  if (current) {
+    [owners setObject:current forKey:key];
+    [current setPermissionDim:contents visible:YES];
+  } else {
+    [owners removeObjectForKey:key];
+  }
+}
+
 AraratWindowHostCore::~AraratWindowHostCore() {
   AraratHosts().erase(this);
   CHECK(windows_.empty());
@@ -977,6 +1010,7 @@ void AraratWindowHostCore::NotifyModalPositions() {
   modal_dialog_host_->NotifyPositionRequiresUpdate();
   for (const auto& [contents, host] : modal_dialog_hosts_)
     host->NotifyPositionRequiresUpdate();
+  [(__bridge ARWindowHost*)owner_ refreshPermissionDims];
 }
 
 void AraratWindowHostCore::SetExtensionAnchor(const gfx::Rect& bounds) {
@@ -1502,6 +1536,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   BOOL workspace_page_hidden_;
   BOOL workspace_remote_;
   NSMutableDictionary<NSValue*, ARTab*>* tabs_;
+  NSMutableDictionary<NSValue*, NSString*>* permission_dims_;
   NSDictionary<NSString*, NSValue*>* split_frames_;
   NSMutableDictionary<NSString*, NSView*>* split_clips_;
   BOOL split_frozen_;
@@ -1661,6 +1696,41 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (AraratWindowHostCore*)hostCore { return core_.get(); }
+
+- (BOOL)hasPermissionContents:(const void*)contents {
+  return tabs_[[NSValue valueWithPointer:contents]] != nil;
+}
+
+- (void)setPermissionDim:(const void*)contents visible:(BOOL)visible {
+  NSValue* key = [NSValue valueWithPointer:contents];
+  NSString* identifier = permission_dims_[key];
+  if (visible) {
+    ARTab* tab = tabs_[key];
+    if (!tab || !page_position_view_) return;
+    if (!permission_dims_) permission_dims_ = [NSMutableDictionary dictionary];
+    identifier = tab.liveId;
+    permission_dims_[key] = identifier;
+    [self refreshPermissionDims];
+  } else if (identifier) {
+    if ([self.delegate respondsToSelector:@selector(windowHost:permissionDim:container:frame:visible:)])
+      [self.delegate windowHost:self permissionDim:identifier container:page_position_view_ frame:NSZeroRect visible:NO];
+    [permission_dims_ removeObjectForKey:key];
+  }
+}
+
+- (void)refreshPermissionDims {
+  NSView* card = page_position_view_.superview;
+  NSView* root = core_->GetNativeWindow().GetNativeNSWindow().contentView;
+  if (!card || !root || ![self.delegate respondsToSelector:@selector(windowHost:permissionDim:container:frame:visible:)]) return;
+  for (NSValue* key in [permission_dims_.allKeys copy]) {
+    ARTab* tab = tabs_[key];
+    if (!tab || !tab.contents) { [self setPermissionDim:key.pointerValue visible:NO]; continue; }
+    NSRect rect = [self modalPageRectForContents:tab.contents];
+    if (!root.isFlipped) rect.origin.y = NSHeight(root.bounds) - NSMaxY(rect);
+    rect = [page_position_view_ convertRect:rect fromView:root];
+    [self.delegate windowHost:self permissionDim:permission_dims_[key] container:page_position_view_ frame:rect visible:YES];
+  }
+}
 
 @synthesize delegate = _delegate;
 
@@ -3458,7 +3528,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [tabs_ removeObjectForKey:key];
     }
   }
+  if (card && page_position_view_.superview == card && card.subviews.lastObject != page_position_view_)
+    [card addSubview:page_position_view_ positioned:NSWindowAbove relativeTo:nil];
   [self positionPage];
+  for (NSValue* key in tabs_) AraratRefreshPermissionDim([tabs_[key] contents]);
 }
 
 - (void)positionPage {
