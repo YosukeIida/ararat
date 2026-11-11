@@ -666,7 +666,9 @@ func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
         window.sendEvent(event)
     }
     #expect(window.makeFirstResponder(track))
-    try await Task.sleep(for: .milliseconds(100))
+    let focusView = try #require(window.firstResponder as? LookTrackProbeView)
+    #expect(!focusView.controlHasFocus)
+    try await waitUntil { focusView.controlHasFocus }
     try arrow(126)
     #expect(abs(fixture.editor.transparency - 56) < 0.001)
     fixture.editor.setTransparency(100)
@@ -675,11 +677,15 @@ func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
     try arrow(125)
     #expect(!fixture.editor.look.glass && fixture.editor.look.opacity == 0)
     #expect(window.makeFirstResponder(grain))
-    try await Task.sleep(for: .milliseconds(100))
+    let grainFocus = try #require(window.firstResponder as? LookTrackProbeView)
+    #expect(!grainFocus.controlHasFocus)
+    try await waitUntil { grainFocus.controlHasFocus }
     try arrow(126)
     #expect(abs(fixture.editor.look.grain - 0.1) < 0.001)
     #expect(window.makeFirstResponder(track))
-    try await Task.sleep(for: .milliseconds(100))
+    let returnFocus = try #require(window.firstResponder as? LookTrackProbeView)
+    #expect(!returnFocus.controlHasFocus)
+    try await waitUntil { returnFocus.controlHasFocus }
     try arrow(126)
     #expect(fixture.editor.look.glass)
     window.contentView = nil

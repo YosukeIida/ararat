@@ -48,6 +48,10 @@ final class LookScreenCheck {
         guard let point = trackPoint(position), let window = probe?.window else { return false }
         return event(type, screen: point, window: window)
     }
+    static func sendWhenFocused(_ focused: Bool, send: () -> Bool) -> Bool? {
+        guard focused else { return nil }
+        return send()
+    }
     func key(_ code: UInt16) -> Bool {
         guard let window = probe?.window else { return false }
         let character = String(UnicodeScalar(code == 126 ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!)
@@ -205,42 +209,54 @@ extension Runtime {
         case 11:
             guard let look = stored(), !look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             check.count = count
-            let focused = check.focus("Transparency")
-            check.report("keyboard_focus", focused)
-            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
-            end(check.key(126), "keyboard_up_input")
+            guard check.focus("Transparency") else { check.report("keyboard_focus", false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            check.phase += 1; browserCheckPhase = check.phase
         case 12:
+            guard let sent = LookScreenCheck.sendWhenFocused(check.probe?.hasFocus("Transparency") == true, send: {
+                check.report("keyboard_focus", true)
+                return check.key(126)
+            }) else { return }
+            end(sent, "keyboard_up_input")
+        case 13:
             guard let look = stored(), look.glass, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.report("keyboard_glass", one)
             guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
             end(check.key(125), "keyboard_down_input")
-        case 13:
+        case 14:
             guard let look = stored(), !look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.report("keyboard_down", one)
             guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
-            let focused = check.focus("Grain")
-            check.report("grain_focus", focused)
-            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
-            end(check.key(126), "grain_up_input")
-        case 14:
+            guard check.focus("Grain") else { check.report("grain_focus", false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            check.phase += 1; browserCheckPhase = check.phase
+        case 15:
+            guard let sent = LookScreenCheck.sendWhenFocused(check.probe?.hasFocus("Grain") == true, send: {
+                check.report("grain_focus", true)
+                return check.key(126)
+            }) else { return }
+            end(sent, "grain_up_input")
+        case 16:
             guard let look = stored(), abs(look.grain - 0.1) < 0.001, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.report("keyboard_grain", one)
             guard one else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
             check.count = count
-            let focused = check.focus("Transparency")
-            check.report("transparency_focus_return", focused)
-            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
-            end(check.key(126), "transparency_up_input")
-        case 15:
+            guard check.focus("Transparency") else { check.report("transparency_focus_return", false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            check.phase += 1; browserCheckPhase = check.phase
+        case 17:
+            guard let sent = LookScreenCheck.sendWhenFocused(check.probe?.hasFocus("Transparency") == true, send: {
+                check.report("transparency_focus_return", true)
+                return check.key(126)
+            }) else { return }
+            end(sent, "transparency_up_input")
+        case 18:
             guard let look = stored(), look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let rendering = sidebarContainer.lookCheckRendering(reduced: true)
             end(count == check.count + 1 && rendering.vibrancy && !rendering.glass && rendering.grain > 0 && rendering.alpha == 0, "reduced_transparency")
-        case 16:
+        case 19:
             finishBrowserCheck(ok: true, values: ["conditions": check.conditions, "failed_conditions": [], "images": check.images])
         default: break
         }

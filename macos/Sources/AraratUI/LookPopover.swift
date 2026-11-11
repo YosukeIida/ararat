@@ -223,7 +223,7 @@ struct TransparencyControl: View {
                         .frame(width: 20, height: 20).offset(x: width + 14)
                     Circle().fill(Color.primary).frame(width: 12, height: 12).offset(x: thumb - 6)
                 }.frame(width: geometry.size.width, height: 30, alignment: .leading)
-                    .background(LookTrackProbe(model: model, target: .transparency, focus: { keyboardFocused = true })).contentShape(Rectangle())
+                    .background(LookTrackProbe(model: model, target: .transparency, focus: { keyboardFocused = true }, focused: { keyboardFocused })).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
                         interaction.haptic = model.alignmentHaptic
@@ -275,6 +275,7 @@ struct LookTrackProbe: NSViewRepresentable {
     let model: LookEditorModel
     var target: Target = .transparency
     var focus: (() -> Void)?
+    var focused: (() -> Bool)?
     func makeNSView(context: Context) -> LookTrackProbeView {
         let view = LookTrackProbeView()
         updateNSView(view, context: context)
@@ -282,6 +283,7 @@ struct LookTrackProbe: NSViewRepresentable {
     }
     func updateNSView(_ view: LookTrackProbeView, context: Context) {
         view.focus = focus
+        view.focused = focused
         view.canFocus = { [weak model] in model?.checkFocusEnabled == true }
         switch target {
         case .transparency: model.checkTrackView = view
@@ -293,7 +295,12 @@ struct LookTrackProbe: NSViewRepresentable {
 
 final class LookTrackProbeView: NSView {
     var focus: (() -> Void)?
+    var focused: (() -> Bool)?
     var canFocus: (() -> Bool)?
+    var controlHasFocus: Bool {
+        guard let responder = window?.firstResponder else { return false }
+        return !(responder is LookTrackProbeView) && focused?() == true
+    }
     override var acceptsFirstResponder: Bool { focus != nil && canFocus?() == true }
     override func becomeFirstResponder() -> Bool {
         guard let focus else { return false }
@@ -319,7 +326,7 @@ struct GrainControl: View {
                 }.contentShape(Circle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                     interaction.drag(GrainInteraction.value(at: event.location, size: geometry.size), model: model)
                 }.onEnded { _ in interaction.previous = nil; model.end() })
-            }.frame(width: 36, height: 36).background(LookTrackProbe(model: model, target: .grain, focus: { keyboardFocused = true }))
+            }.frame(width: 36, height: 36).background(LookTrackProbe(model: model, target: .grain, focus: { keyboardFocused = true }, focused: { keyboardFocused }))
             Text("Grain \(Int((model.look.grain * 100).rounded()))%").font(.caption)
             Spacer()
         }.accessibilityElement(children: .ignore).accessibilityLabel("Grain")
@@ -357,11 +364,14 @@ public final class LookCheckProbe {
     }
     public var trackFrame: NSRect? { frame(anchor.editor?.checkTrackView) }
     public var menuFrame: NSRect? { frame(anchor.editor?.checkMenuView) }
+    private func focusView(_ label: String) -> LookTrackProbeView? {
+        (label == "Transparency" ? anchor.editor?.checkTrackView : anchor.editor?.checkGrainView) as? LookTrackProbeView
+    }
     public func focus(_ label: String) -> Bool {
-        let view = label == "Transparency" ? anchor.editor?.checkTrackView : anchor.editor?.checkGrainView
-        guard let view, let window = view.window else { return false }
+        guard let view = focusView(label), let window = view.window else { return false }
         return window.makeFirstResponder(view)
     }
+    public func hasFocus(_ label: String) -> Bool { focusView(label)?.controlHasFocus == true }
 }
 
 extension SettingsWindowController {

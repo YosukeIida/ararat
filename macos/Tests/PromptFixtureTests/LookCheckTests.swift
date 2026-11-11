@@ -47,3 +47,12 @@ func successfulKeyboardWriteRemainsRecordedWhenNextFocusFails() {
     #expect(result.failed.contains("grain_focus"))
     #expect(result.failed.contains("grain_up_input"))
 }
+
+@Test @MainActor
+func lookCheckSendsKeysOnlyAfterFocusArrives() {
+    var sends = 0
+    let pending = LookScreenCheck.sendWhenFocused(false) { sends += 1; return true }
+    #expect(pending == nil && sends == 0)
+    let sent = LookScreenCheck.sendWhenFocused(true) { sends += 1; return true }
+    #expect(sent == true && sends == 1)
+}
