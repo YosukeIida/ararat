@@ -2130,7 +2130,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   history::QueryOptions options;
   options.max_count = 50;
   service->QueryHistory(base::SysNSStringToUTF16(text), options,
-    base::BindOnce([completion = [completion copy]](history::QueryResults results) {
+    base::BindOnce(^(history::QueryResults results) {
       NSMutableArray* rows = [NSMutableArray array];
       for (const auto& row : results) {
         [rows addObject:@{ @"title": base::SysUTF16ToNSString(row.title()) ?: @"",

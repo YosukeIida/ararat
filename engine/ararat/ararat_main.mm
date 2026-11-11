@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdio>
 #include <iostream>
+#include <string_view>
 #include <vector>
 
 #include "ararat/core/ararat_hooks.h"
