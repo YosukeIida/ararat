@@ -120,7 +120,9 @@ final class SidebarPanelView: NSView {
         }
         // Why not force Auto's backdrop appearance: its vibrancy must keep following the system.
         vibrancy.appearance = mode == .auto ? nil : backgroundAppearance
-        let textAppearance = !hasLook ? nil : NSAppearance(named: dark ? .darkAqua : .aqua)
+        // While inactive the colour layer is hidden, so the text must follow the backdrop that is drawn (the
+        // vibrancy's or Glass's appearance) rather than the Look's colour; for Auto that is the system's.
+        let textAppearance = !hasLook ? nil : !active ? vibrancy.appearance : NSAppearance(named: dark ? .darkAqua : .aqua)
         for view in subviews where view !== vibrancy && view !== coating && view !== glass {
             if view.appearance != textAppearance { view.appearance = textAppearance }
         }

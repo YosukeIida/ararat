@@ -68,6 +68,9 @@ public final class SidebarContainerView: NSView {
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
     var windowKey: (() -> Bool)?
+    /// Inactive means the app is not active or another window took main; a key child panel (the command bar)
+    /// leaves the window main and must leave the tint on.
+    var windowMain: (() -> Bool)?
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
     public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat) {
@@ -262,7 +265,7 @@ public final class SidebarContainerView: NSView {
     }
 
     private func updateActive() {
-        panel.active = applicationActive() && (windowKey?() ?? (window?.isKeyWindow == true))
+        panel.active = applicationActive() && (windowMain?() ?? (window?.isMainWindow == true))
     }
 
     private func layoutFindBar() {
@@ -417,7 +420,7 @@ public final class SidebarContainerView: NSView {
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: nil)
         }
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didMoveNotification] {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification, NSWindow.didMoveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: window)
         }
         for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
