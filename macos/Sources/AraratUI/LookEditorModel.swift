@@ -73,7 +73,10 @@ final class LookEditorModel: ObservableObject {
         editing = true
     }
     func change(_ edit: (inout Look) -> Void) {
-        edit(&look)
+        var updated = look
+        edit(&updated)
+        guard updated != look else { return }
+        look = updated
         preview(look, active: editing)
         if !editing { commit() }
     }

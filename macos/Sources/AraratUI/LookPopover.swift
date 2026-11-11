@@ -245,7 +245,8 @@ struct GrainInteraction {
     }
     var previous: Double?
     var continuous = 0.0
-    mutating func drag(_ value: Double, model: LookEditorModel) {
+    mutating func drag(_ value: Double?, model: LookEditorModel) {
+        guard let value else { return }
         model.begin()
         defer { previous = value }
         guard let previous else { continuous = model.look.grain; return }
@@ -257,8 +258,10 @@ struct GrainInteraction {
         let grain = (continuous * 20).rounded() / 20
         if grain != model.look.grain { model.change { $0.grain = grain } }
     }
-    static func value(at point: CGPoint, size: CGSize) -> Double {
-        let angle = atan2(point.x - size.width / 2, size.height / 2 - point.y)
+    static func value(at point: CGPoint, size: CGSize) -> Double? {
+        let dx = point.x - size.width / 2, dy = size.height / 2 - point.y
+        guard hypot(dx, dy) >= 6 else { return nil }
+        let angle = atan2(dx, dy)
         return (angle < 0 ? angle + 2 * .pi : angle) / (2 * .pi)
     }
 }

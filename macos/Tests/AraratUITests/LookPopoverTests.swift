@@ -592,3 +592,28 @@ func socketRequiresTheHundredPercentDetentFirst() async throws {
     editor.end()
     try await fixture.close()
 }
+
+@Test @MainActor
+func grainCentreDragAndAdjustmentsAtLimitsDoNotWrite() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    editor.change { $0.grain = 0.7 }
+    var writes = try await fixture.writes()
+    let size = CGSize(width: 36, height: 36)
+    var knob = GrainInteraction()
+    knob.drag(GrainInteraction.value(at: CGPoint(x: 18, y: 18), size: size), model: editor)
+    knob.drag(GrainInteraction.value(at: CGPoint(x: 17, y: 18), size: size), model: editor)
+    editor.end()
+    #expect(knob.previous == nil && editor.look.grain == 0.7)
+    #expect(try await fixture.writes() == writes)
+    #expect(GrainInteraction.value(at: CGPoint(x: 12, y: 18), size: size) == 0.75)
+    editor.setTransparency(0)
+    writes = try await fixture.writes()
+    TransparencyInteraction.adjust(.decrement, model: editor)
+    #expect(try await fixture.writes() == writes)
+    editor.change { $0.grain = 1 }
+    writes = try await fixture.writes()
+    GrainInteraction.adjust(1, model: editor)
+    #expect(try await fixture.writes() == writes)
+    try await fixture.close()
+}
