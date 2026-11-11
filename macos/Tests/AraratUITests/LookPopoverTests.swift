@@ -658,15 +658,15 @@ func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
     let track = try #require(fixture.editor.checkTrackView)
     let grain = try #require(fixture.editor.checkGrainView)
     #expect(!track.acceptsFirstResponder && !grain.acceptsFirstResponder)
-    fixture.editor.checkFocusEnabled = true
     #expect(fixture.editor.checkMenuView != nil)
     func arrow(_ code: UInt16) throws {
         let character = String(UnicodeScalar(code == 126 ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!)
         let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
         window.sendEvent(event)
     }
-    #expect(window.makeFirstResponder(track))
-    let focusView = try #require(window.firstResponder as? LookTrackProbeView)
+    let focusView = try #require(track as? LookTrackProbeView)
+    #expect(focusView.requestControlFocus())
+    #expect(window.firstResponder !== focusView)
     #expect(!focusView.controlHasFocus)
     try await waitUntil { focusView.controlHasFocus }
     try arrow(126)
@@ -676,14 +676,16 @@ func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
     #expect(fixture.editor.look.glass)
     try arrow(125)
     #expect(!fixture.editor.look.glass && fixture.editor.look.opacity == 0)
-    #expect(window.makeFirstResponder(grain))
-    let grainFocus = try #require(window.firstResponder as? LookTrackProbeView)
+    let grainFocus = try #require(grain as? LookTrackProbeView)
+    #expect(grainFocus.requestControlFocus())
+    #expect(window.firstResponder !== grainFocus)
     #expect(!grainFocus.controlHasFocus)
     try await waitUntil { grainFocus.controlHasFocus }
     try arrow(126)
     #expect(abs(fixture.editor.look.grain - 0.1) < 0.001)
-    #expect(window.makeFirstResponder(track))
-    let returnFocus = try #require(window.firstResponder as? LookTrackProbeView)
+    let returnFocus = try #require(track as? LookTrackProbeView)
+    #expect(returnFocus.requestControlFocus())
+    #expect(window.firstResponder !== returnFocus)
     #expect(!returnFocus.controlHasFocus)
     try await waitUntil { returnFocus.controlHasFocus }
     try arrow(126)

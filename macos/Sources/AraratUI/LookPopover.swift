@@ -284,7 +284,6 @@ struct LookTrackProbe: NSViewRepresentable {
     func updateNSView(_ view: LookTrackProbeView, context: Context) {
         view.focus = focus
         view.focused = focused
-        view.canFocus = { [weak model] in model?.checkFocusEnabled == true }
         switch target {
         case .transparency: model.checkTrackView = view
         case .grain: model.checkGrainView = view
@@ -296,14 +295,12 @@ struct LookTrackProbe: NSViewRepresentable {
 final class LookTrackProbeView: NSView {
     var focus: (() -> Void)?
     var focused: (() -> Bool)?
-    var canFocus: (() -> Bool)?
     var controlHasFocus: Bool {
         guard let responder = window?.firstResponder else { return false }
         return !(responder is LookTrackProbeView) && focused?() == true
     }
-    override var acceptsFirstResponder: Bool { focus != nil && canFocus?() == true }
-    override func becomeFirstResponder() -> Bool {
-        guard let focus else { return false }
+    func requestControlFocus() -> Bool {
+        guard window != nil, let focus else { return false }
         focus()
         return true
     }
@@ -351,7 +348,6 @@ public final class LookCheckProbe {
     init(_ anchor: LookPopoverAnchor) {
         self.anchor = anchor
         if !anchor.popover.isShown { anchor.performClick(nil) }
-        anchor.editor?.checkFocusEnabled = true
         anchor.editor?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
     }
     public var window: NSWindow? { anchor.popover.contentViewController?.view.window }
@@ -368,8 +364,7 @@ public final class LookCheckProbe {
         (label == "Transparency" ? anchor.editor?.checkTrackView : anchor.editor?.checkGrainView) as? LookTrackProbeView
     }
     public func focus(_ label: String) -> Bool {
-        guard let view = focusView(label), let window = view.window else { return false }
-        return window.makeFirstResponder(view)
+        focusView(label)?.requestControlFocus() == true
     }
     public func hasFocus(_ label: String) -> Bool { focusView(label)?.controlHasFocus == true }
 }
