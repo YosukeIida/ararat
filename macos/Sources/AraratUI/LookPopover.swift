@@ -198,7 +198,7 @@ struct TransparencyControl: View {
             HStack {
                 Text("Transparency").font(.caption)
                 Spacer()
-                if dragging { Text(interaction.label(model)).font(.caption).monospacedDigit() }
+                if dragging { Text(model.checkTransparencyTag ?? interaction.label(model)).font(.caption).monospacedDigit() }
             }.frame(height: 16)
             GeometryReader { geometry in
                 let width = max(1, geometry.size.width - 32)
@@ -224,8 +224,10 @@ struct TransparencyControl: View {
                 }.frame(width: geometry.size.width, height: 30, alignment: .leading).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
+                        interaction.haptic = model.alignmentHaptic
                         interaction.drag(value.location.x / width, model: model)
-                    }.onEnded { _ in dragging = false; interaction.detent = false; interaction.previousPosition = nil; model.end() })
+                        model.checkTransparencyTag = interaction.label(model)
+                    }.onEnded { _ in dragging = false; model.checkTransparencyTag = nil; interaction.detent = false; interaction.previousPosition = nil; model.end() })
             }.frame(height: 30)
         }
         .accessibilityElement(children: .ignore).accessibilityLabel("Transparency")
@@ -295,5 +297,34 @@ struct GrainControl: View {
                 if direction == .right || direction == .up { GrainInteraction.adjust(1, model: model) }
                 if direction == .left || direction == .down { GrainInteraction.adjust(-1, model: model) }
             }
+    }
+}
+
+@MainActor
+public final class LookCheckProbe {
+    private let anchor: LookPopoverAnchor
+    public private(set) var haptics = 0
+    init(_ anchor: LookPopoverAnchor) {
+        self.anchor = anchor
+        if !anchor.popover.isShown { anchor.performClick(nil) }
+        anchor.editor?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
+    }
+    public var window: NSWindow? { anchor.popover.contentViewController?.view.window }
+    public var look: Look? { anchor.editor?.look }
+    public var editing: Bool { anchor.editor?.editing == true }
+    public var transparencyTag: String? { anchor.editor?.checkTransparencyTag }
+}
+
+extension SettingsWindowController {
+    public func openLookForCheck() -> LookCheckProbe? {
+        guard let root = window?.contentView else { return nil }
+        root.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> LookPopoverAnchor? {
+            if let anchor = view as? LookPopoverAnchor { return anchor }
+            for child in view.subviews { if let anchor = find(child) { return anchor } }
+            return nil
+        }
+        guard let anchor = find(root), anchor.window != nil else { return nil }
+        return LookCheckProbe(anchor)
     }
 }

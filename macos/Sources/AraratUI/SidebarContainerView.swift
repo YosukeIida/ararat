@@ -67,6 +67,13 @@ public final class SidebarContainerView: NSView {
     var windowKey: (() -> Bool)?
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
+    public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat) {
+        panel.setCheckReduceTransparency(reduced)
+        let glass: Bool
+        if #available(macOS 26, *) { glass = panel.subviews.contains { $0 is NSGlassEffectView && !$0.isHidden } }
+        else { glass = false }
+        return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
+    }
     public var sidebarState: String { state.mode.rawValue }
     public var sidebarAnimating: Bool { moving }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }

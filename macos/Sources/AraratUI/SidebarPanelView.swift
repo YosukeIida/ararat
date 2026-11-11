@@ -79,6 +79,11 @@ final class SidebarPanelView: NSView {
         renderLook()
     }
 
+    func setCheckReduceTransparency(_ reduced: Bool) {
+        reduceTransparency = { reduced }
+        renderLook()
+    }
+
     @objc nonisolated private func accessibilityChanged() {
         Task { @MainActor [weak self] in self?.renderLook() }
     }

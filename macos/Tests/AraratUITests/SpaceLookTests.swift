@@ -281,3 +281,15 @@ func grainUsesTwoPixelsPerPointAtScaleTwoAndFollowsScaleChanges() throws {
     #expect(panel.grain.contentsScale == 1)
     #expect(!window.isVisible)
 }
+
+@Test @MainActor
+func lookCheckRenderingReadsTheSidebarAndOverridesReduceTransparency() {
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s", title: "Space", icon: nil, look: solidLook(1, 0, 0, opacity: 0, grain: 0.5, glass: true), favorites: [], pinned: [], today: [])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil, spaces: [space]))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    sidebar.refreshLook()
+    let reduced = container.lookCheckRendering(reduced: true)
+    #expect(reduced.vibrancy && !reduced.glass && abs(reduced.grain - 0.5) < 0.001 && reduced.alpha == 0)
+    let normal = container.lookCheckRendering(reduced: false)
+    if #available(macOS 26.0, *) { #expect(normal.glass && !normal.vibrancy) }
+}

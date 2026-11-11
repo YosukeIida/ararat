@@ -617,3 +617,17 @@ func grainCentreDragAndAdjustmentsAtLimitsDoNotWrite() async throws {
     #expect(try await fixture.writes() == writes)
     try await fixture.close()
 }
+
+@Test @MainActor
+func lookCheckHapticSeamCountsAlignmentFeedback() async throws {
+    let fixture = try await LookFixture()
+    var count = 0
+    fixture.editor.alignmentHaptic = { count += 1 }
+    var interaction = TransparencyInteraction(haptic: fixture.editor.alignmentHaptic)
+    interaction.drag(1.03, model: fixture.editor)
+    interaction.drag(1.09, model: fixture.editor)
+    interaction.drag(1.1, model: fixture.editor)
+    #expect(count == 1)
+    fixture.editor.end()
+    try await fixture.close()
+}
