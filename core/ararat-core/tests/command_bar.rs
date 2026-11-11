@@ -421,11 +421,13 @@ fn history(title: &str, url: &str, last_visit: u64) -> command_bar::HistoryEntry
 fn rows_group_as_open_tabs_then_history_then_commands() {
     // D2: a group outranks a score. The history page scores 130 and the command 80, and the tab
     // (40) still leads them both; the command stays last although it beats the tab on score.
+    // The command's title holds the query in the middle of a word, so D2's exception (a title
+    // that starts with the text) does not apply here.
     struct Fixed;
     impl Source for Fixed {
         fn candidates(&self, _: &str) -> Vec<Suggestion> {
             vec![
-                Suggestion { title: "Probe command".into(), subtitle: "Command".into(), url: None, key: None, target: Target::Command { id: "c".into() }, score: 80.0 },
+                Suggestion { title: "Unprobed command".into(), subtitle: "Command".into(), url: None, key: None, target: Target::Command { id: "c".into() }, score: 80.0 },
                 Suggestion { title: "Probe tab".into(), subtitle: "Work".into(), url: Some("https://tab.test/".into()), key: None,
                     target: Target::Tab { id: "t".into(), space_id: Some("space-work".into()) }, score: 40.0 },
             ]
@@ -446,6 +448,33 @@ fn rows_group_as_open_tabs_then_history_then_commands() {
     assert_eq!(row.subtitle, "History");
     assert_eq!(row.url.as_deref(), Some("https://history.test/"));
     assert_eq!(row.score, 100.0 + 30.0, "the shared recency steps apply to a visit");
+}
+
+#[test]
+fn an_exact_command_title_follows_the_typed_row_ahead_of_matching_tabs() {
+    // D2's exception: five open tabs whose titles start with "Set" outscore Settings… on points
+    // (100 + recency each), and Settings… still takes the second row; the tabs follow it.
+    let mut ws = fixture();
+    let template = ws.items["tab-a"].clone();
+    for n in 0..5 {
+        let mut item = template.clone();
+        item.id = format!("set-tab-{n}");
+        item.title = Some(format!("Settings page {n}"));
+        if let ItemKind::Tab { url, .. } = &mut item.kind { *url = format!("https://set-{n}.test/"); }
+        item.membership.parent = Some("today-work".into());
+        item.lifecycle = Lifecycle::Open;
+        ws.last_selected.insert(item.id.clone(), 900 + n);
+        ws.items.insert(item.id.clone(), item);
+    }
+    let rows = Index::new(&ws, "one", 1000).query("set", &[]).rows;
+    assert_eq!(rows.len(), 5, "the typed row keeps its place inside the five");
+    assert!(matches!(&rows[0].target, Target::Search { .. }));
+    assert!(matches!(&rows[1].target, Target::Command { id } if id == "settings"), "an exact command title follows the typed row");
+    assert!(rows[2..].iter().all(|row| matches!(row.target, Target::Tab { .. })), "the tabs follow the command");
+    // A word start inside a command's title promotes it too: "tab" reaches Close Tab, which no
+    // tab of this fixture has in its title.
+    let rows = Index::new(&ws, "one", 1000).query("close t", &[]).rows;
+    assert!(matches!(&rows[1].target, Target::Command { id } if id == "close_tab"));
 }
 
 #[test]

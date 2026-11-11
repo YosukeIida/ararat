@@ -370,6 +370,9 @@ func tabAndRightArrowNoLongerAcceptACompletion() throws {
     editor.keyDown(with: try barKeyEvent("\t", keyCode: 48))
     #expect(view.field.stringValue == "exa")
     #expect(controller.query == "exa")
+    editor.keyDown(with: try barKeyEvent("\u{F703}", keyCode: 124))
+    #expect(view.field.stringValue == "exa")
+    #expect(controller.query == "exa")
 }
 
 @Test @MainActor

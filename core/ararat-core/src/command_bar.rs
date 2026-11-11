@@ -351,7 +351,8 @@ pub struct CommandBarResult {
 
 /// The typed text is a row of its own and always first, even when an open tab matches (D1);
 /// it counts inside the five. Behind it the rows follow D2's order: open tabs, history, then
-/// commands (and the Space / Folder / Move rows filed with them). Ties keep source order.
+/// commands (and the Space / Folder / Move rows filed with them), except that a command whose
+/// title starts with the typed text at a word start takes the second row. Ties keep source order.
 pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -> CommandBarResult {
     let query = query.trim();
     let mut results: Vec<_> = sources.iter().flat_map(|s| s.candidates(query)).collect();
@@ -359,12 +360,31 @@ pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -
         results.truncate(ROW_LIMIT);
         return CommandBarResult { rows: results, private_window };
     }
-    results.sort_by(|a, b| a.target.group().cmp(&b.target.group()).then_with(|| b.score.total_cmp(&a.score)));
+    results.sort_by(|a, b| tier(a, query).cmp(&tier(b, query)).then_with(|| b.score.total_cmp(&a.score)));
     let mut seen = HashSet::new();
     results.retain(|s| s.url.as_ref().is_none_or(|u| seen.insert(u.clone())));
     results.truncate(ROW_LIMIT.saturating_sub(1));
     results.insert(0, typed_row(query));
     CommandBarResult { rows: results, private_window }
+}
+
+/// D2's one exception: an exact command title must not be crowded out by four weak tab matches,
+/// so a command that starts with the typed text goes right after the typed row — ahead of the
+/// tab group. The rest keeps tabs, history, commands.
+fn tier(suggestion: &Suggestion, query: &str) -> u8 {
+    if matches!(suggestion.target, Target::Command { .. }) && starts_with_at_word_start(&suggestion.title, query) {
+        return 0;
+    }
+    suggestion.target.group() + 1
+}
+
+/// The title starts with the query, compared case-insensitively, or one of its words does: both
+/// start at a word start, so `set` finds `Settings…` and `tab` finds `Close Tab` and `New Tab`.
+fn starts_with_at_word_start(title: &str, query: &str) -> bool {
+    let query = query.to_lowercase();
+    if query.is_empty() { return false; }
+    let title = title.to_lowercase();
+    title.starts_with(&query) || title.split(|c: char| !c.is_alphanumeric()).any(|word| !word.is_empty() && word.starts_with(&query))
 }
 
 fn typed_row(query: &str) -> Suggestion {

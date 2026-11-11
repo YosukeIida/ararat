@@ -1365,12 +1365,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
             host.profileDirectory() == capturedProfile, self.snapshot.shownSpaceId == capturedSpace else { return }
       guard let row else { return }
       switch row.target {
-      case .openUrl(let url), .search(let url):
+      case .openUrl(let url), .search(let url), .history(let url):
         if mode == .search && !forceNew && missingTarget { return }
         if mode != .newTab && !forceNew, let target { _ = adapter.navigateCommandURL(url, target: target) }
         else { adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile) }
-      // A history row is a page, not an edit of the current tab: it opens in a new tab (U23 D10).
-      case .history(let url): adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile)
       case .tab(let id, let space):
         if let space {
           self.selectionGeneration += 1

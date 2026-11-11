@@ -125,6 +125,24 @@ func everyMenuShortcutComesFromTheCoreIncludingPinAndFavoriteClose() throws {
 }
 
 @Test @MainActor
+func theHarnessMenuCarriesForceReloadWithItsDefaultKey() throws {
+    // U23 D6: the row has to reach a menu, or the Shortcuts pane would show a key that no item
+    // carries. The harness has no pages, so this pins the item, its View menu and ⇧⌘R.
+    _ = NSApplication.shared
+    let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "force-reload-menu"))
+    let item = try #require(commandItems(harness.makeMenu()).first { $0.identifier?.rawValue == "force_reload" })
+    #expect(item.title == "Force Reload")
+    #expect(item.menu?.title == "View")
+    #expect(item.action == #selector(HarnessDelegate.forceReload(_:)))
+    // ⇧⌘R, in either encoding AppKit is given today: the letter with Shift in the mask, or the
+    // uppercase letter with no Shift (what `setCoreMenuShortcut` writes; S1 moves every menu
+    // to that form).
+    let shifted = item.keyEquivalent == "r" && item.keyEquivalentModifierMask == [.command, .shift]
+    let shiftedUppercase = item.keyEquivalent == "R" && item.keyEquivalentModifierMask == [.command]
+    #expect(item.keyEquivalent.lowercased() == "r" && (shifted || shiftedUppercase), "Force Reload carries ⇧⌘R")
+}
+
+@Test @MainActor
 func overridingClearingAndResettingUpdateExistingMenusAndSettingsImmediately() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

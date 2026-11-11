@@ -585,9 +585,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         switch row.target {
         case .tab(let id, let spaceId): switchToCommandBarTab(id: id, spaceId: spaceId)
         case .archive(let id): restore(id: id) { _ in }
-        case .openUrl(let url), .search(let url): commitCommandBarURL(url, mode: mode, forceNewTab: forceNewTab)
-        // A history row is a page, not an edit of the current tab: it opens in a new tab (U23 D10).
-        case .history(let url): commitCommandBarURL(url, mode: mode, forceNewTab: true)
+        case .openUrl(let url), .search(let url), .history(let url): commitCommandBarURL(url, mode: mode, forceNewTab: forceNewTab)
         case .command(let id): perform(command: id)
         case .space(let id): switchToCommandBarSpace(id: id)
         case .folder(let id, let spaceId): goToCommandBarFolder(id: id, spaceId: spaceId)
@@ -727,7 +725,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         sidebarContainer?.selectionChanged()
     }
 
-    @objc private func forceReload(_ sender: Any?) {
+    @objc func forceReload(_ sender: Any?) {
         // The harness has no pages; the item carries the key for the Shortcuts pane's tests.
     }
 
