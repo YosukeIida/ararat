@@ -29,11 +29,12 @@ private final class FakeCommandBarStore: CommandBarStore {
     var results: [String: CommandBarResult] = [:]
     var queries: [String] = []
     var lastHistory: [HistoryEntry] = []
+    var resultsWithHistory: CommandBarResult?
 
     func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult {
         queries.append(text)
         lastHistory = history
-        return results[text] ?? CommandBarResult(rows: [], privateWindow: false)
+        return (!history.isEmpty ? resultsWithHistory : nil) ?? results[text] ?? CommandBarResult(rows: [], privateWindow: false)
     }
     func searchURL(_ text: String) -> String { "search:" + text }
 }
@@ -808,4 +809,24 @@ func clickingTheURLFieldRequestsEditURL() {
     sidebar.onEditURL = { requests += 1 }
     sidebar.urlField.performClick(nil)
     #expect(requests == 1)
+}
+
+@Test @MainActor
+func historyReplyKeepsTheSelectedCommand() {
+    let store = FakeCommandBarStore()
+    let typed = barRow("set", target: .search(url: "search:set"))
+    let command = barRow("Settings…", target: .command(id: "settings"))
+    let history = barRow("Setting page", target: .history(url: "https://example.test"))
+    store.results["set"] = CommandBarResult(rows: [typed, command], privateWindow: false)
+    store.resultsWithHistory = CommandBarResult(rows: [typed, history, command], privateWindow: false)
+    let controller = CommandBarController()
+    controller.open(mode: .newTab, prefill: nil, store: store)
+    controller.update(query: "set")
+    controller.moveSelection(by: 1)
+    controller.updateHistory([HistoryEntry(title: "Setting page", url: "https://example.test", lastVisit: 1)], for: "set")
+    #expect(controller.result.rows[controller.selectedIndex].target == command.target)
+    var committed: SuggestionTarget?
+    controller.onCommit = { row, _, _ in committed = row?.target }
+    controller.commit(forceNewTab: false)
+    #expect(committed == command.target)
 }

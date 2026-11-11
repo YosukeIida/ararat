@@ -159,7 +159,6 @@ public final class CommandBarController {
         query = newQuery
         selectedIndex = 0
         previewText = nil
-        history = []
         relist()
         queryGeneration += 1
         onQuery(newQuery, queryGeneration)
@@ -167,11 +166,12 @@ public final class CommandBarController {
 
     public func updateHistory(_ entries: [HistoryEntry], for text: String) {
         guard isOpen, query == text, !privateWindow else { return }
+        let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex].target : nil
         history = entries
-        relist()
+        relist(preserving: selected)
     }
 
-    private func relist() {
+    private func relist(preserving selected: SuggestionTarget? = nil) {
         var result: CommandBarResult
         if mode == .search, let store, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let url = store.searchURL(query)
@@ -183,6 +183,10 @@ public final class CommandBarController {
         }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
         self.result = result
+        if let selected {
+            if let index = result.rows.firstIndex(where: { $0.target == selected }) { selectedIndex = index }
+            else { selectedIndex = 0; previewText = nil; previewVersion += 1 }
+        }
         onChange()
         onRowsChange()
     }

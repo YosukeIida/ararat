@@ -504,7 +504,7 @@ public final class SidebarView: NSView {
         urlField.layer?.cornerCurve = .continuous
         host.font = .systemFont(ofSize: 13)
         host.lineBreakMode = .byTruncatingTail
-        host.setAccessibilityLabel("Selected tab host")
+        host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
         header.font = .systemFont(ofSize: 14, weight: .medium)
