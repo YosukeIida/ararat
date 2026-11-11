@@ -26,7 +26,7 @@ final class LookEditorModel: ObservableObject {
         look = space.look ?? Self.defaultLook
     }
 
-    static let defaultLook = Look(colors: [color(x: 0.6, y: 0.5)], opacity: 0.45, grain: 0, glass: false, appearance: .auto)
+    static let defaultLook = Look(colors: [color(x: 0.6, y: 0.5)], opacity: 0.45, grain: 0.05, glass: false, appearance: .auto)
     static func clamp(_ value: Double) -> Double { min(1, max(0, value)) }
     static func color(x: Double, y: Double) -> LookColor {
         let hue = clamp(x), lightness = 1 - clamp(y), saturation = 0.65
@@ -116,9 +116,8 @@ final class LookEditorModel: ObservableObject {
         selected = 0
         change { $0.colors = Self.presets[index] }
     }
-    func toggleGlass() { change { $0.glass.toggle() } }
-    func setTransparency(_ value: Double) {
-        change { $0.opacity = Self.opacity(transparency: value); $0.glass = false }
+    func setTransparency(_ value: Double, glass: Bool = false) {
+        change { $0.opacity = glass ? 0 : Self.opacity(transparency: value); $0.glass = glass }
     }
     func reset() {
         editing = false

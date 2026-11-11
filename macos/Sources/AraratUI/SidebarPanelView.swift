@@ -135,7 +135,7 @@ final class SidebarPanelView: NSView {
             gradient.backgroundColor = nil
             gradient.colors = colors.map(\.cgColor)
         }
-        grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction) * 0.1)
+        grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
         coating.isHidden = !hasLook
         CATransaction.commit()
     }

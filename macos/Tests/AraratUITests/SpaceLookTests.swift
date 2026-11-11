@@ -83,6 +83,17 @@ func lookReduceTransparencyKeepsNativeFallbackAndStoredOpacity() throws {
 }
 
 @Test @MainActor
+func glassWithZeroOpacityUnderReducedTransparencyKeepsGrain() throws {
+    let panel = lookPanel()
+    let look = solidLook(1, 0, 0, opacity: 0, grain: 0.5, glass: true)
+    panel.reduceTransparency = { true }
+    panel.updateLook(look, look, fraction: 0)
+    #expect(!panel.vibrancy.isHidden)
+    #expect(panel.gradient.backgroundColor?.alpha == 0)
+    #expect(abs(panel.grain.opacity - 0.5) < 0.001)
+}
+
+@Test @MainActor
 func noLookKeepsLegacyVibrancyAndPixels() throws {
     for reduced in [false, true] {
         let panel = lookPanel()
@@ -144,7 +155,7 @@ func lookGradientHasVerticalEqualStopsAndDeterministicGrain() throws {
     #expect(panel.gradient.startPoint == CGPoint(x: 0.5, y: 1))
     #expect(panel.gradient.endPoint == CGPoint(x: 0.5, y: 0))
     #expect(panel.gradient.locations == [0, 0.5, 1])
-    #expect(abs(panel.grain.opacity - 0.07) < 0.001)
+    #expect(abs(panel.grain.opacity - 0.7) < 0.001)
     let other = lookPanel()
     other.updateLook(look, look, fraction: 0)
     #expect(try pixel(panel.grain) == pixel(other.grain))
@@ -199,7 +210,7 @@ func lookSwitchesEffectsAndAppearanceAtHalfPage() {
     #expect(content.appearance?.name == .aqua)
     panel.updateLook(first, last, fraction: 0.5)
     #expect(content.appearance?.name == .darkAqua)
-    #expect(abs(panel.grain.opacity - 0.05) < 0.001)
+    #expect(abs(panel.grain.opacity - 0.5) < 0.001)
     if #available(macOS 26.0, *) {
         #expect(panel.vibrancy.isHidden)
         #expect(panel.subviews.compactMap { $0 as? NSGlassEffectView }.contains { !$0.isHidden })

@@ -76,7 +76,6 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
 
 struct LookPopoverView: View {
     @ObservedObject var model: LookEditorModel
-    @State private var transparencyEditing = false
     var body: some View {
         VStack(spacing: 10) {
             ZStack(alignment: .top) {
@@ -88,6 +87,7 @@ struct LookPopoverView: View {
                     Spacer(minLength: 0)
                     Menu {
                         Button("Use for All Spaces") { model.useForAll() }
+                        Button("Reset Look") { model.reset() }
                     } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Look options")
                 }.padding(.horizontal, 5)
@@ -109,27 +109,8 @@ struct LookPopoverView: View {
                 }
                 Button { model.presetPage = min(1, model.presetPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.presetPage == 1).accessibilityLabel("Next presets")
             }.buttonStyle(.plain)
-            VStack(spacing: 3) {
-                HStack {
-                    Text("Transparency").font(.caption)
-                    Spacer()
-                    if transparencyEditing { Text(model.transparencyLabel).font(.caption).monospacedDigit() }
-                }.frame(height: 16)
-                HStack(spacing: 8) {
-                    Slider(value: Binding(get: { model.transparency }, set: { model.setTransparency($0) }), in: 0...100, onEditingChanged: { editing in
-                        transparencyEditing = editing
-                        if editing { model.begin() } else { model.end() }
-                    }).accessibilityLabel("Transparency").accessibilityValue("\(Int(model.transparency.rounded())) percent")
-                    Button { model.toggleGlass() } label: {
-                        Circle().fill(.ultraThinMaterial).frame(width: 20, height: 20)
-                            .overlay(Circle().strokeBorder(model.look.glass ? Color.accentColor : .secondary, lineWidth: model.look.glass ? 2 : 1))
-                    }.buttonStyle(.plain).help("Glass").accessibilityLabel("Glass").accessibilityValue(model.look.glass ? "On" : "Off").accessibilityAddTraits(model.look.glass ? [.isSelected] : [])
-                }
-            }
-            Slider(value: Binding(get: { model.look.grain }, set: { value in model.change { $0.grain = value } }), in: 0...1, onEditingChanged: { editing in
-                if editing { model.begin() } else { model.end() }
-            }) { Text("Grain").font(.caption) }.accessibilityLabel("Grain").accessibilityValue("\(Int((model.look.grain * 100).rounded())) percent")
-            HStack { Button("Reset Look") { model.reset() }; Spacer() }.font(.caption)
+            TransparencyControl(model: model)
+            GrainControl(model: model)
             if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).accessibilityLabel("Look error: " + error) }
         }.padding(11).frame(width: 288).buttonStyle(.borderless)
     }
@@ -175,5 +156,134 @@ struct LookPopoverView: View {
                     .accessibilityAction(named: "Darker") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y + 0.02) } }
             }
         }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height).background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+@MainActor
+struct TransparencyInteraction {
+    var detent = false
+    var haptic: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    mutating func drag(_ position: Double, model: LookEditorModel) {
+        model.begin()
+        detent = position > 1 && position <= 1.06
+        let glass = position > 1.06
+        if glass && !model.look.glass { haptic() }
+        model.setTransparency(min(100, max(0, position * 100)), glass: glass)
+    }
+    func label(_ model: LookEditorModel) -> String {
+        if model.look.glass { return "Liquid Glass" }
+        return detent ? "100% · Liquid Glass ›" : model.transparencyLabel
+    }
+    static func adjust(_ direction: AccessibilityAdjustmentDirection, model: LookEditorModel) {
+        switch direction {
+        case .increment:
+            if !model.look.glass { model.setTransparency(model.transparency + 1, glass: model.transparency >= 100) }
+        case .decrement:
+            if model.look.glass { model.setTransparency(100) }
+            else { model.setTransparency(model.transparency - 1) }
+        @unknown default: break
+        }
+    }
+}
+
+struct TransparencyControl: View {
+    @ObservedObject var model: LookEditorModel
+    @State private var interaction = TransparencyInteraction()
+    @State private var dragging = false
+    var body: some View {
+        VStack(spacing: 3) {
+            HStack {
+                Text("Transparency").font(.caption)
+                Spacer()
+                if dragging { Text(interaction.label(model)).font(.caption).monospacedDigit() }
+            }.frame(height: 16)
+            GeometryReader { geometry in
+                let width = max(1, geometry.size.width - 32)
+                let thumb = model.look.glass ? width + 24 : width * model.transparency / 100
+                ZStack(alignment: .leading) {
+                    Canvas { context, size in
+                        var path = Path()
+                        let amplitude = model.look.glass ? 0 : 4 * (1 - model.transparency / 100)
+                        path.move(to: CGPoint(x: 0, y: size.height / 2))
+                        let segments = 12
+                        for i in 0..<segments {
+                            let x = width * CGFloat(i) / CGFloat(segments)
+                            let next = width * CGFloat(i + 1) / CGFloat(segments)
+                            let y = size.height / 2
+                            let sign: CGFloat = i.isMultiple(of: 2) ? 1 : -1
+                            path.addCurve(to: CGPoint(x: next, y: y), control1: CGPoint(x: x + (next-x)/3, y: y + amplitude * sign), control2: CGPoint(x: x + 2*(next-x)/3, y: y + amplitude * sign))
+                        }
+                        context.stroke(path, with: .color(.secondary), lineWidth: 2)
+                    }.frame(width: width).accessibilityHidden(true)
+                    Circle().fill(.ultraThinMaterial).overlay(Circle().strokeBorder(interaction.detent || model.look.glass ? Color.accentColor : .secondary, lineWidth: 2))
+                        .frame(width: 20, height: 20).offset(x: width + 14)
+                    Circle().fill(Color.primary).frame(width: 12, height: 12).offset(x: thumb - 6)
+                }.frame(width: geometry.size.width, height: 30, alignment: .leading).contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                        dragging = true
+                        interaction.drag(value.location.x / width, model: model)
+                    }.onEnded { _ in dragging = false; interaction.detent = false; model.end() })
+            }.frame(height: 30)
+        }
+        .accessibilityElement(children: .ignore).accessibilityLabel("Transparency")
+        .accessibilityValue(model.look.glass ? "Liquid Glass" : "\(Int(model.transparency.rounded())) percent")
+        .accessibilityAdjustableAction { TransparencyInteraction.adjust($0, model: model) }
+        .focusable().onMoveCommand { direction in
+            if direction == .right || direction == .up { TransparencyInteraction.adjust(.increment, model: model) }
+            if direction == .left || direction == .down { TransparencyInteraction.adjust(.decrement, model: model) }
+        }
+    }
+}
+
+@MainActor
+struct GrainInteraction {
+    static func adjust(_ amount: Double, model: LookEditorModel) {
+        model.change { $0.grain = min(1, max(0, ($0.grain * 20 + amount).rounded() / 20)) }
+    }
+    static func value(at point: CGPoint, size: CGSize) -> Double {
+        let angle = atan2(point.x - size.width / 2, size.height / 2 - point.y)
+        return (angle < 0 ? angle + 2 * .pi : angle) / (2 * .pi)
+    }
+}
+
+struct GrainControl: View {
+    @ObservedObject var model: LookEditorModel
+    @State private var previous: Double?
+    @State private var continuous = 0.0
+    var body: some View {
+        HStack {
+            GeometryReader { geometry in
+                ZStack {
+                    Circle().stroke(.secondary.opacity(0.4), lineWidth: 2)
+                    Circle().fill(Color(nsColor: .controlBackgroundColor)).padding(5)
+                    Circle().fill(Color.primary).frame(width: 4, height: 4)
+                        .offset(y: -12).rotationEffect(.degrees(model.look.grain * 360))
+                }.contentShape(Circle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
+                    let value = GrainInteraction.value(at: event.location, size: geometry.size)
+                    model.begin()
+                    if let previous {
+                        var delta = value - previous
+                        if delta > 0.5 { delta -= 1 }
+                        if delta < -0.5 { delta += 1 }
+                        continuous = min(1, max(0, continuous + delta))
+                    } else { continuous = model.look.grain }
+                    model.change { $0.grain = (continuous * 20).rounded() / 20 }
+                    previous = value
+                }.onEnded { _ in previous = nil; model.end() })
+            }.frame(width: 36, height: 36)
+            Text("Grain \(Int((model.look.grain * 100).rounded()))%").font(.caption)
+            Spacer()
+        }.accessibilityElement(children: .ignore).accessibilityLabel("Grain")
+            .accessibilityValue("\(Int((model.look.grain * 100).rounded())) percent")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: GrainInteraction.adjust(1, model: model)
+                case .decrement: GrainInteraction.adjust(-1, model: model)
+                @unknown default: break
+                }
+            }.focusable().onMoveCommand { direction in
+                if direction == .right || direction == .up { GrainInteraction.adjust(1, model: model) }
+                if direction == .left || direction == .down { GrainInteraction.adjust(-1, model: model) }
+            }
     }
 }
