@@ -12,6 +12,7 @@ private func floatingFixture() -> (NSWindow, SidebarView, SidebarContainerView, 
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.reduceMotion = { false }
     container.applicationActive = { true }
     container.windowKey = { true }
     container.pressedButtons = { 0 }
@@ -255,22 +256,28 @@ func floatingPageMaskTracksRevealAndLibraryWidth() throws {
 }
 
 @Test @MainActor
-func reduceMotionRemovesFloatingShowAndHideAnimations() throws {
-    let (window, _, container, _) = floatingFixture()
-    defer { window.contentView = nil }
-    let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
-    var now = 0.0
-    var point = NSPoint(x: window.frame.minX, y: window.frame.midY)
-    container.clock = { now }
-    container.pointerLocation = { point }
-    container.reduceMotion = { true }
-    container.toggleSidebar()
-    now = 0.15
-    container.processPointer()
-    #expect(container.sidebarState == "floating")
-    #expect(panel.layer?.animation(forKey: "sidebar.position") == nil)
-    point.x = window.frame.maxX + 100
-    container.processPointer()
-    #expect(container.sidebarState == "hidden")
-    #expect(panel.layer?.animation(forKey: "sidebar.position") == nil)
+func floatingShowAndHideRespectReduceMotion() throws {
+    for reduceMotion in [false, true] {
+        let (window, _, container, _) = floatingFixture()
+        defer { window.contentView = nil }
+        let panel = try #require(container.subviews.compactMap { $0 as? SidebarPanelView }.first)
+        var now = 0.0
+        var point = NSPoint(x: window.frame.minX, y: window.frame.midY)
+        container.clock = { now }
+        container.pointerLocation = { point }
+        container.reduceMotion = { reduceMotion }
+        container.toggleSidebar()
+        now = 0.15
+        container.processPointer()
+        #expect(container.sidebarState == "floating")
+        let show = panel.layer?.animation(forKey: "sidebar.position")
+        if reduceMotion { #expect(show == nil) }
+        else { #expect(show is CASpringAnimation) }
+        point.x = window.frame.maxX + 100
+        container.processPointer()
+        #expect(container.sidebarState == "hidden")
+        let hide = panel.layer?.animation(forKey: "sidebar.position")
+        if reduceMotion { #expect(hide == nil) }
+        else { #expect(hide is CABasicAnimation) }
+    }
 }

@@ -656,3 +656,32 @@ func dockSpaceMenuActionsAndAvailability() throws {
     f.sidebar.update(snapshot: snapshot)
     #expect(!f.sidebar.spaceMenu(spaceID: "space-work").items[4].isEnabled)
 }
+
+@Test @MainActor
+func otherDockCellRenamesItsOwnSpaceAfterTheSwitchCompletes() throws {
+    let f = try MenuFixture(); defer { f.dispose() }
+    let index = try #require(f.snapshot.spaces.firstIndex { $0.id == "other" })
+    let cell = try #require(descendants(f.sidebar).compactMap { $0 as? SpaceDockButton }.first { $0.spaceID == "other" })
+    let menu = try #require(cell.menuProvider?())
+    var settings: String?
+    f.sidebar.onSpaceSettings = { settings = $0 }
+    try invoke(menu, "Space Settings…")
+    #expect(settings == "other")
+    var saved: (String, String)?
+    f.sidebar.onRenameSpace = { id, name, done in saved = (id, name); done(true) }
+    try invoke(menu, "Rename Space…")
+    #expect(f.sidebar.spaceShown == index)
+    let field = try #require(descendants(f.sidebar).compactMap { $0 as? SidebarRenameField }.first)
+    f.sidebar.showSpaceWithoutNotification(at: index)
+    #expect(descendants(f.sidebar).contains { $0 === field })
+    field.stringValue = "Renamed other"
+    field.finish(commit: true)
+    #expect(saved?.0 == "other" && saved?.1 == "Renamed other")
+    try invoke(menu, "Rename Space…")
+    let nextField = try #require(descendants(f.sidebar).compactMap { $0 as? SidebarRenameField }.first)
+    nextField.stringValue = "Saved on switch"
+    let previous = try #require(f.snapshot.spaces.firstIndex { $0.id == "space-work" })
+    f.sidebar.showSpaceWithoutNotification(at: previous)
+    #expect(saved?.0 == "other" && saved?.1 == "Saved on switch")
+    #expect(!descendants(f.sidebar).contains { $0 === nextField })
+}

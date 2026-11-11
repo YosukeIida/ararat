@@ -44,8 +44,8 @@ public final class SpaceDockView: NSView {
 @MainActor
 final class SpaceDockButton: NSButton {
     var spaceID = ""
-    var glyph: SpaceDockView.CellState = .letter("") { didSet { needsDisplay = true } }
-    var openFraction: CGFloat = 0 { didSet { needsDisplay = true } }
+    var glyph: SpaceDockView.CellState = .letter("") { didSet { if glyph != oldValue { needsDisplay = true } } }
+    var openFraction: CGFloat = 0 { didSet { if openFraction != oldValue { needsDisplay = true } } }
     static func fillAlpha(fraction: CGFloat, appearance: NSAppearance) -> CGFloat {
         fraction * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.13 : 0.6)
     }

@@ -228,6 +228,7 @@ func sidebarButtonsFollowDockedHiddenAndFloatingPanelIncludingSpring() throws {
     let window = measuredButtonsWindow(selected: true)
     defer { window.contentView = nil }
     let container = try #require(window.contentView?.subviews.first as? SidebarContainerView)
+    container.reduceMotion = { false }
     let lights = try #require((window as? BrowserWindow)?.sidebarLights)
     let panel = try #require(lights.superview)
     var now = 0.0

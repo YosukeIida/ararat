@@ -487,7 +487,7 @@ public final class SidebarView: NSView {
     private func showSpace(at index: Int, animatedReveal: Bool, notify: Bool = true) {
         guard snapshot.spaces.indices.contains(index) else { return }
         if drag != nil { cancelDrag() }
-        spaceRenameField?.finish(commit: true)
+        if index != spaceIndex { spaceRenameField?.finish(commit: true) }
         listScroll.stopReveal()
         if !isScrollPreview, let id = snapshotSpace?.id { spaceListOrigins[id] = listScroll.contentView.bounds.minY }
         finishRowMotion()

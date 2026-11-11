@@ -215,6 +215,7 @@ func floatingPanelGeometryAndDragCollapseKeepTheExistingSidebar() {
     ]))
     let page = NSView()
     let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.reduceMotion = { false }
     container.frame = NSRect(x: 0, y: 0, width: 1100, height: 720)
     container.layoutSubtreeIfNeeded()
     #expect(page.frame == NSRect(x: 240, y: 10, width: 850, height: 700))
