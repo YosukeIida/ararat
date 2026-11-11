@@ -40,10 +40,9 @@ final class LookScreenCheck {
         return true
     }
     func trackPoint(_ value: Double) -> NSPoint? {
-        guard let control = element("Transparency") else { return nil }
-        let frame = control.accessibilityFrame()
+        guard let frame = probe?.trackFrame else { return nil }
         guard frame.width > 32 && frame.height >= 30 else { return nil }
-        return NSPoint(x: frame.minX + (frame.width - 32) * value, y: frame.minY + 15)
+        return NSPoint(x: frame.minX + (frame.width - 32) * value, y: frame.midY)
     }
     func mouse(_ type: NSEvent.EventType, position: Double) -> Bool {
         guard let point = trackPoint(position), let window = probe?.window else { return false }
@@ -128,7 +127,8 @@ extension Runtime {
             "first_responder": window?.firstResponder.map { NSStringFromClass(type(of: $0)) } as Any? ?? NSNull(),
             "ax_elements": ax,
             "transparency_frame": check?.element("Transparency").map { rectFields($0.accessibilityFrame()) } as Any? ?? NSNull(),
-            "track_point_100": point.map { ["x": $0.x, "y": $0.y] } as Any? ?? NSNull(),
+            "track_frame": check?.probe?.trackFrame.map { rectFields($0) } as Any? ?? NSNull(),
+        "track_point_100": point.map { ["x": $0.x, "y": $0.y] } as Any? ?? NSNull(),
             "images": check?.images ?? [:]]
     }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -166,7 +166,7 @@ extension Runtime {
             let transparency = all.filter { $0.accessibilityLabel() == "Transparency" }
             let grain = all.filter { $0.accessibilityLabel() == "Grain" }
             let valid = transparency.count == 1 && grain.count == 1 && (transparency.first?.accessibilityValue() as? String) == "55 percent" && (grain.first?.accessibilityValue() as? String) == "5 percent"
-            guard valid else { end(false, "accessibility"); return }
+            guard valid else { return }
             if !check.initialPrepared {
                 check.report("accessibility", true)
                 guard check.mouse(.leftMouseDown, position: 0.54), check.mouse(.leftMouseDragged, position: 0.55), check.mouse(.leftMouseUp, position: 0.55) else { end(false, "initial_preview_input"); return }

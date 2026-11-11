@@ -221,7 +221,8 @@ struct TransparencyControl: View {
                     Circle().fill(.ultraThinMaterial).overlay(Circle().strokeBorder(interaction.detent || model.look.glass ? Color.accentColor : .secondary, lineWidth: 2))
                         .frame(width: 20, height: 20).offset(x: width + 14)
                     Circle().fill(Color.primary).frame(width: 12, height: 12).offset(x: thumb - 6)
-                }.frame(width: geometry.size.width, height: 30, alignment: .leading).contentShape(Rectangle())
+                }.frame(width: geometry.size.width, height: 30, alignment: .leading)
+                    .background(LookTrackProbe(model: model)).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
                         interaction.haptic = model.alignmentHaptic
@@ -266,6 +267,21 @@ struct GrainInteraction {
         let angle = atan2(dx, dy)
         return (angle < 0 ? angle + 2 * .pi : angle) / (2 * .pi)
     }
+}
+
+struct LookTrackProbe: NSViewRepresentable {
+    let model: LookEditorModel
+    func makeNSView(context: Context) -> NSView {
+        let view = LookTrackProbeView()
+        model.checkTrackView = view
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) { model.checkTrackView = view }
+}
+
+final class LookTrackProbeView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
 }
 
 struct GrainControl: View {
@@ -313,6 +329,10 @@ public final class LookCheckProbe {
     public var look: Look? { anchor.editor?.look }
     public var editing: Bool { anchor.editor?.editing == true }
     public var transparencyTag: String? { anchor.editor?.checkTransparencyTag }
+    public var trackFrame: NSRect? {
+        guard let view = anchor.editor?.checkTrackView, let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
 }
 
 extension SettingsWindowController {

@@ -9,6 +9,7 @@ final class LookEditorModel: ObservableObject {
     @Published var presetPage = 0
     @Published private(set) var editing = false
     @Published private(set) var error: String?
+    weak var checkTrackView: NSView?
     var checkTransparencyTag: String?
     var alignmentHaptic: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     let settings: SettingsModel

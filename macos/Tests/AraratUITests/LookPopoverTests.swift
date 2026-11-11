@@ -631,3 +631,19 @@ func lookCheckHapticSeamCountsAlignmentFeedback() async throws {
     fixture.editor.end()
     try await fixture.close()
 }
+
+@Test @MainActor
+func lookTrackProbeMeasuresTheActualTrackWithoutAccessibility() async throws {
+    let fixture = try await LookFixture()
+    let host = NSHostingView(rootView: LookPopoverView(model: fixture.editor))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 288, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    let track = try #require(fixture.editor.checkTrackView)
+    #expect(track.window === window)
+    #expect(track.bounds.width == 266 && track.bounds.height == 30)
+    #expect(track.hitTest(NSPoint(x: 10, y: 10)) == nil)
+    #expect(!track.isAccessibilityElement())
+    window.contentView = nil
+    try await fixture.close()
+}
