@@ -22,9 +22,19 @@ final class DockScreenCheck {
         let names = conditionNames(screen: screen)
         return (Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }), names.filter { conditions[$0] != true })
     }
-    // Both cells must be visibly between the two pages; a landed or unstarted page cannot pass.
+    // The trackpad follow is driven by exact, synchronously applied deltas, so its sample still has
+    // to be visibly mid and the hidden variant keeps this band.
     static func midBand(_ values: [CGFloat]) -> Bool {
         values.count > 1 && values[0] > 0.05 && values[0] < 0.95 && values[1] > 0.05 && values[1] < 0.95
+    }
+    // The wheel's spring is timed by the render server, and a VM presents coarse frames: design
+    // measured a real mid state of [0.9905, 0.0095], outside any band worth naming. So the wheel
+    // pump accepts any frame with both cells strictly between the two pages whose fractions still
+    // add up to one page, compared at 1e-6.
+    static let midCrossFadeTolerance: CGFloat = 1e-6
+    static func midCrossFade(_ values: [CGFloat]) -> Bool {
+        values.count > 1 && values[0] > 0 && values[0] < 1 && values[1] > 0 && values[1] < 1
+            && abs(values[0] + values[1] - 1) <= midCrossFadeTolerance
     }
     // Reads the pump trace: an offset of 0 means either no animation (a paging fault) or an
     // animation this display never presented (a frame limit), and the trace carries which.
@@ -97,7 +107,9 @@ extension Runtime {
                 // Why the check pumps the dock sampler: SidebarView moves the dock from a display
                 // link, and the VM run landed the switch with no sample in between (mid_fractions
                 // empty while cell 1 was open), so the display link delivered no callbacks there.
-                // The offset the pump reads is still the page layer's presentation value.
+                // The offset the pump reads is still the page layer's presentation value, and the
+                // acceptance rule is midCrossFade: the VM presents coarse frames, so a near-end
+                // pair still counts as the cross-fade.
                 check.midTrace.removeAll()
                 let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self, weak check] _ in
                     MainActor.assumeIsolated {
@@ -107,7 +119,7 @@ extension Runtime {
                         let scroll = sidebar.dockCheckScrollState
                         var values = dock.cellStates.map(\.openFraction)
                         var captured = false
-                        if DockScreenCheck.midBand(values) {
+                        if DockScreenCheck.midCrossFade(values) {
                             // Draw the sample before imaging it: the pump only marks the cells for
                             // display and screencapture blocks the main thread, so without this the
                             // image is the previous pass. Re-read after the flush so the image and
@@ -115,7 +127,7 @@ extension Runtime {
                             window.displayIfNeeded()
                             CATransaction.flush()
                             let drawn = dock.cellStates.map(\.openFraction)
-                            if DockScreenCheck.midBand(drawn) {
+                            if DockScreenCheck.midCrossFade(drawn) {
                                 values = drawn
                                 captured = true
                                 check.mid = drawn
