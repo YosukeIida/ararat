@@ -1631,6 +1631,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     browserCheckAttempts += 1
     var timeoutValues: [String: Any] = ["timeout": true]
+    if mode == "look" || mode == "screen-look" {
+      timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
+    }
     if mode == "organize" || mode == "screen-organize" {
       timeoutValues["conditions"] = organizeConditions
       timeoutValues["failed_conditions"] = organizeConditionNames(screen: mode == "screen-organize").filter { organizeConditions[$0] != true }
@@ -6612,6 +6615,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-keyboard" { result["check"] = "keyboard"; result["screen"] = "keyboard" }
     if browserCheckMode == "screen-organize" { result["check"] = "organize"; result["screen"] = "organize" }
     if browserCheckMode == "screen-look" { result["check"] = "look"; result["screen"] = "look" }
+    if browserCheckMode == "look" || browserCheckMode == "screen-look" {
+      lookCheck?.stopWatchingMenu()
+      let check = LookScreenCheck.conditionResults(lookCheck?.conditions ?? [:], screen: browserCheckMode == "screen-look")
+      result["conditions"] = check.values
+      result["failed_conditions"] = check.failed
+    }
     if browserCheckMode == "organize" || browserCheckMode == "screen-organize" {
       let names = organizeConditionNames(screen: browserCheckMode == "screen-organize")
       result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, organizeConditions[$0] == true) })

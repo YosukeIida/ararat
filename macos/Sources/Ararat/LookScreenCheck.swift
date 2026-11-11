@@ -15,6 +15,17 @@ final class LookScreenCheck {
     var initialPrepared = false
     var count = 0
 
+    static func conditionNames(screen: Bool) -> [String] {
+        ["open", "accessibility", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "grain_focus", "keyboard_down", "transparency_focus_return", "keyboard_grain", "reduced_transparency", "ax_transparency_input", "ax_grain_input", "adjustable_elements"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] : [])
+    }
+    static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
+        let names = conditionNames(screen: screen)
+        return (Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }), names.filter { conditions[$0] != true })
+    }
+    static func lookFields(_ look: Look?) -> Any {
+        guard let look else { return NSNull() }
+        return ["opacity": look.opacity, "grain": look.grain, "glass": look.glass, "appearance": String(describing: look.appearance), "colors": look.colors.map { ["red": $0.red, "green": $0.green, "blue": $0.blue, "x": $0.x, "y": $0.y] }] as [String: Any]
+    }
     func elements(_ element: NSAccessibilityProtocol) -> [NSAccessibilityProtocol] {
         let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityProtocol }
         return children + children.flatMap { elements($0) }
@@ -72,14 +83,54 @@ final class LookScreenCheck {
             guard let menu = note.object as? NSMenu else { return }
             MainActor.assumeIsolated {
                 self?.menuItems = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden }.map(\.title)
+                self?.stopWatchingMenu()
                 menu.cancelTracking()
             }
         }
+    }
+    func stopWatchingMenu() {
+        if let menuObserver { NotificationCenter.default.removeObserver(menuObserver); self.menuObserver = nil }
     }
     deinit { if let menuObserver { NotificationCenter.default.removeObserver(menuObserver) } }
 }
 
 extension Runtime {
+    func lookCheckDiagnostics(screen: Bool) -> [String: Any] {
+        let check = lookCheck
+        let result = LookScreenCheck.conditionResults(check?.conditions ?? [:], screen: screen)
+        let window = check?.probe?.window
+        let stored = adapter?.session.queue.sync {
+            adapter?.session.store?.snapshot(windowId: windowID).spaces.first { $0.id == snapshot.shownSpaceId }?.look
+        }
+        let ax: [[String: Any]] = window.map { window in
+            (check?.elements(window) ?? []).map { element in
+                let value = element.accessibilityValue()
+                return ["label": element.accessibilityLabel() as Any? ?? NSNull(),
+                        "value": value.map { String(describing: $0) } as Any? ?? NSNull(),
+                        "frame": rectFields(element.accessibilityFrame())]
+            }
+        } ?? []
+        let point = check?.trackPoint(1)
+        let probe: [String: Any] = ["look": LookScreenCheck.lookFields(check?.probe?.look),
+            "editing": check?.probe?.editing as Any? ?? NSNull(),
+            "transparency_tag": check?.probe?.transparencyTag as Any? ?? NSNull(),
+            "haptics": check?.probe?.haptics as Any? ?? NSNull()]
+        return ["conditions": result.values, "failed_conditions": result.failed,
+            "phase": check?.phase ?? browserCheckPhase, "menu_items": check?.menuItems as Any? ?? NSNull(),
+            "probe": probe, "stored_look": LookScreenCheck.lookFields(stored ?? nil),
+            "journal_count": check?.journalCount(quitPath) as Any? ?? NSNull(),
+            "journal_baseline": check?.count as Any? ?? NSNull(), "database_path": quitPath as Any? ?? NSNull(),
+            "popover_window_number": window?.windowNumber as Any? ?? NSNull(),
+            "popover_visible": window?.isVisible as Any? ?? NSNull(),
+            "popover_key": window?.isKeyWindow as Any? ?? NSNull(),
+            "settings_key": (root ?? self).settings?.window?.isKeyWindow as Any? ?? NSNull(),
+            "app_active": NSApp.isActive,
+            "first_responder": window?.firstResponder.map { NSStringFromClass(type(of: $0)) } as Any? ?? NSNull(),
+            "ax_elements": ax,
+            "transparency_frame": check?.element("Transparency").map { rectFields($0.accessibilityFrame()) } as Any? ?? NSNull(),
+            "track_point_100": point.map { ["x": $0.x, "y": $0.y] } as Any? ?? NSNull(),
+            "images": check?.images ?? [:]]
+    }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if lookCheck == nil { lookCheck = LookScreenCheck() }
         guard let check = lookCheck, let sidebarContainer = container, let session = adapter?.session else { return }
@@ -96,7 +147,7 @@ extension Runtime {
         }
         func end(_ ok: Bool, _ name: String) {
             check.report(name, ok)
-            if !ok { finishBrowserCheck(ok: false, values: ["conditions": check.conditions, "failed_conditions": [name], "images": check.images]) }
+            if !ok { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)) }
             else { check.phase += 1; browserCheckPhase = check.phase }
         }
         switch check.phase {
@@ -117,7 +168,9 @@ extension Runtime {
             let valid = transparency.count == 1 && grain.count == 1 && (transparency.first?.accessibilityValue() as? String) == "55 percent" && (grain.first?.accessibilityValue() as? String) == "5 percent"
             guard valid else { end(false, "accessibility"); return }
             if !check.initialPrepared {
+                check.report("accessibility", true)
                 guard check.mouse(.leftMouseDown, position: 0.54), check.mouse(.leftMouseDragged, position: 0.55), check.mouse(.leftMouseUp, position: 0.55) else { end(false, "initial_preview_input"); return }
+                check.report("initial_preview_input", true)
                 check.initialPrepared = true
                 return
             }
@@ -125,64 +178,79 @@ extension Runtime {
             let drawing = sidebarContainer.lookCheckRendering(reduced: false)
             guard abs(drawing.alpha - 0.45) < 0.01 && abs(drawing.grain - 0.05) < 0.001 else { return }
             guard capture("55") else { end(false, "capture_55"); return }
+            if screen { check.report("capture_55", true) }
             check.watchMenu()
-            guard let menu = check.element("Look options"), menu.accessibilityPerformPress() else { end(false, "menu_open"); return }
-            end(check.menuItems == ["Use for All Spaces", "Reset Look"], "menu")
+            guard let menu = check.element("Look options"), menu.accessibilityPerformPress() else { check.stopWatchingMenu(); end(false, "menu_open"); return }
+            end(true, "menu_open")
         case 3:
-            end(check.mouse(.leftMouseDown, position: 0.55) && check.mouse(.leftMouseDragged, position: 1) && check.mouse(.leftMouseDragged, position: 1.03), "drag_detent_input")
+            guard let items = check.menuItems else { return }
+            end(items == ["Use for All Spaces", "Reset Look"], "menu")
         case 4:
+            end(check.mouse(.leftMouseDown, position: 0.55) && check.mouse(.leftMouseDragged, position: 1) && check.mouse(.leftMouseDragged, position: 1.03), "drag_detent_input")
+        case 5:
             let ok = check.probe?.look?.glass == false && check.probe?.transparencyTag == "100% · Liquid Glass ›"
             guard capture("detent") else { end(false, "capture_detent"); return }
+            if screen { check.report("capture_detent", true) }
             end(ok, "detent")
-        case 5:
-            end(check.mouse(.leftMouseDragged, position: 1.09), "drag_glass_input")
         case 6:
+            end(check.mouse(.leftMouseDragged, position: 1.09), "drag_glass_input")
+        case 7:
             let ok = check.probe?.look?.glass == true && check.probe?.transparencyTag == "Liquid Glass" && check.probe?.haptics == 1
             guard capture("glass") else { end(false, "capture_glass"); return }
+            if screen { check.report("capture_glass", true) }
             end(ok && check.mouse(.leftMouseUp, position: 1.09), "glass")
-        case 7:
+        case 8:
             guard let look = stored(), look.glass && look.opacity == 0 else { return }
             let rendered = sidebarContainer.lookCheckRendering(reduced: false)
             let glass = if #available(macOS 26, *) { rendered.glass } else { rendered.vibrancy }
             guard glass else { return }
             end(true, "stored_glass")
-        case 8:
-            end(check.mouse(.leftMouseDown, position: 0.3) && check.mouse(.leftMouseUp, position: 0.3), "thirty_input")
         case 9:
+            end(check.mouse(.leftMouseDown, position: 0.3) && check.mouse(.leftMouseUp, position: 0.3), "thirty_input")
+        case 10:
             guard let look = stored(), !look.glass, abs(look.opacity - 0.7) < 0.01 else { return }
             end(check.mouse(.leftMouseDown, position: 1.09) && check.mouse(.leftMouseUp, position: 1.09), "socket_input")
-        case 10:
+        case 11:
             guard let look = stored(), !look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             check.count = count
-            end(check.focus("Transparency") && check.key(126), "keyboard_up_input")
-        case 11:
+            let focused = check.focus("Transparency")
+            check.report("keyboard_focus", focused)
+            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            end(check.key(126), "keyboard_up_input")
+        case 12:
             guard let look = stored(), look.glass, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.count = count
             end(one && check.key(125), "keyboard_glass")
-        case 12:
+        case 13:
             guard let look = stored(), !look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.count = count
-            end(one && check.focus("Grain") && check.key(126), "keyboard_down")
-        case 13:
+            let focused = check.focus("Grain")
+            check.report("grain_focus", focused)
+            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            end(one && check.key(126), "keyboard_down")
+        case 14:
             guard let look = stored(), abs(look.grain - 0.1) < 0.001, let count = check.journalCount(quitPath) else { return }
             let one = count == check.count + 1
             check.count = count
-            end(one && check.focus("Transparency") && check.key(126), "keyboard_grain")
-        case 14:
+            let focused = check.focus("Transparency")
+            check.report("transparency_focus_return", focused)
+            guard focused else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return }
+            end(one && check.key(126), "keyboard_grain")
+        case 15:
             guard let look = stored(), look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let rendering = sidebarContainer.lookCheckRendering(reduced: true)
             end(count == check.count + 1 && rendering.vibrancy && !rendering.glass && rendering.grain > 0 && rendering.alpha == 0, "reduced_transparency")
-        case 15:
-            end(check.element("Transparency")?.accessibilityPerformDecrement() == true, "ax_transparency_input")
         case 16:
+            end(check.element("Transparency")?.accessibilityPerformDecrement() == true, "ax_transparency_input")
+        case 17:
             guard let look = stored(), !look.glass, look.opacity == 0 else { return }
             end(check.element("Grain")?.accessibilityPerformIncrement() == true, "ax_grain_input")
-        case 17:
+        case 18:
             guard let look = stored(), abs(look.grain - 0.15) < 0.001 else { return }
             end(true, "adjustable_elements")
-        case 18:
+        case 19:
             finishBrowserCheck(ok: true, values: ["conditions": check.conditions, "failed_conditions": [], "images": check.images])
         default: break
         }
