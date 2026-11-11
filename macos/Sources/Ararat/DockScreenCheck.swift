@@ -36,6 +36,17 @@ final class DockScreenCheck {
         values.count > 1 && values[0] > 0 && values[0] < 1 && values[1] > 0 && values[1] < 1
             && abs(values[0] + values[1] - 1) <= midCrossFadeTolerance
     }
+    // One mid_trace row: the accepted frame, whether its image was written, and the re-read after
+    // the flush, which is diagnostics only — the slide can land during the capture.
+    static func midTraceRow(scroll: [String: Any], offset: Double, fractions: [CGFloat],
+                            captured: Bool, postFlush: [CGFloat]?) -> [String: Any] {
+        var row = scroll
+        row["offset"] = offset
+        row["fractions"] = fractions.map { Double($0) }
+        row["captured"] = captured
+        if let postFlush { row["post_flush"] = postFlush.map { Double($0) } }
+        return row
+    }
     // Reads the pump trace: an offset of 0 means either no animation (a paging fault) or an
     // animation this display never presented (a frame limit), and the trace carries which.
     var midReading: String {
@@ -117,31 +128,31 @@ extension Runtime {
                               let dock = self.dockDescendants(sidebar).compactMap({ $0 as? SpaceDockView }).first else { return }
                         let offset = sidebar.dockCheckSampleLook()
                         let scroll = sidebar.dockCheckScrollState
-                        var values = dock.cellStates.map(\.openFraction)
+                        let values = dock.cellStates.map(\.openFraction)
                         var captured = false
+                        var postFlush: [CGFloat]?
                         if DockScreenCheck.midCrossFade(values) {
-                            // Draw the sample before imaging it: the pump only marks the cells for
-                            // display and screencapture blocks the main thread, so without this the
-                            // image is the previous pass. Re-read after the flush so the image and
-                            // the recorded mid are the same fill.
+                            // Draw the accepted sample before imaging it: the pump only marks the
+                            // cells for display and screencapture blocks the main thread, so without
+                            // this the image is the previous pass.
                             window.displayIfNeeded()
                             CATransaction.flush()
-                            let drawn = dock.cellStates.map(\.openFraction)
-                            if DockScreenCheck.midCrossFade(drawn) {
-                                values = drawn
-                                captured = true
-                                check.mid = drawn
-                                FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
-                                if let path = self.promptScreenScreenshot(window, name: "dock-mid", withoutShadow: true) { check.images["mid"] = path }
-                                check.timer?.invalidate(); check.timer = nil
-                            }
+                            // Why the re-read is not a condition: the spring can land during the
+                            // flush and the capture, so the drawn frame may no longer be a
+                            // cross-fade; the frame the rule accepted is the one that gets imaged.
+                            // The re-read stays in mid_trace so a run still shows that the slide
+                            // landed in the capture.
+                            postFlush = dock.cellStates.map(\.openFraction)
+                            check.mid = values
+                            FileHandle.standardError.write(Data("ararat-trace: dock capturing mid\n".utf8))
+                            if let path = self.promptScreenScreenshot(window, name: "dock-mid", withoutShadow: true) { check.images["mid"] = path }
+                            captured = check.images["mid"] != nil
+                            check.timer?.invalidate(); check.timer = nil
                         }
                         if check.midTrace.count < 60 {
-                            var entry = scroll
-                            entry["offset"] = offset
-                            entry["fractions"] = values.map { Double($0) }
-                            entry["captured"] = captured
-                            check.midTrace.append(entry)
+                            check.midTrace.append(DockScreenCheck.midTraceRow(scroll: scroll, offset: offset,
+                                                                             fractions: values, captured: captured,
+                                                                             postFlush: postFlush))
                         }
                     }
                 }

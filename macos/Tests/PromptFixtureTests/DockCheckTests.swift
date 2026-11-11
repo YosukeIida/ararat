@@ -37,6 +37,24 @@ func dockCheckMidBandAndCrossFadeAcceptWhatEachSideCanPresent() {
 }
 
 @Test @MainActor
+func dockCheckMidTraceRowKeepsTheAcceptedFrameAndTheReReadApart() {
+    let row = DockScreenCheck.midTraceRow(scroll: ["animation": true], offset: 40,
+                                          fractions: [0.9, 0.1], captured: true, postFlush: [1, 0])
+    #expect(row["captured"] as? Bool == true)
+    #expect(row["fractions"] as? [Double] == [0.9, 0.1])
+    #expect(row["post_flush"] as? [Double] == [1, 0])
+    #expect(row["offset"] as? Double == 40)
+    #expect(row["animation"] as? Bool == true)
+
+    // A tick that imaged nothing still records the sample, and a tick that never reached the flush
+    // has no re-read, so the two frames cannot be confused.
+    let skipped = DockScreenCheck.midTraceRow(scroll: [:], offset: 0, fractions: [0.99, 0.01],
+                                              captured: false, postFlush: nil)
+    #expect(skipped["captured"] as? Bool == false)
+    #expect(skipped["post_flush"] == nil)
+}
+
+@Test @MainActor
 func dockCheckMidReadingTellsNoAnimationFromNoFrames() {
     let check = DockScreenCheck()
     #expect(check.midReading == "no samples")
