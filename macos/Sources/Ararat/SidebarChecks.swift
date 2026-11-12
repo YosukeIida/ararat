@@ -27,6 +27,9 @@ final class SidebarCheck {
     var capturing = false
     // Rows seen before a step, so a created row can be told apart by id.
     var seen: Set<String> = []
+    // The last wait a phase described, so a stall names its condition in the trace and in
+    // the timeout diagnostics without a second VM round.
+    var lastWait = ""
 
     static func conditionNames(mode: Mode, screen: Bool) -> [String] {
         let base: [String]
@@ -98,6 +101,7 @@ extension Runtime {
         let space = sidebarCheckShownSpace()
         return ["check": mode.rawValue, "conditions": result.values, "failed_conditions": result.failed,
                 "phase": check.phase, "capturing": check.capturing, "images": check.images,
+                "attempts": browserCheckAttempts, "last_wait": check.lastWait,
                 "rows": sidebar?.rowCheckIds.sorted() ?? [],
                 "selected": snapshot.selectedId as Any? ?? NSNull(),
                 "space_rows": space.map { ($0.today + $0.pinned + $0.favorites).map { row in
@@ -134,6 +138,13 @@ extension Runtime {
             finishBrowserCheck(ok: failed.isEmpty,
                                values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images])
         }
+        func waitNote(_ text: @autoclosure () -> String) {
+            let now = text()
+            if check.lastWait != now || browserCheckAttempts % 30 == 0 {
+                check.lastWait = now
+                FileHandle.standardError.write(Data("ararat-trace: \(mode.rawValue) wait phase \(check.phase): \(now)\n".utf8))
+            }
+        }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
             trace("capture \(name)")
@@ -165,16 +176,16 @@ extension Runtime {
             sidebarCheckRow(sidebarCheckShownSpace(), id)
         }
         switch mode {
-        case .rows: sidebarRowsTickPhase(host, screen: screen, check: check, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
-        case .folderEmpty: folderEmptyTickPhase(screen: screen, check: check, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
-        case .today: todayTickPhase(screen: screen, check: check, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
-        case .spaceName: spaceNameTickPhase(screen: screen, check: check, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
+        case .rows: sidebarRowsTickPhase(host, screen: screen, check: check, note: { waitNote($0) }, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
+        case .folderEmpty: folderEmptyTickPhase(screen: screen, check: check, note: { waitNote($0) }, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
+        case .today: todayTickPhase(host, screen: screen, check: check, note: { waitNote($0) }, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
+        case .spaceName: spaceNameTickPhase(screen: screen, check: check, note: { waitNote($0) }, trace: trace, step: step, finish: finish, capture: capture, click: click, row: rows)
         }
     }
 
     // MARK: sidebar-rows (R1/R2/R5/R7/F3/F4)
 
-    func sidebarRowsTickPhase(_ host: any ARWindowHostAPI, screen: Bool, check: SidebarCheck, trace: (String) -> Void,
+    func sidebarRowsTickPhase(_ host: any ARWindowHostAPI, screen: Bool, check: SidebarCheck, note: (String) -> Void, trace: (String) -> Void,
                               step: (Int) -> Void, finish: () -> Void, capture: (String) -> Bool,
                               click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
         guard let sidebar else { return }
@@ -203,12 +214,20 @@ extension Runtime {
             sidebar.selectRow(id: todayA.id)
             step(2)
         case 2:
-            guard let todayA = row("today-a"), snapshot.selectedId == todayA.id, liveTab(todayA.id),
-                  let pin = row("pin"), let info = sidebar.rowCheckInfo(id: pin.id),
-                  let core = sidebarCheckCore(),
-                  let corePin = core.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id }),
-                  !corePin.unloaded else { return }
-            guard info.closeLabel == "Close Tab" else { return }
+            guard let todayA = row("today-a"), let pin = row("pin") else {
+                note("today-a or pin row missing"); return
+            }
+            let core = sidebarCheckCore()
+            let corePin = core.flatMap { $0.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id }) }
+            let label = sidebar.rowCheckInfo(id: pin.id)?.closeLabel
+            guard snapshot.selectedId == todayA.id, liveTab(todayA.id),
+                  let info = sidebar.rowCheckInfo(id: pin.id), let corePin, !corePin.unloaded else {
+                note("selected=\(snapshot.selectedId ?? "-") today-a=\(todayA.id) live=\(liveTab(todayA.id)) pin-unloaded=\(String(describing: corePin?.unloaded)) label=\(label ?? "-")")
+                return
+            }
+            guard info.closeLabel == "Close Tab" else {
+                note("pin label is \(info.closeLabel ?? "-"), expected Close Tab"); return
+            }
             trace("press the loaded pin's close")
             check.report("loaded_pin_close", sidebar.pressCloseButton(id: pin.id))
             step(3)
@@ -298,12 +317,15 @@ extension Runtime {
 
     // MARK: folder-empty (F3)
 
-    func folderEmptyTickPhase(screen: Bool, check: SidebarCheck, trace: (String) -> Void, step: (Int) -> Void,
+    func folderEmptyTickPhase(screen: Bool, check: SidebarCheck, note: (String) -> Void, trace: (String) -> Void, step: (Int) -> Void,
                               finish: () -> Void, capture: (String) -> Bool, click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
         guard let sidebar else { return }
         switch check.phase {
         case 0:
-            guard let empty = row("empty"), let marker = sidebar.noTabsRowsForCheck.first(where: { $0.parent == empty.id }) else { return }
+            guard let empty = row("empty"), let marker = sidebar.noTabsRowsForCheck.first(where: { $0.parent == empty.id }) else {
+                note("empty folder or its marker missing: \(sidebar.noTabsRowsForCheck.map(\.parent))")
+                return
+            }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
             let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
             check.report("line_frame", abs(marker.line.minX - expected) < 0.5 && abs(marker.line.width - 24) < 0.5
@@ -342,8 +364,9 @@ extension Runtime {
 
     // MARK: today (T1–T4)
 
-    func todayTickPhase(screen: Bool, check: SidebarCheck, trace: (String) -> Void, step: (Int) -> Void,
-                        finish: () -> Void, capture: (String) -> Bool, click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
+    func todayTickPhase(_ host: any ARWindowHostAPI, screen: Bool, check: SidebarCheck, note: (String) -> Void, trace: (String) -> Void,
+                        step: (Int) -> Void, finish: () -> Void, capture: (String) -> Bool,
+                        click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
         guard let sidebar else { return }
         switch check.phase {
         case 0:
@@ -361,20 +384,35 @@ extension Runtime {
             trace("divider and new tab")
             step(1)
         case 1:
-            // Design q1: with no pins, a drop on the space name row pins at the top.
-            guard let shown = sidebarCheckShownSpace(), let core = sidebarCheckCore() else { return }
-            if let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned, !pinned.isEmpty {
-                // Archive the seed's pins once, so the drop tests the no-pins case.
-                for pin in pinned where check.seen.insert(pin.id).inserted {
-                    adapter?.close(id: pin.id, archive: true)
+            // Design q1: with no pins, a drop on the space name row pins at the top. The pins
+            // are archived on the store's queue so the next tick reads them gone; Clear needs
+            // loaded Today rows, so one is selected first to give it a native tab.
+            guard let shown = sidebarCheckShownSpace() else { return }
+            if let store = adapter?.session.store {
+                let remaining = adapter?.session.queue.sync { () -> Int in
+                    let core = store.snapshot(windowId: windowID)
+                    let pinned = core.spaces.first { $0.id == shown.id }?.pinned ?? []
+                    for pin in pinned { _ = try? store.archiveItem(windowId: windowID, id: pin.id) }
+                    return pinned.count
+                } ?? 0
+                if remaining > 0 {
+                    if let core = sidebarCheckCore() { sidebar.update(snapshot: core) }
+                    note("archived \(remaining) pins, waiting for the snapshot")
+                    return
                 }
+            }
+            guard let core = sidebarCheckCore(), let fresh = core.spaces.first(where: { $0.id == shown.id }),
+                  fresh.pinned.isEmpty else {
+                let pinned = sidebarCheckCore()?.spaces.first { $0.id == shown.id }?.pinned.map(\.id) ?? []
+                note("pinned still \(pinned)")
                 return
             }
-            guard let dragged = row("today-a") else { return }
-            let point = sidebar.convert(NSPoint(x: sidebar.spaceNameRow.bounds.midX, y: sidebar.spaceNameRow.bounds.midY),
-                                        from: sidebar.spaceNameRow)
+            guard let dragged = row("today-a") else { note("today-a row missing"); return }
+            let rect = sidebar.convert(sidebar.spaceNameRow.bounds, from: sidebar.spaceNameRow)
+            let point = CGPoint(x: rect.midX, y: sidebar.bounds.height - rect.midY)
             guard let drop = sidebar.resolveDropForCheck(position: point, draggedID: dragged.id),
                   drop.kind == "insert", drop.container == shown.pinnedId, drop.index == 0 else {
+                note("drop is \(String(describing: sidebar.resolveDropForCheck(position: point, draggedID: dragged.id)))")
                 check.report("name_drop_pins", false); step(2); return
             }
             workspace?.move(id: dragged.id, container: shown.pinnedId, index: 0, openFolder: false) { [weak self] result in
@@ -406,9 +444,15 @@ extension Runtime {
             }
             step(4)
         case 4:
-            guard sidebar.newTabRowForCheck != nil else { return }
-            // D6: Clear runs live_clear_today and closes the pages; the divider and Clear go.
+            guard sidebar.newTabRowForCheck != nil else { note("New Tab row still hidden"); return }
+            // D6: Clear runs live_clear_today and closes the pages. One Today row is selected
+            // first so Clear has a live tab to close, not only core rows to archive.
             guard let space = sidebarCheckShownSpace(), !space.today.isEmpty else { return }
+            if let todayB = row("today-b") {
+                if snapshot.selectedId != todayB.id { sidebar.selectRow(id: todayB.id); return }
+                let live = (host.tabs() as? [any ARTabAPI])?.contains { $0.itemId == todayB.id } == true
+                guard live else { note("waiting for a native tab on \(todayB.id)"); return }
+            }
             check.seen = Set(space.today.map(\.id))
             trace("press Clear")
             guard sidebar.pressClearToday() else { check.report("clear_archives", false); step(5); return }
@@ -428,7 +472,7 @@ extension Runtime {
 
     // MARK: space-name (S1–S4, D13)
 
-    func spaceNameTickPhase(screen: Bool, check: SidebarCheck, trace: (String) -> Void, step: (Int) -> Void,
+    func spaceNameTickPhase(screen: Bool, check: SidebarCheck, note: (String) -> Void, trace: (String) -> Void, step: (Int) -> Void,
                             finish: () -> Void, capture: (String) -> Bool, click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
         guard let sidebar, let space = sidebarCheckShownSpace() else { return }
         let name = sidebar.spaceNameRow
@@ -456,7 +500,7 @@ extension Runtime {
             trace("click toggles")
             step(2)
         case 2:
-            guard sidebar.isSectionCollapsed(space.id) else { return }
+            guard sidebar.isSectionCollapsed(space.id) else { note("section not collapsed yet"); return }
             name.hovered = false
             sidebar.layoutSubtreeIfNeeded()
             check.report("click_toggles", true)
