@@ -43,6 +43,15 @@ final class SidebarRowView: NSView {
     var dragSource = false { didSet { updateFill() } }
     var dropHovered = false { didSet { updateFill() } }
     var dragCopy = false { didSet { updateCloseButton() } }
+    var shortcutPressed = false {
+        didSet {
+            guard shortcutPressed != oldValue else { return }
+            updateCloseButton()
+            closeButton.wantsLayer = true
+            closeButton.layer?.cornerRadius = 4
+            closeButton.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(shortcutPressed ? 0.18 : 0).cgColor
+        }
+    }
     private var trackingPress = false
     private(set) var pressed = false { didSet { updateFill() } }
     private let titleMask = CAGradientLayer()
@@ -337,7 +346,7 @@ final class SidebarRowView: NSView {
         setAccessibilityCustomActions(rowActions)
         if closeButton.accessibilityLabel() != label { closeButton.toolTip = label }
         closeButton.setAccessibilityLabel(label)
-        closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || !hovered))
+        closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || (!hovered && !shortcutPressed)))
         hintCloseTrailing.isActive = !closeButton.isHidden
         unreadDot.isHidden = !unread || !closeButton.isHidden
         needsLayout = true

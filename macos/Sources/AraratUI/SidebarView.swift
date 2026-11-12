@@ -52,6 +52,28 @@ public final class SidebarView: NSView {
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
     let tooltip = SidebarTooltip()
+    public func checkClosePressed(id: String) -> Bool {
+        guard let row = rowViews[id] else { return false }
+        return row.shortcutPressed && !row.closeButton.isHidden
+    }
+    func clearShortcutKeys() {
+        tooltip.clearPressed()
+        rowViews.values.forEach { $0.shortcutPressed = false }
+    }
+    func updateShortcutKeys(_ keys: Set<String>, event: NSEvent) {
+        tooltip.pressedKeys = keys
+        tooltip.flagsChanged(with: event)
+        let key = keyBindings.first(where: { $0.command == "close_tab" })?.key
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let pressed = key.map {
+            flags.contains(.command) == $0.command && flags.contains(.shift) == $0.shift &&
+            flags.contains(.control) == $0.control && flags.contains(.option) == $0.option &&
+            keys.contains(SidebarTooltip.caps(for: $0).last ?? "")
+        } ?? false
+        for row in rowViews.values {
+            row.shortcutPressed = row.row.id == selectedRowID && pressed
+        }
+    }
     private var clickMonitor: Any?
     var removeClickMonitor: (Any) -> Void = NSEvent.removeMonitor
     public var onRestore: ((String) -> Void)?
@@ -915,11 +937,10 @@ public final class SidebarView: NSView {
             return
         }
         tooltip.capture(in: self)
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .flagsChanged]) { [weak self] event in
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
                 if event.window === self?.window {
-                    if event.type == .flagsChanged { self?.tooltip.flagsChanged(with: event) }
-                    else { self?.tooltip.dismiss() }
+                    self?.tooltip.dismiss()
                 }
             }
             return event
