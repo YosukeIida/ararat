@@ -396,6 +396,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var keyBindings: KeyBindingsModel?
   var settings: SettingsWindowController?
   var airTraffic: AirTrafficModel?
+  // R7: the unread dot is app state from the live strip, never stored or synced.
+  var unread = UnreadTracker()
+  var seededNewTabRow: String?
   var commandPresenter: CommandBarPresenter?
   var tabSwitcher: TabSwitcher?
   var commandBarConditions: [String: Bool] = [:]
@@ -406,6 +409,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var commandBarPrivateResult: CommandBarResult?
   var coreMenuInstalled = false
   var lookCheck: LookScreenCheck?
+  var sidebarCheck: SidebarCheck?
+  var sharedLookProbe: LookCheckProbe?
+  // The space-name check waits for the look popover's open animation: the last frame seen.
+  var sharedLookFrame: NSRect?
+  var sidebarChecksActive = false
+  var sidebarSeedTraced = false
+  var sidebarFirstTransactionTraced = false
   var dockCheck: DockScreenCheck?
   var organizeConditions: [String: Bool] = [:]
   var organizeCancelStarted = false
@@ -710,10 +720,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "toasts"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "sidebar-rows", "folder-empty", "today", "space-name", "toasts"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "toasts"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "sidebar-rows", "folder-empty", "today", "space-name", "toasts"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -736,6 +746,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "look" { browserCheckMode = "screen-look" }
       if screenName == "dock" { browserCheckMode = "screen-dock" }
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
+      if screenName == "sidebar-rows" { browserCheckMode = "screen-sidebar-rows" }
+      if screenName == "folder-empty" { browserCheckMode = "screen-folder-empty" }
+      if screenName == "today" { browserCheckMode = "screen-today" }
+      if screenName == "space-name" { browserCheckMode = "screen-space-name" }
       if screenName == "errorpages" { browserCheckMode = "screen-errorpages" }
       if screenName == "downloads" { browserCheckMode = "screen-downloads" }
       if screenName == "toasts" { browserCheckMode = "screen-toasts" }
@@ -809,12 +823,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
     let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
-    let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
+    let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
+    self.sidebarChecksActive = sidebarCheckActive
+    let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedOrganize: check && organize, seedDock: check && dockCheckMode, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -885,6 +901,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
       sidebar?.update(snapshot: snapshot)
+      self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
       if check {
         let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
@@ -914,6 +931,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self.sliceLastRev = transaction.rev
       for strip in transaction.strips {
         self.sliceActive = strip.tabs.first { $0.liveId == strip.active }?.item
+      }
+      self.recordUnread(transaction)
+      // R5: a crashed renderer is reported by the strip, not by a snapshot.
+      self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
+      if self.sidebarChecksActive, !self.sidebarFirstTransactionTraced {
+        self.sidebarFirstTransactionTraced = true
+        let active = transaction.strips.first?.active ?? "-"
+        FileHandle.standardError.write(Data("ararat-trace: sidebar-first-transaction epoch=\(transaction.epoch) rev=\(transaction.rev) cause=\(String(describing: transaction.cause)) strips=\(transaction.strips.count) active=\(active)\n".utf8))
       }
       if CommandLine.arguments.contains("--ararat-space-matrix-check"), self.browserCheckMode != nil {
         self.spaceMatrixLastTransaction = ["epoch": transaction.epoch, "rev": transaction.rev,
@@ -948,12 +973,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     actions.configureEditing(adapter: workspace, isActive: { true }, window: { [weak self] in self?.host?.window() }, show: { [weak self] snapshot in self?.show(snapshot) }, record: { [weak self] snapshot in self?.snapshot = snapshot })
     actions.onClose = { [weak self] id in self?.close(id) }
-    actions.onCloseSelected = { [weak self] in
-      if let id = self?.sidebar?.selectedRowID { self?.close(id) }
-    }
+    actions.onCloseSelected = { [weak self] in self?.adapter?.closeSelected() }
     actions.onArchive = { [weak self] id in
       self?.adapter?.close(id: id, archive: true)
     }
+    actions.onNewTab = { [weak self] in self?.performWorkspaceCommand("new_tab") }
+    actions.onClearToday = { [weak self] in self?.clearToday() }
     actions.onShowSpace = { [weak self] id in
       self?.switchWorkspaceSpace(id)
     }
@@ -1006,7 +1031,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" {
+      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1128,6 +1153,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     updatePageVisibility(snapshot)
     if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
     sidebar?.update(snapshot: snapshot)
+    refreshSidebarRowState(snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
   }
@@ -1357,7 +1383,59 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func close(_ id: String) {
-    adapter?.close(id: id)
+    // A row's ✕/− showed its action; the rowwise buttons pass it through this default.
+    adapter?.close(id: id, archive: false)
+  }
+
+  // D6: one core batch (live_clear_today) with a Close in flight for every mapped live row,
+  // so the engine's replies are accepted; the pages it names are closed beside it.
+  func clearToday() {
+    guard let spaceID = snapshot.shownSpaceId else { return }
+    adapter?.clearToday(spaceID: spaceID) { [weak self] snapshot in
+      guard let self, let snapshot else { return }
+      self.snapshot = snapshot
+      self.show(snapshot)
+    }
+  }
+
+  // R7: the unread dot is app state. A loaded tab the window is not showing gets one when its
+  // title changes; showing it clears the dot; an id that leaves the strip is forgotten with
+  // its title. Nothing here is stored or synced.
+  func recordUnread(_ transaction: LiveTransaction) {
+    guard let strip = transaction.strips.first(where: { $0.window == windowID }) else { return }
+    unread.apply(strip: strip)
+    sidebar?.unreadItems = unread.unread
+  }
+
+  // The sidebar's per-window row state: the live strip's crashed tabs on every snapshot, its
+  // unread ids, and the settings row switch seeded once (the section's chevron rides in the
+  // space snapshot).
+  func refreshSidebarRowState(_ snapshot: WorkspaceSnapshot) {
+    guard let sidebar else { return }
+    // The seed and the first transaction, as U26b traced theirs: a check with no native tab
+    // and an empty row set is told apart from a check whose seed never landed.
+    if sidebarChecksActive, !sidebarSeedTraced, let store = adapter?.session.store {
+      sidebarSeedTraced = true
+      let seed = adapter?.session.queue.sync { store.snapshot(windowId: windowID) }
+      let rows = seed?.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id) ?? []
+      let profiles = seed?.spaces.map(\.profileName) ?? []
+      FileHandle.standardError.write(Data("ararat-trace: sidebar-seed db=\(quitPath ?? "") shown=\(seed?.shownSpaceId ?? "") profiles=\(profiles) rows=\(rows)\n".utf8))
+    }
+    sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
+    sidebar.unreadItems = unread.unread
+    guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }
+    seededNewTabRow = snapshot.shownSpaceId
+    workspace.newTabRowShown { [weak self] result in
+      guard case .success(let shown) = result else { return }
+      self?.sidebar?.newTabRowShown = shown
+    }
+  }
+
+  // The command-bar check drives ⌃Tab through a posted key event, so a run that loses the
+  // switcher needs the path named: this is silent unless that check is running.
+  func commandBarTrace(_ text: @autoclosure () -> String) {
+    guard CommandLine.arguments.contains(where: { $0 == "--ararat-check=commandbar" || $0 == "--ararat-screen=commandbar" }) else { return }
+    FileHandle.standardError.write(Data("ararat-trace: commandbar \(text())\n".utf8))
   }
 
   func performWorkspaceCommand(_ command: String) {
@@ -1375,7 +1453,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case "edit_url": openCommandBar(.editURL)
     case "copy_link": sidebar?.copySelectedLinkForCommand()
     case "search": openCommandBar(.search)
-    case "close_tab": if selectedIsVisible, let id = snapshot.selectedId { close(id) }
+    case "close_tab": if selectedIsVisible { adapter?.closeSelected() }
     case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
     case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
     case "toggle_sidebar": container?.toggleSidebar()
@@ -1440,6 +1518,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   @objc func coreMenuCommand(_ item: NSMenuItem) {
     let owner = root ?? self
     guard let command = item.representedObject as? String else { return }
+    commandBarTrace("core-menu command=\(command) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-")")
     if ([owner] + owner.children).contains(where: { runtime in
       runtime.popups.contains(where: { $0.host?.window().isKeyWindow == true })
     }),
@@ -1469,23 +1548,35 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
     if let switcher = tabSwitcher, switcher.isOpen { switcher.advance(backwards: backwards); return }
     guard hasUsableHost, let host, let workspace else { return }
+    commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
     let switcher = TabSwitcher(parent: host.window(), backwards: backwards) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
+    commandBarTrace("cycle-tabs created")
     switcher.onClose = { [weak self, weak switcher] in
       if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+      self?.commandBarTrace("cycle-tabs switcher closed")
     }
     switcher.onSelect = { [weak self] row in
       guard let self, self.snapshot.shownSpaceId == space, case .tab(let id, _) = row.target, let url = row.url else { return }
       self.adapter?.select(id: id, url: url)
     }
     workspace.recentTabs { [weak self, weak switcher] result in
-      guard let self, let switcher, self.tabSwitcher === switcher, self.snapshot.shownSpaceId == space else { switcher?.cancel(); return }
-      switcher.load((try? result.get()) ?? [])
+      guard let self, let switcher, self.tabSwitcher === switcher, self.snapshot.shownSpaceId == space else {
+        self?.commandBarTrace("cycle-tabs rows skipped same=\(self?.tabSwitcher === switcher) space=\(self?.snapshot.shownSpaceId ?? "-") captured=\(space ?? "-")")
+        switcher?.cancel()
+        return
+      }
+      let rows = (try? result.get()) ?? []
+      self.commandBarTrace("cycle-tabs rows=\(rows.count)")
+      switcher.load(rows)
     }
-    if !holdForCheck && NSApp.currentEvent?.modifierFlags.contains(.control) != true { switcher.commit() }
+    if !holdForCheck && NSApp.currentEvent?.modifierFlags.contains(.control) != true {
+      commandBarTrace("cycle-tabs committing: current event lacks control")
+      switcher.commit()
+    }
   }
 
   func openCommandBar(_ requested: CommandBarMode) {
@@ -1570,7 +1661,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       case .moveToFolder(let id, let spaceID):
         guard let item = capturedItem, self.snapshot.selectedId == item, let target, adapter.isCurrentNavigationTarget(target),
               let space = self.snapshot.spaces.first(where: { $0.id == spaceID }) else { return }
-        let index = space.pinned.filter { $0.parentId == id }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
+        let index = space.pinned.filter { $0.parentId == id && $0.kind != .noTabs }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
         guard let live = target["live"] as? String else { return }
         workspace.moveIfLive(id: item, container: id, index: index, openFolder: false, expectedLive: live) { [weak self] result in
           switch result { case .success(let snapshot): if let snapshot { self?.show(snapshot) }; case .failure(let error): self?.report(error) }
@@ -2127,6 +2218,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "look" || mode == "screen-look" {
         timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
       }
+      if sidebarCheckMode(mode) != nil {
+        timeoutValues.merge(sidebarCheckDiagnostics(mode: mode, screen: mode.hasPrefix("screen-"))) { _, new in new }
+      }
       if mode == "downloads" || mode == "screen-downloads" { timeoutValues.merge(downloadsCheck?.diagnostics(screen: mode == "screen-downloads") ?? [:]) { _, new in new } }
       if mode == "toasts" || mode == "screen-toasts" { timeoutValues.merge((toastsCheck ?? ToastsCheck()).diagnostics(screen: mode == "screen-toasts")) { _, new in new } }
       finishBrowserCheck(ok: false, values: timeoutValues); return
@@ -2239,6 +2333,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "autofill" { autofillCheckTick(host); return }
     if mode == "dock" || mode == "screen-dock" { dockCheckTick(host, screen: mode == "screen-dock"); return }
     if mode == "look" || mode == "screen-look" { lookCheckTick(host, screen: mode == "screen-look"); return }
+    if sidebarCheckMode(mode) != nil { sidebarCheckTick(host, screen: mode.hasPrefix("screen-"), mode: mode); return }
     if mode == "organize" || mode == "screen-organize" { organizeCheckTick(host, screen: mode == "screen-organize"); return }
     if mode == "commandbar" || mode == "screen-commandbar" { commandBarCheckTick(host, screen: mode == "screen-commandbar"); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
@@ -2771,7 +2866,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard docked, let first = tabs.first(where: { $0.liveId == devtoolsFirstLive }), let item = first.itemId else { return }
       browserCheckPhase = 9
-      adapter?.close(id: item)
+      adapter?.close(id: item, archive: false)
     case 9:
       guard !tabs.contains(where: { $0.liveId == devtoolsFirstLive }),
             tabs.contains(where: { $0.liveId == devtoolsSecondLive }), fullPage,
@@ -3843,7 +3938,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard snapshot.selectedId == keyboardRestoreItem, host.activeItemId() == keyboardRestoreItem,
             (host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem && $0.url == baseURL + "?restore" }) else { return }
       keyboardResults["archive_restore"] = true
-      adapter?.close(id: keyboardRestoreItem)
+      adapter?.close(id: keyboardRestoreItem, archive: false)
       browserCheckPhase = 366
     case 366:
       guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
@@ -4387,7 +4482,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   func keyboardProfileCheckTick(_ host: any ARWindowHostAPI, port: UInt16, screen: Bool) {
     if browserCheckPhase == 641 {
       guard commandPresenter?.controller.isOpen == true, let seed = browserCheckSeedID else { return }
-      adapter?.close(id: seed)
+      adapter?.close(id: seed, archive: false)
       browserCheckPhase = 642
       return
     }
@@ -7121,6 +7216,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["failed_conditions"] = check.failed
     }
     if browserCheckMode == "screen-commandbar" { result["check"] = "commandbar"; result["screen"] = "commandbar" }
+    if let mode = sidebarCheckMode(browserCheckMode ?? ""), let check = sidebarCheck {
+      let names = SidebarCheck.conditionNames(mode: mode, screen: browserCheckMode?.hasPrefix("screen-") == true)
+      result["check"] = mode.rawValue
+      if browserCheckMode?.hasPrefix("screen-") == true { result["screen"] = mode.rawValue }
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, check.conditions[$0] == true) })
+      result["failed_conditions"] = names.filter { check.conditions[$0] != true }
+      result["images"] = check.images
+    }
     if browserCheckMode == "screen-errorpages" { result["check"] = "errorpages"; result["screen"] = "errorpages" }
     if browserCheckMode == "screen-downloads" { result["check"] = "downloads"; result["screen"] = "downloads" }
     if browserCheckMode == "screen-toasts" { result["check"] = "toasts"; result["screen"] = "toasts" }

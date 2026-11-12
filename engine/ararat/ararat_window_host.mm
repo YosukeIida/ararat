@@ -2352,7 +2352,27 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "dialogs" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "downloads" && command->GetSwitchValueASCII("ararat-screen") != "toasts" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  NSString* screen = [NSString stringWithUTF8String:command->GetSwitchValueASCII("ararat-screen").c_str()];
+  BOOL allowed = command->HasSwitch("ararat-check") ||
+      [screen isEqualToString:@"prompts"] || [screen isEqualToString:@"fullscreen"] ||
+      [screen isEqualToString:@"keyboard"] || [screen isEqualToString:@"commandbar"] ||
+      [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
+      [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
+      [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
+      [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
+      (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
+       command->HasSwitch("ararat-page-only-menu-check"));
+  // A check that navigates after its last native tab closed has no browser to receive the
+  // tab, so the step would read as a silent no-op: name the condition in the trace.
+  BOOL sidebar_navigate = command->GetSwitchValueASCII("ararat-check") == "sidebar-rows" ||
+      [screen isEqualToString:@"sidebar-rows"];
+  if (!browser_ || !allowed) {
+    if (sidebar_navigate) {
+      std::fprintf(stderr, "ararat-trace: check-navigate skipped browser=%d gate=%d url=%s\n",
+                   browser_ ? 1 : 0, allowed ? 1 : 0, url.UTF8String);
+    }
+    return;
+  }
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;

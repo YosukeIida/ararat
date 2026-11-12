@@ -18,7 +18,16 @@ final class SidebarRowView: NSView {
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
     let closeButton = NSButton()
+    // A dying renderer (R5) draws a warning glyph at 45 %, like an unloaded row.
+    var crashed = false { didSet { updateStatus() } }
+    // The unread dot (R7) is app state from the live strip, never stored in the row.
+    var unread = false { didSet { updateStatus() } }
+    var unreadDotVisible: Bool { !unreadDot.isHidden }
     var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
+    // D11: the row’s ⌘W caps are explicit (the app menu’s item is not the lookup’s action), and
+    // they follow the close_tab binding; R2 shows them on the current tab only.
+    var closeCaps: [String] = ["⌘", "W"]
+    var closeShortcutCaps: [String]? { selected ? closeCaps : nil }
     var pinned = false { didSet { updateCloseButton() } }
     var onDragPress: ((Row, NSPoint) -> Void)?
     var onDragMove: ((NSPoint) -> Void)?
@@ -33,6 +42,7 @@ final class SidebarRowView: NSView {
     private let fill = NSView()
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
+    private let unreadDot = NSView()
     private var fillLeading: NSLayoutConstraint!
     private var hintCloseTrailing: NSLayoutConstraint!
     private var titleCenterY: NSLayoutConstraint!
@@ -62,6 +72,12 @@ final class SidebarRowView: NSView {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        unreadDot.wantsLayer = true
+        unreadDot.layer?.cornerRadius = SidebarMetrics.unreadDotSize / 2
+        unreadDot.isHidden = true
+        unreadDot.setAccessibilityHidden(true)
+        unreadDot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(unreadDot)
         fillLeading = fill.leadingAnchor.constraint(equalTo: leadingAnchor)
         iconLeading = icon.leadingAnchor.constraint(equalTo: leadingAnchor)
         titleCenterY = title.centerYAnchor.constraint(equalTo: centerYAnchor)
@@ -103,6 +119,10 @@ final class SidebarRowView: NSView {
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
+            unreadDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SidebarMetrics.unreadDotTrailing),
+            unreadDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            unreadDot.widthAnchor.constraint(equalToConstant: SidebarMetrics.unreadDotSize),
+            unreadDot.heightAnchor.constraint(equalToConstant: SidebarMetrics.unreadDotSize),
         ])
         hintCloseTrailing = renameHint.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -renameHint.alignmentRectInsets.right - closeButton.alignmentRectInsets.left)
         setAccessibilityElement(true)
@@ -118,16 +138,38 @@ final class SidebarRowView: NSView {
         self.selected = selected
         title.stringValue = row.kind == .split && row.title.isEmpty ? "Split" : row.title
         toolTip = row.url ?? row.title
-        title.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed) : Self.symbol(for: row.kind)
+        icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed)
+            : crashed ? Self.symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed") : Self.symbol(for: row.kind)
         if !pinned || !selected || row.kind != .tab { hideRenameHint() }
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = 10 + CGFloat(row.depth) * 16
         setAccessibilityLabel(title.stringValue)
+        updateStatus()
         updateFill()
         updateCloseButton()
         noteFocusRingMaskChanged()
+    }
+
+    // R5: crashed and unloaded rows draw at 45 %; R7: the dot marks a title change the window
+    // has not shown. Both are view state, so the core's row never carries them.
+    private func updateStatus() {
+        let opacity = crashed || row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+        title.alphaValue = opacity
+        icon.alphaValue = opacity
+        if row.kind == .folder {
+            icon.image = Self.folderSymbol(collapsed: row.collapsed)
+        } else if crashed {
+            icon.image = Self.symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed")
+        } else {
+            icon.image = Self.symbol(for: row.kind)
+        }
+        // The states a sighted reader sees, said in words (6b).
+        let states = [crashed ? "Crashed" : nil, row.unloaded ? "Unloaded" : nil, unread ? "Unread" : nil].compactMap { $0 }
+        setAccessibilityValue(states.isEmpty ? nil : states.joined(separator: ", "))
+        unreadDot.isHidden = !unread || !closeButton.isHidden
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        }
     }
 
     func showRenameHint() {
@@ -227,9 +269,12 @@ final class SidebarRowView: NSView {
     @objc private func closePressed() { if acceptsKeyboardFocus { onClose?(row.id) } }
 
     private func updateCloseButton() {
-        let unload = pinned && selected
-        closeButton.image = NSImage(systemSymbolName: unload ? "minus" : "xmark", accessibilityDescription: nil)
-        let label = unload ? "Close and Keep Pinned" : "Archive this tab"
+        // R1/D2: the glyph and the words follow the load state, not the selection. A loaded
+        // pin's − unloads it and keeps the row; everywhere else ✕ archives (a pin loses its
+        // pin, a Today tab and an unloaded pin go to the Archive).
+        let close = pinned && !row.unloaded
+        closeButton.image = NSImage(systemSymbolName: close ? "minus" : "xmark", accessibilityDescription: nil)
+        let label = close ? "Close Tab" : "Archive Tab"
         let actions: [NSAccessibilityCustomAction] = row.kind == .tab && acceptsKeyboardFocus ? [
             NSAccessibilityCustomAction(name: label) { [weak self] in
                 guard let self, self.acceptsKeyboardFocus else { return false }
@@ -248,6 +293,7 @@ final class SidebarRowView: NSView {
         closeButton.setAccessibilityLabel(label)
         closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || !hovered))
         hintCloseTrailing.isActive = !closeButton.isHidden
+        unreadDot.isHidden = !unread || !closeButton.isHidden
         needsLayout = true
     }
 
@@ -363,10 +409,76 @@ final class SidebarRowView: NSView {
         case .tab: "globe"
         case .folder: "folder.fill"
         case .split: "rectangle.split.2x1"
+        // The open, empty folder's line is drawn by SidebarNoTabsRow, not this symbol.
+        case .noTabs: "minus"
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        return symbol(for: kind, name: name)
+    }
+
+    static func symbol(for kind: RowKind, name: String, description: String? = nil) -> NSImage {
+        NSImage(systemSymbolName: name, accessibilityDescription: description)?
             .withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) ?? NSImage()
     }
+}
+
+// F3: the row an open, empty folder shows at its child indent — a 24 pt "No tabs" line, not
+// an item. It is a drop target for the empty folder (SidebarDrag resolves it there) and never
+// selectable or draggable.
+@MainActor
+private final class SidebarHintLabel: NSTextField {
+    // The label's alignment rect is its frame: a text field's default insets would pull the
+    // "No tabs" text 2 pt left of the child indent the mock names.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+}
+
+@MainActor
+final class SidebarNoTabsRow: NSView {
+    let row: Row
+    // A-Folders: the open empty folder's "No tabs" text line at the child indent, in the
+    // sidebar's secondary text. It is not a hit target; VoiceOver reads the row's label.
+    private let label = SidebarHintLabel(labelWithString: "No tabs")
+    private var labelLeading: NSLayoutConstraint!
+
+    init(row: Row) {
+        self.row = row
+        super.init(frame: .zero)
+        wantsLayer = true
+        label.font = .systemFont(ofSize: SidebarMetrics.secondaryFontSize)
+        label.textColor = .secondaryLabelColor
+        label.setAccessibilityElement(false)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        labelLeading = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10 + CGFloat(row.depth) * 16)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: SidebarMetrics.noTabsRowHeight),
+            labelLeading,
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("No tabs")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            label.textColor = .secondaryLabelColor
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    var textFrameInRow: NSRect { layoutSubtreeIfNeeded(); return label.frame }
+    var textFontSize: CGFloat { label.font?.pointSize ?? 0 }
+    var textLineHeight: CGFloat { label.font.map { NSLayoutManager().defaultLineHeight(for: $0) } ?? 0 }
+    // The natural height of this string in this cell: the frame is compared with it (a field's
+    // intrinsic height includes padding, and font metrics differ by a rounding point).
+    var textCellHeight: CGFloat { label.cell?.cellSize.height ?? 0 }
+    var parentIDForCheck: String { row.parentId }
 }
 
 @MainActor

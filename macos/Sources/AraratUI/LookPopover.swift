@@ -75,6 +75,10 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
 }
 
 struct LookPopoverView: View {
+    /// The popover content's designed width; the space-name check asserts the popped-up
+    /// content matches it (and that the open animation has finished).
+    static let width: CGFloat = 288
+    static let contentPadding: CGFloat = 11
     @ObservedObject var model: LookEditorModel
     var body: some View {
         VStack(spacing: 10) {
@@ -112,7 +116,7 @@ struct LookPopoverView: View {
             TransparencyControl(model: model)
             GrainControl(model: model)
             if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).accessibilityLabel("Look error: " + error) }
-        }.padding(11).frame(width: 288).buttonStyle(.borderless)
+        }.padding(11).frame(width: Self.width).buttonStyle(.borderless)
     }
     private func mode(_ label: String, _ mode: Appearance, _ symbol: String) -> some View {
         Button { model.change { $0.appearance = mode } } label: {
@@ -343,25 +347,42 @@ struct GrainControl: View {
 
 @MainActor
 public final class LookCheckProbe {
-    private let anchor: LookPopoverAnchor
+    private let popover: NSPopover
+    var popoverForCheck: NSPopover { popover }
+    private let model: () -> LookEditorModel?
     public private(set) var haptics = 0
+
     init(_ anchor: LookPopoverAnchor) {
-        self.anchor = anchor
+        popover = anchor.popover
+        model = { [weak anchor] in anchor?.editor }
         if !anchor.popover.isShown { anchor.performClick(nil) }
-        anchor.editor?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
+        model()?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
     }
-    public var window: NSWindow? { anchor.popover.contentViewController?.view.window }
-    public var look: Look? { anchor.editor?.look }
-    public var editing: Bool { anchor.editor?.editing == true }
-    public var transparencyTag: String? { anchor.editor?.checkTransparencyTag }
+
+    // D13: the sidebar hosts its own popover anchored to the space name row; the check reads
+    // the same views through it.
+    init(popover: NSPopover, editor: @escaping () -> LookEditorModel?) {
+        self.popover = popover
+        model = editor
+        model()?.alignmentHaptic = { [weak self] in self?.haptics += 1 }
+    }
+
+    public var window: NSWindow? { popover.contentViewController?.view.window }
+    /// The popover content's size, so a check can tell a finished popover from one that is
+    /// still in its open animation (the size it settles at is the designed one).
+    public var contentSize: NSSize? { popover.contentViewController?.view.frame.size }
+    public static let designedContentWidth: CGFloat = LookPopoverView.width
+    public var look: Look? { model()?.look }
+    public var editing: Bool { model()?.editing == true }
+    public var transparencyTag: String? { model()?.checkTransparencyTag }
     private func frame(_ view: NSView?) -> NSRect? {
         guard let view, let window = view.window else { return nil }
         return window.convertToScreen(view.convert(view.bounds, to: nil))
     }
-    public var trackFrame: NSRect? { frame(anchor.editor?.checkTrackView) }
-    public var menuFrame: NSRect? { frame(anchor.editor?.checkMenuView) }
+    public var trackFrame: NSRect? { frame(model()?.checkTrackView) }
+    public var menuFrame: NSRect? { frame(model()?.checkMenuView) }
     private func focusView(_ label: String) -> LookTrackProbeView? {
-        (label == "Transparency" ? anchor.editor?.checkTrackView : anchor.editor?.checkGrainView) as? LookTrackProbeView
+        (label == "Transparency" ? model()?.checkTrackView : model()?.checkGrainView) as? LookTrackProbeView
     }
     public func focus(_ label: String) -> Bool {
         focusView(label)?.requestControlFocus() == true
@@ -381,4 +402,9 @@ extension SettingsWindowController {
         guard let anchor = find(root), anchor.window != nil else { return nil }
         return LookCheckProbe(anchor)
     }
+}
+
+extension LookCheckProbe {
+    /// Closes the popover a check opened.
+    public func closePopover() { popoverForCheck.performClose(nil) }
 }

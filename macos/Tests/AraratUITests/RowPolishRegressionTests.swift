@@ -4,7 +4,7 @@ import Testing
 @testable import AraratUI
 
 @Test @MainActor
-func middleClickClosesTodayThroughTheSharedClosePath() throws {
+func middleClickArchivesTodayThroughTheSharedRule() throws {
     _ = NSApplication.shared
     let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "today", title: "Today", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: nil, spaces: [
@@ -16,12 +16,15 @@ func middleClickClosesTodayThroughTheSharedClosePath() throws {
         view.subviews.flatMap { ($0 as? SidebarRowView).map { [$0] } ?? rows($0) }
     }
     let view = try #require(rows(sidebar).first)
+    var archived: String?
     var closed: String?
+    sidebar.onArchive = { archived = $0 }
     sidebar.onClose = { closed = $0 }
     let cgEvent = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseUp, mouseCursorPosition: .zero, mouseButton: .center))
     let event = try #require(NSEvent(cgEvent: cgEvent))
     view.otherMouseUp(with: event)
-    #expect(closed == "today")
+    // R1: a Today tab's ✕ and ⌘W archive it.
+    #expect(archived == "today" && closed == nil)
 }
 
 @Test @MainActor

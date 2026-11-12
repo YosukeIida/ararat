@@ -67,7 +67,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -76,7 +76,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -93,6 +93,28 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
                     if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
                 }
+            } else if seedSidebar {
+                _ = try opened.createSpace(windowId: windowID, name: "Sidebar", spaceId: "sidebar-work")
+                try opened.showSpace(windowId: windowID, spaceId: "sidebar-work")
+                _ = try opened.ensureFavorites(windowId: windowID, spaceId: "sidebar-work", containerId: "sidebar-favorites")
+                _ = try opened.createFolder(windowId: windowID, id: "sidebar-folder", name: "Folder", container: "sidebar-work:pinned", index: 0, wrapping: [])
+                _ = try opened.createFolder(windowId: windowID, id: "sidebar-empty", name: "Empty", container: "sidebar-work:pinned", index: 1, wrapping: [])
+                func sidebarTab(_ name: String) throws -> String {
+                    let snapshot = try opened.createTab(windowId: windowID, url: "about:blank?sidebar-\(name)")
+                    guard let id = snapshot.selectedId else { throw NSError(domain: "Ararat.sidebar", code: 1) }
+                    return id
+                }
+                let todayA = try sidebarTab("today-a")
+                _ = try sidebarTab("today-b")
+                _ = try sidebarTab("today-c")
+                let folderTab = try sidebarTab("folder-tab")
+                _ = try opened.moveItem(windowId: windowID, id: folderTab, container: "sidebar-folder", index: 0, openFolder: false)
+                let loadedPin = try sidebarTab("pin")
+                _ = try opened.moveItem(windowId: windowID, id: loadedPin, container: "sidebar-work:pinned", index: 2, openFolder: false)
+                let unloadedPin = try sidebarTab("pin-off")
+                _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
+                _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
+                _ = try opened.selectItem(windowId: windowID, id: todayA)
             } else if seedProfiles || seedDock {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
@@ -341,49 +363,109 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return host.navigateURL(url, target: target)
     }
 
-    public func close(id: String, archive: Bool = false, expectedLive: String? = nil) {
+    public func close(id: String, archive: Bool? = nil, expectedLive: String? = nil) {
         precondition(Thread.isMainThread)
-        if !archive, queue.sync(execute: {
+        // Only the row-less ⌘W (a nil archive) resolves a split member to its split row; a
+        // row's ✕/− acts on the row that showed it until U25c draws splits as one row.
+        if archive == nil, queue.sync(execute: {
             guard let store, let selected = store.snapshot(windowId: windowID).selectedId else { return false }
-            return store.splitLayout(itemId: selected)?.id == id
+            let rows = store.snapshot(windowId: windowID).spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+            return store.splitLayout(itemId: selected)?.id == splitOwner(id, rows: rows)
         }) { invalidateSelection() }
+        queue.async { self.closeInQueue(id: id, archive: archive, expectedLive: expectedLive) }
+    }
+
+    // ⌘W with no sidebar row: the selection is read and the close is decided in one queue
+    // block, so two quick presses act on the core's next tab (a read-then-enqueue split would
+    // let both reads return the first selection and archive the pin the first press unloaded).
+    public func closeSelected() {
+        precondition(Thread.isMainThread)
+        queue.async {
+            guard let store = self.store, let selected = store.snapshot(windowId: self.windowID).selectedId else { return }
+            let rows = store.snapshot(windowId: self.windowID).spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+            let item = splitOwner(selected, rows: rows)
+            if store.splitLayout(itemId: selected)?.id == item { DispatchQueue.main.async { self.invalidateSelection() } }
+            self.closeInQueue(id: item, archive: nil, expectedLive: nil)
+        }
+    }
+
+    // Clear Today: one core batch with a Close in flight for every mapped live row, so the
+    // engine's replies match commands; the caller closes the pages it returns (U25b D6).
+    public func clearToday(spaceID: String, completion: @escaping @MainActor (WorkspaceSnapshot?) -> Void) {
+        precondition(Thread.isMainThread)
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {
-                guard let store = self.store else { return }
-                if let expectedLive, store.liveTab(item: id) != expectedLive { return }
-                let row = store.snapshot(windowId: self.windowID).spaces.flatMap { $0.today + $0.pinned + $0.favorites }.first { $0.id == id }
-                if !archive, row?.kind == .split {
-                    let targets = try store.liveCloseSplit(item: id)
-                    let snapshot = store.snapshot(windowId: self.windowID)
-                    DispatchQueue.main.async {
-                        for target in targets {
-                            if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
-                            else if self.session.cancelPendingOpen(target.liveId) {
-                                self.queue.async {
-                                    _ = self.store?.liveCancel(commandId: target.liveId)
-                                    _ = self.store?.liveSettleClose(commandId: target.command.id)
-                                }
-                            } else {
-                                self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))
+                guard let store = self.store else { DispatchQueue.main.async { completion(nil) }; return }
+                let result = try store.liveClearToday(windowId: self.windowID, spaceId: spaceID)
+                DispatchQueue.main.async {
+                    for target in result.targets {
+                        if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
+                        else if self.session.cancelPendingOpen(target.liveId) {
+                            self.queue.async {
+                                _ = self.store?.liveCancel(commandId: target.liveId)
+                                _ = self.store?.liveSettleClose(commandId: target.command.id)
                             }
                         }
-                        self.deliverIfCurrent(snapshot)
-                        self.onWorkspaceChange?()
+                        else {
+                            // A target the engine no longer has: settle its Close so the row is not
+                            // left pending for a later restore.
+                            self.queue.async { _ = self.store?.liveSettleClose(commandId: target.command.id) }
+                            self.report(CoreError.Live(message: "Cannot find live tab \(target.liveId) to close"))
+                        }
                     }
-                    return
+                    self.deliverIfCurrent(result.snapshot)
+                    completion(result.snapshot)
                 }
-                guard let liveID = store.liveTab(item: id) else {
-                    let snapshot = try archive
-                        ? store.archiveItem(windowId: self.windowID, id: id)
-                        : store.closeItem(windowId: self.windowID, id: id)
-                    DispatchQueue.main.async { self.deliverIfCurrent(snapshot) }
-                    return
-                }
-                let command = try archive ? store.liveArchive(item: id) : store.liveClose(item: id)
-                DispatchQueue.main.async { self.session.tab(liveID)?.close(withCommandId: command.id) }
-            } catch { self.report(error) }
+            } catch {
+                self.report(error)
+                DispatchQueue.main.async { completion(nil) }
+            }
         }
+    }
+
+    // Runs on the adapter's queue. A nil archive applies R1/D2 to the row it reads.
+    private func closeInQueue(id: String, archive: Bool?, expectedLive: String?) {
+        defer { session.drainHistoryPurges() }
+        do {
+            guard let store = self.store else { return }
+            if let expectedLive, store.liveTab(item: id) != expectedLive { return }
+            let snapshot = store.snapshot(windowId: windowID)
+            let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+            let item = archive == nil ? splitOwner(id, rows: rows) : id
+            let row = rows.first { $0.id == item }
+            let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+            let archive = archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false
+            if !archive, row?.kind == .split {
+                let targets = try store.liveCloseSplit(item: item)
+                let snapshot = store.snapshot(windowId: self.windowID)
+                DispatchQueue.main.async {
+                    for target in targets {
+                        if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
+                        else if self.session.cancelPendingOpen(target.liveId) {
+                            self.queue.async {
+                                _ = self.store?.liveCancel(commandId: target.liveId)
+                                _ = self.store?.liveSettleClose(commandId: target.command.id)
+                            }
+                        } else {
+                            self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))
+                        }
+                    }
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
+                return
+            }
+            guard let liveID = store.liveTab(item: item) else {
+                let snapshot = try archive
+                    ? store.archiveItem(windowId: self.windowID, id: item)
+                    : store.closeItem(windowId: self.windowID, id: item)
+                DispatchQueue.main.async { self.deliverIfCurrent(snapshot) }
+                return
+            }
+            let command = try archive ? store.liveArchive(item: item) : store.liveClose(item: item)
+            DispatchQueue.main.async { self.session.tab(liveID)?.close(withCommandId: command.id) }
+        } catch { self.report(error) }
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
@@ -1113,4 +1195,29 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private func invalidTransaction() {
         FileHandle.standardError.write(Data("engine adapter: invalid transaction\n".utf8))
     }
+}
+
+// R1/D2: a loaded pin's ⌘W unloads it and keeps the pin; a Today tab or an unloaded pin
+// archives; a favourite and a split close. The row's load state decides, never the selection.
+public func rowCloseArchives(_ row: Row, in space: SpaceSnapshot) -> Bool {
+    // archive_item takes tabs only: a split (or a duplicated, unloaded split) closes.
+    if row.kind == .split { return false }
+    if space.favorites.contains(where: { $0.id == row.id }) { return false }
+    if row.unloaded { return true }
+    if space.today.contains(where: { $0.id == row.id }) && row.kind == .tab { return true }
+    return false
+}
+
+// A member of a split is closed through the split's row.
+public func splitOwner(_ id: String, rows: [Row]) -> String {
+    guard let row = rows.first(where: { $0.id == id }) else { return id }
+    var current = row
+    var parent = rows.first { $0.id == current.parentId }
+    for _ in rows.indices {
+        guard let ancestor = parent else { break }
+        if ancestor.kind == .split { return ancestor.id }
+        current = ancestor
+        parent = rows.first { $0.id == current.parentId }
+    }
+    return id
 }

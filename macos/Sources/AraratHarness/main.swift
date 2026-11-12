@@ -601,7 +601,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         case .moveToFolder(let id, let spaceId): moveSelectedCommandBarTab { snapshot in
             guard let target = snapshot.spaces.first(where: { $0.id == spaceId }) else { return nil }
-            let end = target.pinned.filter { $0.parentId == id }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
+            let end = target.pinned.filter { $0.parentId == id && $0.kind != .noTabs }.map { Int($0.siblingIndex) + 1 }.max() ?? 0
             return (id, end)
         }
         }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ararat_core::{import, storage::Store};
-use ararat_ffi::{CoreError, LiveCause, LiveStrip, LiveTab, LiveTransaction, Profile, SplitFactor, SplitPaneKind, WorkspaceStore, import_arc_sidebar};
+use ararat_ffi::{CoreError, LiveCause, LiveStrip, LiveTab, LiveTransaction, Profile, RowKind, SplitFactor, SplitPaneKind, WorkspaceStore, import_arc_sidebar};
 use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json");
@@ -714,7 +714,10 @@ fn item_edit_calls_flush_synced_changes_and_local_folder_state_before_returning(
     let folded = store.set_folder_collapsed("one".into(), "new".into(), true).unwrap();
     assert_eq!(folded.selected_id.as_deref(), Some("tab-spec"));
     assert_eq!(folded.shown_space_id.as_deref(), Some("space-work"));
-    assert!(!folded.spaces[1].pinned.iter().any(|r| r.id == "tab-spec"));
+    // The collapsed folder keeps the selected tab's own row (the holder rule, U25b D1):
+    // the folder and the path down to the current tab stay, nothing else does.
+    assert!(folded.spaces[1].pinned.iter().any(|r| r.id == "new"));
+    assert!(folded.spaces[1].pinned.iter().any(|r| r.id == "tab-spec"));
     assert_eq!(Store::open(&path).unwrap().1.folder_collapsed["new"], true);
     assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind != "folder_state").count(), before.len());
     let after = store.delete_folder("one".into(), "new".into()).unwrap();
@@ -965,4 +968,203 @@ fn command_bar_query_takes_history_rows_and_the_store_creates_and_edits_tabs() {
     let space = edited.spaces.iter().find(|space| space.id == shown).unwrap();
     assert!(space.today.iter().any(|row| row.id == created_id && row.url.as_deref() == Some("https://example.org/edited")));
     assert!(store.set_tab_url("test".into(), "folder-docs".into(), "https://example.org/".into()).is_err());
+}
+
+// U25b D1: the collapsed pinned section is a core record, and a collapsed holder (folder or
+// section) keeps the current row's path visible in the snapshot.
+#[test]
+fn a_collapsed_pinned_section_survives_reopen_and_keeps_the_current_pin_visible() {
+    let path = fresh_db("section");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap().snapshot;
+    assert!(!store.section_collapsed("space-work".into()));
+    store.select_item("one".into(), "tab-spec".into()).unwrap();
+    let collapsed = store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
+    assert!(store.section_collapsed("space-work".into()));
+    // The current tab is inside the pinned folder, so its path stays and nothing else does.
+    let pinned: Vec<_> = collapsed.spaces[0].pinned.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(pinned, ["folder-docs", "tab-spec"]);
+    // Favourites and Today are other containers and draw the same rows as before.
+    assert_eq!(collapsed.spaces[0].favorites, imported.spaces[0].favorites);
+    assert_eq!(collapsed.spaces[0].today, imported.spaces[0].today);
+    // The record is device-only like FolderState: it stays out of the journal, so a sync
+    // does not carry it, while the records table brings it back on reopen.
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'section_state'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 0);
+    drop(conn);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.section_collapsed("space-work".into()));
+    assert_eq!(store.snapshot("one".into()).spaces[0].pinned.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["folder-docs", "tab-spec"]);
+    let expanded = store.set_section_collapsed("one".into(), "space-work".into(), false).unwrap();
+    assert!(!store.section_collapsed("space-work".into()));
+    assert_eq!(expanded.spaces[0].pinned.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        imported.spaces[0].pinned.iter().map(|row| row.id.as_str()).collect::<Vec<_>>());
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+#[test]
+fn an_open_empty_folder_emits_the_no_tabs_row_the_ui_draws() {
+    let path = fresh_db("no-tabs");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.create_folder("one".into(), "empty".into(), "Empty".into(), "pin-work".into(), 1, vec![]).unwrap();
+    let snapshot = store.snapshot("one".into());
+    let pinned = &snapshot.spaces[0].pinned;
+    let position = pinned.iter().position(|row| row.id == "empty").unwrap();
+    let marker = &pinned[position + 1];
+    assert_eq!(marker.kind, RowKind::NoTabs);
+    assert_eq!(marker.parent_id, "empty");
+    assert_eq!(marker.depth, pinned[position].depth + 1);
+    assert_eq!(marker.title, "No tabs");
+    assert_eq!(marker.url, None);
+    // A folder that still holds a tab shows none.
+    assert!(!pinned.iter().any(|row| row.kind == RowKind::NoTabs && row.parent_id == "folder-docs"));
+    // A collapsed empty folder draws no marker either: its rows are closed.
+    store.set_folder_collapsed("one".into(), "empty".into(), true).unwrap();
+    assert!(!store.snapshot("one".into()).spaces[0].pinned.iter().any(|row| row.kind == RowKind::NoTabs));
+    // Archive the folder's only tab and the marker comes back under the folder.
+    store.set_folder_collapsed("one".into(), "empty".into(), false).unwrap();
+    store.archive_item("one".into(), "tab-spec".into()).unwrap();
+    let after = store.snapshot("one".into());
+    let pinned = &after.spaces[0].pinned;
+    let position = pinned.iter().position(|row| row.id == "folder-docs").unwrap();
+    assert_eq!(pinned[position + 1].kind, RowKind::NoTabs);
+    assert_eq!(pinned[position + 1].parent_id, "folder-docs");
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// U25b D6: Clear is one batch (one store write, all rows sharing an instant), archives the
+// loaded and the unloaded rows of the shown space's Today, and leaves pins alone.
+#[test]
+fn clear_today_archives_every_today_row_at_once_and_keeps_pins() {
+    let path = fresh_db("clear-today");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap().snapshot;
+    assert!(imported.spaces[0].today.is_empty());
+    let a = store.create_tab("one".into(), "https://a.example/".into()).unwrap().selected_id.unwrap();
+    let b = store.create_tab("one".into(), "https://b.example/".into()).unwrap().selected_id.unwrap();
+    let before = store.snapshot("one".into());
+    assert_eq!(before.spaces[0].today.len(), 2);
+    let cleared = store.clear_today("one".into(), "space-work".into()).unwrap();
+    assert!(cleared.spaces[0].today.is_empty());
+    assert_eq!(cleared.spaces[0].pinned, before.spaces[0].pinned);
+    assert_eq!(cleared.spaces[0].favorites, before.spaces[0].favorites);
+    let archived: Vec<_> = cleared.archive.iter().filter(|entry| [a.as_str(), b.as_str()].contains(&entry.id.as_str())).collect();
+    assert_eq!(archived.len(), 2);
+    assert_eq!(archived[0].lifecycle_changed_at, archived[1].lifecycle_changed_at);
+    assert!(cleared.selected_id.is_none());
+    // The rows are on disk: a reopen reads the empty Today and the archive entries once.
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let reopened = store.snapshot("one".into());
+    assert!(reopened.spaces[0].today.is_empty());
+    assert!(reopened.archive.iter().any(|entry| entry.id == a));
+    assert!(reopened.archive.iter().any(|entry| entry.id == b));
+    // Clearing an empty Today writes nothing and answers with the same snapshot.
+    assert_eq!(store.clear_today("one".into(), "space-work".into()).unwrap(), reopened);
+    assert!(store.clear_today("one".into(), "missing".into()).is_err());
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// U25b D5: the New Tab row switch is a synced workspace record, shown by default.
+#[test]
+fn the_new_tab_row_setting_reads_through_the_ffi_and_survives_reopen() {
+    let path = fresh_db("settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.settings().new_tab_row_shown);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_new_tab_row_shown("one".into(), false).unwrap();
+    assert!(!store.settings().new_tab_row_shown);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.settings().new_tab_row_shown);
+    store.set_new_tab_row_shown("one".into(), true).unwrap();
+    assert!(store.settings().new_tab_row_shown);
+    drop(store);
+    // Back at the built-in value, no row restates it; both writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// Design's review-1 decision 3: selection ignores the section's collapse, so the candidates
+// are the space's rows as if the section were open; the holder rule then keeps the chosen
+// pin visible.
+#[test]
+fn choosing_a_row_ignores_the_sections_collapse() {
+    let path = fresh_db("section-selection");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let imported = store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap().snapshot;
+    assert_eq!(imported.spaces[0].today_count, 0);
+    store.select_item("one".into(), "tab-mail".into()).unwrap();
+    store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
+    // A link routed to a pin under the collapsed section selects it and the pin shows.
+    let routed = store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-spec".into()).unwrap();
+    assert_eq!(routed.selected_id.as_deref(), Some("tab-spec"));
+    assert_eq!(routed.spaces[0].pinned.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["folder-docs", "tab-spec"]);
+    // Switching to the space with an empty Today keeps a selection instead of clearing it.
+    store.show_space("one".into(), "space-home".into()).unwrap();
+    let back = store.show_space_selecting("one".into(), "space-work".into()).unwrap();
+    let selected = back.selected_id.expect("a pin stays selected");
+    assert!(back.spaces[0].pinned.iter().any(|row| row.id == selected));
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// Review 1, 6b: the section record names the space, so deleting the space deletes it.
+#[test]
+fn deleting_a_space_removes_its_section_record() {
+    let path = fresh_db("section-delete");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
+    assert!(store.section_collapsed("space-work".into()));
+    store.delete_space("one".into(), "space-work".into()).unwrap();
+    assert!(!store.section_collapsed("space-work".into()));
+    assert!(!records(&path).iter().any(|(kind, id, _)| kind == "section_state" && id == "space-work"));
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.section_collapsed("space-work".into()));
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "section_state"));
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// Design's review-1 decision 3 as review 2 read it: choosing a row ignores collapse, closed
+// folders included.
+#[test]
+fn choosing_a_row_ignores_a_closed_folder() {
+    let path = fresh_db("folder-selection");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.select_item("one".into(), "tab-mail".into()).unwrap();
+    store.set_folder_collapsed("one".into(), "folder-docs".into(), true).unwrap();
+    // A link routed to a pin inside the closed folder selects it. Selecting a hidden row
+    // opens its ancestors (the existing rule), so the folder shows open with its pin.
+    let routed = store.show_space_selecting_tab("one".into(), "space-work".into(), "tab-spec".into()).unwrap();
+    assert_eq!(routed.selected_id.as_deref(), Some("tab-spec"));
+    let folder = routed.spaces[0].pinned.iter().find(|row| row.id == "folder-docs").unwrap();
+    assert!(!folder.collapsed);
+    assert!(routed.spaces[0].pinned.iter().any(|row| row.id == "tab-spec"));
+    // A space switch keeps a last selection inside a closed folder without opening it: the
+    // pin's row is there while its folder is still collapsed, so only the path shows it.
+    store.set_folder_collapsed("one".into(), "folder-docs".into(), true).unwrap();
+    store.show_space("one".into(), "space-home".into()).unwrap();
+    let back = store.show_space_selecting("one".into(), "space-work".into()).unwrap();
+    assert_eq!(back.selected_id.as_deref(), Some("tab-spec"));
+    let pinned = &back.spaces[0].pinned;
+    assert!(pinned.iter().find(|row| row.id == "folder-docs").unwrap().collapsed);
+    assert!(pinned.iter().any(|row| row.id == "tab-spec"));
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

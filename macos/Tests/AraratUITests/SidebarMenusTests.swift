@@ -39,6 +39,7 @@ private final class MenuFixture {
                 case let .collapse(id, collapsed): result = try self.store.setFolderCollapsed(windowId: "menus", id: id, collapsed: collapsed)
                 case let .duplicate(id): result = try self.store.duplicateItem(windowId: "menus", id: id)
                 case let .deleteFolder(id): result = try self.store.deleteFolder(windowId: "menus", id: id)
+                case let .collapseSection(spaceID, collapsed): result = try self.store.setSectionCollapsed(windowId: "menus", spaceId: spaceID, collapsed: collapsed)
                 }
                 done(result)
             } catch { Issue.record("edit failed: \(error)"); done(nil) }
@@ -85,7 +86,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let favorite = try f.row("tab-mail")
     let folder = try f.row("folder-docs")
     let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
-    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
+    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
     for (menu, expected) in zip(menus, titles) {
         #expect(menu.items.map(\.title) == expected)
         #expect(menu.items.allSatisfy { $0.isEnabled })
@@ -401,7 +402,7 @@ func rowMenusParticipateInTooltipTrackingWithoutShowingMenus() throws {
     #expect(!f.sidebar.tooltip.menuTracking)
     let row = try f.view("tab-spec")
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Remove Pin"])
+    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"])
 }
 
 @Test @MainActor
@@ -417,9 +418,10 @@ func adapterFolderAndRenameEditsReachTheCoreAndPersist() async throws {
     let path = directory.appendingPathComponent("adapter.sqlite").path
     _ = try await value { adapter.open(path: path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
     let created = try await value { adapter.edit(.createFolder(id: "new", container: "pin-work", index: 2), completion: $0) }
-    #expect(created.spaces[0].pinned.last?.id == "new")
+    // The open, empty folder is followed by its "No tabs" marker, which is not a row item.
+    #expect(created.spaces[0].pinned.last(where: { $0.kind != .noTabs })?.id == "new")
     let renamed = try await value { adapter.edit(.rename(id: "new", title: "Named", folder: true), completion: $0) }
-    #expect(renamed.spaces[0].pinned.last?.title == "Named")
+    #expect(renamed.spaces[0].pinned.last(where: { $0.kind != .noTabs })?.title == "Named")
     _ = try await value { adapter.edit(.rename(id: "tab-spec", title: "Custom", folder: false), completion: $0) }
     let cleared = try await value { adapter.edit(.rename(id: "tab-spec", title: "", folder: false), completion: $0) }
     #expect(cleared.spaces[0].pinned.first { $0.id == "tab-spec" }?.title == "Spec")

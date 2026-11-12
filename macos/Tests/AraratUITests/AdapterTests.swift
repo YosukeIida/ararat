@@ -60,7 +60,7 @@ func missingAndMalformedWindowsKeepTheSidebarImportAvailable() async throws {
 }
 
 @Test @MainActor
-func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
+func twoQueuedCommandWRequestsArchiveTodayInSuccessorOrder() async throws {
     let directory = try testTemporaryDirectory()
     let expectedRoot = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory(), isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -87,6 +87,8 @@ func twoQueuedCommandWRequestsCloseTheCoreSuccessorsInOrder() async throws {
             replies += 1
             if replies == 2 { done.resume(returning: changes) }
         }
+        // R1: a Today tab’s ⌘W archives it; the adapter applies the rule to the core’s
+        // current selection, so both presses act in order.
         sidebar.onCloseSelected = { adapter.closeSelected(completion: apply) }
         let menu = NSMenu()
         let close = menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")

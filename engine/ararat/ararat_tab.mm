@@ -190,7 +190,9 @@ class TabContentsObserver : public content::WebContentsObserver {
   auto* args = base::CommandLine::ForCurrentProcess();
   if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "sadtab" &&
                      args->GetSwitchValueASCII("ararat-check") != "errorpages" &&
-                     args->GetSwitchValueASCII("ararat-screen") != "errorpages")) return NO;
+                     args->GetSwitchValueASCII("ararat-check") != "sidebar-rows" &&
+                     args->GetSwitchValueASCII("ararat-screen") != "errorpages" &&
+                     args->GetSwitchValueASCII("ararat-screen") != "sidebar-rows")) return NO;
   auto* frame = contents_->GetPrimaryMainFrame();
   return frame && frame->GetProcess()->Shutdown(1);
 }

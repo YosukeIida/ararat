@@ -77,6 +77,30 @@ enum SidebarMetrics {
     static let rowCloseMoveDuration = 0.120
     static let rowCloseFadeDuration = 0.110
     static let easeOutCubic = CAMediaTimingFunction(controlPoints: 1 / 3, 1, 2 / 3, 1)
+    // U25b: an open, empty folder's line, the Today divider block with its Clear button, the
+    // New Tab row, and the space name row (D10).
+    static let noTabsRowHeight: CGFloat = 24
+    // The sidebar's secondary text size (the No tabs line, the Clear button's label, tooltips).
+    static let secondaryFontSize: CGFloat = 12
+    static let todayDividerHeight: CGFloat = 16
+    // Sidebar x 18 to 80 from the edge; the rows column insets this block by 8.
+    static let todayDividerLeading: CGFloat = 10
+    static let todayDividerLineDrop: CGFloat = 8
+    static let todayDividerTrailing: CGFloat = 72
+    static let todayClearSize: CGFloat = 24
+    static let todayClearTrailing: CGFloat = 8
+    static let newTabRowHeight: CGFloat = 41
+    static let spaceRowHeight: CGFloat = 31
+    // D10: x 16 and x 40 in the sidebar; the column insets this row by 8.
+    static let spaceNameLeading: CGFloat = 8
+    static let spaceNameIndented: CGFloat = 32
+    static let spaceChevronLeading: CGFloat = 8
+    static let spaceChevronSize: CGFloat = 16
+    static let spaceMoreTrailing: CGFloat = 16
+    static let spaceMoreSize: CGFloat = 24
+    static let unreadDotSize: CGFloat = 6
+    // 16 is the multiples-of-8 rule (12 is not a value we may choose); the 6 pt dot is visual.
+    static let unreadDotTrailing: CGFloat = 16
 }
 
 @MainActor

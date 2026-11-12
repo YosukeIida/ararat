@@ -44,8 +44,9 @@ func middleClickAndHoverButtonsUseTheTargetRowsAction() throws {
     let pin = try #require(rows.first { $0.row.id == "pin" })
     let other = try #require(rows.first { $0.row.id == "other" })
     let today = try #require(rows.first { $0.row.id == "a" })
-    #expect(pin.closeButton.accessibilityLabel() == "Close and Keep Pinned")
-    #expect(other.closeButton.accessibilityLabel() == "Archive this tab")
+    // R1: both pins are loaded, so their buttons close (unload) rather than archive.
+    #expect(pin.closeButton.accessibilityLabel() == "Close Tab")
+    #expect(other.closeButton.accessibilityLabel() == "Close Tab")
     pin.closeButton.performClick(nil)
     other.closeButton.performClick(nil)
     let cgMiddle = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseUp, mouseCursorPosition: .zero, mouseButton: .center))
@@ -54,11 +55,12 @@ func middleClickAndHoverButtonsUseTheTargetRowsAction() throws {
     today.otherMouseUp(with: middle)
     other.otherMouseUp(with: middle)
     pin.otherMouseUp(with: middle)
-    #expect(closed == ["pin", "a", "pin"])
-    #expect(archived == ["other", "other"])
+    // The Today tab archives; the loaded pins close.
+    #expect(closed == ["pin", "other", "other", "pin"])
+    #expect(archived == ["a"])
     let favorite = try #require(sidebar.subviews.flatMap { descendants($0) }.compactMap { $0 as? FavoriteTile }.first)
     favorite.otherMouseUp(with: middle)
-    #expect(closed == ["pin", "a", "pin"])
+    #expect(closed == ["pin", "other", "other", "pin"])
     #expect(!window.isVisible && !window.isKeyWindow)
 }
 
@@ -211,4 +213,21 @@ func tooltipPopsInAndFadesOutInTwoFramesWithoutTakingInput() throws {
     #expect(fade.duration == 2.0 / 60)
     #expect(fade.toValue as? Double == 0)
     #expect(!window.isVisible && !window.isKeyWindow)
+}
+
+@Test @MainActor
+func checkPressRunsTheRowsCloseRuleWithoutAPointer() throws {
+    let (window, sidebar) = interactionWindow()
+    defer { window.contentView = nil }
+    var closed: [String] = []
+    var archived: [String] = []
+    sidebar.onClose = { closed.append($0) }
+    sidebar.onArchive = { archived.append($0) }
+    // The sidebar-rows check presses without hovering: the seam resolves the row's close
+    // target (loaded pin closes, Today tab archives) and runs the button's callbacks.
+    #expect(sidebar.pressRowCloseForCheck(id: "pin") == .close)
+    #expect(sidebar.pressRowCloseForCheck(id: "a") == .archive)
+    #expect(sidebar.pressRowCloseForCheck(id: "missing") == nil)
+    #expect(closed == ["pin"])
+    #expect(archived == ["a"])
 }

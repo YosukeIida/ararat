@@ -129,14 +129,19 @@ func latestDockClickCancelsSwipeAndWheelAndAcceptsShakyClick() async throws {
     }
 }
 
+// Views, layers, tracking areas and timers; the running-animation count is timing-dependent.
 @MainActor
 private func polishCounts(_ sidebar: SidebarView) -> [Int] {
     let views = polishViews(sidebar)
     func layers(_ layer: CALayer) -> [CALayer] { [layer] + (layer.sublayers ?? []).flatMap(layers) }
     let backing = sidebar.layer.map(layers) ?? []
     let timers = Mirror(reflecting: sidebar).children.compactMap { $0.value as? Timer }.filter(\.isValid)
-    return [views.count, backing.count, views.reduce(0) { $0 + $1.trackingAreas.count },
-            backing.reduce(0) { $0 + ($1.animationKeys()?.count ?? 0) }, timers.count]
+    // The scroll hairlines' edge.fade spans several switches, so it is the one running
+    // animation not counted here: it ends on its own timer, not with a view's life.
+    let animations = backing.reduce(0) { total, layer in
+        total + (layer.animationKeys() ?? []).filter { $0 != "edge.fade" }.count
+    }
+    return [views.count, backing.count, views.reduce(0) { $0 + $1.trackingAreas.count }, animations, timers.count]
 }
 
 @MainActor

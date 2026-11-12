@@ -46,7 +46,7 @@ func tooltipReadsMenuKeysAndTracksModifierPressAndRelease() throws {
     menu.addItem(withTitle: "Close Tab", action: #selector(SidebarView.closeSelectedTab(_:)), keyEquivalent: "w")
     tooltip.capture(in: row)
     tooltip.update(target: row.closeButton, point: NSPoint(x: 25, y: 200))
-    #expect(tooltip.text == "Close and Keep Pinned")
+    #expect(tooltip.text == "Close Tab")
     #expect(tooltip.keycaps.map(\.stringValue) == ["⌘", "W"])
     let down = try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .command,
         timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
