@@ -384,7 +384,7 @@ func partialHandoffFailureKeepsBothPagesAndCancelsClose() async throws {
     later["cause"] = "Chrome"
     sourceEngine.onTransaction = { _, accepted in applied = accepted }
     sourceEngine.windowHost(sourceHost, didReceiveTransaction: later)
-    try await matrixWait { applied }
+    #expect(!applied)
     try session.queue.sync {
         let store = try #require(session.store)
         #expect(store.liveWindow(item: movedItem) == "target")
@@ -395,6 +395,7 @@ func partialHandoffFailureKeepsBothPagesAndCancelsClose() async throws {
         #expect(["close-split-a", "close-split-b"].allSatisfy { id in rows.contains { $0.id == id && !$0.unloaded } })
     }
     source.closing = false
+    sourceEngine.windowHostClosingAllCancelled(sourceHost)
     sourceEngine.shutdown(); targetEngine.shutdown()
 }
 
@@ -952,7 +953,8 @@ func matrixDelayedAcceptedOpenDoesNotAdvanceSupersededOrClosedStage() async thro
             engine.invalidateSelection()
         }
         engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "delayed", epoch: 1, rev: 0, command: command))
-        try await matrixWait { accepted }
+        if close { #expect(!accepted) }
+        else { try await matrixWait { accepted } }
         #expect(runtime.matrixAcknowledgedLive == nil && runtime.spaceMatrixPhase == 10)
         #expect(fake.entries.count == 1)
     }
@@ -1128,4 +1130,52 @@ func metadataFromClosingWindowDoesNotSupersedePendingSelection() async throws {
     main.windowHost(mainHost, didReceiveTransaction: matrixTransaction(mainFake, window: "main", epoch: 1, rev: 3, command: command))
     try await matrixWait { applied }
     main.shutdown(); child.shutdown()
+}
+
+@Test @MainActor
+func closingWindowRejectsQueuedSelectionAndCrashedStripButFinishesClose() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "closing", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    let row = try session.queue.sync { () -> (String, String) in
+        let store = try #require(session.store)
+        let row = try #require(store.snapshot(windowId: "closing").spaces.first?.today.first)
+        return (row.id, try #require(row.url))
+    }
+    var transactions = 0
+    engine.onTransaction = { _, accepted in if accepted { transactions += 1 } }
+    engine.select(id: row.0, url: row.1)
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "closing", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { transactions == 1 }
+    var held: (() -> Void)?
+    var dispatches = 0
+    engine.checkSelectionDispatch = { stage, _, resume in
+        dispatches += 1
+        if stage == "registered" { held = resume } else { resume() }
+    }
+    engine.select(id: row.0, url: row.1)
+    try await matrixWait { held != nil }
+    engine.windowHostWillBeginClosing(host)
+    engine.select(id: row.0, url: row.1)
+    let resume = try #require(held)
+    resume()
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "closing", epoch: 1, rev: 1, command: nil, crashedItem: row.0))
+    #expect(dispatches == 1)
+    #expect(fake.activated.isEmpty)
+    #expect(transactions == 1)
+    var handedOff: Bool?
+    engine.windowHost(host, prepareCloseHandoff: { handedOff = $0 })
+    #expect(handedOff == true)
+    fake.closing = true
+    fake.entries.removeAll()
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "closing", epoch: 1, rev: 1, command: nil))
+    try await matrixWait { transactions == 2 }
+    #expect(fake.activated.isEmpty)
+    #expect(session.queue.sync { session.store?.liveTab(item: row.0) } == nil)
+    engine.shutdown()
 }

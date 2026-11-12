@@ -22,6 +22,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private let card: NSView
     private let permissionDim = PermissionDim()
     weak var host: (any ARWindowHostAPI)?
+    private let closeStateLock = NSLock()
+    private var closeStarted = false
+    private var selectionClosed: Bool { closeStateLock.withLock { closeStarted } }
+    private func setSelectionClosed(_ closed: Bool) { closeStateLock.withLock { closeStarted = closed } }
     private var selectionGeneration = 0
     private var selectionRequest: (item: String, space: String?, url: String, restoring: Bool, generation: Int, command: String?)?
     private var restoringSelection = false
@@ -180,6 +184,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func attach(_ host: any ARWindowHostAPI) {
         precondition(Thread.isMainThread)
         self.host = host
+        setSelectionClosed(false)
         session.register(self, window: windowID)
         if let keyWindowObserver { NotificationCenter.default.removeObserver(keyWindowObserver) }
         if (host as AnyObject).responds(to: #selector(ARWindowHostAPI.window)) {
@@ -251,6 +256,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func select(id: String, url: String, restoring: RestorationCandidate? = nil) {
         precondition(Thread.isMainThread)
+        guard !selectionClosed, let host, !host.isClosing(), !host.isClosingAll() else { return }
         let space = queue.sync { store?.snapshot(windowId: windowID).shownSpaceId }
         if restoring == nil, let request = selectionRequest, request.item == id, request.space == space, request.url == url, !request.restoring { return }
         invalidateSelection()
@@ -263,7 +269,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
             }
             do {
-                guard let store = self.store else { abandon(); return }
+                guard !self.selectionClosed, let store = self.store else { abandon(); return }
                 if let restoring, store.restorationCandidate(windowId: self.windowID) != restoring { abandon(); return }
                 if restoring != nil { _ = try store.selectItem(windowId: self.windowID, id: id) }
                 let snapshot = store.snapshot(windowId: self.windowID)
@@ -284,9 +290,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let siblings = store.splitLayout(itemId: id).map { leaves($0).filter { $0.id != id } } ?? []
                 DispatchQueue.main.async {
+                    guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll() else {
+                        self.cancelSelectionCommand(command); return
+                    }
                     if self.selectionRequest?.generation == generation { self.selectionRequest?.command = command.id }
                     self.selectionDispatchForCheck("registered", command: command) {
-                        guard self.selectionGeneration == generation,
+                        guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll(),
+                              self.selectionGeneration == generation,
                               self.queue.sync(execute: {
                                   self.store?.snapshot(windowId: self.windowID).shownSpaceId == selectedSpace &&
                                   (restoring == nil || self.store?.restorationCandidate(windowId: self.windowID) == restoring)
@@ -509,7 +519,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {
-        if host.isClosingAll() || host.isClosing() {
+        if selectionClosed || host.isClosingAll() || host.isClosing() {
             _ = host.setClosePresentationProfile(profile)
             MainActor.assumeIsolated { onQuitProfileSwitch?() }
             return
@@ -535,12 +545,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func windowHostWillBeginClosing(_ host: any ARWindowHostAPI) {
+        setSelectionClosed(true)
         handoffGeneration += 1
         invalidateSelection()
         MainActor.assumeIsolated { onCloseStarted?() }
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {
+        setSelectionClosed(false)
         handoffGeneration += 1
         let profile = host.profileDirectory()
         let snapshot: WorkspaceSnapshot? = queue.sync {
@@ -619,14 +631,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
         let transaction = LiveTransaction(epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
-        if (host.isClosing() || host.isClosingAll()), case .engine = cause, strips.count == 1, strips[0].window == windowID, !strips[0].tabs.isEmpty { return }
+        let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
+        if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { return }
         let states = rowStates
         let crashed = crashedItems
         let navigated = navigatedLives
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {
-                guard let store = self.store else { return }
+                guard let store = self.store, !(hasClosingTabs && self.selectionClosed) else { return }
                 var previousOwners: [String: String] = [:]
                 for strip in transaction.strips {
                     for tab in strip.tabs {
@@ -650,6 +663,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let workspaceChanged = before != snapshot || mappingChanged || !outcome.adopted.isEmpty || !outcome.commands.isEmpty
                 DispatchQueue.main.async {
+                    guard !(hasClosingTabs && self.selectionClosed) else { return }
                     for (live, owner) in movedLives {
                         self.session.noteTransfer(live, destination: owner)
                         if owner == self.windowID { self.restoringSplitMoves.remove(live) }
@@ -690,6 +704,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func shutdown() {
         precondition(Thread.isMainThread)
+        setSelectionClosed(true)
         for view in failureViews.values { view.uncover(restoreFocus: false); view.removeFromSuperview() }
         failureViews.removeAll()
         handoffGeneration += 1
@@ -772,7 +787,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     @MainActor
     private func deliverIfCurrent(_ snapshot: WorkspaceSnapshot, skipNearSplitFrames: Bool = false) {
         guard queue.sync(execute: { store?.snapshot(windowId: windowID) == snapshot }) else { return }
-        guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
+        guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
             displayedSplit = snapshot.selectedId.flatMap { id in queue.sync { store?.splitLayout(itemId: id) } }
@@ -1091,7 +1106,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func takeRemoteSelection() {
         precondition(Thread.isMainThread)
-        guard !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { return }
+        guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { return }
         let candidate: (String, String)? = queue.sync {
             guard let store else { return nil }
             let snapshot = store.snapshot(windowId: windowID)
@@ -1180,7 +1195,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private func dispatchActivation(_ command: LiveCommand, live: String, host: any ARWindowHostAPI,
                                     selection: SelectionContext?, deadline: DispatchTime, retrying: Bool) {
         precondition(Thread.isMainThread)
-        guard let current = self.host, (current as AnyObject) === (host as AnyObject),
+        guard !selectionClosed, let current = self.host, (current as AnyObject) === (host as AnyObject),
               !current.isClosing(), !current.isClosingAll(),
               selection.map({ context in
                   self.selectionGeneration == context.generation && current.profileDirectory() == context.profile &&
