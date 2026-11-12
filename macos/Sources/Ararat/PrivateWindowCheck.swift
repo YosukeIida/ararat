@@ -65,7 +65,7 @@ extension Runtime {
         guard let check = privateWindowCheck, !check.capturing else { return }
         let window = host.window()
         func wait(_ name: String) {
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) children=\(children.count) private=\(children.filter(\.isPrivateWindow).count) live=\(PrivateWorkspaces.liveCount) selected=\(snapshot.selectedId ?? "nil") host_active=\(host.activeItemId() ?? "nil")")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) first_key=\(children.first(where: { $0.windowID == privateFirstWindowID })?.host?.window().isKeyWindow ?? false) children=\(children.count) private=\(children.filter(\.isPrivateWindow).count) live=\(PrivateWorkspaces.liveCount) selected=\(snapshot.selectedId ?? "nil") host_active=\(host.activeItemId() ?? "nil")")
         }
         func privateChildren() -> [Runtime] { children.filter { $0.isPrivateWindow && $0.host != nil } }
         func privateSnapshot(_ child: Runtime) -> WorkspaceSnapshot? {
@@ -232,6 +232,11 @@ extension Runtime {
                 wait("sibling tab in window 1"); return
             }
             check.mark("private_sibling_rows")
+            if screen {
+                first.host?.window().makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                guard first.host?.window().isKeyWindow == true else { wait("window 1 key"); return }
+            }
             // Selecting in window 1 a row whose live tab is in window 2 moves it (same OTR domain).
             first.sidebar?.selectRow(id: sibling)
             browserCheckPhase = 5

@@ -123,28 +123,29 @@ extension Runtime {
             let refused = !privateHost.checkMoveTab(privateTab, toHost: regularHost) && !regularHost.checkMoveTab(regularTab, toHost: privateHost)
             check.mark("private_cross_refused", refused)
             guard refused else { wait("refused cross move"); return }
-            // Close the shared row (its live tab is in window 2), then Clear window 2; window 1's
-            // own tab keeps it open, so one private window remains.
+            // Close the shared row, then Clear the remaining private tabs.
             check.pendingClose = privateItem
             first.close(privateItem)
             second.clearToday()
             browserCheckPhase = 6
         case 6:
-            guard privateChildren().count == 1, PrivateWorkspaces.liveCount == 1,
-                  let first = privateChildren().first,
-                  let snap = first.adapter?.session.queue.sync(execute: { first.adapter?.session.store?.snapshot(windowId: first.windowID) }),
-                  snap.spaces.first?.today.contains(where: { $0.id == check.pendingClose }) == false,
-                  snap.archive.isEmpty,
+            guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0,
                   let regularSnapshot = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
                   regularSnapshot.today.contains(where: { $0.id == check.pendingClose }) == false,
+                  !snapshot.archive.contains(where: { $0.id == check.pendingClose }),
                   regularRowsUnchanged() else { wait("private close and clear"); return }
             check.mark("private_close_clear")
             check.mark("private_archive_clean", snapshot.archive.isEmpty)
             check.mark("private_rows_unchanged", regularRowsUnchanged())
+            host.checkCreateIncognito()
+            browserCheckPhase = 60
+        case 60:
+            guard let first = privateChildren().first, PrivateWorkspaces.liveCount == 1,
+                  let snap = first.adapter?.session.queue.sync(execute: { first.adapter?.session.store?.snapshot(windowId: first.windowID) }),
+                  snap.spaces.first?.today.count == 1, snap.archive.isEmpty else { wait("new private window for the bar"); return }
             // The private command bar: open a URL, close it, reopen the bar; nothing was learned.
             check.learnTitle = "ararat-private-learn-\(UUID().uuidString)"
             check.learnURL = "data:text/html,<title>\(check.learnTitle)</title>"
-            guard let first = privateChildren().first else { wait("private window for the bar"); return }
             let space = first.snapshot.shownSpaceId ?? "private"
             first.adapter?.openCommandURL(check.learnURL, expectedSpace: space, profile: first.privateProfile ?? "Default")
             browserCheckPhase = 7

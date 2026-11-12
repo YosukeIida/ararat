@@ -335,20 +335,26 @@ func runPrivateDurabilityDriver() -> Int32 {
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
     root = scratch
     let forwarded = CommandLine.arguments.filter { $0.hasPrefix("--load-extension=") }
-    let common = ["--user-data-dir=\(scratch.appendingPathComponent("profile").path)",
-                  "--ararat-db=\(scratch.appendingPathComponent("workspace.sqlite").path)",
-                  "--use-mock-keychain"] + forwarded
-    func seed(_ mode: String) throws -> (ready: [String: Any], pid: pid_t) {
-      let run = try launchRelaunchChild(common + ["--ararat-check=private-durability-seed", "--ararat-relaunch-mode=\(mode)"], processGroup: true, trace: trace)
+    func common(_ round: URL) -> [String] {
+      ["--user-data-dir=\(round.appendingPathComponent("profile").path)",
+       "--ararat-db=\(round.appendingPathComponent("workspace.sqlite").path)",
+       "--use-mock-keychain"] + forwarded
+    }
+    let clean = scratch.appendingPathComponent("clean", isDirectory: true)
+    let crash = scratch.appendingPathComponent("crash", isDirectory: true)
+    try FileManager.default.createDirectory(at: clean, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: crash, withIntermediateDirectories: false)
+    func seed(_ mode: String, round: URL) throws -> (ready: [String: Any], pid: pid_t) {
+      let run = try launchRelaunchChild(common(round) + ["--ararat-check=private-durability-seed", "--ararat-relaunch-mode=\(mode)"], processGroup: true, trace: trace)
       child = run; group = run.pid; firstPID = run.pid
       guard let line = readRelaunchLine(run.output, seconds: 90), let data = line.data(using: .utf8),
             let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             object["ready"] as? Bool == true else { throw NSError(domain: "Ararat.durability", code: 1) }
       return (object, run.pid)
     }
-    func verify(_ titles: [String]) throws -> (object: [String: Any], status: Int32) {
+    func verify(_ titles: [String], round: URL) throws -> (object: [String: Any], status: Int32) {
       let encoded = (try JSONSerialization.data(withJSONObject: titles)).base64EncodedString()
-      let run = try launchRelaunchChild(common + ["--ararat-check=private-durability-verify", "--ararat-private-titles=\(encoded)"])
+      let run = try launchRelaunchChild(common(round) + ["--ararat-check=private-durability-verify", "--ararat-private-titles=\(encoded)"])
       child = run
       guard let line = readRelaunchLine(run.output, seconds: 90), let data = line.data(using: .utf8),
             let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -357,7 +363,7 @@ func runPrivateDurabilityDriver() -> Int32 {
       return (object, status)
     }
     // 1. Clean quit with private tabs open.
-    let cleanSeed = try seed("private-clean")
+    let cleanSeed = try seed("private-clean", round: clean)
     guard let cleanStatus = reapRelaunchChild(cleanSeed.pid, seconds: 30) else { return failure("clean run did not exit") }
     close(child!.output); child = nil
     kill(-cleanSeed.pid, SIGKILL); group = nil
@@ -365,10 +371,10 @@ func runPrivateDurabilityDriver() -> Int32 {
     let titles = cleanSeed.ready["titles"] as? [String] ?? []
     let urls = cleanSeed.ready["urls"] as? [String] ?? []
     guard !titles.isEmpty else { return failure("seed reported no titles") }
-    let cleanDisk = searchPrivateScratch(scratch, needles: titles + urls)
-    let cleanVerify = try verify(titles)
+    let cleanDisk = searchPrivateScratch(clean, needles: titles + urls)
+    let cleanVerify = try verify(titles, round: clean)
     // 2. SIGKILL with private tabs open.
-    let crashSeed = try seed("private-crash")
+    let crashSeed = try seed("private-crash", round: crash)
     guard kill(-crashSeed.pid, SIGKILL) == 0 else { return failure("cannot kill the crash run") }
     guard let crashStatus = reapRelaunchChild(crashSeed.pid, seconds: 30) else { return failure("crash run did not exit") }
     close(child!.output); child = nil
@@ -376,8 +382,8 @@ func runPrivateDurabilityDriver() -> Int32 {
     guard (crashStatus & 0x7f) == SIGKILL else { return failure("crash run was not killed") }
     let crashTitles = crashSeed.ready["titles"] as? [String] ?? titles
     let crashUrls = crashSeed.ready["urls"] as? [String] ?? urls
-    let crashDisk = searchPrivateScratch(scratch, needles: crashTitles + crashUrls)
-    let crashVerify = try verify(crashTitles)
+    let crashDisk = searchPrivateScratch(crash, needles: crashTitles + crashUrls)
+    let crashVerify = try verify(crashTitles, round: crash)
     if let error = cleanup() { return failure(error) }
     let cleanDiskClean = (cleanDisk["hits"] as? [String] ?? []).isEmpty
     let crashDiskClean = (crashDisk["hits"] as? [String] ?? []).isEmpty
