@@ -3,6 +3,31 @@ import AraratEngineAPI
 import AraratKit
 import AraratUI
 
+// The empty folder's "No tabs" marker, as the sidebar reports it (SidebarView.noTabsRowsForCheck).
+typealias NoTabsMarker = (id: String, parent: String, frame: NSRect, text: NSRect, height: CGFloat,
+                          fontSize: CGFloat, lineHeight: CGFloat, cellHeight: CGFloat)
+
+// A-Folders: the "No tabs" text sits at the child indent in the sidebar's secondary font,
+// centred in the 24 pt row. The tolerances are a point, not a half: the frame's height comes
+// from the field's cell and the font metrics round differently on other backing scales.
+// Returned beside the verdict so a failing run prints the numbers instead of a bare false.
+@MainActor
+func noTabsTextVerdict(_ marker: NoTabsMarker, depth: UInt32, secondarySize: CGFloat = 12) -> (ok: Bool, detail: String) {
+    let expectedX = 8 + 10 + 16 * CGFloat(depth + 1)
+    let x = marker.text.minX - expectedX
+    let heightGap = marker.text.height - marker.cellHeight
+    let centre = marker.text.midY - marker.frame.midY
+    let ok = abs(x) <= 1 && abs(marker.fontSize - secondarySize) <= 0.01 && abs(heightGap) <= 1
+        && abs(centre) <= 1 && abs(marker.height - 24) <= 0.5
+    func n(_ value: CGFloat) -> String { String(format: "%.2f", value) }
+    let detail = "text=\(n(marker.text.minX)),\(n(marker.text.minY)) \(n(marker.text.width))x\(n(marker.text.height))"
+        + " wantX=\(n(expectedX)) dx=\(n(x)) size=\(n(marker.fontSize)) cellH=\(n(marker.cellHeight))"
+        + " heightGap=\(n(heightGap)) lineH=\(n(marker.lineHeight)) midY=\(n(marker.text.midY))"
+        + " rowMidY=\(n(marker.frame.midY)) centreGap=\(n(centre)) rowH=\(n(marker.height))"
+        + " depth=\(depth) id=\(marker.id)"
+    return (ok, detail)
+}
+
 // U25b part 2's checks: rows, folders, Today and the space name row. One class holds the
 // phase, the named conditions and the images; each mode is a small phase machine driven from
 // the app's check tick. The VM has an empty accessibility tree, so every condition reads the
@@ -129,6 +154,18 @@ extension Runtime {
                      "sidebar_width": sidebar?.bounds.width ?? 0] as [String: Any]
                 } ?? [:],
                 "core_archive": sidebarCheckCore()?.archive.map(\.id).sorted() ?? [],
+                "no_tabs": sidebar?.noTabsRowsForCheck.map { marker in
+                    let depth = space?.pinned.first { $0.id == marker.parent }?.depth ?? 0
+                    var fields: [String: Any] = rectFields(marker.text)
+                    fields["x_expected"] = 8 + 10 + 16 * CGFloat(depth + 1)
+                    fields["font_size"] = Double(marker.fontSize)
+                    fields["line_height"] = Double(marker.lineHeight)
+                    fields["cell_height"] = Double(marker.cellHeight)
+                    fields["row_height"] = Double(marker.height)
+                    fields["row_mid_y"] = Double(marker.frame.midY)
+                    fields["parent"] = marker.parent
+                    return fields
+                } ?? [],
                 "has_browser": host?.hasBrowser() ?? false,
                 "tabs": host?.tabs().count ?? 0]
     }
@@ -347,11 +384,9 @@ extension Runtime {
                 check.report("empty_folder_line", false); step(7); return
             }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
-            let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
-            check.report("empty_folder_line", abs(marker.text.minX - expected) < 0.5 && abs(marker.height - 24) < 0.5
-                         && abs(marker.fontSize - 12) < 0.01
-                         && abs(marker.text.height - marker.lineHeight) < 0.5
-                         && abs(marker.text.midY - marker.frame.midY) < 0.5)
+            let verdict = noTabsTextVerdict(marker, depth: folderDepth)
+            trace("no tabs \(verdict.detail)")
+            check.report("empty_folder_line", verdict.ok)
             _ = capture("line")
             trace("empty folder line")
             step(7)
@@ -449,14 +484,9 @@ extension Runtime {
                 return
             }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
-            let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
-            // F3: the "No tabs" text sits at the child indent, in the sidebar's secondary font,
-            // centred in the 24 pt row.
-            check.report("line_frame", abs(marker.text.minX - expected) < 0.5 &&
-                         abs(marker.fontSize - 12) < 0.01 &&
-                         abs(marker.text.height - marker.lineHeight) < 0.5 &&
-                         abs(marker.text.midY - marker.frame.midY) < 0.5 &&
-                         abs(marker.height - 24) < 0.5)
+            let verdict = noTabsTextVerdict(marker, depth: folderDepth)
+            trace("no tabs \(verdict.detail)")
+            check.report("line_frame", verdict.ok)
             _ = capture("line")
             trace("line frame")
             step(1)

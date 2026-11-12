@@ -87,10 +87,14 @@ func anOpenEmptyFoldersLineSitsAtTheChildIndent() throws {
     let line = try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarNoTabsRow }.first)
     #expect(line.row.id == "folder/no-tabs")
     #expect(line.frame.height == SidebarMetrics.noTabsRowHeight)
-    // F3: the "No tabs" text at the child indent (the icon column of depth 1), secondary size.
-    #expect(abs(line.textFrameInRow.minX - (10 + 16)) < 0.5)
+    // F3: the "No tabs" text at the child indent (the icon column of depth 1), secondary size,
+    // centred in the 24 pt row. Tolerances are a point: Auto Layout lands the label on a whole
+    // point (12.5 midY against the row's 12) and the field's height is its cell's.
+    let text = line.textFrameInRow
+    #expect(abs(text.minX - (10 + 16)) <= 1)
     #expect(line.textFontSize == SidebarMetrics.secondaryFontSize)
-    #expect(abs(line.textFrameInRow.height - line.textLineHeight) < 0.5)
+    #expect(abs(text.height - line.textCellHeight) <= 1)
+    #expect(abs(text.midY - line.bounds.midY) <= 1)
     #expect(line.isAccessibilityElement())
     #expect(line.accessibilityLabel() == "No tabs")
     #expect(line.hitTest(NSPoint(x: line.bounds.midX, y: line.bounds.midY)) == nil)

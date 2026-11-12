@@ -475,6 +475,9 @@ final class SidebarNoTabsRow: NSView {
     var textFrameInRow: NSRect { layoutSubtreeIfNeeded(); return label.frame }
     var textFontSize: CGFloat { label.font?.pointSize ?? 0 }
     var textLineHeight: CGFloat { label.font.map { NSLayoutManager().defaultLineHeight(for: $0) } ?? 0 }
+    // The natural height of this string in this cell: the frame is compared with it (a field's
+    // intrinsic height includes padding, and font metrics differ by a rounding point).
+    var textCellHeight: CGFloat { label.cell?.cellSize.height ?? 0 }
     var parentIDForCheck: String { row.parentId }
 }
 
