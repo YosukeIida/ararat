@@ -583,6 +583,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var incognitoWindowRows: [[String]]?
   var incognitoWindowID = ""
   var incognitoWindowItem = ""
+  var incognitoPrivateItem = ""
   var incognitoWindowLive = ""
   var incognitoPrivateLive = ""
   var incognitoPrivateProfile = ""
@@ -6508,11 +6509,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
               let privateHost = privateChild.host,
               let tab = (privateHost.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
-      if !privateHost.window().isKeyWindow { privateHost.window().makeKeyAndOrderFront(nil); return }
-      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: privateHost.window().windowNumber,
-          context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
-      NSApp.sendEvent(event)
+      // Save Page on the full private window: Chrome's own command, no key-window dispatch.
+      privateHost.checkSavePage()
       browserCheckPhase = 62
     } else if screen, browserCheckPhase == 62,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
@@ -6567,6 +6565,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       incognitoPrivateBrowser = browser
       incognitoWindowID = child.windowID
       incognitoWindowItem = item
+      incognitoPrivateItem = item
       incognitoWindowLive = tab.liveId
       if CommandLine.arguments.contains("--ararat-incognito-window-check") {
         // A regular window opened from the private one is a regular child of the root session.
@@ -6656,7 +6655,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
                 return (store.liveTab(item: incognitoWindowItem), store.itemForLive(liveId: incognitoWindowLive))
               }),
               tabs.count == 1, tabs[0].liveId == incognitoPrivateLive,
-              tabs[0].itemId == incognitoWindowItem,
+              tabs[0].itemId == incognitoPrivateItem,
               browsers.count == 1, browsers[0]["off_the_record"] as? Bool == true,
               browsers[0]["profile_pointer"] as? String == incognitoPrivateProfile,
               browsers[0]["browser_pointer"] as? String == incognitoPrivateBrowser,

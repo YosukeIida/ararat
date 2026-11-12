@@ -211,6 +211,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkNewTab;
 - (void)checkNewWindow;
 - (void)checkNewIncognitoWindow;
+- (void)checkSavePage;
 - (void)checkNavigateOffTheRecord;
 - (NSDictionary<NSString*, id>*)checkFullscreenState;
 - (void)checkFullscreenAction:(NSInteger)action;

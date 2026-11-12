@@ -3030,6 +3030,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (browser_) chrome::NewIncognitoWindow(browser_->GetProfile());
 }
 
+// The save-panel step of the page-only extra, without the key-window command dispatch.
+- (void)checkSavePage {
+  const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
+  if (screen != "profiles" && screen != "links" && screen != "extensions") return;
+  if (browser_) chrome::SavePage(browser_);
+}
+
 - (void)checkNavigateOffTheRecord {
   if (!IsProfileCheck() || !browser_) return;
   NavigateParams params(browser_, GURL("data:text/html,<title>ararat-otr-navigation</title>"), ui::PAGE_TRANSITION_LINK);

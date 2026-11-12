@@ -7,7 +7,7 @@ import AraratUI
 final class PrivateWindowCheckState {
     static let names = [
         "private_window", "private_one_space_today_only", "private_sidebar", "private_mask",
-        "private_close_label", "private_selected_active", "private_second_shares",
+        "private_dark", "private_close_label", "private_selected_active", "private_second_shares",
         "private_sibling_rows", "private_sibling_selection", "private_cross_move_refused",
         "private_close_removes", "private_clear_no_toast_no_undo", "private_downloads_library_row",
         "private_command_bar", "private_command_bar_no_history", "private_command_bar_no_disabled",
@@ -22,6 +22,7 @@ final class PrivateWindowCheckState {
     var waitCount = 0
     var capturing = false
     var title = ""
+    var closable = ""
     var db = ""
     var userDataDir = ""
     var diskBefore: [String: Any] = [:]
@@ -129,31 +130,38 @@ extension Runtime {
             host.checkCreateIncognito()
             browserCheckPhase = 2
         case 2:
-            guard let child = privateChildren().first,
-                  child.host?.isPrivateWindow() == true,
-                  let sidebar = child.sidebar, let container = child.container,
-                  let snap = privateSnapshot(child),
+            // Each claim is marked and named as soon as it is checked, so a timeout says which.
+            guard let child = privateChildren().first, child.host?.isPrivateWindow() == true else { wait("private child"); return }
+            check.mark("private_window")
+            guard let snap = privateSnapshot(child),
                   snap.spaces.count == 1, snap.spaces[0].id == "private",
                   snap.spaces[0].pinned.isEmpty, snap.spaces[0].favorites.isEmpty,
-                  snap.spaces[0].today.count == 1, let item = snap.spaces[0].today.first?.id,
-                  let live = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.liveTab(item: item) }),
+                  snap.spaces[0].today.count == 1, let item = snap.spaces[0].today.first?.id else {
+                wait("private one space with one today row"); return
+            }
+            check.mark("private_one_space_today_only")
+            guard let live = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.liveTab(item: item) }),
                   !live.isEmpty,
                   let tabs = child.host?.tabs() as? [any ARTabAPI], tabs.count == 1,
-                  tabs[0].itemId == item, tabs[0].liveId == live,
-                  child.snapshot.selectedId == item, child.host?.activeItemId() == item,
-                  sidebar.checkPrivateBadgeVisible, sidebar.checkPrivateDockHidden,
-                  sidebar.checkPrivateFavoritesHidden, sidebar.checkPrivateSpaceRowHidden,
-                  container.privateMaskVisible, child.host?.window().appearance?.name == .darkAqua,
-                  sidebar.checkPrivateCloseLabel(item) == "Close Tab",
-                  regularRowsUnchanged() else { wait("private window with one tab"); return }
-            check.mark("private_window")
-            check.mark("private_one_space_today_only")
-            check.mark("private_sidebar")
+                  tabs[0].itemId == item, tabs[0].liveId == live else { wait("private adopted tab"); return }
+            check.mark("private_selected_active", child.snapshot.selectedId == item && child.host?.activeItemId() == item)
+            guard child.snapshot.selectedId == item, child.host?.activeItemId() == item else { wait("private selection"); return }
+            guard let sidebar = child.sidebar, let container = child.container else { wait("private views"); return }
+            let side = sidebar.checkPrivateBadgeVisible && sidebar.checkPrivateDockHidden &&
+                sidebar.checkPrivateFavoritesHidden && sidebar.checkPrivateSpaceRowHidden
+            check.mark("private_sidebar", side)
+            guard side else { wait("private sidebar shape"); return }
             check.mark("private_mask", container.privateMaskVisible)
-            check.mark("private_close_label")
-            check.mark("private_selected_active")
+            guard container.privateMaskVisible else { wait("private mask"); return }
+            let dark = child.host?.window().appearance?.name == .darkAqua
+            check.mark("private_dark", dark)
+            guard dark else { wait("private dark appearance"); return }
+            let label = sidebar.checkPrivateCloseLabel(item) == "Close Tab"
+            check.mark("private_close_label", label)
+            guard label else { wait("private close label"); return }
             check.mark("private_routing_domain", host.checkRoutingDomain() && (child.host?.checkRoutingDomain() == true))
             check.mark("private_downloads_library_row", sidebar.checkPrivateDownloadsLibraryRowHidden)
+            guard regularRowsUnchanged() else { wait("regular rows unchanged"); return }
             privateFirstWindowID = child.windowID
             privateFirstItem = item
             privateFirstLive = live
@@ -271,18 +279,34 @@ extension Runtime {
                   let first = privateChildren().first,
                   let s1 = privateSnapshot(first),
                   let titleRow = s1.spaces.first?.today.first(where: { $0.title == check.title })?.id,
-                  let sidebar = first.sidebar else { wait("second private window closed"); return }
-            // Leave only the uniquely titled row, then close the window: it closes with its last tab.
-            for row in s1.spaces.first?.today ?? [] where row.id != titleRow {
-                first.close(row.id)
+                  let closable = s1.spaces.first?.today.first(where: { $0.id != titleRow })?.id else {
+                wait("second private window closed, with a row to close"); return
             }
+            // Close one row through the sidebar's own path: removal, no archive entry.
+            check.closable = closable
+            first.close(closable)
+            browserCheckPhase = 24
+        case 24:
+            guard let first = privateChildren().first, let snap = privateSnapshot(first),
+                  let titleRow = snap.spaces.first?.today.first(where: { $0.title == check.title })?.id else {
+                wait("private window for the row close"); return
+            }
+            let remaining = snap.spaces.first?.today.filter { $0.id != titleRow } ?? []
+            if remaining.contains(where: { $0.id == check.closable }) { wait("private row closed"); return }
+            check.mark("private_close_removes")
+            if let next = remaining.first?.id {
+                check.closable = next
+                first.close(next)
+                return
+            }
+            guard snap.archive.isEmpty, regularRowsUnchanged() else { wait("private close leaves no archive"); return }
+            // Only the uniquely titled row is left; closing the window closes with its last tab.
             browserCheckPhase = 9
         case 9:
             guard let first = privateChildren().first,
                   let s1 = privateSnapshot(first),
                   let titleRow = s1.spaces.first?.today.first(where: { $0.title == check.title })?.id,
                   s1.spaces.first?.today.count == 1 else { wait("only the titled row left"); return }
-            check.mark("private_close_removes")
             first.host?.window().makeKeyAndOrderFront(nil)
             guard first.host?.window().isKeyWindow == true else { wait("private window key for the menu"); return }
             let importItem = NSMenuItem(title: "Import Bookmarks and Settings…", action: nil, keyEquivalent: "")
@@ -310,11 +334,25 @@ extension Runtime {
                   snap.archive.isEmpty else { wait("new private window starts empty"); return }
             check.mark("private_new_starts_empty")
             check.mark("private_open_without_browser_refused", child.host?.checkRefuseOpenWithoutBrowser() == true)
-            if let only = snap.spaces.first?.today.first?.id { child.close(only) }
-            browserCheckPhase = 12
-        case 12:
+            // Two more rows, then Clear: removal with no toast or Undo, and the window closes
+            // with its last tab (design M1).
+            let space = child.snapshot.shownSpaceId ?? "private"
+            let profile = child.privateProfile ?? "Default"
+            child.adapter?.openCommandURL("about:blank?private-clear-a", expectedSpace: space, profile: profile)
+            child.adapter?.openCommandURL("about:blank?private-clear-b", expectedSpace: space, profile: profile)
+            browserCheckPhase = 25
+        case 25:
+            guard let child = privateChildren().first, let snap = privateSnapshot(child),
+                  snap.spaces.first?.today.count == 3 else { wait("private tabs for Clear"); return }
+            child.clearToday()
+            // The private store returns no Clear batch, so the caller offers no toast/Undo;
+            // record that at the press, before the empty strip closes the window.
+            check.mark("private_clear_no_toast_no_undo",
+                       child.container?.checkToastState.visible != true && child.clearUndo.available == false)
+            browserCheckPhase = 26
+        case 26:
             guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0,
-                  regularRowsUnchanged() else { wait("private window closed with its last tab"); return }
+                  regularRowsUnchanged() else { wait("private window closed by Clear"); return }
             check.mark("private_last_tab_closes_window")
             check.mark("private_rows_unchanged")
             let result = check.diagnostics()

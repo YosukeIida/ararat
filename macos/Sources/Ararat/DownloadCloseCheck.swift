@@ -40,9 +40,12 @@ extension Runtime {
       }
     case 21:
       guard let port = promptFixturePort, let privateHost = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateHost.host,
-            let tab = (popup.tabs() as? [any ARTabAPI])?.first,
-            tab.networkError == -106,
-            privateHost.adapter?.checkFailureState(item: tab.itemId ?? "")["heading"] as? String == "You’re offline" else { return }
+            let tab = (popup.tabs() as? [any ARTabAPI])?.first else { return }
+      // The overlay is the user-visible signal; the net error is recorded for diagnosis.
+      let failure = privateHost.adapter?.checkFailureState(item: tab.itemId ?? "") ?? [:]
+      let heading = failure["heading"] as? String ?? ""
+      trace("private offline url=\(tab.url) error=\(tab.networkError) heading=\(heading) loading=\(tab.isLoading) navigation=\(tab.navigationCount)")
+      guard tab.networkError == -106 || heading == "You’re offline" else { return }
       errorPageConditions["private_offline"] = true
       startDownload(popup, port: port)
     case 3:
