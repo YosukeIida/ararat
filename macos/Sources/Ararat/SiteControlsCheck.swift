@@ -78,7 +78,10 @@ extension Runtime {
         let window = host.window()
         func wait(_ name: String) {
             let state = siteState
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) shown=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") rows=\(state?.permissions.count ?? 0) dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil")")
+            let rows = (state?.permissions ?? []).map {
+                "\($0.type):\($0.setting?.title ?? "-"):blockedBySite=\($0.siteSpecificBlock ? 1 : 0):mutable=\($0.mutable ? 1 : 0)"
+            }.joined(separator: ",")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil")")
         }
         func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
