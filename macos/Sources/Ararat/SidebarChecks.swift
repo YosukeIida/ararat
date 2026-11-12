@@ -81,7 +81,10 @@ extension Runtime {
 
     func sidebarCheckRow(_ space: SpaceSnapshot?, _ suffix: String) -> Row? {
         guard let space else { return nil }
-        return (space.today + space.pinned + space.favorites).first { $0.url?.hasSuffix("?sidebar-\(suffix)") == true }
+        // Folders carry no URL, so the seed ids answer for them too.
+        return (space.today + space.pinned + space.favorites).first {
+            $0.id == "sidebar-\(suffix)" || $0.url?.hasSuffix("?sidebar-\(suffix)") == true
+        }
     }
 
     func sidebarCheckCore() -> WorkspaceSnapshot? {
@@ -101,6 +104,16 @@ extension Runtime {
                     ["id": row.id, "title": row.title, "parent": row.parentId, "kind": String(describing: row.kind),
                      "unloaded": row.unloaded, "depth": row.depth] as [String: Any] } } ?? [],
                 "crash_items": adapter?.crashedItems.sorted() ?? [],
+                "name_frames": sidebar.map { view in
+                    view.layoutSubtreeIfNeeded()
+                    let name = view.spaceNameRow
+                    return ["name": rectFields(view.convert(name.checkNameFrame, from: name.superview)),
+                            "row": rectFields(name.frame), "sidebar_width": view.bounds.width] as [String: Any]
+                } ?? [:],
+                "divider_frames": sidebar?.todayDividerForCheck.map { divider in
+                    ["frame": rectFields(divider.frame), "line": rectFields(divider.line), "clear": rectFields(divider.clear),
+                     "sidebar_width": sidebar?.bounds.width ?? 0] as [String: Any]
+                } ?? [:],
                 "core_archive": sidebarCheckCore()?.archive.map(\.id).sorted() ?? []]
     }
 
@@ -127,9 +140,10 @@ extension Runtime {
             check.capturing = true
             let path = promptScreenScreenshot(host.window(), name: "\(mode.rawValue)-\(name)", withoutShadow: true)
             check.capturing = false
-            guard let path else { return false }
-            check.images[name] = path
-            return true
+            if let path { check.images[name] = path }
+            // The screen variants report a single capture condition for all of their images.
+            check.conditions["capture"] = (check.conditions["capture"] ?? true) && path != nil
+            return path != nil
         }
         func click(_ view: NSView, at point: NSPoint) -> Bool {
             guard let window = view.window else { return false }
@@ -164,46 +178,62 @@ extension Runtime {
                               step: (Int) -> Void, finish: () -> Void, capture: (String) -> Bool,
                               click: (NSView, NSPoint) -> Bool, row: (String) -> Row?) {
         guard let sidebar else { return }
+        // Why the first phases select seeded rows: the engine only opens a native tab for a
+        // row the app selects, and the core unloads every open row the first transaction does
+        // not carry — the same slice-seed shape U26b fixed.
+        func liveTab(_ id: String) -> Bool {
+            (host.tabs() as? [any ARTabAPI])?.contains { $0.itemId == id } == true
+        }
         switch check.phase {
         case 0:
             let space = sidebarCheckShownSpace()
-            let needed = ["today-a", "today-b", "today-c", "pin", "pin-off", "folder-tab"]
+            let needed = ["today-a", "today-b", "today-c", "pin", "pin-off", "folder-tab", "empty", "folder"]
             let rowIDs = Set(sidebar.rowCheckIds)
             guard let space,
                   needed.allSatisfy({ suffix in sidebarCheckRow(space, suffix).map { rowIDs.contains($0.id) } == true }) else { return }
             check.report("rows_present", true)
-            trace("rows present")
+            guard let pin = row("pin") else { return }
+            trace("open the pin's native tab")
+            sidebar.selectRow(id: pin.id)
             step(1)
         case 1:
-            // R1/D2: a loaded pin's − is Close Tab and unloads it; the pin stays.
-            guard let pin = row("pin"), let info = sidebar.rowCheckInfo(id: pin.id) else { return }
-            guard info.closeLabel == "Close Tab" else { return }
-            trace("press loaded pin close")
-            check.report("loaded_pin_close", sidebar.pressCloseButton(id: pin.id))
-            check.seen.insert(pin.id)
+            guard let pin = row("pin"), snapshot.selectedId == pin.id, liveTab(pin.id),
+                  let todayA = row("today-a") else { return }
+            trace("open a Today tab beside it")
+            sidebar.selectRow(id: todayA.id)
             step(2)
         case 2:
+            guard let todayA = row("today-a"), snapshot.selectedId == todayA.id, liveTab(todayA.id),
+                  let pin = row("pin"), let info = sidebar.rowCheckInfo(id: pin.id),
+                  let core = sidebarCheckCore(),
+                  let corePin = core.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id }),
+                  !corePin.unloaded else { return }
+            guard info.closeLabel == "Close Tab" else { return }
+            trace("press the loaded pin's close")
+            check.report("loaded_pin_close", sidebar.pressCloseButton(id: pin.id))
+            step(3)
+        case 3:
             guard let pin = row("pin"), let core = sidebarCheckCore(),
                   let corePin = core.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id }) else { return }
             guard corePin.unloaded, !core.archive.contains(where: { $0.id == pin.id }) else { return }
-            trace("press unloaded pin close")
             guard let off = row("pin-off"), let info = sidebar.rowCheckInfo(id: off.id) else { return }
             guard info.closeLabel == "Archive Tab" else { check.report("unloaded_pin_archive", false); finish(); return }
+            trace("press the unloaded pin's close")
             check.report("unloaded_pin_archive", sidebar.pressCloseButton(id: off.id))
-            step(3)
-        case 3:
+            step(4)
+        case 4:
             guard let off = row("pin-off"), let core = sidebarCheckCore() else { return }
             guard !core.spaces.flatMap(\.pinned).contains(where: { $0.id == off.id }),
                   core.archive.contains(where: { $0.id == off.id }) else { return }
             guard let todayA = row("today-a"), let info = sidebar.rowCheckInfo(id: todayA.id), info.closeLabel == "Archive Tab" else { return }
-            trace("press today close")
+            trace("press a Today tab's close")
             check.report("today_archive", sidebar.pressCloseButton(id: todayA.id))
-            step(4)
-        case 4:
+            step(5)
+        case 5:
             guard let todayA = row("today-a"), let core = sidebarCheckCore() else { return }
             guard !core.spaces.flatMap(\.today).contains(where: { $0.id == todayA.id }),
                   core.archive.contains(where: { $0.id == todayA.id }) else { return }
-            // R2: ⌘W acts on the current tab, whose button caps follow the binding.
+            // R2: ⌘W acts on the current tab and only its row shows the binding's caps.
             guard let todayB = row("today-b") else { return }
             sidebar.selectRow(id: todayB.id)
             guard sidebar.selectedRowID == todayB.id else { return }
@@ -211,14 +241,14 @@ extension Runtime {
             check.report("close_caps_current", caps == sidebar.closeCapsForCheck && !(caps ?? []).isEmpty)
             trace("press ⌘W")
             sidebar.closeSelectedTab(nil)
-            step(5)
-        case 5:
+            step(6)
+        case 6:
             guard let todayB = row("today-b"), let core = sidebarCheckCore() else { return }
             guard core.archive.contains(where: { $0.id == todayB.id }) else { return }
             check.report("command_w_current", true)
             // F3: the open, empty folder shows its line at the child indent.
             guard let empty = row("empty"), let marker = sidebar.noTabsRowsForCheck.first(where: { $0.parent == empty.id }) else {
-                check.report("empty_folder_line", false); step(6); return
+                check.report("empty_folder_line", false); step(7); return
             }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
             let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
@@ -226,25 +256,12 @@ extension Runtime {
                          && abs(marker.line.width - 24) < 0.5)
             _ = capture("line")
             trace("empty folder line")
-            step(6)
-        case 6:
-            // R5: a crashed renderer's row draws the warning glyph at 45 %.
-            guard let todayC = row("today-c") else { return }
-            if sidebar.selectedRowID != todayC.id { sidebar.selectRow(id: todayC.id); return }
-            guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id else { return }
-            guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else { return }
-            trace("crash renderer")
-            guard tab.checkCrashRenderer() else { finish(); return }
             step(7)
         case 7:
-            guard let todayC = row("today-c"), let info = sidebar.rowCheckInfo(id: todayC.id),
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else { return }
-            guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else { return }
-            check.report("crashed_glyph", true)
-            _ = capture("crashed")
-            trace("unread fixture")
-            // R7: a loaded, not-shown tab whose title changes gets a dot.
+            // R7 first, while the active tab is healthy: a loaded, not-shown tab whose title
+            // changes gets a dot. (A crashed contents would not navigate for the fixture.)
             check.seen = Set(sidebarCheckShownSpace().map { ($0.today + $0.pinned + $0.favorites).map(\.id) } ?? [])
+            trace("unread fixture")
             host.checkNavigate("data:text/html,<title>Unread</title><script>setTimeout(function(){document.title='Unread changed'},300)</script>",
                                disposition: "background")
             step(8)
@@ -258,6 +275,20 @@ extension Runtime {
         case 9:
             guard let space = sidebarCheckShownSpace(), let shown = space.today.first(where: { sidebar.selectedRowID == $0.id }),
                   sidebar.rowCheckInfo(id: shown.id)?.unreadDot == false else { return }
+            // R5: a crashed renderer's row draws the warning glyph at 45 %.
+            guard let todayC = row("today-c") else { return }
+            if sidebar.selectedRowID != todayC.id { sidebar.selectRow(id: todayC.id); return }
+            guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else { return }
+            trace("crash the renderer")
+            guard tab.checkCrashRenderer() else { finish(); return }
+            step(10)
+        case 10:
+            guard let todayC = row("today-c"), let info = sidebar.rowCheckInfo(id: todayC.id),
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else { return }
+            guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else { return }
+            check.report("crashed_glyph", true)
+            _ = capture("crashed")
             _ = capture("rows")
             trace("done")
             finish()
@@ -331,24 +362,28 @@ extension Runtime {
             step(1)
         case 1:
             // Design q1: with no pins, a drop on the space name row pins at the top.
-            // Archive the seed’s pins first, so the drop tests the no-pins case.
-            guard let core = sidebarCheckCore(), core.spaces.flatMap(\.pinned).isEmpty else {
-                for pin in sidebarCheckShownSpace()?.pinned ?? [] { adapter?.close(id: pin.id, archive: true) }
+            guard let shown = sidebarCheckShownSpace(), let core = sidebarCheckCore() else { return }
+            if let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned, !pinned.isEmpty {
+                // Archive the seed's pins once, so the drop tests the no-pins case.
+                for pin in pinned where check.seen.insert(pin.id).inserted {
+                    adapter?.close(id: pin.id, archive: true)
+                }
                 return
             }
-            guard let dragged = row("today-a"), let name = Optional(sidebar.spaceNameRow) else { return }
-            let point = sidebar.convert(NSPoint(x: name.bounds.midX, y: name.bounds.midY), from: name)
+            guard let dragged = row("today-a") else { return }
+            let point = sidebar.convert(NSPoint(x: sidebar.spaceNameRow.bounds.midX, y: sidebar.spaceNameRow.bounds.midY),
+                                        from: sidebar.spaceNameRow)
             guard let drop = sidebar.resolveDropForCheck(position: point, draggedID: dragged.id),
-                  drop.kind == "insert", drop.container == core.spaces.first?.pinnedId, drop.index == 0,
-                  let space = sidebarCheckShownSpace() else {
+                  drop.kind == "insert", drop.container == shown.pinnedId, drop.index == 0 else {
                 check.report("name_drop_pins", false); step(2); return
             }
-            workspace?.move(id: dragged.id, container: space.pinnedId, index: 0, openFolder: false) { [weak self] result in
+            workspace?.move(id: dragged.id, container: shown.pinnedId, index: 0, openFolder: false) { [weak self] result in
                 if case .success(let snapshot) = result { self?.show(snapshot) }
             }
             step(2)
         case 2:
-            guard let core = sidebarCheckCore(), let pinned = core.spaces.first?.pinned,
+            guard let core = sidebarCheckCore(), let shown = sidebarCheckShownSpace(),
+                  let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned,
                   pinned.count == 1, pinned.first?.url?.hasSuffix("?sidebar-today-a") == true else { return }
             check.report("name_drop_pins", true)
             _ = capture("name-drop")
@@ -398,12 +433,15 @@ extension Runtime {
         guard let sidebar, let space = sidebarCheckShownSpace() else { return }
         let name = sidebar.spaceNameRow
         func nameX() -> CGFloat {
+            // The row is laid out by the sidebar; a check tick can run before a display pass.
+            sidebar.layoutSubtreeIfNeeded()
             name.layoutSubtreeIfNeeded()
             return sidebar.convert(name.checkNameFrame, from: name.superview).minX
         }
         switch check.phase {
         case 0:
             guard space.id == "sidebar-work" else { return }
+            sidebar.layoutSubtreeIfNeeded()
             check.report("name_x", abs(nameX() - 16) < 0.5)
             check.report("chevron_hover", !name.checkChevronVisible)
             name.hovered = true

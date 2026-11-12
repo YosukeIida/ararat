@@ -405,6 +405,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
   var sharedLookProbe: LookCheckProbe?
+  var sidebarChecksActive = false
+  var sidebarSeedTraced = false
+  var sidebarFirstTransactionTraced = false
   var dockCheck: DockScreenCheck?
   var organizeConditions: [String: Bool] = [:]
   var organizeCancelStarted = false
@@ -798,12 +801,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
     let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
+    self.sidebarChecksActive = sidebarCheckActive
     let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && arguments.contains("--ararat-split-close-check"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
@@ -885,6 +889,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self.recordUnread(transaction)
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
+      if self.sidebarChecksActive, !self.sidebarFirstTransactionTraced {
+        self.sidebarFirstTransactionTraced = true
+        let active = transaction.strips.first?.active ?? "-"
+        FileHandle.standardError.write(Data("ararat-trace: sidebar-first-transaction epoch=\(transaction.epoch) rev=\(transaction.rev) cause=\(String(describing: transaction.cause)) strips=\(transaction.strips.count) active=\(active)\n".utf8))
+      }
       if CommandLine.arguments.contains("--ararat-space-matrix-check"), self.browserCheckMode != nil {
         self.spaceMatrixLastTransaction = ["epoch": transaction.epoch, "rev": transaction.rev,
           "cause": String(describing: transaction.cause), "strips": transaction.strips.prefix(10).map { strip in
@@ -1353,6 +1362,15 @@ final class Runtime: NSObject, NSMenuItemValidation {
   // space snapshot).
   func refreshSidebarRowState(_ snapshot: WorkspaceSnapshot) {
     guard let sidebar else { return }
+    // The seed and the first transaction, as U26b traced theirs: a check with no native tab
+    // and an empty row set is told apart from a check whose seed never landed.
+    if sidebarChecksActive, !sidebarSeedTraced, let store = adapter?.session.store {
+      sidebarSeedTraced = true
+      let seed = adapter?.session.queue.sync { store.snapshot(windowId: windowID) }
+      let rows = seed?.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id) ?? []
+      let profiles = seed?.spaces.map(\.profileName) ?? []
+      FileHandle.standardError.write(Data("ararat-trace: sidebar-seed db=\(quitPath ?? "") shown=\(seed?.shownSpaceId ?? "") profiles=\(profiles) rows=\(rows)\n".utf8))
+    }
     sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
     sidebar.unreadItems = unread.unread
     guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }

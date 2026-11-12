@@ -129,7 +129,8 @@ public final class SidebarSpaceNameRow: NSView {
     public override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
 
     public var checkNameFrame: NSRect {
-        name.convert(name.alignmentRect(forFrame: name.frame), to: superview)
+        // alignmentRect(forFrame:) already answers in the superview’s coordinates.
+        name.alignmentRect(forFrame: name.frame)
     }
     public var checkChevronVisible: Bool { !chevron.isHidden }
     public var checkRenameFieldFrame: NSRect? { renameField?.frame }
