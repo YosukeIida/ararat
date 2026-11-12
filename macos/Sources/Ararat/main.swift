@@ -6174,22 +6174,33 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             FileHandle.standardError.write(Data("ararat-trace: matrix race selection-completed command=\(id) rev=\(transaction.rev) applied=\(applied)\n".utf8))
           }
         }
+        adapter.checkSelectionActivated = { [weak self] id in
+          if id == self?.childRaceCommand {
+            self?.childRaceActivated = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
+          }
+        }
         adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
           guard let self, let adapter else { return }
           guard actual == stage else { resume(); return }
           adapter.checkSelectionDispatch = nil
           self.childRaceCommand = command
-          adapter.checkSelectionActivated = { [weak self] id in
-            if id == command {
-              self?.childRaceActivated = true
-              FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
-            }
-          }
           childHost.close()
           resume()
         }
         browserCheckPhase = 505
-        adapter.select(id: selected, url: url)
+        if let joined = adapter.checkInFlightSelection(item: selected) {
+          if let command = joined.command {
+            childRaceCommand = command
+            childRaceActivated = joined.activated
+            if stage == "registered" || joined.resolved {
+              adapter.checkSelectionDispatch = nil
+              childHost.close()
+            }
+          }
+        } else {
+          adapter.select(id: selected, url: url)
+        }
         return
       }
       host.configureProfileCloseCheck(1)

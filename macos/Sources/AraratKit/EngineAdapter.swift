@@ -27,7 +27,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var selectionClosed: Bool { closeStateLock.withLock { closeStarted } }
     private func setSelectionClosed(_ closed: Bool) { closeStateLock.withLock { closeStarted = closed } }
     private var selectionGeneration = 0
-    private var selectionRequest: (item: String, space: String?, url: String, restoring: Bool, generation: Int, command: String?)?
+    private var selectionRequest: (item: String, space: String?, url: String, restoring: Bool, generation: Int, command: String?, resolved: Bool, activated: Bool)?
     private var restoringSelection = false
     private var recoveryDispatched = false
     private var openingSelections: [String: SelectionContext] = [:]
@@ -261,7 +261,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         if restoring == nil, let request = selectionRequest, request.item == id, request.space == space, request.url == url, !request.restoring { return }
         invalidateSelection()
         let generation = selectionGeneration
-        selectionRequest = (id, space, url, restoring != nil, generation, nil)
+        selectionRequest = (id, space, url, restoring != nil, generation, nil, false, false)
         queue.async {
             func abandon() {
                 DispatchQueue.main.async {
@@ -995,6 +995,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func refresh() { publish() }
 
+    public func checkInFlightSelection(item: String) -> (command: String?, resolved: Bool, activated: Bool)? {
+        precondition(Thread.isMainThread)
+        guard let request = selectionRequest, request.item == item else { return nil }
+        return (request.command, request.resolved, request.activated)
+    }
+
     public func checkSelectionState() -> [String: Any] {
         precondition(Thread.isMainThread)
         let generation = selectionGeneration
@@ -1127,6 +1133,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func selectionDispatchForCheck(_ stage: String, command: LiveCommand, action: @escaping () -> Void) {
         traceMatrix("selection dispatch stage=\(stage) command=\(command.id) item=\(command.item) generation=\(selectionGeneration)")
+        if stage == "resolved", selectionRequest?.command == command.id { selectionRequest?.resolved = true }
         if let checkSelectionDispatch, command.kind == .activate { checkSelectionDispatch(stage, command.id, action) }
         else { action() }
     }
@@ -1206,6 +1213,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         if let local = tab(live) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
             traceMatrix("selection activated command=\(command.id) live=\(live) local=true")
+            if selectionRequest?.command == command.id { selectionRequest?.activated = true }
             checkSelectionActivated?(command.id)
             local.activate(withCommandId: command.id)
             return
@@ -1215,6 +1223,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         if let remote, supported, current.transferTab(remote, commandId: command.id) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
             traceMatrix("selection activated command=\(command.id) live=\(live) local=false")
+            if selectionRequest?.command == command.id { selectionRequest?.activated = true }
             checkSelectionActivated?(command.id)
             return
         }

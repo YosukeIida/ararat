@@ -1179,3 +1179,61 @@ func closingWindowRejectsQueuedSelectionAndCrashedStripButFinishesClose() async 
     #expect(session.queue.sync { session.store?.liveTab(item: row.0) } == nil)
     engine.shutdown()
 }
+
+@Test @MainActor
+func metadataDoesNotSelectAndInFlightSelectionExposesItsProgress() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "join", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    let row = try session.queue.sync { () -> (String, String) in
+        let row = try #require(session.store?.snapshot(windowId: "join").spaces.first?.today.first)
+        return (row.id, try #require(row.url))
+    }
+    var applied = false
+    engine.onTransaction = { _, ok in applied = ok }
+    engine.select(id: row.0, url: row.1)
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "join", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { applied }
+    let generation = try #require(engine.checkSelectionState()["generation"] as? Int)
+    applied = false
+    var metadata = matrixTransaction(fake, window: "join", epoch: 1, rev: 1, command: nil)
+    var strips = metadata["strips"] as! [[String: Any]]
+    var tabs = strips[0]["tabs"] as! [[String: Any]]
+    tabs[0]["loading"] = true; tabs[0]["audible"] = true; tabs[0]["canGoForward"] = true
+    strips[0]["tabs"] = tabs; metadata["strips"] = strips
+    engine.windowHost(host, didReceiveTransaction: metadata)
+    try await matrixWait { applied }
+    #expect(engine.checkSelectionState()["generation"] as? Int == generation)
+    #expect(fake.activated.isEmpty)
+    #expect(engine.rowStates[row.0]?.loading == true)
+    var registered: (() -> Void)?
+    var resolved: (() -> Void)?
+    engine.checkSelectionDispatch = { stage, _, resume in
+        if stage == "registered" { registered = resume } else { resolved = resume }
+    }
+    engine.select(id: row.0, url: row.1)
+    try await matrixWait { registered != nil }
+    let early = try #require(engine.checkInFlightSelection(item: row.0))
+    let command = try #require(early.command)
+    #expect(!early.resolved && !early.activated)
+    let resumeRegistered = try #require(registered)
+    resumeRegistered()
+    try await matrixWait { resolved != nil }
+    let middle = try #require(engine.checkInFlightSelection(item: row.0))
+    #expect(middle.command == command && middle.resolved && !middle.activated)
+    let resumeResolved = try #require(resolved)
+    resumeResolved()
+    try await matrixWait { fake.activated.contains(command) }
+    let active = try #require(engine.checkInFlightSelection(item: row.0))
+    #expect(active.command == command && active.activated)
+    applied = false
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "join", epoch: 1, rev: 2, command: command))
+    try await matrixWait { applied }
+    #expect(engine.checkInFlightSelection(item: row.0) == nil)
+    engine.shutdown()
+}
