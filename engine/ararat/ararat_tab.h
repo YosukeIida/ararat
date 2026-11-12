@@ -17,6 +17,7 @@ class WebContents;
 - (ARWindowHost*)ownerHost;
 - (void)refresh;
 - (void)navigationFinished;
+- (void)setNetworkError:(NSInteger)error;
 - (void)rendererCrashed;
 - (void)pageFocused;
 - (BOOL)takePendingNavigation;

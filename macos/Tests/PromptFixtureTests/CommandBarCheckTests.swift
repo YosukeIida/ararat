@@ -1,9 +1,10 @@
-import Foundation
+import AppKit
 import Testing
 @testable import Ararat
 
 @Test @MainActor
 func commandBarTimeoutDiagnosticsAreSerializableWithoutAHost() throws {
+    _ = NSApplication.shared
     let runtime = Runtime(windowID: "commandbar-diagnostics")
     runtime.browserCheckPhase = 11
     let diagnostics = runtime.commandBarCheckDiagnostics()

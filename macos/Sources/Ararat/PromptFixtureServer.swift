@@ -37,6 +37,13 @@ final class PromptFixtureServer {
         let line = String(decoding: request, as: UTF8.self).components(separatedBy: "\r\n").first ?? ""
         let target = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let path = String(target.split(separator: "?", maxSplits: 1).first ?? "")
+        if path == "/slow-download" {
+          let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Length: 1048576\r\nCache-Control: no-store\r\n\r\n"
+          connection.send(content: Data(header.utf8), completion: .contentProcessed { error in
+            if error == nil { sendDownloadChunk(connection) } else { connection.cancel() }
+          })
+          return
+        }
         let (status, headers, body): (String, String, String)
         switch path {
         case "/permissions":
@@ -67,6 +74,13 @@ final class PromptFixtureServer {
         receive(connection, data: request)
       }
     }
+  }
+
+  private static func sendDownloadChunk(_ connection: NWConnection) {
+    connection.send(content: Data(repeating: 0, count: 1024), completion: .contentProcessed { error in
+      guard error == nil else { connection.cancel(); return }
+      DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { sendDownloadChunk(connection) }
+    })
   }
 
   private static let permissionsPage = """

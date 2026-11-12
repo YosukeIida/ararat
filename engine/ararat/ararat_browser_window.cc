@@ -1,6 +1,7 @@
 #include "ararat/core/ararat_browser_window.h"
 
 #include <utility>
+#include <cstdio>
 
 #include "ararat/core/ararat_window_host.h"
 #include "ararat/core/ararat_autofill_bubble_handler.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
+#include "chrome/browser/ui/views/download/download_in_progress_dialog_view.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -479,7 +481,15 @@ void AraratBrowserWindow::ConfirmBrowserCloseWithPendingDownloads(
     int download_count,
     UnloadController::DownloadCloseType dialog_type,
     base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(false);
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close") {
+    std::fprintf(stderr, "ararat-trace: download-close showing confirmation count=%d type=%d\n", download_count, static_cast<int>(dialog_type));
+    callback = base::BindOnce([](base::OnceCallback<void(bool)> next, bool cancel) {
+      std::fprintf(stderr, "ararat-trace: download-close dialog callback cancel=%d\n", cancel);
+      std::move(next).Run(cancel);
+    }, std::move(callback));
+  }
+  DownloadInProgressDialogView::Show(GetNativeWindow(), download_count,
+                                     dialog_type, std::move(callback));
 }
 
 void AraratBrowserWindow::ShowAppMenu() {}

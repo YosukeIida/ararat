@@ -33,6 +33,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var handoffGeneration = 0
     private var splitHandles: [String: SplitDividerView] = [:]
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
+    private var failureViews: [String: PageFailureView] = [:]
     private var displayedSelection: String?
     private var dragBaseline: SplitPane?
     private var dragFactors: [SplitFactor]?
@@ -167,7 +168,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         card.postsFrameChangedNotifications = true
         if let cardResizeObserver { NotificationCenter.default.removeObserver(cardResizeObserver) }
         cardResizeObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: card, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.cancelSplitDrag(); self?.layoutSplit() }
+            MainActor.assumeIsolated { self?.cancelSplitDrag(); self?.layoutSplit(); self?.layoutFailures() }
         }
         let profile = queue.sync { self.shownProfileDirectory() }
         host.delegate = self
@@ -634,6 +635,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func shutdown() {
         precondition(Thread.isMainThread)
+        for view in failureViews.values { view.uncover(restoreFocus: false); view.removeFromSuperview() }
+        failureViews.removeAll()
         handoffGeneration += 1
         invalidateSelection()
         session.unregister(self, window: windowID)
@@ -716,7 +719,49 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             displayedSplit = snapshot.selectedId.flatMap { id in queue.sync { store?.splitLayout(itemId: id) } }
         }
         layoutSplit(skipNearSplitFrames: skipNearSplitFrames)
+        layoutFailures(snapshot: snapshot)
         onSnapshot?(snapshot)
+    }
+
+    private func layoutFailures(snapshot supplied: WorkspaceSnapshot? = nil) {
+        guard let host else { return }
+        let frames: [String: NSRect]
+        if let split = displayedSplit {
+            frames = SplitGeometry(root: split, bounds: card.bounds).panes
+        } else if let selected = displayedSelection {
+            frames = [selected: card.bounds]
+        } else {
+            frames = [:]
+        }
+        let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
+        let failures = tabs.filter { tab in
+            guard let id = tab.itemId else { return false }
+            return frames[id] != nil && (tab.crashed || tab.networkError != 0)
+        }
+        let ids = Set(failures.compactMap(\.itemId))
+        for id in failureViews.keys.filter({ !ids.contains($0) }) {
+            guard let view = failureViews.removeValue(forKey: id) else { continue }
+            view.uncover(restoreFocus: host.activeItemId() == id)
+            view.removeFromSuperview()
+        }
+        guard !failures.isEmpty, let snapshot = supplied ?? queue.sync(execute: { store?.snapshot(windowId: windowID) }) else { return }
+        for tab in failures {
+            guard let id = tab.itemId, let frame = frames[id] else { continue }
+            let view = failureViews[id] ?? PageFailureView(frame: frame)
+            let archive = snapshot.spaces.flatMap(\.today).contains { $0.id == id }
+            view.frame = frame
+            view.update(crashed: tab.crashed, error: Int(tab.networkError), host: URL(string: tab.url)?.host ?? tab.url, archive: archive)
+            view.onReload = { [weak tab] in tab?.reload() }
+            view.onClose = { [weak self] in self?.close(id: id, archive: archive) }
+            if view.superview !== card { card.addSubview(view, positioned: .above, relativeTo: nil) }
+            view.cover(tab.view, focus: host.activeItemId() == id) { [weak tab] in tab?.focus() }
+            failureViews[id] = view
+        }
+    }
+
+    public func checkFailureState(item: String) -> [String: Any] { failureViews[item]?.checkState ?? [:] }
+    public func checkFailurePress(item: String, secondary: Bool, screen: Bool) -> Bool {
+        failureViews[item]?.checkPress(secondary: secondary, screen: screen) ?? false
     }
 
     private func layoutSplit(skipNearSplitFrames: Bool = false) {

@@ -17,6 +17,9 @@ __attribute__((visibility("default")))
 @property(nonatomic, readonly) NSUInteger entryCount;
 @property(nonatomic, readonly) BOOL canGoBack;
 @property(nonatomic, readonly) BOOL crashed;
+@property(nonatomic, readonly) NSInteger networkError;
+- (void)reload;
+- (void)focus;
 - (void)checkFlushHistory:(void (^)(BOOL written))completion;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;

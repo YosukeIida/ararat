@@ -1,0 +1,53 @@
+--- a/components/security_interstitials/core/browser/resources/interstitial_ssl.css
++++ b/components/security_interstitials/core/browser/resources/interstitial_ssl.css
+@@ -42,3 +42,48 @@
+     color: rgb(138, 180, 248); /* google-blue-300 */
+   }
+ }
++
++.ssl .interstitial-wrapper {
++  min-height: 100vh;
++  margin: 0 auto;
++  padding: 24px;
++  max-width: 468px;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  text-align: center;
++}
++
++.ssl .icon {
++  width: 44px;
++  height: 44px;
++  margin: 0 auto 16px;
++}
++
++.ssl h1 {
++  font-size: 20px;
++  font-weight: 600;
++  line-height: 26px;
++  margin: 0 0 10px;
++}
++
++.ssl #main-message > p {
++  display: block;
++  font-size: 13px;
++  line-height: 19px;
++  margin: 0;
++}
++
++.ssl .nav-wrapper {
++  display: flex;
++  justify-content: center;
++  gap: 8px;
++  margin-top: 18px;
++}
++
++.ssl .nav-wrapper button {
++  float: none;
++  font-size: 13px;
++  border-radius: 8px;
++}
++
++.ssl #details { margin: 16px 0 0; font-size: 13px; }

@@ -232,6 +232,7 @@ void CheckGuards(int argc, const char** argv) {
       screen_prompts = std::string_view(arg + 16) == "prompts";
       valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name";
       if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name") g_check_slice = true;
+      if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -249,7 +250,8 @@ void CheckGuards(int argc, const char** argv) {
       check_devtools = name == "devtools";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
+      browser_check = browser_check || name == "errorpages";
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";

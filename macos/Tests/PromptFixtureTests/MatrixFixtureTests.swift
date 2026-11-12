@@ -11,6 +11,8 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var liveId: String
     @objc dynamic var itemId: String?
     @objc dynamic var isLoading = false
+    @objc dynamic var crashed = false
+    @objc dynamic var networkError = 0
     weak var owner: MatrixFakeHost?
     var profile: String
     init(item: String, live: String, profile: String, owner: MatrixFakeHost) {
