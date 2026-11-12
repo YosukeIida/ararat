@@ -1735,7 +1735,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     NSString* name = base::SysUTF16ToNSString(action->GetActionName());
     NSString* tooltip = base::SysUTF16ToNSString(action->GetTooltip(contents));
     auto* state = manager ? manager->GetExtensionAction(*extension) : nullptr;
-    const int tab_id = sessions::SessionTabHelper::IdForTab(contents).id();
+    const int tab_id = contents ? sessions::SessionTabHelper::IdForTab(contents).id() : -1;
     NSString* badge = state ? base::SysUTF8ToNSString(state->GetDisplayBadgeText(tab_id)) : @"";
     [result addObject:@{ @"id": [NSString stringWithUTF8String:id.c_str()],
                          @"name": name, @"icon": icon ?: [NSImage new], @"tooltip": tooltip,
@@ -3725,6 +3725,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     extension_container->SetChangedCallback(base::BindRepeating(^{
       [host queueExtensionActionsChanged];
     }));
+    // U26e: the action snapshot (badge text/colour per tab, popup anchor, invocation) must
+    // follow the focused tab, not the contents the window was built with.
+    extension_container->SetWebContents(active);
   }
   [self queueExtensionActionsChanged];
   NSView* card = [self.delegate pageCardForWindowHost:self];
