@@ -31,7 +31,7 @@ fn workspace() -> Workspace {
 fn strip(live: &Live, tabs: &[&str], active: Option<&str>) -> Strip {
     Strip {
         window: "one".into(),
-        tabs: tabs.iter().map(|item| LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab(item).expect("mapped"), item: Some((*item).into()) }).collect(),
+        tabs: tabs.iter().map(|item| LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab(item).expect("mapped"), item: Some((*item).into()) }).collect(),
         active: active.map(|item| live.live_tab(item).expect("mapped")),
     }
 }
@@ -51,14 +51,14 @@ fn remote_selection_survives_detach_until_explicit_local_activation() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
     let mut moved = strip(&live, &["a"], Some("a"));
     moved.window = "two".into();
-    let (_, result) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome,
+    let (_, result) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["b"], Some("b")), moved] });
     assert!(result.applied);
     assert_eq!(ws.selected("one"), Some("a"));
     let command = live.activate(&ws, "b").unwrap();
     live.command_sent(&command);
     assert!(live.selection_intent(&command.id, "one"));
-    let (_, result) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(command.id),
+    let (_, result) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2, cause: Cause::Command(command.id),
         strips: vec![strip(&live, &["b"], Some("b"))] });
     assert!(result.applied);
     assert_eq!(ws.selected("one"), Some("b"));
@@ -78,7 +78,7 @@ fn a_remote_selection_does_not_reactivate_an_off_space_strip() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
     let mut moved = strip(&live, &["a"], Some("a"));
     moved.window = "two".into();
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome,
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["b"], Some("b")), moved] });
     assert!(outcome.applied);
     assert!(outcome.commands.is_empty());
@@ -102,7 +102,7 @@ fn an_explicit_activation_cannot_restore_a_space_the_window_left() {
     assert!(live.selection_intent(&command.id, "one"));
     ws.show_space("one", "other").unwrap();
     ws.select_item("one", "b").unwrap();
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(command.id),
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Command(command.id),
         strips: vec![strip(&live, &["a", "b"], Some("a"))] });
     assert!(outcome.applied);
     assert_eq!(ws.selected("one"), Some("b"));
@@ -125,10 +125,10 @@ fn newer_selection_intent_rejects_a_late_completion() {
     let new = live.activate(&ws, "c").unwrap();
     live.command_sent(&new);
     assert!(live.selection_intent(&new.id, "one"));
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(new.id),
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Command(new.id),
         strips: vec![strip(&live, &["a", "b", "c"], Some("c"))] });
     assert!(outcome.applied);
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(old.id),
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2, cause: Cause::Command(old.id),
         strips: vec![strip(&live, &["a", "b", "c"], Some("b"))] });
     assert!(!outcome.applied);
     assert_eq!(ws.selected("one"), Some("c"));
@@ -142,7 +142,7 @@ fn replaying_the_same_active_strip_preserves_workspace_rows() {
     live.command_sent(&command);
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
     let before = ws.clone();
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
@@ -163,7 +163,7 @@ fn engine_metadata_does_not_replace_a_space_switch_selection() {
     ws.create_space("one", "Other", "other").unwrap();
     tab(&mut ws, "c2", "other:today", "https://c.example");
     ws.select_item("one", "c2").unwrap();
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Engine,
         strips: vec![strip(&live, &["a", "b"], Some("a"))],
     });
@@ -178,7 +178,7 @@ fn engine_metadata_does_not_replace_a_space_switch_selection() {
     tab(&mut ws, "d2", "other:today", "https://d.example");
     let (_, command) = live.open(&mut ws, "d2", "u").unwrap();
     live.command_sent(&command);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b", "d2"], Some("d2"))],
     });
@@ -196,7 +196,7 @@ fn a_hidden_page_snapshot_keeps_empty_space_selection_and_live_membership() {
     ws.create_space("one", "Empty", "empty").unwrap();
     let before = ws.clone();
     for (rev, cause) in [(1, Cause::Engine), (2, Cause::Chrome)] {
-        let (_, outcome) = live.apply(&mut ws, Transaction {
+        let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
             epoch: 1, rev, cause, strips: vec![strip(&live, &["a"], None)],
         });
         assert!(outcome.applied);
@@ -219,7 +219,7 @@ fn reconciliation_selects_the_shown_browsers_active_tab() {
     ws.last_selected.insert("b".into(), 2);
     let switch_ops = ws.show_space("one", "space-work").unwrap();
     let before = ws.clone();
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b"], Some("b"))],
     });
@@ -246,7 +246,7 @@ fn leaving_a_tab_after_thirteen_hours_keeps_it_out_of_the_next_archive_tick() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
     ws.last_selected.insert("a".into(), now - 13 * 3_600_000);
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b"], Some("b"))],
     });
@@ -268,11 +268,11 @@ fn background_open_and_reorder_do_not_restamp_the_active_tab() {
     ws.last_selected.insert("a".into(), 100);
     let (_, second) = live.open(&mut ws, "b", "u").unwrap();
     live.command_sent(&second);
-    let (opened, _) = live.apply(&mut ws, Transaction {
+    let (opened, _) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(second.id),
         strips: vec![strip(&live, &["a", "b"], Some("a"))],
     });
-    let (reordered, _) = live.apply(&mut ws, Transaction {
+    let (reordered, _) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Chrome,
         strips: vec![strip(&live, &["b", "a"], Some("a"))],
     });
@@ -293,7 +293,7 @@ fn a_selection_recorded_before_the_strip_stamps_the_outgoing_tab_only_once() {
     assert_eq!(ws.last_selected["a"], 123);
     assert_eq!(selection.iter().filter(|op| matches!(op, Op::Put(Record::LastSelected { item, .. }) if item == "a")).count(), 1);
     let before = ws.clone();
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b"], Some("b"))],
     });
@@ -310,7 +310,7 @@ fn reporting_a_selected_unloaded_tab_as_live_marks_it_open() {
     live.command_sent(&command);
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
     ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Unloaded;
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
@@ -325,13 +325,13 @@ fn snapshot_close_for_archived_tab_accepts_its_completion() {
     let mut live = Live::new();
     let (_, snapshot) = live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "engine-a".into(), item: Some("a".into()) }],
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "engine-a".into(), item: Some("a".into()) }],
         active: None,
     }]));
     assert!(snapshot.applied);
     assert_eq!(snapshot.commands.len(), 1);
     assert_eq!(snapshot.commands[0].kind, CommandKind::Close);
-    let (_, completion) = live.apply(&mut ws, Transaction {
+    let (_, completion) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(snapshot.commands[0].id.clone()),
         strips: vec![strip_empty("one")],
     });
@@ -344,17 +344,17 @@ fn within_epoch_close_for_archived_tab_accepts_its_completion() {
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![]));
     ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Archived;
-    let (_, changed) = live.apply(&mut ws, Transaction {
+    let (_, changed) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
-            tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "engine-a".into(), item: Some("a".into()) }],
+            tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "engine-a".into(), item: Some("a".into()) }],
             active: None,
         }],
     });
     assert_eq!(changed.commands.len(), 1);
     assert_eq!(changed.commands[0].kind, CommandKind::Close);
-    let (_, completion) = live.apply(&mut ws, Transaction {
+    let (_, completion) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(changed.commands[0].id.clone()),
         strips: vec![strip_empty("one")],
     });
@@ -368,14 +368,14 @@ fn completed_open_and_close_allow_reopening() {
     live.apply(&mut ws, snapshot_tx(vec![]));
     let (_, open) = live.open(&mut ws, "pinned", "u").unwrap();
     live.command_sent(&open);
-    let (_, opened) = live.apply(&mut ws, Transaction {
+    let (_, opened) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(open.id.clone()),
         strips: vec![strip(&live, &["pinned"], Some("pinned"))],
     });
     assert!(opened.applied);
     let (_, close) = live.close(&mut ws, "pinned").unwrap();
     live.command_sent(&close);
-    let (_, closed) = live.apply(&mut ws, Transaction {
+    let (_, closed) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(close.id),
         strips: vec![strip_empty("one")],
     });
@@ -390,7 +390,7 @@ fn failed_open_clears_its_mapping_and_can_be_retried() {
     live.apply(&mut ws, snapshot_tx(vec![]));
     let (_, command) = live.open(&mut ws, "a", "u").unwrap();
     live.command_sent(&command);
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(command.id.clone()),
         strips: vec![strip_empty("one")],
     });
@@ -400,7 +400,7 @@ fn failed_open_clears_its_mapping_and_can_be_retried() {
     assert_eq!(live.item_for(&command.id), None);
     assert_eq!(ws.items["a"].lifecycle, Lifecycle::Unloaded);
     assert!(live.open(&mut ws, "a", "u").is_ok());
-    let (_, duplicate) = live.apply(&mut ws, Transaction {
+    let (_, duplicate) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(command.id), strips: vec![],
     });
     assert!(!duplicate.applied);
@@ -435,7 +435,7 @@ fn cancelling_a_pending_activation_keeps_the_live_tab_and_rejects_a_late_complet
     live.apply(&mut ws, snapshot_tx(vec![]));
     let (_, open) = live.open(&mut ws, "a", "u").unwrap();
     live.command_sent(&open);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(open.id.clone()),
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
@@ -445,7 +445,7 @@ fn cancelling_a_pending_activation_keeps_the_live_tab_and_rejects_a_late_complet
     assert!(live.cancel(&mut ws, &activate.id).0);
     assert!(!live.cancel(&mut ws, &activate.id).0);
     assert_eq!(live.live_tab("a").as_deref(), Some(open.id.as_str()));
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(activate.id),
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
@@ -466,7 +466,7 @@ fn archiving_a_live_tab_returns_a_close_and_keeps_the_row_archived() {
 }
 
 fn snapshot_tx(strips: Vec<Strip>) -> Transaction {
-    Transaction { epoch: 1, rev: 0, cause: Cause::Engine, strips }
+    Transaction { off_the_record: false, epoch: 1, rev: 0, cause: Cause::Engine, strips }
 }
 
 #[test]
@@ -522,7 +522,7 @@ fn chrome_activation_updates_the_windows_selection() {
     live.command_sent(&command_a);
     live.command_sent(&command_b);
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], None)]));
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b"], Some("b"))],
     });
@@ -551,14 +551,14 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     ws.show_space("one", "other").unwrap();
     let shown = live.activate(&ws, "d").unwrap();
     live.command_sent(&shown);
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Command(shown.id.clone()),
         strips: vec![strip(&live, &["a", "d"], Some("d"))],
     });
     assert_eq!(ws.selected("one"), Some("d"));
     // The late activation of a completes with a as the active tab, but a is in the space the
     // window left: the strip keeps its mapping and must not take the selection back.
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(late.id.clone()),
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -580,7 +580,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     assert!(live.item_for(&reassert.id).is_none());
     // While that Activate is in flight, another Chrome strip that still names a must not mint
     // a second one: the in-flight entry covers it as well as this transaction's.
-    let (_, second) = live.apply(&mut ws, Transaction {
+    let (_, second) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 3, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -588,7 +588,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     assert_eq!(ws.selected("one"), Some("d"));
     // The reply names d: its strip passes the guard, the selection is already d, so it records
     // nothing and asks for no further command. The exchange ends here.
-    let (reply_ops, reply) = live.apply(&mut ws, Transaction {
+    let (reply_ops, reply) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 4, cause: Cause::Command(reassert.id.clone()),
         strips: vec![strip(&live, &["a", "d"], Some("d"))],
     });
@@ -599,7 +599,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     // A Chrome-caused strip is answered the same way. A selection cancels that Activate, and
     // the cancel clears the in-flight entry, so the next strip asks again instead of finding a
     // stale one.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 5, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -610,7 +610,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     let (cancelled, cancel_ops) = live.cancel(&mut ws, &outcome.commands[0].id);
     assert!(cancelled);
     assert!(cancel_ops.is_empty());
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 6, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -619,7 +619,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     // The shown space's own active tab records once the window shows that space again, and
     // the strip asks for nothing.
     ws.show_space("one", "space-work").unwrap();
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 7, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -631,7 +631,7 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     ws.show_space("one", "other").unwrap();
     let (_, b) = live.open(&mut ws, "b", "u").unwrap();
     live.command_sent(&b);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 8, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b", "d"], Some("b"))],
     });
@@ -654,7 +654,7 @@ fn a_swallowed_activation_does_not_silence_the_reopened_row() {
     // The window shows other with d selected; an off-space strip asks for d once.
     ws.show_space("one", "other").unwrap();
     ws.select_item("one", "d").unwrap();
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -665,7 +665,7 @@ fn a_swallowed_activation_does_not_silence_the_reopened_row() {
     // in-flight Activate must leave with it.
     let act_a = live.activate(&ws, "a").unwrap();
     live.command_sent(&act_a);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(act_a.id.clone()),
         strips: vec![strip(&live, &["a"], Some("a"))],
     });
@@ -674,7 +674,7 @@ fn a_swallowed_activation_does_not_silence_the_reopened_row() {
     // The row is opened again; an off-space strip must be free to ask for it again.
     let (_, reopened) = live.open(&mut ws, "d", "u").unwrap();
     live.command_sent(&reopened);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 3, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "d"], Some("a"))],
     });
@@ -684,7 +684,7 @@ fn a_swallowed_activation_does_not_silence_the_reopened_row() {
     assert_eq!(outcome.commands[0].item, "d");
     // A reply for the dropped id names no command in flight: the transaction is dropped whole.
     let before = ws.clone();
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 4, cause: Cause::Command(dropped),
         strips: vec![strip(&live, &["a", "d"], Some("d"))],
     });
@@ -703,13 +703,13 @@ fn chrome_close_of_the_active_tab_activates_the_successor_the_core_chooses() {
     }
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b", "c"], Some("b"))]));
     // Chrome's own switches fill the selection history: c, then b.
-    live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a", "b", "c"], Some("c"))] });
+    live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a", "b", "c"], Some("c"))] });
     assert_eq!(ws.selected("one"), Some("c"));
-    live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Chrome, strips: vec![strip(&live, &["a", "b", "c"], Some("b"))] });
+    live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2, cause: Cause::Chrome, strips: vec![strip(&live, &["a", "b", "c"], Some("b"))] });
     assert_eq!(ws.selected("one"), Some("b"));
     // Chrome closes b and moves to a; the history says c was selected before b, so the
     // coordinator returns an activate for c instead of trusting a.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 3, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "c"], Some("a"))],
     });
@@ -733,7 +733,7 @@ fn a_chrome_close_of_a_background_tab_returns_no_activate() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b", "c"], Some("a"))]));
     // c is closed while a stays active: the selection did not change, so no activate is
     // returned and the window's active tab is recorded as before.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b"], Some("a"))],
     });
@@ -751,20 +751,20 @@ fn a_stale_rev_or_old_epoch_is_dropped_and_counted() {
     live.command_sent(&command_a);
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], None)]));
     // a repeated rev is dropped
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 0, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 0, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
     assert!(!outcome.applied);
     // rev 1 applies, rev 1 again is dropped
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
     assert!(outcome.applied);
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
     assert!(!outcome.applied);
     // a new epoch that does not arrive as a full snapshot is dropped
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 2, rev: 7, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 2, rev: 7, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], None)] });
     assert!(!outcome.applied);
     // the snapshot for the new epoch lands, and the old epoch is dropped after it
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 2, rev: 0, cause: Cause::Chrome, strips: vec![] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 2, rev: 0, cause: Cause::Chrome, strips: vec![] });
     assert!(outcome.applied);
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 9, cause: Cause::Chrome, strips: vec![] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 9, cause: Cause::Chrome, strips: vec![] });
     assert!(!outcome.applied);
     assert_eq!(live.dropped(), 4);
 }
@@ -777,9 +777,9 @@ fn a_completion_from_an_old_epoch_is_dropped_and_the_current_one_applies() {
     let (_, command) = live.open(&mut ws, "a", "https://a.example/").unwrap();
     live.command_sent(&command);
     // The engine restarts; the snapshot for the new epoch carries no live tabs.
-    live.apply(&mut ws, Transaction { epoch: 2, rev: 0, cause: Cause::Engine, strips: vec![] });
+    live.apply(&mut ws, Transaction { off_the_record: false, epoch: 2, rev: 0, cause: Cause::Engine, strips: vec![] });
     // The completion still carries the epoch it was issued in: dropped.
-    let (_, outcome) = live.apply(&mut ws, Transaction { epoch: 1, rev: 0, cause: Cause::Command(command.id.clone()), strips: vec![] });
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 0, cause: Cause::Command(command.id.clone()), strips: vec![] });
     assert!(!outcome.applied);
     assert_eq!(live.dropped(), 1);
     // The map is gone with the epoch: the item is open in the workspace and unmapped, and
@@ -797,15 +797,15 @@ fn a_restart_snapshot_reconciles_the_architecture_five_two_cases() {
     // pinned: open and in the engine; plus one engine tab with no item at all (adopted
     // into Today of the shown space).
     ws.items.get_mut("c").unwrap().lifecycle = Lifecycle::Closed;
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 2, rev: 0, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-a".into(), item: Some("a".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-c".into(), item: Some("c".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-pinned".into(), item: Some("pinned".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-new".into(), item: None },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-a".into(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-c".into(), item: Some("c".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-pinned".into(), item: Some("pinned".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-new".into(), item: None },
             ],
             active: Some("live-a".into()),
         }],
@@ -881,13 +881,13 @@ fn a_transaction_that_reuses_a_live_id_is_dropped_and_the_map_stays_unique() {
     // live(a) now claims item b, which is already live under its own tab: the transaction
     // is dropped whole and the map stays one to one.
     let reused = live.live_tab("a").unwrap();
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: reused.clone(), item: Some("b".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("b").unwrap(), item: Some("b".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: reused.clone(), item: Some("b".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("b").unwrap(), item: Some("b".into()) },
             ],
             active: None,
         }],
@@ -920,13 +920,13 @@ fn an_itemless_tab_inside_the_epoch_is_adopted_in_that_transaction() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], None)]));
     // Chrome opened a tab on its own (⌘-click, window.open): the strips carry it with no
     // item, and the adoption happens in this transaction.
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("a").unwrap(), item: Some("a".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-new".into(), item: None },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("a").unwrap(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live-new".into(), item: None },
             ],
             active: Some("live-new".into()),
         }],
@@ -964,16 +964,16 @@ fn background_adoption_does_not_enter_selection_history() {
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }],
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }],
         active: Some("La".into()),
     }]));
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "new".into(), item: None },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "new".into(), item: None },
             ],
             active: Some("La".into()),
         }],
@@ -991,8 +991,8 @@ fn background_adoption_in_a_snapshot_has_no_selection_history() {
     let (_, outcome) = live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
         tabs: vec![
-            LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
-            LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "new".into(), item: None },
+            LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
+            LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "new".into(), item: None },
         ],
         active: Some("La".into()),
     }]));
@@ -1008,7 +1008,7 @@ fn adopted_tab_metadata_tracks_navigation_and_preserves_custom_title() {
     let mut live = Live::new();
     let (_, outcome) = live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(),
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
             live_id: "new".into(), item: None, opener: None, navigated: false,
             url: Some("https://first.example/".into()), title: Some("First".into()),
         }],
@@ -1018,11 +1018,11 @@ fn adopted_tab_metadata_tracks_navigation_and_preserves_custom_title() {
     assert_eq!(ws.items[&id].display_title(), "First");
     assert!(matches!(&ws.items[&id].kind, ItemKind::Tab { url, .. } if url == "https://first.example/"));
     ws.rename_tab(&id, "Custom").unwrap();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
-            tabs: vec![LiveTab { profile: Default::default(),
+            tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
                 live_id: "new".into(), item: Some(id.clone()), opener: None, navigated: true,
                 url: Some("https://second.example/".into()), title: Some("Second".into()),
             }],
@@ -1032,9 +1032,9 @@ fn adopted_tab_metadata_tracks_navigation_and_preserves_custom_title() {
     assert_eq!(ws.items[&id].display_title(), "Custom");
     assert!(matches!(&ws.items[&id].kind, ItemKind::Tab { url, saved_title: Some(title) } if url == "https://second.example/" && title == "Second"));
     ws.set_tab_url(&id, "https://pending.example/").unwrap();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Engine,
-        strips: vec![Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(),
+        strips: vec![Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
             live_id: "new".into(), item: Some(id.clone()), opener: None, navigated: false,
             url: Some("https://second.example/".into()), title: Some("Stale".into()),
         }], active: Some("new".into()) }],
@@ -1048,7 +1048,7 @@ fn title_report_does_not_change_a_rows_url_without_a_navigation() {
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(),
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
             live_id: "La".into(), item: Some("a".into()), opener: None, navigated: false,
             url: Some("about:blank".into()), title: Some("Page".into()),
         }],
@@ -1064,7 +1064,7 @@ fn an_empty_url_is_filled_from_a_previously_committed_entry() {
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(),
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
             live_id: "La".into(), item: Some("a".into()), opener: None, navigated: false,
             url: Some("https://committed.example/".into()), title: Some("Page".into()),
         }],
@@ -1082,7 +1082,7 @@ fn pinned_navigation_keeps_the_saved_url_and_title() {
     let mut live = Live::new();
     live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(),
-        tabs: vec![LiveTab { profile: Default::default(),
+        tabs: vec![LiveTab { off_the_record: false, profile: Default::default(),
             live_id: "Lp".into(), item: Some("pinned".into()), opener: None, navigated: true,
             url: Some("https://pinned.example/message".into()), title: Some("Message".into()),
         }],
@@ -1175,20 +1175,20 @@ fn an_itemless_tab_adopts_into_its_own_windows_shown_space() {
     for op in ws.create_space("two", "Home", "space-home").unwrap() { ws.apply(&op); }
     tab(&mut ws, "home", "space-home:today", "https://home.example");
     let mut live = Live::new();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![
-            Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) }], active: Some("L1".into()) },
-            Strip { window: "two".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L2".into(), item: Some("home".into()) }], active: None },
+            Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) }], active: Some("L1".into()) },
+            Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L2".into(), item: Some("home".into()) }], active: None },
         ],
     });
     // Window two's shown space is space-home: the itemless tab there adopts into
     // space-home:today, not into window one's Today.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![
-            Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) }], active: Some("L1".into()) },
-            Strip { window: "two".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L2".into(), item: Some("home".into()) }, LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L3".into(), item: None }], active: Some("L3".into()) },
+            Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) }], active: Some("L1".into()) },
+            Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L2".into(), item: Some("home".into()) }, LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L3".into(), item: None }], active: Some("L3".into()) },
         ],
     });
     assert!(outcome.applied);
@@ -1211,13 +1211,13 @@ fn a_dropped_transaction_leaves_the_workspace_and_the_map_alone() {
     live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b", "c"], Some("b"))]));
     // The transaction drops Lc and has Lb claim item a: dropped whole, and the workspace
     // and the map are exactly as they were.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("a").unwrap(), item: Some("a".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("b").unwrap(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("a").unwrap(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: live.live_tab("b").unwrap(), item: Some("a".into()) },
             ],
             active: None,
         }],
@@ -1228,12 +1228,12 @@ fn a_dropped_transaction_leaves_the_workspace_and_the_map_alone() {
     assert_eq!(live.live_tab("a").as_deref(), Some(command_a.id.as_str()));
     // The dropped transaction consumed its rev (design): a retry with the same rev is
     // dropped too, and the next rev applies.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b", "c"], None)],
     });
     assert!(!outcome.applied);
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Chrome,
         strips: vec![strip(&live, &["a", "b", "c"], None)],
     });
@@ -1246,17 +1246,17 @@ fn a_transaction_naming_one_window_leaves_the_other_windows_tabs_alone() {
     for op in ws.create_space("two", "Home", "space-home").unwrap() { ws.apply(&op); }
     tab(&mut ws, "home", "space-home:today", "https://home.example");
     let mut live = Live::new();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![
-            Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
-            Strip { window: "two".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) },
+            Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
+            Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) },
         ],
     });
     // The transaction names only window two: window one's tabs stay open and mapped.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
-        strips: vec![Strip { window: "two".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) }],
+        strips: vec![Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) }],
     });
     assert!(outcome.applied);
     assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
@@ -1271,19 +1271,19 @@ fn a_closed_window_arrives_as_an_empty_strip() {
     for op in ws.create_space("two", "Home", "space-home").unwrap() { ws.apply(&op); }
     tab(&mut ws, "home", "space-home:today", "https://home.example");
     let mut live = Live::new();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![
-            Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
-            Strip { window: "two".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) },
+            Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
+            Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lc".into(), item: Some("home".into()) }], active: Some("Lc".into()) },
         ],
     });
     // Window two closed: its strip arrives empty, and its tab is gone for the core's
     // rules (Chrome caused it, so the ⌘W rule closes the row).
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![
-            Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
+            Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) }, LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }], active: Some("La".into()) },
             Strip { window: "two".into(), tabs: vec![], active: None },
         ],
     });
@@ -1297,13 +1297,13 @@ fn a_closed_window_arrives_as_an_empty_strip() {
 fn closing_a_window_keeps_rows_and_allows_the_selected_tab_to_reopen() {
     let mut ws = workspace();
     let mut live = Live::new();
-    live.apply(&mut ws, Transaction {
+    live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
-        strips: vec![Strip { window: "one".into(), tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None,
+        strips: vec![Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None,
             live_id: "La".into(), item: Some("a".into()),
         }], active: Some("La".into()) }],
     });
-    let (ops, outcome) = live.apply(&mut ws, Transaction {
+    let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Engine,
         strips: vec![Strip { window: "one".into(), tabs: vec![], active: None }],
     });
@@ -1322,13 +1322,13 @@ fn a_snapshot_marks_an_unloaded_row_the_engine_carries_open() {
     let mut live = Live::new();
     // The engine reports the unloaded row as live: the row is open from here on, because
     // the engine owns which tabs exist.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lp".into(), item: Some("pinned".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lp".into(), item: Some("pinned".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "La".into(), item: Some("a".into()) },
             ],
             active: Some("Lp".into()),
         }],
@@ -1344,11 +1344,11 @@ fn a_chrome_transaction_before_an_open_completes_leaves_the_open_alone() {
     let mut live = Live::new();
     // The engine starts with only b live: the snapshot unloads a, and the open that
     // follows flips it back open.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
-            tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }],
+            tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }],
             active: Some("Lb".into()),
         }],
     });
@@ -1357,11 +1357,11 @@ fn a_chrome_transaction_before_an_open_completes_leaves_the_open_alone() {
     live.command_sent(&command_a);
     assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
     // The engine has not created the tab yet: Chrome's transaction still names only b.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
-            tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }],
+            tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) }],
             active: Some("Lb".into()),
         }],
     });
@@ -1373,13 +1373,13 @@ fn a_chrome_transaction_before_an_open_completes_leaves_the_open_alone() {
     assert_eq!(live.live_tab("a").as_deref(), Some(command_a.id.as_str()));
     // The open's completion carries the tab under the command's id and applies with no
     // close.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(command_a.id.clone()),
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: command_a.id.clone(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "Lb".into(), item: Some("b".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: command_a.id.clone(), item: Some("a".into()) },
             ],
             active: Some(command_a.id.clone()),
         }],
@@ -1404,11 +1404,11 @@ fn a_chrome_transaction_before_a_close_completes_leaves_the_unload_alone() {
     // The engine has not carried the close out yet: Chrome's strips still carry the tab
     // under the live id the open command carried. The pending close is not undone — no
     // re-map, no re-selection, no ops at all.
-    let (tx_ops, outcome) = live.apply(&mut ws, Transaction {
+    let (tx_ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 1, cause: Cause::Chrome,
         strips: vec![Strip {
             window: "one".into(),
-            tabs: vec![LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: open_command.id.clone(), item: Some("pinned".into()) }],
+            tabs: vec![LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: open_command.id.clone(), item: Some("pinned".into()) }],
             active: Some(open_command.id.clone()),
         }],
     });
@@ -1419,7 +1419,7 @@ fn a_chrome_transaction_before_a_close_completes_leaves_the_unload_alone() {
     assert!(live.live_tab("pinned").is_none());
     // The engine carries the close out: the transaction without the tab leaves the map
     // clean.
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Engine,
         strips: vec![strip(&live, &[], None)],
     });
@@ -1433,13 +1433,13 @@ fn a_snapshot_rejects_duplicate_live_ids() {
     let mut ws = workspace();
     let mut live = Live::new();
     let before = ws.clone();
-    let (_, outcome) = live.apply(&mut ws, Transaction {
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![Strip {
             window: "one".into(),
             tabs: vec![
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) },
-                LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("b".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) },
+                LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("b".into()) },
             ],
             active: Some("L1".into()),
         }],
@@ -1458,21 +1458,21 @@ fn a_snapshot_rejects_duplicate_live_ids() {
 fn paired_strips_move_ownership_and_reject_duplicate_claims() {
     let mut ws = workspace();
     let mut live = Live::new();
-    let tab = LiveTab { profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) };
+    let tab = LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "L1".into(), item: Some("a".into()) };
     let source = Strip { window: "one".into(), tabs: vec![tab.clone()], active: None };
     let destination = Strip { window: "two".into(), tabs: vec![], active: None };
     assert!(live.apply(&mut ws, snapshot_tx(vec![source.clone(), destination])).1.applied);
     assert_eq!(live.live_window("a").as_deref(), Some("one"));
     let target = Strip { window: "two".into(), tabs: vec![tab], active: None };
     let before = ws.clone();
-    assert!(!live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![source, target.clone()] }).1.applied);
+    assert!(!live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![source, target.clone()] }).1.applied);
     assert_eq!(ws, before);
     assert_eq!(live.live_window("a").as_deref(), Some("one"));
-    assert!(live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Chrome, strips: vec![strip_empty("one"), target] }).1.applied);
+    assert!(live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2, cause: Cause::Chrome, strips: vec![strip_empty("one"), target] }).1.applied);
     assert_eq!(live.live_window("a").as_deref(), Some("two"));
     assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
     assert!(ws.history_purges.is_empty());
-    assert!(!live.apply(&mut ws, Transaction { epoch: 1, rev: 3, cause: Cause::Engine, strips: vec![strip_empty("one"), strip_empty("one")] }).1.applied);
+    assert!(!live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 3, cause: Cause::Engine, strips: vec![strip_empty("one"), strip_empty("one")] }).1.applied);
 }
 
 
@@ -1491,8 +1491,8 @@ fn adoption_uses_the_recent_space_for_the_tabs_profile_in_each_window() {
     ws.show_space("two", "space-work").unwrap();
     let mut live = Live::new();
     let (_, outcome) = live.apply(&mut ws, snapshot_tx(vec![
-        Strip { window: "one".into(), tabs: vec![LiveTab { profile: Profile::Named("Profile 1".into()), live_id: "first".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None },
-        Strip { window: "two".into(), tabs: vec![LiveTab { profile: Profile::Named("Profile 1".into()), live_id: "second".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None },
+        Strip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Profile::Named("Profile 1".into()), live_id: "first".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None },
+        Strip { window: "two".into(), tabs: vec![LiveTab { off_the_record: false, profile: Profile::Named("Profile 1".into()), live_id: "second".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None },
     ]));
     let adopted = |id: &str| &outcome.adopted.iter().find(|(live, _)| live == id).unwrap().1;
     assert_eq!(ws.items[adopted("first")].membership.parent.as_deref(), Some("other:today"));
@@ -1508,7 +1508,7 @@ fn a_tab_claiming_an_item_from_another_profile_is_rejected_without_row_changes()
     let mut live = Live::new();
     let (ops, outcome) = live.apply(&mut ws, snapshot_tx(vec![Strip {
         window: "one".into(), active: None,
-        tabs: vec![LiveTab { profile: Profile::Named("Profile 1".into()), live_id: "foreign".into(), item: Some("a".into()), opener: None, navigated: false, url: None, title: None }],
+        tabs: vec![LiveTab { off_the_record: false, profile: Profile::Named("Profile 1".into()), live_id: "foreign".into(), item: Some("a".into()), opener: None, navigated: false, url: None, title: None }],
     }]));
     assert!(!outcome.applied);
     assert!(ops.is_empty());
@@ -1546,10 +1546,10 @@ fn clearing_today_puts_a_close_in_flight_for_each_live_row() {
     assert_ne!(ws.items["pinned"].lifecycle, Lifecycle::Archived);
     // The engine answers each close with the command's id: the replies name commands in
     // flight, so they are applied and the map lets the rows go.
-    let (_, first) = live.apply(&mut ws, Transaction { epoch: 1, rev: 1, cause: Cause::Command(targets[0].1.id.clone()),
+    let (_, first) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Command(targets[0].1.id.clone()),
         strips: vec![strip_empty("one")] });
     assert!(first.applied);
-    let (_, second) = live.apply(&mut ws, Transaction { epoch: 1, rev: 2, cause: Cause::Command(targets[1].1.id.clone()),
+    let (_, second) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2, cause: Cause::Command(targets[1].1.id.clone()),
         strips: vec![strip_empty("one")] });
     assert!(second.applied);
     for item in ["a", "b"] { assert_eq!(live.live_tab(item), None, "{item}"); }

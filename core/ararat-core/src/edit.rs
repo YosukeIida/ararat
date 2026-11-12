@@ -875,6 +875,7 @@ impl Workspace {
         }
         let mut ops: Vec<_> = outline.iter().filter(|(_, item, _)| changing.contains(&item.id) && (item.lifecycle == Lifecycle::Open || (today && item.lifecycle == Lifecycle::Unloaded)))
             .map(|(_, item, _)| {
+                if self.is_private() { return Op::Delete(crate::model::Kind::Item, item.id.clone()); }
                 let mut changed = (*item).clone();
                 changed.lifecycle = if archive { Lifecycle::Archived } else if today { Lifecycle::Closed } else { Lifecycle::Unloaded };
                 changed.lifecycle_changed_at = changed_at;
@@ -923,6 +924,7 @@ impl Workspace {
     }
 
     fn history_purge_ops(&self, changes: &[Op]) -> Vec<Op> {
+        if self.is_private() { return Vec::new(); }
         use std::hash::BuildHasher;
         changes.iter().filter_map(|op| {
             let (item, changed_at) = match op {
@@ -1023,6 +1025,7 @@ impl Workspace {
 
 impl Workspace {
     pub fn stamp_selection(&mut self, id: &str, now: u64) -> Vec<Op> {
+        if self.is_private() { return Vec::new(); }
         let mut ids = vec![id.to_string()];
         if self.items.get(id).is_some_and(|i| matches!(i.kind, ItemKind::Split { .. } | ItemKind::Folder)) {
             ids.extend(self.outline_entries(id).into_iter().map(|(_, item, _)| item.id.clone()));

@@ -637,8 +637,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return try store.showSpaceSelecting(windowId: windowID, spaceId: space)
     }
 
+    static func privacyFlag(_ value: [String: Any]) -> Bool? {
+        value["off_the_record"] as? Bool
+    }
+
     public func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction value: [String: Any]) {
-        guard let epoch = value["epoch"] as? NSNumber, let rev = value["rev"] as? NSNumber,
+        guard let offTheRecord = Self.privacyFlag(value), let epoch = value["epoch"] as? NSNumber, let rev = value["rev"] as? NSNumber,
               let raw = value["strips"] as? [[String: Any]] else {
             invalidTransaction()
             return
@@ -668,7 +672,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             }
             var parsedTabs: [LiveTab] = []
             for tab in tabs {
-                guard let profile = tab["profile"] as? String, let live = tab["live_id"] as? String, let item = tab["item"],
+                guard let tabOffTheRecord = Self.privacyFlag(tab), let profile = tab["profile"] as? String, let live = tab["live_id"] as? String, let item = tab["item"],
                       let opener = tab["opener"], let url = tab["url"], let title = tab["title"],
                       let navigated = tab["navigated"] as? Bool,
                       let crashed = tab["crashed"] as? Bool,
@@ -678,14 +682,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     invalidTransaction()
                     return
                 }
-                parsedTabs.append(LiveTab(profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
+                parsedTabs.append(LiveTab(offTheRecord: tabOffTheRecord, profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
                 if crashed, let item = item as? String { crashedItems.insert(item) }
                 if navigated { navigatedLives.insert(live) }
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
-        let transaction = LiveTransaction(epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
+        let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
         let crashed = crashedItems
         let navigated = navigatedLives
         queue.async {

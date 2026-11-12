@@ -316,7 +316,7 @@ workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエ
 
 phase 4 の目標: off-the-record のプロファイルは、エンジンの契約における属性であり、すべてのトランザクションとタブがこの属性を持つ。コアは off-the-record の workspace の状態をメモリ上にだけ保持し、それに対する永続的な書き込み、archive のエントリ、同期のレコード、command bar の学習を 1 か所でまとめて拒否する。テストでは、プライベートタブを開いた状態でのクローズ、クラッシュ、archive、同期を対象とする。
 
-off-the-record の通常 Browser はページだけの専用 host を使い、workspace の transaction を送らない。プライベートウィンドウのインメモリ core と sidebar は phase 4 で実装する。Arc のプライベートウィンドウは未確認である（我々の規則）。
+U26f の pass 1・2 で実装した: エンジンはすべてのトランザクションとタブに `Browser::GetProfile()->IsOffTheRecord()` から `off_the_record` を付け、コアはこの属性が無いか、タブと食い違うトランザクションを、workspace を変更する前に拒否する。プライベートの workspace は store を持たないメモリ上の別の workspace であり、変更の前に 1 つの受け入れの規則を通す。この規則は、タブ、選択、live の状態、Today の中の並べ替えを許し、閉じる、archive、Clear を削除として扱い（archive のエントリ、Undo、最近の利用の記録、履歴の削除の outbox は作らない）、取り込み、設定、routing、2 つ目以降の space、フォルダ、ピン留め、favourites、復元、別の workspace からの移動を拒否する。U26f の残りについて決めたこと: 同じプライベートプロファイルのウィンドウは、最後のウィンドウを閉じるまで 1 つのプライベート workspace を共有し、クラッシュの後に復元しない。space は Today だけの 1 つとする。command bar は何も学習せず、履歴を出さない。プライベートと通常のウィンドウは互いの workspace を見ず、その間の移動を拒否する。pass 3 でプライベートウィンドウの host と sidebar を作るまでは、off-the-record の通常 Browser はページだけの専用 host を使い、workspace の transaction を送らない。Arc のプライベートウィンドウは未確認である（我々の規則）。
 
 ## 6. Rust のコア
 

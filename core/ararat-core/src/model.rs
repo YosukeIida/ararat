@@ -124,6 +124,7 @@ pub struct WindowState {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
+    pub(crate) off_the_record: bool,
     pub key_binding_overrides: HashMap<String, Option<crate::key_bindings::KeyCombination>>,
     pub folder_collapsed: HashMap<Id, bool>,
     // The pinned section's collapsed state is per space but stays on the device, like
@@ -317,6 +318,17 @@ pub enum Op {
 }
 
 impl Workspace {
+    pub fn is_private(&self) -> bool { self.off_the_record }
+
+    pub fn private(profile: Profile) -> Self {
+        let mut workspace = Self::default();
+        workspace.create_space("", "Private", "private").expect("private space");
+        workspace.windows.clear();
+        workspace.spaces[0].profile = profile;
+        workspace.off_the_record = true;
+        workspace
+    }
+
     // Ties fall back to the id, not to map order, so every device derives the same list.
     pub fn children(&self, parent: &str) -> Vec<&Item> {
         let mut children: Vec<_> = self
@@ -429,7 +441,7 @@ impl Workspace {
             Op::Delete(Kind::LastSelected, id) => { self.last_selected.remove(id); },
             Op::Put(Record::ArchiveAfter { profile, value }) => { self.archive_after.insert(profile.clone(), *value); },
             Op::Delete(Kind::ArchiveAfter, id) => self.archive_after.retain(|p, _| &profile_id(p) != id),
-            Op::Put(Record::Window(window)) => { self.windows.insert(window.id.clone(), window.clone()); },
+            Op::Put(Record::Window(window)) => { let mut window = window.clone(); if self.is_private() { window.history.clear(); window.space_history.clear(); } self.windows.insert(window.id.clone(), window); },
             Op::Delete(Kind::Window, id) => { self.windows.remove(id); },
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);

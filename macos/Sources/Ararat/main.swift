@@ -1452,11 +1452,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     adapter?.clearToday(spaceID: spaceID) { [weak self] result in
       guard let self, let result else { return }
       self.show(result.snapshot)
-      guard result.hasItems else { return }
+      guard result.hasItems, let batch = result.batch else { return }
       self.clearUndo.offer { [weak self] in
         guard let self else { return }
         self.container?.dismissTabsCleared()
-        self.adapter?.undoClearToday(result.batch) { [weak self] snapshot in
+        self.adapter?.undoClearToday(batch) { [weak self] snapshot in
           guard let self, let snapshot else { return }
           self.show(snapshot)
           if let row = clearUndoSelection(snapshot), let url = row.url {

@@ -142,6 +142,7 @@ impl Index {
                 entries.push(Entry { suggestion: Suggestion { title, subtitle: "Space".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None });
             }
         }
+        if ws.is_private() { entries.retain(|entry| matches!(entry.suggestion.target, Target::Tab { .. } | Target::Command { .. })); }
         let entries = entries.into_iter().map(|entry| {
             let key = entry.suggestion.url.as_ref().map(|url| {
                 let mut key = SearchKey::new(&entry.suggestion.title, url);

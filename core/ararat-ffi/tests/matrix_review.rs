@@ -20,7 +20,7 @@ fn mixed_profile_matrix_keeps_exact_command_lives_and_rejects_invalid_readiness(
         let item = store.create_tab(w.clone(), format!("about:blank?matrix={n}")).unwrap().selected_id.unwrap();
         targets.push((space, item));
     }
-    let apply = |epoch, rev, cause, tabs, active| store.live_apply(LiveTransaction {
+    let apply = |epoch, rev, cause, tabs, active| store.live_apply(LiveTransaction { off_the_record: false,
         epoch, rev, cause, strips: vec![LiveStrip { window: w.clone(), tabs, active }]
     }).unwrap();
     assert!(apply(1, 0, LiveCause::Engine, vec![], None).applied);
@@ -39,7 +39,7 @@ fn mixed_profile_matrix_keeps_exact_command_lives_and_rejects_invalid_readiness(
         assert!(!tabs.iter().any(|t: &LiveTab| t.live_id == cmd.id));
         let profile = if i == 1 { Profile::Named("Profile 1".into()) } else { Profile::Default };
         assert_eq!(store.item_profile(item.clone()), Some(profile.clone()));
-        tabs.push(LiveTab { profile, live_id: cmd.id.clone(), item: Some(item.clone()), opener: None,
+        tabs.push(LiveTab { off_the_record: false, profile, live_id: cmd.id.clone(), item: Some(item.clone()), opener: None,
             navigated: false, url: None, title: None });
         assert!(apply(1, i as u64 + 1, LiveCause::Command(cmd.id.clone()), tabs.clone(), Some(cmd.id.clone())).applied);
         assert_eq!(store.live_tab(item.clone()), Some(cmd.id));
@@ -104,7 +104,7 @@ fn an_unloaded_space_switch_loads_the_last_selected_row_and_an_empty_history_the
     // Selecting 1 last makes it the history's row, not the first row.
     store.select_item(w.clone(), ids[0].clone()).unwrap();
     // The engine's first empty snapshot unloads every row (the store had no live tabs).
-    assert!(store.live_apply(LiveTransaction { epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![] }).unwrap().applied);
+    assert!(store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![] }).unwrap().applied);
     let unloaded = store.snapshot(w.clone());
     assert_eq!(unloaded.selected_id, None);
     assert!(unloaded.spaces.iter().find(|s| s.id == "work").unwrap().today.iter().all(|row| row.unloaded));
