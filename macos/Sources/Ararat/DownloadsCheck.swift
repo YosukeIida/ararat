@@ -18,7 +18,7 @@ final class DownloadsCheck {
   var hoverStart: TimeInterval = 0
   var privatePass = 0
   var privateBefore: Set<String> = []
-  static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_no_list", "private_close_regular_intact"]
+  static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
   static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "popover_rows_layout", "page_actions_fit", "page_rows_layout"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
@@ -226,7 +226,7 @@ extension Runtime {
       host.checkCreateIncognito()
       browserCheckPhase = 15
     case 15:
-      guard let popup = popups.first?.host, popup.isPrivateWindow(), popup.hasBrowser() else { wait("private window"); return }
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host, popup.isPrivateWindow(), popup.hasBrowser() else { wait("private window"); return }
       let settings = popup.downloadsCheckSettings()
       guard settings["directory"] as? String == check.directory, settings["prompt"] as? Bool == false else { fail("private profile did not inherit scratch directory without prompt"); return }
       guard let port = promptFixturePort else { wait("fixture port"); return }
@@ -234,17 +234,17 @@ extension Runtime {
       popup.checkNavigate("http://127.0.0.1:\(port)/private-download?pass=\(check.privatePass)", disposition: "current")
       browserCheckPhase = 16
     case 16:
-      guard let popup = popups.first?.host else { wait("private download window"); return }
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host else { wait("private download window"); return }
       let path = (check.directory as NSString).appendingPathComponent("private-check.txt")
       guard FileManager.default.fileExists(atPath: path), popup.checkInProgressDownloadCount() == 0 else { wait("private file completed in regular directory"); return }
       let attrs = try? FileManager.default.attributesOfItem(atPath: path)
       let correct = (attrs?[.size] as? NSNumber)?.intValue == 8192 && popup.window().attachedSheet == nil
       check.mark(check.privatePass == 0 ? "private_standard" : "private_custom", correct)
-      check.mark("private_no_list", (check.conditions["private_no_list"] ?? true) && popup.downloads().isEmpty)
+      check.mark("private_list_live", !popup.downloads().isEmpty)
       popup.close()
       browserCheckPhase = 17
     case 17:
-      guard popups.isEmpty else { wait("private window teardown"); return }
+      guard children.first(where: { $0.isPrivateWindow && $0.host != nil }) == nil else { wait("private window teardown"); return }
       if check.privatePass == 0 {
         check.privatePass = 1
         check.directory = host.prepareDownloadsCheckDirectory("custom")

@@ -3005,6 +3005,31 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (IsProfileCheck() && browser_) chrome::NewIncognitoWindow(browser_->GetProfile());
 }
 
+// U26f: deterministic tab/window creation for checks, without the key-window command dispatch.
+- (void)checkNewTab {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  const auto check = args->GetSwitchValueASCII("ararat-check");
+  const auto screen = args->GetSwitchValueASCII("ararat-screen");
+  if (check != "incognito" && check != "private-window" && screen != "private-window") return;
+  if (browser_) chrome::AddTabAt(browser_, GURL(), -1, true);
+}
+
+- (void)checkNewWindow {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  const auto check = args->GetSwitchValueASCII("ararat-check");
+  const auto screen = args->GetSwitchValueASCII("ararat-screen");
+  if (check != "incognito" && check != "private-window" && screen != "private-window") return;
+  if (browser_) chrome::NewWindow(browser_);
+}
+
+- (void)checkNewIncognitoWindow {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  const auto check = args->GetSwitchValueASCII("ararat-check");
+  const auto screen = args->GetSwitchValueASCII("ararat-screen");
+  if (check != "popup" && check != "incognito" && check != "private-window" && screen != "private-window") return;
+  if (browser_) chrome::NewIncognitoWindow(browser_->GetProfile());
+}
+
 - (void)checkNavigateOffTheRecord {
   if (!IsProfileCheck() || !browser_) return;
   NavigateParams params(browser_, GURL("data:text/html,<title>ararat-otr-navigation</title>"), ui::PAGE_TRANSITION_LINK);

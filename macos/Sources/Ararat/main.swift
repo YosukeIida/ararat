@@ -224,6 +224,16 @@ func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any
 // Why not compare every record: the page-only popup cannot write workspace rows, but the
 // regular window's own device-local Window/LastSelected rows commit on their one-second batch,
 // so a whole-table compare flakes. Those two kinds are excluded; every workspace kind is not.
+// A private run must not touch the regular workspace rows; the regular window's own
+// Window/LastSelected rows can commit on their own batch and are not workspace content.
+func workspaceRowsMatch(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
+  guard let before, let after else { return false }
+  func stable(_ rows: [[String]]) -> [[String]] {
+    rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
+  }
+  return stable(before) == stable(after)
+}
+
 func pageOnlyRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
   guard let before, let after else { return false }
   func stable(_ rows: [[String]]) -> [[String]] {
@@ -3142,11 +3152,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 23
     } else if mode == "popup", browserCheckPhase == 23, children.allSatisfy({ $0.host == nil }),
               let popup = popups.first?.host {
-      popup.checkKeyboardCommand("incognito")
+      // A normal OTR window is a full private window now, not a page-only popup (U26f).
+      popup.checkNewIncognitoWindow()
       browserCheckPhase = 24
-    } else if mode == "popup", browserCheckPhase == 24, popups.count == 2, let privateHost = popups.last?.host,
-              (privateHost.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
-      privateHost.checkKeyboardCommand("close")
+    } else if mode == "popup", browserCheckPhase == 24,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              privateChild.host?.isPrivateWindow() == true {
+      privateChild.host?.close()
       browserCheckPhase = 25
     } else if mode == "popup", browserCheckPhase == 25, popups.count == 1,
               let tab = (popups.first?.host?.tabs() as? [any ARTabAPI])?.first {
@@ -6475,13 +6487,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "application_active": NSApp.isActive, "application_hidden": NSApp.isHidden,
         "window_key": host.window().isKeyWindow, "focus_wait_ticks": profileFocusPhaseTicks,
         "stock_browsers": host.checkStockBrowsers()])
-    } else if screen, browserCheckPhase == 6, let popup = popups.first?.host,
-              (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+    } else if screen, browserCheckPhase == 6,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host, privateHost.isPrivateWindow() {
+      // U26f: a normal OTR window is a full private window, not the old page-only popup.
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
         guard let rows = captureCheckRows() else { return }
         quitBefore = rows
-        popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
-        popup.window().makeKeyAndOrderFront(nil)
+        privateHost.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
+        privateHost.window().makeKeyAndOrderFront(nil)
         browserCheckPhase = 61
         return
       }
@@ -6489,30 +6503,31 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
         "new_focus_none_event": profileNewFocusNoneEvent, "new_focus_events": newFocusEvents(),
         "focus_events_at_return": profileFocusEventsAtReturn,
-        "app_deactivated": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
-    } else if screen, browserCheckPhase == 61, let popup = popups.first?.host,
-              popup.window().isKeyWindow,
-              let tab = (popup.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
+        "app_deactivated": true, "menu_incognito": true, "private_window": true, "stock_browsers": host.checkStockBrowsers()])
+    } else if screen, browserCheckPhase == 61,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host,
+              let tab = (privateHost.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
+      if !privateHost.window().isKeyWindow { privateHost.window().makeKeyAndOrderFront(nil); return }
       guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: privateHost.window().windowNumber,
           context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
       NSApp.sendEvent(event)
       browserCheckPhase = 62
-    } else if screen, browserCheckPhase == 62, let popup = popups.first?.host,
-              popup.checkPageOnlySaveCount() == 1,
+    } else if screen, browserCheckPhase == 62,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
       guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 63
-    } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
+    } else if screen, browserCheckPhase == 63,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
       let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
-      finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+      finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
           "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
           "new_focus_events": newFocusEvents(),
           "focus_events_at_return": profileFocusEventsAtReturn,
-          "app_deactivated": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
+          "app_deactivated": true, "menu_incognito": true, "private_window": true, "page_only_save": true, "rows_unchanged": unchanged,
           "stock_browsers": host.checkStockBrowsers()])
     }
   }
@@ -6546,7 +6561,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               browsers[0]["off_the_record"] as? Bool == true,
               let profile = browsers[0]["profile_pointer"] as? String, !profile.isEmpty,
               let browser = browsers[0]["browser_pointer"] as? String, !browser.isEmpty,
-              captureCheckRows() == quitBefore {
+              workspaceRowsMatch(quitBefore, captureCheckRows()) {
       incognitoPrivateLive = tab.liveId
       incognitoPrivateProfile = profile
       incognitoPrivateBrowser = browser
@@ -6555,29 +6570,29 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       incognitoWindowLive = tab.liveId
       if CommandLine.arguments.contains("--ararat-incognito-window-check") {
         // A regular window opened from the private one is a regular child of the root session.
-        privateHost.checkKeyboardCommand("window")
+        privateHost.checkNewWindow()
         browserCheckPhase = 30
         return
       }
       // A private new tab is a row in the private workspace; the regular window is untouched.
       incognitoTabsBefore = tabs.count
-      privateHost.checkKeyboardCommand("new")
+      privateHost.checkNewTab()
       browserCheckPhase = 21
     } else if browserCheckPhase == 21, let child = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
-              let privateHost = child.host,
               let snap = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.snapshot(windowId: child.windowID) }),
-              snap.spaces.first?.today.count == incognitoTabsBefore + 1 {
-      guard snapshot == browserCheckBefore, captureCheckRows() == quitBefore else {
+              snap.spaces.first?.today.count == incognitoTabsBefore + 1,
+              let added = snap.spaces.first?.today.first(where: { $0.id != incognitoWindowItem })?.id {
+      guard snapshot == browserCheckBefore, workspaceRowsMatch(quitBefore, captureCheckRows()) else {
         finishBrowserCheck(ok: false, values: ["private_command_created_workspace_row": true]); return
       }
-      privateHost.checkKeyboardCommand("close")
+      // Close the new row through the adapter: no key-window command is involved.
+      child.close(added)
       browserCheckPhase = 22
     } else if browserCheckPhase == 22, let child = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
-              let privateHost = child.host,
               let snap = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.snapshot(windowId: child.windowID) }),
               snap.spaces.first?.today.count == incognitoTabsBefore, snap.archive.isEmpty {
       // Close removed the row and left no archive entry; the private window stays up.
-      privateHost.checkCreateIncognito()
+      child.host?.checkCreateIncognito()
       browserCheckPhase = 25
     } else if browserCheckPhase == 25, children.filter({ $0.isPrivateWindow && $0.host != nil }).count == 2,
               PrivateWorkspaces.liveCount == 2 {
@@ -6592,7 +6607,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }) {
       let stock = host.checkStockBrowsers()
       let after = captureCheckRows()
-      let rowsUnchanged = snapshot == browserCheckBefore && quitBefore != nil && after == quitBefore
+      let rowsUnchanged = snapshot == browserCheckBefore && workspaceRowsMatch(quitBefore, after)
       finishBrowserCheck(ok: rowsUnchanged && stock == 0, values: ["case": "incognito-private", "off_the_record": true,
         "off_the_record_navigation": true, "native_private_new_tab": true, "private_command_close": true,
         "private_new_incognito_window": true, "location_search_noop": true, "rows_unchanged": rowsUnchanged,

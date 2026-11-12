@@ -72,7 +72,12 @@ extension Runtime {
         }
         func regularRowsUnchanged() -> Bool {
             guard let before = quitBefore, let rows = captureCheckRows() else { return false }
-            return rows == before
+            // Why not the whole table: the regular window's device-local Window/LastSelected rows
+            // commit on their own batch; the workspace rows are what a private run must not touch.
+            func stable(_ rows: [[String]]) -> [[String]] {
+                rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
+            }
+            return stable(before) == stable(rows)
         }
         func historySize() -> Int64 {
             guard !check.userDataDir.isEmpty else { return -1 }

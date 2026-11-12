@@ -23,7 +23,7 @@ extension Runtime {
       host.checkCreateIncognito()
       browserCheckPhase = 2
     case 2:
-      guard let port = promptFixturePort, let popup = popups.first?.host, popup.isPrivateWindow() else { return }
+      guard let port = promptFixturePort, let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host, popup.isPrivateWindow() else { return }
       downloadCloseConditions["private_window"] = true
       popup.window().makeKeyAndOrderFront(nil)
       NSApp.activate(ignoringOtherApps: true)
@@ -39,19 +39,20 @@ extension Runtime {
         startDownload(popup, port: port)
       }
     case 21:
-      guard let port = promptFixturePort, let privateHost = popups.first, let popup = privateHost.host,
+      guard let port = promptFixturePort, let privateHost = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateHost.host,
             let tab = (popup.tabs() as? [any ARTabAPI])?.first,
-            tab.networkError == -106, privateHost.checkFailureState["heading"] as? String == "You’re offline" else { return }
+            tab.networkError == -106,
+            privateHost.adapter?.checkFailureState(item: tab.itemId ?? "")["heading"] as? String == "You’re offline" else { return }
       errorPageConditions["private_offline"] = true
       startDownload(popup, port: port)
     case 3:
-      guard let popup = popups.first?.host, popup.checkInProgressDownloadCount() == 1 else { return }
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host, popup.checkInProgressDownloadCount() == 1 else { return }
       downloadCloseConditions["download_pending"] = true
       trace("close private window with download pending")
       popup.close()
       browserCheckPhase = 4
     case 4:
-      guard let popup = popups.first?.host, popup.hasBrowser(), popup.window().isVisible, popup.checkInProgressDownloadCount() == 1,
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host, popup.hasBrowser(), popup.window().isVisible, popup.checkInProgressDownloadCount() == 1,
             let sheet = popup.window().attachedSheet, sheet.isVisible else { return }
       downloadCloseConditions["close_blocked"] = true
       func buttons(_ element: NSAccessibilityProtocol) -> [NSAccessibilityProtocol] {
@@ -70,7 +71,7 @@ extension Runtime {
       downloadCloseConditions["dialog_action"] = true
       browserCheckPhase = 5
     case 5:
-      guard popups.isEmpty else { return }
+      guard children.first(where: { $0.isPrivateWindow && $0.host != nil }) == nil else { return }
       downloadCloseConditions["window_closed"] = true
       let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed"]
       let failed = names.filter { downloadCloseConditions[$0] != true }

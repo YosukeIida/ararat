@@ -208,6 +208,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkCloseTabsForProfile:(NSString*)profile;
 - (void)checkActivateShownProfile;
 - (void)checkCreateIncognito;
+- (void)checkNewTab;
+- (void)checkNewWindow;
+- (void)checkNewIncognitoWindow;
 - (void)checkNavigateOffTheRecord;
 - (NSDictionary<NSString*, id>*)checkFullscreenState;
 - (void)checkFullscreenAction:(NSInteger)action;
