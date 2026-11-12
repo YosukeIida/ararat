@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "ararat/core/public/AraratEngine.h"
+#include "base/auto_reset.h"
 #include "base/functional/bind.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -402,6 +403,9 @@ void AraratCheckSplit() {
 @property(nonatomic, strong) NSView* destinationCard;
 @property(nonatomic) BOOL extensionPath;
 @property(nonatomic) BOOL captureDone;
+@property(nonatomic) NSUInteger captureAttempts;
+@property(nonatomic, copy) NSString* snapshotFailure;
+@property(nonatomic) BOOL tickRunning;
 @property(nonatomic) BOOL snapshotPresent;
 @property(nonatomic) BOOL pairedForward;
 @property(nonatomic) BOOL pairedBack;
@@ -420,6 +424,7 @@ void AraratCheckSplit() {
 namespace {
 ARTransferCheck* g_transfer_check;
 bool g_transfer_check_passed = false;
+constexpr NSUInteger kMaxSnapshotCaptureAttempts = 5;
 void TransferTick() { [g_transfer_check tick]; }
 void ScheduleTransferTick() {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -475,7 +480,12 @@ int RendererPid(ARTab* tab) {
 }
 
 - (void)tick {
-  if (++self.attempts > 300) { [self finish:YES]; return; }
+  if (self.tickRunning) return;
+  base::AutoReset<BOOL> running(&_tickRunning, YES);
+  if (++self.attempts > 300) {
+    if (self.phase == 11 && !self.captureDone) self.snapshotFailure = @"callback_timeout";
+    [self finish:YES]; return;
+  }
   if (self.phase == 0) {
     [self.destination prepareTransferProfile:@"Default"];
     NSArray<ARTab*>* tabs = self.host.tabs;
@@ -488,18 +498,39 @@ int RendererPid(ARTab* tab) {
     self.writerAddress = reinterpret_cast<uintptr_t>(writer);
     self.writerStamp = writer ? writer->admitted_at() : 0;
     self.writerPreserved = writer && !writer->fenced() && writer->web_contents() == tab.contents;
+    self.phase = 10;
+  }
+  if (self.phase == 10) {
+    ARTab* tab = self.host.tabs.firstObject;
+    self.captureDone = NO;
+    self.snapshotPresent = NO;
+    self.snapshotFailure = nil;
+    ++self.captureAttempts;
+    self.phase = 11;
     [tab captureSnapshot:^(NSImage* image) {
-      self.captureDone = YES;
       NSRect rect = NSMakeRect(0, 0, image.size.width, image.size.height);
       CGImageRef cg = image ? [image CGImageForProposedRect:&rect context:nil hints:nil] : nullptr;
       NSBitmapImageRep* bitmap = cg ? [[NSBitmapImageRep alloc] initWithCGImage:cg] : nil;
       NSColor* pixel = bitmap ? [[bitmap colorAtX:bitmap.pixelsWide / 2 y:bitmap.pixelsHigh / 2] colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace] : nil;
       self.snapshotPresent = pixel && pixel.redComponent > 0.7 && pixel.greenComponent < 0.3 && pixel.blueComponent < 0.3;
-      std::cerr << "ararat-trace: transfer snapshot read phase=" << self.phase << " image=" << (image != nil)
+      self.snapshotFailure = !image ? @"capture_unavailable" : !cg ? @"image_conversion_failed" : !pixel ? @"pixel_unavailable" : !self.snapshotPresent ? @"pixel_not_red" : nil;
+      std::cerr << "ararat-trace: transfer snapshot read phase=" << self.phase << " attempt=" << self.captureAttempts << " image=" << (image != nil)
                 << " cg=" << (cg != nullptr) << " pixel=" << (pixel != nil)
                 << " rgb=" << (pixel ? pixel.redComponent : -1) << "," << (pixel ? pixel.greenComponent : -1)
-                << "," << (pixel ? pixel.blueComponent : -1) << "\n";
+                << "," << (pixel ? pixel.blueComponent : -1)
+                << " reason=" << (self.snapshotFailure ? self.snapshotFailure.UTF8String : "none") << "\n";
+      self.captureDone = YES;
     }];
+  }
+  if (self.phase == 11) {
+    if (!self.captureDone) { ScheduleTransferTick(); return; }
+    if (self.snapshotFailure) {
+      if ([self.snapshotFailure isEqualToString:@"capture_unavailable"] && self.captureAttempts < kMaxSnapshotCaptureAttempts) {
+        self.phase = 10;
+        ScheduleTransferTick(); return;
+      }
+      [self finish:NO]; return;
+    }
     self.phase = 1;
   }
   if (self.phase == 1) {
@@ -539,7 +570,7 @@ int RendererPid(ARTab* tab) {
   if (self.phase == 4) {
     self.pairedBack = [self hasPairFrom:@"transfer-destination" to:@"transfer-source" cause:@{ @"Command": @"move-back" }];
     ARTab* tab = self.host.tabs.firstObject;
-    if (!self.pairedBack || !tab || !self.captureDone) { ScheduleTransferTick(); return; }
+    if (!self.pairedBack || !tab) { ScheduleTransferTick(); return; }
     self.identityPreserved = self.identityPreserved && reinterpret_cast<uintptr_t>(tab.contents) == self.contentsAddress &&
         RendererPid(tab) == self.rendererPid && tab.entryCount == self.entries;
     auto* writer = ararat::tab_history::TabHistory::Get().FindWriter("Default", "transfer-item");
@@ -572,6 +603,8 @@ int RendererPid(ARTab* tab) {
             << ",\"identity_pid_history\":" << (self.identityPreserved ? "true" : "false")
             << ",\"writer_preserved\":" << (self.writerPreserved ? "true" : "false")
             << ",\"snapshot_present\":" << (self.snapshotPresent ? "true" : "false")
+            << ",\"snapshot_failure\":\"" << (self.snapshotFailure ? self.snapshotFailure.UTF8String : "none") << "\""
+            << ",\"snapshot_attempts\":" << self.captureAttempts
             << ",\"timeout\":" << (timedOut ? "true" : "false")
             << ",\"stock_browsers\":" << AraratStockBrowserCount() << "}\n" << std::flush;
   [self.host close]; [self.destination close]; AraratQuit();

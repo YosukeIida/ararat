@@ -726,7 +726,8 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (void)captureSnapshot:(void (^)(NSImage*))completion {
   auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
-  bool trace = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "transfer";
+  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
+  bool trace = check == "transfer" || check == "transfer-ext";
   if (trace) std::fprintf(stderr, "ararat-trace: transfer snapshot request view=%d surface=%d\n", view != nullptr, view && view->IsSurfaceAvailableForCopy());
   if (!view || !view->IsSurfaceAvailableForCopy()) { completion(nil); return; }
   auto runner = base::SingleThreadTaskRunner::GetCurrentDefault();
