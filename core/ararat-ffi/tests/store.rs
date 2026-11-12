@@ -220,8 +220,8 @@ fn live_apply_delivers_adoption_when_flush_fails_and_storage_retries() {
     store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap();
     let blocker = Connection::open(&path).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let transaction = LiveTransaction { epoch:  1, rev: 0, cause: LiveCause::Chrome,
-        strips: vec![LiveStrip { window: "test".into(), active: Some("live-new".into()), tabs: vec![LiveTab {
+    let transaction = LiveTransaction { off_the_record: false, epoch:  1, rev: 0, cause: LiveCause::Chrome,
+        strips: vec![LiveStrip { window: "test".into(), active: Some("live-new".into()), tabs: vec![LiveTab { off_the_record: false,
             profile: Profile::Default, live_id: "live-new".into(), item: None, opener: None, navigated: true,
             url: Some("https://example.com/".into()), title: None,
         }] }] };
@@ -1187,4 +1187,27 @@ fn choosing_a_row_ignores_a_closed_folder() {
     assert!(pinned.iter().any(|row| row.id == "tab-spec"));
     drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+#[test]
+fn privacy_mismatch_is_an_error_before_any_state_or_revision_changes() {
+    let path = fresh_db("privacy-contract");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap();
+    let before = store.snapshot("test".into());
+    let db = Connection::open(&path).unwrap();
+    let journal_before: i64 = db.query_row("SELECT count(*) FROM journal", [], |row| row.get(0)).unwrap();
+    let tab = LiveTab { off_the_record: true, profile: Profile::Default, live_id: "private".into(), item: None, opener: None, navigated: true, url: Some("https://private.example/".into()), title: None };
+    let mut tx = LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![LiveStrip { window: "test".into(), tabs: vec![tab], active: Some("private".into()) }] };
+    assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+    tx.off_the_record = true;
+    assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+    assert_eq!(store.snapshot("test".into()), before);
+    assert_eq!(db.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), journal_before);
+    tx.off_the_record = false;
+    tx.strips[0].tabs[0].off_the_record = false;
+    assert!(store.live_apply(tx).unwrap().applied);
+    let expected = store.snapshot("test".into());
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), expected);
 }

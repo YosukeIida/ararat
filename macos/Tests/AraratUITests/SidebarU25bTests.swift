@@ -238,7 +238,7 @@ func theCloseRuleFollowsTheRowAndASplitClosesThroughItsSplit() {
 @Test @MainActor
 func unreadTrackerSetsClearsAndPrunesFromTheStrip() {
     func tab(_ item: String, _ live: String, _ title: String) -> LiveTab {
-        LiveTab(profile: .default, liveId: live, item: item, opener: nil, navigated: false, url: nil, title: title)
+        LiveTab(offTheRecord: false, profile: .default, liveId: live, item: item, opener: nil, navigated: false, url: nil, title: title)
     }
     func strip(_ tabs: [LiveTab], active: String?) -> LiveStrip {
         LiveStrip(window: "w", tabs: tabs, active: active)

@@ -859,7 +859,7 @@ func matrixUnloadedSpaceLoadsItsRowAndEmptySpaceHidesRetainedPage() async throws
         _ = try store.createSpace(windowId: "empty", name: "Unloaded", spaceId: "unloaded")
         let second = try #require(try store.createTab(windowId: "empty", url: "about:blank?unloaded").selectedId)
         _ = try store.createSpace(windowId: "empty", name: "Empty", spaceId: "empty-space")
-        _ = try store.liveApply(transaction: LiveTransaction(epoch: 1, rev: 0, cause: .engine, strips: [LiveStrip(window: "empty", tabs: [], active: nil)]))
+        _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine, strips: [LiveStrip(window: "empty", tabs: [], active: nil)]))
         return (first, second)
     }
     let selected = try session.queue.sync { try session.store!.showSpaceSelectingTab(windowId: "empty", spaceId: "default", itemId: ids.0) }
@@ -904,10 +904,10 @@ func matrixUnloadedSpaceLoadsItsRowAndEmptySpaceHidesRetainedPage() async throws
     #expect(fake.active == ids.1 && fake.entries.count == 2)
     #expect(session.queue.sync { session.store?.liveTab(item: ids.0) } == live)
     #expect(session.queue.sync { session.store?.liveTab(item: ids.1) } == unloadedLive)
-    let strip = LiveStrip(window: "empty", tabs: [LiveTab(profile: .default, liveId: live, item: ids.0, opener: nil, navigated: false, url: nil, title: nil)], active: nil)
+    let strip = LiveStrip(window: "empty", tabs: [LiveTab(offTheRecord: false, profile: .default, liveId: live, item: ids.0, opener: nil, navigated: false, url: nil, title: nil)], active: nil)
     let after = try session.queue.sync { () -> WorkspaceSnapshot in
         let store = try #require(session.store)
-        #expect(try store.liveApply(transaction: LiveTransaction(epoch: 1, rev: 2, cause: .engine, strips: [strip])).applied)
+        #expect(try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 2, cause: .engine, strips: [strip])).applied)
         return store.snapshot(windowId: "empty")
     }
     #expect(after.shownSpaceId == "empty-space" && after.selectedId == nil)
@@ -1054,4 +1054,12 @@ func recoveryDoesNotAcknowledgeTheInitialTransactionBeforeSelectionDispatch() as
     engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "recovery-order", epoch: 1, rev: 0, command: nil))
     engine.restoreSelection()
     try await matrixWait { observedInitial && acknowledgements == 1 }
+}
+
+@Test @MainActor
+func privacyFlagsParseAndDefaultToRegular() {
+    #expect(EngineAdapter.privacyFlag([:]) == false)
+    #expect(EngineAdapter.privacyFlag(["off_the_record": true]) == true)
+    #expect(EngineAdapter.privacyFlag(["off_the_record": false]) == false)
+    #expect(EngineAdapter.privacyFlag(["off_the_record": "true"]) == nil)
 }

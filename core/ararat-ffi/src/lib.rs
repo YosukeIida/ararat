@@ -634,6 +634,7 @@ impl WorkspaceStore {
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, outcome) = live.apply(&mut workspace, transaction.into());
+        if let Some(error) = &outcome.error { return Err(error.clone().into()); }
         self.store.write(ops);
         let mut outcome: LiveApplyOutcome = outcome.into();
         outcome.persistence_error = self.store.flush().err().map(|error| error.0);
@@ -1078,6 +1079,7 @@ pub enum LiveCause {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveTab {
+    pub off_the_record: bool,
     pub profile: Profile,
     pub live_id: String,
     pub item: Option<String>,
@@ -1096,6 +1098,7 @@ pub struct LiveStrip {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveTransaction {
+    pub off_the_record: bool,
     pub epoch: u64,
     pub rev: u64,
     pub cause: LiveCause,
@@ -1146,7 +1149,7 @@ impl From<LiveCause> for ararat_core::live::Cause {
 
 impl From<LiveTab> for ararat_core::live::LiveTab {
     fn from(tab: LiveTab) -> Self {
-        Self { profile: tab.profile.into(), live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
+        Self { off_the_record: tab.off_the_record, profile: tab.profile.into(), live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
     }
 }
 
@@ -1163,6 +1166,7 @@ impl From<LiveStrip> for ararat_core::live::Strip {
 impl From<LiveTransaction> for ararat_core::live::Transaction {
     fn from(transaction: LiveTransaction) -> Self {
         Self {
+            off_the_record: transaction.off_the_record,
             epoch: transaction.epoch,
             rev: transaction.rev,
             cause: transaction.cause.into(),
@@ -1337,6 +1341,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transaction_conversion_preserves_privacy_flags() {
+        let transaction = LiveTransaction { off_the_record: true, epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { off_the_record: true, profile: Profile::Default, live_id: "live".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None }] };
+        let core: ararat_core::live::Transaction = transaction.into();
+        assert!(core.off_the_record);
+        assert!(core.strips[0].tabs[0].off_the_record);
+    }
+
+    #[test]
     fn purge_acknowledgement_cannot_erase_a_later_obligation() {
         let path = std::env::temp_dir().join(format!("ararat-ffi-purge-{}.sqlite", std::process::id()));
         assert!(!path.exists());
@@ -1377,7 +1389,7 @@ mod tests {
         assert_eq!(candidate.id, id);
         assert_eq!(candidate.profile, Profile::Named("Profile 1".into()));
         assert_eq!(store.restoration_candidate("missing".into()), None);
-        store.live_apply(LiveTransaction { epoch: 1, rev: 0, cause: LiveCause::Engine,
+        store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine,
             strips: vec![] }).unwrap();
         assert_eq!(store.snapshot("one".into()).selected_id, None);
         assert_eq!(store.restoration_candidate("one".into()), Some(candidate));
@@ -1391,7 +1403,7 @@ mod tests {
         assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
         store.select_item("one".into(), id.clone()).unwrap();
         let command = store.live_open(id.clone(), "https://restore.example/".into()).unwrap();
-        store.live_apply(LiveTransaction { epoch: 1, rev: 1, cause: LiveCause::Command(command.id), strips: vec![] }).unwrap();
+        store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 1, cause: LiveCause::Command(command.id), strips: vec![] }).unwrap();
         assert_eq!(store.workspace.lock().unwrap().items[&id].lifecycle, Lifecycle::Unloaded);
         assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
         {
@@ -1780,9 +1792,9 @@ mod tests {
         // Chrome's strips arrive with the tab live: the epoch's snapshot maps it, and a
         // Chrome activation moves the window selection.
         let live_id = opened.id.clone();
-        let outcome = store.live_apply(LiveTransaction {
+        let outcome = store.live_apply(LiveTransaction { off_the_record: false,
             epoch: 1, rev: 0, cause: LiveCause::Engine,
-            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { profile: Profile::Default, opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
+            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Profile::Default, opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
         }).unwrap();
         assert!(outcome.applied);
         let snapshot = store.snapshot("one".into());
@@ -1795,7 +1807,7 @@ mod tests {
         let row = snapshot.spaces[0].favorites.iter().find(|row| row.id == "tab-mail").expect("row kept");
         assert!(row.unloaded);
         // A stale rev is dropped and counted on the live coordinator.
-        let outcome = store.live_apply(LiveTransaction {
+        let outcome = store.live_apply(LiveTransaction { off_the_record: false,
             epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![],
         }).unwrap();
         assert!(!outcome.applied);

@@ -1834,7 +1834,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     g_epoch = started.InMillisecondsSinceUnixEpoch();
     g_revision = 0;
     [delegate windowHost:self didReceiveTransaction:@{
-      @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"strips": @[]
+      @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"off_the_record": @([self isPrivateWindow]), @"strips": @[]
     }];
   }
 }
@@ -3471,7 +3471,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
           ARPendingMove* move = [ARPendingMove new];
           move.source = self; move.sourceId = window_id_; move.epoch = g_epoch;
           move.active = selection.old_contents.get() == entry.contents.get();
-          move.entry = @{ @"profile": profile, @"live_id": identity->live_id,
+          move.entry = @{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": identity->live_id,
                           @"item": identity->item_id ?: (id)NSNull.null, @"opener": NSNull.null,
                           @"navigated": @NO, @"crashed": @(tab.crashed),
                           @"url": url.is_valid() ? (id)[NSString stringWithUTF8String:url.spec().c_str()] : (id)NSNull.null,
@@ -3710,7 +3710,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* opener_identity = opener ? static_cast<TabIdentity*>(opener->GetContents()->GetUserData(kTabIdentityKey)) : nullptr;
     const GURL& committed = tab.contents->GetLastCommittedURL();
     NSString* url = committed.is_valid() ? [NSString stringWithUTF8String:committed.spec().c_str()] : nil;
-    [entries addObject:@{ @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
+    [entries addObject:@{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
                           @"opener": opener_identity ? (id)opener_identity->live_id : (id)NSNull.null,
                           @"navigated": @(consumeNavigation && [tab takePendingNavigation]),
                           @"crashed": @(tab.crashed),
@@ -3739,12 +3739,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (!g_epoch) return;
   uint64_t epoch = g_epoch;
   ARWindowHost* retained = self;
+  BOOL off_the_record = [self isPrivateWindow];
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
     if (epoch != g_epoch) return;
     ARWindowHost* recipient = [retained canReportWorkspace] ? retained : nil;
     if (!recipient) for (ARWindowHost* host in ReportingHosts()) if ([host canReportWorkspace]) { recipient = host; break; }
     if (!recipient.delegate) return;
-    NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"strips": strips };
+    NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
     [recipient.delegate windowHost:recipient didReceiveTransaction:transaction];
   }));
 }
@@ -3793,6 +3794,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSArray* strips = @[ [self barrierSnapshot:[cause isKindOfClass:NSString.class] preserveActive:[cause isKindOfClass:NSString.class]] ];
   if (setEmptyReported)
     empty_reported_ = [self tabs].count == 0;
+  BOOL off_the_record = [self isPrivateWindow];
   __weak ARWindowHost* host = self;
   ARWindowHost* retained_host = retainHost ? self : nil;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -3801,7 +3803,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         if (retainHost && IsCloseCheck()) std::fprintf(stderr, "ararat-trace: empty-strip-delivered=%d\n", strong_host.delegate != nil);
         id<ARWindowHostDelegate> delegate = strong_host.delegate;
         if (!strong_host || !delegate) return;
-        NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"strips": strips };
+        NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
         [delegate windowHost:strong_host didReceiveTransaction:transaction];
       }));
 }

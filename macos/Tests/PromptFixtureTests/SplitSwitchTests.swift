@@ -162,8 +162,8 @@ func multipleQuitUsesCapturedSeedWithCombinedProfileAndSingleCheck() throws {
 @Test @MainActor
 func matrixCompletionRequiresAppliedMatchingCommandAndIdentity() {
     let target = Runtime.MatrixTarget(space: "named", item: "item", profile: "Profile 1", url: "about:blank")
-    let tab = LiveTab(profile: .named("Profile 1"), liveId: "live", item: "item", opener: nil, navigated: false, url: nil, title: nil)
-    let transaction = LiveTransaction(epoch: 1, rev: 1, cause: .command("command"),
+    let tab = LiveTab(offTheRecord: false, profile: .named("Profile 1"), liveId: "live", item: "item", opener: nil, navigated: false, url: nil, title: nil)
+    let transaction = LiveTransaction(offTheRecord: false, epoch: 1, rev: 1, cause: .command("command"),
         strips: [LiveStrip(window: "window", tabs: [tab], active: "live")])
     #expect(Runtime.matrixAcceptedLive(transaction, applied: false, command: "command", window: "window", target: target) == nil)
     #expect(Runtime.matrixAcceptedLive(transaction, applied: true, command: "other", window: "window", target: target) == nil)
