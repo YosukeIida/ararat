@@ -211,6 +211,11 @@ class SiteState : public content::WebContentsObserver,
   }
 
   NSDictionary* Snapshot();
+  NSString* Document() const {
+    if (!web_contents() || (!presenter_ && !internal_) || rebind_ ||
+        !document_.AsRenderFrameHostIfValid()) return nil;
+    return [NSString stringWithFormat:@"%llu", (unsigned long long)generation_];
+  }
   bool Change(NSDictionary* request);
   void Close() {
     if (changed_permission_ && presenter_) {
@@ -375,6 +380,7 @@ bool SiteState::Change(NSDictionary* request) {
 }
 - (void)setContents:(content::WebContents*)contents { state_->SetContents(contents); }
 - (NSDictionary*)snapshot { return state_->Snapshot(); }
+- (NSString*)document { return state_->Document(); }
 - (BOOL)change:(NSDictionary*)request { return state_->Change(request); }
 - (void)close { state_->Close(); }
 @end

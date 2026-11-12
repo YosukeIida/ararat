@@ -113,6 +113,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary<NSString*, id>*)siteState;
 - (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request;
 - (void)closeSiteControls;
+// Capture completions are asynchronous; devtoolsBusy includes an existing capture.
+- (void)captureFullPageForDocument:(NSString*)document completion:(void (^)(NSData* _Nullable png, NSString* _Nullable error))completion;
+// The rectangle uses the focused page's contents->GetNativeView() points, with the origin at its top left.
+- (void)captureRegion:(NSRect)rect document:(NSString*)document completion:(void (^)(NSData* _Nullable png, NSString* _Nullable error))completion;
 - (NSArray<NSDictionary<NSString*, id>*>*)downloads;
 - (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier;
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;

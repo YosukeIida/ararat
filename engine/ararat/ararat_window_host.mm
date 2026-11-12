@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "ararat/core/ararat_browser_window.h"
+#include "ararat/core/ararat_capture.h"
 #include "ararat/core/ararat_downloads.h"
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
@@ -214,6 +215,11 @@ bool AraratRedispatchKeyboardEvent(AraratWindowHostCore* host, const input::Nati
       !event.os_event || event.os_event.Get().type != NSEventTypeKeyDown) return false;
   auto* window_host = views::NativeWidgetMacNSWindowHost::GetFromNativeWindow(host->GetNativeWindow());
   return window_host && window_host->RedispatchKeyEvent(event.os_event.Get());
+}
+
+static void PostCaptureError(void (^completion)(NSData*, NSString*), NSString* error) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(^{ completion(nil, error); }));
 }
 
 namespace {
@@ -1534,6 +1540,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<AraratDownloads> downloads_;
   ARSiteState* site_state_;
+  ARCapture* capture_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1614,6 +1621,34 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSDictionary<NSString*, id>*)siteState { return [site_state_ snapshot]; }
 - (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request { return [site_state_ change:request]; }
 - (void)closeSiteControls { [site_state_ close]; }
+- (void)captureFullPageForDocument:(NSString*)document completion:(void (^)(NSData*, NSString*))completion {
+  auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  if (!contents) { PostCaptureError(completion, @"tabGone"); return; }
+  if (!document || ![[site_state_ document] isEqual:document]) { PostCaptureError(completion, @"navigated"); return; }
+  __weak ARWindowHost* host = self;
+  auto expected = contents->GetWeakPtr();
+  [capture_ fullPage:contents completion:^(NSData* png, NSString* error) {
+    ARWindowHost* strong = host;
+    if (!strong || !expected) { completion(nil, @"tabGone"); return; }
+    if (!strong->browser_ || strong->browser_->GetTabStripModel()->GetActiveWebContents() != expected.get() ||
+        ![[strong->site_state_ document] isEqual:document]) { completion(nil, @"navigated"); return; }
+    completion(png, error);
+  }];
+}
+- (void)captureRegion:(NSRect)rect document:(NSString*)document completion:(void (^)(NSData*, NSString*))completion {
+  auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  if (!contents) { PostCaptureError(completion, @"tabGone"); return; }
+  if (!document || ![[site_state_ document] isEqual:document]) { PostCaptureError(completion, @"navigated"); return; }
+  __weak ARWindowHost* host = self;
+  auto expected = contents->GetWeakPtr();
+  [capture_ region:rect contents:contents completion:^(NSData* png, NSString* error) {
+    ARWindowHost* strong = host;
+    if (!strong || !expected) { completion(nil, @"tabGone"); return; }
+    if (!strong->browser_ || strong->browser_->GetTabStripModel()->GetActiveWebContents() != expected.get() ||
+        ![[strong->site_state_ document] isEqual:document]) { completion(nil, @"navigated"); return; }
+    completion(png, error);
+  }];
+}
 
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions {
   auto* window = core_->window();
@@ -1762,6 +1797,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     window_id_ = [windowId copy];
     [ReportingHosts() addObject:self];
     __weak ARWindowHost* host = self;
+    capture_ = [ARCapture new];
     site_state_ = [[ARSiteState alloc] initWithChanged:^{
       ARWindowHost* strong = host;
       if ([strong.delegate respondsToSelector:@selector(siteStateChangedForWindowHost:)])
@@ -3507,6 +3543,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     if (!identity || !identity->item_id || !split_frames_[identity->item_id]) active = nullptr;
   }
   [site_state_ setContents:active];
+  [capture_ selectContents:active];
   NSView* card = [self.delegate pageCardForWindowHost:self];
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;

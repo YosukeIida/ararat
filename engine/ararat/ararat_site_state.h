@@ -9,6 +9,7 @@ namespace content { class WebContents; }
 - (instancetype)initWithChanged:(void (^)(void))changed;
 - (void)setContents:(content::WebContents*)contents;
 - (NSDictionary*)snapshot;
+- (NSString*)document;
 - (BOOL)change:(NSDictionary*)request;
 - (void)close;
 @end
