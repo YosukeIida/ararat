@@ -55,6 +55,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         public let loading: Bool
         public let audible: Bool
         public let muted: Bool
+        public let canGoBack: Bool
         public let canGoForward: Bool
     }
     public private(set) var rowStates: [String: RowState] = [:]
@@ -728,7 +729,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
                 if let item = item as? String {
                     if crashed { crashedItems.insert(item) }
-                    rowStates[item] = RowState(loading: tab["loading"] as? Bool ?? false, audible: tab["audible"] as? Bool ?? false, muted: tab["muted"] as? Bool ?? false, canGoForward: tab["canGoForward"] as? Bool ?? false)
+                    rowStates[item] = RowState(loading: tab["loading"] as? Bool ?? false, audible: tab["audible"] as? Bool ?? false, muted: tab["muted"] as? Bool ?? false, canGoBack: tab["canGoBack"] as? Bool ?? false, canGoForward: tab["canGoForward"] as? Bool ?? false)
                 }
                 if navigated { navigatedLives.insert(live) }
             }

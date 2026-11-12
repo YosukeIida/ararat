@@ -28,6 +28,8 @@ public final class SidebarContainerView: NSView {
     public let findBar = FindBarView()
     private var findPageRect: NSRect?
     private let panel = SidebarPanelView()
+    public let header = SidebarHeaderView()
+    public var onHeaderCommand: ((String) -> Void)?
     private let pageMask = CAShapeLayer()
     private let privateBackdrop = NSView()
     private let privateEmpty = PrivateEmptyView()
@@ -51,6 +53,22 @@ public final class SidebarContainerView: NSView {
     public let resizeHandle: SidebarResizeHandle
     private var state = SidebarState()
     private var localMonitor: Any?
+    private var shortcutMonitor: Any?
+    private var shortcutKeys: Set<String> = []
+    private var shortcutFlags: NSEvent.ModifierFlags = []
+    public func checkShortcutKeys(_ keys: Set<String>, event: NSEvent) {
+        header.updateKeys(keys, event: event)
+        sidebar.updateShortcutKeys(keys, event: event)
+    }
+    func handleShortcutEvent(_ event: NSEvent) {
+        guard event.window === window else { return }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.type == .flagsChanged && !shortcutFlags.subtracting(flags).isEmpty { shortcutKeys.removeAll() }
+        shortcutFlags = flags
+        if event.type == .keyDown, let key = event.charactersIgnoringModifiers?.uppercased() { shortcutKeys.insert(key) }
+        if event.type == .keyUp, let key = event.charactersIgnoringModifiers?.uppercased() { shortcutKeys.remove(key) }
+        checkShortcutKeys(shortcutKeys, event: event)
+    }
     private var globalMonitor: Any?
     private var dwellTimer: Timer?
     private var sampling: CADisplayLink?
@@ -98,12 +116,6 @@ public final class SidebarContainerView: NSView {
         }
     }
     private var windowButtons: SidebarWindowButtons?
-    private let extensionsButton = NSButton()
-    public var extensionActions: (() -> [[String: Any]])? {
-        didSet { extensionsButton.isHidden = extensionActions == nil }
-    }
-    public var onExtensionAction: ((String) -> Void)?
-    public var onExtensionAnchor: ((NSRect) -> Void)?
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
@@ -130,7 +142,6 @@ public final class SidebarContainerView: NSView {
     public var sidebarState: String { state.mode.rawValue }
     public var sidebarAnimating: Bool { moving }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }
-    public var sidebarExtensionsButton: NSButton { extensionsButton }
     public var hasSidebarLights: Bool { windowButtons?.subviews.count == 3 }
     public var sidebarLightsHidden: Bool { windowButtons?.isHidden == true }
     public var appKitLightsHidden: Bool {
@@ -198,16 +209,17 @@ public final class SidebarContainerView: NSView {
         findBar.isHidden = true
         addSubview(findBar)
         addSubview(panel)
-        extensionsButton.image = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: "Extensions")
-        extensionsButton.isBordered = false
-        extensionsButton.isHidden = true
-        extensionsButton.target = self
-        extensionsButton.action = #selector(showExtensions)
         for view in [sidebar, resizeHandle] {
             view.translatesAutoresizingMaskIntoConstraints = false
             panel.addSubview(view)
         }
-        panel.addSubview(extensionsButton)
+        panel.addSubview(header)
+        header.menuDelegate = sidebar
+        header.toggleBinding = { [weak sidebar] in sidebar?.keyBindings.first { $0.command == "toggle_sidebar" }?.key }
+        header.onCommand = { [weak self] command in
+            if command == "toggle_sidebar" { self?.toggleSidebar() }
+            else { self?.onHeaderCommand?(command) }
+        }
         NSLayoutConstraint.activate([
             width,
             sidebar.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
@@ -391,10 +403,7 @@ public final class SidebarContainerView: NSView {
         let inset: CGFloat = docked ? 0 : SidebarMetrics.floatingInset
         panel.frame = NSRect(x: x, y: inset, width: width, height: max(0, bounds.height - inset * 2))
         windowButtons?.frame.origin = NSPoint(x: 12.5, y: panel.bounds.height - 30.5)
-        extensionsButton.frame = NSRect(x: 90, y: panel.bounds.height - 34, width: 24, height: 24)
-        if state.mode != .hidden {
-            onExtensionAnchor?(extensionsButton.convert(extensionsButton.bounds, to: nil))
-        }
+        header.frame = NSRect(x: 0, y: panel.bounds.height - 36, width: width, height: 24)
         let pageX: CGFloat = docked ? width : SidebarMetrics.cardInset
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
@@ -461,30 +470,6 @@ public final class SidebarContainerView: NSView {
     public func setFindPageRect(_ rect: NSRect) {
         findPageRect = rect
         layoutFindBar()
-    }
-
-    @objc private func showExtensions() {
-        onExtensionAnchor?(extensionsButton.convert(extensionsButton.bounds, to: nil))
-        let menu = makeExtensionsMenu()
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: extensionsButton.bounds.minY), in: extensionsButton)
-    }
-
-    func makeExtensionsMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.delegate = sidebar
-        for action in extensionActions?() ?? [] {
-            guard let id = action["id"] as? String, let name = action["name"] as? String else { continue }
-            let item = NSMenuItem(title: name, action: #selector(runExtension(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = id
-            item.image = action["icon"] as? NSImage
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    @objc private func runExtension(_ item: NSMenuItem) {
-        if let id = item.representedObject as? String { onExtensionAction?(id) }
     }
 
     override public func viewDidChangeEffectiveAppearance() {
@@ -591,6 +576,9 @@ public final class SidebarContainerView: NSView {
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         stopMonitoring()
+        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor); self.shortcutMonitor = nil }
+        shortcutKeys.removeAll()
+        shortcutFlags = []
         NotificationCenter.default.removeObserver(self)
         let previousWindow = windowButtons?.browserWindow
         windowButtons?.removeFromSuperview()
@@ -598,6 +586,12 @@ public final class SidebarContainerView: NSView {
         (previousWindow as? BrowserWindow)?.sidebarLights = nil
         if let previousWindow { WindowChrome.layout(window: previousWindow, lights: nil) }
         guard let window else { return }
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handleShortcutEvent(event)
+            }
+            return event
+        }
         let buttons = SidebarWindowButtons(window: window)
         windowButtons = buttons
         panel.addSubview(buttons)
@@ -645,11 +639,18 @@ public final class SidebarContainerView: NSView {
     override public func mouseExited(with event: NSEvent) { processPointer() }
 
     @objc private func contextChanged() {
+        if window?.isKeyWindow != true || !NSApp.isActive {
+            shortcutKeys.removeAll()
+            shortcutFlags = []
+            header.clearKeys()
+            sidebar.clearShortcutKeys()
+        }
         updateActive()
         processPointer()
     }
     @objc private func windowClosed() {
         stopMonitoring()
+        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor); self.shortcutMonitor = nil }
         NotificationCenter.default.removeObserver(self)
     }
 

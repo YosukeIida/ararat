@@ -41,6 +41,11 @@
 #include "base/threading/thread_restrictions.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
+#include "content/public/browser/browsing_data_remover.h"
+#include "content/public/browser/host_zoom_map.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "url/origin.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
@@ -355,6 +360,20 @@ struct HostedProfile : ProfileObserver {
 };
 
 NSUInteger g_check_page_only_save_count = 0;
+
+class SiteClearObserver : public content::BrowsingDataRemover::Observer {
+ public:
+  SiteClearObserver(content::BrowsingDataRemover* remover, void (^completion)(uint64_t))
+      : completion_([completion copy]) { observation_.Observe(remover); }
+  void OnBrowsingDataRemoverDone(uint64_t failed) override {
+    observation_.Reset();
+    completion_(failed);
+    delete this;
+  }
+ private:
+  void (^completion_)(uint64_t);
+  base::ScopedObservation<content::BrowsingDataRemover, content::BrowsingDataRemover::Observer> observation_{this};
+};
 
 class HostNativeWidgetMac : public views::NativeWidgetMac {
  public:
@@ -1681,6 +1700,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSString* extension_popup_storage_;
   base::OnceClosure check_chooser_close_;
   __weak NSWindow* check_anchor_bubble_;
+  NSMutableDictionary<NSString*, id>* check_site_clear_results_;
 }
 
 - (BOOL)dispatchWorkspaceCommand:(NSInteger)command {
@@ -1842,11 +1862,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* action = container ? container->GetActionForId(identifier.UTF8String) : nullptr;
   if (action) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "ext-actions" ||
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions") {
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions" ||
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "extensions") {
     auto* popup = ExtensionPopup::last_popup_for_testing();
     std::fprintf(stderr, "ararat-trace: ext-action id=%s found=%d popup=%d visible=%d\n",
                  identifier.UTF8String, action != nullptr, popup != nullptr,
                  popup && popup->GetWidget() ? popup->GetWidget()->IsVisible() : 0);
+    NSLog(@"ararat-trace: ext-action container actions=%@", [self extensionActions]);
   }
 }
 
@@ -1856,7 +1878,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* flags = base::CommandLine::ForCurrentProcess();
   const auto check = flags->GetSwitchValueASCII("ararat-check");
   const auto screen = flags->GetSwitchValueASCII("ararat-screen");
-  if (check != "ext-actions" && screen != "ext-actions") return @{};
+  if (check != "ext-actions" && screen != "ext-actions" && screen != "extensions") return @{};
   auto* popup = ExtensionPopup::last_popup_for_testing();
   bool visible = popup && popup->GetWidget() && popup->GetWidget()->IsVisible();
   NSWindow* window = visible ? popup->GetWidget()->GetNativeWindow().GetNativeNSWindow() : nil;
@@ -1869,7 +1891,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* flags = base::CommandLine::ForCurrentProcess();
   const auto check = flags->GetSwitchValueASCII("ararat-check");
   const auto screen = flags->GetSwitchValueASCII("ararat-screen");
-  if (check != "ext-actions" && screen != "ext-actions") return;
+  if (check != "ext-actions" && screen != "ext-actions" && screen != "extensions") return;
   auto* window = core_->window();
   auto* container = window ? window->extensions() : nullptr;
   if (container) container->HideActivePopup();
@@ -2441,6 +2463,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
+      [screen isEqualToString:@"header"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
@@ -4093,6 +4116,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                           @"loading": @(tab.contents->ShouldShowLoadingUI()),
                           @"audible": @(tab.contents->IsCurrentlyAudible()),
                           @"muted": @(tab.contents->IsAudioMuted()),
+                          @"canGoBack": @(tab.contents->GetController().CanGoBack()),
                           @"canGoForward": @(tab.contents->GetController().CanGoForward()),
                           @"url": url ?: (id)NSNull.null,
                           @"title": committed.is_valid() ? (id)tab.title : (id)NSNull.null }];
@@ -4230,6 +4254,65 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (!contents) return nil;
   auto* identity = static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey));
   return identity ? identity->item_id : nil;
+}
+
+- (NSString*)currentSiteDomain {
+  if (![self activeItemId]) return nil;
+  auto* contents = browser_->GetTabStripModel()->GetActiveWebContents();
+  const GURL& url = contents->GetLastCommittedURL();
+  if (!url.SchemeIsHTTPOrHTTPS() || url.host().empty()) return nil;
+  std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
+      url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  return base::SysUTF8ToNSString(domain.empty() ? url.host() : domain);
+}
+
+- (double)checkZoomLevel {
+  auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  return contents ? content::HostZoomMap::GetZoomLevel(contents) : 0;
+}
+
+- (NSDictionary<NSString*, id>*)checkSiteClearResults {
+  return [check_site_clear_results_ copy] ?: @{};
+}
+
+- (BOOL)runCommand:(NSString*)command {
+  if (!browser_ || browser_->IsDeleteScheduled() || ![self activeItemId] ||
+      workspace_page_hidden_ || workspace_remote_ || core_->closing() || core_->closed()) return NO;
+  NSDictionary<NSString*, NSNumber*>* commands = @{
+    @"back": @(IDC_BACK), @"forward": @(IDC_FORWARD), @"reload": @(IDC_RELOAD),
+    @"stop": @(IDC_STOP), @"force_reload": @(IDC_RELOAD_BYPASSING_CACHE),
+    @"zoom_in": @(IDC_ZOOM_PLUS), @"zoom_out": @(IDC_ZOOM_MINUS),
+    @"print": @(IDC_PRINT), @"find": @(IDC_FIND)
+  };
+  if (NSNumber* value = commands[command]) return chrome::ExecuteCommand(browser_, value.intValue);
+  BOOL cookies = [command isEqualToString:@"clear_cookies_site"];
+  if (!cookies && ![command isEqualToString:@"clear_cache_site"]) return NO;
+  auto* contents = browser_->GetTabStripModel()->GetActiveWebContents();
+  const GURL& url = contents->GetLastCommittedURL();
+  NSString* domain = [self currentSiteDomain];
+  if (!domain) return NO;
+  auto filter = content::BrowsingDataFilterBuilder::Create(content::BrowsingDataFilterBuilder::Mode::kDelete);
+  if (cookies) filter->AddRegisterableDomain(base::SysNSStringToUTF8(domain));
+  else filter->AddOrigin(url::Origin::Create(url));
+  auto* remover = browser_->GetProfile()->GetBrowsingDataRemover();
+  auto mask = cookies ? content::BrowsingDataRemover::DATA_TYPE_COOKIES : content::BrowsingDataRemover::DATA_TYPE_CACHE;
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (args->GetSwitchValueASCII("ararat-check") == "header" || args->GetSwitchValueASCII("ararat-screen") == "header") {
+    if (!check_site_clear_results_) check_site_clear_results_ = [NSMutableDictionary dictionary];
+    check_site_clear_results_[command] = NSNull.null;
+    __weak ARWindowHost* weakHost = self;
+    NSString* name = [command copy];
+    auto* observer = new SiteClearObserver(remover, ^(uint64_t failed) {
+      ARWindowHost* host = weakHost;
+      if (host) host->check_site_clear_results_[name] = @(failed);
+    });
+    remover->RemoveWithFilterAndReply(base::Time(), base::Time::Max(), mask,
+        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, std::move(filter), observer);
+  } else {
+    remover->RemoveWithFilter(base::Time(), base::Time::Max(), mask,
+        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, std::move(filter));
+  }
+  return YES;
 }
 
 - (BOOL)isClosing {

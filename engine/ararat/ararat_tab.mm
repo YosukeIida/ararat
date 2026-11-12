@@ -119,6 +119,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
+  void NavigationEntriesDeleted() override { [[tab_ ownerHost] tabMetadataChanged:@"navigation-entries" tab:tab_]; }
   void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged:@"audible"]; }
   void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged:@"muted"]; }
   void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }

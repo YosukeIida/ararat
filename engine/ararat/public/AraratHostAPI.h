@@ -176,6 +176,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)navigateURL:(NSString*)url target:(NSDictionary<NSString*, id>*)target;
 - (void)findAction:(NSString*)action text:(NSString*)text selection:(NSRange)selection liveId:(NSString*)liveId profile:(NSString*)profile;
 - (nullable NSString*)activeItemId;
+- (BOOL)runCommand:(NSString*)command;
+- (nullable NSString*)currentSiteDomain;
+- (double)checkZoomLevel;
+- (NSDictionary<NSString*, id>*)checkSiteClearResults;
 - (void)close;
 - (void)installCheckDialogFactory;
 - (void)expectCheckDialogs:(NSUInteger)limit;
