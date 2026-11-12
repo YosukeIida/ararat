@@ -2149,7 +2149,9 @@ extension SidebarView {
         return true
     }
 
-    public var closeCapsForCheck: [String]? { rowViews.values.first?.closeShortcutCaps }
+    public var closeCapsForCheck: [String]? { selectedID.flatMap { rowViews[$0] }?.closeShortcutCaps }
+    /// The caps the close_tab binding gives every row, to compare against the current row's.
+    public var closeBindingCapsForCheck: [String] { closeCaps }
 }
 
 private enum SidebarNoTabsRowSelf {

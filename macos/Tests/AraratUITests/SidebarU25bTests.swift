@@ -353,3 +353,18 @@ func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
     #expect(!work.pinned.contains { $0.id == "p" })
     #expect(work.today.contains { $0.id == "a" })
 }
+
+@Test @MainActor
+func theCloseCapsSeamReadsTheCurrentRowNotAnArbitraryOne() throws {
+    // R2: only the current row draws ⌘W's caps. The check compares the current row's caps
+    // with the close_tab binding's; reading an arbitrary row made the plain run flaky.
+    let (window, sidebar) = u25Sidebar(u25Space(today: [u25Row("a"), u25Row("b")]))
+    defer { window.contentView = nil }
+    sidebar.updateSelection(id: "a")
+    #expect(sidebar.rowCheckInfo(id: "a")?.closeCaps == ["⌘", "W"])
+    #expect(sidebar.rowCheckInfo(id: "b")?.closeCaps == nil)
+    #expect(sidebar.closeCapsForCheck == ["⌘", "W"])
+    #expect(sidebar.closeBindingCapsForCheck == ["⌘", "W"])
+    sidebar.updateSelection(id: nil)
+    #expect(sidebar.closeCapsForCheck == nil)
+}

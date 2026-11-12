@@ -317,8 +317,14 @@ extension Runtime {
             }
             let ready = sidebar.closeSelectedReadyForCheck
             trace("press ⌘W allowed=\(ready.allowed) selected=\(ready.selected ?? "-")")
+            // R2: only the current row draws ⌘W's caps, and they follow the close_tab binding.
             let caps = sidebar.rowCheckInfo(id: todayB.id)?.closeCaps
-            check.report("close_caps_current", caps == sidebar.closeCapsForCheck && !(caps ?? []).isEmpty)
+            let bindingCaps = sidebar.closeBindingCapsForCheck
+            guard let caps, !caps.isEmpty, caps == bindingCaps, sidebar.closeCapsForCheck == caps else {
+                note("today-b caps=\(caps ?? []) binding=\(bindingCaps) current-row=\(sidebar.closeCapsForCheck ?? []) selected=\(sidebar.selectedRowID ?? "-")")
+                return
+            }
+            check.report("close_caps_current", true)
             check.commandWId = todayB.id
             sidebar.closeSelectedTab(nil)
             step(6)
@@ -343,44 +349,55 @@ extension Runtime {
             trace("empty folder line")
             step(7)
         case 7:
-            // R7 first, while the active tab is healthy: a loaded, not-shown tab whose title
-            // changes gets a dot. (A crashed contents would not navigate for the fixture.)
-            check.seen = Set(sidebarCheckShownSpace().map { ($0.today + $0.pinned + $0.favorites).map(\.id) } ?? [])
-            trace("unread fixture")
-            host.checkNavigate("data:text/html,<title>Unread</title><script>setTimeout(function(){document.title='Unread changed'},300)</script>",
-                               disposition: "background")
+            // R7 needs a loaded tab the window is not showing, with a title that changes while
+            // it is hidden. A background checkNavigate cannot provide it: the core adopts an
+            // engine-created tab only when a new live epoch arrives, so a mid-run background
+            // tab never becomes a row. Open an existing Today row instead, then move the
+            // window away before its title changes.
+            guard let todayC = row("today-c") else { note("today-c row missing"); return }
+            trace("unread fixture: open today-c")
+            sidebar.selectRow(id: todayC.id)
             step(8)
         case 8:
-            guard let space = sidebarCheckShownSpace(), let candidate = space.today.first(where: { !check.seen.contains($0.id) }),
-                  let info = sidebar.rowCheckInfo(id: candidate.id), info.unreadDot else {
-                let fresh = sidebarCheckShownSpace().map { $0.today.filter { !check.seen.contains($0.id) }.map(\.id) } ?? []
-                note("no unread dot yet; new rows=\(fresh) dots=\(fresh.map { sidebar.rowCheckInfo(id: $0)?.unreadDot == true })")
+            guard let todayC = row("today-c") else { note("today-c row missing"); return }
+            guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else {
+                note("today-c not current yet for the title fixture: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") live=\(liveTab(todayC.id))")
+                return
+            }
+            // The page's title changes 300 ms after it loads; the pin takes the window first, so
+            // the change lands on a background tab. (A crashed contents would not navigate.)
+            trace("unread fixture: navigate today-c, then hide it behind the pin")
+            host.checkNavigate("data:text/html,<title>Unread</title><script>setTimeout(function(){document.title='Unread changed'},300)</script>",
+                               disposition: "current")
+            guard let pin = row("pin") else { note("pin row missing for the unread fixture"); return }
+            sidebar.selectRow(id: pin.id)
+            step(9)
+        case 9:
+            guard let todayC = row("today-c") else { note("today-c row missing"); return }
+            guard sidebar.rowCheckInfo(id: todayC.id)?.unreadDot == true else {
+                note("no unread dot yet on \(todayC.id): selected=\(sidebar.selectedRowID ?? "-") active=\(host.activeItemId() ?? "-") dot=\(String(describing: sidebar.rowCheckInfo(id: todayC.id)?.unreadDot)) tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
                 return
             }
             check.report("unread_dot", true)
             _ = capture("unread")
-            sidebar.selectRow(id: candidate.id)
-            step(9)
-        case 9:
-            guard let space = sidebarCheckShownSpace(), let shown = space.today.first(where: { sidebar.selectedRowID == $0.id }),
-                  sidebar.rowCheckInfo(id: shown.id)?.unreadDot == false else {
-                let shown = sidebarCheckShownSpace().flatMap { space in
-                    space.today.first { sidebar.selectedRowID == $0.id } }.map(\.id)
-                note("unread dot not cleared yet on \(shown ?? "-")")
-                return
+            sidebar.selectRow(id: todayC.id)
+            step(10)
+        case 10:
+            guard let todayC = row("today-c") else { note("today-c row missing"); return }
+            guard sidebar.rowCheckInfo(id: todayC.id)?.unreadDot == false else {
+                note("unread dot not cleared yet on \(todayC.id)"); return
             }
             // R5: a crashed renderer's row draws the warning glyph at 45 %.
-            guard let todayC = row("today-c") else { note("today-c row missing"); return }
-            if sidebar.selectedRowID != todayC.id { sidebar.selectRow(id: todayC.id); return }
             guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else {
-                note("today-c not active yet: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
+                note("today-c not active yet for the crash: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
                 return
             }
             trace("crash the renderer")
             guard tab.checkCrashRenderer() else { finish(); return }
-            step(10)
-        case 10:
+            step(11)
+        case 11:
             guard let todayC = row("today-c"), let info = sidebar.rowCheckInfo(id: todayC.id),
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else {
                 let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == (row("today-c")?.id ?? "") }
