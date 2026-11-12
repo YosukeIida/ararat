@@ -61,6 +61,7 @@
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
@@ -258,8 +259,8 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "errorpages" ||
-         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
+  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" ||
+         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "downloads" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
 }
 
 void PinStartupPref(Profile* profile) {
@@ -2191,7 +2192,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "dialogs" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
+  if (!browser_ || (!command->HasSwitch("ararat-check") && command->GetSwitchValueASCII("ararat-screen") != "prompts" && command->GetSwitchValueASCII("ararat-screen") != "dialogs" && command->GetSwitchValueASCII("ararat-screen") != "fullscreen" && command->GetSwitchValueASCII("ararat-screen") != "keyboard" && command->GetSwitchValueASCII("ararat-screen") != "commandbar" && command->GetSwitchValueASCII("ararat-screen") != "downloads" && command->GetSwitchValueASCII("ararat-screen") != "errorpages" && !((command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "links" || command->GetSwitchValueASCII("ararat-screen") == "extensions") && command->HasSwitch("ararat-page-only-menu-check")))) return;
   NavigateParams params(browser_, GURL(url.UTF8String), ui::PAGE_TRANSITION_LINK);
   params.source_contents = browser_->GetTabStripModel()->GetActiveWebContents();
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
@@ -2292,6 +2293,36 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   prefs->SetBoolean(prefs::kPromptForDownload, false);
   return !prefs->GetBoolean(prefs::kPromptForDownload) &&
          prefs->GetFilePath(prefs::kDownloadDefaultDirectory) == directory;
+}
+
+- (NSString*)prepareDownloadsCheckDirectory:(NSString*)name {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || browser_->GetProfile()->IsOffTheRecord() ||
+      (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads") ||
+      (![name isEqualToString:@"standard"] && ![name isEqualToString:@"custom"])) return @"";
+  Profile* profile = browser_->GetProfile();
+  auto* service = DownloadCoreServiceFactory::GetForBrowserContext(profile);
+  if (!service || !service->GetDownloadManagerDelegate()) return @"";
+  const base::FilePath directory = profile->GetPath().AppendASCII("ararat-downloads-check").AppendASCII(name.UTF8String);
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    if (!base::CreateDirectory(directory)) return @"";
+  }
+  profile->GetPrefs()->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  profile->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+  auto* prefs = DownloadPrefs::FromBrowserContext(profile);
+  if (!prefs || prefs->DownloadPath() != directory || profile->GetPrefs()->GetBoolean(prefs::kPromptForDownload)) return @"";
+  return base::SysUTF8ToNSString(directory.value());
+}
+
+- (NSDictionary*)downloadsCheckSettings {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads")) return @{};
+  Profile* profile = browser_->GetProfile();
+  auto* prefs = DownloadPrefs::FromBrowserContext(profile);
+  return prefs ? @{ @"directory": base::SysUTF8ToNSString(prefs->DownloadPath().value()),
+                    @"prompt": @(profile->GetPrefs()->GetBoolean(prefs::kPromptForDownload)),
+                    @"private": @(profile->IsOffTheRecord()) } : @{};
 }
 
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {

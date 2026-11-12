@@ -229,6 +229,7 @@ public final class SidebarView: NSView {
         let destination = root.convert(NSPoint(x: libraryButton.bounds.midX, y: libraryButton.bounds.midY), from: libraryButton)
         let icon = NSImageView(frame: NSRect(x: origin.x - 12, y: origin.y - 12, width: 24, height: 24))
         icon.image = downloadIcon(name)
+        icon.identifier = NSUserInterfaceItemIdentifier("download-flight")
         icon.setAccessibilityHidden(true)
         icon.wantsLayer = true
         root.addSubview(icon, positioned: .above, relativeTo: nil)
@@ -245,6 +246,35 @@ public final class SidebarView: NSView {
         icon.layer?.add(flight, forKey: "flight")
         CATransaction.commit()
     }
+
+    private var downloadsCheckEnabled: Bool {
+        CommandLine.arguments.contains("--ararat-check=downloads") || CommandLine.arguments.contains("--ararat-screen=downloads")
+    }
+    public func downloadsCheckState() -> [String: Any] {
+        guard downloadsCheckEnabled else { return [:] }
+        let progress: String
+        switch libraryButton.progress {
+        case .none: progress = "none"
+        case .indeterminate: progress = "indeterminate"
+        case .fraction: progress = "fraction"
+        }
+        let flight = window?.contentView?.subviews.contains { $0.identifier?.rawValue == "download-flight" } ?? false
+        return ["progress": progress, "ring_visible": !libraryButton.ring.isHidden, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "actions": $0.actions] as [String: Any] } ?? [],
+                "list": downloadsPopover?.isShown ?? false, "first": downloadsPopover?.library.title ?? "",
+                "rows": downloadsPopover?.rows.mapValues { UInt(bitPattern: ObjectIdentifier($0)) } ?? [:],
+                "library_open": libraryOpen, "library_page": library.page.rawValue,
+                "page_ids": library.downloadsPage.entries.map(\.id), "flight": flight]
+    }
+    public func downloadsCheckHover() {
+        guard downloadsCheckEnabled, let window,
+              let event = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil) else { return }
+        libraryButton.mouseEntered(with: event)
+    }
+    public func downloadsCheckClosePopover() { if downloadsCheckEnabled { downloadsPopover?.close() } }
+    public func downloadsCheckOpenLibrary() { if downloadsCheckEnabled { downloadsPopover?.library.performClick(nil) } }
+    public func downloadsCheckShowPage() { if downloadsCheckEnabled { library.downloadsButton.performClick(nil) } }
+    public var downloadsCheckPopoverWindow: NSWindow? { downloadsCheckEnabled ? downloadsPopover?.checkWindow : nil }
 
     public func searchArchive(_ query: String) -> Int {
         library.setSearchQuery(query)

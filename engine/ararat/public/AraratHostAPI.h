@@ -186,6 +186,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isPrivateWindow;
 - (int)checkInProgressDownloadCount;
 - (BOOL)prepareCheckDownload;
+- (NSString*)prepareDownloadsCheckDirectory:(NSString*)name;
+- (NSDictionary<NSString*, id>*)downloadsCheckSettings;
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
 - (void)checkSetFindPasteboard:(NSString*)text;

@@ -80,6 +80,7 @@ final class DownloadsPopover: NSObject {
         popover.contentViewController = controller
     }
     var isShown: Bool { popover.isShown }
+    var checkWindow: NSWindow? { popover.contentViewController?.view.window }
     func close() { popover.performClose(nil) }
     func show(focus: Bool = false) {
         guard model.hasSessionDownloads, let window = anchor.window else { return }
