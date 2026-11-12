@@ -107,7 +107,8 @@ impl WorkspaceStore {
     }
 
     pub fn auto_archive(&self, window_id: String, now: u64) -> Result<Option<WorkspaceSnapshot>, CoreError> {
-        self.admit(true)?;
+        if self.private { return Ok(None); }
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.auto_archive(now)?;
         if ops.is_empty() { return Ok(None); }
@@ -1401,6 +1402,37 @@ fn row(ws: &Workspace, depth: usize, item: &Item) -> Option<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_transactions_validate_before_epoch_and_live_closes_remove_rows() {
+        let store = WorkspaceStore::open_private(Profile::Default);
+        let tab = |live: &str| LiveTab { off_the_record: true, profile: Profile::Default, live_id: live.into(), item: None, opener: None, navigated: true, url: Some(format!("https://{live}.example/")), title: None };
+        let mut tx = LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![LiveStrip { window: "w".into(), tabs: vec![tab("one"), tab("two")], active: Some("one".into()) }] };
+        assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+        tx.off_the_record = true;
+        tx.strips[0].tabs[0].profile = Profile::Named("other".into());
+        assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+        tx.strips[0].tabs[0].profile = Profile::Default;
+        tx.rev = 1;
+        assert!(!store.live_apply(tx.clone()).unwrap().applied);
+        assert!(store.snapshot("w".into()).spaces[0].today.is_empty());
+        tx.rev = 0;
+        let applied = store.live_apply(tx).unwrap();
+        assert!(applied.applied);
+        assert_eq!(applied.adopted.len(), 2);
+        let before = store.snapshot("w".into());
+        assert!(store.auto_archive("w".into(), u64::MAX).unwrap().is_none());
+        assert_eq!(store.snapshot("w".into()), before);
+        let first = applied.adopted.iter().find(|tab| tab.live_id == "one").unwrap().item.clone();
+        let second = applied.adopted.iter().find(|tab| tab.live_id == "two").unwrap().item.clone();
+        store.live_close(first).unwrap();
+        store.live_archive(second).unwrap();
+        let after = store.snapshot("w".into());
+        assert!(after.spaces[0].today.is_empty());
+        assert!(after.archive.is_empty());
+        assert!(store.pending_history_purges().unwrap().is_empty());
+        assert!(store.workspace.lock().unwrap().last_selected.is_empty());
+    }
 
     #[test]
     fn private_live_transactions_do_not_learn_or_create_history() {
