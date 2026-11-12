@@ -1413,6 +1413,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  // The command-bar check drives ⌃Tab through a posted key event, so a run that loses the
+  // switcher needs the path named: this is silent unless that check is running.
+  func commandBarTrace(_ text: @autoclosure () -> String) {
+    guard CommandLine.arguments.contains(where: { $0 == "--ararat-check=commandbar" || $0 == "--ararat-screen=commandbar" }) else { return }
+    FileHandle.standardError.write(Data("ararat-trace: commandbar \(text())\n".utf8))
+  }
+
   func performWorkspaceCommand(_ command: String) {
     guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
     let shown = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
@@ -1492,6 +1499,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   @objc func coreMenuCommand(_ item: NSMenuItem) {
     let owner = root ?? self
     guard let command = item.representedObject as? String else { return }
+    commandBarTrace("core-menu command=\(command) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-")")
     if ([owner] + owner.children).contains(where: { runtime in
       runtime.popups.contains(where: { $0.host?.window().isKeyWindow == true })
     }),
@@ -1521,23 +1529,35 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
     if let switcher = tabSwitcher, switcher.isOpen { switcher.advance(backwards: backwards); return }
     guard hasUsableHost, let host, let workspace else { return }
+    commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
     let switcher = TabSwitcher(parent: host.window(), backwards: backwards) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
+    commandBarTrace("cycle-tabs created")
     switcher.onClose = { [weak self, weak switcher] in
       if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+      self?.commandBarTrace("cycle-tabs switcher closed")
     }
     switcher.onSelect = { [weak self] row in
       guard let self, self.snapshot.shownSpaceId == space, case .tab(let id, _) = row.target, let url = row.url else { return }
       self.adapter?.select(id: id, url: url)
     }
     workspace.recentTabs { [weak self, weak switcher] result in
-      guard let self, let switcher, self.tabSwitcher === switcher, self.snapshot.shownSpaceId == space else { switcher?.cancel(); return }
-      switcher.load((try? result.get()) ?? [])
+      guard let self, let switcher, self.tabSwitcher === switcher, self.snapshot.shownSpaceId == space else {
+        self?.commandBarTrace("cycle-tabs rows skipped same=\(self?.tabSwitcher === switcher) space=\(self?.snapshot.shownSpaceId ?? "-") captured=\(space ?? "-")")
+        switcher?.cancel()
+        return
+      }
+      let rows = (try? result.get()) ?? []
+      self.commandBarTrace("cycle-tabs rows=\(rows.count)")
+      switcher.load(rows)
     }
-    if !holdForCheck && NSApp.currentEvent?.modifierFlags.contains(.control) != true { switcher.commit() }
+    if !holdForCheck && NSApp.currentEvent?.modifierFlags.contains(.control) != true {
+      commandBarTrace("cycle-tabs committing: current event lacks control")
+      switcher.commit()
+    }
   }
 
   func openCommandBar(_ requested: CommandBarMode) {

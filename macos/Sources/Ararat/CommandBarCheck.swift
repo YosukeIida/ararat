@@ -144,7 +144,14 @@ extension Runtime {
       guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == commandBarFixtureID }), tab.navigationCount > commandBarReloadCount, !tab.isLoading else { return }
       commandBarConditions["force_reload"] = true
       trace("control tab")
-      if screen { FileHandle.standardError.write(Data("ararat-trace: commandbar control-tab key=\(NSApp.keyWindow?.windowNumber ?? -1) host=\(host.window().windowNumber) host_key=\(host.window().isKeyWindow) app_active=\(NSApp.isActive)\n".utf8)) }
+      if screen {
+        // A posted ⌃Tab must reach the window's menu pass; name what it would find when the
+        // switcher never appears (first responder, the binding's item, the key window).
+        let responder = NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+        let item = NSApp.mainMenu?.items.flatMap { ($0.submenu?.items ?? []) + [$0] }
+          .first { $0.identifier?.rawValue == "cycle_tabs_next" }
+        FileHandle.standardError.write(Data("ararat-trace: commandbar control-tab key=\(NSApp.keyWindow?.windowNumber ?? -1) host=\(host.window().windowNumber) host_key=\(host.window().isKeyWindow) app_active=\(NSApp.isActive) responder=\(responder) menu_item=\(item != nil) menu_key=\(item?.keyEquivalent ?? "-") menu_mods=\(item?.keyEquivalentModifierMask.rawValue ?? 0)\n".utf8))
+      }
       if screen { key(48, chars: "\t", flags: .control, post: true) } else { cycleTabs(backwards: false, holdForCheck: true) }
       step(11, "control tab")
     case 11:
