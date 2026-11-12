@@ -1805,6 +1805,38 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* container = window ? window->extensions() : nullptr;
   auto* action = container ? container->GetActionForId(identifier.UTF8String) : nullptr;
   if (action) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "ext-actions" ||
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions") {
+    auto* popup = ExtensionPopup::last_popup_for_testing();
+    std::fprintf(stderr, "ararat-trace: ext-action id=%s found=%d popup=%d visible=%d\n",
+                 identifier.UTF8String, action != nullptr, popup != nullptr,
+                 popup && popup->GetWidget() ? popup->GetWidget()->IsVisible() : 0);
+  }
+}
+
+// The action popup is an ExtensionPopup (a views bubble), not a Browser, so it never reaches
+// the create_host callback the Runtime's `popups` list is built from. This seam names it.
+- (NSDictionary<NSString*, id>*)checkExtensionActionPopup {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  const auto check = flags->GetSwitchValueASCII("ararat-check");
+  const auto screen = flags->GetSwitchValueASCII("ararat-screen");
+  if (check != "ext-actions" && screen != "ext-actions") return @{};
+  auto* popup = ExtensionPopup::last_popup_for_testing();
+  bool visible = popup && popup->GetWidget() && popup->GetWidget()->IsVisible();
+  NSWindow* window = visible ? popup->GetWidget()->GetNativeWindow().GetNativeNSWindow() : nil;
+  return @{ @"shown": @(visible),
+            @"class": window ? NSStringFromClass([window class]) : @"",
+            @"window": window ?: (id)NSNull.null };
+}
+
+- (void)checkDismissExtensionActionPopup {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  const auto check = flags->GetSwitchValueASCII("ararat-check");
+  const auto screen = flags->GetSwitchValueASCII("ararat-screen");
+  if (check != "ext-actions" && screen != "ext-actions") return;
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  if (container) container->HideActivePopup();
 }
 
 - (BOOL)checkIsExtensionAppPopup {

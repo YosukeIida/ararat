@@ -133,6 +133,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)checkIsExtensionAppPopup;
 - (void)checkExtensionAction:(NSInteger)command;
 - (NSDictionary<NSString*, id>*)checkExtensionActionState;
+- (NSDictionary<NSString*, id>*)checkExtensionActionPopup;
+- (void)checkDismissExtensionActionPopup;
 - (void)checkOpenDevTools;
 - (void)checkCloseDevTools;
 - (NSDictionary<NSString*, id>*)checkDevToolsState;

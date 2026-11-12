@@ -262,17 +262,27 @@ extension Runtime {
                 abs($0.midX - expected.midX) < 1 && abs($0.midY - expected.midY) < 1
             } ?? false
             if anchored { check.mark("action_anchor") }
-            if !popups.isEmpty {
+            // An action popup is an ExtensionPopup bubble, not a Browser window, so the engine's
+            // seam (not the Runtime popups list) is what says it opened.
+            let popupState = host.checkExtensionActionPopup()
+            let popupShown = popupState["shown"] as? Bool == true
+            if popupShown {
+                check.mark("action_popup")
+                FileHandle.standardError.write(Data("ararat-trace: ext-actions action popup shown class=\(popupState["class"] as? String ?? "-")\n".utf8))
+                host.checkDismissExtensionActionPopup()
+                guard host.checkExtensionActionPopup()["shown"] as? Bool != true else { wait("action popup closed"); return }
+            } else if !popups.isEmpty {
                 check.mark("action_popup")
                 for popup in popups { popup.host?.close() }
                 guard popups.isEmpty else { wait("action popup closed"); return }
             } else if phaseTicks() <= 50 {
-                wait("action anchor and popup")
+                wait("action popup")
                 return
             } else {
                 // Keep the later phases reachable and name the missing part.
                 check.mark("action_anchor", anchored)
                 check.mark("action_popup", false)
+                FileHandle.standardError.write(Data("ararat-trace: ext-actions action popup missing after \(phaseTicks()) ticks state=\(popupState)\n".utf8))
             }
             // Remove… last: the uninstall sheet is Chrome's browser-modal fallback.
             check.removeStarted = true
