@@ -238,8 +238,10 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
       close(third.output)
       child = nil
       if let error = cleanup() { return failure(error) }
+      let verified = thirdObject["profile_isolation_verified"] as? Bool ?? false
       let combined: [String: Any] = ["check": "relaunch-pins", "ok": ok && status == 0 && isolated && thirdStatus == 0,
-                                     "pinned_after_relaunch": ok, "unpinned_other_profile": isolated,
+                                     "pinned_after_relaunch": ok, "other_profile_run_ok": isolated,
+                                     "profile_isolation_verified": verified,
                                      "run2": object, "run3": thirdObject]
       if let data = try? JSONSerialization.data(withJSONObject: combined, options: [.sortedKeys]),
          let output = String(data: data, encoding: .utf8) { print(output); fflush(stdout) }

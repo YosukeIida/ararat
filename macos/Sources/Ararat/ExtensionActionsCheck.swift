@@ -11,8 +11,8 @@ final class ExtensionActionsCheck {
     static let common = ["fixture", "seed", "pin", "pin_shown", "menu_items", "manage_enabled",
                          "remove_enabled", "badge_text", "badge_icon", "badge_per_tab", "badge_live",
                          "overflow_row", "overflow_geometry", "overflow_restores", "unpin",
-                         "repin", "remove_cancel"]
-    static let screens = ["capture_action", "capture_overflow", "capture_menu"]
+                         "repin", "action_anchor", "menu_autoenable_off", "ext_actions_labels", "remove_cancel"]
+    static let screens = ["capture_action", "capture_overflow"]
 
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
@@ -26,6 +26,7 @@ final class ExtensionActionsCheck {
     var removeStarted = false
     var removeResult = ""
     var removeAttempts = 0
+    var actionAnchor: NSRect?
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -134,7 +135,7 @@ extension Runtime {
             check.mark("seed")
             if item.pinned {
                 check.mark("pin")
-            } else if adapter?.setExtensionPinned(check.fixtureID, pinned: true) != "done" {
+            } else if !["done", "unchanged"].contains(adapter?.setExtensionPinned(check.fixtureID, pinned: true) ?? "") {
                 wait("pin command"); return
             }
             browserCheckPhase = 2
@@ -153,6 +154,11 @@ extension Runtime {
             check.mark("manage_enabled", manage?.isEnabled == true
                        && adapter?.extensionManagementURL(check.fixtureID) != nil)
             check.mark("remove_enabled", remove?.isEnabled == true && item.removable && pin?.isEnabled == true)
+            menu.update()
+            let staysDisabled = menu.autoenablesItems == false
+                && pin?.isEnabled == item.pinMutable && remove?.isEnabled == item.removable
+            check.mark("menu_autoenable_off", staysDisabled)
+            check.mark("ext_actions_labels", sidebar.checkActionLabelsComplete)
             check.iconBefore = iconHash(item)
             if screen { check.mark("capture_action", capture("action")) }
             guard let ports = siteFixturePorts else { wait("badge fixture"); return }
@@ -195,10 +201,6 @@ extension Runtime {
             check.mark("overflow_row")
             check.mark("overflow_geometry", abs(tile - expectedTile) <= 1 && rowFrame.height == 32)
             if screen { check.mark("capture_overflow", capture("overflow")) }
-            if screen, let menu = sidebar.checkExtensionMenu(check.fixtureID) {
-                _ = menu
-                check.mark("capture_menu", capture("menu"))
-            }
             setWidth(sidebar.checkDefaultWidth)
             browserCheckPhase = 7
         case 7:
@@ -216,14 +218,26 @@ extension Runtime {
             browserCheckPhase = 9
         case 9:
             guard let item = item(), item.pinned,
-                  sidebar.checkInFieldActionIDs.contains(check.fixtureID) else { wait("repinned action"); return }
+                  sidebar.checkInFieldActionIDs.contains(check.fixtureID),
+                  let button = sidebar.checkActionButton(check.fixtureID) else { wait("repinned action"); return }
             check.mark("repin")
+            // M2/S9: the anchor is set before the action runs, and the action's popup opens.
+            check.actionAnchor = button.anchorInWindow
+            sidebar.checkPerformExtensionAction(check.fixtureID)
+            browserCheckPhase = 10
+        case 10:
+            guard let expected = check.actionAnchor else { wait("action anchor recorded"); return }
+            guard let actual = lastExtensionAnchor, abs(actual.midX - expected.midX) < 1, abs(actual.midY - expected.midY) < 1,
+                  !popups.isEmpty else { wait("action anchor and popup"); return }
+            check.mark("action_anchor")
+            for popup in popups { popup.host?.close() }
+            guard popups.isEmpty else { wait("action popup closed"); return }
             // Remove… last: the uninstall sheet is Chrome's browser-modal fallback.
             check.removeStarted = true
             check.removeAttempts = 0
             _ = sidebar.checkPerformMenuCommand(check.fixtureID, title: "Remove…")
-            browserCheckPhase = 10
-        case 10:
+            browserCheckPhase = 11
+        case 11:
             check.removeAttempts += 1
             if !check.removeResult.isEmpty {
                 check.mark("remove_cancel", check.removeResult == "notRemoved")
@@ -232,8 +246,16 @@ extension Runtime {
                 return
             }
             // The dialog is a sheet or a modal child of the host window; closing it is the
-            // cancel path, and the engine reports notRemoved afterwards.
-            let sheet = window.attachedSheet ?? window.childWindows?.first { $0.isVisible && $0 !== window }
+            // cancel path, and the engine reports notRemoved afterwards. S9: close only a
+            // window that looks like the uninstall dialog.
+            let candidates = [window.attachedSheet].compactMap { $0 }
+                + (window.childWindows ?? []).filter { $0 !== window && $0.isVisible }
+            let sheet = candidates.first { candidate in
+                let name = String(describing: type(of: candidate)).lowercased()
+                return candidate === window.attachedSheet
+                    || name.contains("dialog") || name.contains("uninstall") || name.contains("browser")
+                    || candidate.title.lowercased().contains("remove")
+            }
             if let sheet {
                 FileHandle.standardError.write(Data("ararat-trace: ext-actions remove sheet=\(sheet.title) class=\(type(of: sheet))\n".utf8))
                 window.endSheet(sheet)
