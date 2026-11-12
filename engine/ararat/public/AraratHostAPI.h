@@ -93,6 +93,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
+- (void)extensionActionsChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier flight:(BOOL)flight;
 - (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
         container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
@@ -103,14 +105,36 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol ARWindowHostAPI <NSObject>
+// A missing site setting is NSNull; allowed includes valid mixed geolocation values.
+// The blocked flag includes cookie and policy blocks, but excludes automatic downloads and storage access.
+// An embargo alone does not count as a site-specific block until content is refused.
+// Security and certificates use the visible entry and can differ from the committed origin while navigating; error includes Safe Browsing.
+// Closing after a change drops the reload hint; focus and navigation recreate PageInfo and record its open metrics.
+// Swift wrappers and focused bridge tests are left to the UI integration.
+- (NSDictionary<NSString*, id>*)siteState;
+- (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request;
+- (void)closeSiteControls;
+// Capture completions are asynchronous; devtoolsBusy includes an existing capture.
+- (void)captureFullPageForDocument:(NSString*)document completion:(void (^)(NSData* _Nullable png, NSString* _Nullable error))completion;
+// The rectangle uses the focused page's contents->GetNativeView() points, with the origin at its top left.
+- (void)captureRegion:(NSRect)rect document:(NSString*)document completion:(void (^)(NSData* _Nullable png, NSString* _Nullable error))completion;
 - (NSArray<NSDictionary<NSString*, id>*>*)downloads;
 - (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier;
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActionsWithIconSize:(NSUInteger)size;
+- (NSString*)setExtensionPinned:(NSString*)identifier pinned:(BOOL)pinned;
+// Open the returned URL through the shown space's existing new-tab command path.
+- (nullable NSString*)extensionManagementURL:(NSString*)identifier;
+// Completion is asynchronous. Chrome's browser-modal fallback requires VM verification.
+// Report-abuse and setUninstallURL tabs require VM verification in the hosted window.
+- (void)removeExtension:(NSString*)identifier completion:(void (^)(NSString* result, NSString* detail))completion;
 - (void)setExtensionAnchor:(NSRect)rect;
 - (void)runExtensionAction:(NSString*)identifier;
 - (BOOL)checkIsExtensionAppPopup;
 - (void)checkExtensionAction:(NSInteger)command;
 - (NSDictionary<NSString*, id>*)checkExtensionActionState;
+- (NSDictionary<NSString*, id>*)checkExtensionActionPopup;
+- (void)checkDismissExtensionActionPopup;
 - (void)checkOpenDevTools;
 - (void)checkCloseDevTools;
 - (NSDictionary<NSString*, id>*)checkDevToolsState;

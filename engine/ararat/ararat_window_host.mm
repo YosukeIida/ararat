@@ -14,10 +14,12 @@
 #include <unistd.h>
 
 #include "ararat/core/ararat_browser_window.h"
+#include "ararat/core/ararat_capture.h"
 #include "ararat/core/ararat_downloads.h"
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_permission_prompt.h"
+#include "ararat/core/ararat_site_state.h"
 #include "ararat/core/ararat_tab.h"
 #include "ararat/core/ararat_tab_history.h"
 #include "base/check.h"
@@ -69,6 +71,7 @@
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
+#include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -142,6 +145,12 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_action.h"
+#include "extensions/browser/extension_action_manager.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "extensions/common/manifest.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
@@ -222,7 +231,49 @@ bool AraratRedispatchKeyboardEvent(AraratWindowHostCore* host, const input::Nati
   return window_host && window_host->RedispatchKeyEvent(event.os_event.Get());
 }
 
+static void PostCaptureError(void (^completion)(NSData*, NSString*), NSString* error) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(^{ completion(nil, error); }));
+}
+
+static void PostExtensionRemoval(void (^completion)(NSString*, NSString*), NSString* result, NSString* detail) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(^{ completion(result, detail); }));
+}
+
 namespace {
+bool CanRemoveExtension(Profile* profile, const extensions::Extension* extension) {
+  if (!profile || !extension || extensions::Manifest::IsComponentLocation(extension->location())) return false;
+  auto* system = extensions::ExtensionSystem::Get(profile);
+  auto* policy = system ? system->management_policy() : nullptr;
+  return policy && policy->UserMayModifySettings(extension, nullptr) &&
+         !policy->MustRemainInstalled(extension, nullptr);
+}
+
+class ExtensionUninstallRequest : public extensions::ExtensionUninstallDialog::Delegate {
+ public:
+  static void Start(Profile* profile, gfx::NativeWindow parent,
+                    const extensions::Extension* extension,
+                    void (^completion)(NSString*, NSString*)) {
+    auto* request = new ExtensionUninstallRequest(completion);
+    request->dialog_ = extensions::ExtensionUninstallDialog::Create(profile, parent, request);
+    request->dialog_->ConfirmUninstall(extension, extensions::UNINSTALL_REASON_USER_INITIATED,
+                                       extensions::UNINSTALL_SOURCE_TOOLBAR_CONTEXT_MENU);
+  }
+
+ private:
+  explicit ExtensionUninstallRequest(void (^completion)(NSString*, NSString*)) : completion_([completion copy]) {}
+  ~ExtensionUninstallRequest() override = default;
+  void OnExtensionUninstallDialogClosed(bool started, const std::u16string& error) override {
+    void (^completion)(NSString*, NSString*) = completion_;
+    NSString* detail = base::SysUTF16ToNSString(error);
+    NSString* result = started ? @"removed" : @"notRemoved";
+    delete this;
+    PostExtensionRemoval(completion, result, detail);
+  }
+  void (^completion_)(NSString*, NSString*);
+  std::unique_ptr<extensions::ExtensionUninstallDialog> dialog_;
+};
 
 bool IsDevToolsCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
@@ -1339,6 +1390,7 @@ NSDictionary* OrphanMoveSnapshot(NSString* window) {
 - (void)emitOpenFailure:(NSString*)commandId;
 - (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost;
 - (void)syncTabs;
+- (void)queueExtensionActionsChanged;
 - (void)closeCancelled:(const tabs::TabInterface*)tab;
 - (void)drainPendingOpens;
 - (void)discardPendingOpens;
@@ -1562,6 +1614,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<AraratDownloads> downloads_;
+  ARSiteState* site_state_;
+  ARCapture* capture_;
+  BOOL extension_update_queued_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1641,22 +1696,122 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return YES;
 }
 
+- (NSDictionary<NSString*, id>*)siteState { return [site_state_ snapshot]; }
+- (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request { return [site_state_ change:request]; }
+- (void)closeSiteControls { [site_state_ close]; }
+- (void)captureFullPageForDocument:(NSString*)document completion:(void (^)(NSData*, NSString*))completion {
+  auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  if (!contents) { PostCaptureError(completion, @"tabGone"); return; }
+  if (!document || ![[site_state_ document] isEqual:document]) { PostCaptureError(completion, @"navigated"); return; }
+  __weak ARWindowHost* host = self;
+  auto expected = contents->GetWeakPtr();
+  [capture_ fullPage:contents completion:^(NSData* png, NSString* error) {
+    ARWindowHost* strong = host;
+    if (!strong || !expected) { completion(nil, @"tabGone"); return; }
+    if (!strong->browser_ || strong->browser_->GetTabStripModel()->GetActiveWebContents() != expected.get() ||
+        ![[strong->site_state_ document] isEqual:document]) { completion(nil, @"navigated"); return; }
+    completion(png, error);
+  }];
+}
+- (void)captureRegion:(NSRect)rect document:(NSString*)document completion:(void (^)(NSData*, NSString*))completion {
+  auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+  if (!contents) { PostCaptureError(completion, @"tabGone"); return; }
+  if (!document || ![[site_state_ document] isEqual:document]) { PostCaptureError(completion, @"navigated"); return; }
+  __weak ARWindowHost* host = self;
+  auto expected = contents->GetWeakPtr();
+  [capture_ region:rect contents:contents completion:^(NSData* png, NSString* error) {
+    ARWindowHost* strong = host;
+    if (!strong || !expected) { completion(nil, @"tabGone"); return; }
+    if (!strong->browser_ || strong->browser_->GetTabStripModel()->GetActiveWebContents() != expected.get() ||
+        ![[strong->site_state_ document] isEqual:document]) { completion(nil, @"navigated"); return; }
+    completion(png, error);
+  }];
+}
+
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions {
+  return [self extensionActionsWithIconSize:20];
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActionsWithIconSize:(NSUInteger)size {
   auto* window = core_->window();
   auto* container = window ? window->extensions() : nullptr;
-  if (!container) return @[];
+  auto* model = container ? container->toolbar_model() : nullptr;
+  if (!model || !browser_ || size == 0 || size > 128) return @[];
+  auto* profile = browser_->GetProfile();
+  auto* contents = container->GetActiveWebContents();
+  auto* manager = extensions::ExtensionActionManager::Get(profile);
+  std::vector<std::string> ids = model->pinned_action_ids();
+  for (const auto& id : model->action_ids()) if (!model->IsActionPinned(id)) ids.push_back(id);
   NSMutableArray* result = [NSMutableArray array];
-  for (const auto& [id, action] : container->actions()) {
-    auto image = action->GetIcon(container->GetActiveWebContents(), gfx::Size(20, 20))
+  for (const auto& id : ids) {
+    auto found = container->actions().find(id);
+    if (found == container->actions().end()) continue;
+    auto* action = found->second.get();
+    const auto* extension = action->GetExtension();
+    if (!extension) continue;
+    auto image = action->GetIcon(contents, gfx::Size(static_cast<int>(size), static_cast<int>(size)))
                      .Rasterize(core_->widget()->GetColorProvider());
     NSImage* icon = gfx::Image(image).ToNSImage();
-    const auto action_name = action->GetActionName();
-    NSString* name = [[NSString alloc] initWithCharacters:
-        reinterpret_cast<const unichar*>(action_name.data()) length:action_name.size()];
+    NSString* name = base::SysUTF16ToNSString(action->GetActionName());
+    NSString* tooltip = base::SysUTF16ToNSString(action->GetTooltip(contents));
+    auto* state = manager ? manager->GetExtensionAction(*extension) : nullptr;
+    const int tab_id = contents ? sessions::SessionTabHelper::IdForTab(contents).id() : -1;
+    NSString* badge = state ? base::SysUTF8ToNSString(state->GetDisplayBadgeText(tab_id)) : @"";
     [result addObject:@{ @"id": [NSString stringWithUTF8String:id.c_str()],
-                         @"name": name, @"icon": icon ?: [NSImage new] }];
+                         @"name": name, @"icon": icon ?: [NSImage new], @"tooltip": tooltip,
+                         @"enabled": @(contents && action->IsEnabled(contents)),
+                         @"pinned": @(model->IsActionPinned(id)),
+                         @"pinMutable": @(!profile->IsOffTheRecord() && !model->IsActionForcePinned(id)),
+                         @"removable": @(CanRemoveExtension(profile, extension)),
+                         @"badgeText": badge,
+                         @"focusedTabId": @(tab_id),
+                         @"badgeBackgroundColor": @(state ? state->GetBadgeBackgroundColor(tab_id) : 0),
+                         @"badgeTextColor": @(state ? state->GetBadgeTextColor(tab_id) : 0) }];
   }
   return result;
+}
+
+- (NSString*)setExtensionPinned:(NSString*)identifier pinned:(BOOL)pinned {
+  if (!browser_ || !identifier.length) return @"unknown";
+  if (browser_->GetProfile()->IsOffTheRecord()) return @"incognito";
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  auto* model = container ? container->toolbar_model() : nullptr;
+  std::string id = base::SysNSStringToUTF8(identifier);
+  auto* action = container ? static_cast<ExtensionActionViewModel*>(container->GetActionForId(id)) : nullptr;
+  if (!model || !model->HasAction(id) || !action || !action->GetExtension()) return @"unknown";
+  if (model->IsActionForcePinned(id)) return @"forced";
+  if (model->IsActionPinned(id) == static_cast<bool>(pinned)) return @"unchanged";
+  model->SetActionVisibility(id, pinned);
+  return @"done";
+}
+
+- (NSString*)extensionManagementURL:(NSString*)identifier {
+  if (!browser_ || browser_->IsDeleteScheduled() || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_ || !identifier.length) return nil;
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  const std::string id = base::SysNSStringToUTF8(identifier);
+  auto* action = container ? container->GetActionForId(id) : nullptr;
+  auto* extension = action ? static_cast<ExtensionActionViewModel*>(action)->GetExtension() : nullptr;
+  auto* registry = extensions::ExtensionRegistry::Get(browser_->GetProfile());
+  if (!extension || !registry || registry->enabled_extensions().GetByID(id) != extension ||
+      extensions::Manifest::IsComponentLocation(extension->location())) return nil;
+  return base::SysUTF8ToNSString("chrome://extensions/?id=" + id);
+}
+
+- (void)removeExtension:(NSString*)identifier completion:(void (^)(NSString*, NSString*))completion {
+  if (!browser_ || browser_->IsDeleteScheduled() || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_ || !identifier.length) { PostExtensionRemoval(completion, @"unknown", @""); return; }
+  auto* profile = browser_->GetProfile();
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  auto* action = container ? container->GetActionForId(base::SysNSStringToUTF8(identifier)) : nullptr;
+  auto* model = action ? static_cast<ExtensionActionViewModel*>(action) : nullptr;
+  const extensions::Extension* extension = model ? model->GetExtension() : nullptr;
+  if (!extension) { PostExtensionRemoval(completion, @"unknown", @""); return; }
+  if (!CanRemoveExtension(profile, extension)) { PostExtensionRemoval(completion, @"forced", @""); return; }
+  ExtensionUninstallRequest::Start(profile, core_->GetNativeWindow(), extension, completion);
 }
 
 - (void)setExtensionAnchor:(NSRect)rect {
@@ -1670,6 +1825,38 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* container = window ? window->extensions() : nullptr;
   auto* action = container ? container->GetActionForId(identifier.UTF8String) : nullptr;
   if (action) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "ext-actions" ||
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions") {
+    auto* popup = ExtensionPopup::last_popup_for_testing();
+    std::fprintf(stderr, "ararat-trace: ext-action id=%s found=%d popup=%d visible=%d\n",
+                 identifier.UTF8String, action != nullptr, popup != nullptr,
+                 popup && popup->GetWidget() ? popup->GetWidget()->IsVisible() : 0);
+  }
+}
+
+// The action popup is an ExtensionPopup (a views bubble), not a Browser, so it never reaches
+// the create_host callback the Runtime's `popups` list is built from. This seam names it.
+- (NSDictionary<NSString*, id>*)checkExtensionActionPopup {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  const auto check = flags->GetSwitchValueASCII("ararat-check");
+  const auto screen = flags->GetSwitchValueASCII("ararat-screen");
+  if (check != "ext-actions" && screen != "ext-actions") return @{};
+  auto* popup = ExtensionPopup::last_popup_for_testing();
+  bool visible = popup && popup->GetWidget() && popup->GetWidget()->IsVisible();
+  NSWindow* window = visible ? popup->GetWidget()->GetNativeWindow().GetNativeNSWindow() : nil;
+  return @{ @"shown": @(visible),
+            @"class": window ? NSStringFromClass([window class]) : @"",
+            @"window": window ?: (id)NSNull.null };
+}
+
+- (void)checkDismissExtensionActionPopup {
+  auto* flags = base::CommandLine::ForCurrentProcess();
+  const auto check = flags->GetSwitchValueASCII("ararat-check");
+  const auto screen = flags->GetSwitchValueASCII("ararat-screen");
+  if (check != "ext-actions" && screen != "ext-actions") return;
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  if (container) container->HideActivePopup();
 }
 
 - (BOOL)checkIsExtensionAppPopup {
@@ -1788,6 +1975,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     window_id_ = [windowId copy];
     [ReportingHosts() addObject:self];
     __weak ARWindowHost* host = self;
+    capture_ = [ARCapture new];
+    site_state_ = [[ARSiteState alloc] initWithChanged:^{
+      ARWindowHost* strong = host;
+      if ([strong.delegate respondsToSelector:@selector(siteStateChangedForWindowHost:)])
+        [strong.delegate siteStateChangedForWindowHost:strong];
+    }];
     became_key_observer_ = [NSNotificationCenter.defaultCenter
         addObserverForName:NSWindowDidBecomeKeyNotification object:self.window queue:nil
         usingBlock:^(NSNotification*) { [host updateActive:YES]; }];
@@ -2233,6 +2426,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
       [screen isEqualToString:@"header"] ||
+      [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
@@ -3543,9 +3737,25 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)tabMetadataChanged:(NSString*)field tab:(ARTab*)tab {
   [self traceTabEvent:field tab:tab];
   if (core_->closing() || core_->closed() || closing_window_ || closing_all_) return;
+  // U26e: a navigation can change an action's badge or icon.
+  auto* window = core_->window();
+  if (window && window->extensions()) window->extensions()->QueueChanged();
   __weak ARWindowHost* host = self;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(^{ [host emitCause:@"Engine"]; }));
+}
+
+- (void)queueExtensionActionsChanged {
+  if (extension_update_queued_) return;
+  extension_update_queued_ = YES;
+  __weak ARWindowHost* host = self;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
+    ARWindowHost* strong = host;
+    if (!strong) return;
+    strong->extension_update_queued_ = NO;
+    if ([strong.delegate respondsToSelector:@selector(extensionActionsChangedForWindowHost:)])
+      [strong.delegate extensionActionsChangedForWindowHost:strong];
+  }));
 }
 
 - (void)devToolsChanged:(content::WebContents*)inspected {
@@ -3560,6 +3770,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* identity = static_cast<TabIdentity*>(active->GetUserData(kTabIdentityKey));
     if (!identity || !identity->item_id || !split_frames_[identity->item_id]) active = nullptr;
   }
+  [site_state_ setContents:active];
+  [capture_ selectContents:active];
+  auto* extension_window = core_->window();
+  auto* extension_container = extension_window ? extension_window->extensions() : nullptr;
+  if (extension_container) {
+    __weak ARWindowHost* host = self;
+    extension_container->SetChangedCallback(base::BindRepeating(^{
+      [host queueExtensionActionsChanged];
+    }));
+    // U26e: the action snapshot (badge text/colour per tab, popup anchor, invocation) must
+    // follow the focused tab, not the contents the window was built with.
+    extension_container->SetWebContents(active);
+  }
+  [self queueExtensionActionsChanged];
   NSView* card = [self.delegate pageCardForWindowHost:self];
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;

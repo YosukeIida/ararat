@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/containers/flat_map.h"
+#include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -59,6 +60,9 @@ class AraratExtensionsContainer
   // Updates the WebContents associated with this container.
   void SetWebContents(content::WebContents* web_contents);
   const auto& actions() const { return actions_; }
+  ToolbarActionsModel* toolbar_model() const { return toolbar_model_; }
+  void SetChangedCallback(base::RepeatingClosure callback);
+  void QueueChanged();
   void SetShortcutActive(bool active);
 
   // ExtensionsContainer:
@@ -107,6 +111,7 @@ class AraratExtensionsContainer
  private:
   void CreateActions();
   void CreateActionForId(const ToolbarActionsModel::ActionId& action_id);
+  void DispatchChanged();
 
   views::BubbleAnchor GetAnchor() const;
 
@@ -121,8 +126,12 @@ class AraratExtensionsContainer
   base::flat_map<ToolbarActionsModel::ActionId,
                  std::unique_ptr<ExtensionActionViewModel>>
       actions_;
+  base::flat_map<ToolbarActionsModel::ActionId, base::CallbackListSubscription> icon_observations_;
+  base::RepeatingClosure changed_;
+  bool change_queued_ = false;
   std::unique_ptr<ExtensionsMenuCoordinator> extensions_menu_coordinator_;
   base::WeakPtrFactory<ExtensionsContainerViews> weak_ptr_factory_{this};
+  base::WeakPtrFactory<AraratExtensionsContainer> notification_weak_{this};
 };
 
 }  // namespace ararat
