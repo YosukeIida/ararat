@@ -158,6 +158,9 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(metrics["content_width"] as? CGFloat == 240)
     #expect(metrics["title_font"] as? CGFloat == 13)
     #expect((metrics["title_height"] as? CGFloat ?? 0) >= 13)
+    #expect(metrics["rows_leading_and_status_fit"] as? Bool == true)
+    #expect(metrics["library_fills"] as? Bool == true)
+    #expect(popover.library.alignment == .left)
 }
 
 @Test @MainActor func downloadsPageUsesAvailableWidthForStatus() throws {
@@ -186,6 +189,8 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     page.table.layoutSubtreeIfNeeded()
     row.layoutSubtreeIfNeeded()
     #expect(page.actionButtonsFit)
+    #expect(page.rowsLeadingAndStatusFit)
+    #expect(row.statusTruncates)
 }
 
 @Test @MainActor func libraryDownloadsIncludesRestoredAndFollowsProfileUpdates() throws {
