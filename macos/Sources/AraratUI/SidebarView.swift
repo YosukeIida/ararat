@@ -275,6 +275,7 @@ public final class SidebarView: NSView {
                 "popover_readable": panel != nil && panelFrame.width >= SidebarMetrics.defaultWidth && panelFrame.height >= fittingHeight,
                 "popover_metrics": metrics, "hover_fired": downloadsHoverFired,
                 "page_actions_fit": library.downloadsPage.actionButtonsFit,
+                "page_rows_layout": library.downloadsPage.rowsLeadingAndStatusFit,
                 "library_open": libraryOpen, "library_page": library.page.rawValue,
                 "page_ids": library.downloadsPage.entries.map(\.id), "flight": flight]
     }

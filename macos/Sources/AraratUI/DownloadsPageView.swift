@@ -27,6 +27,18 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         }
         return rows > 0 && fits
     }
+    var rowsLeadingAndStatusFit: Bool {
+        var rows = 0
+        var fits = true
+        table.enumerateAvailableRowViews { tableRow, _ in
+            for row in tableRow.subviews.compactMap({ $0 as? DownloadRowView }) {
+                rows += 1
+                let frame = self.table.convert(row.bounds, from: row)
+                if abs(frame.minX - self.table.bounds.minX) > 16 || !row.statusFits || !row.statusTruncates { fits = false }
+            }
+        }
+        return rows > 0 && fits
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
