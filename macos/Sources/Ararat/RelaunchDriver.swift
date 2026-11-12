@@ -252,3 +252,143 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
     return ok && status == 0 ? 0 : 1
   } catch { return failure(String(describing: error)) }
 }
+
+private func searchPrivateScratch(_ root: URL, needles: [String]) -> [String: Any] {
+  let manager = FileManager.default
+  let database = root.appendingPathComponent("workspace.sqlite")
+  var files: [String] = []
+  var hits: [String] = []
+  func search(_ url: URL) -> Bool {
+    guard let attributes = try? manager.attributesOfItem(atPath: url.path),
+          let size = attributes[.size] as? NSNumber, size.int64Value <= 64 * 1024 * 1024,
+          let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }
+    return needles.contains { needle in data.range(of: Data(needle.utf8)) != nil }
+  }
+  for suffix in ["", "-wal", "-shm"] {
+    let url = URL(fileURLWithPath: database.path + suffix)
+    guard manager.fileExists(atPath: url.path) else { continue }
+    files.append(url.lastPathComponent)
+    if search(url) { hits.append(url.lastPathComponent) }
+  }
+  let profile = root.appendingPathComponent("profile")
+  if let enumerator = manager.enumerator(atPath: profile.path) {
+    while let entry = enumerator.nextObject() as? String {
+      let url = profile.appendingPathComponent(entry)
+      var isDirectory: ObjCBool = false
+      guard manager.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
+      files.append(entry)
+      if search(url) { hits.append(entry) }
+    }
+  }
+  return ["files": files.count, "hits": hits]
+}
+
+func runPrivateDurabilityDriver() -> Int32 {
+  var child: RelaunchChild?
+  var group: pid_t?
+  var root: URL?
+  let trace = RelaunchTrace()
+  var firstStatus: Int32?
+  var firstPID: pid_t?
+  defer {
+    if let group { kill(-group, SIGKILL) }
+    if let child { kill(child.pid, SIGKILL); close(child.output) }
+  }
+  func cleanup() -> String? {
+    if let group { kill(-group, SIGKILL) }
+    if let current = child {
+      kill(current.pid, SIGKILL)
+      guard let status = reapRelaunchChild(current.pid, seconds: 30) else {
+        close(current.output); child = nil
+        return "child could not be reaped; scratch kept at \(root?.path ?? "unknown")"
+      }
+      if current.pid == firstPID { firstStatus = status }
+      close(current.output); child = nil
+    }
+    if let current = group {
+      let deadline = Date().addingTimeInterval(30)
+      while kill(-current, 0) == 0 || errno == EPERM {
+        if Date() >= deadline { return "process group still alive; scratch kept at \(root?.path ?? "unknown")" }
+        usleep(20_000)
+      }
+      group = nil
+    }
+    if let current = root {
+      do { try FileManager.default.removeItem(at: current); root = nil }
+      catch { return "cannot remove scratch at \(current.path): \(error)" }
+    }
+    return nil
+  }
+  func failure(_ message: String) -> Int32 {
+    let detail = cleanup().map { "\(message); \($0)" } ?? message
+    _ = trace.reader.wait(timeout: .now() + 2)
+    let (tail, lastTrace) = trace.snapshot()
+    let result: [String: Any] = ["check": "private-durability", "ok": false, "error": detail, "exit": 1,
+                                 "run1_stderr_tail": tail, "run1_last_trace": lastTrace as Any? ?? NSNull()]
+    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+       let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+    return 1
+  }
+  guard let temp = ProcessInfo.processInfo.environment["TMPDIR"], !temp.isEmpty else { return failure("TMPDIR missing") }
+  let scratch = URL(fileURLWithPath: temp, isDirectory: true).appendingPathComponent("ararat-private-durability-\(UUID().uuidString)", isDirectory: true)
+  do {
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
+    root = scratch
+    let forwarded = CommandLine.arguments.filter { $0.hasPrefix("--load-extension=") }
+    let common = ["--user-data-dir=\(scratch.appendingPathComponent("profile").path)",
+                  "--ararat-db=\(scratch.appendingPathComponent("workspace.sqlite").path)",
+                  "--use-mock-keychain"] + forwarded
+    func seed(_ mode: String) throws -> (ready: [String: Any], pid: pid_t) {
+      let run = try launchRelaunchChild(common + ["--ararat-check=private-durability-seed", "--ararat-relaunch-mode=\(mode)"], processGroup: true, trace: trace)
+      child = run; group = run.pid; firstPID = run.pid
+      guard let line = readRelaunchLine(run.output, seconds: 90), let data = line.data(using: .utf8),
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ready"] as? Bool == true else { throw NSError(domain: "Ararat.durability", code: 1) }
+      return (object, run.pid)
+    }
+    func verify(_ titles: [String]) throws -> (object: [String: Any], status: Int32) {
+      let encoded = (try JSONSerialization.data(withJSONObject: titles)).base64EncodedString()
+      let run = try launchRelaunchChild(common + ["--ararat-check=private-durability-verify", "--ararat-private-titles=\(encoded)"])
+      child = run
+      guard let line = readRelaunchLine(run.output, seconds: 90), let data = line.data(using: .utf8),
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let status = reapRelaunchChild(run.pid, seconds: 30) else { throw NSError(domain: "Ararat.durability", code: 2) }
+      close(run.output); child = nil
+      return (object, status)
+    }
+    // 1. Clean quit with private tabs open.
+    let cleanSeed = try seed("private-clean")
+    guard let cleanStatus = reapRelaunchChild(cleanSeed.pid, seconds: 30) else { return failure("clean run did not exit") }
+    close(child!.output); child = nil
+    kill(-cleanSeed.pid, SIGKILL); group = nil
+    guard cleanStatus == 0 else { return failure("clean run did not quit cleanly") }
+    let titles = cleanSeed.ready["titles"] as? [String] ?? []
+    let urls = cleanSeed.ready["urls"] as? [String] ?? []
+    guard !titles.isEmpty else { return failure("seed reported no titles") }
+    let cleanDisk = searchPrivateScratch(scratch, needles: titles + urls)
+    let cleanVerify = try verify(titles)
+    // 2. SIGKILL with private tabs open.
+    let crashSeed = try seed("private-crash")
+    guard kill(-crashSeed.pid, SIGKILL) == 0 else { return failure("cannot kill the crash run") }
+    guard let crashStatus = reapRelaunchChild(crashSeed.pid, seconds: 30) else { return failure("crash run did not exit") }
+    close(child!.output); child = nil
+    group = nil
+    guard (crashStatus & 0x7f) == SIGKILL else { return failure("crash run was not killed") }
+    let crashTitles = crashSeed.ready["titles"] as? [String] ?? titles
+    let crashUrls = crashSeed.ready["urls"] as? [String] ?? urls
+    let crashDisk = searchPrivateScratch(scratch, needles: crashTitles + crashUrls)
+    let crashVerify = try verify(crashTitles)
+    if let error = cleanup() { return failure(error) }
+    let cleanDiskClean = (cleanDisk["hits"] as? [String] ?? []).isEmpty
+    let crashDiskClean = (crashDisk["hits"] as? [String] ?? []).isEmpty
+    let cleanOK = cleanVerify.object["ok"] as? Bool == true && cleanVerify.status == 0 && cleanDiskClean
+    let crashOK = crashVerify.object["ok"] as? Bool == true && crashVerify.status == 0 && crashDiskClean
+    let result: [String: Any] = ["check": "private-durability", "ok": cleanOK && crashOK,
+                                 "clean": ["disk": cleanDisk, "verify": cleanVerify.object],
+                                 "crash": ["disk": crashDisk, "verify": crashVerify.object],
+                                 "titles": titles]
+    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+       let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+    return cleanOK && crashOK ? 0 : 1
+  } catch { return failure(String(describing: error)) }
+}

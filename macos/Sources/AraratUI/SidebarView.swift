@@ -402,6 +402,7 @@ public final class SidebarView: NSView {
     public var checkPrivateSpaceRowHidden: Bool { spaceNameRow.isHidden }
     public var checkPrivateLibraryOpen: Bool { libraryOpen }
     public var checkPrivateDownloadsLibraryRowHidden: Bool { downloadsPopover?.showsLibrary == false }
+    public var checkDownloadIDs: [String] { downloadsModel?.items.map(\.id) ?? [] }
     public func checkPrivateCloseLabel(_ id: String) -> String? { rowViews[id]?.closeLabel }
     public var checkPrivateTodayRows: [String] { snapshotSpace?.today.map(\.id) ?? [] }
     public var checkPrivatePinnedRows: [String] { snapshotSpace?.pinned.map(\.id) ?? [] }
