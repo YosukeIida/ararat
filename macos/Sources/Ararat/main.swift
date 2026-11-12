@@ -7070,6 +7070,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   func extensionScreenTick(_ host: any ARWindowHostAPI) {
     let id = "kmgaadhbnkendcanjninlfmfgehagggl"
     if browserCheckPhase == 0, let row = sliceRows.first, let url = row.url {
+      browserCheckSeedID = row.id
       browserCheckPhase = 1
       adapter?.select(id: row.id, url: url)
       return
@@ -7077,6 +7078,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     guard let tab = (host.tabs() as? [any ARTabAPI])?.first, !tab.isLoading,
           tab.navigationCount > 0, let sidebar else { return }
     if browserCheckPhase == 1, host.window().isKeyWindow,
+       snapshot.selectedId == browserCheckSeedID, host.activeItemId() == browserCheckSeedID,
        extensionItems.contains(where: { $0.id == id }) {
       guard ["done", "unchanged"].contains(adapter?.setExtensionPinned(id, pinned: true) ?? "") else { return }
       browserCheckPhase = 2
@@ -7085,7 +7087,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       devtoolsResults["action_anchor"] = rectFields(button.anchorInWindow)
       sidebar.checkPerformExtensionAction(id)
       browserCheckPhase = 3
-    } else if browserCheckPhase == 3, host.checkExtensionActionPopup()["shown"] as? Bool == true {
+    } else if browserCheckPhase == 3 {
+      let state = host.checkExtensionActionPopup()
+      if browserCheckAttempts % 50 == 0 {
+        let item = extensionItems.first { $0.id == id }
+        FileHandle.standardError.write(Data("ararat-trace: screen-extensions waiting=action-popup id=\(id) pinned=\(item?.pinned ?? false) anchor=\(String(describing: lastExtensionAnchor)) state=\(state)\n".utf8))
+      }
+      guard state["shown"] as? Bool == true else { return }
       devtoolsResults["action_popup"] = true
       host.checkDismissExtensionActionPopup()
       tab.checkExtensionPopupWindow(false)

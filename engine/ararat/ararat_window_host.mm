@@ -1826,11 +1826,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* action = container ? container->GetActionForId(identifier.UTF8String) : nullptr;
   if (action) action->ExecuteUserAction(ToolbarActionViewModel::InvocationSource::kMenuEntry);
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "ext-actions" ||
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions") {
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "ext-actions" ||
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "extensions") {
     auto* popup = ExtensionPopup::last_popup_for_testing();
     std::fprintf(stderr, "ararat-trace: ext-action id=%s found=%d popup=%d visible=%d\n",
                  identifier.UTF8String, action != nullptr, popup != nullptr,
                  popup && popup->GetWidget() ? popup->GetWidget()->IsVisible() : 0);
+    NSLog(@"ararat-trace: ext-action container actions=%@", [self extensionActions]);
   }
 }
 
@@ -1840,7 +1842,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* flags = base::CommandLine::ForCurrentProcess();
   const auto check = flags->GetSwitchValueASCII("ararat-check");
   const auto screen = flags->GetSwitchValueASCII("ararat-screen");
-  if (check != "ext-actions" && screen != "ext-actions") return @{};
+  if (check != "ext-actions" && screen != "ext-actions" && screen != "extensions") return @{};
   auto* popup = ExtensionPopup::last_popup_for_testing();
   bool visible = popup && popup->GetWidget() && popup->GetWidget()->IsVisible();
   NSWindow* window = visible ? popup->GetWidget()->GetNativeWindow().GetNativeNSWindow() : nil;
@@ -1853,7 +1855,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* flags = base::CommandLine::ForCurrentProcess();
   const auto check = flags->GetSwitchValueASCII("ararat-check");
   const auto screen = flags->GetSwitchValueASCII("ararat-screen");
-  if (check != "ext-actions" && screen != "ext-actions") return;
+  if (check != "ext-actions" && screen != "ext-actions" && screen != "extensions") return;
   auto* window = core_->window();
   auto* container = window ? window->extensions() : nullptr;
   if (container) container->HideActivePopup();
