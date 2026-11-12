@@ -1204,13 +1204,15 @@ func metadataDoesNotSelectAndInFlightSelectionExposesItsProgress() async throws 
     var metadata = matrixTransaction(fake, window: "join", epoch: 1, rev: 1, command: nil)
     var strips = metadata["strips"] as! [[String: Any]]
     var tabs = strips[0]["tabs"] as! [[String: Any]]
-    tabs[0]["loading"] = true; tabs[0]["audible"] = true; tabs[0]["canGoForward"] = true
+    tabs[0]["loading"] = true; tabs[0]["audible"] = true; tabs[0]["canGoBack"] = true; tabs[0]["canGoForward"] = true
     strips[0]["tabs"] = tabs; metadata["strips"] = strips
     engine.windowHost(host, didReceiveTransaction: metadata)
     try await matrixWait { applied }
     #expect(engine.checkSelectionState()["generation"] as? Int == generation)
     #expect(fake.activated.isEmpty)
     #expect(engine.rowStates[row.0]?.loading == true)
+    #expect(engine.rowStates[row.0]?.canGoBack == true)
+    #expect(engine.rowStates[row.0]?.canGoForward == true)
     var registered: (() -> Void)?
     var resolved: (() -> Void)?
     engine.checkSelectionDispatch = { stage, _, resume in

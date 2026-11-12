@@ -10,7 +10,7 @@ func sidebarRowReportsLoadingAndAudioAndSpeakerDoesNotSelect() {
         Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "item", title: "Item", url: nil, depth: 0, kind: kind, unloaded: false, lastSelectedAt: nil)
     }
     func state(_ loading: Bool, _ audible: Bool, _ muted: Bool) -> EngineAdapter.RowState {
-        EngineAdapter.RowState(loading: loading, audible: audible, muted: muted, canGoForward: false)
+        EngineAdapter.RowState(loading: loading, audible: audible, muted: muted, canGoBack: false, canGoForward: false)
     }
     var selections = 0
     var mutes: [Bool] = []
