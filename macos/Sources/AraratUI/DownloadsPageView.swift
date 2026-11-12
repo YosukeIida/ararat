@@ -31,7 +31,7 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         table.headerView = nil
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .none
-        table.rowHeight = 80
+        table.rowHeight = DownloadsPopover.rowHeight
         table.intercellSpacing = .zero
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.autoresizingMask = [.width]
@@ -68,6 +68,10 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
+    override func layout() {
+        super.layout()
+        table.tableColumns.first?.width = scroll.contentSize.width
+    }
 
     func setModel(_ model: DownloadsModel) { self.model = model; refresh() }
     func refresh() {

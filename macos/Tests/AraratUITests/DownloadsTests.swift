@@ -116,6 +116,62 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(button.accessibilityValue() as? String == "Downloading, 42 %")
 }
 
+@Test @MainActor func runningRingHasVisibleGeometryEvenAtLowProgress() {
+    let button = DownloadsButton(frame: .zero)
+    button.progress = .fraction(0.004)
+    button.frame = NSRect(x: 0, y: 0, width: 32, height: 32)
+    button.layout()
+    #expect(!button.ring.isHidden && button.ring.opacity > 0)
+    #expect(button.ring.bounds.width > 0 && button.ring.bounds.height > 0)
+    #expect(button.ring.strokeEnd >= 0.12 && button.ring.path != nil)
+    #expect(button.accessibilityValue() as? String == "Downloading, 0 %")
+}
+
+@Test @MainActor func downloadsPopoverUsesThePhysicalUpperEdgeAndFitsThreeRows() throws {
+    _ = NSApplication.shared
+    #expect(DownloadsPopover.edge(flipped: true) == .minY)
+    #expect(DownloadsPopover.edge(flipped: false) == .maxY)
+    let screen = try #require(NSScreen.main)
+    let window = NSWindow(contentRect: NSRect(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY, width: 400, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let anchor = DownloadsButton(frame: NSRect(x: 9, y: 9, width: 32, height: 32))
+    window.contentView?.addSubview(anchor)
+    window.orderFront(nil)
+    defer { window.orderOut(nil) }
+    let model = DownloadsModel()
+    model.update([download("a"), download("b"), download("c")])
+    let popover = DownloadsPopover(model: model, anchor: anchor)
+    popover.show()
+    defer { popover.close() }
+    let panel = try #require(popover.checkWindow)
+    let button = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+    #expect(window.frame.insetBy(dx: -1, dy: -1).contains(panel.frame))
+    #expect(panel.frame.minY >= button.maxY - 1)
+    #expect(panel.frame.width >= SidebarMetrics.defaultWidth)
+    #expect(panel.frame.height >= DownloadsPopover.headerHeight + 3 * DownloadsPopover.rowHeight)
+    #expect(popover.rows.count == 3)
+}
+
+@Test @MainActor func downloadsPageUsesAvailableWidthForStatus() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    var item = download("a", actions: ["show", "cancel"])
+    item["status"] = "4.0/1,024 KB, 9 minutes left"
+    model.update([item])
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    page.layoutSubtreeIfNeeded()
+    page.table.layoutSubtreeIfNeeded()
+    let row = try #require(page.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? DownloadRowView)
+    row.layoutSubtreeIfNeeded()
+    func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(labels) }
+    let status = try #require(labels(row).first { $0.stringValue == "4.0/1,024 KB, 9 minutes left" })
+    #expect(row.bounds.width > 300)
+    #expect(status.bounds.width > 250)
+}
+
 @Test @MainActor func libraryDownloadsIncludesRestoredAndFollowsProfileUpdates() throws {
     let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 640, height: 600))
     let model = DownloadsModel()
