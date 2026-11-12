@@ -100,6 +100,7 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
+#include "chrome/browser/ui/tabs/tab_muted_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
@@ -178,6 +179,7 @@
 
 @interface ARWindowHost (CloseHandoff)
 - (void)prepareCloseHandoff:(void (^)(BOOL))completion;
+- (NSString*)traceWindowID;
 - (NSRect)modalPageRectForContents:(content::WebContents*)contents;
 - (BOOL)hasPermissionContents:(const void*)contents;
 - (void)setPermissionDim:(const void*)contents visible:(BOOL)visible;
@@ -301,6 +303,13 @@ class ExtensionPopupCheck : public extensions::ExtensionHostRegistry::Observer {
  private:
   base::ScopedObservation<extensions::ExtensionHostRegistry, extensions::ExtensionHostRegistry::Observer> observation_{this};
 };
+
+bool IsMatrixTrace() {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  return command->HasSwitch("ararat-cross-window-reverse-check") ||
+         command->HasSwitch("ararat-cross-window-selection-check") ||
+         command->HasSwitch("ararat-space-matrix-check");
+}
 
 bool IsCloseCheck() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -1168,6 +1177,7 @@ void AraratWindowHostCore::ConfirmClose() {
   for (auto* window : windows) {
     if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")
       std::fprintf(stderr, "ararat-trace: download-close requesting browser close\n");
+    if (IsMatrixTrace()) std::fprintf(stderr, "ararat-trace: matrix request-close window=%s profile=%s browser=%p closing=%d\n", [[(__bridge ARWindowHost*)owner_ traceWindowID] UTF8String], window->browser()->GetProfile()->GetPath().BaseName().value().c_str(), static_cast<void*>(window->browser()), closing_);
     window->RequestClose();
   }
 }
@@ -1249,6 +1259,7 @@ void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
   if (popup_ && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "popup")
     std::fprintf(stderr, "ararat-trace: popup browser destroyed\n");
   if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-destroyed closing=%d\n", closing_);
+  if (IsMatrixTrace()) std::fprintf(stderr, "ararat-trace: matrix browser-destroyed window=%s browser=%p closing=%d handoff_pending=%d\n", [[(__bridge ARWindowHost*)owner_ traceWindowID] UTF8String], static_cast<void*>(browser), closing_, close_handoff_pending_);
   AraratWindows().erase(browser);
   const auto name = browser->GetProfile()->GetPath().BaseName().value();
   windows_.erase(name);
@@ -1429,7 +1440,7 @@ bool AraratCheckRecoveryBarrier() {
   ARPendingMove* move = [ARPendingMove new];
   move.sourceId = @"ararat-check-recovery-window";
   move.epoch = g_epoch;
-  move.entry = @{ @"live_id": live };
+  move.entry = @{ @"off_the_record": @NO, @"live_id": live };
   PendingMoves()[live] = move;
   DetachedRecoveries()[base::SysNSStringToUTF8(live)] = std::make_unique<DetachedRecovery>();
   ExpirePendingMove(live, move);
@@ -1602,6 +1613,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSMutableDictionary<NSValue*, NSString*>* pending_closes_;
   NSMutableArray<NSDictionary*>* pending_opens_;
   NSString* window_id_;
+  NSMutableDictionary<NSString*, NSDictionary*>* matrix_states_;
   NSString* command_id_;
   NSString* opening_item_;
   uint64_t opening_stamp_;
@@ -3659,7 +3671,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   [self emitCause:cause_command ? @{ @"Command": cause_command } : (close_selection ? @"Engine" : @"Chrome")];
 }
 
-- (void)tabMetadataChanged {
+- (NSString*)traceWindowID { return window_id_; }
+
+- (void)traceTabEvent:(NSString*)field tab:(ARTab*)tab {
+  if (!IsMatrixTrace()) return;
+  auto* contents = tab.contents;
+  std::fprintf(stderr, "ararat-trace: matrix tab-event window=%s field=%s rev=%llu live=%s item=%s closing=%d all=%d window_closing=%d in_strip=%d loading=%d audible=%d muted=%d forward=%d\n",
+      window_id_.UTF8String, field.UTF8String, static_cast<unsigned long long>(g_revision), tab.liveId.UTF8String ?: "-", tab.itemId.UTF8String ?: "-", core_->closing(), closing_all_, closing_window_, contents && [self stripForTab:tab] != nullptr, contents && contents->ShouldShowLoadingUI(), contents && contents->IsCurrentlyAudible(), contents && contents->IsAudioMuted(), contents && contents->GetController().CanGoForward());
+}
+
+- (void)tabMetadataChanged:(NSString*)field tab:(ARTab*)tab {
+  [self traceTabEvent:field tab:tab];
+  if (core_->closing() || core_->closed() || closing_window_ || closing_all_) return;
+  // U26e: a navigation can change an action's badge or icon.
   auto* window = core_->window();
   if (window && window->extensions()) window->extensions()->QueueChanged();
   __weak ARWindowHost* host = self;
@@ -3876,6 +3900,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return NSMakeRect(rect.x(), rect.y(), rect.width(), rect.height());
 }
 
+- (void)setTabMuted:(BOOL)muted itemId:(NSString*)itemId {
+  for (ARTab* tab in [self tabs]) {
+    if ([tab.itemId isEqualToString:itemId]) { SetTabAudioMuted(tab.contents, muted, TabMutedReason::kAudioIndicator, std::string()); return; }
+  }
+}
+
 - (NSDictionary*)stripSnapshot:(BOOL)consumeNavigation {
   NSMutableArray* entries = [NSMutableArray array];
   NSString* active_id = nil;
@@ -3898,10 +3928,22 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* opener_identity = opener ? static_cast<TabIdentity*>(opener->GetContents()->GetUserData(kTabIdentityKey)) : nullptr;
     const GURL& committed = tab.contents->GetLastCommittedURL();
     NSString* url = committed.is_valid() ? [NSString stringWithUTF8String:committed.spec().c_str()] : nil;
+    if (IsMatrixTrace()) {
+      if (!matrix_states_) matrix_states_ = [NSMutableDictionary dictionary];
+      NSDictionary* state = @{ @"loading": @(tab.contents->ShouldShowLoadingUI()), @"audible": @(tab.contents->IsCurrentlyAudible()), @"muted": @(tab.contents->IsAudioMuted()), @"canGoForward": @(tab.contents->GetController().CanGoForward()) };
+      NSDictionary* old = matrix_states_[tab.liveId];
+      for (NSString* field in state) if (old && ![old[field] isEqual:state[field]])
+        std::fprintf(stderr, "ararat-trace: matrix strip-field window=%s live=%s field=%s old=%d new=%d rev=%llu closing=%d\n", window_id_.UTF8String, tab.liveId.UTF8String, field.UTF8String, [old[field] boolValue], [state[field] boolValue], static_cast<unsigned long long>(g_revision), core_->closing());
+      matrix_states_[tab.liveId] = state;
+    }
     [entries addObject:@{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
                           @"opener": opener_identity ? (id)opener_identity->live_id : (id)NSNull.null,
                           @"navigated": @(consumeNavigation && [tab takePendingNavigation]),
                           @"crashed": @(tab.crashed),
+                          @"loading": @(tab.contents->ShouldShowLoadingUI()),
+                          @"audible": @(tab.contents->IsCurrentlyAudible()),
+                          @"muted": @(tab.contents->IsAudioMuted()),
+                          @"canGoForward": @(tab.contents->GetController().CanGoForward()),
                           @"url": url ?: (id)NSNull.null,
                           @"title": committed.is_valid() ? (id)tab.title : (id)NSNull.null }];
     if (tab.contents == active) active_id = tab.liveId;
@@ -3935,6 +3977,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     if (!recipient) for (ARWindowHost* host in ReportingHosts()) if ([host canReportWorkspace]) { recipient = host; break; }
     if (!recipient.delegate) return;
     NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
+    if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=move\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], retained->core_->closing());
     [recipient.delegate windowHost:recipient didReceiveTransaction:transaction];
   }));
 }
@@ -3993,6 +4036,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         id<ARWindowHostDelegate> delegate = strong_host.delegate;
         if (!strong_host || !delegate) return;
         NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
+        if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=ordinary\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], strong_host->core_->closing());
         [delegate windowHost:strong_host didReceiveTransaction:transaction];
       }));
 }

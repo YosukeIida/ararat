@@ -16,6 +16,7 @@ class WebContents;
 - (content::WebContents*)contents;
 - (ARWindowHost*)ownerHost;
 - (void)refresh;
+- (void)audioStateChanged:(NSString*)field;
 - (void)navigationFinished;
 - (void)setNetworkError:(NSInteger)error;
 - (void)rendererCrashed;
@@ -36,7 +37,8 @@ class WebContents;
 - (void)focusSplitTab:(ARTab*)tab;
 - (void)noteNavigationForTab:(ARTab*)tab;
 - (BOOL)takePendingNavigationForTab:(ARTab*)tab;
-- (void)tabMetadataChanged;
+- (void)tabMetadataChanged:(NSString*)field tab:(ARTab*)tab;
+- (void)traceTabEvent:(NSString*)field tab:(ARTab*)tab;
 - (BOOL)checkDialogHostForContents:(content::WebContents*)contents;
 @end
 

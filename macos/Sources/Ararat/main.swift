@@ -772,7 +772,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "toasts" { browserCheckMode = "screen-toasts" }
       if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
       if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "sidebar-rows"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -989,6 +989,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self.recordUnread(transaction)
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
+      self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
       if self.sidebarChecksActive, !self.sidebarFirstTransactionTraced {
         self.sidebarFirstTransactionTraced = true
         let active = transaction.strips.first?.active ?? "-"
@@ -1492,6 +1493,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       FileHandle.standardError.write(Data("ararat-trace: sidebar-seed db=\(quitPath ?? "") shown=\(seed?.shownSpaceId ?? "") profiles=\(profiles) rows=\(rows)\n".utf8))
     }
     sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
+    sidebar.rowStates = adapter?.rowStates ?? [:]
+    sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
     sidebar.unreadItems = unread.unread
     guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }
     seededNewTabRow = snapshot.shownSpaceId
@@ -6531,21 +6534,38 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         let previous = adapter.onTransaction
         adapter.onTransaction = { [weak self] transaction, applied in
           previous?(transaction, applied)
-          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand {
+            self?.childRaceCompleted = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-completed command=\(id) rev=\(transaction.rev) applied=\(applied)\n".utf8))
+          }
+        }
+        adapter.checkSelectionActivated = { [weak self] id in
+          if id == self?.childRaceCommand {
+            self?.childRaceActivated = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
+          }
         }
         adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
           guard let self, let adapter else { return }
           guard actual == stage else { resume(); return }
           adapter.checkSelectionDispatch = nil
           self.childRaceCommand = command
-          adapter.checkSelectionActivated = { [weak self] id in
-            if id == command { self?.childRaceActivated = true }
-          }
           childHost.close()
           resume()
         }
         browserCheckPhase = 505
-        adapter.select(id: selected, url: url)
+        if let joined = adapter.checkInFlightSelection(item: selected) {
+          if let command = joined.command {
+            childRaceCommand = command
+            childRaceActivated = joined.activated
+            if stage == "registered" || joined.resolved {
+              adapter.checkSelectionDispatch = nil
+              childHost.close()
+            }
+          }
+        } else {
+          adapter.select(id: selected, url: url)
+        }
         return
       }
       host.configureProfileCloseCheck(1)
@@ -6558,7 +6578,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         let previous = childAdapter.onTransaction
         childAdapter.onTransaction = { [weak self] transaction, applied in
           previous?(transaction, applied)
-          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand {
+            self?.childRaceCompleted = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-completed command=\(id) rev=\(transaction.rev) applied=\(applied)\n".utf8))
+          }
         }
         childAdapter.checkSelectionDispatch = { [weak self, weak childAdapter] stage, command, resume in
           guard let self, let childAdapter else { return }
@@ -6566,7 +6589,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           childAdapter.checkSelectionDispatch = nil
           self.childRaceCommand = command
           childAdapter.checkSelectionActivated = { [weak self] id in
-            if id == command { self?.childRaceActivated = true }
+            if id == command {
+              self?.childRaceActivated = true
+              FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
+            }
           }
           host.close()
           resume()

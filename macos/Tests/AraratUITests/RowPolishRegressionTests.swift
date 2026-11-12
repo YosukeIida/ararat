@@ -35,7 +35,6 @@ func pinnedRowsExposeAnAccessibleHoverAction() throws {
     view.frame = NSRect(x: 0, y: 0, width: 220, height: 41)
     view.pointerLocation = { NSPoint(x: 20, y: 20) }
     view.refreshHover()
-    let button = try #require(view.subviews.compactMap { $0 as? NSButton }.first)
-    #expect(!button.isHidden)
-    #expect(button.accessibilityLabel() != nil)
+    #expect(!view.closeButton.isHidden)
+    #expect(view.closeButton.accessibilityLabel() != nil)
 }

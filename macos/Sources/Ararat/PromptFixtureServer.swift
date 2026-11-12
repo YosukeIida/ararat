@@ -5,6 +5,7 @@ final class PromptFixtureServer {
   private let listener: NWListener
   private let queue = DispatchQueue(label: "ararat.prompt-fixture")
   private var resumeAllowed = false
+  private var pendingConnections: [NWConnection] = []
 
   init() throws {
     let parameters = NWParameters.tcp
@@ -42,6 +43,12 @@ final class PromptFixtureServer {
         let line = String(decoding: request, as: UTF8.self).components(separatedBy: "\r\n").first ?? ""
         let target = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let path = String(target.split(separator: "?", maxSplits: 1).first ?? "")
+        if path == "/pending" {
+          self.pendingConnections.append(connection)
+          let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n<title>Pending</title>"
+          connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in })
+          return
+        }
         if path == "/slow-download" {
           let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Length: 1048576\r\nCache-Control: no-store\r\n\r\n"
           connection.send(content: Data(header.utf8), completion: .contentProcessed { error in

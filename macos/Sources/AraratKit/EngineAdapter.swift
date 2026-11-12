@@ -8,6 +8,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let profile: String?
         let restoring: RestorationCandidate?
     }
+    private func traceMatrix(_ message: @autoclosure () -> String) {
+        guard CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") || $0.hasPrefix("--ararat-cross-window-selection-check") || $0 == "--ararat-space-matrix-check" }) else { return }
+        FileHandle.standardError.write(Data("ararat-trace: matrix window=\(windowID) \(message())\n".utf8))
+    }
     public let session: WorkspaceSession
     private var queue: DispatchQueue { session.queue }
     private var store: WorkspaceStore? {
@@ -18,7 +22,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private let card: NSView
     private let permissionDim = PermissionDim()
     weak var host: (any ARWindowHostAPI)?
+    private let closeStateLock = NSLock()
+    private var closeStarted = false
+    private var selectionClosed: Bool { closeStateLock.withLock { closeStarted } }
+    private func setSelectionClosed(_ closed: Bool) { closeStateLock.withLock { closeStarted = closed } }
     private var selectionGeneration = 0
+    private var selectionRequest: (item: String, space: String?, url: String, restoring: Bool, generation: Int, command: String?, resolved: Bool, activated: Bool)?
     private var restoringSelection = false
     private var recoveryDispatched = false
     private var openingSelections: [String: SelectionContext] = [:]
@@ -41,6 +50,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var dragSplit: String?
     private var appliedSplitFrames: [String: NSRect] = [:]
     private var measurementDragOrigin: NSPoint?
+    public struct RowState {
+        public let loading: Bool
+        public let audible: Bool
+        public let muted: Bool
+        public let canGoForward: Bool
+    }
+    public private(set) var rowStates: [String: RowState] = [:]
+    public func setMuted(_ muted: Bool, item: String) { host?.setTabMuted(muted, itemId: item) }
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
@@ -248,6 +265,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func attach(_ host: any ARWindowHostAPI) {
         precondition(Thread.isMainThread)
         self.host = host
+        setSelectionClosed(false)
         session.register(self, window: windowID)
         if let keyWindowObserver { NotificationCenter.default.removeObserver(keyWindowObserver) }
         if (host as AnyObject).responds(to: #selector(ARWindowHostAPI.window)) {
@@ -319,12 +337,21 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func select(id: String, url: String, restoring: RestorationCandidate? = nil) {
         precondition(Thread.isMainThread)
+        guard !selectionClosed, let host, !host.isClosing(), !host.isClosingAll() else { return }
+        let space = queue.sync { store?.snapshot(windowId: windowID).shownSpaceId }
+        if restoring == nil, let request = selectionRequest, request.item == id, request.space == space, request.url == url, !request.restoring { return }
         invalidateSelection()
         let generation = selectionGeneration
+        selectionRequest = (id, space, url, restoring != nil, generation, nil, false, false)
         queue.async {
+            func abandon() {
+                DispatchQueue.main.async {
+                    if self.selectionRequest?.generation == generation { self.selectionRequest = nil }
+                }
+            }
             do {
-                guard let store = self.store else { return }
-                if let restoring, store.restorationCandidate(windowId: self.windowID) != restoring { return }
+                guard !self.selectionClosed, let store = self.store else { abandon(); return }
+                if let restoring, store.restorationCandidate(windowId: self.windowID) != restoring { abandon(); return }
                 if restoring != nil { _ = try store.selectItem(windowId: self.windowID, id: id) }
                 let snapshot = store.snapshot(windowId: self.windowID)
                 let selectedSpace = snapshot.shownSpaceId
@@ -344,8 +371,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let siblings = store.splitLayout(itemId: id).map { leaves($0).filter { $0.id != id } } ?? []
                 DispatchQueue.main.async {
+                    guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll() else {
+                        self.cancelSelectionCommand(command); return
+                    }
+                    if self.selectionRequest?.generation == generation { self.selectionRequest?.command = command.id }
                     self.selectionDispatchForCheck("registered", command: command) {
-                        guard self.selectionGeneration == generation,
+                        guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll(),
+                              self.selectionGeneration == generation,
                               self.queue.sync(execute: {
                                   self.store?.snapshot(windowId: self.windowID).shownSpaceId == selectedSpace &&
                                   (restoring == nil || self.store?.restorationCandidate(windowId: self.windowID) == restoring)
@@ -361,6 +393,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                 }
             } catch {
+                abandon()
                 self.report(error)
             }
         }
@@ -369,6 +402,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func invalidateSelection() {
         precondition(Thread.isMainThread)
         selectionGeneration += 1
+        selectionRequest = nil
         pendingSplitOpens.removeAll()
         let withdrawn = openingSelections.keys.filter { host?.cancelPendingOpen($0) == true }
         openingSelections.removeAll()
@@ -580,7 +614,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, showProfile profile: String) {
-        if host.isClosingAll() || host.isClosing() {
+        if selectionClosed || host.isClosingAll() || host.isClosing() {
             _ = host.setClosePresentationProfile(profile)
             MainActor.assumeIsolated { onQuitProfileSwitch?() }
             return
@@ -606,12 +640,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func windowHostWillBeginClosing(_ host: any ARWindowHostAPI) {
+        setSelectionClosed(true)
         handoffGeneration += 1
         invalidateSelection()
         MainActor.assumeIsolated { onCloseStarted?() }
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {
+        setSelectionClosed(false)
         handoffGeneration += 1
         let profile = host.profileDirectory()
         let snapshot: WorkspaceSnapshot? = queue.sync {
@@ -661,6 +697,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         var strips: [LiveStrip] = []
         var crashedItems: Set<String> = []
+        var rowStates: [String: RowState] = [:]
         var navigatedLives: Set<String> = []
         for strip in raw {
             guard let window = strip["window"] as? String,
@@ -684,24 +721,31 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 parsedTabs.append(LiveTab(offTheRecord: tabOffTheRecord, profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
-                if crashed, let item = item as? String { crashedItems.insert(item) }
+                if let item = item as? String {
+                    if crashed { crashedItems.insert(item) }
+                    rowStates[item] = RowState(loading: tab["loading"] as? Bool ?? false, audible: tab["audible"] as? Bool ?? false, muted: tab["muted"] as? Bool ?? false, canGoForward: tab["canGoForward"] as? Bool ?? false)
+                }
                 if navigated { navigatedLives.insert(live) }
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
         let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
+        let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
+        if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { return }
+        let states = rowStates
         let crashed = crashedItems
         let navigated = navigatedLives
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {
-                guard let store = self.store else { return }
+                guard let store = self.store, !(hasClosingTabs && self.selectionClosed) else { return }
                 var previousOwners: [String: String] = [:]
                 for strip in transaction.strips {
                     for tab in strip.tabs {
                         if let item = tab.item, let owner = store.liveWindow(item: item) { previousOwners[tab.liveId] = owner }
                     }
                 }
+                let before = store.snapshot(windowId: self.windowID)
                 let outcome = try store.liveApply(transaction: transaction)
                 if let error = outcome.persistenceError { self.report(CoreError.Store(message: error)) }
                 for command in outcome.commands where command.kind == .activate || command.kind == .open {
@@ -713,7 +757,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                           let after = store.liveWindow(item: item), before != after else { return nil }
                     return (tab.liveId, after)
                 } }
+                let mappingChanged = transaction.strips.flatMap(\.tabs).contains { tab in
+                    previousOwners[tab.liveId] != tab.item.flatMap { store.liveWindow(item: $0) }
+                }
+                let workspaceChanged = before != snapshot || mappingChanged || !outcome.adopted.isEmpty || !outcome.commands.isEmpty
                 DispatchQueue.main.async {
+                    guard !(hasClosingTabs && self.selectionClosed) else { return }
                     for (live, owner) in movedLives {
                         self.session.noteTransfer(live, destination: owner)
                         if owner == self.windowID { self.restoringSplitMoves.remove(live) }
@@ -724,6 +773,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     for command in outcome.commands { self.execute(command) }
                     if case .command(let id) = transaction.cause {
+                        if self.selectionRequest?.command == id { self.selectionRequest = nil }
                         self.restoringSplitCommands.remove(id)
                         if self.restoringTargetCommand == id { self.restoringTargetCommand = nil }
                     }
@@ -735,6 +785,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     if outcome.applied {
                         self.crashedItems = crashed
+                        self.rowStates = states
                     }
                     self.maybeFinishCrashRecovery()
                     self.deliverIfCurrent(snapshot)
@@ -742,8 +793,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                        let active = own.active, let tab = self.tab(active), let item = tab.itemId {
                         self.session.captureSnapshot(tab, item: item)
                     }
+                    if case .command(let id) = transaction.cause { self.traceMatrix("selection transaction command=\(id) rev=\(transaction.rev) applied=\(outcome.applied)") }
                     self.onTransaction?(transaction, outcome.applied)
-                    if outcome.applied { self.onWorkspaceChange?() }
+                    if outcome.applied && workspaceChanged { self.onWorkspaceChange?() }
                 }
             } catch { self.report(error) }
         }
@@ -751,6 +803,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func shutdown() {
         precondition(Thread.isMainThread)
+        setSelectionClosed(true)
         for view in failureViews.values { view.uncover(restoreFocus: false); view.removeFromSuperview() }
         failureViews.removeAll()
         handoffGeneration += 1
@@ -780,8 +833,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard let current = host, (current as AnyObject) === (source as AnyObject), !source.isClosingAll() else { completion(true); return }
         let generation = handoffGeneration
         let plan = session.handoffs(from: self)
-        guard !plan.isEmpty else { completion(true); return }
+        traceMatrix("handoff plan=\(plan.map { "\($0.live):\($0.item):\($0.profile)->\($0.target.windowID):activate=\($0.activate)" }) generation=\(generation)")
+        guard !plan.isEmpty else { traceMatrix("handoff complete=true empty=true"); completion(true); return }
         func fail() {
+            self.traceMatrix("handoff complete=false")
             FileHandle.standardError.write(Data("engine adapter: close handoff failed; window remains open\n".utf8))
             completion(false)
         }
@@ -799,6 +854,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 return
             }
             let latest = self.session.handoffs(from: self)
+            self.traceMatrix("handoff latest=\(latest.map { "\($0.live):\($0.item):\($0.profile)->\($0.target.windowID):activate=\($0.activate)" })")
             guard latest.count == plan.count,
                   plan.allSatisfy({ move in latest.contains { $0.live == move.live && $0.target === move.target && $0.activate == move.activate } }) else {
                 fail(); return
@@ -814,6 +870,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     return
                 }
             }
+            self.traceMatrix("handoff complete=true empty=false")
             completion(true)
         }
         prepare()
@@ -837,7 +894,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 latest.shownSpaceId == snapshot.shownSpaceId && latest.spaces == snapshot.spaces && latest.archive == snapshot.archive
         }
         guard current else { return }
-        guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
+        guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
             displayedSplit = snapshot.selectedId.flatMap { id in queue.sync { store?.splitLayout(itemId: id) } }
@@ -1045,6 +1102,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func refresh() { publish() }
 
+    public func checkInFlightSelection(item: String) -> (command: String?, resolved: Bool, activated: Bool)? {
+        precondition(Thread.isMainThread)
+        guard let request = selectionRequest, request.item == item else { return nil }
+        return (request.command, request.resolved, request.activated)
+    }
+
     public func checkSelectionState() -> [String: Any] {
         precondition(Thread.isMainThread)
         let generation = selectionGeneration
@@ -1068,6 +1131,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private func cancelSelectionCommand(_ command: LiveCommand) {
         guard command.kind == .open || command.kind == .activate else { return }
         DispatchQueue.main.async {
+            if self.selectionRequest?.command == command.id { self.selectionRequest = nil }
             self.pendingSplitOpens.removeValue(forKey: command.id)
             if let live = self.queue.sync(execute: { self.store?.liveTab(item: command.item) }) {
                 self.session.cancelTransfer(live, destination: self.windowID)
@@ -1155,7 +1219,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func takeRemoteSelection() {
         precondition(Thread.isMainThread)
-        guard !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { return }
+        guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { return }
         let candidate: (String, String)? = queue.sync {
             guard let store else { return nil }
             let snapshot = store.snapshot(windowId: windowID)
@@ -1175,6 +1239,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     private func selectionDispatchForCheck(_ stage: String, command: LiveCommand, action: @escaping () -> Void) {
+        traceMatrix("selection dispatch stage=\(stage) command=\(command.id) item=\(command.item) generation=\(selectionGeneration)")
+        if stage == "resolved", selectionRequest?.command == command.id { selectionRequest?.resolved = true }
         if let checkSelectionDispatch, command.kind == .activate { checkSelectionDispatch(stage, command.id, action) }
         else { action() }
     }
@@ -1243,16 +1309,18 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private func dispatchActivation(_ command: LiveCommand, live: String, host: any ARWindowHostAPI,
                                     selection: SelectionContext?, deadline: DispatchTime, retrying: Bool) {
         precondition(Thread.isMainThread)
-        guard let current = self.host, (current as AnyObject) === (host as AnyObject),
+        guard !selectionClosed, let current = self.host, (current as AnyObject) === (host as AnyObject),
               !current.isClosing(), !current.isClosingAll(),
               selection.map({ context in
                   self.selectionGeneration == context.generation && current.profileDirectory() == context.profile &&
                   self.queue.sync { self.store?.snapshot(windowId: self.windowID).shownSpaceId == context.space }
               }) ?? true,
               queue.sync(execute: { self.store?.liveTab(item: command.item) == live && self.pendingSelectionCommands.contains(command.id) })
-        else { cancelSelectionCommand(command); return }
+        else { traceMatrix("selection cancelled command=\(command.id) live=\(live) generation=\(selectionGeneration) expected=\(selection?.generation.description ?? "none")"); cancelSelectionCommand(command); return }
         if let local = tab(live) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
+            traceMatrix("selection activated command=\(command.id) live=\(live) local=true")
+            if selectionRequest?.command == command.id { selectionRequest?.activated = true }
             checkSelectionActivated?(command.id)
             local.activate(withCommandId: command.id)
             return
@@ -1261,6 +1329,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let supported = (current as AnyObject).responds(to: #selector(ARWindowHostAPI.transferTab(_:commandId:)))
         if let remote, supported, current.transferTab(remote, commandId: command.id) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
+            traceMatrix("selection activated command=\(command.id) live=\(live) local=false")
+            if selectionRequest?.command == command.id { selectionRequest?.activated = true }
             checkSelectionActivated?(command.id)
             return
         }
