@@ -1827,6 +1827,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)setDelegate:(id<ARWindowHostDelegate>)delegate {
   DCHECK([NSThread isMainThread]);
   _delegate = delegate;
+  // Why not reuse this process-wide snapshot for a private store: pass 3 must send that store its own rev 0 snapshot.
   if (delegate && !g_epoch) {
     AraratClearDetachedTransfers();
     base::Time started = base::Process::Current().CreationTime();
@@ -3743,6 +3744,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
     if (epoch != g_epoch) return;
     ARWindowHost* recipient = [retained canReportWorkspace] ? retained : nil;
+    // Why not use an arbitrary recipient for private stores: pass 3 must match the OTR Profile* domain.
     if (!recipient) for (ARWindowHost* host in ReportingHosts()) if ([host canReportWorkspace]) { recipient = host; break; }
     if (!recipient.delegate) return;
     NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };

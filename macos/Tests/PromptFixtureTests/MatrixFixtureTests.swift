@@ -142,10 +142,10 @@ private func matrixWait(_ predicate: () -> Bool) async throws {
 @MainActor
 private func matrixTransaction(_ fake: MatrixFakeHost, window: String, epoch: UInt64, rev: UInt64, command: String?, crashedItem: String? = nil) -> [String: Any] {
     let tabs: [[String: Any]] = fake.entries.map { tab in
-        ["profile": tab.profile, "live_id": tab.liveId, "item": tab.itemId as Any? ?? NSNull(),
+        ["off_the_record": false, "profile": tab.profile, "live_id": tab.liveId, "item": tab.itemId as Any? ?? NSNull(),
          "opener": NSNull(), "url": NSNull(), "title": NSNull(), "navigated": false, "crashed": tab.itemId != nil && tab.itemId == crashedItem]
     }
-    return ["epoch": NSNumber(value: epoch), "rev": NSNumber(value: rev),
+    return ["off_the_record": false, "epoch": NSNumber(value: epoch), "rev": NSNumber(value: rev),
             "cause": command.map { ["Command": $0] } as Any? ?? "Engine",
             "strips": [["window": window, "tabs": tabs,
                          "active": fake.entries.first(where: { $0.itemId == fake.active })?.liveId as Any? ?? NSNull()]]]
@@ -1018,7 +1018,7 @@ func restoredSelectionIsRevalidatedWhenDeferredOpenDrains() async throws {
         return (first, second)
     }
     engine.attach(host)
-    engine.windowHost(host, didReceiveTransaction: ["epoch": 1, "rev": 0, "cause": "Engine", "strips": []])
+    engine.windowHost(host, didReceiveTransaction: ["off_the_record": false, "epoch": 1, "rev": 0, "cause": "Engine", "strips": []])
     engine.restoreSelection()
     try await matrixWait { fake.opened.count == 1 }
     let command = try #require(fake.opened.first)
@@ -1057,9 +1057,48 @@ func recoveryDoesNotAcknowledgeTheInitialTransactionBeforeSelectionDispatch() as
 }
 
 @Test @MainActor
-func privacyFlagsParseAndDefaultToRegular() {
-    #expect(EngineAdapter.privacyFlag([:]) == false)
+func privacyFlagsRequireAnExplicitBoolean() {
+    #expect(EngineAdapter.privacyFlag([:]) == nil)
     #expect(EngineAdapter.privacyFlag(["off_the_record": true]) == true)
     #expect(EngineAdapter.privacyFlag(["off_the_record": false]) == false)
     #expect(EngineAdapter.privacyFlag(["off_the_record": "true"]) == nil)
+}
+
+@Test @MainActor
+func privacyFlagsRejectMissingTransactionOrTabFlags() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "flags", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    var received = 0
+    engine.onTransaction = { _, _ in received += 1 }
+    var initial = matrixTransaction(fake, window: "flags", epoch: 1, rev: 0, command: nil)
+    initial.removeValue(forKey: "off_the_record")
+    engine.windowHost(host, didReceiveTransaction: initial)
+    #expect(received == 0)
+    initial["off_the_record"] = false
+    engine.windowHost(host, didReceiveTransaction: initial)
+    try await matrixWait { received == 1 }
+    let row = try session.queue.sync { () -> String in
+        let store = try #require(session.store)
+        return try #require(store.snapshot(windowId: "flags").spaces.first?.today.first?.id)
+    }
+    fake.entries.append(MatrixFakeTab(item: row, live: "live", profile: "Default", owner: fake))
+    var transaction = matrixTransaction(fake, window: "flags", epoch: 1, rev: 1, command: nil)
+    var strips = transaction["strips"] as! [[String: Any]]
+    var tabs = strips[0]["tabs"] as! [[String: Any]]
+    tabs[0].removeValue(forKey: "off_the_record")
+    strips[0]["tabs"] = tabs
+    transaction["strips"] = strips
+    engine.windowHost(host, didReceiveTransaction: transaction)
+    #expect(received == 1)
+    tabs[0]["off_the_record"] = false
+    strips[0]["tabs"] = tabs
+    transaction["strips"] = strips
+    engine.windowHost(host, didReceiveTransaction: transaction)
+    try await matrixWait { received == 2 }
+    engine.shutdown()
 }

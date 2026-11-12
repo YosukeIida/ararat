@@ -1200,6 +1200,13 @@ fn privacy_mismatch_is_an_error_before_any_state_or_revision_changes() {
     let tab = LiveTab { off_the_record: true, profile: Profile::Default, live_id: "private".into(), item: None, opener: None, navigated: true, url: Some("https://private.example/".into()), title: None };
     let mut tx = LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![LiveStrip { window: "test".into(), tabs: vec![tab], active: Some("private".into()) }] };
     assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+    let regular = LiveTab { off_the_record: false, profile: Profile::Default, live_id: "regular".into(), item: None, opener: None, navigated: false, url: None, title: None };
+    let mixed = LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![
+        LiveStrip { window: "regular".into(), tabs: vec![regular], active: None }, tx.strips[0].clone(),
+    ] };
+    assert!(matches!(store.live_apply(mixed), Err(CoreError::Live { .. })));
+    let empty_private = LiveTransaction { off_the_record: true, epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![] };
+    assert!(matches!(store.live_apply(empty_private), Err(CoreError::Live { .. })));
     tx.off_the_record = true;
     assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
     assert_eq!(store.snapshot("test".into()), before);

@@ -558,8 +558,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     static func privacyFlag(_ value: [String: Any]) -> Bool? {
-        guard let flag = value["off_the_record"] else { return false }
-        return flag as? Bool
+        value["off_the_record"] as? Bool
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction value: [String: Any]) {
