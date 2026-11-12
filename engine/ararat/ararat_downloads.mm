@@ -121,12 +121,14 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
   NSArray* Snapshot() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     NSMutableArray* result = [NSMutableArray array];
-    if (!profile_ || profile_->IsOffTheRecord()) return result;
+    if (!profile_) return result;
+    // A private profile's list is this observer's live items only: no history is loaded, and
+    // the model lives with the window (U26f).
     NSString* profile = base::SysUTF8ToNSString(profile_->GetPath().BaseName().value());
     for (const auto& [guid, item] : items_) {
       DownloadItemModel model(item);
       if (!model.ShouldShowInUi()) continue;
-      [result addObject:@{ @"profile": profile, @"private": @NO,
+      [result addObject:@{ @"profile": profile, @"private": @(profile_->IsOffTheRecord()),
         @"id": base::SysUTF8ToNSString(guid),
         @"restored": @(item->GetDownloadCreationType() == Item::TYPE_HISTORY_IMPORT),
         @"name": base::SysUTF16ToNSString(item->GetFileNameToReportUser().LossyDisplayName()),
@@ -144,7 +146,7 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
   }
   bool Perform(NSString* guid, NSString* action) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    if (!manager_ || !profile_ || profile_->IsOffTheRecord()) return false;
+    if (!manager_ || !profile_) return false;
     Item* item = manager_->GetDownloadByGuid(base::SysNSStringToUTF8(guid));
     if (!item) return false;
     DownloadItemModel model(item);

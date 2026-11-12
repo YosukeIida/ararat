@@ -268,8 +268,8 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" ||
-         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "downloads" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
+  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" || check == "private-window" ||
+         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "downloads" || command->GetSwitchValueASCII("ararat-screen") == "errorpages" || command->GetSwitchValueASCII("ararat-screen") == "private-window";
 }
 
 void PinStartupPref(Profile* profile) {
@@ -556,6 +556,7 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
                  g_pending_profile.c_str(), incoming_name.c_str(), browser->GetProfile()->IsOffTheRecord());
   if (!core) {
     Profile* profile = browser->GetProfile();
+    const bool otr = profile->IsOffTheRecord();
     auto type = browser->GetType();
     auto* state = BrowserInitState::From(browser);
     auto* registry = extensions::ExtensionRegistry::Get(profile);
@@ -578,7 +579,9 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=type\n");
       return nullptr;
     }
-    if (!hosted && (extension_popup || !profile->IsOffTheRecord())) {
+    // Why not ask `hosted` for an OTR window: its profile name is its parent's, so every OTR
+    // window and its regular namesake would match; the UI owns the private session and decides.
+    if (!otr && !hosted) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=profile-mismatch\n");
       return nullptr;
     }
@@ -597,7 +600,10 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
         bounds = gfx::Rect(left, top, std::max(0, right - left), std::max(0, bottom - top));
       }
     }
-    void* owner = AraratRequestHost(type == BrowserWindowInterface::TYPE_POPUP || type == BrowserWindowInterface::TYPE_DEVTOOLS || extension_popup || profile->IsOffTheRecord(), name, bounds);
+    void* owner = AraratRequestHost(
+        type == BrowserWindowInterface::TYPE_POPUP || type == BrowserWindowInterface::TYPE_DEVTOOLS ||
+            extension_popup,
+        otr, profile, name, bounds);
     if (!owner) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=host-unavailable\n");
       return nullptr;
@@ -607,6 +613,12 @@ BrowserWindow* AraratCreateBrowserWindowForPendingHost(
     if (!core || core->windowForProfile(name) || core->closed() || core->closing()) {
       if (checking) std::fprintf(stderr, "ararat-trace: browser-factory fallback=host-unusable\n");
       return nullptr;
+    }
+    if (otr) {
+      // The private host is created before its Browser exists, so mark the domain and the
+      // directory here: the UI's attach must not resolve the parent's regular profile.
+      core->SetPrivateProfile(profile);
+      core->SetProfileName(name);
     }
   }
   if (core->closed() || core->closing() || core->windowForProfile(incoming_name)) {
@@ -1106,7 +1118,10 @@ void AraratWindowHostCore::ConfirmClose() {
     if (pending) return;
   }
   ARWindowHost* host = (__bridge ARWindowHost*)owner_;
-  if (!popup_ && !host.isClosingAll && !close_handoff_complete_) {
+  // Why not hand a private window's tabs to a sibling: the workspace is shared already, and a
+  // live OTR tab cannot move between browsers (moveTab rejects OTR); closing reports the empty
+  // strip and the core removes the rows.
+  if (!popup_ && !private_ && !host.isClosingAll && !close_handoff_complete_) {
     if (close_handoff_pending_) return;
     close_handoff_pending_ = true;
     auto weak = weak_factory_.GetWeakPtr();
@@ -1167,8 +1182,8 @@ void AraratWindowHostCore::SetWindow(AraratBrowserWindow* window) {
   windows_[window->browser()->GetProfile()->GetPath().BaseName().value()] = window;
   devtools_ = window->browser()->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS;
   popup_ = devtools_ || window->browser()->GetType() == BrowserWindowInterface::TYPE_POPUP ||
-           window->browser()->GetType() == BrowserWindowInterface::TYPE_APP_POPUP ||
-           window->browser()->GetProfile()->IsOffTheRecord();
+           window->browser()->GetType() == BrowserWindowInterface::TYPE_APP_POPUP;
+  if (window->browser()->GetProfile()->IsOffTheRecord()) SetPrivateProfile(window->browser()->GetProfile());
   if (devtools_) {
     NSWindow* native_window = GetNativeWindow().GetNativeNSWindow();
     native_window.titleVisibility = NSWindowTitleVisible;
@@ -1202,9 +1217,13 @@ bool AraratWindowHostCore::ShortcutActivationMatches(bool active) const {
   return global && (global->registry_for_active_window() == shortcut_registry_.get()) == active;
 }
 
+namespace {
+// Defined with the epoch below; declared here because the window-destroyed path erases it.
+std::set<Profile*>& PrivateEpochSet();
+}
+
 void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")
-    std::fprintf(stderr, "ararat-trace: download-close browser destroyed\n");
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "download-close")    std::fprintf(stderr, "ararat-trace: download-close browser destroyed\n");
   if (popup_ && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "popup")
     std::fprintf(stderr, "ararat-trace: popup browser destroyed\n");
   if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: browser-destroyed closing=%d\n", closing_);
@@ -1212,6 +1231,13 @@ void AraratWindowHostCore::OnWindowDestroyed(BrowserWindowInterface* browser) {
   AraratWindows().erase(browser);
   const auto name = browser->GetProfile()->GetPath().BaseName().value();
   windows_.erase(name);
+  if (Profile* gone = browser->GetProfile(); gone->IsOffTheRecord()) {
+    // Why not keep the profile in the rev-0 set: its address is reused by a later OTR profile,
+    // whose store would then never get its rev 0 snapshot.
+    bool alive = std::any_of(AraratWindows().begin(), AraratWindows().end(),
+                             [gone](BrowserWindowInterface* other) { return other->GetProfile() == gone; });
+    if (!alive) PrivateEpochSet().erase(gone);
+  }
   [(__bridge ARWindowHost*)owner_ browserDestroyed:browser];
   if ((closing_ || popup_) && windows_.empty() && !(closing_ && close_handoff_pending_)) {
     if (IsCloseCheck()) std::fprintf(stderr, "ararat-trace: widget-close\n");
@@ -1233,6 +1259,12 @@ struct TabIdentity : public base::SupportsUserData::Data {
 
 uint64_t g_epoch = 0;
 uint64_t g_revision = 0;
+
+// OTR Profile* whose private store has received its rev 0 snapshot (U26f).
+std::set<Profile*>& PrivateEpochSet() {
+  static base::NoDestructor<std::set<Profile*>> sent;
+  return *sent;
+}
 
 class StripObserver : public TabStripModelObserver {
  public:
@@ -1260,6 +1292,7 @@ class StripObserver : public TabStripModelObserver {
 @property(nonatomic, copy) NSDictionary* entry;
 @property(nonatomic) BOOL active;
 @property(nonatomic) uint64_t epoch;
+@property(nonatomic) void* profile;
 @end
 @implementation ARPendingMove
 @end
@@ -1310,6 +1343,8 @@ NSDictionary* OrphanMoveSnapshot(NSString* window) {
 - (NSDictionary*)barrierSnapshot:(BOOL)consumeNavigation preserveActive:(BOOL)preserveActive;
 - (BOOL)finishPendingMoves;
 - (void)emitStrips:(NSArray*)strips cause:(id)cause;
+- (void)deliverPrivateEpoch:(Profile*)domain recipient:(id<ARWindowHostDelegate>)recipient;
+- (Profile*)workspaceProfile;
 - (BOOL)recoverDetached:(NSString*)live;
 - (void)prepareDetachedProfile:(NSString*)profile;
 - (BOOL)canReportWorkspace;
@@ -1365,10 +1400,12 @@ void ExpirePendingMove(NSString* live, ARPendingMove* move) {
   }
   [PendingMoves() removeObjectForKey:live];
   if (source) [source emitCause:@"Engine"];
-  else for (ARWindowHost* candidate in ReportingHosts()) if ([candidate canReportWorkspace]) {
-    [candidate emitStrips:@[OrphanMoveSnapshot(move.sourceId)] cause:@"Engine"];
-    break;
-  }
+  else for (ARWindowHost* candidate in ReportingHosts())
+    if ([candidate canReportWorkspace] &&
+        (!move.profile || [candidate workspaceProfile] == move.profile)) {
+      [candidate emitStrips:@[OrphanMoveSnapshot(move.sourceId)] cause:@"Engine"];
+      break;
+    }
 }
 }
 
@@ -2270,12 +2307,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (BOOL)isPrivateWindow {
-  return browser_ && browser_->GetProfile()->IsOffTheRecord();
+  return core_->private_window() || (browser_ && browser_->GetProfile()->IsOffTheRecord());
 }
 
 - (void)updateDownloads {
   downloads_.reset();
-  if (browser_ && !browser_->GetProfile()->IsOffTheRecord()) {
+  if (browser_) {
     __weak ARWindowHost* weakHost = self;
     downloads_ = std::make_unique<AraratDownloads>(browser_->GetProfile(), ^(NSArray* items, NSString* identifier, BrowserWindowInterface* origin) {
       ARWindowHost* host = weakHost;
@@ -2415,7 +2452,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     }
     return;
   }
-  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && args->GetSwitchValueASCII("ararat-check") != "empty" && args->GetSwitchValueASCII("ararat-check") != "incognito" && args->GetSwitchValueASCII("ararat-check") != "popup" && args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup" && args->GetSwitchValueASCII("ararat-check") != "history-purge") return;
+  if (args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && args->GetSwitchValueASCII("ararat-check") != "empty" && args->GetSwitchValueASCII("ararat-check") != "incognito" && args->GetSwitchValueASCII("ararat-check") != "private-window" && args->GetSwitchValueASCII("ararat-screen") != "private-window" && args->GetSwitchValueASCII("ararat-check") != "popup" && args->GetSwitchValueASCII("ararat-check") != "ext-windows-popup" && args->GetSwitchValueASCII("ararat-check") != "history-purge") return;
   NSDictionary<NSString*, NSNumber*>* commands = @{
     @"new": @(IDC_NEW_TAB), @"location": @(IDC_FOCUS_LOCATION), @"search": @(IDC_FOCUS_SEARCH),
     @"find": @(IDC_FIND), @"next": @(IDC_FIND_NEXT), @"previous": @(IDC_FIND_PREVIOUS),
@@ -2976,7 +3013,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (BOOL)checkMoveTab:(id<ARTabAPI>)value toHost:(id<ARWindowHostAPI>)destination {
   if ((base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "transfer-ext" &&
-       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "dialogs") ||
+       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "dialogs" &&
+       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "private-window" &&
+       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "private-window") ||
       ![value isKindOfClass:ARTab.class] || ![destination isKindOfClass:ARWindowHost.class]) return NO;
   ARTab* tab = (ARTab*)value;
   ARWindowHost* targetHost = (ARWindowHost*)destination;
@@ -3483,6 +3522,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
           NSString* profile = [NSString stringWithUTF8String:strip->profile()->GetPath().BaseName().value().c_str()];
           ARPendingMove* move = [ARPendingMove new];
           move.source = self; move.sourceId = window_id_; move.epoch = g_epoch;
+          move.profile = strip->profile();
           move.active = selection.old_contents.get() == entry.contents.get();
           move.entry = @{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": identity->live_id,
                           @"item": identity->item_id ?: (id)NSNull.null, @"opener": NSNull.null,
@@ -3777,17 +3817,38 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return @{ @"window": window_id_, @"tabs": tabs, @"active": active };
 }
 
+- (Profile*)workspaceProfile {
+  if (browser_) return browser_->GetProfile();
+  return core_->private_profile();
+}
+
+// Why not let a private store start at rev 1: its Live has no epoch yet and drops every
+// rev > 0 transaction ("a new epoch must arrive as a full snapshot"). The first transaction of
+// a new OTR Profile* is preceded by its rev 0 here, once per profile (the store is shared by
+// the profile's windows, so the second window must not send another).
+- (void)deliverPrivateEpoch:(Profile*)domain recipient:(id<ARWindowHostDelegate>)recipient {
+  if (!domain || !domain->IsOffTheRecord() || !g_epoch || !recipient) return;
+  if (!PrivateEpochSet().insert(domain).second) return;
+  [recipient windowHost:self didReceiveTransaction:@{
+    @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"off_the_record": @YES, @"strips": @[]
+  }];
+}
+
 - (void)emitStrips:(NSArray*)strips cause:(id)cause {
   if (!g_epoch) return;
   uint64_t epoch = g_epoch;
   ARWindowHost* retained = self;
-  BOOL off_the_record = [self isPrivateWindow];
+  Profile* domain = [self workspaceProfile];
+  BOOL off_the_record = domain ? domain->IsOffTheRecord() : [self isPrivateWindow];
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
     if (epoch != g_epoch) return;
-    ARWindowHost* recipient = [retained canReportWorkspace] ? retained : nil;
-    // Why not use an arbitrary recipient for private stores: pass 3 must match the OTR Profile* domain.
-    if (!recipient) for (ARWindowHost* host in ReportingHosts()) if ([host canReportWorkspace]) { recipient = host; break; }
+    // Why not any canReportWorkspace host: a private strip must reach a private store and a
+    // regular strip a regular one, and two OTR profiles of one parent share a name only.
+    ARWindowHost* recipient = [retained canReportWorkspace] && [retained workspaceProfile] == domain ? retained : nil;
+    if (!recipient) for (ARWindowHost* host in ReportingHosts())
+      if ([host canReportWorkspace] && [host workspaceProfile] == domain) { recipient = host; break; }
     if (!recipient.delegate) return;
+    [recipient deliverPrivateEpoch:domain recipient:recipient.delegate];
     NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
     if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=move\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], retained->core_->closing());
     [recipient.delegate windowHost:recipient didReceiveTransaction:transaction];
@@ -3847,6 +3908,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         if (retainHost && IsCloseCheck()) std::fprintf(stderr, "ararat-trace: empty-strip-delivered=%d\n", strong_host.delegate != nil);
         id<ARWindowHostDelegate> delegate = strong_host.delegate;
         if (!strong_host || !delegate) return;
+        [strong_host deliverPrivateEpoch:[strong_host workspaceProfile] recipient:delegate];
         NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
         if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=ordinary\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], strong_host->core_->closing());
         [delegate windowHost:strong_host didReceiveTransaction:transaction];
@@ -3873,6 +3935,15 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (!directory || (core_->closing() && !switching_for_close_) || core_->closed()) return NO;
   base::FilePath name(directory.UTF8String);
   if (name.empty() || name.IsAbsolute() || name.ReferencesParent() || name.BaseName() != name || name.value() == ".") return NO;
+  if (core_->private_window()) {
+    // One OTR Browser per private window: the directory can only be its own, and switching is
+    // not a private window's operation (design: a private window sees its workspace only).
+    if (core_->private_profile() && core_->private_profile()->GetPath().BaseName() != name) return NO;
+    core_->SetProfileName(name.value());
+    browser_ = core_->window() ? core_->window()->browser() : nullptr;
+    [self updateDownloads];
+    return YES;
+  }
   if (core_->profile_name() == name.value()) {
     if (self.delegate && shown_profiles_.insert(name.value()).second) [self ensureProfileBrowser:directory];
     return YES;
@@ -3916,6 +3987,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)ensureProfileBrowser:(NSString*)directory {
+  // Why not create a regular Browser for a private window: its only Browser is the OTR one the
+  // factory already made; resolving its parent's directory must never load the regular profile.
+  if (core_->private_window()) return;
   if (!self.delegate || core_->closing() || core_->closed() || core_->windowForProfile(directory.UTF8String)) return;
   NSString* requested = [directory copy];
   __weak ARWindowHost* host = self;

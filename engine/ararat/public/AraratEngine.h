@@ -16,7 +16,10 @@ typedef struct AraratCallbacks {
   void (*started)(void* ctx);
   void (*will_shut_down)(void* ctx);
   bool (*reopen)(void* ctx, bool has_visible_windows);
-  void* (*create_host)(void* ctx, bool popup, const char* profile, int x, int y, int width, int height);
+  // `popup` is a real popup, app popup or devtools host; an off-the-record normal Browser is
+  // a full window, so `off_the_record` and the Profile* travel beside the name (the name of an
+  // OTR profile is its parent's, which cannot tell two OTR profiles apart).
+  void* (*create_host)(void* ctx, bool popup, bool off_the_record, void* profile, const char* profile_name, int x, int y, int width, int height);
   void (*open_urls)(void* ctx, void* urls);
   void* ctx;
 } AraratCallbacks;

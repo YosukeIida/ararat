@@ -13,6 +13,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         FileHandle.standardError.write(Data("ararat-trace: matrix window=\(windowID) \(message())\n".utf8))
     }
     public let session: WorkspaceSession
+    public let isPrivate: Bool
     private var queue: DispatchQueue { session.queue }
     private var store: WorkspaceStore? {
         get { session.store }
@@ -84,8 +85,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
+        self.isPrivate = isPrivate
         self.windowID = windowID
         self.card = card
         super.init()
@@ -203,7 +205,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let profile = queue.sync { self.shownProfileDirectory() }
         host.delegate = self
         queue.async { self.session.drainHistoryPurges() }
-        if let profile { _ = host.setProfileDirectory(profile) }
+        // Why not resolve the directory for a private window: its OTR profile's basename is its
+        // parent's, and resolving it before the engine marked the host private would create a
+        // regular Browser. The engine sets the private directory itself.
+        if let profile, !isPrivate { _ = host.setProfileDirectory(profile) }
         publish()
     }
 
@@ -484,7 +489,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let item = archive == nil ? splitOwner(id, rows: rows) : id
             let row = rows.first { $0.id == item }
             let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
-            let archive = archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false
+            let archive = isPrivate ? false : (archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false)
             if !archive, row?.kind == .split {
                 let targets = try store.liveCloseSplit(item: item)
                 let snapshot = store.snapshot(windowId: self.windowID)

@@ -8,6 +8,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     private let session: WorkspaceSession
     private var queue: DispatchQueue { session.queue }
     private let windowID: String
+    public let isPrivate: Bool
     private let spaceSwitchLock = NSLock()
     private var spaceSwitchGeneration: UInt64 = 0
     @MainActor public var checkSpaceSwitchCompletion: ((String, @escaping () -> Void) -> Void)?
@@ -17,9 +18,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         set { session.store = newValue }
     }
 
-    public init(windowID: String, session: WorkspaceSession = WorkspaceSession()) {
+    public init(windowID: String, session: WorkspaceSession = WorkspaceSession(), private isPrivate: Bool = false) {
         self.windowID = windowID
         self.session = session
+        self.isPrivate = isPrivate
     }
 
     func enqueue<T: Sendable>(_ operation: @escaping @Sendable () throws -> T, completion: @escaping Completion<T>) {
@@ -242,7 +244,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
             let item = splitOwner(id, rows: rows)
             let row = rows.first { $0.id == item }
             let space = before.spaces.first { $0.id == before.shownSpaceId }
-            let archive = row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false
+            let archive = self.isPrivate ? false : (row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false)
             return (item, try archive ? store.archiveItem(windowId: self.windowID, id: item) : store.closeItem(windowId: self.windowID, id: item))
         }, completion: completion)
     }
