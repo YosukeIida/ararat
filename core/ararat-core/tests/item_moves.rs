@@ -53,14 +53,20 @@ fn folders_move_with_subtrees_and_splits_move_as_one_even_from_a_member() {
     edit(&mut ws, |ws| ws.move_item("tab-spec", "pin-work", 0, false).unwrap()); ws.move_item("tab-spec", "folder-docs", 0, false).unwrap();
     edit(&mut ws, |ws| ws.move_item("folder-docs", "pin-work", 1, false).unwrap());
     ws.select_item("window", "tab-a").unwrap(); let members = [ws.items["tab-a"].clone(), ws.items["tab-b"].clone()];
-    edit(&mut ws, |ws| ws.move_item("tab-a", "today-home", 0, false).unwrap());
-    assert_eq!(children(&ws, "today-home"), ["split-1"]); assert_eq!([ws.items["tab-a"].clone(), ws.items["tab-b"].clone()], members);
+    // Within the space the split is one row: a member names the whole split.
+    edit(&mut ws, |ws| ws.move_item("tab-a", "today-work", 0, false).unwrap());
+    assert_eq!(children(&ws, "today-work"), ["split-1"]); assert_eq!([ws.items["tab-a"].clone(), ws.items["tab-b"].clone()], members);
     assert_eq!(ws.selected("window"), Some("tab-a")); edit(&mut ws, |ws| ws.move_item("split-1", "pin-work", 0, false).unwrap());
+    // Another space is a move out of the split (U25d): the member leaves and the split left with
+    // one pane becomes that pane's tab, in the place the split held.
+    edit(&mut ws, |ws| ws.move_item("tab-a", "today-home", 0, false).unwrap());
+    assert_eq!(children(&ws, "today-home"), ["tab-a"]); assert_eq!(children(&ws, "pin-work"), ["tab-b", "folder-docs"]);
+    assert!(!ws.items.contains_key("split-1")); assert_eq!(ws.selected("window"), Some("tab-a"));
 }
 #[test]
 fn rejected_moves_and_folder_edits_are_atomic() {
     let mut ws = workspace(); ws.create_folder("inner", "Inner", "folder-docs", 1, &[]).unwrap();
-    for (id, parent, index) in [("folder-docs", "inner", 0), ("folder-docs", "folder-docs", 0), ("folder-docs", "today-work", 0), ("folder-docs", "fav-default", 0), ("split-1", "fav-default", 0), ("tab-a", "fav-default", 0), ("tab-mail", "tab-spec", 0), ("pin-work", "pin-home", 0), ("tab-mail", "missing", 0), ("missing", "pin-home", 0), ("tab-mail", "pin-home", 1), ("tab-mail", "split-1", 0)] { refused(&mut ws, |ws| ws.move_item(id, parent, index, false)); }
+    for (id, parent, index) in [("folder-docs", "inner", 0), ("folder-docs", "folder-docs", 0), ("folder-docs", "today-work", 0), ("folder-docs", "fav-default", 0), ("split-1", "fav-default", 0), ("tab-mail", "tab-spec", 0), ("pin-work", "pin-home", 0), ("tab-mail", "missing", 0), ("missing", "pin-home", 0), ("tab-mail", "pin-home", 1), ("tab-mail", "split-1", 0)] { refused(&mut ws, |ws| ws.move_item(id, parent, index, false)); }
     for lifecycle in [Lifecycle::Closed, Lifecycle::Archived] { ws.items.get_mut("tab-mail").unwrap().lifecycle = lifecycle; refused(&mut ws, |ws| ws.move_item("tab-mail", "pin-home", 0, false)); }
     for parent in ["today-work", "fav-default", "missing", "tab-spec"] { refused(&mut ws, |ws| ws.create_folder("new", "New", parent, 0, &[])); }
     refused(&mut ws, |ws| ws.create_folder("folder-docs", "New", "pin-home", 0, &[])); refused(&mut ws, |ws| ws.create_folder("new", " \n", "pin-home", 0, &[]));

@@ -61,6 +61,15 @@ pub enum Orientation {
     Vertical,
 }
 
+// Which side of the focused pane a new pane joins (Add Left/Right Split), and which side the
+// dragged row takes when a drop on a page half makes the split. Left and right are the row's
+// order: a split is horizontal here (Move Left/Right is the axis's menu title).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitSide {
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemKind {
     Container,

@@ -60,6 +60,14 @@ impl WorkspaceStore {
     fn admit(&self, restricted: bool) -> Result<(), CoreError> {
         if self.private && restricted { Err(CoreError::Edit { message: "operation unavailable in a private workspace".into() }) } else { Ok(()) }
     }
+
+    // The private workspace keeps its rows in one Today list (no pins, folders or favourites),
+    // so a pane op is admitted only for a row that lives there; a foreign item is refused with
+    // the same error rather than reaching the core.
+    fn admit_today(&self, workspace: &Workspace, id: &str) -> Result<(), CoreError> {
+        if self.private && !workspace.is_in_today(id) { self.admit(true)?; }
+        Ok(())
+    }
 }
 
 #[uniffi::export]
@@ -156,6 +164,7 @@ impl WorkspaceStore {
     pub fn move_pane(&self, window_id: String, item_id: String, forward: bool) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
+        self.admit_today(&workspace, &item_id)?;
         let ops = workspace.move_pane(&item_id, forward)?;
         self.store.write(ops);
         self.store.flush()?;
@@ -165,10 +174,47 @@ impl WorkspaceStore {
     pub fn convert_split(&self, window_id: String, split_id: String) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
+        self.admit_today(&workspace, &split_id)?;
         let ops = workspace.convert_split(&split_id)?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // U25d: Add Left/Right Split. The new pane opens the New Tab page; the caller selects it
+    // (its id comes back with the snapshot) and the engine opens it beside its siblings.
+    pub fn add_split_pane(&self, window_id: String, item_id: String, side: SplitSide) -> Result<SplitChange, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        self.admit_today(&workspace, &item_id)?;
+        let (ops, change) = workspace.add_split_pane(&item_id, side.into())?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(SplitChange { snapshot: snapshot(workspace.clone(), &window_id), split: change.split, pane: change.pane })
+    }
+
+    // U25d: Separate Tab from Split. The pane becomes its own Today row right after the split
+    // row, and a split left with one pane becomes that tab, in this one transaction.
+    pub fn separate_pane(&self, window_id: String, item_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        self.admit_today(&workspace, &item_id)?;
+        let ops = workspace.separate_pane(&item_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // U25d: drag-to-split. The dragged row takes the dropped side of the shown row.
+    pub fn make_split(&self, window_id: String, dragged_id: String, target_id: String, side: SplitSide) -> Result<SplitChange, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        self.admit_today(&workspace, &dragged_id)?;
+        self.admit_today(&workspace, &target_id)?;
+        let (ops, change) = workspace.make_split(&dragged_id, &target_id, side.into())?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(SplitChange { snapshot: snapshot(workspace.clone(), &window_id), split: change.split, pane: change.pane })
     }
 
     pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
@@ -751,6 +797,24 @@ pub enum RowKind {
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum SplitPaneKind { Tab, SplitHorizontal, SplitVertical, Placeholder }
+
+/// Which side of the focused pane a new pane joins, and which side a dragged row takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SplitSide { Left, Right }
+
+impl From<SplitSide> for ararat_core::model::SplitSide {
+    fn from(side: SplitSide) -> Self {
+        match side { SplitSide::Left => Self::Left, SplitSide::Right => Self::Right }
+    }
+}
+
+/// A split op's snapshot, with the split it touched and the pane it added (or moved in).
+#[derive(Debug, PartialEq, uniffi::Record)]
+pub struct SplitChange {
+    pub snapshot: WorkspaceSnapshot,
+    pub split: String,
+    pub pane: String,
+}
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SplitFactor { pub id: String, pub factor: f64 }
@@ -1472,6 +1536,78 @@ mod tests {
         assert!(clear.batch.is_none());
         assert!(clear.snapshot.archive.is_empty() && clear.snapshot.spaces[0].today.is_empty());
         assert!(store.pending_history_purges().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pane_ops_admit_only_the_private_today_and_refuse_foreign_items() {
+        let store = WorkspaceStore::open_private(Profile::Default);
+        let window: String = "w".into();
+        // The rows the sidebar draws: a split is one row and its members are not rows of their own.
+        fn rows(snapshot: &WorkspaceSnapshot) -> Vec<String> {
+            let space = &snapshot.spaces[0];
+            let all: Vec<&Row> = space.pinned.iter().chain(&space.today).collect();
+            let splits: Vec<&str> = all.iter().filter(|row| row.kind == RowKind::Split).map(|row| row.id.as_str()).collect();
+            all.iter().filter(|row| {
+                let mut parent = row.parent_id.as_str();
+                while let Some(ancestor) = all.iter().find(|other| other.id == parent) {
+                    if splits.contains(&ancestor.id.as_str()) { return false; }
+                    parent = ancestor.parent_id.as_str();
+                }
+                true
+            }).map(|row| row.id.clone()).collect()
+        }
+        let first = store.create_tab(window.clone(), "https://one.example/".into()).unwrap().selected_id.unwrap();
+        let second = store.create_tab(window.clone(), "https://two.example/".into()).unwrap().selected_id.unwrap();
+        // A Today row: the private workspace's one list, so the pane ops are admitted.
+        let added = store.add_split_pane(window.clone(), first.clone(), SplitSide::Left).unwrap();
+        let split = added.split.clone();
+        let pane = added.pane.clone();
+        assert_ne!(pane, first);
+        assert_eq!(rows(&added.snapshot), [second.clone(), split.clone()]);
+        let next = store.add_split_pane(window.clone(), first.clone(), SplitSide::Right).unwrap().pane;
+        // The pane becomes a row right after the split row and the split keeps two panes.
+        assert_eq!(rows(&store.separate_pane(window.clone(), pane.clone()).unwrap()), [second.clone(), split.clone(), pane.clone()]);
+        assert_eq!(rows(&store.convert_split(window.clone(), split.clone()).unwrap())[1], split);
+        // Drag-to-split from two Today rows, and a refused drop leaves everything as it was.
+        let made = store.make_split(window.clone(), second.clone(), pane.clone(), SplitSide::Left).unwrap();
+        assert_ne!(made.split, split);
+        assert_eq!(rows(&made.snapshot), [split.clone(), made.split.clone()]);
+        let before = store.snapshot(window.clone());
+        assert!(matches!(store.make_split(window.clone(), second.clone(), "tab-b".into(), SplitSide::Left), Err(CoreError::Edit { .. })));
+        assert_eq!(store.snapshot(window.clone()), before);
+        // The same rows in a pinned split are outside the private Today: every pane op refuses.
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            let pinned = workspace.spaces[0].pinned.clone();
+            let mut item = workspace.items[&split].clone();
+            item.membership.parent = Some(pinned);
+            workspace.items.insert(split.clone(), item);
+        }
+        let refused: Vec<CoreError> = vec![
+            store.add_split_pane(window.clone(), first.clone(), SplitSide::Right).map(|_| ()).unwrap_err(),
+            store.separate_pane(window.clone(), first.clone()).map(|_| ()).unwrap_err(),
+            store.make_split(window.clone(), first.clone(), pane.clone(), SplitSide::Right).map(|_| ()).unwrap_err(),
+            store.convert_split(window.clone(), split.clone()).map(|_| ()).unwrap_err(),
+            store.move_pane(window.clone(), first.clone(), true).map(|_| ()).unwrap_err(),
+        ];
+        assert!(refused.iter().all(|error| matches!(error, CoreError::Edit { .. })), "{refused:?}");
+        // Foreign items are refused the same way, and nothing was written.
+        assert!(matches!(store.add_split_pane(window.clone(), "tab-a".into(), SplitSide::Left), Err(CoreError::Edit { .. })));
+        assert!(matches!(store.separate_pane(window.clone(), "close-split-a".into()), Err(CoreError::Edit { .. })));
+        assert!(matches!(store.convert_split(window.clone(), "tab-b".into()), Err(CoreError::Edit { .. })));
+        assert_eq!(store.workspace.lock().unwrap().items.get("tab-a"), None);
+        // Back in Today the same pane ops are admitted again.
+        {
+            let mut workspace = store.workspace.lock().unwrap();
+            let today = workspace.spaces[0].today.clone();
+            let mut item = workspace.items[&split].clone();
+            item.membership.parent = Some(today);
+            workspace.items.insert(split.clone(), item);
+        }
+        assert!(store.separate_pane(window.clone(), first.clone()).is_ok());
+        // The split left with one pane became that pane's tab, so it is gone by now.
+        assert!(!store.workspace.lock().unwrap().items.contains_key(&split));
+        assert!(store.workspace.lock().unwrap().items.contains_key(&next));
     }
 
     #[test]

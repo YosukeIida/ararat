@@ -1,8 +1,18 @@
 use std::collections::HashSet;
 
-use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Profile, Record, Settings, WindowState, Workspace};
+use crate::model::{Id, ItemKind, Kind, Lifecycle, Op, Profile, Record, Settings, SplitSide, WindowState, Workspace};
 
 pub const HISTORY_LIMIT: usize = 50;
+
+// The New Tab page a new split pane opens: the same page a fresh window's tab shows.
+const NEW_TAB_PAGE: &str = "chrome://newtab/";
+
+// What a split op built, for the caller that opens and focuses the pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitChange {
+    pub split: Id,
+    pub pane: Id,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct EditError(pub String);
@@ -28,26 +38,19 @@ impl WindowState {
 impl Workspace {
     pub fn move_pane(&mut self, id: &str, forward: bool) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
-        let item = self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. })
-            && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
-            .ok_or_else(|| EditError(format!("item {id} is not an open pane")))?;
-        let parent = item.membership.parent.as_deref().filter(|parent|
-            self.items.get(*parent).is_some_and(|item| matches!(item.kind, ItemKind::Split { .. })))
+        self.pane_row(id)?;
+        let split = self.pane_split(id).map(|split| split.id.clone())
             .ok_or_else(|| EditError(format!("item {id} is not in a split")))?;
-        let children: Vec<_> = self.children(parent).into_iter().filter(|item|
-            matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).collect();
+        let children = self.active_children(&split);
         let index = children.iter().position(|item| item.id == id).unwrap();
         let other = if forward { index.checked_add(1).filter(|i| *i < children.len()) } else { index.checked_sub(1) }
             .ok_or_else(|| EditError("pane has no neighbour in that direction".into()))?;
-        let mut reordered: Vec<_> = children.into_iter().cloned().collect();
-        reordered.swap(index, other);
-        let mut previous = None;
-        let ops = reordered.into_iter().map(|mut item| {
-            item.membership.order = crate::order::key_between(previous.as_deref(), None);
-            previous = Some(item.membership.order.clone());
-            Op::Put(Record::Item(item))
-        }).collect();
-        Ok(self.commit_edit(ops))
+        // Only the moved pane takes a key: between the neighbours it lands between, with a tied
+        // seam re-keyed first, so the other members (and the inactive ones) keep their records.
+        let mut next = self.clone();
+        let ops = next.rekey_pane(id, &split, other)?;
+        *self = next;
+        Ok(ops)
     }
 
     pub fn convert_split(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
@@ -61,6 +64,316 @@ impl Workspace {
             crate::model::Orientation::Vertical => crate::model::Orientation::Horizontal,
         };
         Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
+    // The new pane opens the New Tab page. It joins the focused pane's split beside that pane,
+    // or wraps the focused row in a new split at the row's place.
+    pub fn add_split_pane(&mut self, id: &str, side: SplitSide) -> Result<(Vec<Op>, SplitChange), EditError> {
+        self.check_tree().map_err(EditError)?;
+        let item = self.pane_row(id)?.clone();
+        self.list_for(id).ok_or_else(|| EditError(format!("item {id} is not in a workspace list")))?;
+        let now = self.lifecycle_time();
+        let mut next = self.clone();
+        let (split, index, mut ops) = match next.pane_split(id).map(|split| split.id.clone()) {
+            Some(split) => {
+                let index = next.active_children(&split).iter().position(|child| child.id == id)
+                    .map(|index| if side == SplitSide::Left { index } else { index + 1 })
+                    .ok_or_else(|| EditError(format!("item {id} is not a member of its split")))?;
+                (split, index, Vec::new())
+            }
+            None if matches!(item.kind, ItemKind::Split { .. }) => {
+                let index = if side == SplitSide::Left { 0 } else { next.active_children(id).len() };
+                (id.to_string(), index, Vec::new())
+            }
+            None => {
+                // A lone row: the split takes the row's place and the row its first key.
+                let split = next.fresh_id();
+                let ops = next.wrap_in_split(id, &split, now)?;
+                (split, if side == SplitSide::Left { 0 } else { 1 }, ops)
+            }
+        };
+        let pane = next.fresh_id();
+        let tab = crate::model::Item {
+            id: pane.clone(), title: None,
+            kind: ItemKind::Tab { url: NEW_TAB_PAGE.into(), saved_title: None },
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: now,
+            membership: crate::model::Membership {
+                parent: None, previous_parent: None, hlc: Default::default(), order: String::new(),
+            },
+        };
+        ops.extend(next.insert_into_split(tab, &split, index)?);
+        *self = next;
+        Ok((ops, SplitChange { split, pane }))
+    }
+
+    // Separate Tab from Split: the pane becomes its own Today row right after the split row (at
+    // the top of Today when the split is pinned, since Today is the row list it moves to). A
+    // split left with one pane becomes that pane's tab; the split goes in the same transaction.
+    pub fn separate_pane(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        if !matches!(self.pane_row(id)?.kind, ItemKind::Tab { .. }) {
+            return Err(EditError(format!("item {id} is not a pane")));
+        }
+        let now = self.lifecycle_time();
+        let mut next = self.clone();
+        let ops = next.detach_row(id, now)?;
+        *self = next;
+        Ok(ops)
+    }
+
+    // Drag-to-split. The dragged row joins the shown row's split beside it (design S1: no split
+    // inside a split), or wraps a lone shown row in a new split at its place. A row dragged out of
+    // its own split leaves it first (the same rule as a member moved to another space); two panes
+    // of one split are re-ordered in place.
+    pub fn make_split(&mut self, dragged: &str, target: &str, side: SplitSide) -> Result<(Vec<Op>, SplitChange), EditError> {
+        self.check_tree().map_err(EditError)?;
+        if dragged == target { return Err(EditError("a split needs two different rows".into())); }
+        self.pane_row(dragged)?;
+        self.pane_row(target)?;
+        // A split joins nothing: a split inside a split is what design's S1 keeps out, so a split
+        // row is not a row a page half accepts.
+        if matches!(self.items[dragged].kind, ItemKind::Split { .. }) {
+            return Err(EditError(format!("item {dragged} is a split, not a pane")));
+        }
+        let (root, _) = self.list_for(dragged).ok_or_else(|| EditError(format!("item {dragged} is not in a workspace list")))?;
+        if self.list_for(target).map(|(root, _)| root) != Some(root) {
+            return Err(EditError("a split holds rows of one list".into()));
+        }
+        if self.is_descendant(dragged, target) || self.is_descendant(target, dragged) {
+            return Err(EditError("a split cannot hold a row inside another".into()));
+        }
+        let now = self.lifecycle_time();
+        let mut next = self.clone();
+        let mut ops = Vec::new();
+        // The split the target belongs to: its own pane's split, or itself when the row is a split.
+        let target_split = next.pane_split(target).map(|split| split.id.clone())
+            .or_else(|| matches!(next.items[target].kind, ItemKind::Split { .. }).then(|| target.to_string()));
+        let split = match (next.pane_split(dragged).map(|split| split.id.clone()), target_split) {
+            (Some(dragged_split), Some(target_split)) if dragged_split == target_split => {
+                // Both are panes of one split: the dragged pane takes its place beside the other.
+                // The index counts the split without the dragged pane, since it is being re-keyed.
+                let others: Vec<crate::model::Item> = next.active_children(&target_split).into_iter()
+                    .filter(|child| child.id != dragged).collect();
+                let position = others.iter().position(|child| child.id == target)
+                    .ok_or_else(|| EditError(format!("item {target} is not a member of its split")))?;
+                let index = if side == SplitSide::Left { position } else { position + 1 };
+                ops.extend(next.rekey_pane(dragged, &target_split, index)?);
+                target_split
+            }
+            (_, Some(target_split)) => {
+                if next.pane_split(dragged).is_some() { ops.extend(next.detach_row(dragged, now)?); }
+                let others: Vec<crate::model::Item> = next.active_children(&target_split).into_iter()
+                    .filter(|child| child.id != dragged).collect();
+                let index = match others.iter().position(|child| child.id == target) {
+                    Some(position) => if side == SplitSide::Left { position } else { position + 1 },
+                    // The target is the split row itself: the pane joins at that end.
+                    None => if side == SplitSide::Left { 0 } else { others.len() },
+                };
+                ops.extend(next.insert_into_split(next.items[dragged].clone(), &target_split, index)?);
+                target_split
+            }
+            (_, None) => {
+                if next.pane_split(dragged).is_some() { ops.extend(next.detach_row(dragged, now)?); }
+                let split = next.fresh_id();
+                ops.extend(next.wrap_in_split(target, &split, now)?);
+                ops.extend(next.insert_into_split(next.items[dragged].clone(), &split,
+                    if side == SplitSide::Left { 0 } else { 1 })?);
+                split
+            }
+        };
+        *self = next;
+        Ok((ops, SplitChange { split, pane: dragged.into() }))
+    }
+
+    // The split a tab hangs in directly, when it is one a pane op may work on.
+    fn pane_split(&self, id: &str) -> Option<&crate::model::Item> {
+        let parent = self.items.get(id)?.membership.parent.as_deref()?;
+        self.items.get(parent).filter(|item| matches!(item.kind, ItemKind::Split { .. })
+            && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+    }
+
+    fn pane_row(&self, id: &str) -> Result<&crate::model::Item, EditError> {
+        self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. })
+            && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .ok_or_else(|| EditError(format!("item {id} is not an open row")))
+    }
+
+    fn active_children(&self, parent: &str) -> Vec<crate::model::Item> {
+        self.children(parent).into_iter()
+            .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).cloned().collect()
+    }
+
+    fn fresh_id(&self) -> Id {
+        use std::hash::BuildHasher;
+        loop {
+            let random = std::collections::hash_map::RandomState::new();
+            let id = format!("{:016x}{:016x}", random.hash_one(0u8), random.hash_one(2u8));
+            if !self.items.contains_key(&id) && !self.spaces.iter().any(|space| space.id == id) { break id; }
+        }
+    }
+
+    // A new split in the row's place with the row inside it; empty width factors mean equal
+    // panes. The split takes the row's order key, so it sits where the row was.
+    fn wrap_in_split(&mut self, id: &str, split: &str, now: u64) -> Result<Vec<Op>, EditError> {
+        let mut row = self.items.get(id).cloned().ok_or_else(|| EditError(format!("unknown item {id}")))?;
+        let parent = row.membership.parent.clone()
+            .ok_or_else(|| EditError(format!("item {id} is not in a workspace list")))?;
+        let mut ops = vec![Op::Put(Record::Item(crate::model::Item {
+            id: split.into(), title: None,
+            kind: ItemKind::Split { orientation: crate::model::Orientation::Horizontal, width_factors: Vec::new() },
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: now,
+            membership: crate::model::Membership {
+                parent: Some(parent.clone()), previous_parent: Some(parent), hlc: Default::default(),
+                order: row.membership.order.clone(),
+            },
+        }))];
+        row.membership.previous_parent = row.membership.parent.replace(split.into());
+        row.membership.order = crate::order::key_between(None, None);
+        ops.push(Op::Put(Record::Item(row)));
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
+    // One key for a row joining a split's active children at `index`, with a tied run at that
+    // seam re-keyed first (the item moves' insertion_keys rule); the re-keys ride in the same
+    // transaction.
+    fn join_key(&self, split: &str, index: usize) -> Result<(String, Vec<Op>), EditError> {
+        let others: Vec<crate::model::Item> = self.active_children(split);
+        let refs: Vec<&crate::model::Item> = others.iter().collect();
+        let (mut keys, ops) = Self::insertion_keys(&refs, index, 1)?;
+        Ok((keys.remove(0), ops))
+    }
+
+    // Puts a row into a split at `index` among its active children.
+    fn insert_into_split(&mut self, mut item: crate::model::Item, split: &str, index: usize) -> Result<Vec<Op>, EditError> {
+        let (key, mut ops) = self.join_key(split, index)?;
+        item.membership.previous_parent = item.membership.parent.replace(split.into());
+        item.membership.order = key;
+        ops.push(Op::Put(Record::Item(item)));
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
+    // The one key a re-ordered pane takes: between its new neighbours among the split's other
+    // active children (the pane stands at `index` with itself left out). Only the moved pane and
+    // a tied run at that seam are written (review 1, S2).
+    fn rekey_pane(&mut self, id: &str, split: &str, index: usize) -> Result<Vec<Op>, EditError> {
+        let others: Vec<crate::model::Item> = self.active_children(split).into_iter()
+            .filter(|child| child.id != id).collect();
+        let refs: Vec<&crate::model::Item> = others.iter().collect();
+        let (mut keys, mut ops) = Self::insertion_keys(&refs, index, 1)?;
+        let mut moved = self.items.get(id).cloned().ok_or_else(|| EditError(format!("unknown item {id}")))?;
+        moved.membership.order = keys.remove(0);
+        ops.push(Op::Put(Record::Item(moved)));
+        for op in &ops { self.apply(op); }
+        Ok(ops)
+    }
+
+    // The row a split hangs from in its list: the split itself, or the outermost row it sits in
+    // (a split nested by an import, whose members the sidebar hides behind that one row).
+    fn list_row(&self, id: &str) -> Id {
+        let mut current = id;
+        for _ in 0..self.items.len() {
+            let Some(parent) = self.items.get(current).and_then(|item| item.membership.parent.as_deref()) else { break };
+            if self.items.get(parent).is_some_and(|item| matches!(item.kind, ItemKind::Container)) {
+                return current.into();
+            }
+            current = parent;
+        }
+        id.into()
+    }
+
+    // Leaves the split: the row becomes its own Today row right after the split's row in the list
+    // it was shown in, and the split's leftovers tidy up.
+    fn detach_row(&mut self, id: &str, now: u64) -> Result<Vec<Op>, EditError> {
+        self.pane_row(id)?;
+        let split = self.pane_split(id).map(|split| split.id.clone())
+            .ok_or_else(|| EditError(format!("item {id} is not in a split")))?;
+        let (root, _) = self.list_for(id).ok_or_else(|| EditError(format!("item {id} is not in a workspace list")))?;
+        let today = self.spaces.iter().find(|space| space.pinned == root || space.today == root)
+            .map(|space| space.today.clone())
+            .ok_or_else(|| EditError(format!("item {id} has no Today list to separate into")))?;
+        let row = self.list_row(&split);
+        let index = self.active_children(&today).iter().position(|child| child.id == row)
+            .map(|position| position + 1).unwrap_or(0);
+        let (order, mut ops) = self.item_order(&today, index, &HashSet::from([id.to_string()]))?;
+        let mut item = self.items[id].clone();
+        item.membership.previous_parent = item.membership.parent.replace(today);
+        item.membership.order = order;
+        ops.push(Op::Put(Record::Item(item)));
+        for op in &ops { self.apply(op); }
+        ops.extend(self.collapse_split(&split, now)?);
+        Ok(ops)
+    }
+
+    // A split left with one pane becomes that pane's row, taking the split's place; a split with
+    // none goes alone. A window that was on the split follows, and the row it lands on loads, so
+    // no window is left on a row that no longer exists. An inactive pane (closed or archived with
+    // Close Pane) keeps its record but joins the split's list, the way a deleted folder's tabs
+    // join the pinned list, so the tree stays whole (review 1, M1).
+    fn collapse_split(&mut self, split: &str, now: u64) -> Result<Vec<Op>, EditError> {
+        let Some(split_item) = self.items.get(split).cloned() else { return Ok(Vec::new()) };
+        if !matches!(split_item.kind, ItemKind::Split { .. }) { return Ok(Vec::new()); }
+        let remaining = self.active_children(split);
+        if remaining.len() > 1 { return Ok(Vec::new()); }
+        let only = remaining.first().cloned();
+        let mut ops = Vec::new();
+        if let Some(parent) = split_item.membership.parent.clone() {
+            for mut child in self.children(split).into_iter()
+                .filter(|child| !matches!(child.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).cloned() {
+                child.membership.previous_parent = child.membership.parent.replace(parent.clone());
+                ops.push(Op::Put(Record::Item(child)));
+            }
+        }
+        if let Some(only) = &only {
+            let mut item = only.clone();
+            item.membership.previous_parent = split_item.membership.parent.clone();
+            item.membership.parent = split_item.membership.parent.clone();
+            item.membership.order = split_item.membership.order.clone();
+            ops.push(Op::Put(Record::Item(item)));
+        }
+        ops.push(Op::Delete(crate::model::Kind::Item, split.into()));
+        let mut windows: Vec<_> = self.windows.values().cloned().collect();
+        windows.sort_by(|a, b| a.id.cmp(&b.id));
+        for mut state in windows {
+            let before = state.clone();
+            state.history.retain(|id| id != split);
+            if state.selected.as_deref() == Some(split) {
+                state.select(only.as_ref().map(|only| only.id.clone()));
+                state.changed_at = now;
+            }
+            if state != before { ops.push(Op::Put(Record::Window(state))); }
+        }
+        for op in &ops { self.apply(op); }
+        if let Some(only) = &only {
+            if self.windows.values().any(|state| state.selected.as_deref() == Some(only.id.as_str())) {
+                ops.extend(self.flip_active(&only.id, now));
+                ops.extend(self.stamp_selection(&only.id, now));
+            }
+        }
+        Ok(ops)
+    }
+
+    fn is_descendant(&self, id: &str, ancestor: &str) -> bool {
+        let mut parent = self.items.get(id).and_then(|item| item.membership.parent.as_deref());
+        for _ in 0..self.items.len() {
+            let Some(current) = parent else { return false };
+            if current == ancestor { return true; }
+            parent = self.items.get(current).and_then(|item| item.membership.parent.as_deref());
+        }
+        false
+    }
+
+    // The space whose list holds the item (None for favourites): what "another space" means for
+    // a member that leaves its split when it moves.
+    fn space_id(&self, id: &str) -> Option<Id> {
+        let (root, _) = self.list_for(id)?;
+        self.spaces.iter().find(|space| space.pinned == root || space.today == root).map(|space| space.id.clone())
+    }
+
+    // Whether the row lives in a Today list (the private workspace's only list).
+    pub fn is_in_today(&self, id: &str) -> bool {
+        self.list_for(id).is_some_and(|(_, today)| today)
     }
 
     pub fn split_factors(&self, id: &str) -> Option<Vec<(Id, f64)>> {
@@ -240,6 +553,26 @@ impl Workspace {
 
     pub fn move_item_at(&mut self, id: &str, container: &str, index: usize, open_folder: bool, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
+        // A member carried to another space (or out of the lists into favourites) leaves its
+        // split first: the split is one row of one list, so a tab cannot arrive in another
+        // space's list as a pane (the HANDOVER finding). The destination is judged before
+        // anything changes, and the detach and the move stay one transaction; after it the row
+        // is a top-level tab and the ordinary rule applies.
+        if self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. }) && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            && self.pane_split(id).is_some() && self.space_id(id) != self.space_id(container) {
+            let item = self.items[id].clone();
+            self.check_destination(&item, container)?;
+            if self.item_profile(id) != self.item_profile(container) {
+                return Err(EditError("cannot move across profiles".into()));
+            }
+            // On a clone: the detach and the move are one answer, and an error later (a bad
+            // index, say) leaves the split whole (review 1, S3).
+            let mut next = self.clone();
+            let mut ops = next.detach_row(id, now)?;
+            ops.extend(next.move_item_at(id, container, index, open_folder, now)?);
+            *self = next;
+            return Ok(ops);
+        }
         let mut item = self.movable_item(id)?;
         self.check_destination(&item, container)?;
         if self.item_profile(&item.id) != self.item_profile(container) {
