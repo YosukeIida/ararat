@@ -32,6 +32,7 @@ final class DownloadsButton: SidebarDockButton {
         scheduleHover(task)
     }
     override func mouseExited(with event: NSEvent) { hoverTask?.cancel(); hoverTask = nil }
+    func checkHover() { scheduleHover(DispatchWorkItem { [weak self] in self?.onHover?() }) }
     override func layout() { super.layout(); updateRing() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateRing() }
     private func updateRing() {
@@ -42,7 +43,7 @@ final class DownloadsButton: SidebarDockButton {
         case .none:
             ring.removeAnimation(forKey: "spin"); ring.isHidden = true; setAccessibilityValue(libraryOpen ? 1 : 0)
         case .fraction(let fraction):
-            ring.removeAnimation(forKey: "spin"); ring.isHidden = false; ring.strokeEnd = fraction
+            ring.removeAnimation(forKey: "spin"); ring.isHidden = false; ring.strokeEnd = max(0.12, fraction)
             setAccessibilityValue("Downloading, \(Int((fraction * 100).rounded())) %")
         case .indeterminate:
             ring.isHidden = false; ring.strokeEnd = 0.25
@@ -59,6 +60,8 @@ final class DownloadsButton: SidebarDockButton {
 
 @MainActor
 final class DownloadsPopover: NSObject {
+    static let rowHeight: CGFloat = 56
+    static let headerHeight: CGFloat = 40
     private let popover = NSPopover()
     private let model: DownloadsModel
     private let anchor: NSView
@@ -70,26 +73,37 @@ final class DownloadsPopover: NSObject {
         self.model = model; self.anchor = anchor
         super.init()
         popover.behavior = .transient
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 0
+        stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 0
         library.target = self; library.action = #selector(open)
         library.bezelStyle = .inline; library.setAccessibilityLabel("Open Library")
         stack.addArrangedSubview(library)
         library.heightAnchor.constraint(equalToConstant: 40).isActive = true
         let controller = NSViewController()
-        controller.view = stack
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
+        content.addSubview(stack)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: content.leadingAnchor), stack.trailingAnchor.constraint(equalTo: content.trailingAnchor), stack.topAnchor.constraint(equalTo: content.topAnchor), stack.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
+        controller.view = content
         popover.contentViewController = controller
     }
     var isShown: Bool { popover.isShown }
     var checkWindow: NSWindow? { popover.contentViewController?.view.window }
     func close() { popover.performClose(nil) }
+    static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
     func show(focus: Bool = false) {
         guard model.hasSessionDownloads, let window = anchor.window else { return }
-        let point = window.convertPoint(toScreen: anchor.convert(NSPoint(x: 0, y: anchor.bounds.maxY), to: nil))
-        let available = (window.screen?.visibleFrame.maxY ?? point.y + 400) - point.y
-        let count = max(0, min(model.items.count, Int(max(0, available - 80) / 80)))
+        let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let available = max(0, window.frame.maxY - anchorRect.maxY - 16)
+        let count = max(0, min(model.items.count, Int(max(0, available - Self.headerHeight) / Self.rowHeight)))
         refresh(limit: count)
-        popover.contentSize = NSSize(width: 320, height: 40 + count * 80)
-        if !popover.isShown { popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY) }
+        let size = NSSize(width: SidebarMetrics.defaultWidth, height: Self.headerHeight + CGFloat(count) * Self.rowHeight)
+        popover.contentViewController?.view.setFrameSize(size)
+        popover.contentSize = size
+        if !popover.isShown { popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: Self.edge(flipped: anchor.isFlipped)) }
+        if let panel = popover.contentViewController?.view.window {
+            let frame = panel.frame
+            panel.setFrameOrigin(NSPoint(x: min(max(frame.minX, window.frame.minX), window.frame.maxX - frame.width), y: frame.minY))
+        }
         if focus { popover.contentViewController?.view.window?.makeFirstResponder(library) }
     }
     func refresh(limit: Int) {
@@ -143,14 +157,19 @@ final class DownloadRowView: NSStackView {
         super.init(frame: .zero)
         icon.setAccessibilityHidden(true)
         name.lineBreakMode = .byTruncatingMiddle
-        status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
+        status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor; status.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         actions.orientation = .horizontal; actions.spacing = 4
-        let text = NSStackView(views: [name, status, actions]); text.orientation = .vertical; text.alignment = .leading; text.spacing = 4
-        orientation = .horizontal; alignment = .centerY; spacing = 8
+        let text = NSStackView(views: [name, status, actions]); text.orientation = .vertical; text.alignment = .width; text.spacing = 0
+        orientation = .horizontal; alignment = .centerY; spacing = 4
         addArrangedSubview(icon); addArrangedSubview(text)
         edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
-        heightAnchor.constraint(equalToConstant: 80).isActive = true
-        icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        text.widthAnchor.constraint(equalTo: widthAnchor, constant: -36).isActive = true
+        name.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
+        status.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
+        heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true
+        icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
         update(item: item)
     }
     func update(item: DownloadEntry) {
