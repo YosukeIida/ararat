@@ -62,7 +62,6 @@ final class SiteFixtureServer {
     private let plain: NWListener
     private let secure: NWListener
     private let queue = DispatchQueue(label: "ararat.site-fixture")
-    let keychainPath: String
 
     struct Ports {
         var plain: UInt16
@@ -70,30 +69,21 @@ final class SiteFixtureServer {
     }
 
     init() throws {
-        keychainPath = Self.scratchKeychainPath()
-        Self.trackForExit(keychainPath)
         let plainParameters = NWParameters.tcp
         plainParameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         plain = try NWListener(using: plainParameters)
 
-        do {
-            let identity = try Self.decodeIdentity(keychainPath: keychainPath)
-            let tls = NWProtocolTLS.Options()
-            guard let secIdentity = sec_identity_create(identity) else {
-                throw NSError(domain: "Ararat.siteFixture", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "sec_identity_create failed"])
-            }
-            sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
-            let secureParameters = NWParameters(tls: tls)
-            secureParameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
-            secure = try NWListener(using: secureParameters)
-        } catch {
-            Self.removeKeychain(at: keychainPath)
-            throw error
+        let identity = try Self.decodeIdentity()
+        let tls = NWProtocolTLS.Options()
+        guard let secIdentity = sec_identity_create(identity) else {
+            throw NSError(domain: "Ararat.siteFixture", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "sec_identity_create failed"])
         }
+        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
+        let secureParameters = NWParameters(tls: tls)
+        secureParameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        secure = try NWListener(using: secureParameters)
     }
-
-    deinit { Self.removeKeychain(at: keychainPath) }
 
     func start(ready: @escaping (Result<Ports, Error>) -> Void) {
         var plainPort: UInt16?
@@ -131,7 +121,6 @@ final class SiteFixtureServer {
     func stop() {
         plain.cancel()
         secure.cancel()
-        Self.removeKeychain(at: keychainPath)
     }
 
     private func receive(_ connection: NWConnection, data: Data) {
@@ -195,67 +184,23 @@ final class SiteFixtureServer {
     </script>
     """
 
-    static func scratchKeychainPath() -> String {
-        NSTemporaryDirectory() + "ararat-site-fixture-\(UUID().uuidString).keychain"
-    }
-
-    /// Deletes the scratch keychain and its file. Safe when the file is already gone.
-    @discardableResult
-    static func removeKeychain(at path: String) -> Bool {
-        var keychain: SecKeychain?
-        if SecKeychainOpen(path, &keychain) == errSecSuccess, let keychain {
-            SecKeychainDelete(keychain)
-        }
-        try? FileManager.default.removeItem(atPath: path)
-        if path == exitPath { exitPath = "" }
-        return !FileManager.default.fileExists(atPath: path)
-    }
-
-    // A check that times out can exit before the runtime tears its fixture down, so the one
-    // scratch keychain of this process is also removed by an atexit handler.
-    nonisolated(unsafe) private static var exitPath = ""
-    nonisolated(unsafe) private static var exitRegistered = false
-
-    private static func trackForExit(_ path: String) {
-        exitPath = path
-        guard !exitRegistered else { return }
-        exitRegistered = true
-        atexit {
-            let pending = SiteFixtureServer.exitPath
-            if !pending.isEmpty { SiteFixtureServer.removeKeychain(at: pending) }
-        }
-    }
-
-    /// Imports the embedded throwaway PKCS#12 into a scratch keychain. The keychain is passed
-    /// with kSecImportExportKeychain, so the user's default keychain and search list are never
-    /// read or changed; the caller deletes the scratch keychain when done.
-    static func decodeIdentity(keychainPath: String) throws -> SecIdentity {
-        var keychain: SecKeychain?
-        let password = "ararat"
-        SecKeychainSetUserInteractionAllowed(false)
-        defer { SecKeychainSetUserInteractionAllowed(true) }
-        var status = SecKeychainCreate(keychainPath, UInt32(password.utf8.count), password, false, nil, &keychain)
-        if status == errSecDuplicateItem { status = SecKeychainOpen(keychainPath, &keychain) }
-        guard status == errSecSuccess, let keychain else {
-            removeKeychain(at: keychainPath)
-            throw NSError(domain: "Ararat.siteFixture", code: Int(status),
-                          userInfo: [NSLocalizedDescriptionKey: "scratch keychain error \(status)"])
-        }
+    /// Imports the embedded throwaway PKCS#12 into process memory only (kSecImportToMemoryOnly,
+    /// macOS 15+): no keychain file is created, and neither the user's search list nor the
+    /// default keychain is read or changed.
+    static func decodeIdentity() throws -> SecIdentity {
         // Why .ignoreUnknownCharacters: the identity is a wrapped multi-line literal.
         guard let data = Data(base64Encoded: identityBase64, options: .ignoreUnknownCharacters) else {
-            removeKeychain(at: keychainPath)
             throw NSError(domain: "Ararat.siteFixture", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "identity base64 does not decode"])
         }
         var items: CFArray?
         let options: [String: Any] = [
-            kSecImportExportPassphrase as String: password,
-            kSecImportExportKeychain as String: keychain,
+            kSecImportExportPassphrase as String: "ararat",
+            kSecImportToMemoryOnly as String: true,
         ]
         let imported = SecPKCS12Import(data as CFData, options as CFDictionary, &items)
         guard imported == errSecSuccess, let list = items as? [[String: Any]],
               let item = list.first, let identity = item[kSecImportItemIdentity as String] else {
-            removeKeychain(at: keychainPath)
             throw NSError(domain: "Ararat.siteFixture", code: imported == errSecSuccess ? 3 : Int(imported),
                           userInfo: [NSLocalizedDescriptionKey: "pkcs12 import error \(imported)"])
         }

@@ -13,32 +13,33 @@ private func defaultKeychainPath() -> String? {
     return String(cString: buffer)
 }
 
-@Test func siteFixtureIdentityDecodesAndLeavesTheDefaultKeychainAlone() throws {
-    let path = SiteFixtureServer.scratchKeychainPath()
-    defer { SiteFixtureServer.removeKeychain(at: path) }
-    let before = defaultKeychainPath()
-    let identity = try SiteFixtureServer.decodeIdentity(keychainPath: path)
+/// The user's search list, in order: creating a keychain would insert one, deleting it would
+/// remove it again, and a crash would leave it behind.
+private func searchListPaths() -> [String] {
+    var array: CFArray?
+    guard SecKeychainCopySearchList(&array) == errSecSuccess,
+          let list = array as? [SecKeychain] else { return [] }
+    return list.map { keychain in
+        var length: UInt32 = 1024
+        var buffer = [CChar](repeating: 0, count: 1024)
+        guard SecKeychainGetPath(keychain, &length, &buffer) == errSecSuccess else { return "?" }
+        return String(cString: buffer)
+    }
+}
+
+@Test func siteFixtureIdentityDecodesFromMemoryAndLeavesKeychainsAlone() throws {
+    let beforeDefault = defaultKeychainPath()
+    let beforeSearch = searchListPaths()
+    let identity = try SiteFixtureServer.decodeIdentity()
     #expect(CFGetTypeID(identity) == SecIdentityGetTypeID())
-    // The scratch keychain file exists while the identity is alive...
-    #expect(FileManager.default.fileExists(atPath: path))
-    // ...and the user's keychain set was neither read nor changed.
-    #expect(defaultKeychainPath() == before)
-    // Cleanup removes the file, and the identity survives until the caller drops it.
-    #expect(SiteFixtureServer.removeKeychain(at: path))
-    #expect(!FileManager.default.fileExists(atPath: path))
+    // kSecImportToMemoryOnly: no keychain file, no default or search-list change.
+    #expect(defaultKeychainPath() == beforeDefault)
+    #expect(searchListPaths() == beforeSearch)
 }
 
-@Test func siteFixtureCleanupIsIdempotentAndLeavesNoFile() {
-    let path = SiteFixtureServer.scratchKeychainPath()
-    #expect(!FileManager.default.fileExists(atPath: path))
-    #expect(SiteFixtureServer.removeKeychain(at: path))
-    #expect(!FileManager.default.fileExists(atPath: path))
-}
-
-@Test func siteFixtureServerDeletesItsScratchKeychainOnStop() throws {
+@Test func siteFixtureServerCreatesNoKeychainFile() throws {
     let server = try SiteFixtureServer()
-    let path = server.keychainPath
-    #expect(FileManager.default.fileExists(atPath: path))
     server.stop()
-    #expect(!FileManager.default.fileExists(atPath: path))
+    let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory())) ?? []
+    #expect(!leftovers.contains { $0.hasPrefix("ararat-site-fixture-") && $0.hasSuffix(".keychain") })
 }
