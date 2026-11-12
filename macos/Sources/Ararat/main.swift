@@ -826,6 +826,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.observeHistoryFailures(running)
     let downloads = DownloadsModel()
     sidebar.setDownloadsModel(downloads)
     let container = SidebarContainerView(sidebar: sidebar, page: card)
@@ -1370,6 +1371,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case "quit": NSApp.terminate(nil)
     case "new_tab": openCommandBar(.newTab)
     case "edit_url": openCommandBar(.editURL)
+    case "copy_link": sidebar?.copySelectedLinkForCommand()
     case "search": openCommandBar(.search)
     case "close_tab": if selectedIsVisible, let id = snapshot.selectedId { close(id) }
     case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
@@ -1409,7 +1411,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
-    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "pin_tab", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {

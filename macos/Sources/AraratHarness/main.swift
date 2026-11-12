@@ -285,7 +285,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         pin.identifier = NSUserInterfaceItemIdentifier("pin_tab")
         pin.target = self
         pin.toolTip = "Pin or unpin the selected tab."
-        for binding in defaultKeyBindings().filter({ ["cycle_tabs_next", "cycle_tabs_previous", "duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
+        for binding in defaultKeyBindings().filter({ ["cycle_tabs_next", "cycle_tabs_previous", "copy_link", "duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
             let action = binding.command.hasPrefix("cycle_tabs_") ? #selector(cycleRecentTab(_:)) : #selector(organize(_:))
             let item = tabsMenu.addItem(withTitle: binding.title, action: action, keyEquivalent: "")
             item.identifier = NSUserInterfaceItemIdentifier(binding.command)
@@ -709,6 +709,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         case "close_tab": closeSelectedTab(nil)
         case "new_tab": openCommandBar(.newTab)
         case "edit_url": openCommandBar(.editURL)
+        case "copy_link": sidebar?.copySelectedLinkForCommand()
         case "pin_tab": pinTab(in: window)
         case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
         case "toggle_sidebar": toggleSidebar(nil)

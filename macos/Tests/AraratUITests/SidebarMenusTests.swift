@@ -101,10 +101,16 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let pasteboard = NSPasteboard(name: NSPasteboard.Name("Ararat-menu-test-\(UUID().uuidString)"))
     defer { pasteboard.releaseGlobally() }
     f.sidebar.pasteboard = pasteboard
+    var copied = 0
+    f.sidebar.onLinkCopied = { copied += 1 }
     for (menu, row) in zip(menus.prefix(3), [pin, pin, favorite]) {
         try invoke(menu, "Copy Link")
         #expect(pasteboard.string(forType: .string) == row.url)
     }
+    #expect(copied == 3)
+    #expect(f.sidebar.selectRow(id: pin.id))
+    f.sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == pin.url && copied == 4)
     var invalid = pin; invalid.url = nil
     #expect(f.sidebar.todayMenu(row: invalid).items[0].isEnabled == false)
     var noTargets = f.snapshot; noTargets.spaces.removeAll { $0.id == "other" }

@@ -1,9 +1,20 @@
 import AppKit
 
+private final class ToastView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 @MainActor
 public final class SidebarContainerView: NSView {
     private let sidebar: SidebarView
     private let page: NSView
+    private let toast = ToastView()
+    private let toastLabel = NSTextField(labelWithString: "Link copied")
+    private var toastGeneration = 0
+    public var checkToastAnnouncement: ((String) -> Void)?
+    public var checkToastState: (visible: Bool, frame: NSRect, page: NSRect, generation: Int) {
+        ( !toast.isHidden, toast.frame, page.frame, toastGeneration )
+    }
     public let findBar = FindBarView()
     private var findPageRect: NSRect?
     private let panel = SidebarPanelView()
@@ -122,6 +133,19 @@ public final class SidebarContainerView: NSView {
         panel.wantsLayer = true
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
+        toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        toastLabel.textColor = .white
+        toastLabel.translatesAutoresizingMaskIntoConstraints = false
+        toast.addSubview(toastLabel)
+        NSLayoutConstraint.activate([
+            toastLabel.centerXAnchor.constraint(equalTo: toast.centerXAnchor),
+            toastLabel.centerYAnchor.constraint(equalTo: toast.centerYAnchor),
+        ])
+        toast.wantsLayer = true
+        toast.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
+        toast.layer?.cornerRadius = 8
+        toast.isHidden = true
+        addSubview(toast)
         findBar.isHidden = true
         addSubview(findBar)
         addSubview(panel)
@@ -161,6 +185,7 @@ public final class SidebarContainerView: NSView {
         sidebar.onLookChanged = { [weak self] from, to, fraction in
             self?.panel.updateLook(from, to, fraction: fraction)
         }
+        sidebar.onLinkCopied = { [weak self] in self?.showLinkCopied() }
         sidebar.refreshLook()
         resizeHandle.onWidthChanged = { [weak self] in
             self?.needsLayout = true
@@ -207,12 +232,48 @@ public final class SidebarContainerView: NSView {
         processPointer()
     }
 
+    public func showLinkCopied() {
+        toastGeneration += 1
+        let generation = toastGeneration
+        toast.layer?.removeAllAnimations()
+        toast.alphaValue = 1
+        toast.isHidden = false
+        needsLayout = true
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            toast.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                toast.animator().alphaValue = 1
+            }
+        }
+        checkToastAnnouncement?("Link copied")
+        NSAccessibility.post(element: toast, notification: .announcementRequested, userInfo: [.announcement: "Link copied", .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.toastGeneration == generation else { return }
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { self.toast.isHidden = true; return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                self.toast.animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, self.toastGeneration == generation else { return }
+                    self.toast.isHidden = true
+                }
+            }
+        }
+    }
+
+    private func layoutToast() {
+        toast.frame = NSRect(x: page.frame.midX - 72, y: page.frame.maxY - 56, width: 144, height: 40)
+    }
+
     override public func layout() {
         super.layout()
         if pageFullscreen {
             panel.isHidden = true
             page.frame = bounds
             page.layer?.mask = nil
+            layoutToast()
             layoutFindBar()
             return
         }
@@ -232,6 +293,7 @@ public final class SidebarContainerView: NSView {
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
                             height: max(0, bounds.height - SidebarMetrics.cardInset * 2))
+        layoutToast()
         layoutFindBar()
         panel.layer?.cornerRadius = docked ? 0 : SidebarMetrics.cornerRadius
         panel.layer?.masksToBounds = !docked

@@ -25,8 +25,8 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
     assert_eq!(ws.key_binding("cycle_tabs_next").unwrap(), Some(cycle.clone()));
     cycle.shift = true;
     assert_eq!(ws.key_binding("cycle_tabs_previous").unwrap(), Some(cycle));
-    assert_eq!(commands().len(), 34);
-    for id in ["duplicate", "new_folder", "rename", "delete_folder"].into_iter().map(String::from)
+    assert_eq!(commands().len(), 35);
+    for id in ["copy_link", "duplicate", "new_folder", "rename", "delete_folder"].into_iter().map(String::from)
         .chain((1..=9).map(|n| format!("move_to_space_{n}"))) {
         assert_eq!(ws.key_binding(&id).unwrap(), None);
     }
