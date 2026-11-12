@@ -113,8 +113,13 @@ class TabContentsObserver : public content::WebContentsObserver {
       [tab_ navigationFinished];
     }
   }
+  void DidStartNavigation(content::NavigationHandle* navigation) override {
+    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) [tab_ refresh];
+  }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
+  void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged]; }
+  void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged]; }
   void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }
   void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
     [tab_ rendererCrashed];
@@ -136,6 +141,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   NSString* title_;
   NSString* url_;
   BOOL loading_;
+  BOOL loading_ui_;
   NSInteger network_error_;
   NSUInteger navigation_count_;
   BOOL check_opener_alive_;
@@ -718,6 +724,10 @@ class TabContentsObserver : public content::WebContentsObserver {
   [host_ tabMetadataChanged];
 }
 
+- (void)audioStateChanged {
+  [host_ tabMetadataChanged];
+}
+
 - (void)rendererCrashed {
   [host_ tabMetadataChanged];
 }
@@ -773,6 +783,11 @@ class TabContentsObserver : public content::WebContentsObserver {
     [self willChangeValueForKey:@"isLoading"];
     loading_ = loading;
     [self didChangeValueForKey:@"isLoading"];
+  }
+  BOOL loadingUI = contents_->ShouldShowLoadingUI();
+  if (loading_ui_ != loadingUI) {
+    loading_ui_ = loadingUI;
+    [host_ tabMetadataChanged];
   }
 }
 

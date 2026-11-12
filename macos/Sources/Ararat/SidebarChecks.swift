@@ -65,13 +65,15 @@ final class SidebarCheck {
     // The Today tab the unread fixture navigates: its seeded url is gone after the
     // navigation, so the later phases read this id instead of the row's url suffix.
     var unreadId = ""
+    var statusId = ""
+    var statusNavigationCount: UInt = 0
 
     static func conditionNames(mode: Mode, screen: Bool) -> [String] {
         let base: [String]
         switch mode {
         case .rows:
             base = ["rows_present", "loaded_pin_close", "unloaded_pin_archive", "today_archive",
-                    "command_w_current", "close_caps_current", "empty_folder_line", "crashed_glyph", "unread_dot"]
+                    "command_w_current", "close_caps_current", "empty_folder_line", "crashed_glyph", "unread_dot", "loading_spinner", "mute_round_trip"]
         case .folderEmpty:
             base = ["line_frame", "line_absent_with_tabs", "line_absent_collapsed", "line_drop"]
         case .today:
@@ -466,6 +468,58 @@ extension Runtime {
             check.report("crashed_glyph", true)
             _ = capture("crashed")
             _ = capture("rows")
+            guard let pin = row("pin") else { note("pin missing for loading fixture"); return }
+            check.statusId = pin.id
+            trace("select pin for pending page")
+            sidebar.selectRow(id: pin.id)
+            step(12)
+        case 12:
+            guard let port = promptFixturePort, host.activeItemId() == check.statusId,
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }),
+                  sidebar.rowCheckInfo(id: check.statusId)?.loading == false else {
+                note("waiting for selected pin and non-loading baseline on \(check.statusId)"); return
+            }
+            check.statusNavigationCount = tab.navigationCount
+            trace("navigate pin to pending loopback page")
+            host.checkNavigate("http://127.0.0.1:\(port)/pending", disposition: "current")
+            step(13)
+        case 13:
+            guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }),
+                  tab.url.hasSuffix("/pending"), tab.navigationCount > check.statusNavigationCount,
+                  sidebar.rowCheckInfo(id: check.statusId)?.loading == true else {
+                note("waiting for committed /pending and spinner on \(check.statusId)"); return
+            }
+            check.report("loading_spinner", true)
+            _ = capture("loading")
+            adapter?.setMuted(true, item: check.statusId)
+            step(14)
+        case 14:
+            guard adapter?.rowStates[check.statusId]?.muted == true,
+                  sidebar.rowCheckInfo(id: check.statusId)?.audioLabel == "Unmute Tab",
+                  let port = promptFixturePort,
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }) else {
+                note("waiting for muted strip and speaker on \(check.statusId)"); return
+            }
+            _ = capture("muted")
+            check.statusNavigationCount = tab.navigationCount
+            trace("navigate muted pin across documents")
+            host.checkNavigate("http://127.0.0.1:\(port)/keyboard", disposition: "current")
+            step(15)
+        case 15:
+            guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }),
+                  tab.url.hasSuffix("/keyboard"), tab.navigationCount > check.statusNavigationCount,
+                  adapter?.rowStates[check.statusId]?.muted == true,
+                  sidebar.rowCheckInfo(id: check.statusId)?.audioLabel == "Unmute Tab" else {
+                note("waiting for committed /keyboard with mute retained on \(check.statusId)"); return
+            }
+            sidebar.pressRowAudioForCheck(id: check.statusId)
+            step(16)
+        case 16:
+            guard adapter?.rowStates[check.statusId]?.muted == false,
+                  sidebar.rowCheckInfo(id: check.statusId)?.audioLabel == nil else {
+                note("waiting for speaker click to unmute \(check.statusId)"); return
+            }
+            check.report("mute_round_trip", true)
             trace("done")
             finish()
         default: break

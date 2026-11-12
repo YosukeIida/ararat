@@ -151,6 +151,8 @@ public final class SidebarView: NSView {
     // and the live strip’s crashed and unread tabs. The section’s chevron rides in the space
     // snapshot (pinned_collapsed), so every window shows the same one.
     public var newTabRowShown = true { didSet { reload() } }
+    public var rowStates: [String: EngineAdapter.RowState] = [:] { didSet { applyRowStatus() } }
+    public var onMute: ((String, Bool) -> Void)?
     public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var onNewTab: (() -> Void)?
@@ -1135,6 +1137,8 @@ public final class SidebarView: NSView {
             // id it showed, so a stale click cannot be upgraded in the queue.
             if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
         }
+        view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
+        view.status = rowStates[row.id]
         view.closeCaps = closeCaps
         view.update(row: row, selected: row.id == selectedID)
         view.crashed = crashedItems.contains(row.id)
@@ -1156,6 +1160,7 @@ public final class SidebarView: NSView {
 
     private func applyRowStatus() {
         for (id, view) in rowViews {
+            view.status = rowStates[id]
             view.crashed = crashedItems.contains(id)
             view.unread = unreadItems.contains(id)
         }
@@ -2278,6 +2283,8 @@ public struct SidebarRowCheckInfo: Sendable {
     public let id: String
     public let kind: RowKind
     public let unloaded: Bool
+    public let loading: Bool
+    public let audioLabel: String?
     public let closeLabel: String?
     public let closeCaps: [String]?
     public let unreadDot: Bool
@@ -2288,12 +2295,13 @@ public struct SidebarRowCheckInfo: Sendable {
 
 extension SidebarView {
     public var rowCheckIds: [String] { Array(rowViews.keys) }
+    public func pressRowAudioForCheck(id: String) { rowViews[id]?.pressAudioForCheck() }
 
     public func rowCheckInfo(id: String) -> SidebarRowCheckInfo? {
         guard let view = rowViews[id] else { return nil }
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first
         let label = view.closeButton.accessibilityLabel()
-        return SidebarRowCheckInfo(id: id, kind: view.row.kind, unloaded: view.row.unloaded,
+        return SidebarRowCheckInfo(id: id, kind: view.row.kind, unloaded: view.row.unloaded, loading: view.loadingVisible, audioLabel: view.audioLabel,
             // The configured label, shown or not: the button only appears on hover, and a VM
             // check cannot move the pointer reliably (the hover look is covered in swift test).
             closeLabel: label, closeCaps: view.closeShortcutCaps,

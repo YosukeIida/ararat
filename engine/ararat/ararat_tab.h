@@ -16,6 +16,7 @@ class WebContents;
 - (content::WebContents*)contents;
 - (ARWindowHost*)ownerHost;
 - (void)refresh;
+- (void)audioStateChanged;
 - (void)navigationFinished;
 - (void)setNetworkError:(NSInteger)error;
 - (void)rendererCrashed;

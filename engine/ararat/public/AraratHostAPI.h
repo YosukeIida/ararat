@@ -139,6 +139,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)openBackgroundURL:(NSString*)url commandId:(NSString*)commandId itemId:(NSString*)itemId profile:(NSString*)profile historyStamp:(uint64_t)stamp;
 - (BOOL)cancelPendingOpen:(NSString*)commandId;
 - (NSArray*)tabs;
+- (void)setTabMuted:(BOOL)muted itemId:(NSString*)itemId;
 - (BOOL)hasActiveTab;
 - (void)setWorkspacePageHidden:(BOOL)hidden;
 - (void)setWorkspaceRemote:(BOOL)remote;

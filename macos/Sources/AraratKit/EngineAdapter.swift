@@ -41,6 +41,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var dragSplit: String?
     private var appliedSplitFrames: [String: NSRect] = [:]
     private var measurementDragOrigin: NSPoint?
+    public struct RowState {
+        public let loading: Bool
+        public let audible: Bool
+        public let muted: Bool
+        public let canGoForward: Bool
+    }
+    public private(set) var rowStates: [String: RowState] = [:]
+    public func setMuted(_ muted: Bool, item: String) { host?.setTabMuted(muted, itemId: item) }
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
@@ -562,6 +570,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         var strips: [LiveStrip] = []
         var crashedItems: Set<String> = []
+        var rowStates: [String: RowState] = [:]
         var navigatedLives: Set<String> = []
         for strip in raw {
             guard let window = strip["window"] as? String,
@@ -585,12 +594,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 parsedTabs.append(LiveTab(profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
-                if crashed, let item = item as? String { crashedItems.insert(item) }
+                if let item = item as? String {
+                    if crashed { crashedItems.insert(item) }
+                    rowStates[item] = RowState(loading: tab["loading"] as? Bool ?? false, audible: tab["audible"] as? Bool ?? false, muted: tab["muted"] as? Bool ?? false, canGoForward: tab["canGoForward"] as? Bool ?? false)
+                }
                 if navigated { navigatedLives.insert(live) }
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
         let transaction = LiveTransaction(epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
+        let states = rowStates
         let crashed = crashedItems
         let navigated = navigatedLives
         queue.async {
@@ -636,6 +649,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     if outcome.applied {
                         self.crashedItems = crashed
+                        self.rowStates = states
                     }
                     self.maybeFinishCrashRecovery()
                     self.deliverIfCurrent(snapshot)

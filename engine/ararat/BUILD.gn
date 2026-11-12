@@ -172,6 +172,7 @@ source_set("entry") {
     "//components/web_modal",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip",
+    "//chrome/browser/ui/tabs:utils",
     "//chrome/browser/ui/tabs:tab_strip_model_observer",
     "//content/public/browser",
     "//content/public/common",

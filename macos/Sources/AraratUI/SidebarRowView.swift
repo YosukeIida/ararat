@@ -17,6 +17,14 @@ final class SidebarRowView: NSView {
     private(set) var hintTimer: Timer?
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
+    var onMute: ((String, Bool) -> Void)?
+    var status: EngineAdapter.RowState? { didSet { updateStatus() } }
+    private let spinner = NSProgressIndicator()
+    private let audioButton = NSButton()
+    private var audioTitleTrailing: NSLayoutConstraint!
+    var loadingVisible: Bool { icon.isHidden }
+    var audioLabel: String? { audioButton.isHidden ? nil : audioButton.accessibilityLabel() }
+    func pressAudioForCheck() { audioButton.performClick(nil) }
     let closeButton = NSButton()
     // A dying renderer (R5) draws a warning glyph at 45 %, like an unloaded row.
     var crashed = false { didSet { updateStatus() } }
@@ -95,6 +103,25 @@ final class SidebarRowView: NSView {
             title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             titleCenterY,
         ])
+        spinner.setAccessibilityHidden(true)
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(spinner)
+        audioButton.isBordered = false
+        audioButton.imagePosition = .imageOnly
+        audioButton.target = self
+        audioButton.action = #selector(mutePressed)
+        audioButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(audioButton)
+        audioTitleTrailing = title.trailingAnchor.constraint(lessThanOrEqualTo: audioButton.leadingAnchor, constant: -4)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: icon.centerXAnchor), spinner.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 16), spinner.heightAnchor.constraint(equalToConstant: 16),
+            audioButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -32), audioButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            audioButton.widthAnchor.constraint(equalToConstant: 24), audioButton.heightAnchor.constraint(equalToConstant: 24),
+        ])
         renameHint.font = .systemFont(ofSize: 10)
         renameHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         renameHint.lineBreakMode = .byTruncatingTail
@@ -153,6 +180,15 @@ final class SidebarRowView: NSView {
     // R5: crashed and unloaded rows draw at 45 %; R7: the dot marks a title change the window
     // has not shown. Both are view state, so the core's row never carries them.
     private func updateStatus() {
+        let loading = status?.loading == true && row.kind == .tab && !crashed
+        icon.isHidden = loading
+        if loading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        let muted = status?.muted == true
+        audioButton.isHidden = row.kind != .tab || !(muted || status?.audible == true)
+        audioTitleTrailing.isActive = !audioButton.isHidden
+        audioButton.image = NSImage(systemSymbolName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        audioButton.setAccessibilityLabel(muted ? "Unmute Tab" : "Mute Tab")
+        audioButton.toolTip = muted ? "Unmute Tab" : "Mute Tab"
         let opacity = crashed || row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         title.alphaValue = opacity
         icon.alphaValue = opacity
@@ -164,8 +200,9 @@ final class SidebarRowView: NSView {
             icon.image = Self.symbol(for: row.kind)
         }
         // The states a sighted reader sees, said in words (6b).
-        let states = [crashed ? "Crashed" : nil, row.unloaded ? "Unloaded" : nil, unread ? "Unread" : nil].compactMap { $0 }
+        let states = [crashed ? "Crashed" : nil, row.unloaded ? "Unloaded" : nil, unread ? "Unread" : nil, loading ? "Loading" : nil, !audioButton.isHidden && muted ? "Muted" : nil, !audioButton.isHidden && status?.audible == true && !muted ? "Playing audio" : nil].compactMap { $0 }
         setAccessibilityValue(states.isEmpty ? nil : states.joined(separator: ", "))
+        updateCloseButton()
         unreadDot.isHidden = !unread || !closeButton.isHidden
         effectiveAppearance.performAsCurrentDrawingAppearance {
             unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
@@ -266,6 +303,8 @@ final class SidebarRowView: NSView {
         if event.buttonNumber == 2 && acceptsKeyboardFocus && (row.kind == .tab || (row.kind == .split && !pinned)) { onClose?(row.id) }
     }
 
+    @objc private func mutePressed() { if acceptsKeyboardFocus { onMute?(row.id, !(status?.muted ?? false)) } }
+
     @objc private func closePressed() { if acceptsKeyboardFocus { onClose?(row.id) } }
 
     private func updateCloseButton() {
@@ -283,6 +322,13 @@ final class SidebarRowView: NSView {
             },
         ] : []
         var rowActions = actions
+        if !audioButton.isHidden && acceptsKeyboardFocus {
+            rowActions.append(NSAccessibilityCustomAction(name: status?.muted == true ? "Unmute Tab" : "Mute Tab") { [weak self] in
+                guard let self, self.acceptsKeyboardFocus, !self.audioButton.isHidden else { return false }
+                self.mutePressed()
+                return true
+            })
+        }
         if row.kind == .folder && acceptsKeyboardFocus {
             rowActions.append(NSAccessibilityCustomAction(name: row.collapsed ? "Expand" : "Collapse") { [weak self] in
                 guard let self, self.acceptsKeyboardFocus else { return false }; self.action(self.row); return true

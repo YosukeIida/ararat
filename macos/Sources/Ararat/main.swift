@@ -753,7 +753,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "errorpages" { browserCheckMode = "screen-errorpages" }
       if screenName == "downloads" { browserCheckMode = "screen-downloads" }
       if screenName == "toasts" { browserCheckMode = "screen-toasts" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "sidebar-rows"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -935,6 +935,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self.recordUnread(transaction)
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
+      self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
       if self.sidebarChecksActive, !self.sidebarFirstTransactionTraced {
         self.sidebarFirstTransactionTraced = true
         let active = transaction.strips.first?.active ?? "-"
@@ -1422,6 +1423,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       FileHandle.standardError.write(Data("ararat-trace: sidebar-seed db=\(quitPath ?? "") shown=\(seed?.shownSpaceId ?? "") profiles=\(profiles) rows=\(rows)\n".utf8))
     }
     sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
+    sidebar.rowStates = adapter?.rowStates ?? [:]
+    sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
     sidebar.unreadItems = unread.unread
     guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }
     seededNewTabRow = snapshot.shownSpaceId

@@ -97,6 +97,7 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
+#include "chrome/browser/ui/tabs/tab_muted_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
@@ -3688,6 +3689,12 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return NSMakeRect(rect.x(), rect.y(), rect.width(), rect.height());
 }
 
+- (void)setTabMuted:(BOOL)muted itemId:(NSString*)itemId {
+  for (ARTab* tab in [self tabs]) {
+    if ([tab.itemId isEqualToString:itemId]) { SetTabAudioMuted(tab.contents, muted, TabMutedReason::kAudioIndicator, std::string()); return; }
+  }
+}
+
 - (NSDictionary*)stripSnapshot:(BOOL)consumeNavigation {
   NSMutableArray* entries = [NSMutableArray array];
   NSString* active_id = nil;
@@ -3714,6 +3721,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                           @"opener": opener_identity ? (id)opener_identity->live_id : (id)NSNull.null,
                           @"navigated": @(consumeNavigation && [tab takePendingNavigation]),
                           @"crashed": @(tab.crashed),
+                          @"loading": @(tab.contents->ShouldShowLoadingUI()),
+                          @"audible": @(tab.contents->IsCurrentlyAudible()),
+                          @"muted": @(tab.contents->IsAudioMuted()),
+                          @"canGoForward": @(tab.contents->GetController().CanGoForward()),
                           @"url": url ?: (id)NSNull.null,
                           @"title": committed.is_valid() ? (id)tab.title : (id)NSNull.null }];
     if (tab.contents == active) active_id = tab.liveId;
