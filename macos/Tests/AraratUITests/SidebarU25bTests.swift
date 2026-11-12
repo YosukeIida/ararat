@@ -87,9 +87,13 @@ func anOpenEmptyFoldersLineSitsAtTheChildIndent() throws {
     let line = try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarNoTabsRow }.first)
     #expect(line.row.id == "folder/no-tabs")
     #expect(line.frame.height == SidebarMetrics.noTabsRowHeight)
-    // F3: the 24 pt line at the child indent (the icon column of depth 1).
-    #expect(abs(line.lineFrameInRow.minX - (10 + 16)) < 0.5)
-    #expect(abs(line.lineFrameInRow.width - SidebarMetrics.noTabsLineWidth) < 0.5)
+    // F3: the "No tabs" text at the child indent (the icon column of depth 1), secondary size.
+    #expect(abs(line.textFrameInRow.minX - (10 + 16)) < 0.5)
+    #expect(line.textFontSize == SidebarMetrics.secondaryFontSize)
+    #expect(abs(line.textFrameInRow.height - line.textLineHeight) < 0.5)
+    #expect(line.isAccessibilityElement())
+    #expect(line.accessibilityLabel() == "No tabs")
+    #expect(line.hitTest(NSPoint(x: line.bounds.midX, y: line.bounds.midY)) == nil)
     // It is not a row: a click never selects it.
     #expect(sidebar.selectRow(id: "folder/no-tabs"))
     #expect(sidebar.selectedRowID != "folder/no-tabs")

@@ -342,14 +342,16 @@ extension Runtime {
                 return
             }
             check.report("command_w_current", true)
-            // F3: the open, empty folder shows its line at the child indent.
+            // F3: the open, empty folder shows its "No tabs" text at the child indent.
             guard let empty = row("empty"), let marker = sidebar.noTabsRowsForCheck.first(where: { $0.parent == empty.id }) else {
                 check.report("empty_folder_line", false); step(7); return
             }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
             let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
-            check.report("empty_folder_line", abs(marker.line.minX - expected) < 0.5 && abs(marker.height - 24) < 0.5
-                         && abs(marker.line.width - 24) < 0.5)
+            check.report("empty_folder_line", abs(marker.text.minX - expected) < 0.5 && abs(marker.height - 24) < 0.5
+                         && abs(marker.fontSize - 12) < 0.01
+                         && abs(marker.text.height - marker.lineHeight) < 0.5
+                         && abs(marker.text.midY - marker.frame.midY) < 0.5)
             _ = capture("line")
             trace("empty folder line")
             step(7)
@@ -448,8 +450,13 @@ extension Runtime {
             }
             let folderDepth = (sidebarCheckShownSpace()?.pinned ?? []).first { $0.id == empty.id }?.depth ?? 0
             let expected = 8 + 10 + 16 * CGFloat(folderDepth + 1)
-            check.report("line_frame", abs(marker.line.minX - expected) < 0.5 && abs(marker.line.width - 24) < 0.5
-                         && abs(marker.height - 24) < 0.5)
+            // F3: the "No tabs" text sits at the child indent, in the sidebar's secondary font,
+            // centred in the 24 pt row.
+            check.report("line_frame", abs(marker.text.minX - expected) < 0.5 &&
+                         abs(marker.fontSize - 12) < 0.01 &&
+                         abs(marker.text.height - marker.lineHeight) < 0.5 &&
+                         abs(marker.text.midY - marker.frame.midY) < 0.5 &&
+                         abs(marker.height - 24) < 0.5)
             _ = capture("line")
             trace("line frame")
             step(1)
@@ -666,12 +673,22 @@ extension Runtime {
             step(6)
         case 6:
             guard let probe = sharedLookProbe, let popover = probe.window else { return }
+            // The capture must show the finished popover, not points of its open animation:
+            // wait until the window is opaque and its frame has stopped changing.
+            if popover.alphaValue < 1 || sharedLookFrame != popover.frame {
+                sharedLookFrame = popover.frame
+                note("look popover still opening: alpha=\(popover.alphaValue) frame=\(rectFields(popover.frame)) content=\(probe.contentSize.map { rectFields(NSRect(origin: .zero, size: $0)) } ?? [:])")
+                return
+            }
             let row = sidebar.convert(name.bounds, from: name)
             let rowOnScreen = sidebar.window?.convertToScreen(row) ?? .zero
             let near = abs(popover.frame.midX - rowOnScreen.midX) < rowOnScreen.width + 40
-            check.report("look_anchor", near && popover.isVisible)
+            // The content is its designed width once the animation has landed.
+            let width = probe.contentSize?.width ?? 0
+            check.report("look_anchor", near && popover.isVisible && abs(width - LookCheckProbe.designedContentWidth) < 0.5)
             _ = capture("look")
             sharedLookProbe = nil
+            sharedLookFrame = nil
             probe.closePopover()
             trace("done")
             finish()

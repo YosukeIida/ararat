@@ -75,6 +75,10 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
 }
 
 struct LookPopoverView: View {
+    /// The popover content's designed width; the space-name check asserts the popped-up
+    /// content matches it (and that the open animation has finished).
+    static let width: CGFloat = 288
+    static let contentPadding: CGFloat = 11
     @ObservedObject var model: LookEditorModel
     var body: some View {
         VStack(spacing: 10) {
@@ -112,7 +116,7 @@ struct LookPopoverView: View {
             TransparencyControl(model: model)
             GrainControl(model: model)
             if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).accessibilityLabel("Look error: " + error) }
-        }.padding(11).frame(width: 288).buttonStyle(.borderless)
+        }.padding(11).frame(width: Self.width).buttonStyle(.borderless)
     }
     private func mode(_ label: String, _ mode: Appearance, _ symbol: String) -> some View {
         Button { model.change { $0.appearance = mode } } label: {
@@ -364,6 +368,10 @@ public final class LookCheckProbe {
     }
 
     public var window: NSWindow? { popover.contentViewController?.view.window }
+    /// The popover content's size, so a check can tell a finished popover from one that is
+    /// still in its open animation (the size it settles at is the designed one).
+    public var contentSize: NSSize? { popover.contentViewController?.view.frame.size }
+    public static let designedContentWidth: CGFloat = LookPopoverView.width
     public var look: Look? { model()?.look }
     public var editing: Bool { model()?.editing == true }
     public var transparencyTag: String? { model()?.checkTransparencyTag }

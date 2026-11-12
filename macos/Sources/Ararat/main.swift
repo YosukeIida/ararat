@@ -411,6 +411,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
   var sharedLookProbe: LookCheckProbe?
+  // The space-name check waits for the look popover's open animation: the last frame seen.
+  var sharedLookFrame: NSRect?
   var sidebarChecksActive = false
   var sidebarSeedTraced = false
   var sidebarFirstTransactionTraced = false
