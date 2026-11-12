@@ -2131,6 +2131,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   /// that cannot load Profile 1 fails with the named `profile_isolation` condition.
   func pinsIsolationTick(_ host: any ARWindowHostAPI, id: String) {
     let startupProfile = host.profileDirectory()
+    if browserCheckAttempts % 20 == 0 {
+      let childProfile = pinsIsolationChild?.host?.profileDirectory() ?? "nil"
+      let childPinned = pinsIsolationChild?.extensionItems.first(where: { $0.id == id }).map { "\($0.pinned)" } ?? "nil"
+      let defaultPinned = extensionItems.first(where: { $0.id == id }).map { "\($0.pinned)" } ?? "nil"
+      FileHandle.standardError.write(Data("ararat-trace: relaunch-pins isolation phase=\(browserCheckPhase) attempts=\(browserCheckAttempts) profile=\(startupProfile) child=\(pinsIsolationChild != nil) child_profile=\(childProfile) child_pinned=\(childPinned) default_pinned=\(defaultPinned)\n".utf8))
+    }
     switch browserCheckPhase {
     case 0:
       guard let startupItem = extensionItems.first(where: { $0.id == id }) else {
@@ -2188,7 +2194,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
         return
       }
-      guard let profileItem = child.extensionItems.first(where: { $0.id == id }) else { return }
+      guard let profileItem = child.extensionItems.first(where: { $0.id == id }) else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Profile 1 window has no extension fixture action",
+                                                 "profile": childProfile])
+        }
+        return
+      }
       let defaultPinned = extensionItems.first(where: { $0.id == id })?.pinned ?? false
       let isolated = !profileItem.pinned
       let passed = defaultPinned && isolated

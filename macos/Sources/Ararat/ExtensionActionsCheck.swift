@@ -27,6 +27,8 @@ final class ExtensionActionsCheck {
     var removeResult = ""
     var removeAttempts = 0
     var actionAnchor: NSRect?
+    var lastPhase = -1
+    var phaseStart = 0
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -65,7 +67,7 @@ extension Runtime {
         let window = host.window()
         func wait(_ name: String) {
             let item = extensionItems.first { $0.id == check.fixtureID }
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) fixture=\(check.fixtureID.isEmpty ? "nil" : check.fixtureID) items=\(extensionItems.count) pinned=\(item?.pinned ?? false) badge=\(item?.badgeText ?? "-") in_field=\(sidebar.checkInFieldActionIDs) row=\(sidebar.checkRowActionIDs) selected=\(snapshot.selectedId ?? "nil")")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) fixture=\(check.fixtureID.isEmpty ? "nil" : check.fixtureID) items=\(extensionItems.count) pinned=\(item?.pinned ?? false) badge=\(item?.badgeText ?? "-") in_field=\(sidebar.checkInFieldActionIDs) row=\(sidebar.checkRowActionIDs) selected=\(snapshot.selectedId ?? "nil") host_active=\(host.activeItemId() ?? "nil") second=\(extensionSecondTabs[check.secondTab] ?? "nil")")
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
@@ -75,6 +77,11 @@ extension Runtime {
             return true
         }
         func item() -> ExtensionActionItem? { extensionItems.first { $0.id == check.fixtureID } }
+        if check.lastPhase != browserCheckPhase {
+            check.lastPhase = browserCheckPhase
+            check.phaseStart = browserCheckAttempts
+        }
+        func phaseTicks() -> Int { max(0, browserCheckAttempts - check.phaseStart) }
         func activeTab() -> (any ARTabAPI)? {
             (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == snapshot.selectedId }
         }
@@ -179,17 +186,36 @@ extension Runtime {
             }
             browserCheckPhase = 4
         case 4:
-            guard let second = extensionSecondTabs[check.secondTab], snapshot.selectedId == second,
-                  host.activeItemId() == second, let item = item(), item.badgeText.isEmpty else { wait("second tab"); return }
-            check.mark("badge_per_tab")
-            if let row = check.seedRow { selectCheckSeed(row) }
-            browserCheckPhase = 5
+            if let second = extensionSecondTabs[check.secondTab], snapshot.selectedId == second,
+               host.activeItemId() == second, let item = item(), item.badgeText.isEmpty {
+                check.mark("badge_per_tab")
+                if let row = check.seedRow { selectCheckSeed(row) }
+                browserCheckPhase = 5
+                return
+            }
+            // A failing badge must not hide the later phases: give it 5 s, name it, move on.
+            if phaseTicks() > 50 {
+                check.mark("badge_per_tab", false)
+                if let row = check.seedRow { selectCheckSeed(row) }
+                browserCheckPhase = 5
+                return
+            }
+            wait("second tab")
         case 5:
-            guard let row = check.seedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
-                  let item = item(), item.badgeText == "7" else { wait("badge tab again"); return }
-            check.mark("badge_live")
-            setWidth(164)
-            browserCheckPhase = 6
+            if let row = check.seedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
+               let item = item(), item.badgeText == "7" {
+                check.mark("badge_live")
+                setWidth(164)
+                browserCheckPhase = 6
+                return
+            }
+            if phaseTicks() > 50 {
+                check.mark("badge_live", false)
+                setWidth(164)
+                browserCheckPhase = 6
+                return
+            }
+            wait("badge tab again")
         case 6:
             let rowFrame = sidebar.checkActionsRowFrame
             let rowHeight = sidebar.checkActionsRowHeight
