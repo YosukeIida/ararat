@@ -179,7 +179,7 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
     _ = trace.reader.wait(timeout: .now() + 2)
     let (tail, lastTrace) = trace.snapshot()
     let status: [String: Any] = firstStatus.map { ($0 & 0x7f) == 0 ? ["exit_status": Int(($0 >> 8) & 0xff)] : ["signal": Int($0 & 0x7f)] } ?? [:]
-    let result: [String: Any] = ["check": mode, "ok": false, "error": detail, "exit": 1,
+    let result: [String: Any] = ["check": mode == "pins" ? "relaunch-pins" : mode, "ok": false, "error": detail, "exit": 1,
                                  "run1_stderr_tail": tail, "run1_last_trace": lastTrace as Any? ?? NSNull(),
                                  "run1_status": status.isEmpty ? NSNull() : status as Any]
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
@@ -191,7 +191,8 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
   do {
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
     root = scratch
-    let common = ["--user-data-dir=\(scratch.appendingPathComponent("profile").path)", "--ararat-db=\(scratch.appendingPathComponent("workspace.sqlite").path)", "--use-mock-keychain"]
+    let forwarded = CommandLine.arguments.filter { $0.hasPrefix("--load-extension=") }
+    let common = ["--user-data-dir=\(scratch.appendingPathComponent("profile").path)", "--ararat-db=\(scratch.appendingPathComponent("workspace.sqlite").path)", "--use-mock-keychain"] + forwarded
     let first = try launchRelaunchChild(common + ["--ararat-check=relaunch-seed", "--ararat-relaunch-mode=\(mode)"], processGroup: true, trace: trace)
     firstPID = first.pid
     child = first
@@ -206,6 +207,7 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
     close(first.output)
     child = nil
     if mode == "relaunch" && status != 0 { return failure("run 1 did not quit cleanly") }
+    if mode == "pins" && status != 0 { return failure("run 1 did not quit cleanly") }
     if mode == "crash" && (status & 0x7f) != SIGKILL { return failure("run 1 was not killed") }
     kill(-first.pid, SIGKILL)
     let deadline = Date().addingTimeInterval(30)
@@ -215,7 +217,7 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
     }
     guard errno == ESRCH else { return failure("cannot check run 1 process group") }
     group = nil
-    let second = try launchRelaunchChild(common + ["--ararat-check=relaunch-verify", "--ararat-relaunch-expected=\(bytes.base64EncodedString())", "--ararat-relaunch-mode=\(mode)"])
+    let second = try launchRelaunchChild(common + ["--ararat-check=relaunch-verify", "--ararat-relaunch-expected=\(bytes.base64EncodedString())", "--ararat-relaunch-mode=\(mode)"] + (mode == "pins" ? ["--profile-directory=Default"] : []))
     child = second
     guard let line = readRelaunchLine(second.output, seconds: 60),
           let result = line.data(using: .utf8),
@@ -224,6 +226,27 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
           let status = reapRelaunchChild(second.pid, seconds: 30) else { return failure("run 2 did not finish") }
     close(second.output)
     child = nil
+    if mode == "pins" {
+      // A second profile in the same store must not inherit the Default profile's pin.
+      let third = try launchRelaunchChild(common + ["--ararat-check=relaunch-verify", "--ararat-relaunch-expected=\(bytes.base64EncodedString())", "--ararat-relaunch-mode=pins-isolated", "--profile-directory=Profile 1"])
+      child = third
+      guard let thirdLine = readRelaunchLine(third.output, seconds: 60),
+            let thirdResult = thirdLine.data(using: .utf8),
+            let thirdObject = try JSONSerialization.jsonObject(with: thirdResult) as? [String: Any],
+            let isolated = thirdObject["ok"] as? Bool,
+            let thirdStatus = reapRelaunchChild(third.pid, seconds: 30) else { return failure("run 3 did not finish") }
+      close(third.output)
+      child = nil
+      if let error = cleanup() { return failure(error) }
+      let verified = thirdObject["profile_isolation_verified"] as? Bool ?? false
+      let combined: [String: Any] = ["check": "relaunch-pins", "ok": ok && status == 0 && isolated && thirdStatus == 0,
+                                     "pinned_after_relaunch": ok, "other_profile_run_ok": isolated,
+                                     "profile_isolation_verified": verified,
+                                     "run2": object, "run3": thirdObject]
+      if let data = try? JSONSerialization.data(withJSONObject: combined, options: [.sortedKeys]),
+         let output = String(data: data, encoding: .utf8) { print(output); fflush(stdout) }
+      return (ok && status == 0 && isolated && thirdStatus == 0) ? 0 : 1
+    }
     if let error = cleanup() { return failure(error) }
     print(line); fflush(stdout)
     return ok && status == 0 ? 0 : 1

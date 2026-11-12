@@ -52,6 +52,28 @@ public final class SidebarView: NSView {
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
     let tooltip = SidebarTooltip()
+    public func checkClosePressed(id: String) -> Bool {
+        guard let row = rowViews[id] else { return false }
+        return row.shortcutPressed && !row.closeButton.isHidden
+    }
+    func clearShortcutKeys() {
+        tooltip.clearPressed()
+        rowViews.values.forEach { $0.shortcutPressed = false }
+    }
+    func updateShortcutKeys(_ keys: Set<String>, event: NSEvent) {
+        tooltip.pressedKeys = keys
+        tooltip.flagsChanged(with: event)
+        let key = keyBindings.first(where: { $0.command == "close_tab" })?.key
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let pressed = key.map {
+            flags.contains(.command) == $0.command && flags.contains(.shift) == $0.shift &&
+            flags.contains(.control) == $0.control && flags.contains(.option) == $0.option &&
+            keys.contains(SidebarTooltip.caps(for: $0).last ?? "")
+        } ?? false
+        for row in rowViews.values {
+            row.shortcutPressed = row.row.id == selectedRowID && pressed
+        }
+    }
     private var clickMonitor: Any?
     var removeClickMonitor: (Any) -> Void = NSEvent.removeMonitor
     public var onRestore: ((String) -> Void)?
@@ -119,7 +141,27 @@ public final class SidebarView: NSView {
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
-    private let favorites = NSStackView()
+    private let siteControlsButton = SiteControlsButton()
+    private let inFieldActions = ExtensionActionsStrip()
+    public let actionsRow = ExtensionActionsRow()
+    private var hostTrailingToActions: NSLayoutConstraint?
+    private var inFieldActionsWidth: NSLayoutConstraint?
+    private var hostTrailingToCopy: NSLayoutConstraint?
+    public var siteControlsBlocked = false {
+        didSet {
+            siteControlsButton.showsBlockedDot = siteControlsBlocked
+            siteControlsButton.setAccessibilityValue(siteControlsBlocked ? "Permission blocked" : "")
+        }
+    }
+    public var extensionActions: [ExtensionActionItem] = [] {
+        didSet { updateExtensionActions() }
+    }
+    public var onSiteControls: ((NSRect) -> Void)?
+    public var onExtensionAction: ((ExtensionActionItem) -> Void)?
+    public var onExtensionMenu: ((ExtensionActionItem) -> NSMenu?)?
+    public var onExtensionAnchor: ((NSRect) -> Void)?
+    private var actionsHeight: NSLayoutConstraint!
+    private var favorites = NSStackView()
     private var favoriteColumns = 0
     private var favoritesHeight: NSLayoutConstraint!
     private let listScroll = SidebarScrollView()
@@ -747,6 +789,23 @@ public final class SidebarView: NSView {
         copyLinkButton.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(copyLinkButton)
 
+        siteControlsButton.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Site controls")
+        siteControlsButton.isBordered = false
+        siteControlsButton.target = self
+        siteControlsButton.action = #selector(siteControlsClicked)
+        siteControlsButton.setAccessibilityLabel("Site controls")
+        siteControlsButton.toolTip = "Site controls"
+        siteControlsButton.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(siteControlsButton)
+
+        inFieldActions.translatesAutoresizingMaskIntoConstraints = false
+        inFieldActions.onOpen = { [weak self] item, button in self?.openExtension(item, from: button) }
+        inFieldActions.onMenu = { [weak self] item, button in self?.extensionMenu(item, from: button) }
+        urlField.addSubview(inFieldActions)
+
+        actionsRow.onOpen = { [weak self] item, button in self?.openExtension(item, from: button) }
+        actionsRow.onMenu = { [weak self] item, button in self?.extensionMenu(item, from: button) }
+
         favorites.orientation = .vertical
         favorites.spacing = 8
         favorites.alignment = .leading
@@ -802,32 +861,47 @@ public final class SidebarView: NSView {
         historyBanner.addArrangedSubview(historyMessage)
         historyBanner.addArrangedSubview(NSStackView(views: [historyRetryButton, historyDismissButton]))
         historyBanner.isHidden = true
-        let column = NSStackView(views: [urlField, spaceViewport, historyBanner, bottomBar])
+        let column = NSStackView(views: [urlField, actionsRow, spaceViewport, historyBanner, bottomBar])
         mainColumn = column
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 0
         column.setCustomSpacing(8, after: urlField)
+        column.setCustomSpacing(8, after: actionsRow)
         column.setCustomSpacing(10, after: spaceViewport)
         column.edgeInsets = NSEdgeInsets(top: 46, left: 8, bottom: 8, right: 8)
         addSubview(column)
         column.translatesAutoresizingMaskIntoConstraints = false
         favoritesHeight = favorites.heightAnchor.constraint(equalToConstant: 0)
+        actionsHeight = actionsRow.heightAnchor.constraint(equalToConstant: 0)
+        hostTrailingToActions = host.trailingAnchor.constraint(equalTo: inFieldActions.leadingAnchor, constant: -4)
+        inFieldActionsWidth = inFieldActions.widthAnchor.constraint(equalToConstant: 0)
+        hostTrailingToCopy = host.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             column.topAnchor.constraint(equalTo: topAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             urlField.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -16),
+            actionsRow.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            actionsHeight,
             bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
             host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
-            host.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
-            copyLinkButton.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -4),
+            host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            inFieldActions.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
+            inFieldActions.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            inFieldActions.heightAnchor.constraint(equalToConstant: 24),
+            inFieldActionsWidth!,
+
+            copyLinkButton.trailingAnchor.constraint(equalTo: siteControlsButton.leadingAnchor, constant: -4),
             copyLinkButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             copyLinkButton.widthAnchor.constraint(equalToConstant: 24),
             copyLinkButton.heightAnchor.constraint(equalToConstant: 24),
-            host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            siteControlsButton.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -4),
+            siteControlsButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            siteControlsButton.widthAnchor.constraint(equalToConstant: 24),
+            siteControlsButton.heightAnchor.constraint(equalToConstant: 24),
             spaceViewport.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             spaceColumn.leadingAnchor.constraint(equalTo: spaceViewport.leadingAnchor),
             spaceColumn.trailingAnchor.constraint(equalTo: spaceViewport.trailingAnchor),
@@ -925,11 +999,10 @@ public final class SidebarView: NSView {
             return
         }
         tooltip.capture(in: self)
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .flagsChanged]) { [weak self] event in
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
                 if event.window === self?.window {
-                    if event.type == .flagsChanged { self?.tooltip.flagsChanged(with: event) }
-                    else { self?.tooltip.dismiss() }
+                    self?.tooltip.dismiss()
                 }
             }
             return event
@@ -982,6 +1055,97 @@ public final class SidebarView: NSView {
             favoriteColumns = columns
             reloadFavorites()
         }
+        actionsRow.columns = columns
+        updateExtensionLayout()
+    }
+
+    private func updateExtensionLayout() {
+        guard let hostWidth = urlFieldValueWidth() else { return }
+        let pinned = extensionActions.filter(\.pinned)
+        let actionsWidth = pinned.isEmpty ? 0 : CGFloat(pinned.count) * 24 + CGFloat(pinned.count - 1) * 4
+        // Arc keeps the pinned actions in the URL field while the host keeps 64 pt (§7); below
+        // that all of them move to one 32 pt row on the favourites' columns.
+        let inField = !pinned.isEmpty && hostWidth - 4 - actionsWidth >= 64
+        inFieldActions.isHidden = !inField
+        actionsRow.isHidden = inField || pinned.isEmpty
+        actionsHeight.constant = actionsRow.isHidden ? 0 : actionsRow.requiredHeight
+        hostTrailingToActions?.isActive = inField
+        hostTrailingToCopy?.isActive = !inField
+        if !inField, !pinned.isEmpty { actionsRow.needsLayout = true }
+    }
+
+    private func urlFieldValueWidth() -> CGFloat? {
+        urlField.layoutSubtreeIfNeeded()
+        guard urlField.bounds.width > 0 else { return nil }
+        return urlField.bounds.width - 72
+    }
+
+    private func updateExtensionActions() {
+        let pinned = extensionActions.filter(\.pinned)
+        inFieldActions.update(items: pinned)
+        actionsRow.update(items: pinned)
+        inFieldActionsWidth?.constant = ExtensionActionsStrip.width(for: pinned.count)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    @objc private func siteControlsClicked() {
+        onSiteControls?(siteControlsButton.convert(siteControlsButton.bounds, to: nil))
+    }
+
+    private func openExtension(_ item: ExtensionActionItem, from button: ExtensionActionButton) {
+        let anchor = button.anchorInWindow
+        onExtensionAnchor?(anchor)
+        onExtensionAction?(item)
+    }
+
+    private func extensionMenu(_ item: ExtensionActionItem, from button: ExtensionActionButton) -> NSMenu? {
+        onExtensionAnchor?(button.anchorInWindow)
+        return onExtensionMenu?(item)
+    }
+
+    public var checkSiteControlsFrame: NSRect { convert(siteControlsButton.bounds, from: siteControlsButton) }
+    public var checkSiteControlsDot: Bool { siteControlsButton.showsBlockedDot }
+    public func checkClickSiteControls() { siteControlsButton.performClick(nil) }
+    public var checkInFieldActionIDs: [String] { inFieldActions.isHidden ? [] : inFieldActions.checkItems }
+    public var checkActionLabelsComplete: Bool {
+        inFieldActions.isHidden ? actionsRow.checkLabelsComplete : inFieldActions.checkLabelsComplete
+    }
+    public var checkRowActionIDs: [String] { actionsRow.isHidden ? [] : actionsRow.items.map(\.id) }
+    public var checkActionsRowFrame: NSRect { convert(actionsRow.bounds, from: actionsRow) }
+    public var checkActionsRowHeight: CGFloat { actionsRow.isHidden ? 0 : actionsRow.checkRowHeight }
+    public var checkDefaultWidth: CGFloat { SidebarMetrics.defaultWidth }
+    /// The 32 pt tile width the overflow row uses: the favourites' column pitch for the
+    /// sidebar's current width.
+    public var checkActionTileExpectedWidth: CGFloat {
+        let width = bounds.width - 16
+        let columns = SidebarDragMetrics.favoriteColumns(width: width, slots: 4)
+        return (width + 8) / CGFloat(columns) - 8
+    }
+    public var checkSiteControlsButton: SiteControlsButton { siteControlsButton }
+    public func checkActionButton(_ id: String) -> ExtensionActionButton? {
+        if !inFieldActions.isHidden, let button = inFieldActions.checkButton(id) { return button }
+        return actionsRow.checkButton(id)
+    }
+    public func checkExtensionMenu(_ id: String) -> NSMenu? {
+        guard let item = extensionActions.first(where: { $0.id == id }) else { return nil }
+        // An unpinned action has no URL-field button; the menu still exists, anchored at the
+        // URL field (it is the container's extensions menu entry in the product).
+        if let button = checkActionButton(id) {
+            onExtensionAnchor?(button.anchorInWindow)
+        } else {
+            onExtensionAnchor?(urlField.convert(urlField.bounds, to: nil))
+        }
+        return onExtensionMenu?(item)
+    }
+    public func checkPerformMenuCommand(_ id: String, title: String) -> Bool {
+        guard let menu = checkExtensionMenu(id), let item = menu.items.first(where: { $0.title == title }),
+              item.isEnabled, let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+    public func checkPerformExtensionAction(_ id: String) {
+        guard let item = extensionActions.first(where: { $0.id == id }), let button = checkActionButton(id) else { return }
+        openExtension(item, from: button)
     }
 
     override public func viewDidChangeEffectiveAppearance() {

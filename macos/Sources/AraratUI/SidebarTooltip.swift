@@ -5,6 +5,9 @@ import AraratKit
 final class SidebarTooltip {
     var clock: () -> CFTimeInterval = CACurrentMediaTime
     var modifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
+    var explicitCaps: ((NSView) -> [String]?)?
+    var pressedKeys: Set<String> = []
+    func clearPressed() { pressedKeys.removeAll(); keycaps.forEach { $0.setPressed(false) } }
     var menuTracking = false { didSet { dismiss() } }
     private let texts = NSMapTable<NSView, NSString>.weakToStrongObjects()
     private weak var target: NSView?
@@ -26,7 +29,7 @@ final class SidebarTooltip {
 
     func flagsChanged(with event: NSEvent) {
         guard text != nil else { return }
-        label.keycaps.forEach { $0.setPressed(event.modifierFlags.contains($0.modifier) && !$0.modifier.isEmpty) }
+        label.keycaps.forEach { $0.setPressed($0.modifier.isEmpty ? pressedKeys.contains($0.stringValue) : event.modifierFlags.contains($0.modifier)) }
     }
 
     init() {
@@ -125,7 +128,7 @@ final class SidebarTooltip {
         label.keycaps = []
         let action = (target as? NSControl)?.action
         let shortcutAction: Selector?
-        var explicit: [String]?
+        var explicit: [String]? = explicitCaps?(target)
         if let row = target.superview as? SidebarRowView, target === row.closeButton {
             shortcutAction = row.closeShortcutAction
             explicit = row.closeShortcutCaps
@@ -141,7 +144,7 @@ final class SidebarTooltip {
         for cap in label.keycaps {
             cap.frame = NSRect(x: x, y: 5, width: max(18, cap.intrinsicContentSize.width + 6), height: 18)
             label.addSubview(cap)
-            cap.setPressed(!cap.modifier.isEmpty && modifiers.contains(cap.modifier))
+            cap.setPressed(cap.modifier.isEmpty ? pressedKeys.contains(cap.stringValue) : modifiers.contains(cap.modifier))
             x += cap.frame.width + 3
         }
         let size = NSSize(width: min(root.bounds.width, label.keycaps.isEmpty ? x + 10 : x + 7), height: 28)

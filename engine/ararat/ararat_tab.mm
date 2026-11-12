@@ -97,7 +97,8 @@ base::WeakPtr<content::WebContents> g_held_find_contents;
 int g_held_find_request = -1;
 bool IsPromptScreen() {
   const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
-  return screen == "prompts" || screen == "dialogs";
+  return screen == "prompts" || screen == "dialogs" || screen == "site-controls" ||
+         base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "site-controls";
 }
 class TabContentsObserver : public content::WebContentsObserver {
  public:
@@ -118,6 +119,7 @@ class TabContentsObserver : public content::WebContentsObserver {
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
+  void NavigationEntriesDeleted() override { [[tab_ ownerHost] tabMetadataChanged:@"navigation-entries" tab:tab_]; }
   void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged:@"audible"]; }
   void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged:@"muted"]; }
   void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }

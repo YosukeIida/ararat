@@ -236,13 +236,14 @@ void CheckGuards(int argc, const char** argv) {
       screen_prompts = std::string_view(arg + 16) == "prompts";
       screen_downloads = std::string_view(arg + 16) == "downloads";
       screen_toasts = std::string_view(arg + 16) == "toasts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-focus") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -262,20 +263,21 @@ void CheckGuards(int argc, const char** argv) {
       check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions";
       browser_check = browser_check || name == "errorpages";
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
       browser_check = browser_check || name == "split-focus";
+      browser_check = browser_check || name == "header";
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";
       check_slice = name == "slice";
       g_check_slice = check_slice;
-      check_started = name == "started" || name == "window" || name == "tabs" || name == "split" || g_check_transfer ||
+      check_started = name == "started" || name == "window" || name == "tabs" || name == "split" || g_check_transfer || name == "relaunch-pins" ||
                       name == "slice" || name == "quit" || name == "quit-cancel" ||
                       name == "close" || browser_check;
-      check_slice = check_slice || name == "quit" || name == "quit-cancel" ||
+      check_slice = check_slice || name == "quit" || name == "quit-cancel" || name == "relaunch-pins" ||
                     name == "close" || browser_check;
       // Why not require g_slice_passed: DevTools validates after ChromeMain returns.
       g_check_slice = g_check_slice || (browser_check && !check_devtools);
@@ -406,6 +408,20 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
   std::vector<const char*> browser_args(argv, argv + argc);
+  // The site-controls check serves a throwaway self-signed loopback certificate and allows
+  // exactly that key, so Chromium reports a secure connection without touching trust stores.
+  for (int i = 1; i < argc; ++i) {
+    if (argv[i] && (strcmp(argv[i], "--ararat-check=site-controls") == 0 ||
+                    strcmp(argv[i], "--ararat-screen=site-controls") == 0)) {
+      browser_args.push_back(
+          "--ignore-certificate-errors-spki-list=41bhvYwNSFKJywXg6t2xbgeAoiBIlI83FdLJO/ILKZg=");
+      // Why not 127.0.0.1 for the plain page: loopback is potentially trustworthy, so Chromium
+      // reports a neutral connection, never "not_secure". A named host mapped to loopback is
+      // not trustworthy, which is what the check must exercise.
+      browser_args.push_back("--host-resolver-rules=MAP ararat.test 127.0.0.1");
+      break;
+    }
+  }
   bool has_no_startup_window = false;
   for (const char* arg : browser_args) {
     if (arg && strcmp(arg, "--") == 0) break;
