@@ -8,6 +8,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let profile: String?
         let restoring: RestorationCandidate?
     }
+    private func traceMatrix(_ message: @autoclosure () -> String) {
+        guard CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-cross-window-reverse-check=") || $0.hasPrefix("--ararat-cross-window-selection-check") || $0 == "--ararat-space-matrix-check" }) else { return }
+        FileHandle.standardError.write(Data("ararat-trace: matrix window=\(windowID) \(message())\n".utf8))
+    }
     public let session: WorkspaceSession
     private var queue: DispatchQueue { session.queue }
     private var store: WorkspaceStore? {
@@ -657,6 +661,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                        let active = own.active, let tab = self.tab(active), let item = tab.itemId {
                         self.session.captureSnapshot(tab, item: item)
                     }
+                    if case .command(let id) = transaction.cause { self.traceMatrix("selection transaction command=\(id) rev=\(transaction.rev) applied=\(outcome.applied)") }
                     self.onTransaction?(transaction, outcome.applied)
                     if outcome.applied { self.onWorkspaceChange?() }
                 }
@@ -695,8 +700,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard let current = host, (current as AnyObject) === (source as AnyObject), !source.isClosingAll() else { completion(true); return }
         let generation = handoffGeneration
         let plan = session.handoffs(from: self)
-        guard !plan.isEmpty else { completion(true); return }
+        traceMatrix("handoff plan=\(plan.map { "\($0.live):\($0.item):\($0.profile)->\($0.target.windowID):activate=\($0.activate)" }) generation=\(generation)")
+        guard !plan.isEmpty else { traceMatrix("handoff complete=true empty=true"); completion(true); return }
         func fail() {
+            self.traceMatrix("handoff complete=false")
             FileHandle.standardError.write(Data("engine adapter: close handoff failed; window remains open\n".utf8))
             completion(false)
         }
@@ -714,6 +721,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 return
             }
             let latest = self.session.handoffs(from: self)
+            self.traceMatrix("handoff latest=\(latest.map { "\($0.live):\($0.item):\($0.profile)->\($0.target.windowID):activate=\($0.activate)" })")
             guard latest.count == plan.count,
                   plan.allSatisfy({ move in latest.contains { $0.live == move.live && $0.target === move.target && $0.activate == move.activate } }) else {
                 fail(); return
@@ -729,6 +737,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     return
                 }
             }
+            self.traceMatrix("handoff complete=true empty=false")
             completion(true)
         }
         prepare()
@@ -1082,6 +1091,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     private func selectionDispatchForCheck(_ stage: String, command: LiveCommand, action: @escaping () -> Void) {
+        traceMatrix("selection dispatch stage=\(stage) command=\(command.id) item=\(command.item) generation=\(selectionGeneration)")
         if let checkSelectionDispatch, command.kind == .activate { checkSelectionDispatch(stage, command.id, action) }
         else { action() }
     }
@@ -1157,9 +1167,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                   self.queue.sync { self.store?.snapshot(windowId: self.windowID).shownSpaceId == context.space }
               }) ?? true,
               queue.sync(execute: { self.store?.liveTab(item: command.item) == live && self.pendingSelectionCommands.contains(command.id) })
-        else { cancelSelectionCommand(command); return }
+        else { traceMatrix("selection cancelled command=\(command.id) live=\(live) generation=\(selectionGeneration) expected=\(selection?.generation.description ?? "none")"); cancelSelectionCommand(command); return }
         if let local = tab(live) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
+            traceMatrix("selection activated command=\(command.id) live=\(live) local=true")
             checkSelectionActivated?(command.id)
             local.activate(withCommandId: command.id)
             return
@@ -1168,6 +1179,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let supported = (current as AnyObject).responds(to: #selector(ARWindowHostAPI.transferTab(_:commandId:)))
         if let remote, supported, current.transferTab(remote, commandId: command.id) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
+            traceMatrix("selection activated command=\(command.id) live=\(live) local=false")
             checkSelectionActivated?(command.id)
             return
         }

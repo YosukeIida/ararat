@@ -6169,7 +6169,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         let previous = adapter.onTransaction
         adapter.onTransaction = { [weak self] transaction, applied in
           previous?(transaction, applied)
-          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand {
+            self?.childRaceCompleted = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-completed command=\(id) rev=\(transaction.rev) applied=\(applied)\n".utf8))
+          }
         }
         adapter.checkSelectionDispatch = { [weak self, weak adapter] actual, command, resume in
           guard let self, let adapter else { return }
@@ -6177,7 +6180,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           adapter.checkSelectionDispatch = nil
           self.childRaceCommand = command
           adapter.checkSelectionActivated = { [weak self] id in
-            if id == command { self?.childRaceActivated = true }
+            if id == command {
+              self?.childRaceActivated = true
+              FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
+            }
           }
           childHost.close()
           resume()
@@ -6196,7 +6202,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         let previous = childAdapter.onTransaction
         childAdapter.onTransaction = { [weak self] transaction, applied in
           previous?(transaction, applied)
-          if case .command(let id) = transaction.cause, id == self?.childRaceCommand { self?.childRaceCompleted = true }
+          if case .command(let id) = transaction.cause, id == self?.childRaceCommand {
+            self?.childRaceCompleted = true
+            FileHandle.standardError.write(Data("ararat-trace: matrix race selection-completed command=\(id) rev=\(transaction.rev) applied=\(applied)\n".utf8))
+          }
         }
         childAdapter.checkSelectionDispatch = { [weak self, weak childAdapter] stage, command, resume in
           guard let self, let childAdapter else { return }
@@ -6204,7 +6213,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           childAdapter.checkSelectionDispatch = nil
           self.childRaceCommand = command
           childAdapter.checkSelectionActivated = { [weak self] id in
-            if id == command { self?.childRaceActivated = true }
+            if id == command {
+              self?.childRaceActivated = true
+              FileHandle.standardError.write(Data("ararat-trace: matrix race selection-activated command=\(id)\n".utf8))
+            }
           }
           host.close()
           resume()

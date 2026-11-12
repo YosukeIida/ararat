@@ -114,12 +114,12 @@ class TabContentsObserver : public content::WebContentsObserver {
     }
   }
   void DidStartNavigation(content::NavigationHandle* navigation) override {
-    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) [tab_ refresh];
+    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) { [[tab_ ownerHost] traceTabEvent:@"navigation-start" tab:tab_]; [tab_ refresh]; }
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
-  void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged]; }
-  void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged]; }
+  void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged:@"audible"]; }
+  void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged:@"muted"]; }
   void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }
   void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
     [tab_ rendererCrashed];
@@ -721,15 +721,15 @@ class TabContentsObserver : public content::WebContentsObserver {
   ++navigation_count_;
   [host_ noteNavigationForTab:self];
   [self refresh];
-  [host_ tabMetadataChanged];
+  [host_ tabMetadataChanged:@"navigation-finished" tab:self];
 }
 
-- (void)audioStateChanged {
-  [host_ tabMetadataChanged];
+- (void)audioStateChanged:(NSString*)field {
+  [host_ tabMetadataChanged:field tab:self];
 }
 
 - (void)rendererCrashed {
-  [host_ tabMetadataChanged];
+  [host_ tabMetadataChanged:@"crashed" tab:self];
 }
 
 - (void)pageFocused {
@@ -772,7 +772,7 @@ class TabContentsObserver : public content::WebContentsObserver {
     [self willChangeValueForKey:@"title"];
     title_ = title;
     [self didChangeValueForKey:@"title"];
-    [host_ tabMetadataChanged];
+    [host_ tabMetadataChanged:@"title" tab:self];
   }
   if (![url_ isEqualToString:url]) {
     [self willChangeValueForKey:@"url"];
@@ -782,12 +782,13 @@ class TabContentsObserver : public content::WebContentsObserver {
   if (loading_ != loading) {
     [self willChangeValueForKey:@"isLoading"];
     loading_ = loading;
+    [host_ traceTabEvent:@"isLoading" tab:self];
     [self didChangeValueForKey:@"isLoading"];
   }
   BOOL loadingUI = contents_->ShouldShowLoadingUI();
   if (loading_ui_ != loadingUI) {
     loading_ui_ = loadingUI;
-    [host_ tabMetadataChanged];
+    [host_ tabMetadataChanged:@"loading-ui" tab:self];
   }
 }
 
