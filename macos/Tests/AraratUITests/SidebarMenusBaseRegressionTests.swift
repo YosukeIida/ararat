@@ -10,7 +10,9 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("base.sqlite").path)
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     _ = try store.importArcSidebar(windowId: "regression", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
-    let snapshot = try store.moveItem(windowId: "regression", id: "tab-a", container: "today-work", index: 0, openFolder: false)
+    _ = try store.moveItem(windowId: "regression", id: "tab-a", container: "today-work", index: 0, openFolder: false)
+    let snapshot = try store.createTab(windowId: "regression", url: "https://today.example")
+    let today = try #require(snapshot.selectedId)
     _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: snapshot)
     sidebar.frame = NSRect(x: 0, y: 0, width: 260, height: 700)
@@ -19,10 +21,13 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     let rows = views(sidebar).compactMap { $0 as? SidebarRowView }
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     #expect(sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
-    for (id, titles) in [("folder-docs", ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]), ("tab-spec", ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"]), ("tab-a", ["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"])] {
+    for (id, titles) in [("folder-docs", ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]), ("tab-spec", ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"]), (today, ["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"])] {
         let row = try #require(rows.first { $0.row.id == id })
         #expect(row.menu(for: event)?.items.map(\.title) == titles)
     }
+    #expect(rows.contains { $0.row.id == "split-1" })
+    #expect(rows.first { $0.row.id == "split-1" }?.menu(for: event) == nil)
+    #expect(!rows.contains { $0.row.id == "tab-a" })
     let favorite = try #require(views(sidebar).compactMap { $0 as? FavoriteTile }.first)
     #expect(favorite.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"])
     let folder = try #require(rows.first { $0.row.id == "folder-docs" })

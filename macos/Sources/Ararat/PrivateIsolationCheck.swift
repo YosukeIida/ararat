@@ -123,11 +123,10 @@ extension Runtime {
             let refused = !privateHost.checkMoveTab(privateTab, toHost: regularHost) && !regularHost.checkMoveTab(regularTab, toHost: privateHost)
             check.mark("private_cross_refused", refused)
             guard refused else { wait("refused cross move"); return }
-            // Close one private row and Clear the other.
-            guard let firstRow = (first.host?.tabs() as? [any ARTabAPI])?.first?.itemId,
-                  let secondSpace = second.snapshot.shownSpaceId else { wait("rows for the removal"); return }
-            check.pendingClose = firstRow
-            first.close(firstRow)
+            // Close the shared row (its live tab is in window 2), then Clear window 2; window 1's
+            // own tab keeps it open, so one private window remains.
+            check.pendingClose = privateItem
+            first.close(privateItem)
             second.clearToday()
             browserCheckPhase = 6
         case 6:

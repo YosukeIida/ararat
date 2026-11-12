@@ -43,33 +43,35 @@ pub struct Command {
 }
 
 pub fn commands() -> Vec<Command> {
-    let key = |key: &str, command, control, shift| Some(KeyCombination { key: key.into(), command, control, option: false, shift });
+    let key = |key: &str, command, control, option, shift| Some(KeyCombination { key: key.into(), command, control, option, shift });
     let mut commands: Vec<_> = [
-        ("settings", "Settings…", "Ararat", "Open settings for the shown space.", key(",", true, false, false)),
-        ("quit", "Quit Ararat Harness", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false)),
-        ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false)),
-        ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false)),
-        ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false)),
+        ("settings", "Settings…", "Ararat", "Open settings for the shown space.", key(",", true, false, false, false)),
+        ("quit", "Quit Ararat Harness", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false, false)),
+        ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false, false)),
+        ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false, false)),
+        ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false, false)),
         ("copy_link", "Copy Link", "Tabs", "Copy the selected tab's URL.", None),
-        ("cycle_tabs_next", "Next Recent Tab", "Tabs", "Switch to the next recent tab.", key("\t", false, true, false)),
-        ("cycle_tabs_previous", "Previous Recent Tab", "Tabs", "Switch to the previous recent tab.", key("\t", false, true, true)),
-        ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false)),
+        ("cycle_tabs_next", "Next Recent Tab", "Tabs", "Switch to the next recent tab.", key("\t", false, true, false, false)),
+        ("cycle_tabs_previous", "Previous Recent Tab", "Tabs", "Switch to the previous recent tab.", key("\t", false, true, false, true)),
+        ("focus_next_pane", "Focus Next Pane", "Tabs", "Focus the next split pane.", key("\u{f703}", true, false, true, false)),
+        ("focus_previous_pane", "Focus Previous Pane", "Tabs", "Focus the previous split pane.", key("\u{f702}", true, false, true, false)),
+        ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false, false)),
         ("duplicate", "Duplicate", "Tabs", "Duplicate the selected row.", None),
         ("new_folder", "New Folder", "Tabs", "Create a folder in pinned.", None),
         ("rename", "Rename", "Tabs", "Rename the selected row.", None),
         ("delete_folder", "Delete Folder", "Tabs", "Delete the selected folder.", None),
-        ("toggle_sidebar", "Toggle Sidebar", "View", "Show or hide the sidebar.", key("s", true, false, false)),
-        ("toggle_library", "Toggle Library", "View", "Show or hide the Library.", key("l", true, false, true)),
+        ("toggle_sidebar", "Toggle Sidebar", "View", "Show or hide the sidebar.", key("s", true, false, false, false)),
+        ("toggle_library", "Toggle Library", "View", "Show or hide the Library.", key("l", true, false, false, true)),
         // Chrome already performs the cache-bypassing reload at this key (IDC_RELOAD_BYPASSING_CACHE,
         // accelerators_cocoa.mm:95-97); the entry exists so the pane lists and rebinds it (U23 D6).
-        ("force_reload", "Force Reload", "View", "Reload the page, ignoring the cache.", key("r", true, false, true)),
+        ("force_reload", "Force Reload", "View", "Reload the page, ignoring the cache.", key("r", true, false, false, true)),
         ("reset_sidebar_width", "Reset Sidebar Width", "View", "Reset the sidebar width.", None),
     ].into_iter().map(|(id, title, menu, description, default_key)| Command {
         id: id.into(), title: title.into(), menu: menu.into(), description: description.into(), default_key,
     }).collect();
     commands.extend((1..=9).map(|n| Command {
         id: format!("show_space_{n}"), title: format!("Show Space {n}"), menu: "View".into(),
-        description: format!("Show space {n} in sidebar order."), default_key: key(&n.to_string(), false, true, false),
+        description: format!("Show space {n} in sidebar order."), default_key: key(&n.to_string(), false, true, false, false),
     }));
     commands.extend((1..=9).map(|n| Command {
         id: format!("move_to_space_{n}"), title: format!("Move to Space {n}"), menu: "Tabs".into(),

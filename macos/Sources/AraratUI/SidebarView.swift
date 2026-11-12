@@ -45,7 +45,7 @@ public final class SidebarView: NSView {
     private var scrollPageIndex: Int { libraryOpen ? -1 : createSpaceOpen ? snapshot.spaces.count : spaceIndex }
     public var onItemEdit: ((SidebarItemEdit, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
-    var pasteboard: NSPasteboard = .general
+    public var pasteboard: NSPasteboard = .general
     private(set) var renamingID: String?
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
@@ -136,6 +136,7 @@ public final class SidebarView: NSView {
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
+    public var focusedPane: (id: String, url: String)?
 
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
@@ -583,9 +584,10 @@ public final class SidebarView: NSView {
         let snapshot = keepingLookPreview(snapshot)
         let selected = Self.sidebarSelection(snapshot)
         let selectionChanged = selectedID != selected
+        let focusedPaneChanged = self.snapshot.selectedId != snapshot.selectedId
         if self.snapshot.spaces == snapshot.spaces {
             self.snapshot = snapshot
-            if selectionChanged { selectedID = selected; reload() }
+            if selectionChanged || focusedPaneChanged { selectedID = selected; reload() }
         }
         else { replaceSnapshot(snapshot) }
         library.update(archive: snapshot.archive)
@@ -746,11 +748,19 @@ public final class SidebarView: NSView {
 
     public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
     public func clickURLForCheck() { urlField.performClick(nil) }
+    public var urlHostForCheck: String { host.stringValue }
     @objc private func editURLClicked() { onEditURL?() }
     @objc private func copySelectedLink() {
-        guard let space = snapshotSpace,
-              let url = (space.favorites + space.pinned + space.today).first(where: { $0.id == selectedID })?.url else { return }
+        guard let url = selectedURL else { return }
         copyLink(url)
+    }
+    private var selectedURL: String? {
+        guard let space = snapshotSpace, let selectedID else { return nil }
+        let rows = space.favorites + space.pinned + space.today
+        guard rows.contains(where: { $0.id == selectedID }) else { return nil }
+        let member = snapshot.selectedId.flatMap { id in rows.first { $0.id == id } }
+        guard let member, Self.sidebarSelection(snapshot) == selectedID else { return rows.first { $0.id == selectedID }?.url }
+        return focusedPane?.id == member.id ? focusedPane?.url : member.url
     }
     private func copyLink(_ url: String) {
         pasteboard.clearContents()
@@ -1221,18 +1231,29 @@ public final class SidebarView: NSView {
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
-        copyLinkButton.isEnabled = selected?.url != nil
-        host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
+        let url = selected == nil ? nil : selectedURL
+        copyLinkButton.isEnabled = url != nil
+        host.stringValue = url.flatMap { URL(string: $0)?.host } ?? ""
         urlField.setAccessibilityValue(host.stringValue)
 
         reloadFavorites()
 
-        let ids = Set((pinned + today).map(\.id))
+        let allRows = pinned + today
+        let splitIDs = Set(allRows.filter { $0.kind == .split }.map(\.id))
+        let hidden = Set(allRows.filter { row in
+            var parent = row.parentId
+            while let ancestor = allRows.first(where: { $0.id == parent }) {
+                if splitIDs.contains(ancestor.id) { return true }
+                parent = ancestor.parentId
+            }
+            return false
+        }.map(\.id))
+        let ids = Set(allRows.map(\.id)).subtracting(hidden)
         for id in Array(rowViews.keys) where !ids.contains(id) { removeRow(id: id) }
         for id in Array(noTabsRows.keys) where !ids.contains(id) {
             noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
-        var ordered: [NSView] = pinned.map { listView(for: $0) }
+        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0) }
         if today.isEmpty {
             todayDivider.removeFromSuperview()
         } else {
@@ -1246,7 +1267,7 @@ public final class SidebarView: NSView {
         } else {
             newTabRow.removeFromSuperview()
         }
-        ordered.append(contentsOf: today.map { listView(for: $0) })
+        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0) })
         arrange(ordered, in: rows)
 
         if !privateWindow, dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
@@ -1374,6 +1395,13 @@ public final class SidebarView: NSView {
         view.update(row: row, selected: row.id == selectedID)
         view.crashed = crashedItems.contains(row.id)
         view.unread = unreadItems.contains(row.id)
+        if row.kind == .split {
+            let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
+            func leaves(_ id: String) -> [Row] {
+                all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
+            }
+            view.updateSegments(leaves(row.id), active: snapshot.selectedId, crashed: crashedItems)
+        } else { view.updateSegments([], active: nil) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -1451,16 +1479,14 @@ public final class SidebarView: NSView {
             performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
             return
         }
-        selectedID = row.id
         snapshot.selectedId = row.id
+        selectedID = Self.sidebarSelection(snapshot)
         reload()
         revealSelection()
         onSelect?(row)
     }
 
-    // R1/D2: a row's ✕ or middle click acts on the row that showed it (a split member closes
-    // only itself until U25c draws splits as one row); the row-less ⌘W resolves the split in
-    // the adapter.
+    // Why not close a member: the split is one row and ⌘W closes the split in the adapter.
     public enum RowCloseAction { case close, archive }
 
     public func closeTarget(for id: String) -> (id: String, action: RowCloseAction)? {

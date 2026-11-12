@@ -43,6 +43,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var keyWindowObserver: NSObjectProtocol?
     private var handoffGeneration = 0
     private var splitHandles: [String: SplitDividerView] = [:]
+    private let splitFocusRing = SplitFocusRingView()
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
     private var failureViews: [String: PageFailureView] = [:]
     private var displayedSelection: String?
@@ -60,6 +61,51 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
     public private(set) var rowStates: [String: RowState] = [:]
     public func setMuted(_ muted: Bool, item: String) { host?.setTabMuted(muted, itemId: item) }
+    public var canFocusPane: Bool {
+        guard let split = displayedSplit, let active = host?.activeItemId() else { return false }
+        return Self.nextPane(split, active: active, backwards: false)?.id != nil
+    }
+    public static func nextPane(_ split: SplitPane, active: String, backwards: Bool) -> SplitPane? {
+        func leaves(_ pane: SplitPane) -> [SplitPane] { pane.kind == .tab ? [pane] : pane.children.flatMap(leaves) }
+        let panes = leaves(split)
+        guard panes.count > 1, let index = panes.firstIndex(where: { $0.id == active }) else { return nil }
+        return panes[(index + (backwards ? panes.count - 1 : 1)) % panes.count]
+    }
+    public func focusPane(backwards: Bool) {
+        guard let host, let split = displayedSplit, let active = host.activeItemId() else { return }
+        let next = Self.nextPane(split, active: active, backwards: backwards)
+        if CommandLine.arguments.contains(where: { $0 == "--ararat-check=split-focus" || $0 == "--ararat-screen=split-focus" }) {
+            func leaves(_ pane: SplitPane) -> [String] { pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves) }
+            let ids = leaves(split)
+            let selected = queue.sync { store?.snapshot(windowId: windowID).selectedId }
+            FileHandle.standardError.write(Data("ararat-trace: split-focus dispatch=\(backwards ? "previous" : "next") root=\(split.id) leaves=\(ids) index=\(ids.firstIndex(of: active).map(String.init) ?? "nil") target_index=\(next.flatMap { ids.firstIndex(of: $0.id) }.map(String.init) ?? "nil") target=\(next?.id ?? "nil") selected=\(selected ?? "nil") active=\(active)\n".utf8))
+        }
+        guard let next else { return }
+        let live = ((host.tabs() as? [any ARTabAPI]) ?? []).first(where: { $0.itemId == next.id })
+        guard let url = live?.url ?? next.url else { return }
+        select(id: next.id, url: url)
+    }
+    public func checkSplitFocus() -> (panes: [String: NSRect], ring: NSRect?, ringWidth: CGFloat, ringPassesHits: Bool, ringAbovePage: Bool, frozen: Bool, dividers: [NSRect], dividerEdgesHit: Bool) {
+        let panes = displayedSplit.map { SplitGeometry(root: $0, bounds: card.bounds).panes } ?? [:]
+        let parent = card.superview
+        let ring = splitFocusRing.superview === parent ? parent.map { $0.convert(splitFocusRing.frame, to: nil) } : nil
+        let siblings = parent?.subviews ?? []
+        let above = siblings.firstIndex(of: splitFocusRing).flatMap { ringIndex in siblings.firstIndex(of: card).map { ringIndex > $0 } } ?? false
+        return (panes.mapValues { card.convert($0, to: nil) }, ring, SplitFocusRingView.lineWidth,
+                splitFocusRing.hitTest(.zero) == nil,
+                above && !splitFocusRing.isHiddenOrHasHiddenAncestor && splitFocusRing.window != nil && splitFocusRing.layer?.isHidden == false && (splitFocusRing.layer?.opacity ?? 0) > 0, dragBaseline != nil,
+                splitHandles.values.map { card.convert($0.frame, to: nil) },
+                splitHandles.values.allSatisfy { view in
+                    let points = view.horizontal
+                        ? [NSPoint(x: view.frame.minX + 0.5, y: view.frame.midY), NSPoint(x: view.frame.maxX - 0.5, y: view.frame.midY)]
+                        : [NSPoint(x: view.frame.midX, y: view.frame.minY + 0.5), NSPoint(x: view.frame.midX, y: view.frame.maxY - 0.5)]
+                    return points.allSatisfy { card.hitTest(card.convert($0, to: card.superview)) === view }
+                })
+    }
+    public func checkSplitFactors() -> [Double] {
+        guard let id = displayedSelection else { return [] }
+        return queue.sync { store?.splitLayout(itemId: id)?.children.map(\.factor) ?? [] }
+    }
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
@@ -990,6 +1036,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             return
         }
         if !nearPrevious { appliedSplitFrames = geometry.panes }
+        if geometry.panes.count > 1, let active = host.activeItemId(), let frame = geometry.panes[active], let parent = card.superview {
+            splitFocusRing.frame = card.convert(frame, to: parent)
+            if splitFocusRing.superview !== parent { parent.addSubview(splitFocusRing, positioned: .above, relativeTo: card) }
+        } else { splitFocusRing.removeFromSuperview() }
         let tabs = Set(leafTabs(split))
         let missing = Set(geometry.panes.keys).subtracting(local)
         for key in splitPlaceholders.keys.filter({ !missing.contains($0) }) { splitPlaceholders.removeValue(forKey: key)?.removeFromSuperview() }
@@ -1017,6 +1067,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     private func clearSplitHandles() {
+        splitFocusRing.removeFromSuperview()
         for view in splitHandles.values { view.removeFromSuperview() }
         splitHandles.removeAll()
         for view in splitPlaceholders.values { view.removeFromSuperview() }

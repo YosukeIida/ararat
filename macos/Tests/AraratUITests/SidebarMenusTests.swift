@@ -175,7 +175,7 @@ func organizeRenameAndDeleteResolveFolderFocusOrSelectedTab() throws {
     do {
         let f = try MenuFixture(); defer { f.dispose() }
         f.sidebar.updateSelection(id: "tab-spec")
-        let unrelated = try f.view("tab-a")
+        let unrelated = try f.view("split-1")
         #expect(f.window.makeFirstResponder(unrelated))
         f.sidebar.organize(command: "rename")
         #expect(try f.view("tab-spec").renameField != nil && unrelated.renameField == nil)

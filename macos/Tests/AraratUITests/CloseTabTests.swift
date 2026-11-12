@@ -208,7 +208,7 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
     #expect(sidebar.selectedRowID == "d")
     #expect(closeViews(sidebar).first === survivor)
     let motion = try #require(survivor.layer?.animation(forKey: "row.close.move") as? CABasicAnimation)
-    #expect(abs(try #require(motion.fromValue as? Double)) == 123)
+    #expect(abs(try #require(motion.fromValue as? Double)) == 41)
     #expect(menu.performKeyEquivalent(with: key))
     #expect(store.snapshot(windowId: "test").spaces[0].today.isEmpty)
     #expect(store.snapshot(windowId: "test").selectedId == nil)

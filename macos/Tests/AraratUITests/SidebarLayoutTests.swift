@@ -57,6 +57,25 @@ func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
 }
 
 @Test @MainActor
+func focusedURLFollowsItsItemWhileSelectionChanges() {
+    let a = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "a", title: "A", url: "https://a.example/saved", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let b = Row(folderHasTabs: false, parentId: "today", siblingIndex: 1, collapsed: false, id: "b", title: "B", url: "https://b.example/saved", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 2, profileKey: "default", pinnedId: "pinned", todayId: "today", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [a, b])
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: "a", spaces: [space])
+    let sidebar = SidebarView(snapshot: snapshot)
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("split-url-\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    sidebar.pasteboard = pasteboard
+    sidebar.focusedPane = ("a", "https://live-a.example/path")
+    sidebar.update(snapshot: snapshot)
+    #expect(sidebar.urlHostForCheck == "live-a.example")
+    #expect(sidebar.selectRow(id: "b"))
+    #expect(sidebar.urlHostForCheck == "b.example")
+    sidebar.checkClickCopyLink()
+    #expect(pasteboard.string(forType: .string) == b.url)
+}
+
+@Test @MainActor
 func selectedHostTracksVisibleSpace() {
     let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Spec", url: "https://docs.example.com/spec", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
@@ -93,6 +112,43 @@ func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
             #expect(icon.image?.symbolConfiguration == NSImage.SymbolConfiguration(pointSize: 16, weight: .regular))
         }
     }
+}
+
+@Test @MainActor
+func splitSegmentsSelectTheirPane() {
+    let split = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
+    let members = ["a", "b", "c"].map { id in
+        Row(folderHasTabs: false, parentId: "split", siblingIndex: 0, collapsed: false, id: id, title: id, url: "https://\(id).example", depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    }
+    var chosen: String?
+    let view = SidebarRowView(row: split, selected: true) { chosen = $0.id }
+    view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
+    view.updateSegments(members, active: "b")
+    view.layoutSubtreeIfNeeded()
+    let buttons = descendants(of: view).compactMap { $0 as? NSButton }.filter { ["a", "b", "c"].contains($0.title) }
+    #expect(buttons.map(\.title) == ["a", "b", "c"])
+    buttons[2].performClick(nil)
+    #expect(chosen == "c")
+    let icon = view.subviews.compactMap { $0 as? NSImageView }.first!
+    #expect(!icon.isHidden)
+    for button in buttons {
+        let fill = button.layer?.sublayers?.first { $0.name == "split-segment-fill" }
+        #expect(fill != nil)
+        if let frame = fill?.frame {
+            #expect(frame.minX == 4 && frame.maxX == button.bounds.maxX - 4)
+            #expect(frame.minY == 4 && frame.maxY == button.bounds.maxY - 4)
+            #expect(view.convert(frame, from: button).minX > view.convert(icon.bounds, from: icon).maxX)
+        }
+    }
+    #expect(buttons[1].layer?.sublayers?.first { $0.name == "split-segment-fill" }?.backgroundColor != buttons[0].layer?.sublayers?.first { $0.name == "split-segment-fill" }?.backgroundColor)
+    #expect(buttons[1].accessibilityLabel() == "Pane 2 of 3: b")
+    #expect(buttons[1].isAccessibilitySelected())
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: "b", spaces: [
+        SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "pinned", todayId: "today", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [split] + members)
+    ]))
+    let rows = descendants(of: sidebar).compactMap { $0 as? SidebarRowView }
+    #expect(rows.map { $0.row.id } == ["split"])
+    #expect(descendants(of: sidebar).compactMap { $0 as? NSButton }.filter { ["a", "b", "c"].contains($0.title) }.count == 3)
 }
 
 @Test @MainActor

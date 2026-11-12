@@ -221,6 +221,13 @@ bool AraratIsKeyboardShortcut(const input::NativeWebKeyboardEvent& event) {
   if (!native || !EventUsesPerformKeyEquivalent(native)) return false;
   int command = CommandForKeyEvent(native).chrome_command;
   if (command == -1) command = DelayedWebContentsCommandForKeyEvent(native);
+  if (command == IDC_SELECT_NEXT_TAB || command == IDC_SELECT_PREVIOUS_TAB) {
+    NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
+    [menu update];
+    NSMenuItem* item = [menu cr_menuItemForKeyEquivalentEvent:native];
+    NSString* name = command == IDC_SELECT_NEXT_TAB ? @"focus_next_pane" : @"focus_previous_pane";
+    if (!item.enabled || ![item.identifier isEqualToString:name]) return false;
+  }
   return command != -1;
 }
 
@@ -1714,6 +1721,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   else if (command == IDC_OPTIONS) name = @"settings";
   else if (command == IDC_CYCLE_TO_NEXT_TAB) name = @"cycle_tabs_next";
   else if (command == IDC_CYCLE_TO_PREV_TAB) name = @"cycle_tabs_previous";
+  else if (command == IDC_SELECT_NEXT_TAB) name = @"focus_next_pane";
+  else if (command == IDC_SELECT_PREVIOUS_TAB) name = @"focus_previous_pane";
   else if (command == IDC_RELOAD_BYPASSING_CACHE) {
     NSEvent* event = NSApp.currentEvent;
     if (event.type == NSEventTypeKeyDown) {
@@ -1724,7 +1733,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     name = @"force_reload";
   }
   if (!name) return NO;
-  if ((command == IDC_CYCLE_TO_NEXT_TAB || command == IDC_CYCLE_TO_PREV_TAB) && NSApp.currentEvent.type == NSEventTypeKeyDown) {
+  if ((command == IDC_CYCLE_TO_NEXT_TAB || command == IDC_CYCLE_TO_PREV_TAB || command == IDC_SELECT_NEXT_TAB || command == IDC_SELECT_PREVIOUS_TAB) && NSApp.currentEvent.type == NSEventTypeKeyDown) {
     NSMenu* menu = [NSApp.mainMenu itemWithTag:0x4152434d].submenu;
     if (![[menu cr_menuItemForKeyEquivalentEvent:NSApp.currentEvent].identifier isEqualToString:name]) return YES;
   }
@@ -2463,6 +2472,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
+      [screen isEqualToString:@"split-focus"] ||
       [screen isEqualToString:@"header"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
