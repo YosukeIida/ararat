@@ -19,14 +19,14 @@ final class DownloadsCheck {
   var privatePass = 0
   var privateBefore: Set<String> = []
   static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_no_list", "private_close_regular_intact"]
-  static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight"]
+  static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = names(screen: screen)
     return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
             "failed_conditions": names.filter { conditions[$0] != true }, "wait": waitName,
             "images": images, "directory": directory, "slow_id": slowID, "complete_id": completeID,
-            "resume_id": resumeID, "private_pass": privatePass,
+            "resume_id": resumeID, "private_pass": privatePass, "condition_notes": ["hover_list": "0.2 second hover timer driven through the test seam; no physical cursor"],
             "unverified": ["dangerous and scanning verdicts: no deterministic fixture", "history restoration across relaunch: list rule is covered by Swift unit tests", "private manager observer destruction is not directly instrumented"]]
   }
   func mark(_ name: String, _ value: Bool = true) {
@@ -112,17 +112,19 @@ extension Runtime {
       start("slow-download")
       browserCheckPhase = 3
     case 3:
+      if screen && check.conditions["capture_flight"] == nil {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+          check.mark("capture_flight", state["flight"] as? Bool == false && capture("reduced-motion", window: window))
+        } else if state["flight"] as? Bool == true {
+          check.mark("capture_flight", capture("flight", window: window))
+        }
+      }
       let item = find("fixture.bin")
       guard number(item, "received") > 0, state["progress"] as? String != "none", state["ring_visible"] as? Bool == true else { wait("slow download and ring"); return }
       check.slowID = itemID(item); check.received = number(item, "received")
       check.mark("started"); check.mark("ring_running")
       check.mark("running_actions_safe", actions(item).contains("cancel") && !actions(item).contains("remove") && !actions(item).contains("open"))
       if screen {
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-          check.mark("capture_flight", state["flight"] as? Bool == false && capture("reduced-motion", window: window))
-        } else {
-          check.mark("capture_flight", state["flight"] as? Bool == true && capture("flight", window: window))
-        }
         check.mark("capture_ring", capture("ring", window: window))
       }
       guard clickLibrary() else { fail("cannot post downloads click"); return }
@@ -130,7 +132,11 @@ extension Runtime {
     case 4:
       guard state["list"] as? Bool == true else { wait("click popover"); return }
       check.mark("click_list"); check.mark("popover_first", state["first"] as? String == "Open Library")
-      if screen { check.mark("capture_popover", sidebar.downloadsCheckPopoverWindow.map { capture("popover", window: $0) } ?? false) }
+      if screen {
+        check.mark("popover_inside_above", state["popover_inside_above"] as? Bool == true)
+        check.mark("popover_readable", state["popover_readable"] as? Bool == true)
+        check.mark("capture_popover", sidebar.downloadsCheckPopoverWindow.map { capture("popover", window: $0) } ?? false)
+      }
       check.rowIdentity = (state["rows"] as? [String: UInt])?[check.slowID]
       check.received = number(find("fixture.bin"), "received")
       browserCheckPhase = 5
