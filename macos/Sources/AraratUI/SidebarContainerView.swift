@@ -21,8 +21,9 @@ public final class SidebarContainerView: NSView {
     private var toastUndoConstraints: [NSLayoutConstraint] = []
     private var toastGeneration = 0
     public var checkToastAnnouncement: ((String) -> Void)?
-    public var checkToastState: (visible: Bool, frame: NSRect, page: NSRect, generation: Int) {
-        ( !toast.isHidden, toast.frame, page.frame, toastGeneration )
+    public var pageCard: NSView { page }
+    public var checkToastState: (visible: Bool, frame: NSRect, page: NSRect, generation: Int, message: String) {
+        ( !toast.isHidden, toast.frame, page.frame, toastGeneration, toastLabel.stringValue )
     }
     public let findBar = FindBarView()
     private var findPageRect: NSRect?
@@ -274,6 +275,11 @@ public final class SidebarContainerView: NSView {
         showToast("Link copied", seconds: 2, action: nil)
     }
 
+    /// U26e pass 4: the same host for one more message ("Screenshot copied"), without Undo.
+    public func showToast(_ message: String) {
+        showToast(message, seconds: 2, action: nil)
+    }
+
     public func showTabsCleared(undo: @escaping () -> Void) {
         showToast("Tabs cleared", seconds: 5, action: undo)
     }
@@ -318,6 +324,7 @@ public final class SidebarContainerView: NSView {
         toast.alphaValue = 1
         toast.isHidden = false
         needsLayout = true
+        layoutSubtreeIfNeeded()
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             toast.alphaValue = 0
             NSAnimationContext.runAnimationGroup { context in
@@ -345,7 +352,12 @@ public final class SidebarContainerView: NSView {
     }
 
     private func layoutToast() {
-        let width: CGFloat = toastUndo.isHidden ? 144 : 200
+        // U26d part 2 sizes an Undo toast at 200 pt; U26e pass 4 lets the text set the width,
+        // on the 8 pt grid, with the Undo button's extra room when it is shown.
+        let text = toastLabel.fittingSize.width
+        let minimum: CGFloat = toastUndo.isHidden ? 144 : 200
+        let extra: CGFloat = toastUndo.isHidden ? 32 : 88
+        let width = max(minimum, ceil((text + extra) / 8) * 8)
         toast.frame = NSRect(x: page.frame.midX - width / 2, y: page.frame.maxY - 56, width: width, height: 40)
     }
 

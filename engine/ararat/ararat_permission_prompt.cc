@@ -55,8 +55,10 @@ CheckState& GetCheckState() {
 bool IsPermissionCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   return command->GetSwitchValueASCII("ararat-check") == "permissions" ||
+         command->GetSwitchValueASCII("ararat-check") == "site-controls" ||
          command->GetSwitchValueASCII("ararat-screen") == "prompts" ||
          command->GetSwitchValueASCII("ararat-screen") == "dialogs" ||
+         command->GetSwitchValueASCII("ararat-screen") == "site-controls" ||
          command->GetSwitchValueASCII("ararat-check") == "keyboard" ||
          command->GetSwitchValueASCII("ararat-screen") == "keyboard";
 }

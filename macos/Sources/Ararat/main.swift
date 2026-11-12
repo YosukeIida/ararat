@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -73,8 +73,8 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
   }
 }
 
-if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" }) {
-  exit(runRelaunchDriver(String(check.dropFirst(15))))
+if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" }) {
+  exit(runRelaunchDriver(check == "--ararat-check=relaunch-pins" ? "pins" : String(check.dropFirst(15))))
 }
 
 enum Launcher {
@@ -212,6 +212,17 @@ func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any
           "check_flags": checkCoverageFlags(arguments),
           "compositor": arguments.contains("--ararat-compositor=c2") ? "c2" : "c1",
           "requested_direction": arguments.contains("--force-ui-direction=rtl") ? "rtl" : "default"]
+}
+
+// Why not compare every record: the page-only popup cannot write workspace rows, but the
+// regular window's own device-local Window/LastSelected rows commit on their one-second batch,
+// so a whole-table compare flakes. Those two kinds are excluded; every workspace kind is not.
+func pageOnlyRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
+  guard let before, let after else { return false }
+  func stable(_ rows: [[String]]) -> [[String]] {
+    rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
+  }
+  return stable(before) == stable(after)
 }
 
 func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
@@ -670,6 +681,22 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var downloadCloseConditions: [String: Bool] = [:]
   var downloadsCheck: DownloadsCheck?
   var toastsCheck: ToastsCheck?
+  var siteControlsCheck: SiteControlsCheck?
+  var extensionActionsCheck: ExtensionActionsCheck?
+  var pinsIsolationChild: Runtime?
+  var siteFixture: SiteFixtureServer?
+  var siteFixturePorts: SiteFixtureServer.Ports?
+  var siteFixtureError: String?
+  // U26e: the focused site snapshot and the extension action list both come from the engine's
+  // callbacks; the app only mirrors them into the UI and the checks.
+  var siteState: SiteState?
+  var siteControls: SiteControlsPopover?
+  var siteOverlay: SiteCaptureOverlay?
+  var siteOverlayDocument = ""
+  var lastExtensionAnchor: NSRect?
+  var extensionItems: [ExtensionActionItem] = []
+  var captureError = ""
+  var lastSiteFingerprint = ""
   var downloadCloseFallback = false
   var errorPageConditions: [String: Bool] = [:]
   var errorPageImages: [String: String] = [:]
@@ -790,10 +817,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "sidebar-rows", "folder-empty", "today", "space-name", "toasts"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "site-controls", "ext-actions"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "sidebar-rows", "folder-empty", "today", "space-name", "toasts"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "site-controls", "ext-actions"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -824,6 +851,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "downloads" { browserCheckMode = "screen-downloads" }
       if screenName == "toasts" { browserCheckMode = "screen-toasts" }
       if screenName == "private-window" { browserCheckMode = "screen-private-window" }
+      if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
+      if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
       if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "sidebar-rows"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -836,6 +865,29 @@ final class Runtime: NSObject, NSMenuItemValidation {
             case .failure(let error): self?.promptFixtureError = String(describing: error)
             }
           }
+        }
+      }
+      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" {
+        do {
+          let fixture = try SiteFixtureServer()
+          siteFixture = fixture
+          fixture.start { [weak self] result in
+            DispatchQueue.main.async {
+              switch result {
+              case .success(let ports):
+                self?.siteFixturePorts = ports
+                FileHandle.standardError.write(Data("ararat-trace: site-fixture plain=\(ports.plain) secure=\(ports.secure)\n".utf8))
+              case .failure(let error):
+                self?.siteFixtureError = String(describing: error)
+                FileHandle.standardError.write(Data("ararat-trace: site-fixture failed \(error)\n".utf8))
+              }
+            }
+          }
+        } catch {
+          // The check reports this as its named `fixture` condition instead of a
+          // startup failure the harness cannot attribute.
+          siteFixtureError = String(describing: error)
+          FileHandle.standardError.write(Data("ararat-trace: site-fixture startup \(error)\n".utf8))
         }
       }
     }
@@ -967,6 +1019,18 @@ final class Runtime: NSObject, NSMenuItemValidation {
     container.extensionActions = { [weak host] in host?.extensionActions() ?? [] }
     container.onExtensionAnchor = { [weak host] rect in host?.setExtensionAnchor(rect) }
     container.onExtensionAction = { [weak host] id in host?.runExtensionAction(id) }
+    sidebar.onSiteControls = { [weak self, weak container] rect in
+      guard let self, let container else { return }
+      self.showSiteControls(rect, in: container)
+    }
+    sidebar.onExtensionAction = { [weak self] item in self?.invokeExtensionAction(item) }
+    sidebar.onExtensionMenu = { [weak self] item in self?.extensionMenu(item) }
+    sidebar.onExtensionAnchor = { [weak self, weak host] rect in
+      self?.lastExtensionAnchor = rect
+      host?.setExtensionAnchor(rect)
+    }
+    adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
+    adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
       guard self?.host?.isClosing() != true, self?.host?.isClosingAll() != true else { return }
       self?.snapshot = snapshot
@@ -1032,6 +1096,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.commandPresenter?.close(restoreFocus: false)
       self?.tabSwitcher?.cancel()
+      // S1: a region selection does not outlive the window it drew in.
+      self?.siteOverlay?.cancel()
     }
     let actions = SidebarActions()
     actions.onSelect = { [weak self, weak adapter] row in
@@ -1088,6 +1154,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     actions.onCreatePageChanged = { [weak self] in self?.container?.selectionChanged() }
     actions.bind(to: sidebar)
     adapter.attach(host)
+    refreshSiteState()
+    refreshExtensionActions()
     if session == nil && adoptedWindow { adapter.restoreSelection() }
     if session == nil && !adoptedWindow { running.finishCrashRecovery?() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
@@ -1715,6 +1783,208 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  // MARK: U26e pass 4: site controls
+
+  func refreshSiteState() {
+    guard hasUsableHost else { return }
+    let state = adapter?.siteState()
+    siteState = state
+    sidebar?.siteControlsBlocked = state?.blocked ?? false
+    // S1: a navigation or tab switch while the region overlay is up cancels the selection.
+    // A nil snapshot (last tab closed) counts as gone too.
+    if let overlay = siteOverlay, state?.document != siteOverlayDocument {
+      overlay.cancel()
+    }
+    let fingerprint = Self.siteFingerprint(state)
+    if fingerprint != lastSiteFingerprint {
+      lastSiteFingerprint = fingerprint
+      if let state, let controls = siteControls, controls.isShown { controls.reload(model: state) }
+    }
+  }
+
+  static func siteFingerprint(_ state: SiteState?) -> String {
+    guard let state else { return "" }
+    let rows = state.permissions.map { row in
+      "\(row.type)=\(row.setting?.title ?? "-")/\(row.mutable ? 1 : 0)/\(row.allowed.count)"
+    }
+    return "\(state.document)|\(state.security)|\(state.blocked)|\(state.isInternal)|\(rows.joined(separator: ","))"
+  }
+
+  func showSiteControls(_ windowRect: NSRect, in container: SidebarContainerView) {
+    guard hasUsableHost else { return }
+    refreshSiteState()
+    guard let state = siteState else { return }
+    let anchor = container.convert(windowRect, from: nil)
+    let controls: SiteControlsPopover
+    if let existing = siteControls {
+      controls = existing
+    } else {
+      controls = SiteControlsPopover()
+      controls.onCaptureRegion = { [weak self] model in self?.beginRegionCapture(model) }
+      controls.onCaptureFullPage = { [weak self] model in self?.captureFullPage(model) }
+      controls.onPermissionChange = { [weak self] _, request in self?.changePermission(request) ?? false }
+      controls.onClose = { [weak self] in self?.adapter?.closeSiteControls() }
+      controls.hostWindow = { [weak host] in host?.window() }
+      siteControls = controls
+    }
+    if controls.isShown {
+      controls.close()
+      return
+    }
+    controls.present(relativeTo: anchor, of: container, model: state)
+  }
+  @discardableResult
+  func changePermission(_ request: [String: Any]) -> Bool {
+    let changed = adapter?.changeSitePermission(request) ?? false
+    refreshSiteState()
+    return changed
+  }
+
+  func beginRegionCapture(_ model: SiteState) {
+    guard siteOverlay == nil, let container, hasUsableHost else { return }
+    // The overlay covers the focused pane only: in a split the page view is offset inside the
+    // page card, and a selection outside it would be clipped by the engine anyway.
+    let cardBounds = container.pageCard.bounds
+    var frame = cardBounds
+    if let native = focusedPageView(), native.window === container.window {
+      let paneFrame = container.pageCard.convert(native.bounds, from: native)
+      if !paneFrame.isEmpty { frame = paneFrame.intersection(cardBounds) }
+    }
+    let overlay = SiteCaptureOverlay(frame: frame)
+    overlay.autoresizingMask = []
+    overlay.onFinish = { [weak self, weak overlay] rect in
+      guard let self, let overlay else { return }
+      // Convert while the view is still attached: a detached view has no window, so its
+      // convert(_:to: nil) would return points in the view's own root space.
+      let inWindow: NSRect? = rect.map { overlay.convert($0, to: nil) }
+      overlay.removeFromSuperview()
+      self.siteOverlay = nil
+      self.siteOverlayDocument = ""
+      guard let inWindow, rect != nil, let native = self.focusedPageView() else { return }
+      // The engine takes the page view's own points with the origin at its top left.
+      let local = native.convert(inWindow, from: nil)
+      let flipped = NSRect(x: local.minX, y: native.bounds.height - local.maxY,
+                           width: local.width, height: local.height)
+      self.adapter?.captureRegion(flipped, document: model.document) { [weak self] png, error in
+        self?.finishCapture(png, error: error, mode: "region")
+      }
+    }
+    // The engine removes non-page children of pageCard while synchronizing tabs.
+    container.addSubview(overlay)
+    overlay.frame = container.convert(frame, from: container.pageCard)
+    siteOverlay = overlay
+    siteOverlayDocument = model.document
+  }
+
+  func focusedPageView() -> NSView? {
+    guard let host, let active = host.activeItemId(),
+          let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active }) else { return nil }
+    return tab.view
+  }
+
+  func captureFullPage(_ model: SiteState) {
+    guard hasUsableHost else { return }
+    adapter?.captureFullPage(document: model.document) { [weak self] png, error in
+      self?.finishCapture(png, error: error, mode: "full")
+    }
+  }
+
+  func finishCapture(_ png: Data?, error: String?, mode: String) {
+    guard let png, let image = NSImage(data: png) else {
+      captureError = error ?? "failed"
+      // S3: every named failure is visible; only a user cancel is silent.
+      let text = error == "tooLarge" ? "The page is too large to capture" : "The page couldn't be captured"
+      container?.showToast(text)
+      FileHandle.standardError.write(Data("ararat-trace: site-capture mode=\(mode) error=\(error ?? "failed")\n".utf8))
+      return
+    }
+    captureError = ""
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setData(png, forType: .png)
+    container?.showToast("Screenshot copied")
+    FileHandle.standardError.write(Data("ararat-trace: site-capture mode=\(mode) ok=1 size=\(Int(image.size.width))x\(Int(image.size.height)) pasteboard=\(pasteboard.data(forType: .png)?.count ?? 0)\n".utf8))
+  }
+
+  // MARK: U26e pass 5: extension actions
+
+  func refreshExtensionActions() {
+    guard hasUsableHost else { return }
+    extensionItems = adapter?.extensionActions(iconSize: 16) ?? []
+    sidebar?.extensionActions = extensionItems
+  }
+
+  func invokeExtensionAction(_ item: ExtensionActionItem) {
+    guard hasUsableHost else { return }
+    adapter?.runExtensionAction(item.id)
+  }
+
+  func extensionMenu(_ item: ExtensionActionItem) -> NSMenu {
+    let menu = NSMenu()
+    // AppKit would re-enable a disabled item through its automatic validation; the engine's
+    // named refused results already tell us which items cannot act.
+    menu.autoenablesItems = false
+    let pin = NSMenuItem(title: item.pinned ? "Unpin" : "Pin",
+                         action: #selector(menuPinExtension(_:)), keyEquivalent: "")
+    pin.target = self
+    pin.representedObject = item.id
+    pin.isEnabled = item.pinMutable
+    menu.addItem(pin)
+    menu.addItem(.separator())
+    let manage = NSMenuItem(title: "Manage Extension",
+                            action: #selector(menuManageExtension(_:)), keyEquivalent: "")
+    manage.target = self
+    manage.representedObject = item.id
+    manage.isEnabled = adapter?.extensionManagementURL(item.id) != nil
+    menu.addItem(manage)
+    let remove = NSMenuItem(title: "Remove…",
+                            action: #selector(menuRemoveExtension(_:)), keyEquivalent: "")
+    remove.target = self
+    remove.representedObject = item.id
+    remove.isEnabled = item.removable
+    menu.addItem(remove)
+    return menu
+  }
+
+  @objc func menuPinExtension(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String,
+          let item = extensionItems.first(where: { $0.id == id }) else { return }
+    pinExtension(id, pinned: !item.pinned)
+  }
+
+  @objc func menuManageExtension(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    manageExtension(id)
+  }
+
+  @objc func menuRemoveExtension(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    removeExtension(id)
+  }
+
+  func pinExtension(_ identifier: String, pinned: Bool) {
+    let before = extensionItems.first(where: { $0.id == identifier })?.pinned
+    let result = adapter?.setExtensionPinned(identifier, pinned: pinned) ?? "unknown"
+    refreshExtensionActions()
+    let after = extensionItems.first(where: { $0.id == identifier })?.pinned
+    FileHandle.standardError.write(Data("ararat-trace: ext-pin id=\(identifier) pinned=\(pinned) result=\(result) before=\(before.map { "\($0)" } ?? "nil") after=\(after.map { "\($0)" } ?? "nil")\n".utf8))
+  }
+
+  func manageExtension(_ identifier: String) {
+    guard hasUsableHost, let host, let url = adapter?.extensionManagementURL(identifier) else { return }
+    // Pass 3 review S1: the shown space's existing new-tab command path, captured at invocation.
+    adapter?.openCommandURL(url, expectedSpace: snapshot.shownSpaceId, profile: host.profileDirectory())
+  }
+
+  func removeExtension(_ identifier: String) {
+    guard hasUsableHost else { return }
+    adapter?.removeExtension(identifier) { [weak self] result, detail in
+      FileHandle.standardError.write(Data("ararat-trace: ext-remove id=\(identifier) result=\(result) detail=\(detail)\n".utf8))
+      self?.extensionActionsCheck?.removeResult = result
+      self?.refreshExtensionActions()
+    }
+  }
+
   func openCommandBar(_ requested: CommandBarMode) {
     guard hasUsableHost, let host, let adapter, let workspace else { return }
     commandPresenter?.close()
@@ -1907,7 +2177,169 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   if mode == "popup", (6...10).contains(phase) { devtools() } else { regular() }
 }
 
+  /// U26e pass 5: the relaunch-pins driver's first run pins the fixture action through Chrome's
+  /// per-profile prefs and commits them, then prints the ready line the driver waits for.
+  func pinsSeedTick(_ host: any ARWindowHostAPI) {
+    let id = "kmgaadhbnkendcanjninlfmfgehagggl"
+    guard let item = extensionItems.first(where: { $0.id == id }) else { return }
+    switch browserCheckPhase {
+    case 0:
+      if item.pinned {
+        browserCheckPhase = 1
+      } else {
+        let result = adapter?.setExtensionPinned(id, pinned: true) ?? "unknown"
+        FileHandle.standardError.write(Data("ararat-trace: relaunch-pins seed pin result=\(result)\n".utf8))
+        browserCheckPhase = result == "done" ? 1 : 2
+      }
+    case 1:
+      refreshExtensionActions()
+      guard extensionItems.first(where: { $0.id == id })?.pinned == true else { return }
+      browserCheckPhase = 2
+      guard let symbol = dlsym(Launcher.handle, "AraratCheckCommitProfilePrefs") else {
+        finishBrowserCheck(ok: false, values: ["error": "missing profile prefs commit API"]); return
+      }
+      typealias Commit = @convention(c) (UnsafeRawPointer, @escaping @convention(block) (Bool) -> Void) -> Void
+      let commit = unsafeBitCast(symbol, to: Commit.self)
+      let profile = host.profileDirectory() as NSString
+      commit(Unmanaged.passUnretained(profile).toOpaque()) { done in
+        MainActor.assumeIsolated {
+          guard done else {
+            self.finishBrowserCheck(ok: false, values: ["error": "profile unavailable for prefs commit"]); return
+          }
+          let ready: [String: Any] = ["ready": true, "pinned": id]
+          if let data = try? JSONSerialization.data(withJSONObject: ready, options: [.sortedKeys]),
+             let line = String(data: data, encoding: .utf8) { print(line); fflush(stdout) }
+          self.finishBrowserCheck(ok: true, values: ["pinned": id, "profile": host.profileDirectory()])
+        }
+      }
+    default:
+      break
+    }
+  }
+
+  func pinsVerifyTick(_ host: any ARWindowHostAPI, expected: Bool) {
+    let id = "kmgaadhbnkendcanjninlfmfgehagggl"
+    let isolationRun = CommandLine.arguments.contains("--ararat-relaunch-mode=pins-isolated")
+    if isolationRun {
+      pinsIsolationTick(host, id: id)
+      return
+    }
+    let profile = host.profileDirectory()
+    guard let item = extensionItems.first(where: { $0.id == id }) else {
+      if browserCheckAttempts > 300 {
+        finishBrowserCheck(ok: false, values: ["error": "extension fixture action missing", "profile": profile])
+      }
+      return
+    }
+    if browserCheckPhase == 0 { browserCheckPhase = 1 }
+    guard item.pinned == expected else {
+      if browserCheckAttempts > 300 {
+        finishBrowserCheck(ok: false, values: ["pinned": item.pinned, "expected": expected, "profile": profile])
+      }
+      return
+    }
+    finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": profile,
+                                          "profile_isolation_verified": false])
+  }
+
+  /// N2: run 3 must really test Profile 1. `--profile-directory` alone does not move the host
+  /// (the shown space picks the profile), so this opens a second window through the same
+  /// session and loads Profile 1 into it, then compares the two profiles' pin state. A window
+  /// that cannot load Profile 1 fails with the named `profile_isolation` condition.
+  func pinsIsolationTick(_ host: any ARWindowHostAPI, id: String) {
+    let startupProfile = host.profileDirectory()
+    if browserCheckAttempts % 20 == 0 {
+      let childProfile = pinsIsolationChild?.host?.profileDirectory() ?? "nil"
+      let childPinned = pinsIsolationChild?.extensionItems.first(where: { $0.id == id }).map { "\($0.pinned)" } ?? "nil"
+      let defaultPinned = extensionItems.first(where: { $0.id == id }).map { "\($0.pinned)" } ?? "nil"
+      FileHandle.standardError.write(Data("ararat-trace: relaunch-pins isolation phase=\(browserCheckPhase) attempts=\(browserCheckAttempts) profile=\(startupProfile) child=\(pinsIsolationChild != nil) child_profile=\(childProfile) child_pinned=\(childPinned) default_pinned=\(defaultPinned)\n".utf8))
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard let startupItem = extensionItems.first(where: { $0.id == id }) else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "extension fixture action missing in the verify window",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      if startupProfile == "Profile 1" {
+        // Chromium honoured --profile-directory; this window is the isolated one.
+        let passed = startupItem.pinned == false
+        finishBrowserCheck(ok: passed, values: ["profile_isolation": passed,
+                                                "profile_isolation_verified": passed,
+                                                "profile": startupProfile,
+                                                "profile1_pinned": startupItem.pinned])
+        return
+      }
+      guard startupItem.pinned else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Default profile lost its pin before the Profile 1 check",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      let child = Runtime()
+      child.root = self.root
+      do {
+        try child.start(session: adapter?.session)
+      } catch {
+        finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                               "error": "cannot start a Profile 1 window: \(error)",
+                                               "profile": startupProfile])
+        return
+      }
+      children.append(child)
+      guard child.host?.setProfileDirectory("Profile 1") == true else {
+        finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                               "error": "the window cannot load Profile 1",
+                                               "profile": startupProfile])
+        return
+      }
+      pinsIsolationChild = child
+      browserCheckPhase = 1
+    case 1:
+      guard let child = pinsIsolationChild, let childHost = child.host else { return }
+      let childProfile = childHost.profileDirectory()
+      guard childProfile == "Profile 1" else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Profile 1 window reports \(childProfile)",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      guard let profileItem = child.extensionItems.first(where: { $0.id == id }) else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Profile 1 window has no extension fixture action",
+                                                 "profile": childProfile])
+        }
+        return
+      }
+      let defaultPinned = extensionItems.first(where: { $0.id == id })?.pinned ?? false
+      let isolated = !profileItem.pinned
+      let passed = defaultPinned && isolated
+      finishBrowserCheck(ok: passed, values: ["profile_isolation": passed,
+                                              "profile_isolation_verified": passed,
+                                              "profile": childProfile,
+                                              "default_pinned": defaultPinned,
+                                              "profile1_pinned": profileItem.pinned])
+    default:
+      break
+    }
+  }
+
   func relaunchCheckTick(_ host: any ARWindowHostAPI, mode: String) {
+    let relaunchMode = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-relaunch-mode=") })
+      .map { String($0.dropFirst("--ararat-relaunch-mode=".count)) } ?? ""
+    if mode == "relaunch-seed", relaunchMode == "pins" { pinsSeedTick(host); return }
+    if mode == "relaunch-verify", relaunchMode == "pins" || relaunchMode == "pins-isolated" {
+      pinsVerifyTick(host, expected: relaunchMode == "pins")
+      return
+    }
     let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
     if mode == "relaunch-seed" {
       if browserCheckPhase == 1, browserCheckAttempts % 100 == 0 {
@@ -2014,7 +2446,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
-    if downloadsCheck?.capturing == true || toastsCheck?.capturing == true { return }
+    if downloadsCheck?.capturing == true || toastsCheck?.capturing == true || siteControlsCheck?.capturing == true || extensionActionsCheck?.capturing == true { return }
     if browserCheckPhase != browserCheckTracedPhase {
       browserCheckTracedPhase = browserCheckPhase
       FileHandle.standardError.write(Data("ararat-trace: browser-check=\(mode) phase=\(browserCheckPhase) tabs=\(host?.tabs().count ?? 0) children=\(children.count) popups=\(popups.count)\n".utf8))
@@ -2344,7 +2776,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window"].contains(mode) ? 900 : 300
+    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
@@ -2366,6 +2798,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
                              "private_live": PrivateWorkspaces.liveCount,
                              "images": PrivateWindowCheckImages.images]) { _, new in new }
       }
+      if mode == "site-controls" || mode == "screen-site-controls" { timeoutValues.merge((siteControlsCheck ?? SiteControlsCheck()).diagnostics(screen: mode == "screen-site-controls")) { _, new in new } }
+      if mode == "ext-actions" || mode == "screen-ext-actions" { timeoutValues.merge((extensionActionsCheck ?? ExtensionActionsCheck()).diagnostics(screen: mode == "screen-ext-actions")) { _, new in new } }
       finishBrowserCheck(ok: false, values: timeoutValues); return
     }
     if mode == "profiles", CommandLine.arguments.contains("--ararat-multiple-close-check"), host == nil,
@@ -2489,6 +2923,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "downloads" || mode == "screen-downloads" { downloadsCheckTick(host, screen: mode == "screen-downloads"); return }
     if mode == "toasts" || mode == "screen-toasts" { toastsCheckTick(host, screen: mode == "screen-toasts"); return }
     if mode == "private-window" || mode == "screen-private-window" { privateWindowCheckTick(host, screen: mode == "screen-private-window"); return }
+    if mode == "site-controls" || mode == "screen-site-controls" { siteControlsCheckTick(host, screen: mode == "screen-site-controls"); return }
+    if mode == "ext-actions" || mode == "screen-ext-actions" { extensionActionsCheckTick(host, screen: mode == "screen-ext-actions"); return }
     if mode == "errorpages" || mode == "screen-errorpages" { errorPagesCheckTick(host, screen: mode == "screen-errorpages"); return }
     if mode == "ext-windows" || mode == "screen-profiles" { extensionCheckTick(host, screen: mode == "screen-profiles"); return }
     if mode == "ext-windows-popup" { extensionPopupWindowCheckTick(host); return }
@@ -2577,12 +3013,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if mode == "screen-links", browserCheckPhase == 42, let popup = popups.first?.host,
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 43
     } else if mode == "screen-links", browserCheckPhase == 43, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["command_click": true, "context_menu": true, "popup_placed": true, "page_only_save": true,
                  "rows_unchanged": unchanged, "stock_browsers": host.checkStockBrowsers()])
@@ -6052,12 +6488,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if screen, browserCheckPhase == 62, let popup = popups.first?.host,
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 63
     } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
           "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
@@ -6880,12 +7316,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 63
     } else if browserCheckPhase == 63, let popup = popups.first?.host, popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 64
     } else if browserCheckPhase == 64, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       devtoolsResults["page_only_save"] = true
       devtoolsResults["app_popup"] = popup.checkIsExtensionAppPopup()
       devtoolsResults["rows_unchanged"] = unchanged
@@ -7360,6 +7796,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     protocolLaunchObserver = nil
     promptFixture?.stop()
     promptFixture = nil
+    siteFixture?.stop()
+    siteFixture = nil
     browserCheckTimer?.invalidate()
     browserCheckTimer = nil
     dockCheck?.stop()
@@ -7416,6 +7854,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-downloads" { result["check"] = "downloads"; result["screen"] = "downloads" }
     if browserCheckMode == "screen-toasts" { result["check"] = "toasts"; result["screen"] = "toasts" }
     if browserCheckMode == "screen-private-window" { result["check"] = "private-window"; result["screen"] = "private-window" }
+    if browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" {
+      let names = SiteControlsCheck.conditionNames(screen: browserCheckMode == "screen-site-controls")
+      result["check"] = "site-controls"
+      if browserCheckMode == "screen-site-controls" { result["screen"] = "site-controls" }
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, (siteControlsCheck?.conditions[$0] == true)) })
+      result["failed_conditions"] = names.filter { siteControlsCheck?.conditions[$0] != true }
+    }
+    if browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" {
+      let names = ExtensionActionsCheck.conditionNames(screen: browserCheckMode == "screen-ext-actions")
+      result["check"] = "ext-actions"
+      if browserCheckMode == "screen-ext-actions" { result["screen"] = "ext-actions" }
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, extensionActionsCheck?.conditions[$0] == true) })
+      result["failed_conditions"] = names.filter { extensionActionsCheck?.conditions[$0] != true }
+    }
     if browserCheckMode == "commandbar" || browserCheckMode == "screen-commandbar" {
       result["conditions"] = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
       result["failed_conditions"] = commandBarConditionNames.filter { commandBarConditions[$0] != true }
@@ -8094,6 +8546,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func shutdown() {
     commandPresenter?.close(restoreFocus: false)
+    siteOverlay?.removeFromSuperview()
+    siteOverlay = nil
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)
       promptScreenSeeded = false
@@ -8102,6 +8556,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     protocolLaunchObserver = nil
     promptFixture?.stop()
     promptFixture = nil
+    siteFixture?.stop()
+    siteFixture = nil
     browserCheckTimer?.invalidate()
     children.forEach { $0.shutdown() }
     children.removeAll()
@@ -8214,7 +8670,7 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
-  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window"].contains(name) ? 120 : 60
+  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "site-controls", "ext-actions"].contains(name) ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
   timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {
@@ -8223,6 +8679,9 @@ if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-ch
       "attempts_are_placeholder": true, "watchdog_seconds": watchdogSeconds]
     if name == "toasts" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the toasts check" }
     if name == "downloads" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the downloads check" }
+    if name == "site-controls" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the site-controls check" }
+    if name == "ext-actions" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the ext-actions check" }
+    if name == "private-window" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the private-window check" }
     if !screen { result.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { result["screen"] = name }
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
@@ -8255,7 +8714,7 @@ let checksPassed = MainActor.assumeIsolated {
     return runtime.finishQuitCheck(exitCode: result)
   }
   if let argument = CommandLine.arguments.first(where: {
-    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=ext-popup", "--ararat-check=ext-windows-popup", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=dialogs", "--ararat-screen=devtools", "--ararat-screen=extensions"].contains($0)
+    ["--ararat-check=quit", "--ararat-check=quit-cancel", "--ararat-check=close", "--ararat-check=newtab", "--ararat-check=popup", "--ararat-check=menu", "--ararat-check=empty", "--ararat-check=deferred", "--ararat-check=profiles", "--ararat-check=ext-windows", "--ararat-check=ext-popup", "--ararat-check=ext-windows-popup", "--ararat-check=incognito", "--ararat-check=permissions", "--ararat-check=dialogs", "--ararat-check=protocol", "--ararat-check=autofill", "--ararat-check=devtools", "--ararat-screen=quit", "--ararat-screen=links", "--ararat-screen=profiles", "--ararat-screen=prompts", "--ararat-screen=dialogs", "--ararat-screen=devtools", "--ararat-screen=extensions", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions"].contains($0)
   }) {
     Launcher.startupWatchdog?.cancel()
     let screen = argument.hasPrefix("--ararat-screen=")
