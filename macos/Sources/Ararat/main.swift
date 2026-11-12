@@ -1766,8 +1766,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
         self?.finishCapture(png, error: error, mode: "region")
       }
     }
-    container.pageCard.addSubview(overlay)
-    overlay.frame = frame
+    // The engine removes non-page children of pageCard while synchronizing tabs.
+    container.addSubview(overlay)
+    overlay.frame = container.convert(frame, from: container.pageCard)
     siteOverlay = overlay
     siteOverlayDocument = model.document
   }

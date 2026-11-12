@@ -13,6 +13,7 @@ public final class SiteCaptureOverlay: NSView {
     private var origin: NSPoint?
     private var tracking = false
     private var escapeMonitor: Any?
+    public var checkEscapeMonitorInstalled: Bool { escapeMonitor != nil }
 
     public override var isFlipped: Bool { true }
     public override var acceptsFirstResponder: Bool { true }

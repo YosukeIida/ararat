@@ -3,6 +3,19 @@ import AraratKit
 import Testing
 @testable import AraratUI
 
+@Test @MainActor
+func captureOverlayInstallsMonitorOnlyWhileAttached() {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let overlay = SiteCaptureOverlay(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+    #expect(!overlay.checkEscapeMonitorInstalled)
+    window.contentView?.addSubview(overlay)
+    #expect(overlay.window === window)
+    #expect(overlay.checkEscapeMonitorInstalled)
+    overlay.removeFromSuperview()
+    #expect(!overlay.checkEscapeMonitorInstalled)
+}
+
 private func permissionRow(type: String = "geolocation",
                            setting: Any? = ["kind": "geolocation", "approximate": "block", "precise": "block"],
                            mutable: Bool = true,

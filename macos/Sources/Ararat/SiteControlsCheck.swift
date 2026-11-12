@@ -82,7 +82,7 @@ extension Runtime {
             let rows = (state?.permissions ?? []).map {
                 "\($0.type):\($0.setting?.title ?? "-"):blockedBySite=\($0.siteSpecificBlock ? 1 : 0):mutable=\($0.mutable ? 1 : 0)"
             }.joined(separator: ",")
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) overlay_window=\(siteOverlay?.window?.windowNumber ?? -1) first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") blocked=\(check.blockedRow?.id ?? "nil") clean=\(check.cleanTab)")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) overlay_window=\(siteOverlay?.window?.windowNumber ?? -1) overlay_key=\(siteOverlay?.window?.isKeyWindow ?? false) monitor=\(siteOverlay?.checkEscapeMonitorInstalled ?? false) first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") blocked=\(check.blockedRow?.id ?? "nil") clean=\(check.cleanTab)")
         }
         func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
@@ -264,16 +264,11 @@ extension Runtime {
             guard findRow() != nil else { wait("permission row"); return }
             openPopover()
             browserCheckPhase = 10
-        case 9:
-            guard let row = check.blockedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
-                  sidebar.checkSiteControlsDot else { wait("blocked tab again"); return }
-            refreshSiteState()
-            guard findRow() != nil else { wait("permission row"); return }
-            openPopover()
-            browserCheckPhase = 10
         case 10:
-            guard let state = siteState, let row = state.permissions.first(where: { $0.type == "geolocation" }) else { wait("permission row snapshot"); return }
+            refreshSiteState()
+            guard let state = siteState, state.blocked, let row = state.permissions.first(where: { $0.type == "geolocation" }) else { wait("blocked permission snapshot"); return }
             check.mark("permission_row", row.setting?.isBlock == true && row.mutable)
+            openPopover()
             guard let controls = siteControls, controls.isShown else { wait("popover after block"); return }
             let rows = controls.checkPermissionRows
             guard let index = rows.firstIndex(where: { $0.type == "geolocation" }) else { wait("popover permission row"); return }
@@ -318,7 +313,7 @@ extension Runtime {
             guard let fresh = siteControls, fresh.isShown, fresh.checkClickAction("Screenshot a region") else { wait("region action"); return }
             browserCheckPhase = 15
         case 15:
-            guard let overlay = siteOverlay, overlay.superview === container.pageCard else { wait("region overlay"); return }
+            guard let overlay = siteOverlay, overlay.superview === container, overlay.window === window else { wait("region overlay"); return }
             if screen { check.mark("capture_overlay", capture("overlay")) }
             check.regionRect = NSRect(x: 40, y: 60, width: 200, height: 120)
             overlay.performCheckDrag(from: check.regionRect.origin,
@@ -412,14 +407,14 @@ extension Runtime {
                   controls.checkClickAction("Screenshot a region") else { wait("cancel overlay"); return }
             browserCheckPhase = 26
         case 26:
-            guard let overlay = siteOverlay else { wait("cancel overlay view"); return }
+            guard let overlay = siteOverlay, overlay.window === window, overlay.checkEscapeMonitorInstalled else { wait("attached overlay and escape monitor"); return }
             // S9/N4: the Esc path itself. A local monitor inside the overlay cancels wherever
             // the key goes; the page view refuses to resign first responder, so that is not an
             // assertion (the wait trace prints both classes).
             if !window.isKeyWindow { window.makeKeyAndOrderFront(nil) }
             guard window.isKeyWindow else { wait("key window for escape"); return }
             window.makeFirstResponder(overlay)
-            FileHandle.standardError.write(Data("ararat-trace: site-controls escape first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") overlay_window=\(overlay.window?.windowNumber ?? -1) key=\(window.isKeyWindow)\n".utf8))
+            FileHandle.standardError.write(Data("ararat-trace: site-controls escape first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") overlay_window=\(overlay.window?.windowNumber ?? -1) key=\(overlay.window?.isKeyWindow ?? false) monitor=\(overlay.checkEscapeMonitorInstalled)\n".utf8))
             guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                                                timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil,
