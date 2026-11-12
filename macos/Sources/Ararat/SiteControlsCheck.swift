@@ -163,7 +163,6 @@ extension Runtime {
             check.allowIndex = allow
             check.mark("menu_items", entry.items.contains("Allow") && entry.items.contains("Block")
                        && entry.items.contains("Ask") && entry.items.contains("Reset") && entry.current == "Block")
-            if screen { check.mark("capture_overlay", true) }
             guard allow >= 0, controls.checkChoosePermission(row: index, item: allow) else { wait("allow choice"); return }
             browserCheckPhase = 5
         case 5:
@@ -201,6 +200,7 @@ extension Runtime {
         case 9:
             guard let overlay = siteOverlay, overlay.superview === container.pageCard else { wait("region overlay"); return }
             let frame = overlay.frame
+            if screen { check.mark("capture_overlay", capture("overlay")) }
             check.regionRect = NSRect(x: 40, y: 60, width: 200, height: 120)
             overlay.performCheckDrag(from: check.regionRect.origin,
                                      to: NSPoint(x: check.regionRect.maxX, y: check.regionRect.maxY))

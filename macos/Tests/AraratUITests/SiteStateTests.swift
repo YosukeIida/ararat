@@ -83,6 +83,29 @@ func permissionMenuMapsMixedGeolocationPairsWithoutDuplicatingUniformTitles() {
 }
 
 @Test @MainActor
+func extensionActionRowUsesFavouriteColumnsAndOneRow() throws {
+    let icon = NSImage(size: NSSize(width: 16, height: 16))
+    func item(_ index: Int) throws -> ExtensionActionItem {
+        try #require(ExtensionActionItem([
+            "id": "a\(index)", "name": "Probe \(index)", "tooltip": "Probe", "icon": icon,
+            "enabled": true, "pinned": true, "pinMutable": true, "removable": true,
+            "badgeText": "", "badgeBackgroundColor": 0, "badgeTextColor": 0,
+        ]) as ExtensionActionItem?)
+    }
+    let row = ExtensionActionsRow(frame: NSRect(x: 0, y: 0, width: 224, height: 32))
+    row.columns = 4
+    row.update(items: try (0..<3).map(item))
+    row.layoutSubtreeIfNeeded()
+    #expect(row.checkRowHeight == 32)
+    let frames = row.checkFrames
+    #expect(frames.count == 3)
+    #expect(abs((frames["a0"]?.width ?? 0) - ((224 + 8) / 4 - 8)) <= 0.5)
+    #expect(frames.values.allSatisfy { $0.height == 32 })
+    #expect(ExtensionActionsStrip.width(for: 0) == 0)
+    #expect(ExtensionActionsStrip.width(for: 2) == 52)
+}
+
+@Test @MainActor
 func extensionActionItemParsesEngineFields() throws {
     let icon = NSImage(size: NSSize(width: 16, height: 16))
     let item = try #require(ExtensionActionItem([

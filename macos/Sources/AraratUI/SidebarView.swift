@@ -1074,18 +1074,32 @@ public final class SidebarView: NSView {
     public var checkSiteControlsFrame: NSRect { convert(siteControlsButton.bounds, from: siteControlsButton) }
     public var checkSiteControlsDot: Bool { siteControlsButton.showsBlockedDot }
     public func checkClickSiteControls() { siteControlsButton.performClick(nil) }
-    public var checkInFieldActionIDs: [String] { inFieldActions.checkItems }
-    public var checkRowActionIDs: [String] { actionsRow.items.map(\.id) }
+    public var checkInFieldActionIDs: [String] { inFieldActions.isHidden ? [] : inFieldActions.checkItems }
+    public var checkRowActionIDs: [String] { actionsRow.isHidden ? [] : actionsRow.items.map(\.id) }
     public var checkActionsRowFrame: NSRect { convert(actionsRow.bounds, from: actionsRow) }
     public var checkActionsRowHeight: CGFloat { actionsRow.isHidden ? 0 : actionsRow.checkRowHeight }
+    public var checkDefaultWidth: CGFloat { SidebarMetrics.defaultWidth }
+    /// The 32 pt tile width the overflow row uses: the favourites' column pitch for the
+    /// sidebar's current width.
+    public var checkActionTileExpectedWidth: CGFloat {
+        let width = bounds.width - 16
+        let columns = SidebarDragMetrics.favoriteColumns(width: width, slots: 4)
+        return (width + 8) / CGFloat(columns) - 8
+    }
     public var checkSiteControlsButton: SiteControlsButton { siteControlsButton }
     public func checkActionButton(_ id: String) -> ExtensionActionButton? {
-        inFieldActions.checkButton(id) ?? actionsRow.checkButton(id)
+        if !inFieldActions.isHidden, let button = inFieldActions.checkButton(id) { return button }
+        return actionsRow.checkButton(id)
     }
     public func checkExtensionMenu(_ id: String) -> NSMenu? {
         guard let item = extensionActions.first(where: { $0.id == id }), let button = checkActionButton(id) else { return nil }
         onExtensionAnchor?(button.anchorInWindow)
         return onExtensionMenu?(item)
+    }
+    public func checkPerformMenuCommand(_ id: String, title: String) -> Bool {
+        guard let menu = checkExtensionMenu(id), let item = menu.items.first(where: { $0.title == title }),
+              item.isEnabled, let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
     }
     public func checkPerformExtensionAction(_ id: String) {
         guard let item = extensionActions.first(where: { $0.id == id }), let button = checkActionButton(id) else { return }

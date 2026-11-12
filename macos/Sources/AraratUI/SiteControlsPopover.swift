@@ -74,7 +74,7 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
         controller.view = content
         popover.contentViewController = controller
         popover.contentSize = content.preferredSize
-        popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+        popover.show(relativeTo: rect, of: view, preferredEdge: .minY)
     }
 
     /// Keeps an open popover in step with a changed snapshot (a permission decision, a
