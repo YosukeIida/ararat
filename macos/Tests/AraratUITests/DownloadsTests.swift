@@ -3,8 +3,8 @@ import Testing
 import AraratKit
 @testable import AraratUI
 
-private func download(_ id: String, start: Double = 0, running: Bool = false, received: Int64 = 0, total: Int64 = 0, actions: [String] = [], restored: Bool = false, state: Int? = nil) -> [String: Any] {
-    ["id": id, "profile": "Default", "name": id, "state": state ?? (running ? 0 : 1), "running": running, "restored": restored,
+private func download(_ id: String, start: Double = 0, running: Bool = false, received: Int64 = 0, total: Int64 = 0, actions: [String] = [], restored: Bool = false, state: Int? = nil, profile: String = "Default") -> [String: Any] {
+    ["id": id, "profile": profile, "name": id, "state": state ?? (running ? 0 : 1), "running": running, "restored": restored,
      "start": start, "received": received, "total": total, "status": "", "actions": actions]
 }
 
@@ -116,3 +116,118 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(button.accessibilityValue() as? String == "Downloading, 42 %")
 }
 
+@Test @MainActor func libraryDownloadsIncludesRestoredAndFollowsProfileUpdates() throws {
+    let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 640, height: 600))
+    let model = DownloadsModel()
+    library.setDownloadsModel(model)
+    #expect(library.page == .archive)
+    library.showDownloads()
+    #expect(library.downloadsPage.emptyVisible)
+    model.update([download("old", start: 1, restored: true), download("new", start: 2, actions: ["show"])])
+    library.refreshDownloads()
+    #expect(library.downloadsPage.entries.map(\.id) == ["new", "old"])
+    #expect(!library.downloadsPage.emptyVisible)
+    model.update([download("other-profile", start: 3, profile: "Profile 1")])
+    library.refreshDownloads()
+    #expect(library.downloadsPage.entries.map(\.id) == ["other-profile"])
+    #expect(library.downloadsPage.entries.first?.profile == "Profile 1")
+    model.update([])
+    library.refreshDownloads()
+    #expect(library.downloadsPage.entries.isEmpty && library.downloadsPage.emptyVisible)
+}
+
+@Test @MainActor func libraryAndPopoverUseTheSameRowActions() throws {
+    let model = DownloadsModel()
+    var called: [String] = []
+    model.onAction = { action, id in called.append("\(id):\(action)"); return true }
+    model.update([download("one", actions: ["show", "cancel"])])
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    page.setModel(model)
+    page.layoutSubtreeIfNeeded()
+    let row = try #require(page.tableView(page.table, viewFor: page.table.tableColumns.first, row: 0) as? DownloadRowView)
+    try #require(row.actionButtons.first { $0.downloadAction == "cancel" }).performClick(nil)
+    #expect(called == ["one:cancel"])
+}
+
+@Test @MainActor func downloadsPageArrowAndTabNavigateRows() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    model.update([download("first", start: 2, actions: ["show", "cancel"]), download("second", start: 1, actions: ["open"])])
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    page.layoutSubtreeIfNeeded()
+    page.focusFirst()
+    func key(_ code: UInt16, _ text: String = "") throws {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+        window.firstResponder?.keyDown(with: event)
+    }
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadAction == "show")
+    try key(48, "\t")
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadAction == "cancel")
+    try key(125)
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "second")
+    try key(126)
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "first")
+}
+
+@Test @MainActor func downloadsPageKeepsLongHistoryInAVirtualTable() {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    model.update((0..<2000).map { download("item-\($0)", start: Double($0), restored: true) })
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    page.layoutSubtreeIfNeeded()
+    page.table.layoutSubtreeIfNeeded()
+    var visible = 0
+    page.table.enumerateAvailableRowViews { _, _ in visible += 1 }
+    #expect(page.table.numberOfRows == 2000)
+    #expect(visible < 30)
+}
+
+@Test @MainActor func libraryEntryPointsSelectTheRequestedPage() throws {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let model = DownloadsModel()
+    sidebar.setDownloadsModel(model)
+    sidebar.setLibraryOpen(true)
+    #expect(sidebar.libraryPage == "Archive")
+    try #require(sidebar.downloadsPopover).library.performClick(nil)
+    #expect(sidebar.libraryPage == "Downloads")
+    sidebar.setLibraryOpen(false)
+    sidebar.libraryButton.performClick(nil)
+    #expect(sidebar.libraryOpen && sidebar.libraryPage == "Archive")
+    try #require(sidebar.downloadsPopover).library.performClick(nil)
+    sidebar.setLibraryOpen(false)
+    sidebar.setLibraryOpen(true)
+    #expect(sidebar.libraryPage == "Archive")
+}
+
+@Test @MainActor func removingFocusedDownloadKeepsTheNearestRow() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    model.update([download("first", start: 3, actions: ["remove"]), download("middle", start: 2, actions: ["remove"]), download("last", start: 1, actions: ["remove"])])
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    page.layoutSubtreeIfNeeded()
+    page.focusFirst()
+    let down = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125))
+    window.firstResponder?.keyDown(with: down)
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "middle")
+    model.update([download("first", start: 3, actions: ["remove"]), download("last", start: 1, actions: ["remove"])])
+    page.refresh()
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "last")
+    model.update([download("first", start: 3, actions: ["remove"])])
+    page.refresh()
+    #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "first")
+    model.update([])
+    page.refresh()
+    #expect((window.firstResponder as? NSView)?.accessibilityLabel() == "Exit Library")
+}

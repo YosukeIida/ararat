@@ -3,7 +3,7 @@ import AraratKit
 
 @MainActor
 final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    enum Page: String { case archive = "Archive" }
+    enum Page: String { case archive = "Archive", downloads = "Downloads" }
     private(set) var page = Page.archive
     var onRestore: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
@@ -40,6 +40,9 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     private let search = ArchiveSearchField()
     private let back = SidebarDockButton()
     private let archiveButton = NSButton(title: Page.archive.rawValue, target: nil, action: nil)
+    let downloadsButton = NSButton(title: Page.downloads.rawValue, target: nil, action: nil)
+    let downloadsPage = DownloadsPageView(frame: .zero)
+    private let archiveContent = NSView()
     private let now: () -> Date
     private let calendar: Calendar
     private var archive: [ArchiveEntry] = []
@@ -58,12 +61,23 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         archiveButton.alignment = .left
         archiveButton.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
         archiveButton.setAccessibilityLabel("Archive page")
+        archiveButton.setAccessibilityValue("selected")
+        archiveContent.setAccessibilityLabel("Archive")
+        archiveContent.setAccessibilityElement(true)
+        archiveContent.setAccessibilityRole(.group)
         rail.addSubview(archiveButton)
+        downloadsButton.target = self
+        downloadsButton.action = #selector(showDownloads)
+        downloadsButton.isBordered = false
+        downloadsButton.alignment = .left
+        downloadsButton.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
+        downloadsButton.setAccessibilityLabel("Downloads page")
+        rail.addSubview(downloadsButton)
         let divider = NSView()
         divider.wantsLayer = true
         divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
         divider.setAccessibilityHidden(true)
-        let list = NSView()
+        let list = archiveContent
         let preferredWidth = list.widthAnchor.constraint(equalToConstant: SidebarMetrics.archiveListWidth)
         preferredWidth.priority = .defaultLow
         search.placeholderString = "Search Archived Tabs"
@@ -117,13 +131,18 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         back.setAccessibilityLabel("Exit Library")
         back.target = self
         back.action = #selector(exitLibrary)
-        archiveButton.nextKeyView = search
+        archiveButton.nextKeyView = downloadsButton
+        downloadsButton.nextKeyView = search
         search.nextKeyView = table
         table.nextKeyView = back
         back.nextKeyView = archiveButton
-        for view in [rail, divider, list] { addSubview(view) }
+        downloadsPage.isHidden = true
+        downloadsPage.onExit = { [weak self] in self?.onExit?() }
+        downloadsPage.onScroll = { [weak self] event, scroll in self?.onScroll?(event, scroll) ?? false }
+        downloadsPage.previousFocus = downloadsButton
+        for view in [rail, divider, list, downloadsPage] { addSubview(view) }
         for view in [search, scroll, back, emptyState] { list.addSubview(view) }
-        for view in [rail, divider, list, archiveButton, search, scroll, back, emptyState] { view.translatesAutoresizingMaskIntoConstraints = false }
+        for view in [rail, divider, list, downloadsPage, archiveButton, downloadsButton, search, scroll, back, emptyState] { view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             rail.leadingAnchor.constraint(equalTo: leadingAnchor),
             rail.widthAnchor.constraint(equalToConstant: SidebarMetrics.archiveRailContentWidth),
@@ -133,10 +152,14 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             divider.topAnchor.constraint(equalTo: topAnchor), divider.bottomAnchor.constraint(equalTo: bottomAnchor),
             list.leadingAnchor.constraint(equalTo: divider.trailingAnchor), list.trailingAnchor.constraint(equalTo: trailingAnchor),
             list.topAnchor.constraint(equalTo: topAnchor), list.bottomAnchor.constraint(equalTo: bottomAnchor), preferredWidth,
+            downloadsPage.leadingAnchor.constraint(equalTo: list.leadingAnchor), downloadsPage.trailingAnchor.constraint(equalTo: list.trailingAnchor),
+            downloadsPage.topAnchor.constraint(equalTo: list.topAnchor), downloadsPage.bottomAnchor.constraint(equalTo: list.bottomAnchor),
             archiveButton.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: SidebarMetrics.libraryContentInset),
             archiveButton.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -SidebarMetrics.libraryContentInset),
             archiveButton.topAnchor.constraint(equalTo: rail.topAnchor, constant: SidebarMetrics.libraryContentTop),
             archiveButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
+            downloadsButton.leadingAnchor.constraint(equalTo: archiveButton.leadingAnchor), downloadsButton.trailingAnchor.constraint(equalTo: archiveButton.trailingAnchor),
+            downloadsButton.topAnchor.constraint(equalTo: archiveButton.bottomAnchor, constant: 8), downloadsButton.heightAnchor.constraint(equalToConstant: 32),
             search.leadingAnchor.constraint(equalTo: list.leadingAnchor, constant: SidebarMetrics.libraryContentInset),
             search.trailingAnchor.constraint(equalTo: list.trailingAnchor, constant: -SidebarMetrics.libraryContentInset),
             search.topAnchor.constraint(equalTo: list.topAnchor, constant: SidebarMetrics.libraryContentTop),
@@ -190,7 +213,9 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         needsGrouping = true
         rebuild()
     }
-    func focusSearch() { window?.makeFirstResponder(search) }
+    func focusSearch() { if page == .downloads { downloadsPage.focusFirst() } else { window?.makeFirstResponder(search) } }
+    func setDownloadsModel(_ model: DownloadsModel) { downloadsPage.setModel(model) }
+    func refreshDownloads() { downloadsPage.refresh() }
     func setSearchQuery(_ query: String) { search.stringValue = query; rebuild() }
     func controlTextDidChange(_ notification: Notification) { rebuild() }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -413,7 +438,18 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         table.enumerateAvailableRowViews { row, _ in row.subviews.compactMap { $0 as? ArchiveRowView }.forEach { $0.refreshHover() } }
         restoreVisibleFocus()
     }
-    @objc private func showArchive() { page = .archive }
+    @objc func showArchive() {
+        page = .archive; archiveContent.isHidden = false; downloadsPage.isHidden = true
+        archiveButton.setAccessibilityValue("selected"); downloadsButton.setAccessibilityValue(nil)
+        downloadsButton.nextKeyView = search
+        if !isHidden { window?.makeFirstResponder(search) }
+    }
+    @objc func showDownloads() {
+        page = .downloads; archiveContent.isHidden = true; downloadsPage.isHidden = false
+        archiveButton.setAccessibilityValue(nil); downloadsButton.setAccessibilityValue("selected")
+        downloadsButton.nextKeyView = downloadsPage.table
+        downloadsPage.focusFirst()
+    }
     @objc private func exitLibrary() { onExit?() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
     private func updateFill() {

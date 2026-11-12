@@ -8,6 +8,7 @@ final class DownloadsButton: SidebarDockButton {
     private var hoverTask: DispatchWorkItem?
     var scheduleHover: (DispatchWorkItem) -> Void = { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: $0) }
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    var libraryOpen = false { didSet { if progress == .none { updateRing() } } }
     var progress: DownloadsModel.Progress = .none { didSet { if progress != oldValue { updateRing() } } }
     let ring = CAShapeLayer()
     override init(frame frameRect: NSRect) {
@@ -39,7 +40,7 @@ final class DownloadsButton: SidebarDockButton {
         effectiveAppearance.performAsCurrentDrawingAppearance { ring.strokeColor = NSColor.controlAccentColor.cgColor }
         switch progress {
         case .none:
-            ring.removeAnimation(forKey: "spin"); ring.isHidden = true; setAccessibilityValue(nil)
+            ring.removeAnimation(forKey: "spin"); ring.isHidden = true; setAccessibilityValue(libraryOpen ? 1 : 0)
         case .fraction(let fraction):
             ring.removeAnimation(forKey: "spin"); ring.isHidden = false; ring.strokeEnd = fraction
             setAccessibilityValue("Downloading, \(Int((fraction * 100).rounded())) %")
@@ -62,7 +63,7 @@ final class DownloadsPopover: NSObject {
     private let model: DownloadsModel
     private let anchor: NSView
     private let stack = NSStackView()
-    private let library = NSButton(title: "Open Library", target: nil, action: nil)
+    let library = NSButton(title: "Open Library", target: nil, action: nil)
     private(set) var rows: [String: DownloadRowView] = [:]
     var openLibrary: (() -> Void)?
     init(model: DownloadsModel, anchor: NSView) {
@@ -125,6 +126,15 @@ final class DownloadRowView: NSStackView {
     private let name = NSTextField(labelWithString: "")
     private let status = NSTextField(labelWithString: "")
     private let actions = NSStackView()
+    var moveRow: ((Int) -> Void)?
+    var tabRow: ((Bool) -> Void)?
+    override var acceptsFirstResponder: Bool { true }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 125, let moveRow { moveRow(1) }
+        else if event.keyCode == 126, let moveRow { moveRow(-1) }
+        else if event.keyCode == 48, let tabRow { tabRow(event.modifierFlags.contains(.shift)) }
+        else { super.keyDown(with: event) }
+    }
 
     init(item: DownloadEntry, model: DownloadsModel) {
         itemID = item.id
@@ -147,6 +157,7 @@ final class DownloadRowView: NSStackView {
         if icon.image == nil || name.stringValue != item.name { icon.image = downloadIcon(item.name) }
         name.stringValue = item.name
         status.stringValue = item.status
+        for button in actionButtons { button.setAccessibilityLabel("\(button.title) \(item.name)") }
         guard actionButtons.map(\.downloadAction) != item.actions || actionButtons.contains(where: { $0.downloadID != item.id }) else { return }
         actionButtons.forEach { actions.removeArrangedSubview($0); $0.removeFromSuperview() }
         actionButtons.removeAll()
@@ -155,6 +166,7 @@ final class DownloadRowView: NSStackView {
             guard let title = titles[action] else { continue }
             let button = DownloadActionButton(title: title, target: self, action: #selector(performDownload(_:)))
             button.downloadID = item.id; button.downloadAction = action; button.bezelStyle = .inline
+            button.setAccessibilityLabel("\(title) \(item.name)")
             actionButtons.append(button)
             actions.addArrangedSubview(button)
         }
@@ -172,4 +184,12 @@ func downloadIcon(_ name: String) -> NSImage {
 final class DownloadActionButton: NSButton {
     var downloadID = ""
     var downloadAction = ""
+    var moveRow: ((Int) -> Void)?
+    var tabRow: ((Bool) -> Void)?
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 125, let moveRow { moveRow(1) }
+        else if event.keyCode == 126, let moveRow { moveRow(-1) }
+        else if event.keyCode == 48, let tabRow { tabRow(event.modifierFlags.contains(.shift)) }
+        else { super.keyDown(with: event) }
+    }
 }

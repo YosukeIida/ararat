@@ -38,7 +38,7 @@ public final class SidebarView: NSView {
     private let library = LibraryView(frame: .zero)
     let libraryButton = DownloadsButton()
     private var downloadsModel: DownloadsModel?
-    private var downloadsPopover: DownloadsPopover?
+    var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
     private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
@@ -202,13 +202,15 @@ public final class SidebarView: NSView {
 
     public func setDownloadsModel(_ model: DownloadsModel) {
         downloadsModel = model
+        library.setDownloadsModel(model)
         let popover = DownloadsPopover(model: model, anchor: libraryButton)
-        popover.openLibrary = { [weak self] in self?.setLibraryOpen(true) }
+        popover.openLibrary = { [weak self] in self?.setLibraryOpen(true, downloads: true) }
         downloadsPopover = popover
         libraryButton.onHover = { [weak self] in self?.downloadsPopover?.show() }
         model.onChange = { [weak self, weak model] in
             guard let self, let model else { return }
             self.libraryButton.progress = model.progress
+            self.library.refreshDownloads()
             if !model.hasSessionDownloads { self.downloadsPopover?.close() }
             else if self.downloadsPopover?.isShown == true { self.downloadsPopover?.show() }
         }
@@ -249,7 +251,8 @@ public final class SidebarView: NSView {
         return library.filteredEntries.count
     }
 
-    public func setLibraryOpen(_ open: Bool, scrolling: Bool = false) {
+    public func setLibraryOpen(_ open: Bool, scrolling: Bool = false, downloads: Bool = false) {
+        if open { if downloads { library.showDownloads() } else { library.showArchive() } }
         guard open != libraryOpen else { return }
         if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
         finishRowMotion()
@@ -263,7 +266,7 @@ public final class SidebarView: NSView {
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
         mainColumn.isHidden = open || createSpaceOpen
-        if libraryButton.progress == .none { libraryButton.setAccessibilityValue(open ? 1 : 0) }
+        libraryButton.libraryOpen = open
         updateDockSelection()
         if open { window?.makeFirstResponder(self) }
         refreshLook()
