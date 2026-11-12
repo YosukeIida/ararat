@@ -11,6 +11,7 @@
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/values.h"
@@ -36,8 +37,12 @@
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "base/no_destructor.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/permissions/permission_request_manager.h"
+#include "components/permissions/permission_request.h"
+#include "components/permissions/permission_request_data.h"
+#include "components/permissions/request_type.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_notification_details.h"
 #include "content/public/browser/javascript_dialog_manager.h"
@@ -91,7 +96,8 @@ NSDictionary* KeyboardIMEObservation(content::WebContents* contents, NSString* s
 base::WeakPtr<content::WebContents> g_held_find_contents;
 int g_held_find_request = -1;
 bool IsPromptScreen() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "prompts";
+  const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
+  return screen == "prompts" || screen == "dialogs";
 }
 class TabContentsObserver : public content::WebContentsObserver {
  public:
@@ -381,30 +387,69 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (NSDictionary<NSString*, id>*)checkPermissionBlockButton {
   auto* widget = contents_ ? AraratCheckPermissionWidget(contents_) : nullptr;
-  auto* delegate = widget ? widget->widget_delegate()->AsDialogDelegate() : nullptr;
-  auto* button = delegate ? delegate->GetCancelButton() : nullptr;
+  auto* button = contents_ ? AraratCheckPermissionBlockButton(contents_) : nullptr;
   NSWindow* window = widget ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
   if (!button || !window) return @{};
   const auto bounds = button->GetBoundsInScreen();
   if (bounds.IsEmpty()) return @{};
   const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
   NSRect screen = NSMakeRect(bounds.x(), top - bounds.y() - bounds.height(), bounds.width(), bounds.height());
-  return @{ @"window": window, @"frame": [NSValue valueWithRect:[window convertRectFromScreen:screen]] };
+  return @{ @"window": window, @"frame": [NSValue valueWithRect:[window convertRectFromScreen:screen]],
+            @"origin_wrapped": @(AraratCheckPermissionOriginWrapped(contents_)) };
+}
+
+- (BOOL)checkPermissionWidgetVisible {
+  auto* widget = contents_ ? AraratCheckPermissionWidget(contents_) : nullptr;
+  return widget && widget->IsVisible();
+}
+
+- (NSDictionary<NSString*, id>*)checkPermissionWidgetState {
+  auto* widget = contents_ ? AraratCheckPermissionWidget(contents_) : nullptr;
+  auto* dialog = widget && widget->widget_delegate() ? widget->widget_delegate()->AsDialogDelegate() : nullptr;
+  if (!dialog) return @{};
+  auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
+  auto* delegate = manager ? manager->delegate() : nullptr;
+  NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
+  std::fprintf(stderr, "ararat-trace: permission-widget name=%s view=%s fixed=%d bounds=%s visible=%d\n",
+               widget->GetName().c_str(), std::string(dialog->GetContentsView()->GetClassName()).c_str(), dialog->fixed_width(),
+               widget->GetWindowBoundsInScreen().ToString().c_str(), widget->IsVisible());
+  return @{ @"visible": @(widget->IsVisible()),
+            @"window_number": @(window.windowNumber),
+            @"parent_window_number": @(window.parentWindow ? window.parentWindow.windowNumber : -1),
+            @"delegate_visible": @(delegate && delegate->IsWebContentsVisible(contents_)),
+            @"no_default": @(dialog->GetDefaultDialogButton() == static_cast<int>(ui::mojom::DialogButton::kNone)),
+            @"escape_closes": @(!dialog->EscShouldCancelDialog()),
+            @"width": @(widget->GetWindowBoundsInScreen().width()) };
 }
 
 - (BOOL)checkPermissionPending {
   const auto* args = base::CommandLine::ForCurrentProcess();
-  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "permissions" && args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return NO;
+  if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "permissions" && args->GetSwitchValueASCII("ararat-check") != "keyboard" && args->GetSwitchValueASCII("ararat-screen") != "keyboard" && !IsPromptScreen())) return NO;
   auto* manager = permissions::PermissionRequestManager::FromWebContents(contents_);
   return manager && (manager->IsRequestInProgress() || manager->has_pending_requests());
 }
 
 - (void)checkRequestPermission:(NSInteger)request {
   if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "permissions" && !IsPromptScreen())) return;
+  if (request == 3 && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs") {
+    auto* manager = permissions::PermissionRequestManager::FromWebContents(contents_);
+    if (!manager) return;
+    const auto origin = contents_->GetLastCommittedURL().DeprecatedGetOriginAsURL();
+    auto data = std::make_unique<permissions::PermissionRequestData>(
+        permissions::RequestType::kNotifications, true, origin, origin);
+    manager->AddRequest(contents_->GetPrimaryMainFrame(),
+        std::make_unique<permissions::PermissionRequest>(std::move(data), base::DoNothing()));
+    return;
+  }
   const char16_t* scripts[] = {u"window.requestNotifications()", u"window.requestLocation()", u"window.requestMidi()"};
   if (request < 0 || request >= 3) return;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
       scripts[request], base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+}
+
+- (void)checkActivateSplitPane {
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs")
+    [host_ focusSplitTab:self];
 }
 
 - (void)checkPermissionResults:(void (^)(NSString*))completion {
@@ -422,7 +467,7 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (BOOL)checkIsDialogActive {
   const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
-  if (!contents_ || (check != "dialogs" && check != "protocol" && check != "autofill" && check != "keyboard" && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "keyboard" && !IsPromptScreen())) return NO;
+  if (!contents_ || (check != "permissions" && check != "dialogs" && check != "protocol" && check != "autofill" && check != "keyboard" && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "keyboard" && !IsPromptScreen())) return NO;
   auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
   return manager && manager->IsDialogActive();
 }

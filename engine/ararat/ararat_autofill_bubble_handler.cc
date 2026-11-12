@@ -3,6 +3,7 @@
 #include "ararat/core/ararat_autofill_bubble_handler.h"
 
 #include <memory>
+#include <cstdio>
 #include <optional>
 #include <utility>
 
@@ -87,6 +88,7 @@ class Bubble : public autofill::AutofillBubbleBase {
     model_ = model.get();
     widget_ = constrained_window::ShowWebModal(std::move(model), contents);
     if (card && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "autofill") {
+      std::fprintf(stderr, "ararat-trace: autofill bubble shown card=%d\n", *card);
       auto& state = GetAutofillCheckState();
       state.bubble = weak;
       state.contents = contents->GetWeakPtr();
@@ -102,6 +104,8 @@ class Bubble : public autofill::AutofillBubbleBase {
 
  private:
   void Destroyed() {
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "autofill")
+      std::fprintf(stderr, "ararat-trace: autofill bubble destroyed\n");
     if (GetAutofillCheckState().bubble.get() == this)
       GetAutofillCheckState().bubble.reset();
     widget_ = nullptr;

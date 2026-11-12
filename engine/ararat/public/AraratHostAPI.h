@@ -55,8 +55,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSUInteger)checkPermissionShownCount;
 - (BOOL)checkPermissionDecision:(NSInteger)decision;
 - (NSDictionary<NSString*, id>*)checkPermissionBlockButton;
+- (BOOL)checkPermissionWidgetVisible;
+- (NSDictionary<NSString*, id>*)checkPermissionWidgetState;
 - (BOOL)checkPermissionPending;
 - (void)checkRequestPermission:(NSInteger)request;
+- (void)checkActivateSplitPane;
 - (void)checkPermissionResults:(void (^)(NSString*))completion;
 - (BOOL)checkAutofillBubble:(BOOL)card decline:(BOOL)decline;
 - (NSDictionary<NSString*, id>*)checkAutofillState;
@@ -90,6 +93,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
+        container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host shouldOpenCommand:(NSString*)commandId itemId:(NSString*)itemId;
 - (void)windowHost:(id<ARWindowHostAPI>)host prepareCloseHandoff:(void (^)(BOOL ready))completion;
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host installSplitMeasurement:(NSUInteger)count;

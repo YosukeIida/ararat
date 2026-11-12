@@ -48,6 +48,42 @@ func organizeSeedHasTwoSpacesAndExpectedRows() throws {
 }
 
 @Test @MainActor
+func dialogsSeedUsesTheShownProfilesTab() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "dialogs", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    try session.queue.sync {
+        let store = try #require(session.store)
+        let initial = store.snapshot(windowId: "dialogs")
+        let defaultRow = try #require(initial.spaces.first(where: { $0.id == "default" })?.today.first)
+        #expect(initial.shownSpaceId == "default")
+        #expect(defaultRow.url == "about:blank")
+        #expect(Runtime.dialogSeedRows(initial).map(\.id) == [defaultRow.id])
+        try store.showSpace(windowId: "dialogs", spaceId: "named")
+        let named = store.snapshot(windowId: "dialogs")
+        #expect(Runtime.dialogSeedRows(named).map(\.id) == named.spaces.first(where: { $0.id == "named" })?.today.map(\.id))
+    }
+}
+
+@Test @MainActor
+func splitMemberCanBeSelectedInDestination() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "source", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    try session.queue.sync { try #require(session.store).showSpace(windowId: "destination", spaceId: "named") }
+    let workspace = WorkspaceAdapter(windowID: "destination", session: session)
+    let selected = try await splitValue { workspace.select(id: "close-split-b", completion: $0) }
+    #expect(selected.shownSpaceId == "named")
+    #expect(selected.selectedId == "close-split-b")
+    #expect(selected.spaces.first(where: { $0.id == "named" })?.pinned.contains(where: { $0.id == selected.selectedId }) == true)
+    #expect(session.queue.sync { session.store?.splitLayout(itemId: "close-split-b") } != nil)
+}
+
+@Test @MainActor
 func checkSeedSelectionCommitsTheRequestedVisibleRow() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -16,6 +16,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
     let windowID: String
     private let card: NSView
+    private let permissionDim = PermissionDim()
     weak var host: (any ARWindowHostAPI)?
     private var selectionGeneration = 0
     private var restoringSelection = false
@@ -458,6 +459,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
+    public func checkPermissionDim(_ identifier: String) -> Bool { permissionDim.isVisible(identifier) }
+
+    public func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,
+                           container: NSView, frame: NSRect, visible: Bool) {
+        permissionDim.update(identifier, container: container, frame: frame, visible: visible)
+    }
 
     public func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {
         MainActor.assumeIsolated { onPageFullscreenChanged?(fullscreen) }

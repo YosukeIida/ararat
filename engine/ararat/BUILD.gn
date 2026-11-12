@@ -164,6 +164,7 @@ source_set("entry") {
     "//components/javascript_dialogs",
     "//components/prefs",
     "//components/tabs:public",
+    "//components/url_formatter",
     "//components/web_modal",
     "//chrome/browser/ui/tabs:tab_enums",
     "//chrome/browser/ui/tabs:tab_strip",
