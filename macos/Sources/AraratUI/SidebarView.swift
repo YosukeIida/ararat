@@ -121,6 +121,22 @@ public final class SidebarView: NSView {
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onFirstFavorite: ((String, String, Int, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    // U25d: the segment menu's commands, the page-half drop and its indicator. `onMakeSplit`
+    // answers whether the split was made, so a refused drop sends the copy back.
+    public var onPaneCommand: ((PaneCommand, String) -> Void)?
+    public var onMakeSplit: ((String, String, SplitSide, @escaping (Bool) -> Void) -> Void)?
+    // The shown split's axis (nil: no split), so Move's words and the drop zones follow it.
+    public var splitIsVertical: ((String) -> Bool?)?
+    // The page halves a row can be dropped on (a window point in, the half in container
+    // coordinates out); nil while nothing is on the page.
+    public var pageHalfAt: ((NSPoint, PaneDropAxis) -> PaneDropHalf?)?
+    public var showPaneDrop: ((PaneDropHalf?) -> Void)?
+    // A private window takes no split from a drop (U26f: its workspace has one Today list and
+    // the page is not the sidebar's surface there); the copy springs back like a refused drop.
+    public var privateWindow = false
+    // The tab that was showing when the drag began, and the half the pointer is over now.
+    private var dragShownPane: String?
+    private var dragShownVertical = false
     private(set) var drag: SidebarDragState?
     private(set) var dropTarget = SidebarDrop.refused
     private(set) var dragCopyView: SidebarRowView?
@@ -1305,9 +1321,14 @@ public final class SidebarView: NSView {
         view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
         view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
         wireDrag(view)
-        view.menuProvider = { [weak self, weak view] in
+        view.menuProvider = { [weak self, weak view] pane in
             guard let self, let row = view?.row else { return nil }
-            return row.kind == .folder ? self.folderMenu(row: row) : row.kind == .tab ? (view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)) : nil
+            switch row.kind {
+            case .folder: return self.folderMenu(row: row)
+            case .split: return self.splitMenu(row: row, pane: pane)
+            case .tab: return view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)
+            case .noTabs: return nil
+            }
         }
         view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
         view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
@@ -1329,11 +1350,7 @@ public final class SidebarView: NSView {
         view.crashed = crashedItems.contains(row.id)
         view.unread = unreadItems.contains(row.id)
         if row.kind == .split {
-            let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
-            func leaves(_ id: String) -> [Row] {
-                all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
-            }
-            view.updateSegments(leaves(row.id), active: snapshot.selectedId, crashed: crashedItems)
+            view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems)
         } else { view.updateSegments([], active: nil) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
@@ -1876,6 +1893,15 @@ extension SidebarView {
         CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
     }
 
+    // The half of the page a sidebar-local drag point is over. Only the zones along the shown
+    // split's own axis are offered (design S1): left/right for a horizontal split or a lone tab,
+    // top/bottom for a vertical one; the perpendicular zones belong to Convert.
+    private func pageHalf(at point: CGPoint) -> PaneDropHalf? {
+        guard let pageHalfAt else { return nil }
+        let local = NSPoint(x: point.x, y: bounds.height - point.y)
+        return pageHalfAt(convert(local, to: nil), dragShownVertical ? .vertical : .horizontal)
+    }
+
     private func pressDrag(row: Row, view: NSView?, windowPoint: CGPoint) {
         guard let view, drag == nil, !dragSettling, !libraryOpen, !createSpaceOpen else { return }
         window?.makeFirstResponder(self)
@@ -1883,6 +1909,9 @@ extension SidebarView {
         guard row.kind != .folder, row.kind != .noTabs else { return }
         finishRowMotion()
         clearScrollPresentation()
+        // U25d: the page half splits with the tab that was showing when the drag began — the
+        // press selects the dragged row, so the shown tab is read before that happens.
+        let shown = snapshot.selectedId
         var item = row
         let models = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
         var parent = models.first { $0.id == item.parentId }
@@ -1893,6 +1922,9 @@ extension SidebarView {
         let source = rowViews[item.id] ?? view
         let point = dragPoint(windowPoint)
         drag = SidebarDragState(row: item, origin: point, originFrame: dragRect(source), position: point)
+        dragShownPane = shown
+        // The zone set is fixed for the drag: only the shown split's own axis offers halves.
+        dragShownVertical = shown.flatMap { splitIsVertical?($0) } ?? false
         if row.kind != .folder { select(row); listScroll.stopReveal() }
     }
 
@@ -1961,6 +1993,17 @@ extension SidebarView {
 
     private func resolveDrag() {
         guard let state = drag, state.active, let geometry = dragGeometry() else { return }
+        // The page's halves are judged before the sidebar's targets: the pointer is outside the
+        // sidebar there, which the sidebar's own resolver calls a refusal.
+        if !privateWindow, let half = pageHalf(at: state.position) {
+            dropTarget = .split(half.side)
+            showPaneDrop?(half)
+            setRefusedDock(nil)
+            for row in rowViews.values { row.dropHovered = false }
+            dropIndicator.removeFromSuperlayer()
+            return
+        }
+        showPaneDrop?(nil)
         dropTarget = resolveSidebarDrop(position: state.position, geometry: geometry, dragged: state.row)
         let refused = geometry.dock.firstIndex { $0.frame.contains(state.position) && $0.space.profileKey != geometry.space.profileKey }
         setRefusedDock(refused)
@@ -2041,8 +2084,18 @@ extension SidebarView {
         dragTimer = nil
         let target = dropTarget
         dropIndicator.removeFromSuperlayer()
+        showPaneDrop?(nil)
         dragSettling = true
-        if case .favorites(nil, let index) = target, let space = snapshotSpace, let onFirstFavorite {
+        if case .split(let side) = target, let onMakeSplit, let shown = dragShownPane, !privateWindow {
+            // The page half makes a split with the tab that was showing when the drag began; a
+            // refusal (same row, another list, a private window) sends the copy back like any
+            // other refused drop.
+            let generation = dragGeneration
+            onMakeSplit(state.row.id, shown, side) { [weak self] accepted in
+                guard let self, self.dragGeneration == generation else { return }
+                self.settleDrag(accepted: accepted)
+            }
+        } else if case .favorites(nil, let index) = target, let space = snapshotSpace, let onFirstFavorite {
             let generation = dragGeneration
             onFirstFavorite(state.row.id, space.id, index) { [weak self] snapshot in
                 guard let self, self.dragGeneration == generation else { return }
@@ -2071,6 +2124,7 @@ extension SidebarView {
         dragTimer = nil
         dropTarget = .refused
         dropIndicator.removeFromSuperlayer()
+        showPaneDrop?(nil)
         dragSettling = true
         settleDrag(accepted: false)
     }
@@ -2114,6 +2168,9 @@ extension SidebarView {
         dragCopyView = nil
         drag = nil
         dragSettling = false
+        dragShownPane = nil
+        dragShownVertical = false
+        showPaneDrop?(nil)
         for row in rowViews.values { row.dragSource = false; row.dropHovered = false }
         tooltip.dismiss()
         refreshPointer()
@@ -2219,6 +2276,50 @@ extension SidebarView: NSMenuDelegate {
         itemMenu([SidebarMenuItem("New Nested Folder…") { [weak self] in self?.createFolder(in: row.id) },
                   renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
+    }
+
+    // The split row's panes, in row order: a nested split contributes its own leaves.
+    func paneRows(of split: String) -> [Row] {
+        let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
+        func leaves(_ id: String) -> [Row] {
+            all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
+        }
+        return leaves(split)
+    }
+
+    // U25d D7: the segment menu on the pane that was right-clicked. Move's words follow the
+    // split's axis, Add names the side the new pane joins, Convert names the axis it switches to,
+    // and Close Pane carries the close binding's caps.
+    func splitMenu(row: Row, pane: Row?) -> NSMenu {
+        let members = paneRows(of: row.id)
+        guard let focused = pane ?? members.first else { return itemMenu([]) }
+        let index = members.firstIndex { $0.id == focused.id } ?? 0
+        let vertical = splitIsVertical?(row.id) ?? false
+        let close = paneItem("Close Pane", image: "xmark", identifier: "close_tab") { [weak self] in
+            self?.onPaneCommand?(.close, focused.id)
+        }
+        let moveBack = paneItem(vertical ? "Move Up" : "Move Left", image: vertical ? "arrow.up" : "arrow.left",
+                                enabled: index > 0) { [weak self] in self?.onPaneCommand?(.moveBackward, focused.id) }
+        let moveForward = paneItem(vertical ? "Move Down" : "Move Right", image: vertical ? "arrow.down" : "arrow.right",
+                                   enabled: index + 1 < members.count) { [weak self] in self?.onPaneCommand?(.moveForward, focused.id) }
+        return itemMenu([
+            moveBack, moveForward, NSMenuItem.separator(),
+            paneItem("Add Right Split", image: "rectangle.righthalf.inset.filled") { [weak self] in self?.onPaneCommand?(.addRight, focused.id) },
+            paneItem("Add Left Split", image: "rectangle.lefthalf.inset.filled") { [weak self] in self?.onPaneCommand?(.addLeft, focused.id) },
+            paneItem("Separate Tab from Split", image: "arrow.up.right.square") { [weak self] in self?.onPaneCommand?(.separate, focused.id) },
+            paneItem(vertical ? "Convert to Horizontal Split View" : "Convert to Vertical Split View",
+                     image: vertical ? "rectangle.split.2x1" : "rectangle.split.1x2") { [weak self] in self?.onPaneCommand?(.convert, focused.id) },
+            NSMenuItem.separator(), close,
+        ])
+    }
+
+    private func paneItem(_ title: String, image: String, identifier: String? = nil, enabled: Bool = true,
+                          perform: @escaping () -> Void) -> NSMenuItem {
+        let item = SidebarMenuItem(title, enabled: enabled, perform: perform)
+        item.image = NSImage(systemSymbolName: image, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        if let identifier { item.identifier = NSUserInterfaceItemIdentifier(identifier) }
+        return item
     }
 
     public func dockMenuItems(for spaceID: String) -> [NSMenuItem] {
@@ -2566,6 +2667,7 @@ extension SidebarView {
         case let .folder(id): return SidebarDropCheck(kind: "folder", container: id, index: nil)
         case let .favorites(container, index): return SidebarDropCheck(kind: "favorites", container: container, index: index)
         case let .dock(_, container, index): return SidebarDropCheck(kind: "dock", container: container, index: index)
+        case .split: return SidebarDropCheck(kind: "split", container: nil, index: nil)
         }
     }
 }

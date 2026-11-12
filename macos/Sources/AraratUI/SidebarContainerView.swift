@@ -113,6 +113,36 @@ public final class SidebarContainerView: NSView {
         else { glass = false }
         return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
     }
+
+    // U25d: the half of the page a dragged row is over, in this view's coordinates. Only the
+    // zones along the shown split's axis are offered (design S1): left/right for a horizontal
+    // split or a lone tab, top/bottom for a vertical one.
+    private let paneDrop = PaneDropIndicator(frame: .zero)
+    public func paneDropHalf(at windowPoint: NSPoint, axis: PaneDropAxis) -> PaneDropHalf? {
+        guard page.superview === self, !page.isHiddenOrHasHiddenAncestor, page.bounds.width > 0, page.bounds.height > 0 else { return nil }
+        let local = page.convert(windowPoint, from: nil)
+        guard page.bounds.contains(local) else { return nil }
+        let vertical = axis == .vertical
+        let first = vertical ? local.y < page.bounds.midY : local.x < page.bounds.midX
+        let half = vertical
+            ? NSRect(x: 0, y: first ? 0 : page.bounds.height / 2, width: page.bounds.width, height: page.bounds.height / 2)
+            : NSRect(x: first ? 0 : page.bounds.width / 2, y: 0, width: page.bounds.width / 2, height: page.bounds.height)
+        // `first` is the order side: left, or top, before the other half.
+        return PaneDropHalf(side: first ? .left : .right, rect: convert(half, from: page))
+    }
+
+    public func showPaneDrop(_ half: PaneDropHalf?) {
+        guard let half else {
+            paneDrop.isHidden = true
+            return
+        }
+        paneDrop.frame = half.rect
+        if paneDrop.superview !== self { addSubview(paneDrop) }
+        paneDrop.updateLook()
+        paneDrop.isHidden = false
+    }
+
+    public var paneDropForCheck: NSRect? { paneDrop.isHidden ? nil : paneDrop.frame }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
     public func dockCheckSetMain(_ main: Bool) {
         guard CommandLine.arguments.contains("--ararat-check=dock") else { return }

@@ -532,6 +532,40 @@ func clickingSplitMemberSelectsItWithoutMovingTheSplit() throws {
 }
 
 @Test @MainActor
+func splitMenuFollowsTheAxisAndThePanePosition() throws {
+    let split = dragRow("split", "ts", kind: .split)
+    let first = dragRow("first", "split", depth: 1)
+    let second = dragRow("second", "split", depth: 1)
+    let (window, sidebar) = dragWindow(dragSpace(today: [split, first, second]))
+    defer { window.contentView = nil }
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
+    let buttons = dragDescendants(row).compactMap { $0 as? NSButton }.filter { $0.title == "first" || $0.title == "second" }
+        .sorted { $0.frame.minX < $1.frame.minX }
+    #expect(buttons.count == 2)
+    let right = try #require(buttons.first)
+    func titles(_ menu: NSMenu?) -> [String] { menu?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? [] }
+    // Side by side: Move Left/Right, and the first pane cannot move left.
+    #expect(titles(row.menu(for: eventOver(right, in: window))) ==
+            ["Move Left", "Move Right", "Add Right Split", "Add Left Split", "Separate Tab from Split",
+             "Convert to Vertical Split View", "Close Pane"])
+    #expect(row.menu(for: eventOver(right, in: window))?.items[0].isEnabled == false)
+    // The last pane cannot move right.
+    let last = try #require(buttons.last)
+    #expect(row.menu(for: eventOver(last, in: window))?.items[1].isEnabled == false)
+    // Stacked: the words and the Convert title follow the axis.
+    sidebar.splitIsVertical = { _ in true }
+    #expect(titles(row.menu(for: eventOver(right, in: window))) ==
+            ["Move Up", "Move Down", "Add Right Split", "Add Left Split", "Separate Tab from Split",
+             "Convert to Horizontal Split View", "Close Pane"])
+}
+
+private func eventOver(_ view: NSView, in window: NSWindow) -> NSEvent {
+    let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+    return NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                              windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+}
+
+@Test @MainActor
 func splitSegmentForwardsContextAndMiddleClick() throws {
     let split = dragRow("split", "ts", kind: .split)
     let member = dragRow("member", "split", depth: 1)
@@ -542,7 +576,11 @@ func splitSegmentForwardsContextAndMiddleClick() throws {
     let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
     let hit = try #require(window.contentView?.hitTest(point))
     let right = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-    #expect(hit.menu(for: right) == nil)
+    // U25d: a segment carries the split commands for the pane it was right-clicked on.
+    let menu = try #require(hit.menu(for: right))
+    #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) ==
+            ["Move Left", "Move Right", "Add Right Split", "Add Left Split", "Separate Tab from Split",
+             "Convert to Vertical Split View", "Close Pane"])
     var closed: String?
     sidebar.onClose = { closed = $0 }
     let cg = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseUp, mouseCursorPosition: point, mouseButton: .center))

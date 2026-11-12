@@ -38,6 +38,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var restoringTargetCommand: String?
     private var restoringSplitPreparing = false
     private var displayedSplit: SplitPane?
+    // U25d S4: a member of a split shown in another window, selected here as a plain tab. While
+    // this window holds it, it draws no split layout (§4.6 one page, one place).
+    private var loneSplitPane: String?
     private var cardResizeObserver: NSObjectProtocol?
     private var keyWindowObserver: NSObjectProtocol?
     private var handoffGeneration = 0
@@ -382,7 +385,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         session.finishCrashRecovery?()
     }
 
-    public func select(id: String, url: String, restoring: RestorationCandidate? = nil) {
+    public func select(id: String, url: String, restoring: RestorationCandidate? = nil, wholeSplit: Bool = true) {
         precondition(Thread.isMainThread)
         guard !selectionClosed, let host, !host.isClosing(), !host.isClosingAll() else { return }
         let space = queue.sync { store?.snapshot(windowId: windowID).shownSpaceId }
@@ -416,12 +419,21 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     if pane.kind == .tab { return [pane] }
                     return pane.children.flatMap(leaves)
                 }
-                let siblings = store.splitLayout(itemId: id).map { leaves($0).filter { $0.id != id } } ?? []
+                // U25d S4: one member of a split shown in another window comes alone — the split
+                // row stays where it is drawn and this window shows the page as a plain tab. The
+                // split row's own selection (wholeSplit) still brings every pane.
+                let lone = !wholeSplit && store.splitLayout(itemId: id).map { pane in
+                    leaves(pane).contains { other in
+                        other.id != id && (store.liveWindow(item: other.id).map { $0 != self.windowID } ?? false)
+                    }
+                } == true
+                let siblings = lone ? [] : store.splitLayout(itemId: id).map { leaves($0).filter { $0.id != id } } ?? []
                 DispatchQueue.main.async {
                     guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll() else {
                         self.cancelSelectionCommand(command); return
                     }
                     if self.selectionRequest?.generation == generation { self.selectionRequest?.command = command.id }
+                    self.loneSplitPane = lone ? id : nil
                     self.selectionDispatchForCheck("registered", command: command) {
                         guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll(),
                               self.selectionGeneration == generation,
@@ -450,6 +462,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         precondition(Thread.isMainThread)
         selectionGeneration += 1
         selectionRequest = nil
+        loneSplitPane = nil
         pendingSplitOpens.removeAll()
         let withdrawn = openingSelections.keys.filter { host?.cancelPendingOpen($0) == true }
         openingSelections.removeAll()
@@ -458,6 +471,107 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             for id in self.pendingSelectionCommands { _ = self.store?.liveCancel(commandId: id) }
             self.pendingSelectionCommands.removeAll()
         }
+    }
+
+    // U25d: the split row's segment menu and the page-half drop. Each op is the core's one
+    // transaction, and its snapshot goes through the usual delivery, so the split frames, the
+    // ring and the sidebar follow. A new pane opens the New Tab page and takes the focus.
+    static let newTabPage = "chrome://newtab/"
+
+    public func addSplitPane(item: String, side: SplitSide) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                let change = try store.addSplitPane(windowId: self.windowID, itemId: item, side: side)
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(change.snapshot)
+                    self.onWorkspaceChange?()
+                    self.select(id: change.pane, url: Self.newTabPage)
+                }
+            } catch { self.report(error) }
+        }
+    }
+
+    public func separatePane(item: String) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                let snapshot = try store.separatePane(windowId: self.windowID, itemId: item)
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
+            } catch { self.report(error) }
+        }
+    }
+
+    public func movePane(item: String, forward: Bool) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                let snapshot = try store.movePane(windowId: self.windowID, itemId: item, forward: forward)
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
+            } catch { self.report(error) }
+        }
+    }
+
+    public func convertSplit(item: String) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                let split = store.splitLayout(itemId: item)?.id ?? item
+                let snapshot = try store.convertSplit(windowId: self.windowID, splitId: split)
+                DispatchQueue.main.async { self.deliverIfCurrent(snapshot) }
+            } catch { self.report(error) }
+        }
+    }
+
+    // A row dropped on a page half makes a split with the tab that was showing when the drag
+    // began. `completion` answers whether it was made, so the copy springs back when it was not.
+    public func makeSplit(dragged: String, target: String, side: SplitSide, completion: @escaping @MainActor (Bool) -> Void) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { DispatchQueue.main.async { completion(false) }; return }
+                let change = try store.makeSplit(windowId: self.windowID, draggedId: dragged, targetId: target, side: side)
+                // The press selected the dragged row, so the new split is the selection; selecting
+                // it again opens the panes this window has no live tab for (an unloaded member).
+                let url = change.snapshot.spaces.flatMap { $0.pinned + $0.today }.first { $0.id == dragged }?.url
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(change.snapshot)
+                    self.onWorkspaceChange?()
+                    if let url { self.select(id: dragged, url: url) }
+                    completion(true)
+                }
+            } catch {
+                self.report(error)
+                DispatchQueue.main.async { completion(false) }
+            }
+        }
+    }
+
+    // The shown split's axis, from the core: nil when the item is not in a split.
+    public func splitIsVertical(_ item: String) -> Bool? {
+        queue.sync {
+            guard let split = store?.splitLayout(itemId: item) else { return nil }
+            return split.kind == .splitVertical
+        }
+    }
+
+    // What the split-commands check reads: the panes this window lays out as a split (0: a plain
+    // page, which is what a member taken alone from another window must show).
+    public func checkSplitLayout() -> (panes: Int, split: Bool, frozen: Bool) {
+        precondition(Thread.isMainThread)
+        guard let split = displayedSplit else { return (0, false, false) }
+        func leaves(_ pane: SplitPane) -> [String] { pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves) }
+        return (leaves(split).count, true, dragBaseline != nil)
     }
 
     public func openExternalURLs(_ urls: [(url: String, untrusted: Bool)]) {
@@ -944,7 +1058,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
-            displayedSplit = snapshot.selectedId.flatMap { id in queue.sync { store?.splitLayout(itemId: id) } }
+            displayedSplit = snapshot.selectedId.flatMap { id in
+                // A pane taken alone from another window is drawn as a plain page (U25d S4).
+                if loneSplitPane == id { return nil }
+                return queue.sync { store?.splitLayout(itemId: id) }
+            }
         }
         layoutSplit(skipNearSplitFrames: skipNearSplitFrames)
         layoutFailures(snapshot: snapshot)

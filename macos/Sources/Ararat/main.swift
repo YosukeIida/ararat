@@ -1046,7 +1046,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.selectionGeneration += 1
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.host?.setWorkspacePageHidden(false)
-      if let url = row.url { adapter?.select(id: row.id, url: url) }
+      // U25d S4: a tab picked on its own takes that tab alone when its split is shown in another
+      // window; the split row's own click below still brings every pane.
+      if let url = row.url { adapter?.select(id: row.id, url: url, wholeSplit: false) }
       else if row.kind == .split, let self {
         let generation = self.selectionGeneration
         self.workspace?.select(id: row.id) { [weak self] result in
@@ -1095,6 +1097,27 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     actions.onCreatePageChanged = { [weak self] in self?.container?.selectionChanged() }
     actions.bind(to: sidebar)
+    // U25d: the split row's segment menu, the page-half drop and its mark.
+    sidebar.onPaneCommand = { [weak self] command, pane in
+      guard let self, let adapter = self.adapter else { return }
+      switch command {
+      case .moveBackward: adapter.movePane(item: pane, forward: false)
+      case .moveForward: adapter.movePane(item: pane, forward: true)
+      case .addLeft: adapter.addSplitPane(item: pane, side: .left)
+      case .addRight: adapter.addSplitPane(item: pane, side: .right)
+      case .separate: adapter.separatePane(item: pane)
+      case .convert: adapter.convertSplit(item: pane)
+      case .close: self.closePane(pane)
+      }
+    }
+    sidebar.splitIsVertical = { [weak adapter] pane in adapter?.splitIsVertical(pane) }
+    sidebar.onMakeSplit = { [weak adapter] dragged, target, side, done in
+      guard let adapter else { done(false); return }
+      adapter.makeSplit(dragged: dragged, target: target, side: side) { made in done(made) }
+    }
+    sidebar.pageHalfAt = { [weak container] point, axis in container?.paneDropHalf(at: point, axis: axis) }
+    sidebar.showPaneDrop = { [weak container] half in container?.showPaneDrop(half) }
+    sidebar.privateWindow = host.isPrivateWindow()
     adapter.attach(host)
     refreshSiteState()
     refreshExtensionActions()
@@ -1471,6 +1494,15 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func close(_ id: String) {
     // A row's ✕/− showed its action; the rowwise buttons pass it through this default.
     adapter?.close(id: id, archive: false)
+  }
+
+  // U25d: Close Pane in a segment menu closes that pane's tab by the row rule: a Today pane
+  // archives, a pin unloads and keeps its place (R1/D2). The split's own row still closes the
+  // whole split through ⌘W.
+  func closePane(_ id: String) {
+    guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+          let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }) else { return }
+    adapter?.close(id: id, archive: rowCloseArchives(row, in: space))
   }
 
   // D6: one core batch (live_clear_today) with a Close in flight for every mapped live row,

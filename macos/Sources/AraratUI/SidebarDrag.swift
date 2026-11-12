@@ -45,13 +45,15 @@ enum SidebarDrop: Equatable {
     case folder(String)
     case favorites(container: String?, index: Int)
     case dock(space: String, container: String, index: Int)
+    // U25d: over one half of the page, which makes a split with the tab it was over.
+    case split(SplitSide)
 
     var move: (container: String, index: Int)? {
         switch self {
         case let .insert(container, index, _, _), let .dock(_, container, index): (container, index)
         case let .favorites(container, index): container.map { ($0, index) }
         case let .folder(id): (id, 0)
-        case .refused: nil
+        case .refused, .split: nil
         }
     }
 }
