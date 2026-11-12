@@ -153,6 +153,24 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn move_pane(&self, window_id: String, item_id: String, forward: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.move_pane(&item_id, forward)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn convert_split(&self, window_id: String, split_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.convert_split(&split_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
         self.admit(true)?;
         let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref(), owner_profile.map(Into::into)).map_err(|e| CoreError::Import { message: e.0 })?;

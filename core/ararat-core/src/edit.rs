@@ -26,6 +26,43 @@ impl WindowState {
 }
 
 impl Workspace {
+    pub fn move_pane(&mut self, id: &str, forward: bool) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let item = self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. })
+            && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .ok_or_else(|| EditError(format!("item {id} is not an open pane")))?;
+        let parent = item.membership.parent.as_deref().filter(|parent|
+            self.items.get(*parent).is_some_and(|item| matches!(item.kind, ItemKind::Split { .. })))
+            .ok_or_else(|| EditError(format!("item {id} is not in a split")))?;
+        let children: Vec<_> = self.children(parent).into_iter().filter(|item|
+            matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)).collect();
+        let index = children.iter().position(|item| item.id == id).unwrap();
+        let other = if forward { index.checked_add(1).filter(|i| *i < children.len()) } else { index.checked_sub(1) }
+            .ok_or_else(|| EditError("pane has no neighbour in that direction".into()))?;
+        let mut reordered: Vec<_> = children.into_iter().cloned().collect();
+        reordered.swap(index, other);
+        let mut previous = None;
+        let ops = reordered.into_iter().map(|mut item| {
+            item.membership.order = crate::order::key_between(previous.as_deref(), None);
+            previous = Some(item.membership.order.clone());
+            Op::Put(Record::Item(item))
+        }).collect();
+        Ok(self.commit_edit(ops))
+    }
+
+    pub fn convert_split(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
+        let mut item = self.items.get(id).filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .cloned().ok_or_else(|| EditError(format!("item {id} is not an open split")))?;
+        let ItemKind::Split { orientation, .. } = &mut item.kind else {
+            return Err(EditError(format!("item {id} is not a split")));
+        };
+        *orientation = match orientation {
+            crate::model::Orientation::Horizontal => crate::model::Orientation::Vertical,
+            crate::model::Orientation::Vertical => crate::model::Orientation::Horizontal,
+        };
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
     pub fn split_factors(&self, id: &str) -> Option<Vec<(Id, f64)>> {
         let ItemKind::Split { width_factors, .. } = &self.items.get(id)?.kind else { return None };
         let children: Vec<_> = self.children(id).into_iter()
