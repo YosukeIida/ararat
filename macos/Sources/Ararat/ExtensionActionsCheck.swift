@@ -11,7 +11,7 @@ final class ExtensionActionsCheck {
     static let common = ["fixture", "seed", "pin", "pin_shown", "menu_items", "manage_enabled",
                          "remove_enabled", "badge_text", "badge_icon", "badge_per_tab", "badge_live",
                          "overflow_row", "overflow_geometry", "overflow_restores", "unpin",
-                         "repin", "action_anchor", "menu_autoenable_off", "ext_actions_labels", "remove_cancel"]
+                         "repin", "action_anchor", "action_popup", "menu_autoenable_off", "ext_actions_labels", "remove_cancel"]
     static let screens = ["capture_action", "capture_overflow"]
 
     var conditions: [String: Bool] = [:]
@@ -23,6 +23,7 @@ final class ExtensionActionsCheck {
     var seedRow: Row?
     var iconBefore: Data?
     var secondTab = ""
+    var badgeTab = ""
     var removeStarted = false
     var removeResult = ""
     var removeAttempts = 0
@@ -62,12 +63,11 @@ final class ExtensionActionsCheck {
 extension Runtime {
     func extensionActionsCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if extensionActionsCheck == nil { extensionActionsCheck = ExtensionActionsCheck() }
-        guard let check = extensionActionsCheck, !check.capturing, let sidebar, let container,
-              let workspace else { return }
+        guard let check = extensionActionsCheck, !check.capturing, let sidebar, let container else { return }
         let window = host.window()
         func wait(_ name: String) {
             let item = extensionItems.first { $0.id == check.fixtureID }
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) fixture=\(check.fixtureID.isEmpty ? "nil" : check.fixtureID) items=\(extensionItems.count) pinned=\(item?.pinned ?? false) badge=\(item?.badgeText ?? "-") in_field=\(sidebar.checkInFieldActionIDs) row=\(sidebar.checkRowActionIDs) selected=\(snapshot.selectedId ?? "nil") host_active=\(host.activeItemId() ?? "nil") second=\(extensionSecondTabs[check.secondTab] ?? "nil")")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) fixture=\(check.fixtureID.isEmpty ? "nil" : check.fixtureID) items=\(extensionItems.count) pinned=\(item?.pinned ?? false) badge=\(item?.badgeText ?? "-") focused_tab=\(item?.focusedTabId ?? -1) in_field=\(sidebar.checkInFieldActionIDs) row=\(sidebar.checkRowActionIDs) selected=\(snapshot.selectedId ?? "nil") host_active=\(host.activeItemId() ?? "nil") first=\(check.badgeTab) second=\(check.secondTab)")
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
@@ -178,17 +178,22 @@ extension Runtime {
             check.mark("badge_text")
             let changed = check.iconBefore.map { iconHash(item) != $0 } ?? false
             check.mark("badge_icon", changed && iconHash(item)?.isEmpty == false && item.badgeBackgroundColor != 0 && item.badgeTextColor != 0)
-            // A second tab: the badge is per tab, so the fixture's tab keeps 7 and the new one none.
-            check.secondTab = UUID().uuidString
-            workspace.createTab(url: "data:text/html,<title>Badge other</title>") { [weak self] result in
-                guard case .success(let snapshot) = result else { return }
-                self?.extensionSecondTabs[check.secondTab] = snapshot.selectedId
-            }
+            // A second tab through the shown space's open path (a core row plus a live open):
+            // the badge is per tab, so the fixture's tab keeps 7 and the new one shows none.
+            check.badgeTab = snapshot.selectedId ?? ""
+            guard let ports = siteFixturePorts else { wait("second tab fixture"); return }
+            adapter?.openCommandURL("http://127.0.0.1:\(ports.plain)/clean",
+                                    expectedSpace: snapshot.shownSpaceId,
+                                    profile: host.profileDirectory())
             browserCheckPhase = 4
         case 4:
-            if let second = extensionSecondTabs[check.secondTab], snapshot.selectedId == second,
-               host.activeItemId() == second, let item = item(), item.badgeText.isEmpty {
+            if let ports = siteFixturePorts, !check.badgeTab.isEmpty,
+               let second = snapshot.selectedId, second != check.badgeTab,
+               host.activeItemId() == second,
+               let tab = activeTab(), tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"), !tab.isLoading,
+               let item = item(), item.badgeText.isEmpty {
                 check.mark("badge_per_tab")
+                check.secondTab = second
                 if let row = check.seedRow { selectCheckSeed(row) }
                 browserCheckPhase = 5
                 return
@@ -253,11 +258,22 @@ extension Runtime {
             browserCheckPhase = 10
         case 10:
             guard let expected = check.actionAnchor else { wait("action anchor recorded"); return }
-            guard let actual = lastExtensionAnchor, abs(actual.midX - expected.midX) < 1, abs(actual.midY - expected.midY) < 1,
-                  !popups.isEmpty else { wait("action anchor and popup"); return }
-            check.mark("action_anchor")
-            for popup in popups { popup.host?.close() }
-            guard popups.isEmpty else { wait("action popup closed"); return }
+            let anchored = lastExtensionAnchor.map {
+                abs($0.midX - expected.midX) < 1 && abs($0.midY - expected.midY) < 1
+            } ?? false
+            if anchored { check.mark("action_anchor") }
+            if !popups.isEmpty {
+                check.mark("action_popup")
+                for popup in popups { popup.host?.close() }
+                guard popups.isEmpty else { wait("action popup closed"); return }
+            } else if phaseTicks() <= 50 {
+                wait("action anchor and popup")
+                return
+            } else {
+                // Keep the later phases reachable and name the missing part.
+                check.mark("action_anchor", anchored)
+                check.mark("action_popup", false)
+            }
             // Remove… last: the uninstall sheet is Chrome's browser-modal fallback.
             check.removeStarted = true
             check.removeAttempts = 0

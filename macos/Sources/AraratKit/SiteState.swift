@@ -236,6 +236,7 @@ public struct ExtensionActionItem {
     public var pinMutable: Bool
     public var removable: Bool
     public var badgeText: String
+    public var focusedTabId: Int
     public var badgeBackgroundColor: UInt32
     public var badgeTextColor: UInt32
 
@@ -250,6 +251,7 @@ public struct ExtensionActionItem {
         pinMutable = value["pinMutable"] as? Bool ?? false
         removable = value["removable"] as? Bool ?? false
         badgeText = value["badgeText"] as? String ?? ""
+        focusedTabId = (value["focusedTabId"] as? NSNumber)?.intValue ?? -1
         badgeBackgroundColor = (value["badgeBackgroundColor"] as? NSNumber)?.uint32Value ?? 0
         badgeTextColor = (value["badgeTextColor"] as? NSNumber)?.uint32Value ?? 0
     }

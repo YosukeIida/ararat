@@ -1097,8 +1097,14 @@ public final class SidebarView: NSView {
         return actionsRow.checkButton(id)
     }
     public func checkExtensionMenu(_ id: String) -> NSMenu? {
-        guard let item = extensionActions.first(where: { $0.id == id }), let button = checkActionButton(id) else { return nil }
-        onExtensionAnchor?(button.anchorInWindow)
+        guard let item = extensionActions.first(where: { $0.id == id }) else { return nil }
+        // An unpinned action has no URL-field button; the menu still exists, anchored at the
+        // URL field (it is the container's extensions menu entry in the product).
+        if let button = checkActionButton(id) {
+            onExtensionAnchor?(button.anchorInWindow)
+        } else {
+            onExtensionAnchor?(urlField.convert(urlField.bounds, to: nil))
+        }
         return onExtensionMenu?(item)
     }
     public func checkPerformMenuCommand(_ id: String, title: String) -> Bool {

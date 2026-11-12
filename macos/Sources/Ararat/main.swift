@@ -603,7 +603,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var toastsCheck: ToastsCheck?
   var siteControlsCheck: SiteControlsCheck?
   var extensionActionsCheck: ExtensionActionsCheck?
-  var extensionSecondTabs: [String: String] = [:]
   var pinsIsolationChild: Runtime?
   var siteFixture: SiteFixtureServer?
   var siteFixturePorts: SiteFixtureServer.Ports?
@@ -1849,9 +1848,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func pinExtension(_ identifier: String, pinned: Bool) {
+    let before = extensionItems.first(where: { $0.id == identifier })?.pinned
     let result = adapter?.setExtensionPinned(identifier, pinned: pinned) ?? "unknown"
-    FileHandle.standardError.write(Data("ararat-trace: ext-pin id=\(identifier) pinned=\(pinned) result=\(result)\n".utf8))
     refreshExtensionActions()
+    let after = extensionItems.first(where: { $0.id == identifier })?.pinned
+    FileHandle.standardError.write(Data("ararat-trace: ext-pin id=\(identifier) pinned=\(pinned) result=\(result) before=\(before.map { "\($0)" } ?? "nil") after=\(after.map { "\($0)" } ?? "nil")\n".utf8))
   }
 
   func manageExtension(_ identifier: String) {
