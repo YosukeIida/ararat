@@ -37,6 +37,9 @@ final class SidebarCheck {
     var todayArchiveId = ""
     // The Today tab ⌘W closes, which leaves the list too.
     var commandWId = ""
+    // The Today tab the unread fixture navigates: its seeded url is gone after the
+    // navigation, so the later phases read this id instead of the row's url suffix.
+    var unreadId = ""
 
     static func conditionNames(mode: Mode, screen: Bool) -> [String] {
         let base: [String]
@@ -125,7 +128,9 @@ extension Runtime {
                     ["frame": rectFields(divider.frame), "line": rectFields(divider.line), "clear": rectFields(divider.clear),
                      "sidebar_width": sidebar?.bounds.width ?? 0] as [String: Any]
                 } ?? [:],
-                "core_archive": sidebarCheckCore()?.archive.map(\.id).sorted() ?? []]
+                "core_archive": sidebarCheckCore()?.archive.map(\.id).sorted() ?? [],
+                "has_browser": host?.hasBrowser() ?? false,
+                "tabs": host?.tabs().count ?? 0]
     }
 
     func sidebarCheckTick(_ host: any ARWindowHostAPI, screen: Bool, mode: String) {
@@ -350,19 +355,26 @@ extension Runtime {
             step(7)
         case 7:
             // R7 needs a loaded tab the window is not showing, with a title that changes while
-            // it is hidden. A background checkNavigate cannot provide it: the core adopts an
-            // engine-created tab only when a new live epoch arrives, so a mid-run background
-            // tab never becomes a row. Open an existing Today row instead, then move the
-            // window away before its title changes.
+            // it is hidden. Open a seeded Today row instead of asking the engine for a new
+            // background tab: by this phase the check has closed every native tab, so the
+            // window has no browser and checkNavigate would return without creating one
+            // (ararat_window_host.mm checkNavigate's browser_ gate).
             guard let todayC = row("today-c") else { note("today-c row missing"); return }
             trace("unread fixture: open today-c")
+            check.unreadId = todayC.id
             sidebar.selectRow(id: todayC.id)
             step(8)
         case 8:
-            guard let todayC = row("today-c") else { note("today-c row missing"); return }
-            guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else {
-                note("today-c not current yet for the title fixture: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") live=\(liveTab(todayC.id))")
+            // The id is read once: the navigation below replaces the row's seeded url, so a
+            // later lookup by url suffix would miss it.
+            guard !check.unreadId.isEmpty else { note("the unread row id was not recorded"); return }
+            guard snapshot.selectedId == check.unreadId, host.activeItemId() == check.unreadId,
+                  liveTab(check.unreadId) else {
+                note("today-c not current yet for the title fixture: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") live=\(liveTab(check.unreadId))")
+                return
+            }
+            guard host.hasBrowser() else {
+                note("no browser to navigate today-c: host.hasBrowser() is false")
                 return
             }
             // The page's title changes 300 ms after it loads; the pin takes the window first, so
@@ -374,23 +386,23 @@ extension Runtime {
             sidebar.selectRow(id: pin.id)
             step(9)
         case 9:
-            guard let todayC = row("today-c") else { note("today-c row missing"); return }
-            guard sidebar.rowCheckInfo(id: todayC.id)?.unreadDot == true else {
-                note("no unread dot yet on \(todayC.id): selected=\(sidebar.selectedRowID ?? "-") active=\(host.activeItemId() ?? "-") dot=\(String(describing: sidebar.rowCheckInfo(id: todayC.id)?.unreadDot)) tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
+            guard !check.unreadId.isEmpty else { note("the unread row id was not recorded"); return }
+            guard sidebar.rowCheckInfo(id: check.unreadId)?.unreadDot == true else {
+                note("no unread dot yet on \(check.unreadId): selected=\(sidebar.selectedRowID ?? "-") active=\(host.activeItemId() ?? "-") dot=\(String(describing: sidebar.rowCheckInfo(id: check.unreadId)?.unreadDot)) tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
                 return
             }
             check.report("unread_dot", true)
             _ = capture("unread")
-            sidebar.selectRow(id: todayC.id)
+            sidebar.selectRow(id: check.unreadId)
             step(10)
         case 10:
-            guard let todayC = row("today-c") else { note("today-c row missing"); return }
-            guard sidebar.rowCheckInfo(id: todayC.id)?.unreadDot == false else {
-                note("unread dot not cleared yet on \(todayC.id)"); return
+            guard !check.unreadId.isEmpty else { note("the unread row id was not recorded"); return }
+            guard sidebar.rowCheckInfo(id: check.unreadId)?.unreadDot == false else {
+                note("unread dot not cleared yet on \(check.unreadId)"); return
             }
             // R5: a crashed renderer's row draws the warning glyph at 45 %.
-            guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else {
+            guard snapshot.selectedId == check.unreadId, host.activeItemId() == check.unreadId,
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.unreadId }) else {
                 note("today-c not active yet for the crash: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
                 return
             }
@@ -398,10 +410,10 @@ extension Runtime {
             guard tab.checkCrashRenderer() else { finish(); return }
             step(11)
         case 11:
-            guard let todayC = row("today-c"), let info = sidebar.rowCheckInfo(id: todayC.id),
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else {
-                let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == (row("today-c")?.id ?? "") }
-                note("today-c not crashed yet: crashed=\(tab?.crashed ?? false) icon=\(sidebar.rowCheckInfo(id: row("today-c")?.id ?? "")?.iconDescription ?? "-")")
+            guard let info = sidebar.rowCheckInfo(id: check.unreadId),
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.unreadId }), tab.crashed else {
+                let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == check.unreadId }
+                note("today-c not crashed yet: crashed=\(tab?.crashed ?? false) icon=\(sidebar.rowCheckInfo(id: check.unreadId)?.iconDescription ?? "-")")
                 return
             }
             guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else {
