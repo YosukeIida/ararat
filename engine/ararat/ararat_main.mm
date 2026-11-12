@@ -234,12 +234,12 @@ void CheckGuards(int argc, const char** argv) {
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
       screen_prompts = std::string_view(arg + 16) == "prompts";
+      screen_downloads = std::string_view(arg + 16) == "downloads";
       screen_toasts = std::string_view(arg + 16) == "toasts";
       valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name";
       if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
-      if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
