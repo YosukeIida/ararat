@@ -34,6 +34,7 @@ final class SiteControlsCheck {
     var permissionRow = 0
     var allowIndex = 0
     var secondTab = ""
+    var cleanTab = ""
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -74,14 +75,14 @@ final class SiteControlsCheck {
 extension Runtime {
     func siteControlsCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if siteControlsCheck == nil { siteControlsCheck = SiteControlsCheck() }
-        guard let check = siteControlsCheck, !check.capturing, let sidebar, let container, let workspace else { return }
+        guard let check = siteControlsCheck, !check.capturing, let sidebar, let container else { return }
         let window = host.window()
         func wait(_ name: String) {
             let state = siteState
             let rows = (state?.permissions ?? []).map {
                 "\($0.type):\($0.setting?.title ?? "-"):blockedBySite=\($0.siteSpecificBlock ? 1 : 0):mutable=\($0.mutable ? 1 : 0)"
             }.joined(separator: ",")
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil")")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") blocked=\(check.blockedRow?.id ?? "nil") clean=\(check.cleanTab)")
         }
         func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
@@ -229,21 +230,30 @@ extension Runtime {
                   tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/site"), !tab.isLoading else { wait("blocked page again"); return }
             guard sidebar.checkSiteControlsDot, check.blockedRow != nil else { wait("dot restored"); return }
             check.mark("dot_restored")
-            // A second tab at a clean origin: the dot follows the active tab.
-            check.secondTab = UUID().uuidString
-            let key = check.secondTab
-            workspace.createTab(url: "http://127.0.0.1:\(ports.plain)/clean") { [weak self] result in
-                guard case .success(let snapshot) = result else { return }
-                self?.extensionSecondTabs[key] = snapshot.selectedId
-            }
+            // A second tab through the shown space's open path (a core row plus a live open):
+            // a core-only createTab never becomes a live tab or a selection.
+            adapter?.openCommandURL("http://127.0.0.1:\(ports.plain)/clean",
+                                    expectedSpace: snapshot.shownSpaceId,
+                                    profile: host.profileDirectory())
             browserCheckPhase = 8
         case 8:
-            guard let second = extensionSecondTabs[check.secondTab], snapshot.selectedId == second,
-                  host.activeItemId() == second else { wait("clean tab active"); return }
+            guard let ports = fixturePorts(), let row = check.blockedRow,
+                  let clean = snapshot.selectedId, clean != row.id,
+                  host.activeItemId() == clean,
+                  let tab = activeTab(), tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"),
+                  !tab.isLoading else { wait("clean tab active"); return }
             guard !sidebar.checkSiteControlsDot else { wait("dot off on the clean tab"); return }
             check.mark("tab_switch_dot")
-            if let row = check.blockedRow { selectCheckSeed(row) }
+            check.cleanTab = clean
+            selectCheckSeed(row)
             browserCheckPhase = 9
+        case 9:
+            guard let row = check.blockedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
+                  sidebar.checkSiteControlsDot else { wait("blocked tab again"); return }
+            refreshSiteState()
+            guard findRow() != nil else { wait("permission row"); return }
+            openPopover()
+            browserCheckPhase = 10
         case 9:
             guard let row = check.blockedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
                   sidebar.checkSiteControlsDot else { wait("blocked tab again"); return }
