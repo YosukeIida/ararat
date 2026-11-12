@@ -2188,3 +2188,14 @@ extension SidebarView {
         }
     }
 }
+
+extension SidebarView {
+    /// The action the hover button runs for a row, without a pointer: the check calls the
+    /// same rule and callbacks the button would (the button itself is hover-only).
+    @discardableResult
+    public func pressRowCloseForCheck(id: String) -> RowCloseAction? {
+        guard let target = closeTarget(for: id) else { return nil }
+        if target.action == .archive { onArchive?(target.id) } else { onClose?(target.id) }
+        return target.action
+    }
+}

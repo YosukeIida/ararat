@@ -201,7 +201,10 @@ extension Runtime {
             let needed = ["today-a", "today-b", "today-c", "pin", "pin-off", "folder-tab", "empty", "folder"]
             let rowIDs = Set(sidebar.rowCheckIds)
             guard let space,
-                  needed.allSatisfy({ suffix in sidebarCheckRow(space, suffix).map { rowIDs.contains($0.id) } == true }) else { return }
+                  needed.allSatisfy({ suffix in sidebarCheckRow(space, suffix).map { rowIDs.contains($0.id) } == true }) else {
+                note("rows missing: \(needed.filter { suffix in !(sidebarCheckShownSpace().flatMap { sidebarCheckRow($0, suffix) }.map { rowIDs.contains($0.id) } ?? false) })")
+                return
+            }
             check.report("rows_present", true)
             guard let pin = row("pin") else { return }
             trace("open the pin's native tab")
@@ -209,7 +212,11 @@ extension Runtime {
             step(1)
         case 1:
             guard let pin = row("pin"), snapshot.selectedId == pin.id, liveTab(pin.id),
-                  let todayA = row("today-a") else { return }
+                  let todayA = row("today-a") else {
+                let id = row("pin")?.id ?? "-"
+                note("selected=\(snapshot.selectedId ?? "-") pin=\(id) live=\(liveTab(id)) today-a=\(row("today-a")?.id ?? "-")")
+                return
+            }
             trace("open a Today tab beside it")
             sidebar.selectRow(id: todayA.id)
             step(2)
@@ -229,41 +236,68 @@ extension Runtime {
                 note("pin label is \(info.closeLabel ?? "-"), expected Close Tab"); return
             }
             trace("press the loaded pin's close")
-            check.report("loaded_pin_close", sidebar.pressCloseButton(id: pin.id))
-            step(3)
+            let action = sidebar.pressRowCloseForCheck(id: pin.id)
+            trace("close action for \(pin.id): \(action.map { $0 == .archive ? "archive" : "close" } ?? "no target")")
+            check.report("loaded_pin_close", action != nil)
+            if action != nil { step(3) } else { note("the close action did not fire: no close target for \(pin.id)") }
         case 3:
-            guard let pin = row("pin"), let core = sidebarCheckCore(),
-                  let corePin = core.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id }) else { return }
-            guard corePin.unloaded, !core.archive.contains(where: { $0.id == pin.id }) else { return }
-            guard let off = row("pin-off"), let info = sidebar.rowCheckInfo(id: off.id) else { return }
+            guard let pin = row("pin") else { note("pin row gone"); return }
+            let core = sidebarCheckCore()
+            let corePin = core?.spaces.flatMap(\.pinned).first(where: { $0.id == pin.id })
+            let live = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == pin.id }?.liveId ?? "-"
+            let archived = core?.archive.contains(where: { $0.id == pin.id }) ?? false
+            guard let corePin, corePin.unloaded, !archived else {
+                note("pin lifecycle=\(corePin.map(\.unloaded) == true ? "unloaded" : "loaded"), archived=\(archived), native live=\(live), tabs=\((host.tabs() as? [any ARTabAPI])?.count ?? 0)")
+                return
+            }
+            guard let off = row("pin-off"), let info = sidebar.rowCheckInfo(id: off.id) else {
+                note("pin-off row missing"); return
+            }
             guard info.closeLabel == "Archive Tab" else { check.report("unloaded_pin_archive", false); finish(); return }
             trace("press the unloaded pin's close")
             check.report("unloaded_pin_archive", sidebar.pressCloseButton(id: off.id))
             step(4)
         case 4:
-            guard let off = row("pin-off"), let core = sidebarCheckCore() else { return }
+            guard let off = row("pin-off"), let core = sidebarCheckCore() else {
+                note("pin-off row missing or no core"); return
+            }
             guard !core.spaces.flatMap(\.pinned).contains(where: { $0.id == off.id }),
-                  core.archive.contains(where: { $0.id == off.id }) else { return }
-            guard let todayA = row("today-a"), let info = sidebar.rowCheckInfo(id: todayA.id), info.closeLabel == "Archive Tab" else { return }
+                  core.archive.contains(where: { $0.id == off.id }) else {
+                note("pin-off still pinned=\(core.spaces.flatMap(\.pinned).contains { $0.id == off.id }) archived=\(core.archive.contains { $0.id == off.id })")
+                return
+            }
+            guard let todayA = row("today-a"), let info = sidebar.rowCheckInfo(id: todayA.id), info.closeLabel == "Archive Tab" else {
+                note("today-a label is \(row("today-a").flatMap { sidebar.rowCheckInfo(id: $0.id)?.closeLabel } ?? "-"), expected Archive Tab")
+                return
+            }
             trace("press a Today tab's close")
             check.report("today_archive", sidebar.pressCloseButton(id: todayA.id))
             step(5)
         case 5:
-            guard let todayA = row("today-a"), let core = sidebarCheckCore() else { return }
+            guard let todayA = row("today-a"), let core = sidebarCheckCore() else {
+                note("today-a row missing or no core"); return
+            }
             guard !core.spaces.flatMap(\.today).contains(where: { $0.id == todayA.id }),
-                  core.archive.contains(where: { $0.id == todayA.id }) else { return }
+                  core.archive.contains(where: { $0.id == todayA.id }) else {
+                note("today-a still in today=\(core.spaces.flatMap(\.today).contains { $0.id == todayA.id }) archived=\(core.archive.contains { $0.id == todayA.id })")
+                return
+            }
             // R2: ⌘W acts on the current tab and only its row shows the binding's caps.
-            guard let todayB = row("today-b") else { return }
+            guard let todayB = row("today-b") else { note("today-b row missing"); return }
             sidebar.selectRow(id: todayB.id)
-            guard sidebar.selectedRowID == todayB.id else { return }
+            guard sidebar.selectedRowID == todayB.id else { note("today-b not selected: \(sidebar.selectedRowID ?? "-")"); return }
             let caps = sidebar.rowCheckInfo(id: todayB.id)?.closeCaps
             check.report("close_caps_current", caps == sidebar.closeCapsForCheck && !(caps ?? []).isEmpty)
             trace("press ⌘W")
             sidebar.closeSelectedTab(nil)
             step(6)
         case 6:
-            guard let todayB = row("today-b"), let core = sidebarCheckCore() else { return }
-            guard core.archive.contains(where: { $0.id == todayB.id }) else { return }
+            guard let todayB = row("today-b"), let core = sidebarCheckCore() else {
+                note("today-b row missing or no core"); return
+            }
+            guard core.archive.contains(where: { $0.id == todayB.id }) else {
+                note("today-b not archived yet"); return
+            }
             check.report("command_w_current", true)
             // F3: the open, empty folder shows its line at the child indent.
             guard let empty = row("empty"), let marker = sidebar.noTabsRowsForCheck.first(where: { $0.parent == empty.id }) else {
@@ -286,26 +320,44 @@ extension Runtime {
             step(8)
         case 8:
             guard let space = sidebarCheckShownSpace(), let candidate = space.today.first(where: { !check.seen.contains($0.id) }),
-                  let info = sidebar.rowCheckInfo(id: candidate.id), info.unreadDot else { return }
+                  let info = sidebar.rowCheckInfo(id: candidate.id), info.unreadDot else {
+                let fresh = sidebarCheckShownSpace().map { $0.today.filter { !check.seen.contains($0.id) }.map(\.id) } ?? []
+                note("no unread dot yet; new rows=\(fresh) dots=\(fresh.map { sidebar.rowCheckInfo(id: $0)?.unreadDot == true })")
+                return
+            }
             check.report("unread_dot", true)
             _ = capture("unread")
             sidebar.selectRow(id: candidate.id)
             step(9)
         case 9:
             guard let space = sidebarCheckShownSpace(), let shown = space.today.first(where: { sidebar.selectedRowID == $0.id }),
-                  sidebar.rowCheckInfo(id: shown.id)?.unreadDot == false else { return }
+                  sidebar.rowCheckInfo(id: shown.id)?.unreadDot == false else {
+                let shown = sidebarCheckShownSpace().flatMap { space in
+                    space.today.first { sidebar.selectedRowID == $0.id } }.map(\.id)
+                note("unread dot not cleared yet on \(shown ?? "-")")
+                return
+            }
             // R5: a crashed renderer's row draws the warning glyph at 45 %.
-            guard let todayC = row("today-c") else { return }
+            guard let todayC = row("today-c") else { note("today-c row missing"); return }
             if sidebar.selectedRowID != todayC.id { sidebar.selectRow(id: todayC.id); return }
             guard snapshot.selectedId == todayC.id, host.activeItemId() == todayC.id,
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else { return }
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }) else {
+                note("today-c not active yet: snapshot=\(snapshot.selectedId ?? "-") host=\(host.activeItemId() ?? "-") tabs=\((host.tabs() as? [any ARTabAPI])?.map(\.itemId) ?? [])")
+                return
+            }
             trace("crash the renderer")
             guard tab.checkCrashRenderer() else { finish(); return }
             step(10)
         case 10:
             guard let todayC = row("today-c"), let info = sidebar.rowCheckInfo(id: todayC.id),
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else { return }
-            guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else { return }
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayC.id }), tab.crashed else {
+                let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == (row("today-c")?.id ?? "") }
+                note("today-c not crashed yet: crashed=\(tab?.crashed ?? false) icon=\(sidebar.rowCheckInfo(id: row("today-c")?.id ?? "")?.iconDescription ?? "-")")
+                return
+            }
+            guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else {
+                note("crashed glyph is \(info.iconDescription ?? "-") at \(info.opacity)"); return
+            }
             check.report("crashed_glyph", true)
             _ = capture("crashed")
             _ = capture("rows")

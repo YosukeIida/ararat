@@ -214,3 +214,20 @@ func tooltipPopsInAndFadesOutInTwoFramesWithoutTakingInput() throws {
     #expect(fade.toValue as? Double == 0)
     #expect(!window.isVisible && !window.isKeyWindow)
 }
+
+@Test @MainActor
+func checkPressRunsTheRowsCloseRuleWithoutAPointer() throws {
+    let (window, sidebar) = interactionWindow()
+    defer { window.contentView = nil }
+    var closed: [String] = []
+    var archived: [String] = []
+    sidebar.onClose = { closed.append($0) }
+    sidebar.onArchive = { archived.append($0) }
+    // The sidebar-rows check presses without hovering: the seam resolves the row's close
+    // target (loaded pin closes, Today tab archives) and runs the button's callbacks.
+    #expect(sidebar.pressRowCloseForCheck(id: "pin") == .close)
+    #expect(sidebar.pressRowCloseForCheck(id: "a") == .archive)
+    #expect(sidebar.pressRowCloseForCheck(id: "missing") == nil)
+    #expect(closed == ["pin"])
+    #expect(archived == ["a"])
+}
