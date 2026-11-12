@@ -318,3 +318,38 @@ func theRowCapsFollowTheCloseBindingWithoutAMenuItem() throws {
     sidebar.tooltip.update(target: row.closeButton, point: NSPoint(x: 25, y: 200))
     #expect(sidebar.tooltip.keycaps.map(\.stringValue) == ["⌃", "⌘", "Q"])
 }
+
+@Test @MainActor
+func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
+    // D2: an unloaded pin's ✕ archives it (the row showed Archive Tab). The check presses
+    // the row's rule directly, which lands on actions.onArchive → adapter.close(archive: true).
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("pin-archive.sqlite").path
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: path, windowID: "archive", card: NSView(), session: session)
+    let store = try #require(session.store)
+    let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":["p"],"data":{"itemContainer":{}}},"p",{"id":"p","parentID":"pin","childrenIds":[],"data":{"tab":{"savedURL":"https://p.example"}}},"today",{"id":"today","parentID":null,"childrenIds":["a"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}}]}]}}"#
+    _ = try store.importArcSidebar(windowId: "archive", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+    try store.showSpace(windowId: "archive", spaceId: "work")
+    let before = try #require(store.snapshot(windowId: "archive").spaces.first { $0.id == "work" })
+    let pin = try #require(before.pinned.first { $0.id == "p" })
+    #expect(!rowCloseArchives(pin, in: before))
+    // Unload the pin the way the check's seed does (its loaded ✕ closes it).
+    _ = try store.closeItem(windowId: "archive", id: "p")
+    let unloaded = try #require(store.snapshot(windowId: "archive").spaces.first { $0.id == "work" })
+    let unloadedPin = try #require(unloaded.pinned.first { $0.id == "p" })
+    #expect(unloadedPin.unloaded)
+    // The unloaded pin's ✕ is Archive Tab: the row's own rule.
+    #expect(rowCloseArchives(unloadedPin, in: unloaded))
+    engine.close(id: "p", archive: true)
+    try await waitUntil {
+        let now = store.snapshot(windowId: "archive")
+        return now.archive.contains { $0.id == "p" }
+    }
+    let after = store.snapshot(windowId: "archive")
+    let work = try #require(after.spaces.first { $0.id == "work" })
+    #expect(after.archive.contains { $0.id == "p" })
+    #expect(!work.pinned.contains { $0.id == "p" })
+    #expect(work.today.contains { $0.id == "a" })
+}

@@ -2116,12 +2116,6 @@ extension SidebarView {
             frame: convert(view.bounds, from: view))
     }
 
-    public func pressCloseButton(id: String) -> Bool {
-        guard let view = rowViews[id], !view.closeButton.isHidden else { return false }
-        view.closeButton.performClick(nil)
-        return true
-    }
-
     public var noTabsRowsForCheck: [(id: String, parent: String, frame: NSRect, line: NSRect, height: CGFloat)] {
         noTabsRows.map { id, view in
             view.layoutSubtreeIfNeeded()

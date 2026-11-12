@@ -30,6 +30,13 @@ final class SidebarCheck {
     // The last wait a phase described, so a stall names its condition in the trace and in
     // the timeout diagnostics without a second VM round.
     var lastWait = ""
+    // The unloaded pin the rows check archives: it leaves the sidebar's lists, so its id is
+    // read once while the row exists.
+    var unloadedPinId = ""
+    // The Today tab the rows check archives, recorded for the same reason.
+    var todayArchiveId = ""
+    // The Today tab ⌘W closes, which leaves the list too.
+    var commandWId = ""
 
     static func conditionNames(mode: Mode, screen: Bool) -> [String] {
         let base: [String]
@@ -195,6 +202,15 @@ extension Runtime {
         func liveTab(_ id: String) -> Bool {
             (host.tabs() as? [any ARTabAPI])?.contains { $0.itemId == id } == true
         }
+        // The row's ✕ button only exists on hover, which a VM check cannot do: press the same
+        // rule and callbacks the button runs, and trace the action it resolved.
+        func pressClose(_ id: String) -> Bool {
+            let action = sidebar.pressRowCloseForCheck(id: id)
+            let name = action.map { $0 == .archive ? "archive" : "close" } ?? "no target"
+            trace("press close for \(id): \(name)")
+            if action == nil { note("no close target for \(id)") }
+            return action != nil
+        }
         switch check.phase {
         case 0:
             let space = sidebarCheckShownSpace()
@@ -255,15 +271,17 @@ extension Runtime {
             }
             guard info.closeLabel == "Archive Tab" else { check.report("unloaded_pin_archive", false); finish(); return }
             trace("press the unloaded pin's close")
-            check.report("unloaded_pin_archive", sidebar.pressCloseButton(id: off.id))
+            check.unloadedPinId = off.id
+            check.report("unloaded_pin_archive", pressClose(off.id))
             step(4)
         case 4:
-            guard let off = row("pin-off"), let core = sidebarCheckCore() else {
-                note("pin-off row missing or no core"); return
-            }
-            guard !core.spaces.flatMap(\.pinned).contains(where: { $0.id == off.id }),
-                  core.archive.contains(where: { $0.id == off.id }) else {
-                note("pin-off still pinned=\(core.spaces.flatMap(\.pinned).contains { $0.id == off.id }) archived=\(core.archive.contains { $0.id == off.id })")
+            // The archived pin leaves pinned and the sidebar's lists, so the wait reads the
+            // core through the id recorded at the press.
+            guard let core = sidebarCheckCore() else { note("no core"); return }
+            guard !check.unloadedPinId.isEmpty else { note("the unloaded pin id was not recorded"); return }
+            guard !core.spaces.flatMap(\.pinned).contains(where: { $0.id == check.unloadedPinId }),
+                  core.archive.contains(where: { $0.id == check.unloadedPinId }) else {
+                note("pin-off still pinned=\(core.spaces.flatMap(\.pinned).contains { $0.id == check.unloadedPinId }) archived=\(core.archive.contains { $0.id == check.unloadedPinId })")
                 return
             }
             guard let todayA = row("today-a"), let info = sidebar.rowCheckInfo(id: todayA.id), info.closeLabel == "Archive Tab" else {
@@ -271,15 +289,16 @@ extension Runtime {
                 return
             }
             trace("press a Today tab's close")
-            check.report("today_archive", sidebar.pressCloseButton(id: todayA.id))
+            check.todayArchiveId = todayA.id
+            check.report("today_archive", pressClose(todayA.id))
             step(5)
         case 5:
-            guard let todayA = row("today-a"), let core = sidebarCheckCore() else {
-                note("today-a row missing or no core"); return
-            }
-            guard !core.spaces.flatMap(\.today).contains(where: { $0.id == todayA.id }),
-                  core.archive.contains(where: { $0.id == todayA.id }) else {
-                note("today-a still in today=\(core.spaces.flatMap(\.today).contains { $0.id == todayA.id }) archived=\(core.archive.contains { $0.id == todayA.id })")
+            // The archived Today tab leaves the list, so the wait reads the core by id.
+            guard let core = sidebarCheckCore() else { note("no core"); return }
+            guard !check.todayArchiveId.isEmpty else { note("the Today tab id was not recorded"); return }
+            guard !core.spaces.flatMap(\.today).contains(where: { $0.id == check.todayArchiveId }),
+                  core.archive.contains(where: { $0.id == check.todayArchiveId }) else {
+                note("today-a still in today=\(core.spaces.flatMap(\.today).contains { $0.id == check.todayArchiveId }) archived=\(core.archive.contains { $0.id == check.todayArchiveId })")
                 return
             }
             // R2: ⌘W acts on the current tab and only its row shows the binding's caps.
@@ -289,13 +308,14 @@ extension Runtime {
             let caps = sidebar.rowCheckInfo(id: todayB.id)?.closeCaps
             check.report("close_caps_current", caps == sidebar.closeCapsForCheck && !(caps ?? []).isEmpty)
             trace("press ⌘W")
+            check.commandWId = todayB.id
             sidebar.closeSelectedTab(nil)
             step(6)
         case 6:
-            guard let todayB = row("today-b"), let core = sidebarCheckCore() else {
-                note("today-b row missing or no core"); return
-            }
-            guard core.archive.contains(where: { $0.id == todayB.id }) else {
+            // ⌘W archives the selected Today tab, which then leaves the list: read the core by id.
+            guard let core = sidebarCheckCore() else { note("no core"); return }
+            guard !check.commandWId.isEmpty else { note("the ⌘W tab id was not recorded"); return }
+            guard core.archive.contains(where: { $0.id == check.commandWId }) else {
                 note("today-b not archived yet"); return
             }
             check.report("command_w_current", true)
