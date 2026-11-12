@@ -29,12 +29,15 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     }
     var rowsLeadingAndStatusFit: Bool {
         var rows = 0
-        var fits = true
+        let clip = scroll.contentView
+        let visible = clip.bounds
+        var fits = visible.width > 0 && abs((table.tableColumns.first?.width ?? 0) - visible.width) <= 1
         table.enumerateAvailableRowViews { tableRow, _ in
             for row in tableRow.subviews.compactMap({ $0 as? DownloadRowView }) {
                 rows += 1
-                let frame = self.table.convert(row.bounds, from: row)
-                if abs(frame.minX - self.table.bounds.minX) > 16 || !row.statusFits || !row.statusTruncates { fits = false }
+                let frame = clip.convert(row.bounds, from: row)
+                let status = row.statusFrame(in: clip)
+                if frame.minX < visible.minX - 1 || frame.minX > visible.minX + 16 || frame.maxX > visible.maxX + 1 || status.minX < visible.minX - 1 || status.maxX > visible.maxX + 1 || !row.statusFits || !row.statusTruncates { fits = false }
             }
         }
         return rows > 0 && fits
