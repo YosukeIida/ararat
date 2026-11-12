@@ -2108,7 +2108,9 @@ extension SidebarView {
         let icon = view.subviews.compactMap { $0 as? NSImageView }.first
         let label = view.closeButton.accessibilityLabel()
         return SidebarRowCheckInfo(id: id, kind: view.row.kind, unloaded: view.row.unloaded,
-            closeLabel: view.closeButton.isHidden ? nil : label, closeCaps: view.closeShortcutCaps,
+            // The configured label, shown or not: the button only appears on hover, and a VM
+            // check cannot move the pointer reliably (the hover look is covered in swift test).
+            closeLabel: label, closeCaps: view.closeShortcutCaps,
             unreadDot: view.unreadDotVisible, iconDescription: icon?.image?.accessibilityDescription,
             opacity: Double(icon?.alphaValue ?? 1),
             frame: convert(view.bounds, from: view))

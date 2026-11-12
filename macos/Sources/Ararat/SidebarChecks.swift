@@ -392,8 +392,10 @@ extension Runtime {
                 let remaining = adapter?.session.queue.sync { () -> Int in
                     let core = store.snapshot(windowId: windowID)
                     let pinned = core.spaces.first { $0.id == shown.id }?.pinned ?? []
-                    for pin in pinned { _ = try? store.archiveItem(windowId: windowID, id: pin.id) }
-                    return pinned.count
+                    // Only tabs are pins; the section.s folders stay and are not archived.
+                    let tabs = pinned.filter { $0.kind == .tab }
+                    for pin in tabs { _ = try? store.archiveItem(windowId: windowID, id: pin.id) }
+                    return tabs.count
                 } ?? 0
                 if remaining > 0 {
                     if let core = sidebarCheckCore() { sidebar.update(snapshot: core) }
@@ -402,9 +404,9 @@ extension Runtime {
                 }
             }
             guard let core = sidebarCheckCore(), let fresh = core.spaces.first(where: { $0.id == shown.id }),
-                  fresh.pinned.isEmpty else {
-                let pinned = sidebarCheckCore()?.spaces.first { $0.id == shown.id }?.pinned.map(\.id) ?? []
-                note("pinned still \(pinned)")
+                  fresh.pinned.filter({ $0.kind == .tab }).isEmpty else {
+                let pins = sidebarCheckCore()?.spaces.first { $0.id == shown.id }?.pinned.filter { $0.kind == .tab }.map(\.id) ?? []
+                note("pinned tabs still \(pins)")
                 return
             }
             guard let dragged = row("today-a") else { note("today-a row missing"); return }
@@ -422,7 +424,11 @@ extension Runtime {
         case 2:
             guard let core = sidebarCheckCore(), let shown = sidebarCheckShownSpace(),
                   let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned,
-                  pinned.count == 1, pinned.first?.url?.hasSuffix("?sidebar-today-a") == true else { return }
+                  pinned.first?.url?.hasSuffix("?sidebar-today-a") == true else {
+                let first = sidebarCheckCore()?.spaces.first { $0.id == sidebarCheckShownSpace()?.id }?.pinned.first?.url ?? "-"
+                note("pinned first is \(first)")
+                return
+            }
             check.report("name_drop_pins", true)
             _ = capture("name-drop")
             // T4: the core setting hides the New Tab row.
