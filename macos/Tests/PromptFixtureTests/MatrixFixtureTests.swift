@@ -787,6 +787,7 @@ func matrixActivationHooksRejectSupersededAndClosedSelections() async throws {
                 fake.closing = true
                 engine.windowHostWillBeginClosing(host)
             } else {
+                engine.invalidateSelection()
                 engine.select(id: item, url: "about:blank")
                 try await matrixWait { !fake.activated.isEmpty }
             }
@@ -1054,4 +1055,77 @@ func recoveryDoesNotAcknowledgeTheInitialTransactionBeforeSelectionDispatch() as
     engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "recovery-order", epoch: 1, rev: 0, command: nil))
     engine.restoreSelection()
     try await matrixWait { observedInitial && acknowledgements == 1 }
+}
+
+@Test @MainActor
+func metadataFromClosingWindowDoesNotSupersedePendingSelection() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let main = try EngineAdapter(path: path, windowID: "main", card: NSView(), seedProfiles: true, session: session)
+    let child = try EngineAdapter(path: path, windowID: "child", card: NSView(), session: session)
+    let (mainFake, mainHost) = matrixFake()
+    let (childFake, childHost) = matrixFake()
+    main.attach(mainHost); child.attach(childHost)
+    let row = try session.queue.sync { () -> (String, String) in
+        let snapshot = try #require(session.store).snapshot(windowId: "main")
+        let row = try #require(snapshot.spaces.first?.today.first)
+        return (row.id, try #require(row.url))
+    }
+    var applied = false
+    main.onTransaction = { _, ok in applied = ok }
+    main.select(id: row.0, url: row.1)
+    try await matrixWait { mainFake.opened.count == 1 }
+    main.windowHost(mainHost, didReceiveTransaction: matrixTransaction(mainFake, window: "main", epoch: 1, rev: 0, command: mainFake.opened[0]))
+    try await matrixWait { applied }
+    let childRow = try session.queue.sync { () -> (String, String) in
+        let store = try #require(session.store)
+        let snapshot = try store.createTab(windowId: "child", url: "https://child.example/")
+        return (try #require(snapshot.selectedId), "https://child.example/")
+    }
+    child.select(id: childRow.0, url: childRow.1)
+    try await matrixWait { childFake.opened.count == 1 }
+    var childApplied = false
+    child.onTransaction = { _, ok in childApplied = ok }
+    child.windowHost(childHost, didReceiveTransaction: matrixTransaction(childFake, window: "child", epoch: 1, rev: 1, command: childFake.opened[0]))
+    try await matrixWait { childApplied }
+    var held: (() -> Void)?
+    var command = ""
+    main.checkSelectionDispatch = { stage, id, resume in
+        if stage == "resolved" { held = resume; command = id } else { resume() }
+    }
+    main.select(id: row.0, url: row.1)
+    try await matrixWait { held != nil }
+    let generation = try #require(main.checkSelectionState()["generation"] as? Int)
+    var broadcasts = 0
+    child.onWorkspaceChange = { broadcasts += 1; main.refresh() }
+    childApplied = false
+    var metadata = matrixTransaction(childFake, window: "child", epoch: 1, rev: 2, command: nil)
+    var strips = metadata["strips"] as! [[String: Any]]
+    var tabs = strips[0]["tabs"] as! [[String: Any]]
+    tabs[0]["loading"] = true
+    tabs[0]["audible"] = true
+    strips[0]["tabs"] = tabs
+    metadata["strips"] = strips
+    child.windowHost(childHost, didReceiveTransaction: metadata)
+    try await matrixWait { childApplied }
+    #expect(child.rowStates[childRow.0]?.loading == true)
+    #expect(child.rowStates[childRow.0]?.audible == true)
+    #expect(broadcasts == 0)
+    main.select(id: row.0, url: row.1)
+    childFake.closing = true
+    childApplied = false
+    child.windowHost(childHost, didReceiveTransaction: matrixTransaction(childFake, window: "child", epoch: 1, rev: 3, command: nil, crashedItem: childRow.0))
+    #expect(!childApplied)
+    #expect(main.checkSelectionState()["generation"] as? Int == generation)
+    main.checkSelectionDispatch = nil
+    let resume = try #require(held)
+    resume()
+    try await matrixWait { mainFake.activated.contains(command) }
+    applied = false
+    main.windowHost(mainHost, didReceiveTransaction: matrixTransaction(mainFake, window: "main", epoch: 1, rev: 3, command: command))
+    try await matrixWait { applied }
+    main.shutdown(); child.shutdown()
 }

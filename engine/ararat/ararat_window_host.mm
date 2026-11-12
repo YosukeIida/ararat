@@ -3520,6 +3520,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)tabMetadataChanged:(NSString*)field tab:(ARTab*)tab {
   [self traceTabEvent:field tab:tab];
+  if (core_->closing() || core_->closed() || closing_window_ || closing_all_) return;
   __weak ARWindowHost* host = self;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(^{ [host emitCause:@"Engine"]; }));
