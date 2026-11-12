@@ -38,6 +38,7 @@ public final class SidebarView: NSView {
     private let library = LibraryView(frame: .zero)
     let libraryButton = DownloadsButton()
     private var downloadsModel: DownloadsModel?
+    private var downloadsHoverFired = false
     var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
     private let libraryFill = CALayer()
@@ -266,17 +267,25 @@ public final class SidebarView: NSView {
         let panelFrame = panel?.frame ?? .zero
         let inside = window.map { $0.frame.insetBy(dx: -1, dy: -1).contains(panelFrame) } ?? false
         let fittingHeight = DownloadsPopover.headerHeight + CGFloat(downloadsPopover?.rows.count ?? 0) * DownloadsPopover.rowHeight
+        let metrics = downloadsPopover?.checkMetrics ?? [:]
         return ["progress": progress, "ring_visible": ringVisible, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "actions": $0.actions] as [String: Any] } ?? [],
                 "list": downloadsPopover?.isShown ?? false, "first": downloadsPopover?.library.title ?? "",
                 "rows": downloadsPopover?.rows.mapValues { UInt(bitPattern: ObjectIdentifier($0)) } ?? [:],
                 "popover_inside_above": panel != nil && inside && panelFrame.minY >= buttonFrame.maxY - 1,
                 "popover_readable": panel != nil && panelFrame.width >= SidebarMetrics.defaultWidth && panelFrame.height >= fittingHeight,
+                "popover_metrics": metrics, "hover_fired": downloadsHoverFired,
+                "page_actions_fit": library.downloadsPage.actionButtonsFit,
                 "library_open": libraryOpen, "library_page": library.page.rawValue,
                 "page_ids": library.downloadsPage.entries.map(\.id), "flight": flight]
     }
     public func downloadsCheckHover() {
         guard downloadsCheckEnabled else { return }
-        libraryButton.checkHover()
+        downloadsHoverFired = false
+        libraryButton.checkHover { [weak self] in
+            guard let self else { return }
+            self.downloadsHoverFired = true
+            FileHandle.standardError.write(Data("ararat-trace: downloads hover seam: popover shown=\(self.downloadsPopover?.isShown ?? false)\n".utf8))
+        }
     }
     public func downloadsCheckClosePopover() { if downloadsCheckEnabled { downloadsPopover?.close() } }
     public func downloadsCheckOpenLibrary() { if downloadsCheckEnabled { downloadsPopover?.library.performClick(nil) } }

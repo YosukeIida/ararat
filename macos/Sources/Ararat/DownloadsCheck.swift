@@ -19,7 +19,7 @@ final class DownloadsCheck {
   var privatePass = 0
   var privateBefore: Set<String> = []
   static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_no_list", "private_close_regular_intact"]
-  static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable"]
+  static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "page_actions_fit"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = names(screen: screen)
@@ -135,6 +135,9 @@ extension Runtime {
       if screen {
         check.mark("popover_inside_above", state["popover_inside_above"] as? Bool == true)
         check.mark("popover_readable", state["popover_readable"] as? Bool == true)
+        let metrics = state["popover_metrics"] as? [String: Any] ?? [:]
+        FileHandle.standardError.write(Data("ararat-trace: downloads popover metrics=\(metrics)\n".utf8))
+        check.mark("popover_content", (metrics["content_width"] as? CGFloat ?? 0) >= 240 && (metrics["title_font"] as? CGFloat ?? 0) >= 13 && (metrics["title_height"] as? CGFloat ?? 0) >= 13)
         check.mark("capture_popover", sidebar.downloadsCheckPopoverWindow.map { capture("popover", window: $0) } ?? false)
       }
       check.rowIdentity = (state["rows"] as? [String: UInt])?[check.slowID]
@@ -145,19 +148,26 @@ extension Runtime {
       let identity = (state["rows"] as? [String: UInt])?[check.slowID]
       check.mark("popover_row_stable", identity != nil && identity == check.rowIdentity)
       sidebar.downloadsCheckClosePopover()
+      browserCheckPhase = 51
+    case 51:
+      guard state["list"] as? Bool == false else { wait("popover close before hover"); return }
       check.hoverStart = ProcessInfo.processInfo.systemUptime
       sidebar.downloadsCheckHover()
       browserCheckPhase = 6
     case 6:
-      guard state["list"] as? Bool == true else { wait("hover delay and popover"); return }
-      check.mark("hover_list", ProcessInfo.processInfo.systemUptime - check.hoverStart >= 0.2)
+      guard ProcessInfo.processInfo.systemUptime - check.hoverStart >= 0.2,
+            state["hover_fired"] as? Bool == true, state["list"] as? Bool == true else { wait("hover delay and popover"); return }
+      check.mark("hover_list")
       sidebar.downloadsCheckOpenLibrary()
       browserCheckPhase = 7
     case 7:
       guard state["library_open"] as? Bool == true, state["library_page"] as? String == "Downloads",
             (state["page_ids"] as? [String] ?? []).contains(check.slowID) else { wait("Library Downloads page"); return }
       check.mark("library_downloads_page")
-      if screen { check.mark("capture_library", capture("library", window: window)) }
+      if screen {
+        check.mark("page_actions_fit", state["page_actions_fit"] as? Bool == true)
+        check.mark("capture_library", capture("library", window: window))
+      }
       guard host.performDownloadAction("cancel", identifier: check.slowID) else { fail("cancel was not offered"); return }
       browserCheckPhase = 8
     case 8:

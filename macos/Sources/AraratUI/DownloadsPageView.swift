@@ -14,6 +14,19 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     var onScroll: ((NSEvent, NSScrollView?) -> Bool)?
     var previousFocus: NSView?
     var emptyVisible: Bool { !empty.isHidden }
+    var actionButtonsFit: Bool {
+        var rows = 0
+        var fits = true
+        table.enumerateAvailableRowViews { tableRow, _ in
+            for row in tableRow.subviews.compactMap({ $0 as? DownloadRowView }) {
+                rows += 1
+                for button in row.actionButtons {
+                    if !row.bounds.insetBy(dx: -1, dy: -1).contains(row.convert(button.bounds, from: button)) { fits = false }
+                }
+            }
+        }
+        return rows > 0 && fits
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
