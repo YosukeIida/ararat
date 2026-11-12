@@ -384,29 +384,34 @@ extension Runtime {
             trace("divider and new tab")
             step(1)
         case 1:
-            // Design q1: with no pins, a drop on the space name row pins at the top. The pins
-            // are archived on the store's queue so the next tick reads them gone; Clear needs
-            // loaded Today rows, so one is selected first to give it a native tab.
+            // The mock's no-pins layout is about an empty pinned section, so the seed's pin
+            // tabs and its two folders are removed through the core on the store's queue;
+            // the next tick reads the section gone and the sidebar is refreshed from it.
             guard let shown = sidebarCheckShownSpace() else { return }
             if let store = adapter?.session.store {
                 let remaining = adapter?.session.queue.sync { () -> Int in
                     let core = store.snapshot(windowId: windowID)
-                    let pinned = core.spaces.first { $0.id == shown.id }?.pinned ?? []
-                    // Only tabs are pins; the section.s folders stay and are not archived.
-                    let tabs = pinned.filter { $0.kind == .tab }
-                    for pin in tabs { _ = try? store.archiveItem(windowId: windowID, id: pin.id) }
-                    return tabs.count
+                    guard let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned else { return 0 }
+                    for pin in pinned where pin.kind == .tab {
+                        _ = try? store.archiveItem(windowId: windowID, id: pin.id)
+                    }
+                    // Folders first, deepest last: deleteFolder moves their tabs out, and the
+                    // seed's folder tab goes with them.
+                    for folder in pinned.filter({ $0.kind == .folder }).sorted(by: { $0.depth > $1.depth }) {
+                        _ = try? store.deleteFolder(windowId: windowID, id: folder.id)
+                    }
+                    return core.spaces.first(where: { $0.id == shown.id })?.pinned.count ?? 0
                 } ?? 0
+                if let core = sidebarCheckCore() { sidebar.update(snapshot: core) }
                 if remaining > 0 {
-                    if let core = sidebarCheckCore() { sidebar.update(snapshot: core) }
-                    note("archived \(remaining) pins, waiting for the snapshot")
+                    note("pinned still holds \(remaining) rows, waiting for an empty section")
                     return
                 }
             }
             guard let core = sidebarCheckCore(), let fresh = core.spaces.first(where: { $0.id == shown.id }),
-                  fresh.pinned.filter({ $0.kind == .tab }).isEmpty else {
-                let pins = sidebarCheckCore()?.spaces.first { $0.id == shown.id }?.pinned.filter { $0.kind == .tab }.map(\.id) ?? []
-                note("pinned tabs still \(pins)")
+                  fresh.pinned.isEmpty else {
+                let pinned = sidebarCheckCore()?.spaces.first { $0.id == shown.id }?.pinned.map(\.id) ?? []
+                note("pinned still \(pinned)")
                 return
             }
             guard let dragged = row("today-a") else { note("today-a row missing"); return }
@@ -424,7 +429,7 @@ extension Runtime {
         case 2:
             guard let core = sidebarCheckCore(), let shown = sidebarCheckShownSpace(),
                   let pinned = core.spaces.first(where: { $0.id == shown.id })?.pinned,
-                  pinned.first?.url?.hasSuffix("?sidebar-today-a") == true else {
+                  pinned.count == 1, pinned.first?.url?.hasSuffix("?sidebar-today-a") == true else {
                 let first = sidebarCheckCore()?.spaces.first { $0.id == sidebarCheckShownSpace()?.id }?.pinned.first?.url ?? "-"
                 note("pinned first is \(first)")
                 return
