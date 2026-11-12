@@ -2212,15 +2212,16 @@ extension SidebarView {
             frame: convert(view.bounds, from: view))
     }
 
-    public var noTabsRowsForCheck: [(id: String, parent: String, frame: NSRect, line: NSRect, height: CGFloat)] {
+    public var noTabsRowsForCheck: [(id: String, parent: String, frame: NSRect, text: NSRect, height: CGFloat,
+                                    fontSize: CGFloat, lineHeight: CGFloat)] {
         noTabsRows.map { id, view in
             view.layoutSubtreeIfNeeded()
             // Dragging works in the sidebar’s flipped coordinates (SidebarDrag.dragRect).
             let row = dragRect(view)
-            let line = convert(view.lineFrameInRow, from: view)
+            let text = convert(view.textFrameInRow, from: view)
             return (id, view.parentIDForCheck, row,
-                    CGRect(x: line.minX, y: bounds.height - line.maxY, width: line.width, height: line.height),
-                    view.frame.height)
+                    CGRect(x: text.minX, y: bounds.height - text.maxY, width: text.width, height: text.height),
+                    view.frame.height, view.textFontSize, view.textLineHeight)
         }
     }
 

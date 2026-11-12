@@ -421,35 +421,43 @@ final class SidebarRowView: NSView {
     }
 }
 
-// F3: the row an open, empty folder shows at its child indent — a 24 pt line, not an item.
-// It is a drop target for the empty folder (SidebarDrag resolves it there) and never
+// F3: the row an open, empty folder shows at its child indent — a 24 pt "No tabs" line, not
+// an item. It is a drop target for the empty folder (SidebarDrag resolves it there) and never
 // selectable or draggable.
+@MainActor
+private final class SidebarHintLabel: NSTextField {
+    // The label's alignment rect is its frame: a text field's default insets would pull the
+    // "No tabs" text 2 pt left of the child indent the mock names.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+}
+
 @MainActor
 final class SidebarNoTabsRow: NSView {
     let row: Row
-    private let line = NSView()
-    private var lineLeading: NSLayoutConstraint!
+    // A-Folders: the open empty folder's "No tabs" text line at the child indent, in the
+    // sidebar's secondary text. It is not a hit target; VoiceOver reads the row's label.
+    private let label = SidebarHintLabel(labelWithString: "No tabs")
+    private var labelLeading: NSLayoutConstraint!
 
     init(row: Row) {
         self.row = row
         super.init(frame: .zero)
         wantsLayer = true
-        line.wantsLayer = true
-        line.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(line)
-        lineLeading = line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10 + CGFloat(row.depth) * 16)
+        label.font = .systemFont(ofSize: SidebarMetrics.secondaryFontSize)
+        label.textColor = .secondaryLabelColor
+        label.setAccessibilityElement(false)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        labelLeading = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10 + CGFloat(row.depth) * 16)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: SidebarMetrics.noTabsRowHeight),
-            lineLeading,
-            line.centerYAnchor.constraint(equalTo: centerYAnchor),
-            line.widthAnchor.constraint(equalToConstant: SidebarMetrics.noTabsLineWidth),
-            line.heightAnchor.constraint(equalToConstant: 1),
-            line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            labelLeading,
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
         ])
-        setAccessibilityElement(false)
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            line.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(SidebarMetrics.unloadedOpacity).cgColor
-        }
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("No tabs")
     }
 
     @available(*, unavailable)
@@ -458,13 +466,15 @@ final class SidebarNoTabsRow: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            line.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(SidebarMetrics.unloadedOpacity).cgColor
+            label.textColor = .secondaryLabelColor
         }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    var lineFrameInRow: NSRect { line.frame }
+    var textFrameInRow: NSRect { layoutSubtreeIfNeeded(); return label.frame }
+    var textFontSize: CGFloat { label.font?.pointSize ?? 0 }
+    var textLineHeight: CGFloat { label.font.map { NSLayoutManager().defaultLineHeight(for: $0) } ?? 0 }
     var parentIDForCheck: String { row.parentId }
 }
 

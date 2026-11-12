@@ -80,7 +80,8 @@ enum SidebarMetrics {
     // U25b: an open, empty folder's line, the Today divider block with its Clear button, the
     // New Tab row, and the space name row (D10).
     static let noTabsRowHeight: CGFloat = 24
-    static let noTabsLineWidth: CGFloat = 24
+    // The sidebar's secondary text size (the No tabs line, the Clear button's label, tooltips).
+    static let secondaryFontSize: CGFloat = 12
     static let todayDividerHeight: CGFloat = 16
     // Sidebar x 18 to 80 from the edge; the rows column insets this block by 8.
     static let todayDividerLeading: CGFloat = 10
