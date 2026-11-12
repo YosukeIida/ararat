@@ -321,6 +321,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
 
 @MainActor
 final class Runtime: NSObject, NSMenuItemValidation {
+  let clearUndo = ClearUndo()
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
@@ -865,7 +866,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -1213,7 +1214,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let rows = space.map { $0.today + $0.pinned + $0.favorites } ?? []
-    let visible = snapshot.selectedId.map { id in rows.contains { $0.id == id } } ?? false
+    let visible = snapshot.selectedId.map { id in rows.contains { $0.id == splitOwner(id, rows: rows) } } ?? false
     host?.setWorkspacePageHidden(!visible)
   }
 
@@ -1439,10 +1440,22 @@ final class Runtime: NSObject, NSMenuItemValidation {
   // so the engine's replies are accepted; the pages it names are closed beside it.
   func clearToday() {
     guard let spaceID = snapshot.shownSpaceId else { return }
-    adapter?.clearToday(spaceID: spaceID) { [weak self] snapshot in
-      guard let self, let snapshot else { return }
-      self.snapshot = snapshot
-      self.show(snapshot)
+    adapter?.clearToday(spaceID: spaceID) { [weak self] result in
+      guard let self, let result else { return }
+      self.show(result.snapshot)
+      guard result.hasItems else { return }
+      self.clearUndo.offer { [weak self] in
+        guard let self else { return }
+        self.container?.dismissTabsCleared()
+        self.adapter?.undoClearToday(result.batch) { [weak self] snapshot in
+          guard let self, let snapshot else { return }
+          self.show(snapshot)
+          if let row = clearUndoSelection(snapshot), let url = row.url {
+            self.adapter?.select(id: row.id, url: url)
+          }
+        }
+      }
+      self.container?.showTabsCleared { [weak self] in self?.clearUndo.run() }
     }
   }
 
@@ -1539,6 +1552,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
+    if let edit = menu.item(withTitle: "Edit")?.submenu {
+      // Why not ⌘Z: the page's editable first responder must keep its own undo.
+      let undo = NSMenuItem(title: "Undo Clear Tabs", action: #selector(undoClearTabs(_:)), keyEquivalent: "")
+      undo.target = self
+      edit.insertItem(undo, at: min(1, edit.items.count))
+    }
     let ids = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
@@ -1587,10 +1606,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    if item.action == #selector(undoClearTabs(_:)) {
+      let owner = root ?? self
+      return Self.clearUndoMenuEnabled(([owner] + owner.children).first { $0.host?.window().isKeyWindow == true })
+    }
     guard item.action == #selector(coreMenuCommand(_:)), item.representedObject as? String == "delete_folder" else { return true }
     let owner = root ?? self
     let target = ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }
     return target?.sidebar?.canDeleteOrganizeFolder == true
+  }
+
+  static func clearUndoMenuEnabled(_ target: Runtime?) -> Bool { target?.clearUndo.available == true }
+
+  @objc func undoClearTabs(_ item: NSMenuItem) {
+    let owner = root ?? self
+    ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }?.clearUndo.run()
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {

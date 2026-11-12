@@ -7,6 +7,13 @@ pub const HISTORY_LIMIT: usize = 50;
 #[derive(Debug, PartialEq, Eq)]
 pub struct EditError(pub String);
 
+#[derive(Debug, Clone)]
+pub struct ClearTodayBatch {
+    pub space: Id,
+    pub items: Vec<crate::model::Item>,
+    pub changed_at: u64,
+}
+
 impl WindowState {
     pub(crate) fn select(&mut self, id: Option<Id>) {
         if let Some(id) = &id {
@@ -780,12 +787,13 @@ impl Workspace {
     // loaded and unloaded rows, and the tabs inside a split row — so the undo toast reverses
     // it as one step. Pins and the profile's favourites are other lists and keep their tabs.
     // Every archived row shares one instant, which is what makes the batch read as one action.
-    pub fn clear_today(&mut self, space: &str) -> Result<Vec<Op>, EditError> {
+    pub fn clear_today(&mut self, space: &str) -> Result<(Vec<Op>, ClearTodayBatch), EditError> {
         self.check_tree().map_err(EditError)?;
         let today = self.spaces.iter().find(|entry| entry.id == space).map(|entry| entry.today.clone())
             .ok_or_else(|| EditError(format!("unknown space {space}")))?;
-        let ids: Vec<Id> = self.children(&today).into_iter()
+        let ids: Vec<Id> = self.outline_entries(&today).into_iter().map(|(_, item, _)| item)
             .filter(|item| matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+            .filter(|item| !item.membership.parent.as_ref().and_then(|id| self.items.get(id)).is_some_and(|parent| matches!(parent.kind, ItemKind::Split { .. })))
             .filter(|item| match item.kind {
                 ItemKind::Tab { .. } => true,
                 // A split with no open member is not a row the sidebar shows; leave it be.
@@ -793,7 +801,7 @@ impl Workspace {
                 _ => false,
             })
             .map(|item| item.id.clone()).collect();
-        if ids.is_empty() { return Ok(Vec::new()); }
+        if ids.is_empty() { return Ok((Vec::new(), ClearTodayBatch { space: space.into(), items: Vec::new(), changed_at: 0 })); }
         let now = self.lifecycle_time();
         let mut next = self.clone();
         let mut ops = Vec::new();
@@ -802,7 +810,41 @@ impl Workspace {
         for id in &ids {
             ops.extend(next.finish_item(id, true, now)?);
         }
+        let items = ops.iter().filter_map(|op| match op {
+            Op::Put(Record::Item(item)) if item.lifecycle == Lifecycle::Archived && item.lifecycle_changed_at == now => Some(item.clone()),
+            _ => None,
+        }).collect();
         *self = next;
+        Ok((ops, ClearTodayBatch { space: space.into(), items, changed_at: now }))
+    }
+
+    pub fn undo_clear_today(&mut self, window: &str, batch: &ClearTodayBatch, selected: Option<&str>) -> Result<Vec<Op>, EditError> {
+        self.check_tree().map_err(EditError)?;
+        let today = self.spaces.iter().find(|space| space.id == batch.space)
+            .map(|space| space.today.clone()).ok_or_else(|| EditError(format!("unknown space {}", batch.space)))?;
+        let now = self.lifecycle_time();
+        let mut ops = Vec::new();
+        for original in &batch.items {
+            let Some(item) = self.items.get(&original.id) else { continue };
+            if item != original || item.lifecycle != Lifecycle::Archived || item.lifecycle_changed_at != batch.changed_at
+                || self.list_for(&item.id).map(|(root, _)| root) != Some(today.as_str()) { continue }
+            if let Some(parent) = item.membership.parent.as_ref().and_then(|id| self.items.get(id)) {
+                if matches!(parent.kind, ItemKind::Split { .. }) && parent.lifecycle == Lifecycle::Archived
+                    && !ops.iter().any(|op| matches!(op, Op::Put(Record::Item(restored)) if restored.id == parent.id)) { continue }
+            }
+            let mut item = item.clone();
+            item.lifecycle = Lifecycle::Unloaded;
+            item.lifecycle_changed_at = now;
+            ops.push(Op::Put(Record::Item(item)));
+        }
+        if let Some(id) = selected.filter(|id| ops.iter().any(|op| matches!(op, Op::Put(Record::Item(item)) if item.id == *id && matches!(item.kind, ItemKind::Tab { .. })))) {
+            let mut state = self.window_state(window);
+            state.shown_space = Some(batch.space.clone());
+            state.select(Some(id.into()));
+            state.changed_at = now;
+            ops.push(Op::Put(Record::Window(state)));
+        }
+        for op in &ops { self.apply(op); }
         Ok(ops)
     }
 

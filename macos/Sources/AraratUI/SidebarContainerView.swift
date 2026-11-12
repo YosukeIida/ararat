@@ -1,7 +1,11 @@
 import AppKit
 
 private final class ToastView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    weak var button: NSView?
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === button ? hit : nil
+    }
 }
 
 @MainActor
@@ -10,6 +14,11 @@ public final class SidebarContainerView: NSView {
     private let page: NSView
     private let toast = ToastView()
     private let toastLabel = NSTextField(labelWithString: "Link copied")
+    private let toastUndo = NSButton(title: "Undo", target: nil, action: nil)
+    private var toastAction: (() -> Void)?
+    private var toastLabelLeading: NSLayoutConstraint!
+    private var toastLabelCenter: NSLayoutConstraint!
+    private var toastUndoConstraints: [NSLayoutConstraint] = []
     private var toastGeneration = 0
     public var checkToastAnnouncement: ((String) -> Void)?
     public var pageCard: NSView { page }
@@ -138,10 +147,24 @@ public final class SidebarContainerView: NSView {
         toastLabel.textColor = .white
         toastLabel.translatesAutoresizingMaskIntoConstraints = false
         toast.addSubview(toastLabel)
+        toastLabelLeading = toastLabel.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 16)
+        toastLabelCenter = toastLabel.centerXAnchor.constraint(equalTo: toast.centerXAnchor)
         NSLayoutConstraint.activate([
-            toastLabel.centerXAnchor.constraint(equalTo: toast.centerXAnchor),
+            toastLabelCenter,
             toastLabel.centerYAnchor.constraint(equalTo: toast.centerYAnchor),
         ])
+        toastUndo.translatesAutoresizingMaskIntoConstraints = false
+        toastUndo.bezelStyle = .inline
+        toastUndo.contentTintColor = .white
+        toastUndo.target = self
+        toastUndo.action = #selector(undoToast)
+        toast.addSubview(toastUndo)
+        toast.button = toastUndo
+        toastUndoConstraints = [
+            toastUndo.leadingAnchor.constraint(equalTo: toastLabel.trailingAnchor, constant: 12),
+            toastUndo.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -12),
+            toastUndo.centerYAnchor.constraint(equalTo: toast.centerYAnchor),
+        ]
         toast.wantsLayer = true
         toast.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
         toast.layer?.cornerRadius = 8
@@ -234,12 +257,52 @@ public final class SidebarContainerView: NSView {
     }
 
     public func showLinkCopied() {
-        showToast("Link copied")
+        showToast("Link copied", seconds: 2, action: nil)
     }
 
-    /// One toast per window, sized to its text (the U26d host, generalized in U26e pass 4).
+    /// U26e pass 4: the same host for one more message ("Screenshot copied"), without Undo.
     public func showToast(_ message: String) {
+        showToast(message, seconds: 2, action: nil)
+    }
+
+    public func showTabsCleared(undo: @escaping () -> Void) {
+        showToast("Tabs cleared", seconds: 5, action: undo)
+    }
+
+    @objc private func undoToast() {
+        let action = toastAction
+        toastAction = nil
+        toastGeneration += 1
+        toast.isHidden = true
+        action?()
+    }
+
+    public func checkUndoToast() { toastUndo.performClick(nil) }
+
+    public func dismissTabsCleared() {
+        guard toastAction != nil else { return }
+        toastAction = nil
+        toastGeneration += 1
+        toast.isHidden = true
+    }
+
+    public func checkToastHits() -> (labelPasses: Bool, undoReceives: Bool) {
+        layoutSubtreeIfNeeded()
+        let labelPoint = convert(NSPoint(x: toastLabel.bounds.midX, y: toastLabel.bounds.midY), from: toastLabel)
+        let labelHit = hitTest(convert(labelPoint, to: superview))
+        let buttonPoint = convert(NSPoint(x: toastUndo.bounds.midX, y: toastUndo.bounds.midY), from: toastUndo)
+        let buttonHit = hitTest(convert(buttonPoint, to: superview))
+        return (labelHit === page || labelHit?.isDescendant(of: page) == true, !toastUndo.isHidden && buttonHit === toastUndo)
+    }
+
+    private func showToast(_ message: String, seconds: TimeInterval, action: (() -> Void)?) {
+        toastAction = action
         toastLabel.stringValue = message
+        toastUndo.isHidden = action == nil
+        NSLayoutConstraint.deactivate(toastUndoConstraints)
+        toastLabelCenter.isActive = action == nil
+        toastLabelLeading.isActive = action != nil
+        if action != nil { NSLayoutConstraint.activate(toastUndoConstraints) }
         toastGeneration += 1
         let generation = toastGeneration
         toast.layer?.removeAllAnimations()
@@ -254,10 +317,12 @@ public final class SidebarContainerView: NSView {
                 toast.animator().alphaValue = 1
             }
         }
-        checkToastAnnouncement?(message)
-        NSAccessibility.post(element: toast, notification: .announcementRequested, userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+        let announcement = action == nil ? message : "Tabs cleared. Undo available."
+        checkToastAnnouncement?(announcement)
+        NSAccessibility.post(element: toast, notification: .announcementRequested, userInfo: [.announcement: announcement, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             guard let self, self.toastGeneration == generation else { return }
+            self.toastAction = nil
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { self.toast.isHidden = true; return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.16
@@ -272,8 +337,12 @@ public final class SidebarContainerView: NSView {
     }
 
     private func layoutToast() {
+        // U26d part 2 sizes an Undo toast at 200 pt; U26e pass 4 lets the text set the width,
+        // on the 8 pt grid, with the Undo button's extra room when it is shown.
         let text = toastLabel.fittingSize.width
-        let width = max(144, ceil((text + 32) / 8) * 8)
+        let minimum: CGFloat = toastUndo.isHidden ? 144 : 200
+        let extra: CGFloat = toastUndo.isHidden ? 32 : 88
+        let width = max(minimum, ceil((text + extra) / 8) * 8)
         toast.frame = NSRect(x: page.frame.midX - width / 2, y: page.frame.maxY - 56, width: width, height: 40)
     }
 

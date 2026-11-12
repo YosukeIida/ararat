@@ -1532,7 +1532,7 @@ fn clearing_today_puts_a_close_in_flight_for_each_live_row() {
         item.lifecycle = Lifecycle::Unloaded;
         item.lifecycle_changed_at = 1;
     }
-    let (ops, targets) = live.clear_today(&mut ws, "space-work").unwrap();
+    let (ops, targets, _) = live.clear_today(&mut ws, "space-work").unwrap();
     assert_eq!(targets.len(), 2);
     assert_eq!(targets.iter().map(|(_, command)| command.item.as_str()).collect::<Vec<_>>(), ["a", "b"]);
     // One batch archives the loaded and the unloaded row alike.

@@ -115,6 +115,10 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
+    pub fn selected_item(&self, window_id: String) -> Option<String> {
+        self.workspace.lock().unwrap().selected(&window_id).map(str::to_owned)
+    }
+
     pub fn split_layout(&self, item_id: String) -> Option<SplitPane> {
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
@@ -500,12 +504,14 @@ impl WorkspaceStore {
     }
 
     // D6: one batch, one store write, so the caller's undo reverses the whole clear.
-    pub fn clear_today(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn clear_today(&self, window_id: String, space_id: String) -> Result<ClearTodayResult, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.clear_today(&space_id)?;
+        let selected = workspace.selected(&window_id).map(str::to_owned);
+        let (ops, batch) = workspace.clear_today(&space_id)?;
         self.store.write(ops);
         self.store.flush()?;
-        Ok(snapshot(workspace.clone(), &window_id))
+        Ok(ClearTodayResult { snapshot: snapshot(workspace.clone(), &window_id),
+            batch: std::sync::Arc::new(ClearTodayUndo { batch, selected }) })
     }
 
     pub fn settings(&self) -> WorkspaceSettings {
@@ -600,14 +606,28 @@ impl WorkspaceStore {
     pub fn live_clear_today(&self, window_id: String, space_id: String) -> Result<LiveClearToday, CoreError> {
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
-        let (ops, targets) = live.clear_today(&mut workspace, &space_id)?;
+        let selected = workspace.selected(&window_id).map(str::to_owned);
+        let (ops, targets, batch) = live.clear_today(&mut workspace, &space_id)?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(LiveClearToday {
             snapshot: snapshot(workspace.clone(), &window_id),
+            has_items: !batch.items.is_empty(),
+            batch: std::sync::Arc::new(ClearTodayUndo { batch, selected }),
             targets: targets.into_iter()
                 .map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect(),
         })
+    }
+
+    pub fn undo_clear_today(&self, window_id: String, undo: std::sync::Arc<ClearTodayUndo>) -> Result<WorkspaceSnapshot, CoreError> {
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.undo_clear_today(&window_id, &undo.batch, undo.selected.as_deref())?;
+        let restored_selection = undo.selected.as_ref().filter(|id| ops.iter().any(|op| matches!(op, ararat_core::model::Op::Put(ararat_core::model::Record::Item(item)) if &item.id == *id && item.lifecycle == Lifecycle::Unloaded))).cloned();
+        self.store.write(ops);
+        self.store.flush()?;
+        let mut result = snapshot(workspace.clone(), &window_id);
+        if restored_selection.is_some() { result.selected_id = restored_selection; }
+        Ok(result)
     }
 
     pub fn live_apply(&self, transaction: LiveTransaction) -> Result<LiveApplyOutcome, CoreError> {
@@ -1026,10 +1046,24 @@ pub struct LiveCloseTarget {
 
 // Clear Today: the batch's snapshot, with the live tabs whose pages the caller closes (each
 // beside a Close command the core has in flight).
-#[derive(Debug, PartialEq, uniffi::Record)]
+#[derive(uniffi::Object)]
+pub struct ClearTodayUndo {
+    batch: ararat_core::edit::ClearTodayBatch,
+    selected: Option<String>,
+}
+
+#[derive(uniffi::Record)]
+pub struct ClearTodayResult {
+    pub snapshot: WorkspaceSnapshot,
+    pub batch: std::sync::Arc<ClearTodayUndo>,
+}
+
+#[derive(uniffi::Record)]
 pub struct LiveClearToday {
     pub snapshot: WorkspaceSnapshot,
     pub targets: Vec<LiveCloseTarget>,
+    pub batch: std::sync::Arc<ClearTodayUndo>,
+    pub has_items: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
