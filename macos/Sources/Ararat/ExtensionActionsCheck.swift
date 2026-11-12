@@ -84,6 +84,32 @@ extension Runtime {
             window.contentView?.layoutSubtreeIfNeeded()
         }
 
+        // Startup self-checks: the loopback fixture and the extension fixture name their
+        // failure in a condition with the error text rather than failing the process.
+        if let error = siteFixtureError {
+            check.mark("fixture", false)
+            var values = check.diagnostics(screen: screen)
+            values["error"] = "site fixture: \(error)"
+            values["fixture_error"] = error
+            finishBrowserCheck(ok: false, values: values)
+            return
+        }
+        if siteFixturePorts == nil, browserCheckAttempts > 100 {
+            check.mark("fixture", false)
+            var values = check.diagnostics(screen: screen)
+            values["error"] = "site fixture did not report ports in 10 s"
+            values["fixture_error"] = promptFixtureError ?? ""
+            finishBrowserCheck(ok: false, values: values)
+            return
+        }
+        if extensionItems.isEmpty, browserCheckAttempts > 100 {
+            check.mark("fixture", false)
+            var values = check.diagnostics(screen: screen)
+            values["error"] = "extension fixture action missing; load test_extensions/windows with --load-extension"
+            finishBrowserCheck(ok: false, values: values)
+            return
+        }
+
         switch browserCheckPhase {
         case 0:
             guard let ports = siteFixturePorts, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),

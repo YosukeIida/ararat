@@ -606,6 +606,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var extensionSecondTabs: [String: String] = [:]
   var siteFixture: SiteFixtureServer?
   var siteFixturePorts: SiteFixtureServer.Ports?
+  var siteFixtureError: String?
   // U26e: the focused site snapshot and the extension action list both come from the engine's
   // callbacks; the app only mirrors them into the UI and the checks.
   var siteState: SiteState?
@@ -790,17 +791,26 @@ final class Runtime: NSObject, NSMenuItemValidation {
         }
       }
       if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" {
-        let fixture = try SiteFixtureServer()
-        siteFixture = fixture
-        fixture.start { [weak self] result in
-          DispatchQueue.main.async {
-            switch result {
-            case .success(let ports):
-              self?.siteFixturePorts = ports
-              FileHandle.standardError.write(Data("ararat-trace: site-fixture plain=\(ports.plain) secure=\(ports.secure)\n".utf8))
-            case .failure(let error): self?.promptFixtureError = String(describing: error)
+        do {
+          let fixture = try SiteFixtureServer()
+          siteFixture = fixture
+          fixture.start { [weak self] result in
+            DispatchQueue.main.async {
+              switch result {
+              case .success(let ports):
+                self?.siteFixturePorts = ports
+                FileHandle.standardError.write(Data("ararat-trace: site-fixture plain=\(ports.plain) secure=\(ports.secure)\n".utf8))
+              case .failure(let error):
+                self?.siteFixtureError = String(describing: error)
+                FileHandle.standardError.write(Data("ararat-trace: site-fixture failed \(error)\n".utf8))
+              }
             }
           }
+        } catch {
+          // The check reports this as its named `fixture` condition instead of a
+          // startup failure the harness cannot attribute.
+          siteFixtureError = String(describing: error)
+          FileHandle.standardError.write(Data("ararat-trace: site-fixture startup \(error)\n".utf8))
         }
       }
     }

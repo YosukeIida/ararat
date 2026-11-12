@@ -9,7 +9,13 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (!message || message.type !== 'ararat-badge' || !sender.tab?.id) return;
   const text = String(message.text ?? '');
-  chrome.action.setBadgeText({tabId: sender.tab.id, text});
-  chrome.action.setBadgeBackgroundColor({tabId: sender.tab.id, color: message.color ?? '#3366FF'});
-  chrome.action.setBadgeTextColor({tabId: sender.tab.id, color: '#FFFFFF'});
+  try {
+    chrome.action.setBadgeText({tabId: sender.tab.id, text});
+    chrome.action.setBadgeBackgroundColor({tabId: sender.tab.id, color: message.color ?? '#3366FF'});
+    if (chrome.action.setBadgeTextColor) {
+      try { chrome.action.setBadgeTextColor({tabId: sender.tab.id, color: '#FFFFFF'}); } catch (error) {}
+    }
+  } catch (error) {
+    chrome.storage.session.set({badgeError: String(error)});
+  }
 });

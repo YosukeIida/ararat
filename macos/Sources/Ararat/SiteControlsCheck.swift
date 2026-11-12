@@ -92,6 +92,24 @@ extension Runtime {
             sidebar.checkClickSiteControls()
         }
         func fixturePorts() -> SiteFixtureServer.Ports? { siteFixturePorts }
+        // A startup failure of the loopback fixture becomes this check's named `fixture`
+        // condition with the error text, never a bare "engine: startup failed".
+        if let error = siteFixtureError {
+            check.mark("fixture", false)
+            var values = check.diagnostics(screen: screen)
+            values["error"] = "site fixture: \(error)"
+            values["fixture_error"] = error
+            finishBrowserCheck(ok: false, values: values)
+            return
+        }
+        if siteFixturePorts == nil, browserCheckAttempts > 100 {
+            check.mark("fixture", false)
+            var values = check.diagnostics(screen: screen)
+            values["error"] = "site fixture did not report ports in 10 s"
+            values["fixture_error"] = promptFixtureError ?? ""
+            finishBrowserCheck(ok: false, values: values)
+            return
+        }
         func activeTab() -> (any ARTabAPI)? {
             (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == snapshot.selectedId }
         }
