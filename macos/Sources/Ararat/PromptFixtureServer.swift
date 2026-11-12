@@ -4,6 +4,7 @@ import Network
 final class PromptFixtureServer {
   private let listener: NWListener
   private let queue = DispatchQueue(label: "ararat.prompt-fixture")
+  private var resumeAllowed = false
 
   init() throws {
     let parameters = NWParameters.tcp
@@ -20,16 +21,20 @@ final class PromptFixtureServer {
       default: break
       }
     }
-    listener.newConnectionHandler = { [queue] connection in
-      connection.start(queue: queue)
-      Self.receive(connection, data: Data())
+    listener.newConnectionHandler = { [weak self] connection in
+      guard let self else { connection.cancel(); return }
+      connection.start(queue: self.queue)
+      self.receive(connection, data: Data())
     }
     listener.start(queue: queue)
   }
 
   func stop() { listener.cancel() }
+  func allowDownloadResume(_ completion: @escaping () -> Void) {
+    queue.async { self.resumeAllowed = true; completion() }
+  }
 
-  private static func receive(_ connection: NWConnection, data: Data) {
+  private func receive(_ connection: NWConnection, data: Data) {
     connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { chunk, _, complete, error in
       var request = data
       if let chunk { request.append(chunk) }
@@ -40,26 +45,40 @@ final class PromptFixtureServer {
         if path == "/slow-download" {
           let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Length: 1048576\r\nCache-Control: no-store\r\n\r\n"
           connection.send(content: Data(header.utf8), completion: .contentProcessed { error in
-            if error == nil { sendDownloadChunk(connection) } else { connection.cancel() }
+            if error == nil { Self.sendDownloadChunk(connection) } else { connection.cancel() }
           })
+          return
+        }
+        if path == "/complete-download" || path == "/private-download" || path == "/resume-download" {
+          let name = path == "/private-download" ? "private-check.txt" : path == "/resume-download" ? "resume-check.bin" : "complete-check.txt"
+          let total = path == "/resume-download" ? 262144 : 8192
+          let rangeLine = request.split(separator: 10).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { $0.lowercased().hasPrefix("range: bytes=") }
+          let start = rangeLine.flatMap { Int($0.dropFirst("range: bytes=".count).split(separator: "-").first ?? "") }
+          let offset = start.flatMap { $0 >= 0 && $0 < total ? $0 : nil } ?? 0
+          let partial = path == "/resume-download" && !self.resumeAllowed
+          let count = partial ? min(32768, max(0, total - offset - 1)) : total - offset
+          let rangeHeader = start == nil ? "" : "Content-Range: bytes \(offset)-\(total - 1)/\(total)\r\n"
+          let header = "HTTP/1.1 \(start == nil ? "200 OK" : "206 Partial Content")\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\(name)\r\nContent-Length: \(start == nil ? total : total - offset)\r\nAccept-Ranges: bytes\r\nETag: \"ararat-download-fixture\"\r\nCache-Control: no-store\r\nConnection: close\r\n\(rangeHeader)\r\n"
+          connection.send(content: Data(header.utf8) + Data(repeating: 65, count: count), completion: .contentProcessed { _ in connection.cancel() })
           return
         }
         let (status, headers, body): (String, String, String)
         switch path {
         case "/permissions":
-          status = "200 OK"; headers = ""; body = permissionsPage
+          status = "200 OK"; headers = ""; body = Self.permissionsPage
         case "/dialogs":
-          status = "200 OK"; headers = ""; body = dialogsPage
+          status = "200 OK"; headers = ""; body = Self.dialogsPage
         case "/protocol":
           status = "200 OK"; headers = ""; body = "<!doctype html><title>Protocol fixture</title>"
         case "/keyboard":
-          status = "200 OK"; headers = ""; body = keyboardPage
+          status = "200 OK"; headers = ""; body = Self.keyboardPage
         case "/search":
           status = "200 OK"; headers = ""; body = "<!doctype html><title>Search fixture</title>"
         case "/autofill":
-          status = "200 OK"; headers = ""; body = autofillPage
+          status = "200 OK"; headers = ""; body = Self.autofillPage
         case "/webauthn":
-          status = "200 OK"; headers = ""; body = webauthnPage
+          status = "200 OK"; headers = ""; body = Self.webauthnPage
         case "/auth":
           status = "401 Unauthorized"; headers = "WWW-Authenticate: Basic realm=\"Ararat fixture\"\r\n"; body = "<!doctype html><title>Unauthorized</title><p>401 body</p><script>document.documentElement.dataset.auth = 'body';</script>"
         default:
@@ -71,7 +90,7 @@ final class PromptFixtureServer {
       } else if complete || error != nil || request.count >= 32768 {
         connection.cancel()
       } else {
-        receive(connection, data: request)
+        self.receive(connection, data: request)
       }
     }
   }

@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "ararat/core/ararat_browser_window.h"
+#include "ararat/core/ararat_downloads.h"
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_permission_prompt.h"
@@ -60,6 +61,7 @@
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
@@ -257,8 +259,8 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "errorpages" ||
-         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
+  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" ||
+         command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "downloads" || command->GetSwitchValueASCII("ararat-screen") == "errorpages";
 }
 
 void PinStartupPref(Profile* profile) {
@@ -523,6 +525,7 @@ AraratWindowHostCore* AraratTakePendingWindowHost(const std::string& profile) {
 
 BrowserWindow* AraratCreateBrowserWindowForPendingHost(
     BrowserWindowInterface* browser) {
+  AraratConfigurePrivateDownloads(browser->GetProfile());
   const auto incoming_name = browser->GetProfile()->GetPath().BaseName().value();
   AraratWindowHostCore* core = browser->GetProfile()->IsOffTheRecord() ||
                                        browser->GetType() != BrowserWindowInterface::TYPE_NORMAL
@@ -1528,6 +1531,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
+  std::unique_ptr<AraratDownloads> downloads_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1781,6 +1785,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)dealloc {
+  downloads_.reset();
   [ReportingHosts() removeObject:self];
   if (became_key_observer_) [NSNotificationCenter.defaultCenter removeObserver:became_key_observer_];
   if (resigned_key_observer_) [NSNotificationCenter.defaultCenter removeObserver:resigned_key_observer_];
@@ -2193,7 +2198,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"keyboard"] || [screen isEqualToString:@"commandbar"] ||
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
-      [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
+      [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"errorpages"] ||
+      [screen isEqualToString:@"dialogs"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
   // A check that navigates after its last native tab closed has no browser to receive the
@@ -2254,6 +2260,33 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return browser_ && browser_->GetProfile()->IsOffTheRecord();
 }
 
+- (void)updateDownloads {
+  downloads_.reset();
+  if (browser_ && !browser_->GetProfile()->IsOffTheRecord()) {
+    __weak ARWindowHost* weakHost = self;
+    downloads_ = std::make_unique<AraratDownloads>(browser_->GetProfile(), ^(NSArray* items, NSString* identifier, BrowserWindowInterface* origin) {
+      ARWindowHost* host = weakHost;
+      BOOL flight = NO;
+      if (identifier && host) {
+        bool shown = false;
+        for (AraratWindowHostCore* candidate : AraratHosts()) {
+          if (origin && candidate->window() && candidate->window()->browser() == origin && !candidate->popup() && !candidate->closed()) { shown = true; break; }
+        }
+        flight = shown ? host->browser_ == origin : host.window.isKeyWindow;
+      }
+      if ([host.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:flight:)])
+        [host.delegate windowHost:host downloadsChanged:items newDownload:identifier flight:flight];
+    });
+  }
+  if ([self.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:flight:)])
+    [self.delegate windowHost:self downloadsChanged:[self downloads] newDownload:nil flight:NO];
+}
+
+- (NSArray*)downloads { return downloads_ ? downloads_->Snapshot() : @[]; }
+- (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier {
+  return downloads_ && downloads_->Perform(identifier, action);
+}
+
 - (int)checkInProgressDownloadCount {
   if (!browser_) return 0;
   auto* service = DownloadCoreServiceFactory::GetForBrowserContext(browser_->GetProfile());
@@ -2280,6 +2313,36 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   prefs->SetBoolean(prefs::kPromptForDownload, false);
   return !prefs->GetBoolean(prefs::kPromptForDownload) &&
          prefs->GetFilePath(prefs::kDownloadDefaultDirectory) == directory;
+}
+
+- (NSString*)prepareDownloadsCheckDirectory:(NSString*)name {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || browser_->GetProfile()->IsOffTheRecord() ||
+      (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads") ||
+      (![name isEqualToString:@"standard"] && ![name isEqualToString:@"custom"])) return @"";
+  Profile* profile = browser_->GetProfile();
+  auto* service = DownloadCoreServiceFactory::GetForBrowserContext(profile);
+  if (!service || !service->GetDownloadManagerDelegate()) return @"";
+  const base::FilePath directory = profile->GetPath().AppendASCII("ararat-downloads-check").AppendASCII(name.UTF8String);
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    if (!base::CreateDirectory(directory)) return @"";
+  }
+  profile->GetPrefs()->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  profile->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+  auto* prefs = DownloadPrefs::FromBrowserContext(profile);
+  if (!prefs || prefs->DownloadPath() != directory || profile->GetPrefs()->GetBoolean(prefs::kPromptForDownload)) return @"";
+  return base::SysUTF8ToNSString(directory.value());
+}
+
+- (NSDictionary*)downloadsCheckSettings {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (!browser_ || (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads")) return @{};
+  Profile* profile = browser_->GetProfile();
+  auto* prefs = DownloadPrefs::FromBrowserContext(profile);
+  return prefs ? @{ @"directory": base::SysUTF8ToNSString(prefs->DownloadPath().value()),
+                    @"prompt": @(profile->GetPrefs()->GetBoolean(prefs::kPromptForDownload)),
+                    @"private": @(profile->IsOffTheRecord()) } : @{};
 }
 
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {
@@ -2721,6 +2784,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   strip_observers_[browser] = std::make_unique<StripObserver>(browser->GetTabStripModel(), self);
   if (core_->window() && core_->window()->browser() == browser) {
     browser_ = browser;
+    [self updateDownloads];
     core_->SetShortcutWindow(core_->window(), self.window.isKeyWindow);
     if (self.window.isKeyWindow) [self updateActive:YES];
     if (self.window.isMainWindow)
@@ -2740,7 +2804,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)browserDestroyed:(BrowserWindowInterface*)browser {
   if (strip_observers_.erase(browser)) {
-    if (browser_ == browser) browser_ = nullptr;
+    if (browser_ == browser) { browser_ = nullptr; [self updateDownloads]; }
     [self syncTabs];
     if (core_->closing() || core_->closed()) {
       if (core_->windows().empty()) profile_keep_alives_.clear();
@@ -3776,6 +3840,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (self.window.isKeyWindow) [self updateActive:NO];
   core_->SetProfileName(name.value());
   browser_ = core_->window() ? core_->window()->browser() : nullptr;
+  [self updateDownloads];
   core_->SetShortcutWindow(core_->window(), self.window.isKeyWindow);
   auto* find = browser_ ? FindBarController::From(browser_) : nullptr;
   if (find && find->HasFindBar()) find->find_bar()->UpdateFindBarForChangedWebContents();

@@ -36,7 +36,10 @@ public final class SidebarView: NSView {
     private(set) public var libraryOpen = false
     private var libraryNeedsFocus = false
     private let library = LibraryView(frame: .zero)
-    private let libraryButton = SidebarDockButton()
+    let libraryButton = DownloadsButton()
+    private var downloadsModel: DownloadsModel?
+    private var downloadsHoverFired = false
+    var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
     private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
@@ -224,12 +227,105 @@ public final class SidebarView: NSView {
 
     @objc public func toggleLibrary(_ sender: Any? = nil) { setLibraryOpen(!libraryOpen) }
 
+    public func setDownloadsModel(_ model: DownloadsModel) {
+        downloadsModel = model
+        library.setDownloadsModel(model)
+        let popover = DownloadsPopover(model: model, anchor: libraryButton)
+        popover.openLibrary = { [weak self] in self?.setLibraryOpen(true, downloads: true) }
+        downloadsPopover = popover
+        libraryButton.onHover = { [weak self] in self?.downloadsPopover?.show() }
+        model.onChange = { [weak self, weak model] in
+            guard let self, let model else { return }
+            self.libraryButton.progress = model.progress
+            self.library.refreshDownloads()
+            if !model.hasSessionDownloads { self.downloadsPopover?.close() }
+            else if self.downloadsPopover?.isShown == true { self.downloadsPopover?.show() }
+        }
+        libraryButton.progress = model.progress
+    }
+
+    @objc private func libraryButtonClicked(_ sender: Any?) {
+        if downloadsModel?.hasSessionDownloads == true { downloadsPopover?.show(focus: true) }
+        else { toggleLibrary(sender) }
+    }
+
+    public func flyDownload(from source: NSView, name: String) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let window, source.window === window, let root = window.contentView else { return }
+        let origin = root.convert(NSPoint(x: source.bounds.midX, y: source.bounds.midY), from: source)
+        let destination = root.convert(NSPoint(x: libraryButton.bounds.midX, y: libraryButton.bounds.midY), from: libraryButton)
+        let icon = NSImageView(frame: NSRect(x: origin.x - 12, y: origin.y - 12, width: 24, height: 24))
+        icon.image = downloadIcon(name)
+        icon.identifier = NSUserInterfaceItemIdentifier("download-flight")
+        icon.setAccessibilityHidden(true)
+        icon.wantsLayer = true
+        root.addSubview(icon, positioned: .above, relativeTo: nil)
+        icon.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        icon.layer?.position = destination
+        let path = CGMutablePath()
+        path.move(to: origin)
+        path.addQuadCurve(to: destination, control: CGPoint(x: (origin.x + destination.x) / 2, y: max(origin.y, destination.y) + 80))
+        let flight = CAKeyframeAnimation(keyPath: "position")
+        flight.path = path; flight.duration = 0.4
+        flight.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { icon.removeFromSuperview() }
+        icon.layer?.add(flight, forKey: "flight")
+        CATransaction.commit()
+    }
+
+    private var downloadsCheckEnabled: Bool {
+        CommandLine.arguments.contains("--ararat-check=downloads") || CommandLine.arguments.contains("--ararat-screen=downloads")
+    }
+    public func downloadsCheckState() -> [String: Any] {
+        guard downloadsCheckEnabled else { return [:] }
+        let progress: String
+        switch libraryButton.progress {
+        case .none: progress = "none"
+        case .indeterminate: progress = "indeterminate"
+        case .fraction: progress = "fraction"
+        }
+        let flight = window?.contentView?.subviews.contains { $0.identifier?.rawValue == "download-flight" } ?? false
+        let ring = libraryButton.ring
+        let ringVisible = !ring.isHidden && ring.superlayer != nil && ring.bounds.width > 0 && ring.bounds.height > 0 && ring.opacity > 0 && ring.strokeEnd > 0 && ring.path != nil
+        let panel = downloadsPopover?.checkWindow
+        let buttonFrame = window.map { $0.convertToScreen(libraryButton.convert(libraryButton.bounds, to: nil)) } ?? .zero
+        let panelFrame = panel?.frame ?? .zero
+        let inside = window.map { $0.frame.insetBy(dx: -1, dy: -1).contains(panelFrame) } ?? false
+        let fittingHeight = DownloadsPopover.headerHeight + CGFloat(downloadsPopover?.rows.count ?? 0) * DownloadsPopover.rowHeight
+        let metrics = downloadsPopover?.checkMetrics ?? [:]
+        return ["progress": progress, "ring_visible": ringVisible, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "actions": $0.actions] as [String: Any] } ?? [],
+                "list": downloadsPopover?.isShown ?? false, "first": downloadsPopover?.library.title ?? "",
+                "rows": downloadsPopover?.rows.mapValues { UInt(bitPattern: ObjectIdentifier($0)) } ?? [:],
+                "popover_inside_above": panel != nil && inside && panelFrame.minY >= buttonFrame.maxY - 1,
+                "popover_readable": panel != nil && panelFrame.width >= SidebarMetrics.defaultWidth && panelFrame.height >= fittingHeight,
+                "popover_metrics": metrics, "hover_fired": downloadsHoverFired,
+                "page_actions_fit": library.downloadsPage.actionButtonsFit,
+                "page_rows_layout": library.downloadsPage.rowsLeadingAndStatusFit,
+                "library_open": libraryOpen, "library_page": library.page.rawValue,
+                "page_ids": library.downloadsPage.entries.map(\.id), "flight": flight]
+    }
+    public func downloadsCheckHover() {
+        guard downloadsCheckEnabled else { return }
+        downloadsHoverFired = false
+        libraryButton.checkHover { [weak self] in
+            guard let self else { return }
+            self.downloadsHoverFired = true
+            FileHandle.standardError.write(Data("ararat-trace: downloads hover seam: popover shown=\(self.downloadsPopover?.isShown ?? false)\n".utf8))
+        }
+    }
+    public func downloadsCheckClosePopover() { if downloadsCheckEnabled { downloadsPopover?.close() } }
+    public func downloadsCheckOpenLibrary() { if downloadsCheckEnabled { downloadsPopover?.library.performClick(nil) } }
+    public func downloadsCheckShowPage() { if downloadsCheckEnabled { library.downloadsButton.performClick(nil) } }
+    public var downloadsCheckPopoverWindow: NSWindow? { downloadsCheckEnabled ? downloadsPopover?.checkWindow : nil }
+
     public func searchArchive(_ query: String) -> Int {
         library.setSearchQuery(query)
         return library.filteredEntries.count
     }
 
-    public func setLibraryOpen(_ open: Bool, scrolling: Bool = false) {
+    public func setLibraryOpen(_ open: Bool, scrolling: Bool = false, downloads: Bool = false) {
+        if open { if downloads { library.showDownloads() } else { library.showArchive() } }
         guard open != libraryOpen else { return }
         if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
         finishRowMotion()
@@ -243,7 +339,7 @@ public final class SidebarView: NSView {
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
         mainColumn.isHidden = open || createSpaceOpen
-        libraryButton.setAccessibilityValue(open ? 1 : 0)
+        libraryButton.libraryOpen = open
         updateDockSelection()
         if open { window?.makeFirstResponder(self) }
         refreshLook()
@@ -661,7 +757,7 @@ public final class SidebarView: NSView {
         libraryFill.cornerRadius = 6
         libraryButton.layer?.insertSublayer(libraryFill, at: 0)
         libraryButton.target = self
-        libraryButton.action = #selector(toggleLibrary(_:))
+        libraryButton.action = #selector(libraryButtonClicked(_:))
         libraryButton.toolTip = "Library"
         libraryButton.setAccessibilityLabel("Library")
         libraryButton.translatesAutoresizingMaskIntoConstraints = false

@@ -53,6 +53,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onFindBar: (@MainActor ([String: Any]) -> Void)?
     public var findBarHasFocus: (@MainActor () -> Bool)?
     public var onFindPageRect: (@MainActor (NSRect) -> Void)?
+    public var onDownloads: (@MainActor ([[String: Any]], String?, Bool) -> Void)?
+
+    public func downloads() -> [[String: Any]] { host?.downloads() ?? [] }
+    public func performDownloadAction(_ action: String, identifier: String) -> Bool {
+        host?.performDownloadAction(action, identifier: identifier) ?? false
+    }
+
+    public func windowHost(_ host: any ARWindowHostAPI, downloadsChanged items: [[String: Any]], newDownload identifier: String?, flight: Bool) {
+        MainActor.assumeIsolated { onDownloads?(items, identifier, flight) }
+    }
     public var checkSelectionDispatch: ((String, String, @escaping () -> Void) -> Void)?
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
