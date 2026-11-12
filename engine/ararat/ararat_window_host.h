@@ -73,7 +73,8 @@ class AraratWindowHostCore {
   // flag is set from the Profile* the window was requested for, before its Browser exists.
   bool private_window() const { return private_; }
   Profile* private_profile() const { return private_profile_; }
-  void SetPrivateProfile(Profile* profile) { private_ = true; private_profile_ = profile; }
+  const std::string& private_directory() const { return private_name_; }
+  void SetPrivateProfile(Profile* profile);
   const std::string& profile_name() const { return profile_name_; }
   void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
@@ -139,6 +140,7 @@ class AraratWindowHostCore {
   bool devtools_ = false;
   bool private_ = false;
   raw_ptr<Profile> private_profile_ = nullptr;
+  std::string private_name_;
   bool check_fullscreen_ = false;
   bool fullscreen_transitioning_ = false;
   uint64_t fullscreen_transition_generation_ = 0;

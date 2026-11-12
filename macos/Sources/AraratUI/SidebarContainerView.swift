@@ -30,12 +30,20 @@ public final class SidebarContainerView: NSView {
     private let panel = SidebarPanelView()
     private let pageMask = CAShapeLayer()
     private let privateBackdrop = NSView()
+    private let privateEmpty = PrivateEmptyView()
     // U26f: a private window is always dark, and a black mask sits behind the page card.
     public var privateWindow = false {
         didSet {
             privateBackdrop.isHidden = !privateWindow
+            privateEmpty.isHidden = !(privateWindow && privateEmptyShown)
             needsLayout = true
             layoutSubtreeIfNeeded()
+        }
+    }
+    public var privateEmptyShown = false {
+        didSet {
+            privateEmpty.isHidden = !(privateWindow && privateEmptyShown)
+            needsLayout = true
         }
     }
     public var privateMaskVisible: Bool { privateWindow && !privateBackdrop.isHidden }
@@ -158,6 +166,8 @@ public final class SidebarContainerView: NSView {
         privateBackdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.92).cgColor
         privateBackdrop.isHidden = true
         addSubview(privateBackdrop, positioned: .below, relativeTo: page)
+        privateEmpty.isHidden = true
+        addSubview(privateEmpty)
         toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
         toastLabel.textColor = .white
         toastLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -367,6 +377,7 @@ public final class SidebarContainerView: NSView {
         if pageFullscreen {
             panel.isHidden = true
             page.frame = bounds
+            privateEmpty.frame = page.frame
             page.layer?.mask = nil
             layoutToast()
             layoutFindBar()
@@ -388,6 +399,7 @@ public final class SidebarContainerView: NSView {
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
                             height: max(0, bounds.height - SidebarMetrics.cardInset * 2))
+        privateEmpty.frame = page.frame
         layoutToast()
         layoutFindBar()
         panel.layer?.cornerRadius = docked ? 0 : SidebarMetrics.cornerRadius

@@ -380,7 +380,7 @@ public final class SidebarView: NSView {
     public var checkPrivateSpaceRowHidden: Bool { spaceNameRow.isHidden }
     public var checkPrivateLibraryOpen: Bool { libraryOpen }
     public var checkPrivateDownloadsLibraryRowHidden: Bool { downloadsPopover?.showsLibrary == false }
-    public func checkPrivateCloseLabel(_ id: String) -> String? { rowViews[id]?.closeButton.accessibilityLabel() }
+    public func checkPrivateCloseLabel(_ id: String) -> String? { rowViews[id]?.closeLabel }
     public var checkPrivateTodayRows: [String] { snapshotSpace?.today.map(\.id) ?? [] }
     public var checkPrivatePinnedRows: [String] { snapshotSpace?.pinned.map(\.id) ?? [] }
     public var checkPrivateFavoriteRows: [String] { snapshotSpace?.favorites.map(\.id) ?? [] }
@@ -781,8 +781,10 @@ public final class SidebarView: NSView {
         host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
-        privateLock.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Private")
+        privateLock.image = PrivateMaskGlyph.image(size: 16)
         privateLock.contentTintColor = .secondaryLabelColor
+        privateLock.imageScaling = .scaleProportionallyDown
+        privateLock.setAccessibilityElement(false)
         privateLock.isHidden = true
         privateLock.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(privateLock)

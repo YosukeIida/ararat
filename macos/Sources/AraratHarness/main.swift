@@ -9,10 +9,26 @@ var headless = false
 var databasePath: String?
 var profile: Profile?
 var path: String?
+var privateDisk = false
+var privateDiskProfileDir: String?
+var privateDiskTitle: String?
 while let argument = arguments.next() {
     switch argument {
     case "--check": checkOnly = true
     case "--headless": headless = true
+    case "--private-disk": privateDisk = true
+    case "--profile-dir":
+        guard let value = arguments.next(), !value.hasPrefix("--") else {
+            FileHandle.standardError.write(Data("--profile-dir requires a path\n".utf8))
+            exit(1)
+        }
+        privateDiskProfileDir = value
+    case "--title":
+        guard let value = arguments.next(), !value.isEmpty else {
+            FileHandle.standardError.write(Data("--title requires a value\n".utf8))
+            exit(1)
+        }
+        privateDiskTitle = value
     case "--db":
         guard let value = arguments.next(), !value.hasPrefix("--") else {
             FileHandle.standardError.write(Data("--db requires a path\n".utf8))
@@ -840,6 +856,14 @@ enum HitchMonitor {
             }
         }
     }
+}
+
+if privateDisk {
+    guard let db = databasePath, let dir = privateDiskProfileDir, let title = privateDiskTitle else {
+        FileHandle.standardError.write(Data("--private-disk requires --db, --profile-dir and --title\n".utf8))
+        exit(2)
+    }
+    exit(PrivateDiskCheck.run(db: db, profileDir: dir, title: title))
 }
 
 let app = NSApplication.shared

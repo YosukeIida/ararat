@@ -205,6 +205,13 @@ func checkCoverageFlags(_ arguments: [String]) -> [String] {
   return arguments.filter { argument in names.contains { argument == $0 || argument.hasPrefix($0 + "=") } }
 }
 
+/// U26f: the commands a private workspace (one space, Today only) can run. One list for the
+/// command dispatcher and the menu validation, so the two cannot drift.
+let privateWorkspaceCommands: Set<String> = [
+  "cycle_tabs_next", "cycle_tabs_previous", "force_reload", "settings", "quit", "new_tab",
+  "edit_url", "copy_link", "close_tab", "rename", "toggle_sidebar", "reset_sidebar_width",
+]
+
 func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any] {
   guard check == "incognito" else { return [:] }
   let regular = arguments.contains("--ararat-incognito-window-check")
@@ -488,6 +495,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var privateFirstLive = ""
   var privateRowsBefore: [[String]]?
   var privateHistoryQueries = 0
+  var privateWindowCheck: PrivateWindowCheckState?
   var coreMenuInstalled = false
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
@@ -1042,6 +1050,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       sidebar?.update(snapshot: snapshot)
       self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
+      container?.privateEmptyShown = self?.isPrivateWindow == true && snapshot.selectedId == nil
       if check {
         let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
         self?.sliceRows = ["One", "Two", "Three"].compactMap { name in
@@ -1607,10 +1616,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // A private workspace is one space with Today only: pins, folders, duplicates, space
     // switching and moves are not its operations (the core would refuse them).
     if isPrivateWindow {
-      let allowed: Set<String> = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "settings",
-                                  "quit", "new_tab", "edit_url", "copy_link", "search", "close_tab",
-                                  "toggle_sidebar", "reset_sidebar_width"]
-      guard allowed.contains(command) else { return }
+      guard privateWorkspaceCommands.contains(command) else { return }
     }
     let shown = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let rows = shown.map { $0.today + $0.pinned + $0.favorites } ?? []
@@ -1730,8 +1736,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // folders, duplicates, other spaces or moves either.
       if item.title.range(of: "import", options: .caseInsensitive) != nil { return false }
       if item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String,
-         !["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "settings", "quit", "new_tab",
-           "edit_url", "copy_link", "search", "close_tab", "toggle_sidebar", "reset_sidebar_width"].contains(command) {
+         !privateWorkspaceCommands.contains(command) {
         return false
       }
     }
@@ -2793,10 +2798,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "downloads" || mode == "screen-downloads" { timeoutValues.merge(downloadsCheck?.diagnostics(screen: mode == "screen-downloads") ?? [:]) { _, new in new } }
       if mode == "toasts" || mode == "screen-toasts" { timeoutValues.merge((toastsCheck ?? ToastsCheck()).diagnostics(screen: mode == "screen-toasts")) { _, new in new } }
       if mode == "private-window" || mode == "screen-private-window" {
-        timeoutValues.merge(["phase": browserCheckPhase, "children": children.count,
-                             "private_windows": children.filter(\.isPrivateWindow).count,
-                             "private_live": PrivateWorkspaces.liveCount,
-                             "images": PrivateWindowCheckImages.images]) { _, new in new }
+        timeoutValues.merge(privateWindowCheck?.diagnostics() ?? [:]) { _, new in new }
       }
       if mode == "site-controls" || mode == "screen-site-controls" { timeoutValues.merge((siteControlsCheck ?? SiteControlsCheck()).diagnostics(screen: mode == "screen-site-controls")) { _, new in new } }
       if mode == "ext-actions" || mode == "screen-ext-actions" { timeoutValues.merge((extensionActionsCheck ?? ExtensionActionsCheck()).diagnostics(screen: mode == "screen-ext-actions")) { _, new in new } }

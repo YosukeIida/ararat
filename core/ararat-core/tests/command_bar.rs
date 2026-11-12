@@ -543,6 +543,19 @@ fn a_history_page_of_an_open_tab_is_dropped_in_the_tab_s_favour() {
 }
 
 #[test]
+fn a_private_command_bar_offers_only_the_commands_a_private_space_has() {
+    let ws = fixture();
+    let ids = |query: &str, private: bool| -> Vec<String> {
+        Index::new(&ws, "one", 1_000_000).private_window(private).query(query, &[]).rows.into_iter()
+            .filter_map(|row| match row.target { Target::Command { id } => Some(id), _ => None }).collect()
+    };
+    let private = ids("Pin Tab", true);
+    assert!(!private.contains(&"pin_tab".to_string()), "no pin in a private window: {private:?}");
+    assert!(ids("Pin Tab", false).contains(&"pin_tab".to_string()), "the regular bar keeps Pin Tab");
+    assert!(ids("New Tab", true).contains(&"new_tab".to_string()), "a command a private space has stays");
+}
+
+#[test]
 fn a_private_query_withholds_history_and_says_so() {
     let ws = fixture();
     let entries = [history("Design tokens reference", "https://docs.example.org/design/tokens", 0)];

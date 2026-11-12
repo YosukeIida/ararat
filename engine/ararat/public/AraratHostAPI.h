@@ -209,6 +209,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)checkFullscreenAction:(NSInteger)action;
 - (void)forceReload;
 - (BOOL)isPrivateWindow;
+- (BOOL)checkRefuseOpenWithoutBrowser;
+- (BOOL)checkRoutingDomain;
 - (int)checkInProgressDownloadCount;
 - (BOOL)prepareCheckDownload;
 - (NSString*)prepareDownloadsCheckDirectory:(NSString*)name;
