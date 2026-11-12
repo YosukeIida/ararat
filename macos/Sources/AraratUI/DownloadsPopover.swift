@@ -83,10 +83,12 @@ final class DownloadsPopover: NSObject {
         popover.animates = false
         stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 0
         library.target = self; library.action = #selector(open)
-        library.bezelStyle = .inline; library.setAccessibilityLabel("Open Library")
+        library.bezelStyle = .inline; library.isBordered = false; library.alignment = .left; library.setAccessibilityLabel("Open Library")
         library.font = .systemFont(ofSize: 13)
         stack.addArrangedSubview(library)
         library.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        library.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+        library.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
         let controller = NSViewController()
         let content = NSView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
         content.addSubview(stack)
@@ -108,6 +110,11 @@ final class DownloadsPopover: NSObject {
                 "content_width": content?.bounds.width ?? 0, "content_alpha": content?.alphaValue ?? 0,
                 "layer_transform": String(describing: content?.layer?.presentation()?.transform),
                 "rows": rows.mapValues { NSStringFromRect($0.frame) },
+                "rows_leading_and_status_fit": !rows.isEmpty && rows.values.allSatisfy { row in
+                    let frame = stack.convert(row.bounds, from: row)
+                    return abs(frame.minX - stack.bounds.minX) <= 16 && frame.width >= stack.bounds.width - 1 && row.statusFits
+                },
+                "library_fills": abs(stack.convert(library.bounds, from: library).minX - stack.bounds.minX) <= 1 && library.bounds.width >= stack.bounds.width - 1,
                 "title_font": rows.values.first?.titleFontSize ?? 0, "title_height": rows.values.first?.titleHeight ?? 0]
     }
     func close() { popover.performClose(nil) }
@@ -145,6 +152,8 @@ final class DownloadsPopover: NSObject {
                 let row = DownloadRowView(item: item, model: model)
                 rows[item.id] = row
                 stack.insertArrangedSubview(row, at: index + 1)
+                row.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+                row.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
             }
         }
     }
@@ -165,6 +174,11 @@ final class DownloadRowView: NSStackView {
     private let actions = NSStackView()
     var titleFontSize: CGFloat { name.font?.pointSize ?? 0 }
     var titleHeight: CGFloat { name.bounds.height }
+    var statusFits: Bool {
+        let frame = convert(status.bounds, from: status)
+        return frame.width > 0 && bounds.insetBy(dx: -1, dy: -1).contains(frame)
+    }
+    var statusTruncates: Bool { status.maximumNumberOfLines == 1 && status.lineBreakMode == .byTruncatingTail && status.cell?.isScrollable == false && status.cell?.usesSingleLineMode == true }
     var moveRow: ((Int) -> Void)?
     var tabRow: ((Bool) -> Void)?
     override var acceptsFirstResponder: Bool { true }
@@ -181,7 +195,9 @@ final class DownloadRowView: NSStackView {
         super.init(frame: .zero)
         icon.setAccessibilityHidden(true)
         name.font = .systemFont(ofSize: 13); name.lineBreakMode = .byTruncatingMiddle
-        status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor; status.lineBreakMode = .byTruncatingTail
+        status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
+        status.maximumNumberOfLines = 1; status.lineBreakMode = .byTruncatingTail
+        status.cell?.usesSingleLineMode = true; status.cell?.isScrollable = false; status.cell?.wraps = false; status.cell?.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         actions.orientation = .horizontal; actions.spacing = 4
