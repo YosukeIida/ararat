@@ -72,6 +72,12 @@ public final class ExtensionActionsStrip: NSView {
     public override var isFlipped: Bool { true }
 
     public var checkItems: [String] { items.map(\.id) }
+    public var checkLabelsComplete: Bool {
+        !buttons.isEmpty && buttons.values.allSatisfy {
+            !(($0.accessibilityLabel() ?? "").isEmpty)
+                && ($0.accessibilityValue() as? String ?? "") == ($0.item.badgeText.isEmpty ? "" : "Badge \($0.item.badgeText)")
+        }
+    }
     public func checkButton(_ id: String) -> ExtensionActionButton? { buttons[id] }
 
     public func update(items: [ExtensionActionItem]) {
@@ -117,9 +123,22 @@ public final class ExtensionActionsRow: NSView {
     public var columns = 4
     private var buttons: [String: ExtensionActionButton] = [:]
 
+    public var checkLabelsComplete: Bool {
+        !buttons.isEmpty && buttons.values.allSatisfy {
+            !(($0.accessibilityLabel() ?? "").isEmpty)
+                && ($0.accessibilityValue() as? String ?? "") == ($0.item.badgeText.isEmpty ? "" : "Badge \($0.item.badgeText)")
+        }
+    }
     public var checkFrames: [String: NSRect] { buttons.mapValues { convert($0.bounds, from: $0) } }
     public func checkButton(_ id: String) -> ExtensionActionButton? { buttons[id] }
-    public var checkRowHeight: CGFloat { items.isEmpty ? 0 : 32 }
+    /// Wraps onto further 32 pt lines rather than hiding actions that do not fit one line.
+    public var checkRowHeight: CGFloat { requiredHeight }
+    public var requiredHeight: CGFloat {
+        guard !items.isEmpty else { return 0 }
+        let columns = max(1, min(4, self.columns))
+        let lines = (items.count + columns - 1) / columns
+        return 32 * CGFloat(lines)
+    }
 
     public override var isFlipped: Bool { true }
 
@@ -145,7 +164,7 @@ public final class ExtensionActionsRow: NSView {
     }
 
     public override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: checkRowHeight)
+        NSSize(width: NSView.noIntrinsicMetric, height: requiredHeight)
     }
 
     public override func layout() {

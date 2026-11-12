@@ -143,10 +143,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         host?.runExtensionAction(identifier)
     }
 
-    private func notifySiteState() {
-        MainActor.assumeIsolated { onSiteStateChanged?() }
-    }
-
     public var checkSelectionDispatch: ((String, String, @escaping () -> Void) -> Void)?
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?

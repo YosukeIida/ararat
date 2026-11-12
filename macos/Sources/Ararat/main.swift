@@ -612,14 +612,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var siteState: SiteState?
   var siteControls: SiteControlsPopover?
   var siteOverlay: SiteCaptureOverlay?
-  var siteCaptureMode = ""
-  var siteCaptureDocument = ""
+  var siteOverlayDocument = ""
+  var lastExtensionAnchor: NSRect?
   var extensionItems: [ExtensionActionItem] = []
-  var extensionActionsRevision = 0
-  var siteControlsOpenCount = 0
-  var capturePasteboardSize = NSSize.zero
   var captureError = ""
-  var permissionChangeRejected = false
   var lastSiteFingerprint = ""
   var downloadCloseFallback = false
   var errorPageConditions: [String: Bool] = [:]
@@ -790,7 +786,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
           }
         }
       }
-      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" {
+      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" {
         do {
           let fixture = try SiteFixtureServer()
           siteFixture = fixture
@@ -942,11 +938,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard let self, let container else { return }
       self.showSiteControls(rect, in: container)
     }
-    sidebar.onExtensionAction = { [weak self] item, _ in self?.invokeExtensionAction(item) }
+    sidebar.onExtensionAction = { [weak self] item in self?.invokeExtensionAction(item) }
     sidebar.onExtensionMenu = { [weak self] item in self?.extensionMenu(item) }
-    sidebar.onExtensionPin = { [weak self] id, pinned in self?.pinExtension(id, pinned: pinned) }
-    sidebar.onExtensionManage = { [weak self] id in self?.manageExtension(id) }
-    sidebar.onExtensionRemove = { [weak self] id in self?.removeExtension(id) }
+    sidebar.onExtensionAnchor = { [weak self, weak host] rect in
+      self?.lastExtensionAnchor = rect
+      host?.setExtensionAnchor(rect)
+    }
     adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
     adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
@@ -1013,6 +1010,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.commandPresenter?.close(restoreFocus: false)
       self?.tabSwitcher?.cancel()
+      // S1: a region selection does not outlive the window it drew in.
+      self?.siteOverlay?.cancel()
     }
     let actions = SidebarActions()
     actions.onSelect = { [weak self, weak adapter] row in
@@ -1674,6 +1673,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let state = adapter?.siteState()
     siteState = state
     sidebar?.siteControlsBlocked = state?.blocked ?? false
+    // S1: a navigation or tab switch while the region overlay is up cancels the selection.
+    if let overlay = siteOverlay, let state, state.document != siteOverlayDocument {
+      overlay.cancel()
+    }
     let fingerprint = Self.siteFingerprint(state)
     if fingerprint != lastSiteFingerprint {
       lastSiteFingerprint = fingerprint
@@ -1703,47 +1706,55 @@ final class Runtime: NSObject, NSMenuItemValidation {
       controls.onCaptureFullPage = { [weak self] model in self?.captureFullPage(model) }
       controls.onPermissionChange = { [weak self] _, request in self?.changePermission(request) ?? false }
       controls.onClose = { [weak self] in self?.adapter?.closeSiteControls() }
+      controls.hostWindow = { [weak host] in host?.window() }
       siteControls = controls
     }
     if controls.isShown {
       controls.close()
       return
     }
-    siteControlsOpenCount += 1
     controls.present(relativeTo: anchor, of: container, model: state)
   }
   @discardableResult
   func changePermission(_ request: [String: Any]) -> Bool {
     let changed = adapter?.changeSitePermission(request) ?? false
-    permissionChangeRejected = !changed
     refreshSiteState()
     return changed
   }
 
   func beginRegionCapture(_ model: SiteState) {
     guard siteOverlay == nil, let container, hasUsableHost else { return }
-    let overlay = SiteCaptureOverlay(frame: container.pageCard.bounds)
-    overlay.autoresizingMask = [.width, .height]
+    // The overlay covers the focused pane only: in a split the page view is offset inside the
+    // page card, and a selection outside it would be clipped by the engine anyway.
+    let cardBounds = container.pageCard.bounds
+    var frame = cardBounds
+    if let native = focusedPageView(), native.window === container.window {
+      let paneFrame = container.pageCard.convert(native.bounds, from: native)
+      if !paneFrame.isEmpty { frame = paneFrame.intersection(cardBounds) }
+    }
+    let overlay = SiteCaptureOverlay(frame: frame)
+    overlay.autoresizingMask = []
     overlay.onFinish = { [weak self, weak overlay] rect in
-      guard let self else { return }
-      overlay?.removeFromSuperview()
+      guard let self, let overlay else { return }
+      // Convert while the view is still attached: a detached view has no window, so its
+      // convert(_:to: nil) would return points in the view's own root space.
+      let inWindow: NSRect? = rect.map { overlay.convert($0, to: nil) }
+      overlay.removeFromSuperview()
       self.siteOverlay = nil
-      guard let rect, let native = self.focusedPageView() else { return }
-      // The overlay is in page-card points; the engine takes the page view's own points with
-      // the origin at its top left, so convert through the window and flip the native view.
-      let inWindow = overlay?.convert(rect, to: nil) ?? rect
+      self.siteOverlayDocument = ""
+      guard let inWindow, rect != nil, let native = self.focusedPageView() else { return }
+      // The engine takes the page view's own points with the origin at its top left.
       let local = native.convert(inWindow, from: nil)
       let flipped = NSRect(x: local.minX, y: native.bounds.height - local.maxY,
                            width: local.width, height: local.height)
-      self.siteCaptureMode = "region"
-      self.siteCaptureDocument = model.document
       self.adapter?.captureRegion(flipped, document: model.document) { [weak self] png, error in
         self?.finishCapture(png, error: error, mode: "region")
       }
     }
     container.pageCard.addSubview(overlay)
-    overlay.frame = container.pageCard.bounds
+    overlay.frame = frame
     siteOverlay = overlay
+    siteOverlayDocument = model.document
   }
 
   func focusedPageView() -> NSView? {
@@ -1754,8 +1765,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func captureFullPage(_ model: SiteState) {
     guard hasUsableHost else { return }
-    siteCaptureMode = "full"
-    siteCaptureDocument = model.document
     adapter?.captureFullPage(document: model.document) { [weak self] png, error in
       self?.finishCapture(png, error: error, mode: "full")
     }
@@ -1764,12 +1773,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func finishCapture(_ png: Data?, error: String?, mode: String) {
     guard let png, let image = NSImage(data: png) else {
       captureError = error ?? "failed"
-      if error == "tooLarge" { container?.showToast("The page is too large to capture") }
+      // S3: every named failure is visible; only a user cancel is silent.
+      let text = error == "tooLarge" ? "The page is too large to capture" : "The page couldn't be captured"
+      container?.showToast(text)
       FileHandle.standardError.write(Data("ararat-trace: site-capture mode=\(mode) error=\(error ?? "failed")\n".utf8))
       return
     }
     captureError = ""
-    capturePasteboardSize = image.size
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setData(png, forType: .png)
@@ -1781,7 +1791,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func refreshExtensionActions() {
     guard hasUsableHost else { return }
-    extensionActionsRevision += 1
     extensionItems = adapter?.extensionActions(iconSize: 16) ?? []
     sidebar?.extensionActions = extensionItems
   }
@@ -1793,6 +1802,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func extensionMenu(_ item: ExtensionActionItem) -> NSMenu {
     let menu = NSMenu()
+    // AppKit would re-enable a disabled item through its automatic validation; the engine's
+    // named refused results already tell us which items cannot act.
+    menu.autoenablesItems = false
     let pin = NSMenuItem(title: item.pinned ? "Unpin" : "Pin",
                          action: #selector(menuPinExtension(_:)), keyEquivalent: "")
     pin.target = self
@@ -1852,7 +1864,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  func openCommandBar(_ requested: CommandBarMode) {    guard hasUsableHost, let host, let adapter, let workspace else { return }
+  func openCommandBar(_ requested: CommandBarMode) {
+    guard hasUsableHost, let host, let adapter, let workspace else { return }
     commandPresenter?.close()
     let target = adapter.captureNavigationTarget()
     let missingTarget = target == nil && host.hasActiveTab()
@@ -2084,20 +2097,31 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func pinsVerifyTick(_ host: any ARWindowHostAPI, expected: Bool) {
     let id = "kmgaadhbnkendcanjninlfmfgehagggl"
+    let profile = host.profileDirectory()
+    let isolationRun = CommandLine.arguments.contains("--ararat-relaunch-mode=pins-isolated")
     guard let item = extensionItems.first(where: { $0.id == id }) else {
       if browserCheckAttempts > 300 {
-        finishBrowserCheck(ok: false, values: ["error": "extension fixture action missing", "profile": host.profileDirectory()])
+        finishBrowserCheck(ok: false, values: ["error": "extension fixture action missing", "profile": profile])
       }
       return
     }
     if browserCheckPhase == 0 { browserCheckPhase = 1 }
     guard item.pinned == expected else {
       if browserCheckAttempts > 300 {
-        finishBrowserCheck(ok: false, values: ["pinned": item.pinned, "expected": expected, "profile": host.profileDirectory()])
+        finishBrowserCheck(ok: false, values: ["pinned": item.pinned, "expected": expected, "profile": profile])
       }
       return
     }
-    finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": host.profileDirectory()])
+    if isolationRun, profile != "Profile 1" {
+      // S8: the host follows the workspace's shown space, so --profile-directory alone cannot
+      // move this window. Report honestly instead of claiming the per-profile isolation ran.
+      finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": profile,
+                                            "profile_isolation_verified": false,
+                                            "note": "window profile is \(profile); seed a Profile 1 space to verify isolation"])
+      return
+    }
+    finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": profile,
+                                          "profile_isolation_verified": isolationRun])
   }
 
   func relaunchCheckTick(_ host: any ARWindowHostAPI, mode: String) {
@@ -8262,6 +8286,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func shutdown() {
     commandPresenter?.close(restoreFocus: false)
+    siteOverlay?.removeFromSuperview()
+    siteOverlay = nil
     if promptScreenSeeded, let tab = (host?.tabs() as? [any ARTabAPI])?.first {
       _ = tab.checkScreenAddress(false)
       promptScreenSeeded = false

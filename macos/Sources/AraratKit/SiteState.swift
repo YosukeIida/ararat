@@ -65,9 +65,16 @@ public struct SiteState {
                     default: return "Unsupported"
                     }
                 }
-                if approximate == "allow" { return "Allow approximate location" }
-                if precise == "allow" { return "Allow precise location" }
-                return "Location: \(approximate) / \(precise)"
+                // S10: every mixed pair names both halves, so no two menu items read alike.
+                func word(_ value: String) -> String {
+                    switch value {
+                    case "allow": return "Allow"
+                    case "block": return "Block"
+                    case "ask": return "Ask"
+                    default: return value.capitalized
+                    }
+                }
+                return "\(word(approximate)) approximate, \(word(precise)) precise"
             }
         }
 

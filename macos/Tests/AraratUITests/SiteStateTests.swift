@@ -75,9 +75,17 @@ func internalSnapshotHasNoPermissions() throws {
 @Test @MainActor
 func permissionMenuMapsMixedGeolocationPairsWithoutDuplicatingUniformTitles() {
     let allow = SiteState.PermissionSetting(dictionary: ["kind": "geolocation", "approximate": "allow", "precise": "block"])
-    #expect(allow?.title == "Allow approximate location")
+    #expect(allow?.title == "Allow approximate, Block precise")
     let precise = SiteState.PermissionSetting(dictionary: ["kind": "geolocation", "approximate": "ask", "precise": "allow"])
-    #expect(precise?.title == "Allow precise location")
+    #expect(precise?.title == "Ask approximate, Allow precise")
+    // Every mixed pair is distinct.
+    let pairs = ["allow", "block", "ask"].flatMap { approximate in
+        ["allow", "block", "ask"].map { precise in
+            SiteState.PermissionSetting(dictionary: ["kind": "geolocation", "approximate": approximate, "precise": precise])?.title
+        }
+    }.compactMap { $0 }
+    #expect(pairs.count == 9)
+    #expect(Set(pairs).count == 9)
     #expect(SiteState.PermissionSetting(dictionary: ["kind": "content", "value": "session_only"])?.title == "Allow for session")
     #expect(SiteState.PermissionSetting(dictionary: ["kind": "unsupported"]) == nil)
 }
@@ -103,6 +111,42 @@ func extensionActionRowUsesFavouriteColumnsAndOneRow() throws {
     #expect(frames.values.allSatisfy { $0.height == 32 })
     #expect(ExtensionActionsStrip.width(for: 0) == 0)
     #expect(ExtensionActionsStrip.width(for: 2) == 52)
+}
+
+@Test @MainActor
+func permissionRowWithoutExplicitSettingShowsItsDefaultNotAllow() throws {
+    let state = try #require(SiteState([
+        "document": "4", "origin": "https://127.0.0.1:4444", "security": "secure",
+        "certificateChain": [Data](),
+        "permissions": [permissionRow(setting: nil, mutable: true)],
+        "blocked": false, "internal": false,
+    ]))
+    let content = SiteControlsContent(model: state, includesFullPage: false)
+    let rows = content.checkPermissionRows
+    #expect(rows.count == 1)
+    // The current value is the default, shown as its own selected line, never item 0 ("Allow").
+    #expect(rows[0].current == "Ask (default)")
+    #expect(rows[0].items == ["Allow", "Block", "Ask"])
+}
+
+@Test @MainActor
+func extensionActionRowWrapsBeyondOneLine() throws {
+    let icon = NSImage(size: NSSize(width: 16, height: 16))
+    func item(_ index: Int) throws -> ExtensionActionItem {
+        try #require(ExtensionActionItem([
+            "id": "b\(index)", "name": "Probe \(index)", "tooltip": "Probe", "icon": icon,
+            "enabled": true, "pinned": true, "pinMutable": true, "removable": true,
+            "badgeText": "", "badgeBackgroundColor": 0, "badgeTextColor": 0,
+        ]) as ExtensionActionItem?)
+    }
+    let row = ExtensionActionsRow(frame: NSRect(x: 0, y: 0, width: 148, height: 96))
+    row.columns = 2
+    row.update(items: try (0..<5).map(item))
+    row.layoutSubtreeIfNeeded()
+    // Five actions over two columns take three 32 pt lines; none is hidden.
+    #expect(row.requiredHeight == 96)
+    #expect(row.checkFrames.count == 5)
+    #expect(row.checkFrames.values.allSatisfy { $0.maxY <= 96 })
 }
 
 @Test @MainActor

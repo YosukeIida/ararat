@@ -125,18 +125,18 @@ public final class SidebarView: NSView {
     private var inFieldActionsWidth: NSLayoutConstraint?
     private var hostTrailingToCopy: NSLayoutConstraint?
     public var siteControlsBlocked = false {
-        didSet { siteControlsButton.showsBlockedDot = siteControlsBlocked }
+        didSet {
+            siteControlsButton.showsBlockedDot = siteControlsBlocked
+            siteControlsButton.setAccessibilityValue(siteControlsBlocked ? "Permission blocked" : "")
+        }
     }
     public var extensionActions: [ExtensionActionItem] = [] {
         didSet { updateExtensionActions() }
     }
     public var onSiteControls: ((NSRect) -> Void)?
-    public var onExtensionAction: ((ExtensionActionItem, NSRect) -> Void)?
+    public var onExtensionAction: ((ExtensionActionItem) -> Void)?
     public var onExtensionMenu: ((ExtensionActionItem) -> NSMenu?)?
     public var onExtensionAnchor: ((NSRect) -> Void)?
-    public var onExtensionPin: ((String, Bool) -> Void)?
-    public var onExtensionManage: ((String) -> Void)?
-    public var onExtensionRemove: ((String) -> Void)?
     private var actionsHeight: NSLayoutConstraint!
     private var favorites = NSStackView()
     private var favoriteColumns = 0
@@ -1035,7 +1035,7 @@ public final class SidebarView: NSView {
         let inField = !pinned.isEmpty && hostWidth - 4 - actionsWidth >= 64
         inFieldActions.isHidden = !inField
         actionsRow.isHidden = inField || pinned.isEmpty
-        actionsHeight.constant = actionsRow.isHidden ? 0 : 32
+        actionsHeight.constant = actionsRow.isHidden ? 0 : actionsRow.requiredHeight
         hostTrailingToActions?.isActive = inField
         hostTrailingToCopy?.isActive = !inField
         if !inField, !pinned.isEmpty { actionsRow.needsLayout = true }
@@ -1063,7 +1063,7 @@ public final class SidebarView: NSView {
     private func openExtension(_ item: ExtensionActionItem, from button: ExtensionActionButton) {
         let anchor = button.anchorInWindow
         onExtensionAnchor?(anchor)
-        onExtensionAction?(item, anchor)
+        onExtensionAction?(item)
     }
 
     private func extensionMenu(_ item: ExtensionActionItem, from button: ExtensionActionButton) -> NSMenu? {
@@ -1075,6 +1075,9 @@ public final class SidebarView: NSView {
     public var checkSiteControlsDot: Bool { siteControlsButton.showsBlockedDot }
     public func checkClickSiteControls() { siteControlsButton.performClick(nil) }
     public var checkInFieldActionIDs: [String] { inFieldActions.isHidden ? [] : inFieldActions.checkItems }
+    public var checkActionLabelsComplete: Bool {
+        inFieldActions.isHidden ? actionsRow.checkLabelsComplete : inFieldActions.checkLabelsComplete
+    }
     public var checkRowActionIDs: [String] { actionsRow.isHidden ? [] : actionsRow.items.map(\.id) }
     public var checkActionsRowFrame: NSRect { convert(actionsRow.bounds, from: actionsRow) }
     public var checkActionsRowHeight: CGFloat { actionsRow.isHidden ? 0 : actionsRow.checkRowHeight }

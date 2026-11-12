@@ -35,6 +35,9 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     public var onPermissionChange: ((SiteState, [String: Any]) -> Bool)?
     public var onClose: (() -> Void)?
 
+    /// The window the certificate sheet attaches to (the host window, not the popover).
+    public var hostWindow: (() -> NSWindow?)?
+    private weak var certificateParentWindow: NSWindow?
     private let popover = NSPopover()
     private var content: SiteControlsContent?
     private var model: SiteState?
@@ -99,17 +102,36 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     // MARK: Certificate panel
 
     private func showCertificatePanel() {
-        guard let model, model.canShowCertificate, let window = content?.window,
+        guard let model, model.canShowCertificate,
+              let parent = hostWindow?() ?? content?.window?.parent ?? content?.window,
               let panel = SFCertificatePanel.shared() else { return }
         let certificates = model.certificateChain.compactMap { data in
             SecCertificateCreateWithData(nil, data as CFData)
         }
         guard !certificates.isEmpty else { return }
+        // S4: evaluate the SSL policy and hostname for this chain, without network fetches.
+        // The panel still shows macOS's verdict, not Chromium's; the footer carries Chromium's.
+        var trust: SecTrust?
+        let host = URL(string: model.origin)?.host ?? ""
+        let policy = SecPolicyCreateSSL(true, host as CFString)
+        if SecTrustCreateWithCertificates(certificates as CFArray, policy, &trust) == errSecSuccess,
+           let trust {
+            SecTrustSetNetworkFetchAllowed(trust, false)
+        }
+        certificateParentWindow = parent
         checkCertificatePanelOpen = true
         checkCertificatePanelEnded = false
-        panel.beginSheet(for: window, modalDelegate: self,
-                         didEnd: #selector(certificatePanelEnded(_:returnCode:contextInfo:)),
-                         contextInfo: nil, certificates: certificates, showGroup: true)
+        // The panel is wider than the popover and outlives a transient popover's close.
+        close()
+        if let trust {
+            panel.beginSheet(for: parent, modalDelegate: self,
+                             didEnd: #selector(certificatePanelEnded(_:returnCode:contextInfo:)),
+                             contextInfo: nil, trust: trust, showGroup: false)
+        } else {
+            panel.beginSheet(for: parent, modalDelegate: self,
+                             didEnd: #selector(certificatePanelEnded(_:returnCode:contextInfo:)),
+                             contextInfo: nil, certificates: certificates, showGroup: true)
+        }
     }
 
     @objc private func certificatePanelEnded(_ panel: Any?, returnCode: Int, contextInfo: UnsafeMutableRawPointer?) {
@@ -118,11 +140,11 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     }
 
     public var checkAttachedCertificateSheet: NSWindow? {
-        content?.window?.attachedSheet
+        certificateParentWindow?.attachedSheet
     }
 
     public func checkCloseCertificatePanel() {
-        guard let window = content?.window, let sheet = window.attachedSheet else { return }
+        guard let window = certificateParentWindow, let sheet = window.attachedSheet else { return }
         window.endSheet(sheet)
     }
 
@@ -184,7 +206,9 @@ final class SiteControlsContent: NSView {
     var checkPermissionRows: [(type: String, name: String, current: String, items: [String], readOnly: Bool, frame: NSRect)] {
         rows.map { entry in
             let popup = entry.control as? NSPopUpButton
-            let items = popup?.itemArray.map(\.title) ?? []
+            // Only the engine's allowed values are actionable; a placeholder for the current
+            // value is not one of them.
+            let items = popup?.itemArray.filter { $0.representedObject != nil }.map(\.title) ?? []
             let current = popup?.titleOfSelectedItem ?? (entry.control as? NSTextField)?.stringValue ?? ""
             return (entry.row.type, entry.row.displayName, current, items,
                     popup == nil, convert(entry.control.bounds, from: entry.control))
@@ -323,6 +347,21 @@ final class SiteControlsContent: NSView {
             popup.alignment = .right
             popup.setAccessibilityLabel("\(row.displayName) permission")
             var menuItems: [NSMenuItem] = []
+            let currentIndex = row.allowed.firstIndex(where: { $0 == row.current })
+            var hasPlaceholder = false
+            if currentIndex == nil {
+                hasPlaceholder = true
+                // S5: never show "Allow" for a value the row does not hold. A current value the
+                // engine does not list (no explicit setting, or a mixed pair it omits) gets its
+                // own selected, disabled line.
+                let title = row.setting == nil
+                    ? "\(row.current?.title ?? "Unsupported") (default)"
+                    : (row.current?.title ?? "Unsupported")
+                let placeholder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                placeholder.isEnabled = false
+                placeholder.state = .on
+                menuItems.append(placeholder)
+            }
             for (itemIndex, setting) in row.allowed.enumerated() {
                 let item = NSMenuItem(title: setting.title, action: #selector(permissionChosen(_:)), keyEquivalent: "")
                 item.target = self
@@ -338,7 +377,11 @@ final class SiteControlsContent: NSView {
                 menuItems.append(reset)
             }
             for item in menuItems { popup.menu?.addItem(item) }
-            popup.selectItem(at: row.allowed.firstIndex(where: { $0 == row.current }) ?? 0)
+            if let currentIndex {
+                popup.selectItem(at: currentIndex + (hasPlaceholder ? 1 : 0))
+            } else {
+                popup.selectItem(at: 0)
+            }
             popup.widthAnchor.constraint(equalToConstant: 108).isActive = true
             popup.heightAnchor.constraint(equalToConstant: Self.rowHeight).isActive = true
             permissionPopups.append(popup)

@@ -162,6 +162,11 @@ final class SiteFixtureServer {
 
     private static let sitePage = """
     <!doctype html><title>Site controls fixture</title>
+    <style>
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    #block { position: absolute; left: 40px; top: 60px; width: 200px; height: 120px; background: #3366FF; }
+    </style>
+    <div id="block"></div>
     <p id="fixture">site controls fixture</p>
     <script>
     const result = document.documentElement.dataset;

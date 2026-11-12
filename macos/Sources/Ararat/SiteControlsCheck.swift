@@ -11,7 +11,8 @@ import AraratUI
 final class SiteControlsCheck {
     static let common = ["fixture", "seed", "secure_page", "secure_security", "chain",
                          "actions", "popover_geometry", "permission_prompt", "permission_row",
-                         "blocked_dot", "permission_change", "permission_reset", "menu_items",
+                         "blocked_dot", "dot_cleared_on_navigation", "dot_restored", "tab_switch_dot",
+                         "permission_change", "permission_reset", "menu_items",
                          "certificate_panel", "certificate_closed", "popover_dismiss",
                          "region_capture", "region_pasteboard", "region_toast", "region_cancel",
                          "full_page_capture", "full_page_pasteboard", "full_page_toast",
@@ -25,12 +26,14 @@ final class SiteControlsCheck {
     var waitName = ""
     var waitCount = 0
     var item = ""
+    var blockedRow: Row?
     var startData: Data?
     var startPasteboard: Data?
     var regionRect = NSRect(x: 40, y: 60, width: 200, height: 120)
     var toastGeneration = 0
     var permissionRow = 0
     var allowIndex = 0
+    var secondTab = ""
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -62,7 +65,7 @@ final class SiteControlsCheck {
                 "wait": waitName, "images": images, "item": item,
                 "unverified": ["The full-page readback threshold and the tiling bound (VM measurement)",
                                "A too-large page's error toast (needs a page above the 16384 device px bound)",
-                               "A split pane whose page view is offset (only the card is exercised)",
+                               "The certificate panel's macOS trust verdict versus Chromium's footer verdict",
                                "Safe Browsing verdicts in the security footer",
                                "VoiceOver speech output; announcements and labels are observed"]]
     }
@@ -71,11 +74,11 @@ final class SiteControlsCheck {
 extension Runtime {
     func siteControlsCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if siteControlsCheck == nil { siteControlsCheck = SiteControlsCheck() }
-        guard let check = siteControlsCheck, !check.capturing, let sidebar, let container else { return }
+        guard let check = siteControlsCheck, !check.capturing, let sidebar, let container, let workspace else { return }
         let window = host.window()
         func wait(_ name: String) {
             let state = siteState
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) shown=\(state?.document ?? "nil") security=\(state?.security ?? "nil") rows=\(state?.permissions.count ?? 0) dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil)")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) shown=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") rows=\(state?.permissions.count ?? 0) dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil")")
         }
         func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
@@ -84,11 +87,9 @@ extension Runtime {
             check.images[name] = path
             return true
         }
-        func fail(_ message: String) {
-            var result = check.diagnostics(screen: screen); result["error"] = message
-            finishBrowserCheck(ok: false, values: result)
-        }
         func openPopover() {
+            // The button toggles; do not close a fresh popover by clicking twice in one tick.
+            guard siteControls?.isShown != true else { return }
             sidebar.checkClickSiteControls()
         }
         func fixturePorts() -> SiteFixtureServer.Ports? { siteFixturePorts }
@@ -114,6 +115,35 @@ extension Runtime {
             (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == snapshot.selectedId }
         }
         func isGrid(_ value: CGFloat) -> Bool { abs(value / 8 - (value / 8).rounded()) < 0.001 }
+        func findRow() -> SiteState.Permission? {
+            siteState?.permissions.first(where: { $0.type == "geolocation" })
+        }
+        /// M1/S9: the captured rectangle must be the solid block the fixture paints at the
+        /// dragged CSS rectangle (40, 60, 200 × 120): a shifted region would include the white
+        /// page and fail.
+        func blockPixels(_ data: Data) -> (ok: Bool, detail: String) {
+            guard let rep = NSBitmapImageRep(data: data) else { return (false, "no bitmap") }
+            let width = rep.pixelsWide, height = rep.pixelsHigh
+            guard width > 10, height > 10 else { return (false, "\(width)x\(height)") }
+            var matching = 0, total = 0
+            var x = 2
+            while x < width - 2 {
+                var y = 2
+                while y < height - 2 {
+                    if let colour = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                        total += 1
+                        let block = abs(colour.redComponent - 0x33 / 255.0) < 0.03
+                            && abs(colour.greenComponent - 0x66 / 255.0) < 0.03
+                            && abs(colour.blueComponent - 0xFF / 255.0) < 0.03
+                        if block { matching += 1 }
+                    }
+                    y += 8
+                }
+                x += 8
+            }
+            let ratio = total > 0 ? Double(matching) / Double(total) : 0
+            return (total > 100 && ratio > 0.98, "\(matching)/\(total) block pixels in \(width)x\(height)")
+        }
 
         switch browserCheckPhase {
         case 0:
@@ -124,6 +154,7 @@ extension Runtime {
             _ = ports
             check.mark("fixture")
             check.item = row.id
+            check.blockedRow = row
             browserCheckSeedID = row.id
             selectCheckSeed(row)
             browserCheckPhase = 1
@@ -166,12 +197,51 @@ extension Runtime {
             guard tab.checkPermissionDecision(2) else { wait("permission decision"); return }
             browserCheckPhase = 4
         case 4:
+            // S9: the dot must arrive from the engine callback, without a manual snapshot refresh.
             guard let tab = activeTab(), !tab.checkPermissionPending() else { wait("blocked permission"); return }
+            guard sidebar.checkSiteControlsDot else { wait("blocked dot from the engine callback"); return }
+            check.mark("blocked_dot")
+            siteControls?.close()
+            guard let ports = fixturePorts() else { wait("clean fixture"); return }
+            host.checkNavigate("https://127.0.0.1:\(ports.secure)/clean", disposition: "current")
+            browserCheckPhase = 5
+        case 5:
+            guard let ports = fixturePorts(), let tab = activeTab(),
+                  tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/clean"), !tab.isLoading else { wait("clean page"); return }
+            guard !sidebar.checkSiteControlsDot else { wait("dot cleared after navigation"); return }
+            check.mark("dot_cleared_on_navigation")
+            host.checkNavigate("https://127.0.0.1:\(ports.secure)/site", disposition: "current")
+            browserCheckPhase = 6
+        case 6:
+            guard let ports = fixturePorts(), let tab = activeTab(),
+                  tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/site"), !tab.isLoading else { wait("blocked page again"); return }
+            guard sidebar.checkSiteControlsDot, check.blockedRow != nil else { wait("dot restored"); return }
+            check.mark("dot_restored")
+            // A second tab at a clean origin: the dot follows the active tab.
+            check.secondTab = UUID().uuidString
+            let key = check.secondTab
+            workspace.createTab(url: "http://127.0.0.1:\(ports.plain)/clean") { [weak self] result in
+                guard case .success(let snapshot) = result else { return }
+                self?.extensionSecondTabs[key] = snapshot.selectedId
+            }
+            browserCheckPhase = 7
+        case 7:
+            guard let second = extensionSecondTabs[check.secondTab], snapshot.selectedId == second,
+                  host.activeItemId() == second else { wait("clean tab active"); return }
+            guard !sidebar.checkSiteControlsDot else { wait("dot off on the clean tab"); return }
+            check.mark("tab_switch_dot")
+            if let row = check.blockedRow { selectCheckSeed(row) }
+            browserCheckPhase = 8
+        case 8:
+            guard let row = check.blockedRow, snapshot.selectedId == row.id, host.activeItemId() == row.id,
+                  sidebar.checkSiteControlsDot else { wait("blocked tab again"); return }
             refreshSiteState()
-            guard let state = siteState,
-                  let row = state.permissions.first(where: { $0.type == "geolocation" }) else { wait("permission row"); return }
+            guard findRow() != nil else { wait("permission row"); return }
+            openPopover()
+            browserCheckPhase = 9
+        case 9:
+            guard let state = siteState, let row = state.permissions.first(where: { $0.type == "geolocation" }) else { wait("permission row snapshot"); return }
             check.mark("permission_row", row.setting?.isBlock == true && row.mutable)
-            check.mark("blocked_dot", state.blocked && sidebar.checkSiteControlsDot)
             guard let controls = siteControls, controls.isShown else { wait("popover after block"); return }
             let rows = controls.checkPermissionRows
             guard let index = rows.firstIndex(where: { $0.type == "geolocation" }) else { wait("popover permission row"); return }
@@ -182,49 +252,47 @@ extension Runtime {
             check.mark("menu_items", entry.items.contains("Allow") && entry.items.contains("Block")
                        && entry.items.contains("Ask") && entry.items.contains("Reset") && entry.current == "Block")
             guard allow >= 0, controls.checkChoosePermission(row: index, item: allow) else { wait("allow choice"); return }
-            browserCheckPhase = 5
-        case 5:
+            browserCheckPhase = 10
+        case 10:
+            guard !sidebar.checkSiteControlsDot else { wait("dot cleared by the engine callback"); return }
             refreshSiteState()
             guard let state = siteState, let row = state.permissions.first(where: { $0.type == "geolocation" }),
                   row.setting?.title == "Allow" else { wait("allowed permission"); return }
             check.mark("permission_change", !state.blocked)
             guard let controls = siteControls, controls.isShown,
                   controls.checkChoosePermission(row: check.permissionRow, item: -1) else { wait("reset choice"); return }
-            browserCheckPhase = 6
-        case 6:
+            browserCheckPhase = 11
+        case 11:
             refreshSiteState()
             guard let state = siteState,
                   (state.permissions.first(where: { $0.type == "geolocation" })?.setting == nil) else { wait("reset permission"); return }
             check.mark("permission_reset")
             guard let controls = siteControls, controls.isShown, controls.checkFooterEnabled else { wait("certificate footer"); return }
             guard controls.checkClickFooter() else { wait("certificate click"); return }
-            browserCheckPhase = 7
-        case 7:
+            browserCheckPhase = 12
+        case 12:
             guard let controls = siteControls, let sheet = controls.checkAttachedCertificateSheet else { wait("certificate sheet"); return }
             check.mark("certificate_panel", controls.checkCertificatePanelOpen && sheet.isVisible)
             if screen { check.mark("capture_certificate", capture("certificate", window: sheet)) }
             controls.checkCloseCertificatePanel()
-            browserCheckPhase = 8
-        case 8:
+            browserCheckPhase = 13
+        case 13:
             guard let controls = siteControls, controls.checkAttachedCertificateSheet == nil else { wait("certificate dismissed"); return }
             check.mark("certificate_closed")
-            controls.close()
             guard !controls.isShown else { wait("popover dismissed"); return }
             check.mark("popover_dismiss")
             check.startPasteboard = NSPasteboard.general.data(forType: .png)
             openPopover()
             guard let fresh = siteControls, fresh.isShown, fresh.checkClickAction("Screenshot a region") else { wait("region action"); return }
-            browserCheckPhase = 9
-        case 9:
+            browserCheckPhase = 14
+        case 14:
             guard let overlay = siteOverlay, overlay.superview === container.pageCard else { wait("region overlay"); return }
-            let frame = overlay.frame
             if screen { check.mark("capture_overlay", capture("overlay")) }
             check.regionRect = NSRect(x: 40, y: 60, width: 200, height: 120)
             overlay.performCheckDrag(from: check.regionRect.origin,
                                      to: NSPoint(x: check.regionRect.maxX, y: check.regionRect.maxY))
-            check.mark("region_capture", NSEqualRects(overlay.frame, frame))
-            browserCheckPhase = 10
-        case 10:
+            browserCheckPhase = 15
+        case 15:
             let data = NSPasteboard.general.data(forType: .png)
             let toast = container.checkToastState
             guard siteOverlay == nil, let data, data != check.startPasteboard,
@@ -233,17 +301,20 @@ extension Runtime {
             let scale = window.backingScaleFactor
             let expected = NSSize(width: (check.regionRect.width * scale).rounded(), height: (check.regionRect.height * scale).rounded())
             let size = image?.size ?? .zero
+            let pixels = blockPixels(data)
             check.mark("region_pasteboard", abs(size.width - expected.width) <= 2 && abs(size.height - expected.height) <= 2)
+            check.mark("region_capture", pixels.ok)
+            FileHandle.standardError.write(Data("ararat-trace: site-controls region pixels=\(pixels.detail)\n".utf8))
             check.mark("region_toast", toast.message == "Screenshot copied" && abs(toast.frame.midX - toast.page.midX) < 1)
             if screen { check.mark("capture_toast", capture("toast")) }
             check.toastGeneration = toast.generation
-            browserCheckPhase = 11
-        case 11:
+            browserCheckPhase = 16
+        case 16:
             guard !container.checkToastState.visible else { wait("capture toast expiry"); return }
-            guard let ports = fixturePorts(), let tab = activeTab() else { wait("capture fixture tab"); return }
+            guard let ports = fixturePorts(), activeTab() != nil else { wait("capture fixture tab"); return }
             host.checkNavigate("https://127.0.0.1:\(ports.secure)/capture", disposition: "current")
-            browserCheckPhase = 12
-        case 12:
+            browserCheckPhase = 17
+        case 17:
             guard let ports = fixturePorts(), let tab = activeTab(),
                   tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/capture"), !tab.isLoading,
                   tab.navigationCount > 0 else { wait("capture page"); return }
@@ -251,8 +322,8 @@ extension Runtime {
             openPopover()
             guard let controls = siteControls, controls.isShown,
                   controls.checkClickAction("Capture the full page") else { wait("full page action"); return }
-            browserCheckPhase = 13
-        case 13:
+            browserCheckPhase = 18
+        case 18:
             let data = NSPasteboard.general.data(forType: .png)
             let toast = container.checkToastState
             guard let data, data != check.startPasteboard, toast.visible,
@@ -262,54 +333,66 @@ extension Runtime {
             check.mark("full_page_capture", image.size.height > page.bounds.height * scale + 200)
             check.mark("full_page_pasteboard", data.count > 1000)
             check.mark("full_page_toast", toast.message == "Screenshot copied")
-            browserCheckPhase = 14
-        case 14:
+            browserCheckPhase = 19
+        case 19:
             guard !container.checkToastState.visible else { wait("full page toast expiry"); return }
             guard let ports = fixturePorts() else { wait("plain fixture"); return }
             host.checkNavigate("http://127.0.0.1:\(ports.plain)/clean", disposition: "current")
-            browserCheckPhase = 15
-        case 15:
+            browserCheckPhase = 20
+        case 20:
             guard let ports = fixturePorts(), let tab = activeTab(),
                   tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"), !tab.isLoading else { wait("insecure fixture"); return }
             refreshSiteState()
             guard let state = siteState, state.origin.hasPrefix("http://127.0.0.1:\(ports.plain)") else { wait("insecure snapshot"); return }
             check.mark("insecure_security", state.security == "not_secure")
-            check.mark("insecure_no_chain", state.certificateChain.isEmpty)
-            guard let controls = siteControls, controls.isShown else { wait("certificate footer disabled"); return }
+            // M5: the capture row closed the popover; open it before reading the footer.
+            openPopover()
+            browserCheckPhase = 21
+        case 21:
+            guard let state = siteState, state.certificateChain.isEmpty else { wait("insecure chain"); return }
+            check.mark("insecure_no_chain")
+            guard let controls = siteControls, controls.isShown else { wait("insecure popover"); return }
             check.mark("insecure_no_chain", state.certificateChain.isEmpty && !controls.checkFooterEnabled)
             controls.close()
             host.checkNavigate("chrome://version", disposition: "current")
-            browserCheckPhase = 16
-        case 16:
+            browserCheckPhase = 22
+        case 22:
             guard let tab = activeTab(), tab.url.hasPrefix("chrome://version"), !tab.isLoading else { wait("internal page"); return }
             refreshSiteState()
             guard let state = siteState else { wait("internal snapshot"); return }
             check.mark("internal_page", state.isInternal && state.permissions.isEmpty && state.security == "none")
             check.startPasteboard = NSPasteboard.general.data(forType: .png)
             openPopover()
+            browserCheckPhase = 23
+        case 23:
             guard let controls = siteControls, controls.isShown else { wait("internal popover"); return }
-            _ = controls
-            browserCheckPhase = 17
-        case 17:
-            guard let controls = siteControls, controls.isShown, controls.checkPermissionRows.isEmpty else { wait("internal popover rows"); return }
+            guard controls.checkPermissionRows.isEmpty else { wait("internal popover rows"); return }
             controls.close()
             guard let ports = fixturePorts() else { wait("region cancel fixture"); return }
             host.checkNavigate("https://127.0.0.1:\(ports.secure)/site", disposition: "current")
-            browserCheckPhase = 18
-        case 18:
+            browserCheckPhase = 24
+        case 24:
             guard let ports = fixturePorts(), let tab = activeTab(),
                   tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/site"), !tab.isLoading else { wait("cancel fixture"); return }
             openPopover()
             guard let controls = siteControls, controls.isShown,
                   controls.checkClickAction("Screenshot a region") else { wait("cancel overlay"); return }
-            browserCheckPhase = 19
-        case 19:
+            browserCheckPhase = 25
+        case 25:
             guard let overlay = siteOverlay else { wait("cancel overlay view"); return }
-            overlay.cancel()
-            browserCheckPhase = 20
-        case 20:
+            // S9: the Esc path itself, posted to the app queue with the overlay as first
+            // responder (the VM has no real keyboard events otherwise).
+            window.makeFirstResponder(overlay)
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                               timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil,
+                                               characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                                               isARepeat: false, keyCode: 53) else { wait("escape event"); return }
+            NSApp.postEvent(event, atStart: false)
+            browserCheckPhase = 26
+        case 26:
             let data = NSPasteboard.general.data(forType: .png)
-            guard siteOverlay == nil else { wait("overlay removed"); return }
+            guard siteOverlay == nil else { wait("overlay cancelled by escape"); return }
             check.mark("region_cancel", data == check.startPasteboard && !container.checkToastState.visible)
             let result = check.diagnostics(screen: screen)
             finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
