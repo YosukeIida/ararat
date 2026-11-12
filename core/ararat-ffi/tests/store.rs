@@ -813,7 +813,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 34);
+    assert_eq!(defaults.len(), 35);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     let key = KeyCombination { key: "s".into(), command: true, control: false, option: false, shift: false };
     let changed = store.set_key_binding("close_tab".into(), Some(key.clone())).unwrap();

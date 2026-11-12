@@ -2198,8 +2198,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"keyboard"] || [screen isEqualToString:@"commandbar"] ||
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
-      [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"errorpages"] ||
-      [screen isEqualToString:@"dialogs"] ||
+      [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
+      [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
   // A check that navigates after its last native tab closed has no browser to receive the

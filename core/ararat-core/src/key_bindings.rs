@@ -50,6 +50,7 @@ pub fn commands() -> Vec<Command> {
         ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false)),
         ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false)),
         ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false)),
+        ("copy_link", "Copy Link", "Tabs", "Copy the selected tab's URL.", None),
         ("cycle_tabs_next", "Next Recent Tab", "Tabs", "Switch to the next recent tab.", key("\t", false, true, false)),
         ("cycle_tabs_previous", "Previous Recent Tab", "Tabs", "Switch to the previous recent tab.", key("\t", false, true, true)),
         ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false)),

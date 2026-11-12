@@ -5,6 +5,30 @@ import SwiftUI
 @MainActor
 public final class SidebarView: NSView {
     public var onEditURL: (() -> Void)?
+    public var onLinkCopied: (() -> Void)?
+    public var onRetryHistory: (() -> Void)?
+    public var onDismissHistory: (() -> Void)?
+    private let historyBanner = NSStackView()
+    private let historyMessage = NSTextField(wrappingLabelWithString: "History could not be deleted.")
+    private let historyRetryButton = NSButton()
+    private let historyDismissButton = NSButton()
+    var historyFailureVisible: Bool { !historyBanner.isHidden }
+    public var checkHistoryVisible: Bool { !historyBanner.isHidden }
+    public var checkHistoryContext: (space: String?, profileID: String?, profile: String?, message: String) {
+        (snapshotSpace?.id, snapshotSpace?.profileKey, snapshotSpace?.profileName, historyMessage.stringValue)
+    }
+    public var checkHistoryAnnouncement: ((String) -> Void)?
+    public func checkClickCopyLink() { copyLinkButton.performClick(nil) }
+    public func checkClickHistoryRetry() { historyRetryButton.performClick(nil) }
+    public func checkClickHistoryDismiss() { historyDismissButton.performClick(nil) }
+    public func checkCopyMenu(row: Row) -> Bool {
+        let item = copyItem(row)
+        guard item.isEnabled, let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+    private let copyLinkButton = NSButton()
+    private var historySession: WorkspaceSession?
+    private var historyObserver: NSObjectProtocol?
     public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
     public var onDeleteSpace: ((String) -> Void)?
     public var onSpaceSettings: ((String) -> Void)?
@@ -499,7 +523,9 @@ public final class SidebarView: NSView {
         spaceScroll = SpaceScrollState()
         self.snapshot = snapshot
         spaceListOrigins = spaceListOrigins.filter { id, _ in snapshot.spaces.contains { $0.id == id } }
-        spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID } ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
+        spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID }
+            ?? (shownID == nil ? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } : nil)
+            ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
         selectedID = Self.sidebarSelection(snapshot)
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
@@ -637,6 +663,45 @@ public final class SidebarView: NSView {
     public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
     public func clickURLForCheck() { urlField.performClick(nil) }
     @objc private func editURLClicked() { onEditURL?() }
+    @objc private func copySelectedLink() {
+        guard let space = snapshotSpace,
+              let url = (space.favorites + space.pinned + space.today).first(where: { $0.id == selectedID })?.url else { return }
+        copyLink(url)
+    }
+    private func copyLink(_ url: String) {
+        pasteboard.clearContents()
+        if pasteboard.setString(url, forType: .string) { onLinkCopied?() }
+    }
+    public func copySelectedLinkForCommand() { copySelectedLink() }
+    @objc private func retryHistory() { onRetryHistory?() }
+    @objc private func dismissHistory() { onDismissHistory?() }
+    public func showHistoryFailure(_ visible: Bool) {
+        guard historyBanner.isHidden != !visible else { return }
+        historyBanner.isHidden = !visible
+        if visible, let profile = snapshotSpace?.profileName,
+           historySession?.claimHistoryFailureAnnouncement(profile: profile) == true {
+            checkHistoryAnnouncement?("History could not be deleted.")
+            NSAccessibility.post(element: historyBanner, notification: .announcementRequested, userInfo: [.announcement: "History could not be deleted.", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
+    }
+    public func observeHistoryFailures(_ session: WorkspaceSession) {
+        historySession = session
+        if let profile = snapshotSpace?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
+        historyObserver = NotificationCenter.default.addObserver(forName: WorkspaceSession.historyPurgeChanged, object: nil, queue: .main) { [weak self, weak session] notification in
+            guard let source = notification.object as? WorkspaceSession, source === session,
+                  let profile = notification.userInfo?["profile"] as? String,
+                  let visible = notification.userInfo?["visible"] as? Bool else { return }
+            MainActor.assumeIsolated {
+                guard let self, profile == self.snapshotSpace?.profileName else { return }
+                self.showHistoryFailure(visible)
+            }
+        }
+        onRetryHistory = { [weak session] in session?.retryHistoryPurges() }
+        onDismissHistory = { [weak self, weak session] in
+            guard let profile = self?.snapshotSpace?.profileName else { return }
+            session?.dismissHistoryPurgeFailure(profile: profile)
+        }
+    }
 
     private func build() {
         wantsLayer = true
@@ -662,6 +727,13 @@ public final class SidebarView: NSView {
         }
         spaceNameRow.onToggle = { [weak self] in self?.toggleSection() }
         spaceNameRow.onRenameEnded = { [weak self] in self?.spaceRenameEnded() }
+        copyLinkButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy Link")
+        copyLinkButton.isBordered = false
+        copyLinkButton.target = self
+        copyLinkButton.action = #selector(copySelectedLink)
+        copyLinkButton.setAccessibilityLabel("Copy Link")
+        copyLinkButton.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(copyLinkButton)
 
         favorites.orientation = .vertical
         favorites.spacing = 8
@@ -706,7 +778,19 @@ public final class SidebarView: NSView {
             dock.topAnchor.constraint(equalTo: bottomBar.topAnchor), dock.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
         ])
-        let column = NSStackView(views: [urlField, spaceViewport, bottomBar])
+        historyRetryButton.title = "Retry"
+        historyRetryButton.target = self
+        historyRetryButton.action = #selector(retryHistory)
+        historyDismissButton.title = "Dismiss"
+        historyDismissButton.target = self
+        historyDismissButton.action = #selector(dismissHistory)
+        historyBanner.orientation = .vertical
+        historyBanner.alignment = .leading
+        historyBanner.spacing = 4
+        historyBanner.addArrangedSubview(historyMessage)
+        historyBanner.addArrangedSubview(NSStackView(views: [historyRetryButton, historyDismissButton]))
+        historyBanner.isHidden = true
+        let column = NSStackView(views: [urlField, spaceViewport, historyBanner, bottomBar])
         mainColumn = column
         column.orientation = .vertical
         column.alignment = .leading
@@ -726,7 +810,11 @@ public final class SidebarView: NSView {
             bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
             host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
-            host.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12),
+            host.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
+            copyLinkButton.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -4),
+            copyLinkButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            copyLinkButton.widthAnchor.constraint(equalToConstant: 24),
+            copyLinkButton.heightAnchor.constraint(equalToConstant: 24),
             host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             spaceViewport.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             spaceColumn.leadingAnchor.constraint(equalTo: spaceViewport.leadingAnchor),
@@ -801,6 +889,7 @@ public final class SidebarView: NSView {
     }
 
     isolated deinit {
+        if let historyObserver { NotificationCenter.default.removeObserver(historyObserver) }
         if let clickMonitor { removeClickMonitor(clickMonitor) }
         tooltip.dismiss()
     }
@@ -898,6 +987,7 @@ public final class SidebarView: NSView {
     private func reload() {
         defer { refreshLook() }
         let space = snapshotSpace
+        if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
         if space?.id != hintSpaceID {
             rowViews.values.forEach { $0.hideRenameHint() }
             hintSpaceID = space?.id
@@ -907,6 +997,7 @@ public final class SidebarView: NSView {
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
+        copyLinkButton.isEnabled = selected?.url != nil
         host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
         urlField.setAccessibilityValue(host.stringValue)
 
@@ -1866,8 +1957,7 @@ extension SidebarView: NSMenuDelegate {
     private func copyItem(_ row: Row) -> NSMenuItem {
         SidebarMenuItem("Copy Link", enabled: row.url != nil) { [weak self] in
             guard let self, let url = row.url else { return }
-            self.pasteboard.clearContents()
-            self.pasteboard.setString(url, forType: .string)
+            self.copyLink(url)
         }
     }
 

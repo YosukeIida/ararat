@@ -205,6 +205,8 @@ void CheckGuards(int argc, const char** argv) {
   bool screen_prompts = false;
   bool check_downloads = false;
   bool screen_downloads = false;
+  bool check_toasts = false;
+  bool screen_toasts = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
     if (strcmp(arg, "--") == 0) option_terminator = true;
@@ -232,12 +234,14 @@ void CheckGuards(int argc, const char** argv) {
     if (strncmp(arg, "--ararat-screen=", 16) == 0) {
       has_screen = true;
       screen_prompts = std::string_view(arg + 16) == "prompts";
-      screen_downloads = std::string_view(arg + 16) == "downloads";
+      screen_toasts = std::string_view(arg + 16) == "toasts";
       valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name";
       if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
+      if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
+      if (screen_toasts) { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -254,11 +258,13 @@ void CheckGuards(int argc, const char** argv) {
       check_autofill = name == "autofill";
       check_devtools = name == "devtools";
       check_downloads = name == "downloads";
+      check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
                            name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
       browser_check = browser_check || name == "errorpages";
       browser_check = browser_check || check_downloads;
+      browser_check = browser_check || check_toasts;
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";
@@ -310,8 +316,8 @@ void CheckGuards(int argc, const char** argv) {
   if (bare_check) {
     refuse("the switch needs a =name");
   }
-  if ((check_downloads || screen_downloads) && (!disable_system_notifications || disable_features_count != 1 || enable_features || option_terminator)) {
-    refuse("downloads checks require --disable-features=SystemNotifications and no --enable-features");
+  if ((check_downloads || screen_downloads || check_toasts || screen_toasts) && (!disable_system_notifications || disable_features_count != 1 || enable_features || option_terminator)) {
+    refuse("downloads and toasts checks require --disable-features=SystemNotifications and no --enable-features");
   }
   if (has_measure && (!valid_measure || has_check || temp_dir.empty() || !under_temp || !mock_keychain)) {
     std::cerr << "engine: --ararat-measure requires a scenario, scratch profile and mock keychain" << std::endl;

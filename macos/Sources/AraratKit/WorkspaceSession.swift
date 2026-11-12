@@ -12,6 +12,10 @@ public final class WorkspaceSession: @unchecked Sendable {
     public var finishCrashRecovery: (() -> Void)?
     private var inFlight: Set<String> = []
     private var retryScheduled = false
+    private var failedPurges: [String: Set<String>] = [:]
+    private var dismissedPurges: [String: Set<String>] = [:]
+    private var announcedProfiles: Set<String> = []
+    public static let historyPurgeChanged = Notification.Name("Ararat.historyPurgeChanged")
     private var adapters: [String: WeakAdapter] = [:]
     private var keyOrder: [String: UInt64] = [:]
     private var keySequence: UInt64 = 0
@@ -207,15 +211,58 @@ public final class WorkspaceSession: @unchecked Sendable {
             self.queue.async {
                 self.inFlight.remove(purge.id)
                 do {
-                    if ok { try self.store?.acknowledgeHistoryPurge(id: purge.id); return }
+                    if ok {
+                        try self.store?.acknowledgeHistoryPurge(id: purge.id)
+                        self.setHistoryPurgeFailed(false, id: purge.id, profile: directory)
+                        return
+                    }
                 } catch {
                     FileHandle.standardError.write(Data("ararat-history: purge-ack-failed id=\(purge.id) \(error)\n".utf8))
                 }
                 FileHandle.standardError.write(Data("ararat-history: purge-failed id=\(purge.id) item=\(purge.item)\n".utf8))
+                self.setHistoryPurgeFailed(true, id: purge.id, profile: directory)
                 self.scheduleHistoryRetry()
             }
         }
     }
+
+    private func setHistoryPurgeFailed(_ failed: Bool, id: String, profile: String) {
+        if failed { failedPurges[profile, default: []].insert(id) }
+        else {
+            failedPurges[profile]?.remove(id)
+            dismissedPurges[profile]?.remove(id)
+        }
+        let visible = historyFailureVisible(profile: profile)
+        if !visible { announcedProfiles.remove(profile) }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.historyPurgeChanged, object: self, userInfo: ["profile": profile, "visible": visible])
+        }
+    }
+
+    public func dismissHistoryPurgeFailure(profile: String) {
+        queue.async {
+            // Why not forget the failures: retries of dismissed ids must stay silent until a new id fails.
+            self.dismissedPurges[profile] = self.failedPurges[profile]
+            self.announcedProfiles.remove(profile)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Self.historyPurgeChanged, object: self, userInfo: ["profile": profile, "visible": false])
+            }
+        }
+    }
+
+    public func historyPurgeFailed(profile: String) -> Bool {
+        queue.sync { historyFailureVisible(profile: profile) }
+    }
+
+    private func historyFailureVisible(profile: String) -> Bool {
+        !(failedPurges[profile, default: []].subtracting(dismissedPurges[profile, default: []])).isEmpty
+    }
+
+    public func claimHistoryFailureAnnouncement(profile: String) -> Bool {
+        queue.sync { historyFailureVisible(profile: profile) && announcedProfiles.insert(profile).inserted }
+    }
+
+    public func retryHistoryPurges() { queue.async { self.drainHistoryPurges() } }
 
     private func scheduleHistoryRetry() {
         guard !retryScheduled else { return }
