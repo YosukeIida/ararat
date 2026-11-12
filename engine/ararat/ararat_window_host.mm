@@ -1744,6 +1744,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                          @"pinMutable": @(!profile->IsOffTheRecord() && !model->IsActionForcePinned(id)),
                          @"removable": @(CanRemoveExtension(profile, extension)),
                          @"badgeText": badge,
+                         @"focusedTabId": @(tab_id),
                          @"badgeBackgroundColor": @(state ? state->GetBadgeBackgroundColor(tab_id) : 0),
                          @"badgeTextColor": @(state ? state->GetBadgeTextColor(tab_id) : 0) }];
   }
