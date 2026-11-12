@@ -53,6 +53,13 @@ pub struct WorkspaceStore {
     store: Store,
     workspace: Mutex<Workspace>,
     live: Mutex<ararat_core::live::Live>,
+    private: bool,
+}
+
+impl WorkspaceStore {
+    fn admit(&self, restricted: bool) -> Result<(), CoreError> {
+        if self.private && restricted { Err(CoreError::Edit { message: "operation unavailable in a private workspace".into() }) } else { Ok(()) }
+    }
 }
 
 #[uniffi::export]
@@ -60,7 +67,12 @@ impl WorkspaceStore {
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, CoreError> {
         let (store, workspace) = Store::open(Path::new(&path))?;
-        Ok(Arc::new(Self { store, workspace: Mutex::new(workspace), live: Mutex::new(ararat_core::live::Live::new()) }))
+        Ok(Arc::new(Self { store, workspace: Mutex::new(workspace), live: Mutex::new(ararat_core::live::Live::new()), private: false }))
+    }
+
+    #[uniffi::constructor]
+    pub fn open_private(profile: Profile) -> Arc<Self> {
+        Arc::new(Self { store: Store::private(), workspace: Mutex::new(Workspace::private(profile.into())), live: Mutex::new(ararat_core::live::Live::new()), private: true })
     }
 
     pub fn key_bindings(&self) -> Vec<KeyBinding> {
@@ -68,6 +80,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_key_binding(&self, command: String, key: Option<KeyCombination>) -> Result<Vec<KeyBinding>, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_key_binding(&command, key.map(Into::into))?;
         self.store.write(ops);
@@ -76,6 +89,7 @@ impl WorkspaceStore {
     }
 
     pub fn reset_key_binding(&self, command: String) -> Result<Vec<KeyBinding>, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.reset_key_binding(&command)?;
         self.store.write(ops);
@@ -84,6 +98,7 @@ impl WorkspaceStore {
     }
 
     pub fn reset_all_key_bindings(&self) -> Result<Vec<KeyBinding>, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.reset_all_key_bindings();
         self.store.write(ops);
@@ -92,6 +107,8 @@ impl WorkspaceStore {
     }
 
     pub fn auto_archive(&self, window_id: String, now: u64) -> Result<Option<WorkspaceSnapshot>, CoreError> {
+        if self.private { return Ok(None); }
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.auto_archive(now)?;
         if ops.is_empty() { return Ok(None); }
@@ -101,6 +118,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_archive_after(&self, window_id: String, space_id: String, value: ArchiveAfter) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let profile = workspace.spaces.iter().find(|s| s.id == space_id)
             .ok_or_else(|| CoreError::Edit { message: format!("unknown space {space_id}") })?.profile.clone();
@@ -115,6 +133,10 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
+    pub fn selected_item(&self, window_id: String) -> Option<String> {
+        self.workspace.lock().unwrap().selected(&window_id).map(str::to_owned)
+    }
+
     pub fn split_layout(&self, item_id: String) -> Option<SplitPane> {
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
@@ -123,6 +145,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_split_factors(&self, split_id: String, factors: Vec<SplitFactor>) -> Result<(), CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_split_factors(&split_id, factors.into_iter().map(|f| (f.id, f.factor)).collect())?;
         self.store.write(ops);
@@ -131,6 +154,7 @@ impl WorkspaceStore {
     }
 
     pub fn import_arc_sidebar(&self, window_id: String, json: String, windows_json: Option<String>, key_bindings_json: Option<String>, link_routing_json: Option<String>, owner_profile: Option<Profile>) -> Result<ImportResult, CoreError> {
+        self.admit(true)?;
         let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref(), owner_profile.map(Into::into)).map_err(|e| CoreError::Import { message: e.0 })?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         for item in imported.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
@@ -177,6 +201,7 @@ impl WorkspaceStore {
     }
 
     pub fn add_rule(&self, window_id: String, rule: Rule) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.add_rule(rule.into())?;
         self.store.write(ops);
@@ -185,6 +210,7 @@ impl WorkspaceStore {
     }
 
     pub fn edit_rule(&self, window_id: String, rule: Rule) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.edit_rule(rule.into())?;
         self.store.write(ops);
@@ -193,6 +219,7 @@ impl WorkspaceStore {
     }
 
     pub fn delete_rule(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_rule(&id)?;
         self.store.write(ops);
@@ -201,6 +228,7 @@ impl WorkspaceStore {
     }
 
     pub fn move_rule(&self, window_id: String, id: String, index: u32) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.move_rule(&id, index as usize)?;
         self.store.write(ops);
@@ -209,6 +237,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_default_destination(&self, window_id: String, destination: Destination) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_default_destination(destination.into())?;
         self.store.write(ops);
@@ -217,6 +246,7 @@ impl WorkspaceStore {
     }
 
     pub fn select_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.select_item(&window_id, &id)?;
         self.store.write(ops);
@@ -224,6 +254,7 @@ impl WorkspaceStore {
     }
 
     pub fn show_space(&self, window_id: String, space_id: String) -> Result<(), CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.show_space(&window_id, &space_id)?;
         self.store.write(ops);
@@ -231,6 +262,7 @@ impl WorkspaceStore {
     }
 
     pub fn show_space_selecting(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
@@ -258,6 +290,7 @@ impl WorkspaceStore {
     }
 
     pub fn show_space_selecting_tab(&self, window_id: String, space_id: String, item_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut next = workspace.clone();
         let mut ops = next.show_space(&window_id, &space_id)?;
@@ -281,6 +314,7 @@ impl WorkspaceStore {
     }
 
     pub fn close_window(&self, window_id: String, quitting: bool) -> Result<(), CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.close_window(&window_id, quitting);
         self.store.write(ops);
@@ -290,7 +324,7 @@ impl WorkspaceStore {
 
     pub fn kept_windows(&self) -> Vec<KeptWindow> {
         let workspace = self.workspace.lock().unwrap();
-        workspace.kept_windows().into_iter()
+        workspace.kept_windows().into_iter().filter(|_| !self.private)
             .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at }).collect()
     }
 
@@ -313,6 +347,7 @@ impl WorkspaceStore {
     }
 
     pub fn acknowledge_history_purge(&self, id: String) -> Result<(), CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         if !workspace.history_purges.contains_key(&id) { return Ok(()); }
         let op = ararat_core::model::Op::Delete(ararat_core::model::Kind::HistoryPurge, id);
@@ -323,6 +358,7 @@ impl WorkspaceStore {
     }
 
     pub fn restoration_candidate(&self, window_id: String) -> Option<RestorationCandidate> {
+        if self.private { return None; }
         let workspace = self.workspace.lock().unwrap();
         let state = workspace.windows.get(&window_id)?;
         let space = workspace.spaces.iter().find(|space| Some(space.id.as_str()) == workspace.shown_space(&window_id))?;
@@ -342,6 +378,7 @@ impl WorkspaceStore {
     }
 
     pub fn close_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.close_item(&id)?;
         self.store.write(ops);
@@ -350,6 +387,7 @@ impl WorkspaceStore {
     }
 
     pub fn archive_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.archive_item(&id)?;
         self.store.write(ops);
@@ -358,6 +396,7 @@ impl WorkspaceStore {
     }
 
     pub fn restore_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.restore_item(&window_id, &id)?;
         self.store.write(ops);
@@ -366,6 +405,7 @@ impl WorkspaceStore {
     }
 
     pub fn create_space(&self, window_id: String, name: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.create_space(&window_id, &name, &space_id)?;
         self.store.write(ops);
@@ -374,6 +414,7 @@ impl WorkspaceStore {
     }
 
     pub fn rename_space(&self, window_id: String, space_id: String, name: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.rename_space(&space_id, &name)?;
         self.store.write(ops);
@@ -382,6 +423,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_space_icon(&self, window_id: String, space_id: String, icon: Option<String>) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_space_icon(&space_id, icon)?;
         self.store.write(ops);
@@ -390,6 +432,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_space_look(&self, window_id: String, space_id: String, look: Option<Look>) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_space_look(&space_id, look.map(Into::into))?;
         self.store.write(ops);
@@ -398,6 +441,7 @@ impl WorkspaceStore {
     }
 
     pub fn move_space(&self, window_id: String, space_id: String, index: u32) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.move_space(&space_id, index as usize)?;
         self.store.write(ops);
@@ -406,6 +450,7 @@ impl WorkspaceStore {
     }
 
     pub fn delete_space(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_space(&space_id)?;
         self.store.write(ops);
@@ -414,6 +459,7 @@ impl WorkspaceStore {
     }
 
     pub fn delete_archive_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_archive_item(&id)?;
         self.store.write(ops);
@@ -422,6 +468,7 @@ impl WorkspaceStore {
     }
 
     pub fn ensure_favorites(&self, window_id: String, space_id: String, container_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.ensure_favorites(&space_id, &container_id)?;
         self.store.write(ops);
@@ -430,7 +477,9 @@ impl WorkspaceStore {
     }
 
     pub fn move_item(&self, window_id: String, id: String, container: String, index: u32, open_folder: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
+        if self.private && (open_folder || workspace.spaces.first().is_none_or(|space| space.today != container)) { self.admit(true)?; }
         let ops = workspace.move_item(&id, &container, index as usize, open_folder)?;
         self.store.write(ops);
         self.store.flush()?;
@@ -438,6 +487,7 @@ impl WorkspaceStore {
     }
 
     pub fn duplicate_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.duplicate_item(&id)?;
         self.store.write(ops);
@@ -446,6 +496,7 @@ impl WorkspaceStore {
     }
 
     pub fn create_folder(&self, window_id: String, id: String, name: String, container: String, index: u32, wrapping: Vec<String>) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.create_folder(&id, &name, &container, index as usize, &wrapping)?;
         self.store.write(ops);
@@ -454,6 +505,7 @@ impl WorkspaceStore {
     }
 
     pub fn rename_folder(&self, window_id: String, id: String, name: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.rename_folder(&id, &name)?;
         self.store.write(ops);
@@ -462,6 +514,7 @@ impl WorkspaceStore {
     }
 
     pub fn delete_folder(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_folder(&id)?;
         self.store.write(ops);
@@ -470,6 +523,7 @@ impl WorkspaceStore {
     }
 
     pub fn rename_tab(&self, window_id: String, id: String, title: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.rename_tab(&id, &title)?;
         self.store.write(ops);
@@ -478,6 +532,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_folder_collapsed(&self, window_id: String, id: String, collapsed: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_folder_collapsed(&id, collapsed)?;
         self.store.write(ops);
@@ -486,6 +541,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_section_collapsed(&self, window_id: String, space_id: String, collapsed: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_section_collapsed(&space_id, collapsed)?;
         self.store.write(ops);
@@ -500,12 +556,15 @@ impl WorkspaceStore {
     }
 
     // D6: one batch, one store write, so the caller's undo reverses the whole clear.
-    pub fn clear_today(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+    pub fn clear_today(&self, window_id: String, space_id: String) -> Result<ClearTodayResult, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.clear_today(&space_id)?;
+        let selected = workspace.selected(&window_id).map(str::to_owned);
+        let (ops, batch) = workspace.clear_today(&space_id)?;
         self.store.write(ops);
         self.store.flush()?;
-        Ok(snapshot(workspace.clone(), &window_id))
+        Ok(ClearTodayResult { snapshot: snapshot(workspace.clone(), &window_id),
+            batch: (!self.private).then(|| std::sync::Arc::new(ClearTodayUndo { batch, selected })) })
     }
 
     pub fn settings(&self) -> WorkspaceSettings {
@@ -513,6 +572,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_new_tab_row_shown(&self, window_id: String, shown: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_new_tab_row_shown(shown);
         self.store.write(ops);
@@ -534,6 +594,7 @@ impl WorkspaceStore {
     // is handed to the engine. The open's map entry and its in-flight marker land only
     // after that flush succeeded.
     pub fn live_open(&self, item: String, url: String) -> Result<LiveCommand, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, command) = live.open(&mut workspace, &item, &url)?;
@@ -544,6 +605,7 @@ impl WorkspaceStore {
     }
 
     pub fn live_activate(&self, item: String) -> Result<LiveCommand, CoreError> {
+        self.admit(false)?;
         let workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let command = live.activate(&workspace, &item)?;
@@ -567,6 +629,7 @@ impl WorkspaceStore {
     }
 
     pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, command) = live.close(&mut workspace, &item)?;
@@ -577,6 +640,7 @@ impl WorkspaceStore {
     }
 
     pub fn live_close_split(&self, item: String) -> Result<Vec<LiveCloseTarget>, CoreError> {
+        self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, commands) = live.close_split(&mut workspace, &item)?;
@@ -586,6 +650,7 @@ impl WorkspaceStore {
     }
 
     pub fn live_archive(&self, item: String) -> Result<LiveCommand, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, command) = live.archive(&mut workspace, &item)?;
@@ -598,22 +663,41 @@ impl WorkspaceStore {
     // Clear Today in one batch, with a Close command in flight for every mapped live row it
     // archives, so the engine's replies match commands (U25b D6).
     pub fn live_clear_today(&self, window_id: String, space_id: String) -> Result<LiveClearToday, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
-        let (ops, targets) = live.clear_today(&mut workspace, &space_id)?;
+        let selected = workspace.selected(&window_id).map(str::to_owned);
+        let (ops, targets, batch) = live.clear_today(&mut workspace, &space_id)?;
+        let has_items = if self.private { !ops.is_empty() } else { !batch.items.is_empty() };
         self.store.write(ops);
         self.store.flush()?;
         Ok(LiveClearToday {
             snapshot: snapshot(workspace.clone(), &window_id),
+            has_items,
+            batch: (!self.private).then(|| std::sync::Arc::new(ClearTodayUndo { batch, selected })),
             targets: targets.into_iter()
                 .map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect(),
         })
     }
 
+    pub fn undo_clear_today(&self, window_id: String, undo: std::sync::Arc<ClearTodayUndo>) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.undo_clear_today(&window_id, &undo.batch, undo.selected.as_deref())?;
+        let restored_selection = undo.selected.as_ref().filter(|id| ops.iter().any(|op| matches!(op, ararat_core::model::Op::Put(ararat_core::model::Record::Item(item)) if &item.id == *id && item.lifecycle == Lifecycle::Unloaded))).cloned();
+        self.store.write(ops);
+        self.store.flush()?;
+        let mut result = snapshot(workspace.clone(), &window_id);
+        if restored_selection.is_some() { result.selected_id = restored_selection; }
+        Ok(result)
+    }
+
     pub fn live_apply(&self, transaction: LiveTransaction) -> Result<LiveApplyOutcome, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, outcome) = live.apply(&mut workspace, transaction.into());
+        if let Some(error) = &outcome.error { return Err(error.clone().into()); }
         self.store.write(ops);
         let mut outcome: LiveApplyOutcome = outcome.into();
         outcome.persistence_error = self.store.flush().err().map(|error| error.0);
@@ -1026,10 +1110,24 @@ pub struct LiveCloseTarget {
 
 // Clear Today: the batch's snapshot, with the live tabs whose pages the caller closes (each
 // beside a Close command the core has in flight).
-#[derive(Debug, PartialEq, uniffi::Record)]
+#[derive(uniffi::Object)]
+pub struct ClearTodayUndo {
+    batch: ararat_core::edit::ClearTodayBatch,
+    selected: Option<String>,
+}
+
+#[derive(uniffi::Record)]
+pub struct ClearTodayResult {
+    pub snapshot: WorkspaceSnapshot,
+    pub batch: Option<std::sync::Arc<ClearTodayUndo>>,
+}
+
+#[derive(uniffi::Record)]
 pub struct LiveClearToday {
     pub snapshot: WorkspaceSnapshot,
     pub targets: Vec<LiveCloseTarget>,
+    pub batch: Option<std::sync::Arc<ClearTodayUndo>>,
+    pub has_items: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -1044,6 +1142,7 @@ pub enum LiveCause {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveTab {
+    pub off_the_record: bool,
     pub profile: Profile,
     pub live_id: String,
     pub item: Option<String>,
@@ -1062,6 +1161,7 @@ pub struct LiveStrip {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveTransaction {
+    pub off_the_record: bool,
     pub epoch: u64,
     pub rev: u64,
     pub cause: LiveCause,
@@ -1112,7 +1212,7 @@ impl From<LiveCause> for ararat_core::live::Cause {
 
 impl From<LiveTab> for ararat_core::live::LiveTab {
     fn from(tab: LiveTab) -> Self {
-        Self { profile: tab.profile.into(), live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
+        Self { off_the_record: tab.off_the_record, profile: tab.profile.into(), live_id: tab.live_id, item: tab.item, opener: tab.opener, navigated: tab.navigated, url: tab.url, title: tab.title }
     }
 }
 
@@ -1129,6 +1229,7 @@ impl From<LiveStrip> for ararat_core::live::Strip {
 impl From<LiveTransaction> for ararat_core::live::Transaction {
     fn from(transaction: LiveTransaction) -> Self {
         Self {
+            off_the_record: transaction.off_the_record,
             epoch: transaction.epoch,
             rev: transaction.rev,
             cause: transaction.cause.into(),
@@ -1303,6 +1404,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn private_transactions_validate_before_epoch_and_live_closes_remove_rows() {
+        let store = WorkspaceStore::open_private(Profile::Default);
+        let tab = |live: &str| LiveTab { off_the_record: true, profile: Profile::Default, live_id: live.into(), item: None, opener: None, navigated: true, url: Some(format!("https://{live}.example/")), title: None };
+        let mut tx = LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![LiveStrip { window: "w".into(), tabs: vec![tab("one"), tab("two")], active: Some("one".into()) }] };
+        assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+        tx.off_the_record = true;
+        tx.strips[0].tabs[0].profile = Profile::Named("other".into());
+        assert!(matches!(store.live_apply(tx.clone()), Err(CoreError::Live { .. })));
+        tx.strips[0].tabs[0].profile = Profile::Default;
+        tx.rev = 1;
+        assert!(!store.live_apply(tx.clone()).unwrap().applied);
+        assert!(store.snapshot("w".into()).spaces[0].today.is_empty());
+        tx.rev = 0;
+        let applied = store.live_apply(tx).unwrap();
+        assert!(applied.applied);
+        assert_eq!(applied.adopted.len(), 2);
+        let before = store.snapshot("w".into());
+        assert!(store.auto_archive("w".into(), u64::MAX).unwrap().is_none());
+        assert_eq!(store.snapshot("w".into()), before);
+        let first = applied.adopted.iter().find(|tab| tab.live_id == "one").unwrap().item.clone();
+        let second = applied.adopted.iter().find(|tab| tab.live_id == "two").unwrap().item.clone();
+        store.live_close(first).unwrap();
+        store.live_archive(second).unwrap();
+        let after = store.snapshot("w".into());
+        assert!(after.spaces[0].today.is_empty());
+        assert!(after.archive.is_empty());
+        assert!(store.pending_history_purges().unwrap().is_empty());
+        assert!(store.workspace.lock().unwrap().last_selected.is_empty());
+    }
+
+    #[test]
+    fn private_live_transactions_do_not_learn_or_create_history() {
+        let store = WorkspaceStore::open_private(Profile::Default);
+        let tab = |id: &str| LiveTab { off_the_record: true, profile: Profile::Default, live_id: id.into(), item: None, opener: None, navigated: true, url: Some(format!("https://{id}.example/")), title: None };
+        let tx = LiveTransaction { off_the_record: true, epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![LiveStrip { window: "w".into(), tabs: vec![tab("first"), tab("second")], active: Some("first".into()) }] };
+        let result = store.live_apply(tx).unwrap();
+        assert_eq!(result.adopted.len(), 2);
+        let workspace = store.workspace.lock().unwrap();
+        assert!(workspace.last_selected.is_empty());
+        assert!(workspace.windows.values().all(|window| window.history.is_empty()));
+        drop(workspace);
+        let suggestions = store.command_bar_session("w".into(), false).query("second".into(), vec![]);
+        assert!(suggestions.private_window);
+        assert!(suggestions.rows.iter().any(|row| matches!(row.target, SuggestionTarget::Tab { .. })));
+        let clear = store.live_clear_today("w".into(), "private".into()).unwrap();
+        assert_eq!(clear.targets.len(), 2);
+        assert!(clear.has_items);
+        assert!(clear.batch.is_none());
+        assert!(clear.snapshot.archive.is_empty() && clear.snapshot.spaces[0].today.is_empty());
+        assert!(store.pending_history_purges().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transaction_conversion_preserves_privacy_flags() {
+        let transaction = LiveTransaction { off_the_record: true, epoch: 1, rev: 0, cause: LiveCause::Engine, strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { off_the_record: true, profile: Profile::Default, live_id: "live".into(), item: None, opener: None, navigated: false, url: None, title: None }], active: None }] };
+        let core: ararat_core::live::Transaction = transaction.into();
+        assert!(core.off_the_record);
+        assert!(core.strips[0].tabs[0].off_the_record);
+    }
+
+    #[test]
     fn purge_acknowledgement_cannot_erase_a_later_obligation() {
         let path = std::env::temp_dir().join(format!("ararat-ffi-purge-{}.sqlite", std::process::id()));
         assert!(!path.exists());
@@ -1343,7 +1505,7 @@ mod tests {
         assert_eq!(candidate.id, id);
         assert_eq!(candidate.profile, Profile::Named("Profile 1".into()));
         assert_eq!(store.restoration_candidate("missing".into()), None);
-        store.live_apply(LiveTransaction { epoch: 1, rev: 0, cause: LiveCause::Engine,
+        store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine,
             strips: vec![] }).unwrap();
         assert_eq!(store.snapshot("one".into()).selected_id, None);
         assert_eq!(store.restoration_candidate("one".into()), Some(candidate));
@@ -1357,7 +1519,7 @@ mod tests {
         assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
         store.select_item("one".into(), id.clone()).unwrap();
         let command = store.live_open(id.clone(), "https://restore.example/".into()).unwrap();
-        store.live_apply(LiveTransaction { epoch: 1, rev: 1, cause: LiveCause::Command(command.id), strips: vec![] }).unwrap();
+        store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 1, cause: LiveCause::Command(command.id), strips: vec![] }).unwrap();
         assert_eq!(store.workspace.lock().unwrap().items[&id].lifecycle, Lifecycle::Unloaded);
         assert!(store.snapshot("one".into()).spaces.iter().flat_map(|space| &space.today).find(|row| row.id == id).unwrap().unloaded);
         {
@@ -1746,9 +1908,9 @@ mod tests {
         // Chrome's strips arrive with the tab live: the epoch's snapshot maps it, and a
         // Chrome activation moves the window selection.
         let live_id = opened.id.clone();
-        let outcome = store.live_apply(LiveTransaction {
+        let outcome = store.live_apply(LiveTransaction { off_the_record: false,
             epoch: 1, rev: 0, cause: LiveCause::Engine,
-            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { profile: Profile::Default, opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
+            strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab { off_the_record: false, profile: Profile::Default, opener: None, navigated: false, url: None, title: None, live_id: live_id.clone(), item: Some("tab-mail".into()) }], active: Some(live_id.clone()) }],
         }).unwrap();
         assert!(outcome.applied);
         let snapshot = store.snapshot("one".into());
@@ -1761,7 +1923,7 @@ mod tests {
         let row = snapshot.spaces[0].favorites.iter().find(|row| row.id == "tab-mail").expect("row kept");
         assert!(row.unloaded);
         // A stale rev is dropped and counted on the live coordinator.
-        let outcome = store.live_apply(LiveTransaction {
+        let outcome = store.live_apply(LiveTransaction { off_the_record: false,
             epoch: 1, rev: 0, cause: LiveCause::Chrome, strips: vec![],
         }).unwrap();
         assert!(!outcome.applied);
@@ -1982,7 +2144,7 @@ impl WorkspaceStore {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
-        Arc::new(CommandBarSession { index: ararat_core::command_bar::Index::new(&workspace, &window_id, now).private_window(private_window) })
+        Arc::new(CommandBarSession { index: ararat_core::command_bar::Index::new(&workspace, &window_id, now).private_window(private_window || self.private) })
     }
 
     /// The shown space's most recently selected tabs, newest first, for the ⌃Tab switcher
@@ -1997,6 +2159,7 @@ impl WorkspaceStore {
     }
 
     pub fn create_tab(&self, window_id: String, url: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.create_tab(&window_id, &url)?;
         self.store.write(ops);
@@ -2005,6 +2168,7 @@ impl WorkspaceStore {
     }
 
     pub fn set_tab_url(&self, window_id: String, id: String, url: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(false)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.set_tab_url(&id, &url)?;
         self.store.write(ops);

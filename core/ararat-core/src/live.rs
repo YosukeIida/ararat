@@ -37,6 +37,7 @@ pub enum Cause {
 /// its per-tab session data carries, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveTab {
+    pub off_the_record: bool,
     pub profile: Profile,
     pub live_id: Id,
     pub item: Option<Id>,
@@ -56,6 +57,7 @@ pub struct Strip {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
+    pub off_the_record: bool,
     pub epoch: u64,
     pub rev: u64,
     pub cause: Cause,
@@ -67,6 +69,7 @@ pub struct Transaction {
 /// uniqueness — it is dropped and counted, and its rev is consumed.
 #[derive(Debug, Default, PartialEq)]
 pub struct ApplyOutcome {
+    pub error: Option<LiveError>,
     pub applied: bool,
     /// Commands the apply produced: closes for engine tabs whose item is closed,
     /// archived or deleted, and activates for the successor a Chrome-caused close left
@@ -310,7 +313,7 @@ impl Live {
     /// it archives — the way `close_split` does — so the engine's replies name commands that
     /// are in flight (apply drops a reply whose command is not pending). The caller closes the
     /// returned live tabs with the commands' ids.
-    pub fn clear_today(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+    pub fn clear_today(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>, crate::edit::ClearTodayBatch), LiveError> {
         workspace.check_tree().map_err(LiveError)?;
         let today = workspace.spaces.iter().find(|entry| entry.id == space).map(|entry| entry.today.clone())
             .ok_or_else(|| LiveError(format!("unknown space {space}")))?;
@@ -320,7 +323,7 @@ impl Live {
             .map(|(_, item, _)| item.id.clone())
             .filter(|id| matches!(workspace.items[id].kind, ItemKind::Tab { .. }) && self.map.contains_key(id))
             .collect();
-        let ops = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
+        let (ops, batch) = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
         let mut targets = Vec::new();
         for item in items {
             let Some(live) = self.map.remove(&item) else { continue };
@@ -333,7 +336,7 @@ impl Live {
             targets.push((live, command));
         }
         self.selection_intents.retain(|id, _| self.pending.contains_key(id));
-        Ok((ops, targets))
+        Ok((ops, targets, batch))
     }
 
     fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {
@@ -356,6 +359,14 @@ impl Live {
     /// dropped one leaves both exactly as they were.
     pub fn apply(&mut self, workspace: &mut Workspace, transaction: Transaction) -> (Vec<Op>, ApplyOutcome) {
         let mut outcome = ApplyOutcome::default();
+        if transaction.off_the_record != workspace.is_private() || transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| tab.off_the_record != transaction.off_the_record) {
+            outcome.error = Some(LiveError("transaction privacy mismatch".into()));
+            return (Vec::new(), outcome);
+        }
+        if workspace.is_private() && transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| workspace.spaces.first().is_none_or(|space| space.profile != tab.profile)) {
+            outcome.error = Some(LiveError("private profile mismatch".into()));
+            return (Vec::new(), outcome);
+        }
         match self.epoch {
             Some(current) if transaction.epoch < current => { self.dropped += 1; return (Vec::new(), outcome); }
             Some(current) if transaction.epoch == current => {

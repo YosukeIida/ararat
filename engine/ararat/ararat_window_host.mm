@@ -1388,7 +1388,7 @@ bool AraratCheckRecoveryBarrier() {
   ARPendingMove* move = [ARPendingMove new];
   move.sourceId = @"ararat-check-recovery-window";
   move.epoch = g_epoch;
-  move.entry = @{ @"live_id": live };
+  move.entry = @{ @"off_the_record": @NO, @"live_id": live };
   PendingMoves()[live] = move;
   DetachedRecoveries()[base::SysNSStringToUTF8(live)] = std::make_unique<DetachedRecovery>();
   ExpirePendingMove(live, move);
@@ -1839,6 +1839,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)setDelegate:(id<ARWindowHostDelegate>)delegate {
   DCHECK([NSThread isMainThread]);
   _delegate = delegate;
+  // Why not reuse this process-wide snapshot for a private store: pass 3 must send that store its own rev 0 snapshot.
   if (delegate && !g_epoch) {
     AraratClearDetachedTransfers();
     base::Time started = base::Process::Current().CreationTime();
@@ -1846,7 +1847,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     g_epoch = started.InMillisecondsSinceUnixEpoch();
     g_revision = 0;
     [delegate windowHost:self didReceiveTransaction:@{
-      @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"strips": @[]
+      @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"off_the_record": @([self isPrivateWindow]), @"strips": @[]
     }];
   }
 }
@@ -3483,7 +3484,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
           ARPendingMove* move = [ARPendingMove new];
           move.source = self; move.sourceId = window_id_; move.epoch = g_epoch;
           move.active = selection.old_contents.get() == entry.contents.get();
-          move.entry = @{ @"profile": profile, @"live_id": identity->live_id,
+          move.entry = @{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": identity->live_id,
                           @"item": identity->item_id ?: (id)NSNull.null, @"opener": NSNull.null,
                           @"navigated": @NO, @"crashed": @(tab.crashed),
                           @"url": url.is_valid() ? (id)[NSString stringWithUTF8String:url.spec().c_str()] : (id)NSNull.null,
@@ -3747,7 +3748,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         std::fprintf(stderr, "ararat-trace: matrix strip-field window=%s live=%s field=%s old=%d new=%d rev=%llu closing=%d\n", window_id_.UTF8String, tab.liveId.UTF8String, field.UTF8String, [old[field] boolValue], [state[field] boolValue], static_cast<unsigned long long>(g_revision), core_->closing());
       matrix_states_[tab.liveId] = state;
     }
-    [entries addObject:@{ @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
+    [entries addObject:@{ @"off_the_record": @(strip->profile()->IsOffTheRecord()), @"profile": profile, @"live_id": tab.liveId, @"item": identity->item_id ? (id)identity->item_id : (id)NSNull.null,
                           @"opener": opener_identity ? (id)opener_identity->live_id : (id)NSNull.null,
                           @"navigated": @(consumeNavigation && [tab takePendingNavigation]),
                           @"crashed": @(tab.crashed),
@@ -3780,12 +3781,14 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (!g_epoch) return;
   uint64_t epoch = g_epoch;
   ARWindowHost* retained = self;
+  BOOL off_the_record = [self isPrivateWindow];
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
     if (epoch != g_epoch) return;
     ARWindowHost* recipient = [retained canReportWorkspace] ? retained : nil;
+    // Why not use an arbitrary recipient for private stores: pass 3 must match the OTR Profile* domain.
     if (!recipient) for (ARWindowHost* host in ReportingHosts()) if ([host canReportWorkspace]) { recipient = host; break; }
     if (!recipient.delegate) return;
-    NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"strips": strips };
+    NSDictionary* transaction = @{ @"epoch": @(epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
     if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=move\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], retained->core_->closing());
     [recipient.delegate windowHost:recipient didReceiveTransaction:transaction];
   }));
@@ -3835,6 +3838,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSArray* strips = @[ [self barrierSnapshot:[cause isKindOfClass:NSString.class] preserveActive:[cause isKindOfClass:NSString.class]] ];
   if (setEmptyReported)
     empty_reported_ = [self tabs].count == 0;
+  BOOL off_the_record = [self isPrivateWindow];
   __weak ARWindowHost* host = self;
   ARWindowHost* retained_host = retainHost ? self : nil;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -3843,7 +3847,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         if (retainHost && IsCloseCheck()) std::fprintf(stderr, "ararat-trace: empty-strip-delivered=%d\n", strong_host.delegate != nil);
         id<ARWindowHostDelegate> delegate = strong_host.delegate;
         if (!strong_host || !delegate) return;
-        NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"strips": strips };
+        NSDictionary* transaction = @{ @"epoch": @(g_epoch), @"rev": @(++g_revision), @"cause": cause, @"off_the_record": @(off_the_record), @"strips": strips };
         if (IsMatrixTrace()) for (NSDictionary* strip in strips) std::fprintf(stderr, "ararat-trace: matrix transaction window=%s rev=%llu cause=%s tabs=%lu closing=%d path=ordinary\n", [strip[@"window"] UTF8String], static_cast<unsigned long long>(g_revision), [[cause description] UTF8String], (unsigned long)[strip[@"tabs"] count], strong_host->core_->closing());
         [delegate windowHost:strong_host didReceiveTransaction:transaction];
       }));

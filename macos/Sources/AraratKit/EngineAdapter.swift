@@ -84,7 +84,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -136,14 +136,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """
-                if seedSplitCheck {
-                    let old = "\"pin-named\",{\"id\":\"pin-named\",\"parentID\":null,\"childrenIds\":[]"
-                    let replacement = "\"pin-named\",{\"id\":\"pin-named\",\"parentID\":null,\"childrenIds\":[\"close-split\"]"
+                if seedSplitCheck || seedToastSplit {
+                    let parent = seedToastSplit ? "pin-default" : "pin-named"
+                    let old = "\"\(parent)\",{\"id\":\"\(parent)\",\"parentID\":null,\"childrenIds\":[]"
+                    let replacement = "\"\(parent)\",{\"id\":\"\(parent)\",\"parentID\":null,\"childrenIds\":[\"close-split\"]"
                     guard json.contains(old) else { throw NSError(domain: "Ararat.split-check", code: 1) }
                     json = json.replacingOccurrences(of: old, with: replacement)
                     let marker = "\"today-named\",{\"id\":\"today-named\""
                     let split = """
-                    "close-split",{"id":"close-split","parentID":"pin-named","childrenIds":["close-split-a","close-split-b"],"data":{"splitView":{"layoutOrientation":"horizontal","itemWidthFactors":["close-split-a",0.5,"close-split-b",0.5]}}},"close-split-a",{"id":"close-split-a","parentID":"close-split","childrenIds":[],"data":{"tab":{"savedURL":"about:blank","savedTitle":"A"}}},"close-split-b",{"id":"close-split-b","parentID":"close-split","childrenIds":[],"data":{"tab":{"savedURL":"about:blank","savedTitle":"B"}}},
+                    "close-split",{"id":"close-split","parentID":"\(parent)","childrenIds":["close-split-a","close-split-b"],"data":{"splitView":{"layoutOrientation":"horizontal","itemWidthFactors":["close-split-a",0.5,"close-split-b",0.5]}}},"close-split-a",{"id":"close-split-a","parentID":"close-split","childrenIds":[],"data":{"tab":{"savedURL":"about:blank","savedTitle":"A"}}},"close-split-b",{"id":"close-split-b","parentID":"close-split","childrenIds":[],"data":{"tab":{"savedURL":"about:blank","savedTitle":"B"}}},
                     """
                     guard json.contains(marker) else { throw NSError(domain: "Ararat.split-check", code: 2) }
                     json = json.replacingOccurrences(of: marker, with: split + marker)
@@ -425,7 +426,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     // Clear Today: one core batch with a Close in flight for every mapped live row, so the
     // engine's replies match commands; the caller closes the pages it returns (U25b D6).
-    public func clearToday(spaceID: String, completion: @escaping @MainActor (WorkspaceSnapshot?) -> Void) {
+    public func clearToday(spaceID: String, completion: @escaping @MainActor (LiveClearToday?) -> Void) {
         precondition(Thread.isMainThread)
         queue.async {
             defer { self.session.drainHistoryPurges() }
@@ -449,8 +450,22 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         }
                     }
                     self.deliverIfCurrent(result.snapshot)
-                    completion(result.snapshot)
+                    completion(result)
                 }
+            } catch {
+                self.report(error)
+                DispatchQueue.main.async { completion(nil) }
+            }
+        }
+    }
+
+    public func undoClearToday(_ batch: ClearTodayUndo, completion: @escaping @MainActor (WorkspaceSnapshot?) -> Void) {
+        precondition(Thread.isMainThread)
+        queue.async {
+            do {
+                guard let store = self.store else { DispatchQueue.main.async { completion(nil) }; return }
+                let snapshot = try store.undoClearToday(windowId: self.windowID, undo: batch)
+                DispatchQueue.main.async { self.deliverIfCurrent(snapshot, allowUnloadedSelection: true); completion(snapshot) }
             } catch {
                 self.report(error)
                 DispatchQueue.main.async { completion(nil) }
@@ -578,8 +593,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return try store.showSpaceSelecting(windowId: windowID, spaceId: space)
     }
 
+    static func privacyFlag(_ value: [String: Any]) -> Bool? {
+        value["off_the_record"] as? Bool
+    }
+
     public func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction value: [String: Any]) {
-        guard let epoch = value["epoch"] as? NSNumber, let rev = value["rev"] as? NSNumber,
+        guard let offTheRecord = Self.privacyFlag(value), let epoch = value["epoch"] as? NSNumber, let rev = value["rev"] as? NSNumber,
               let raw = value["strips"] as? [[String: Any]] else {
             invalidTransaction()
             return
@@ -610,7 +629,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             }
             var parsedTabs: [LiveTab] = []
             for tab in tabs {
-                guard let profile = tab["profile"] as? String, let live = tab["live_id"] as? String, let item = tab["item"],
+                guard let tabOffTheRecord = Self.privacyFlag(tab), let profile = tab["profile"] as? String, let live = tab["live_id"] as? String, let item = tab["item"],
                       let opener = tab["opener"], let url = tab["url"], let title = tab["title"],
                       let navigated = tab["navigated"] as? Bool,
                       let crashed = tab["crashed"] as? Bool,
@@ -620,7 +639,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     invalidTransaction()
                     return
                 }
-                parsedTabs.append(LiveTab(profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
+                parsedTabs.append(LiveTab(offTheRecord: tabOffTheRecord, profile: profile == "Default" ? .default : .named(profile), liveId: live, item: item as? String,
                                           opener: opener as? String, navigated: navigated, url: url as? String, title: title as? String))
                 if let item = item as? String {
                     if crashed { crashedItems.insert(item) }
@@ -630,7 +649,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             }
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
-        let transaction = LiveTransaction(epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
+        let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
         let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
         if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { return }
         let states = rowStates
@@ -785,8 +804,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     @MainActor
-    private func deliverIfCurrent(_ snapshot: WorkspaceSnapshot, skipNearSplitFrames: Bool = false) {
-        guard queue.sync(execute: { store?.snapshot(windowId: windowID) == snapshot }) else { return }
+    private func deliverIfCurrent(_ snapshot: WorkspaceSnapshot, skipNearSplitFrames: Bool = false, allowUnloadedSelection: Bool = false) {
+        let current = queue.sync { () -> Bool in
+            guard let store else { return false }
+            let latest = store.snapshot(windowId: windowID)
+            if latest == snapshot { return true }
+            return allowUnloadedSelection && latest.selectedId == nil &&
+                store.selectedItem(windowId: windowID) == snapshot.selectedId &&
+                latest.shownSpaceId == snapshot.shownSpaceId && latest.spaces == snapshot.spaces && latest.archive == snapshot.archive
+        }
+        guard current else { return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {

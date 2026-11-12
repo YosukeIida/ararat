@@ -8,7 +8,7 @@ fn lifecycle_purges_are_local_and_durable_but_empty_epoch_is_not_a_delete() {
     let (store, _) = Store::open(&path).unwrap();
     store.write(ws.to_ops());
     store.flush().unwrap();
-    let (ops, _) = Live::new().apply(&mut ws, Transaction {
+    let (ops, _) = Live::new().apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 0, cause: Cause::Engine,
         strips: vec![Strip { window: "one".into(), tabs: vec![], active: None }],
     });
