@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -65,9 +65,9 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
     let path = URL(fileURLWithPath: value).resolvingSymlinksInPath().path
     return temporary.contains { path.hasPrefix($0) }
   }
-  let downloads = args.contains(where: { $0.hasSuffix("=downloads") })
+  let downloads = args.contains(where: { $0.hasSuffix("=downloads") || $0.hasSuffix("=toasts") })
   guard args.contains("--use-mock-keychain"), scratch("--user-data-dir="), scratch("--ararat-db="), !downloads || args.contains("--disable-features=SystemNotifications") else {
-    let result: [String: Any] = ["check": downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : "organize", "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
+    let result: [String: Any] = ["check": args.contains(where: { $0.hasSuffix("=toasts") }) ? "toasts" : downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : "organize", "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
     exit(1)
   }
@@ -589,6 +589,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var promptFixtureError: String?
   var downloadCloseConditions: [String: Bool] = [:]
   var downloadsCheck: DownloadsCheck?
+  var toastsCheck: ToastsCheck?
   var downloadCloseFallback = false
   var errorPageConditions: [String: Bool] = [:]
   var errorPageImages: [String: String] = [:]
@@ -709,10 +710,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "toasts"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "toasts"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -737,7 +738,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
       if screenName == "errorpages" { browserCheckMode = "screen-errorpages" }
       if screenName == "downloads" { browserCheckMode = "screen-downloads" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" {
+      if screenName == "toasts" { browserCheckMode = "screen-toasts" }
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -806,7 +808,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let card = NSView()
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
@@ -1004,7 +1006,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" {
+      if browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1784,7 +1786,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
-    if downloadsCheck?.capturing == true { return }
+    if downloadsCheck?.capturing == true || toastsCheck?.capturing == true { return }
     if browserCheckPhase != browserCheckTracedPhase {
       browserCheckTracedPhase = browserCheckPhase
       FileHandle.standardError.write(Data("ararat-trace: browser-check=\(mode) phase=\(browserCheckPhase) tabs=\(host?.tabs().count ?? 0) children=\(children.count) popups=\(popups.count)\n".utf8))
@@ -2114,7 +2116,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads"].contains(mode) ? 900 : 300
+    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts"].contains(mode) ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
@@ -2126,6 +2128,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
       }
       if mode == "downloads" || mode == "screen-downloads" { timeoutValues.merge(downloadsCheck?.diagnostics(screen: mode == "screen-downloads") ?? [:]) { _, new in new } }
+      if mode == "toasts" || mode == "screen-toasts" { timeoutValues.merge((toastsCheck ?? ToastsCheck()).diagnostics(screen: mode == "screen-toasts")) { _, new in new } }
       finishBrowserCheck(ok: false, values: timeoutValues); return
     }
     if mode == "profiles", CommandLine.arguments.contains("--ararat-multiple-close-check"), host == nil,
@@ -2246,6 +2249,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "incognito" { incognitoCheckTick(host); return }
     if mode == "download-close" { downloadCloseCheckTick(host); return }
     if mode == "downloads" || mode == "screen-downloads" { downloadsCheckTick(host, screen: mode == "screen-downloads"); return }
+    if mode == "toasts" || mode == "screen-toasts" { toastsCheckTick(host, screen: mode == "screen-toasts"); return }
     if mode == "errorpages" || mode == "screen-errorpages" { errorPagesCheckTick(host, screen: mode == "screen-errorpages"); return }
     if mode == "ext-windows" || mode == "screen-profiles" { extensionCheckTick(host, screen: mode == "screen-profiles"); return }
     if mode == "ext-windows-popup" { extensionPopupWindowCheckTick(host); return }
@@ -7119,6 +7123,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-commandbar" { result["check"] = "commandbar"; result["screen"] = "commandbar" }
     if browserCheckMode == "screen-errorpages" { result["check"] = "errorpages"; result["screen"] = "errorpages" }
     if browserCheckMode == "screen-downloads" { result["check"] = "downloads"; result["screen"] = "downloads" }
+    if browserCheckMode == "screen-toasts" { result["check"] = "toasts"; result["screen"] = "toasts" }
     if browserCheckMode == "commandbar" || browserCheckMode == "screen-commandbar" {
       result["conditions"] = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
       result["failed_conditions"] = commandBarConditionNames.filter { commandBarConditions[$0] != true }
@@ -7916,13 +7921,14 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
-  let watchdogSeconds = ["keyboard", "errorpages", "downloads"].contains(name) ? 120 : 60
+  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts"].contains(name) ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
   timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {
     var result: [String: Any] = ["check": name, "ok": false, "timeout": "watchdog", "exit": 1,
       "phase": -1, "attempts": 0, "style_mask": 0, "phase_is_placeholder": true,
       "attempts_are_placeholder": true, "watchdog_seconds": watchdogSeconds]
+    if name == "toasts" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the toasts check" }
     if name == "downloads" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the downloads check" }
     if !screen { result.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { result["screen"] = name }
