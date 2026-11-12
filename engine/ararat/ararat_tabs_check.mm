@@ -495,6 +495,10 @@ int RendererPid(ARTab* tab) {
       NSBitmapImageRep* bitmap = cg ? [[NSBitmapImageRep alloc] initWithCGImage:cg] : nil;
       NSColor* pixel = bitmap ? [[bitmap colorAtX:bitmap.pixelsWide / 2 y:bitmap.pixelsHigh / 2] colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace] : nil;
       self.snapshotPresent = pixel && pixel.redComponent > 0.7 && pixel.greenComponent < 0.3 && pixel.blueComponent < 0.3;
+      std::cerr << "ararat-trace: transfer snapshot read phase=" << self.phase << " image=" << (image != nil)
+                << " cg=" << (cg != nullptr) << " pixel=" << (pixel != nil)
+                << " rgb=" << (pixel ? pixel.redComponent : -1) << "," << (pixel ? pixel.greenComponent : -1)
+                << "," << (pixel ? pixel.blueComponent : -1) << "\n";
     }];
     self.phase = 1;
   }

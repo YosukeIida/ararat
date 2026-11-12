@@ -726,6 +726,8 @@ class TabContentsObserver : public content::WebContentsObserver {
 
 - (void)captureSnapshot:(void (^)(NSImage*))completion {
   auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
+  bool trace = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "transfer";
+  if (trace) std::fprintf(stderr, "ararat-trace: transfer snapshot request view=%d surface=%d\n", view != nullptr, view && view->IsSurfaceAvailableForCopy());
   if (!view || !view->IsSurfaceAvailableForCopy()) { completion(nil); return; }
   auto runner = base::SingleThreadTaskRunner::GetCurrentDefault();
   auto contents = contents_->GetWeakPtr();
@@ -733,7 +735,10 @@ class TabContentsObserver : public content::WebContentsObserver {
   view->CopyFromSurface(gfx::Rect(), gfx::Size(320, 200), base::Milliseconds(250),
       base::BindOnce(^(const content::CopyFromSurfaceResult& result) {
         SkBitmap bitmap = result.has_value() ? result->bitmap : SkBitmap();
+        bool copyOK = result.has_value();
         runner->PostTask(FROM_HERE, base::BindOnce(^{
+          if (trace) std::fprintf(stderr, "ararat-trace: transfer snapshot copy ok=%d contents=%d live_match=%d bitmap=%d\n",
+                                  copyOK, !!contents, contents && AraratLiveIdForContents(contents.get()) == live, !bitmap.empty());
         NSImage* image = !contents || AraratLiveIdForContents(contents.get()) != live || bitmap.empty()
               ? nil : gfx::Image::CreateFrom1xBitmap(bitmap).ToNSImage();
           completion(image);
