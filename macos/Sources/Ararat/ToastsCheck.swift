@@ -5,7 +5,7 @@ import AraratUI
 
 @MainActor
 final class ToastsCheck {
-  static let common = ["seed", "url_copy", "row_copy", "command_copy", "pasteboard", "replacement", "expiry", "geometry", "window_isolation", "failure_two_windows", "profile_isolation", "retry_clears", "dismiss", "dismiss_tracks", "dismiss_retry_silent", "new_failure", "toast_announcement", "banner_announcement"]
+  static let common = ["seed", "url_copy", "row_copy", "command_copy", "pasteboard", "replacement", "expiry", "geometry", "window_isolation", "failure_two_windows", "profile_isolation", "retry_clears", "dismiss", "dismiss_tracks", "dismiss_retry_silent", "new_failure", "toast_announcement", "banner_announcement", "clear_undo", "clear_replacement", "link_click_through", "clear_click_through", "undo_hit", "split_undo"]
   static let screens = ["capture_toast", "capture_banner"]
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
@@ -28,6 +28,9 @@ final class ToastsCheck {
   var bannerAnnouncements = 0
   var same: Runtime?
   var other: Runtime?
+  var clearOrder: [String] = []
+  var clearSelected = ""
+  var clearGeneration = 0
   func mark(_ name: String, _ value: Bool = true) {
     conditions[name] = value
     FileHandle.standardError.write(Data("ararat-trace: toasts \(name)=\(value)\n".utf8))
@@ -42,8 +45,9 @@ final class ToastsCheck {
     return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
             "failed_conditions": names.filter { conditions[$0] != true }, "wait": waitName,
             "images": images, "first_id": firstID, "second_id": secondID,
+            "clear_order": clearOrder, "clear_selected": clearSelected,
             "condition_notes": ["profile_isolation": profileIsolationNote],
-            "unverified": ["VoiceOver speech output; notification calls are observed", "Full Keyboard Access focus traversal", "Clear and Undo await U25b"]]
+            "unverified": ["VoiceOver speech output; notification calls are observed", "Full Keyboard Access focus traversal"]]
   }
 }
 
@@ -111,6 +115,7 @@ extension Runtime {
       check.mark("url_copy", container.checkToastState.visible)
       check.mark("pasteboard", NSPasteboard.general.string(forType: .string) == check.row?.url)
       container.layoutSubtreeIfNeeded()
+      check.mark("link_click_through", container.checkToastHits().labelPasses)
       let state = container.checkToastState
       let grid: (CGFloat) -> Bool = { abs($0 / 8 - ($0 / 8).rounded()) < 0.001 }
       check.mark("geometry", state.page.contains(state.frame) && abs(state.frame.midX - state.page.midX) < 1 && abs(state.page.maxY - state.frame.maxY - 16) < 1 && grid(state.frame.width) && grid(state.frame.height))
@@ -207,6 +212,76 @@ extension Runtime {
             check.same?.sidebar?.checkHistoryVisible == false else { wait("successful retry"); return }
       check.mark("retry_clears")
       if let original = check.originalPurge { session.purgeHistory = original }
+      workspace.createTab(url: "data:text/html,<title>undo one</title>") { result in
+        guard case .success = result else { fail("create undo fixture"); return }
+        workspace.createTab(url: "data:text/html,<title>undo two</title>") { result in
+          guard case .success(let snapshot) = result else { fail("create undo fixture"); return }
+          self.show(snapshot)
+          self.browserCheckPhase = 14
+        }
+      }
+      browserCheckPhase = 100
+    case 14:
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+            space.today.count >= 3, let selected = snapshot.selectedId,
+            let row = space.today.first(where: { $0.id == selected }), let url = row.url else { wait("undo fixtures"); return }
+      check.clearOrder = space.today.map(\.id); check.clearSelected = selected
+      adapter?.select(id: selected, url: url)
+      browserCheckPhase = 15
+    case 15:
+      guard host.activeItemId() == check.clearSelected else { wait("undo selected tab"); return }
+      clearToday(); browserCheckPhase = 16
+    case 16:
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }), space.today.isEmpty,
+            container.checkToastState.visible else { wait("clear toast"); return }
+      let hits = container.checkToastHits()
+      check.mark("clear_click_through", hits.labelPasses)
+      check.mark("undo_hit", hits.undoReceives)
+      container.checkUndoToast(); browserCheckPhase = 17
+    case 17:
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+            space.today.map(\.id) == check.clearOrder, snapshot.selectedId == check.clearSelected,
+            host.activeItemId() == check.clearSelected else { wait("undo restored"); return }
+      check.mark("clear_undo", space.today.filter { $0.id != check.clearSelected }.allSatisfy(\.unloaded))
+      clearToday(); browserCheckPhase = 18
+    case 18:
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }), space.today.isEmpty,
+            container.checkToastState.visible else { wait("first replacement clear"); return }
+      check.clearGeneration = container.checkToastState.generation
+      workspace.createTab(url: "data:text/html,<title>second clear</title>") { result in
+        guard case .success(let snapshot) = result else { fail("create replacement fixture"); return }
+        self.show(snapshot)
+        self.browserCheckPhase = 19
+      }
+      browserCheckPhase = 100
+    case 19:
+      guard snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.isEmpty == false else { wait("second clear fixture"); return }
+      clearToday(); browserCheckPhase = 20
+    case 20:
+      guard container.checkToastState.generation > check.clearGeneration else { wait("second clear toast"); return }
+      container.checkUndoToast(); browserCheckPhase = 21
+    case 21:
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }), !space.today.isEmpty else { wait("second clear undo"); return }
+      check.mark("clear_replacement", space.today.count == 1 && check.clearOrder.allSatisfy { id in !space.today.contains { $0.id == id } })
+      browserCheckPhase = 100
+      workspace.move(id: "close-split", container: space.todayId, index: 0, openFolder: false) { result in
+        guard case .success = result else { fail("move split fixture"); return }
+        workspace.select(id: "close-split-a") { result in
+          guard case .success = result else { fail("select split fixture"); return }
+          self.showAndSelect(result)
+          self.browserCheckPhase = 22
+        }
+      }
+    case 22:
+      guard snapshot.selectedId == "close-split-a", host.activeItemId() == "close-split-a", splitCheckPagesPresented(host) else { wait("split pages before clear"); return }
+      clearToday(); browserCheckPhase = 23
+    case 23:
+      guard snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.isEmpty == true,
+            container.checkToastState.visible else { wait("split clear"); return }
+      container.checkUndoToast(); browserCheckPhase = 24
+    case 24:
+      guard snapshot.selectedId == "close-split-a", host.activeItemId() == "close-split-a", splitCheckPagesPresented(host) else { wait("split pages after undo"); return }
+      check.mark("split_undo")
       let result = check.diagnostics(screen: screen)
       finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
     default: break

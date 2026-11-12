@@ -310,7 +310,7 @@ impl Live {
     /// it archives — the way `close_split` does — so the engine's replies name commands that
     /// are in flight (apply drops a reply whose command is not pending). The caller closes the
     /// returned live tabs with the commands' ids.
-    pub fn clear_today(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+    pub fn clear_today(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>, crate::edit::ClearTodayBatch), LiveError> {
         workspace.check_tree().map_err(LiveError)?;
         let today = workspace.spaces.iter().find(|entry| entry.id == space).map(|entry| entry.today.clone())
             .ok_or_else(|| LiveError(format!("unknown space {space}")))?;
@@ -320,7 +320,7 @@ impl Live {
             .map(|(_, item, _)| item.id.clone())
             .filter(|id| matches!(workspace.items[id].kind, ItemKind::Tab { .. }) && self.map.contains_key(id))
             .collect();
-        let ops = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
+        let (ops, batch) = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
         let mut targets = Vec::new();
         for item in items {
             let Some(live) = self.map.remove(&item) else { continue };
@@ -333,7 +333,7 @@ impl Live {
             targets.push((live, command));
         }
         self.selection_intents.retain(|id, _| self.pending.contains_key(id));
-        Ok((ops, targets))
+        Ok((ops, targets, batch))
     }
 
     fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {

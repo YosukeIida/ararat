@@ -1050,7 +1050,7 @@ fn clear_today_archives_every_today_row_at_once_and_keeps_pins() {
     let b = store.create_tab("one".into(), "https://b.example/".into()).unwrap().selected_id.unwrap();
     let before = store.snapshot("one".into());
     assert_eq!(before.spaces[0].today.len(), 2);
-    let cleared = store.clear_today("one".into(), "space-work".into()).unwrap();
+    let cleared = store.clear_today("one".into(), "space-work".into()).unwrap().snapshot;
     assert!(cleared.spaces[0].today.is_empty());
     assert_eq!(cleared.spaces[0].pinned, before.spaces[0].pinned);
     assert_eq!(cleared.spaces[0].favorites, before.spaces[0].favorites);
@@ -1066,8 +1066,28 @@ fn clear_today_archives_every_today_row_at_once_and_keeps_pins() {
     assert!(reopened.archive.iter().any(|entry| entry.id == a));
     assert!(reopened.archive.iter().any(|entry| entry.id == b));
     // Clearing an empty Today writes nothing and answers with the same snapshot.
-    assert_eq!(store.clear_today("one".into(), "space-work".into()).unwrap(), reopened);
+    assert_eq!(store.clear_today("one".into(), "space-work".into()).unwrap().snapshot, reopened);
     assert!(store.clear_today("one".into(), "missing".into()).is_err());
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+#[test]
+fn live_clear_undo_persists_the_selected_split_member() {
+    let path = fresh_db("undo-clear-split");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), split_today_fixture(), None, None, None, None).unwrap();
+    store.select_item("one".into(), "tab-b".into()).unwrap();
+    let cleared = store.live_clear_today("one".into(), "space-work".into()).unwrap();
+    let restored = store.undo_clear_today("one".into(), cleared.batch).unwrap();
+    assert_eq!(restored.selected_id.as_deref(), Some("tab-b"));
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let reopened = store.snapshot("one".into());
+    assert_eq!(store.restoration_candidate("one".into()).unwrap().id, "tab-b");
+    for id in ["split-1", "tab-a", "tab-b"] {
+        assert!(reopened.spaces[0].today.iter().any(|row| row.id == id && row.unloaded), "{id}");
+    }
     drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

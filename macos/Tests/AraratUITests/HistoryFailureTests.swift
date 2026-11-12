@@ -89,3 +89,43 @@ func replacementToastOutlivesTheFirstExpiry() async throws {
     #expect(container.checkToastState.visible)
     try await waitUntil { !container.checkToastState.visible }
 }
+
+@Test @MainActor
+func clearToastReplacesAndReleasesItsUndo() async throws {
+    final class Batch {}
+    _ = NSApplication.shared
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    var calls = 0
+    var first: Batch? = Batch()
+    weak var released = first
+    container.showTabsCleared { [batch = first!] in _ = batch; calls += 1 }
+    first = nil
+    #expect(released != nil)
+    container.showTabsCleared { calls += 10 }
+    #expect(released == nil)
+    container.checkUndoToast()
+    #expect(calls == 10)
+    #expect(!container.checkToastState.visible)
+    var last: Batch? = Batch()
+    weak var expired = last
+    container.showTabsCleared { [batch = last!] in _ = batch }
+    last = nil
+    try await Task.sleep(for: .seconds(5.3))
+    #expect(expired == nil)
+    try await waitUntil { !container.checkToastState.visible }
+}
+
+@Test @MainActor
+func toastLabelsPassHitsAndUndoButtonReceivesThem() {
+    _ = NSApplication.shared
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+    container.layoutSubtreeIfNeeded()
+    container.showLinkCopied()
+    #expect(container.checkToastHits().labelPasses)
+    container.showTabsCleared(undo: {})
+    let hits = container.checkToastHits()
+    #expect(hits.labelPasses && hits.undoReceives)
+}
