@@ -87,13 +87,20 @@ extension Runtime {
     if let error = promptFixtureError { fail("fixture: \(error)"); return }
     switch browserCheckPhase {
     case 0:
-      guard let space = snapshot.spaces.first(where: { $0.id == "default" }), let row = space.today.first, let url = row.url,
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }), let row = space.today.first, row.url != nil,
             host.hasBrowser(), promptFixturePort != nil, window.isVisible, window.isKeyWindow else { wait("seed and key window"); return }
       check.mark("seed")
-      adapter?.select(id: row.id, url: url)
+      browserCheckSeedID = row.id
+      FileHandle.standardError.write(Data("ararat-trace: downloads seed-select space=\(space.id) profile=\(space.profileName) item=\(row.id)\n".utf8))
+      selectCheckSeed(row)
       browserCheckPhase = 1
     case 1:
-      guard let selected = snapshot.selectedId, host.activeItemId() == selected else { wait("active seed tab"); return }
+      let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == browserCheckSeedID }
+      guard let id = browserCheckSeedID, snapshot.selectedId == id, host.activeItemId() == id,
+            let tab, !tab.isLoading, tab.navigationCount > 0 else {
+        check.wait("active seed tab", "seed=\(browserCheckSeedID ?? "nil") shown=\(snapshot.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") tab=\(tab != nil) loading=\(tab?.isLoading ?? false) navigations=\(tab?.navigationCount ?? 0) stage=\(checkSeedSelectionStage)")
+        return
+      }
       check.directory = host.prepareDownloadsCheckDirectory("standard")
       guard !check.directory.isEmpty else { fail("cannot configure scratch download directory"); return }
       guard clickLibrary() else { fail("cannot post Library click"); return }
