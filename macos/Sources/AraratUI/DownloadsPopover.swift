@@ -178,6 +178,7 @@ final class DownloadRowView: NSStackView {
         let frame = convert(status.bounds, from: status)
         return frame.width > 0 && bounds.insetBy(dx: -1, dy: -1).contains(frame)
     }
+    func statusFrame(in view: NSView) -> NSRect { view.convert(status.bounds, from: status) }
     var statusTruncates: Bool { status.maximumNumberOfLines == 1 && status.lineBreakMode == .byTruncatingTail && status.cell?.isScrollable == false && status.cell?.usesSingleLineMode == true }
     var moveRow: ((Int) -> Void)?
     var tabRow: ((Bool) -> Void)?
