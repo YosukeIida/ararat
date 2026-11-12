@@ -303,11 +303,22 @@ extension Runtime {
             }
             // R2: ⌘W acts on the current tab and only its row shows the binding's caps.
             guard let todayB = row("today-b") else { note("today-b row missing"); return }
-            sidebar.selectRow(id: todayB.id)
-            guard sidebar.selectedRowID == todayB.id else { note("today-b not selected: \(sidebar.selectedRowID ?? "-")"); return }
+            if sidebar.selectedRowID != todayB.id {
+                sidebar.selectRow(id: todayB.id)
+                guard sidebar.selectedRowID == todayB.id else { note("today-b not selected: \(sidebar.selectedRowID ?? "-")"); return }
+            }
+            // ⌘W reads the core's selection, which is recorded when the engine answers the
+            // selection command: press only once today-b is the core's current tab.
+            let coreNow = sidebarCheckCore()
+            let active = host.activeItemId()
+            guard coreNow?.selectedId == todayB.id, liveTab(todayB.id) else {
+                note("today-b waiting to be current: core=\(coreNow?.selectedId ?? "-") active=\(active ?? "-") live=\(liveTab(todayB.id))")
+                return
+            }
+            let ready = sidebar.closeSelectedReadyForCheck
+            trace("press ⌘W allowed=\(ready.allowed) selected=\(ready.selected ?? "-")")
             let caps = sidebar.rowCheckInfo(id: todayB.id)?.closeCaps
             check.report("close_caps_current", caps == sidebar.closeCapsForCheck && !(caps ?? []).isEmpty)
-            trace("press ⌘W")
             check.commandWId = todayB.id
             sidebar.closeSelectedTab(nil)
             step(6)
@@ -316,7 +327,8 @@ extension Runtime {
             guard let core = sidebarCheckCore() else { note("no core"); return }
             guard !check.commandWId.isEmpty else { note("the ⌘W tab id was not recorded"); return }
             guard core.archive.contains(where: { $0.id == check.commandWId }) else {
-                note("today-b not archived yet"); return
+                note("⌘W has not archived \(check.commandWId) yet: core selected=\(core.selectedId ?? "-") archive=\(core.archive.map(\.id))")
+                return
             }
             check.report("command_w_current", true)
             // F3: the open, empty folder shows its line at the child indent.

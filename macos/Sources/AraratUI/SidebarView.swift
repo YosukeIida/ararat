@@ -2192,4 +2192,10 @@ extension SidebarView {
         if target.action == .archive { onArchive?(target.id) } else { onClose?(target.id) }
         return target.action
     }
+
+    /// What closeSelectedTab checks before it runs ⌘W's action, so a check can tell a
+    /// blocked window (no page command allowed) from a missing archive.
+    public var closeSelectedReadyForCheck: (allowed: Bool, selected: String?) {
+        (pageCommandsAllowed, selectedID)
+    }
 }
