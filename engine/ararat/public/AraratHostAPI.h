@@ -93,6 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier flight:(BOOL)flight;
 - (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
         container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
@@ -103,6 +104,15 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol ARWindowHostAPI <NSObject>
+// A missing site setting is NSNull; allowed includes valid mixed geolocation values.
+// The blocked flag includes cookie and policy blocks, but excludes automatic downloads and storage access.
+// An embargo alone does not count as a site-specific block until content is refused.
+// Security and certificates use the visible entry and can differ from the committed origin while navigating; error includes Safe Browsing.
+// Closing after a change drops the reload hint; focus and navigation recreate PageInfo and record its open metrics.
+// Swift wrappers and focused bridge tests are left to the UI integration.
+- (NSDictionary<NSString*, id>*)siteState;
+- (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request;
+- (void)closeSiteControls;
 - (NSArray<NSDictionary<NSString*, id>*>*)downloads;
 - (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier;
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;

@@ -53,7 +53,8 @@ test("history_files_unittests") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_downloads.h", "ararat_downloads.mm", "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
+  sources = [ "ararat_site_state.h", "ararat_site_state.mm" ]
+  sources += [ "ararat_downloads.h", "ararat_downloads.mm", "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
     ":core",
@@ -80,6 +81,16 @@ source_set("entry") {
     "//chrome/browser/download/bubble:impl",
     "//chrome/browser/extensions",
     "//chrome/browser/history",
+    "//chrome/browser/content_settings:content_settings_factory",
+    "//chrome/browser/ssl",
+    "//chrome/browser/ui/page_info",
+    "//components/content_settings/browser",
+    "//components/content_settings/core/browser",
+    "//components/dom_distiller/core",
+    "//components/page_info",
+    "//components/security_state/core",
+    "//third_party/boringssl",
+    "//url",
     "//chrome/browser/devtools:devtools_contents_resizing_strategy",
     "//chrome/browser/devtools:devtools_toggle_action",
     "//chrome/browser/renderer_context_menu",
@@ -176,6 +187,7 @@ source_set("entry") {
     "//content/public/browser",
     "//content/public/common",
     "//extensions/browser",
+    "//extensions/common",
     "//extensions/common:extension_features",
     "//net",
     "//services/network/public/mojom:cookies_mojom",

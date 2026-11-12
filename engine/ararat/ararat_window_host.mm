@@ -18,6 +18,7 @@
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_permission_prompt.h"
+#include "ararat/core/ararat_site_state.h"
 #include "ararat/core/ararat_tab.h"
 #include "ararat/core/ararat_tab_history.h"
 #include "base/check.h"
@@ -1532,6 +1533,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<AraratDownloads> downloads_;
+  ARSiteState* site_state_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1608,6 +1610,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   [self.delegate windowHost:self performWorkspaceCommand:name];
   return YES;
 }
+
+- (NSDictionary<NSString*, id>*)siteState { return [site_state_ snapshot]; }
+- (BOOL)changeSitePermission:(NSDictionary<NSString*, id>*)request { return [site_state_ change:request]; }
+- (void)closeSiteControls { [site_state_ close]; }
 
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions {
   auto* window = core_->window();
@@ -1756,6 +1762,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     window_id_ = [windowId copy];
     [ReportingHosts() addObject:self];
     __weak ARWindowHost* host = self;
+    site_state_ = [[ARSiteState alloc] initWithChanged:^{
+      ARWindowHost* strong = host;
+      if ([strong.delegate respondsToSelector:@selector(siteStateChangedForWindowHost:)])
+        [strong.delegate siteStateChangedForWindowHost:strong];
+    }];
     became_key_observer_ = [NSNotificationCenter.defaultCenter
         addObserverForName:NSWindowDidBecomeKeyNotification object:self.window queue:nil
         usingBlock:^(NSNotification*) { [host updateActive:YES]; }];
@@ -3495,6 +3506,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     auto* identity = static_cast<TabIdentity*>(active->GetUserData(kTabIdentityKey));
     if (!identity || !identity->item_id || !split_frames_[identity->item_id]) active = nullptr;
   }
+  [site_state_ setContents:active];
   NSView* card = [self.delegate pageCardForWindowHost:self];
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;
