@@ -91,7 +91,6 @@ impl From<crate::edit::EditError> for LiveError {
 
 #[derive(Debug, Default)]
 pub struct Live {
-    off_the_record: bool,
     map: HashMap<Id, Id>,
     reverse: HashMap<Id, Id>,
     windows: HashMap<Id, Id>,
@@ -360,8 +359,12 @@ impl Live {
     /// dropped one leaves both exactly as they were.
     pub fn apply(&mut self, workspace: &mut Workspace, transaction: Transaction) -> (Vec<Op>, ApplyOutcome) {
         let mut outcome = ApplyOutcome::default();
-        if transaction.off_the_record != self.off_the_record || transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| tab.off_the_record != transaction.off_the_record) {
+        if transaction.off_the_record != workspace.is_private() || transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| tab.off_the_record != transaction.off_the_record) {
             outcome.error = Some(LiveError("transaction privacy mismatch".into()));
+            return (Vec::new(), outcome);
+        }
+        if workspace.is_private() && transaction.strips.iter().flat_map(|strip| &strip.tabs).any(|tab| workspace.spaces.first().is_none_or(|space| space.profile != tab.profile)) {
+            outcome.error = Some(LiveError("private profile mismatch".into()));
             return (Vec::new(), outcome);
         }
         match self.epoch {

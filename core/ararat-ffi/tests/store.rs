@@ -1079,7 +1079,7 @@ fn live_clear_undo_persists_the_selected_split_member() {
     store.import_arc_sidebar("one".into(), split_today_fixture(), None, None, None, None).unwrap();
     store.select_item("one".into(), "tab-b".into()).unwrap();
     let cleared = store.live_clear_today("one".into(), "space-work".into()).unwrap();
-    let restored = store.undo_clear_today("one".into(), cleared.batch).unwrap();
+    let restored = store.undo_clear_today("one".into(), cleared.batch.unwrap()).unwrap();
     assert_eq!(restored.selected_id.as_deref(), Some("tab-b"));
     drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
@@ -1210,4 +1210,48 @@ fn privacy_mismatch_is_an_error_before_any_state_or_revision_changes() {
     let expected = store.snapshot("test".into());
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), expected);
+}
+
+#[test]
+fn private_workspace_is_volatile_isolated_and_rejects_persistent_operations() {
+    let dir = fresh_db("private-directory");
+    std::fs::create_dir(&dir).unwrap();
+    let one = WorkspaceStore::open_private(Profile::Default);
+    let other = WorkspaceStore::open_private(Profile::Named("Profile 1".into()));
+    let snapshot = one.create_tab("w".into(), "https://private.example/a".into()).unwrap();
+    let id = snapshot.selected_id.unwrap();
+    assert_eq!(snapshot.spaces.len(), 1);
+    assert!(snapshot.spaces[0].pinned.is_empty() && snapshot.spaces[0].favorites.is_empty());
+    assert!(other.snapshot("w".into()).spaces[0].today.is_empty());
+    assert!(one.import_arc_sidebar("w".into(), today_fixture(), None, None, None, None).is_err());
+    assert!(one.create_space("w".into(), "x".into(), "x".into()).is_err());
+    assert!(one.create_folder("w".into(), "f".into(), "f".into(), "private:today".into(), 0, vec![]).is_err());
+    assert!(one.move_item("w".into(), id.clone(), "private:pinned".into(), 0, false).is_err());
+    assert!(other.move_item("w".into(), id.clone(), "private:today".into(), 0, false).is_err());
+    one.select_item("w".into(), id.clone()).unwrap();
+    let bar = one.command_bar_session("w".into(), false);
+    let history = vec![ararat_ffi::HistoryEntry { title: "private.example history".into(), url: "https://history.example/".into(), last_visit: 1 }];
+    assert!(!bar.query("history".into(), history).rows.iter().any(|row| matches!(row.target, ararat_ffi::SuggestionTarget::History { .. })));
+    let closed = one.archive_item("w".into(), id).unwrap();
+    assert!(closed.archive.is_empty() && closed.spaces[0].today.is_empty());
+    assert!(one.pending_history_purges().unwrap().is_empty());
+    assert!(one.kept_windows().is_empty());
+    assert!(one.restoration_candidate("w".into()).is_none());
+    one.create_tab("w".into(), "https://private.example/b".into()).unwrap();
+    let cleared = one.clear_today("w".into(), "private".into()).unwrap();
+    assert!(cleared.batch.is_none());
+    assert!(cleared.snapshot.archive.is_empty() && cleared.snapshot.spaces[0].today.is_empty());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    let regular = WorkspaceStore::open(dir.join("regular.sqlite").display().to_string()).unwrap();
+    regular.create_space("w".into(), "Regular".into(), "regular".into()).unwrap();
+    let regular_tab = regular.create_tab("w".into(), "https://regular.example/".into()).unwrap();
+    let regular_id = regular_tab.selected_id.unwrap();
+    assert!(one.move_item("w".into(), regular_id, "private:today".into(), 0, false).is_err());
+    assert!(one.snapshot("w".into()).spaces[0].today.is_empty());
+    assert_eq!(regular.snapshot("w".into()).spaces[0].today.len(), 1);
+    drop(regular);
+    std::fs::remove_file(dir.join("regular.sqlite")).unwrap();
+    drop(one); drop(other);
+    std::fs::remove_dir(dir).unwrap();
+    assert!(WorkspaceStore::open_private(Profile::Default).snapshot("w".into()).spaces[0].today.is_empty());
 }

@@ -91,13 +91,18 @@ impl Store {
         Ok((Store { tx: Some(tx), error, writer: Some(writer) }, workspace))
     }
 
+    pub fn private() -> Store {
+        Store { tx: None, error: Arc::new(Mutex::new(None)), writer: None }
+    }
+
     // Returns at once; the ops are committed within BATCH_WINDOW, or retried until they are.
     pub fn write(&self, ops: Vec<Op>) {
-        self.send(Msg::Write(ops));
+        if self.tx.is_some() { self.send(Msg::Write(ops)); }
     }
 
     // On failure the batch stays queued for the next retry; nothing is dropped.
     pub fn flush(&self) -> Result<(), StoreError> {
+        if self.tx.is_none() { return Ok(()); }
         let (ack, done) = mpsc::channel();
         self.send(Msg::Flush(ack));
         done.recv().expect("storage writer stopped")
