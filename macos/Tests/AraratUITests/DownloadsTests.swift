@@ -84,6 +84,11 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     button.mouseEntered(with: event)
     tasks[1].perform()
     #expect(opened == 1)
+    var fired = false
+    button.checkHover { fired = true }
+    #expect(!fired)
+    tasks[2].perform()
+    #expect(fired && opened == 2)
 }
 
 @Test @MainActor func popoverKeepsRowsAndActionsDuringProgressUpdates() throws {
@@ -149,6 +154,10 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(panel.frame.width >= SidebarMetrics.defaultWidth)
     #expect(panel.frame.height >= DownloadsPopover.headerHeight + 3 * DownloadsPopover.rowHeight)
     #expect(popover.rows.count == 3)
+    let metrics = popover.checkMetrics
+    #expect(metrics["content_width"] as? CGFloat == 240)
+    #expect(metrics["title_font"] as? CGFloat == 13)
+    #expect((metrics["title_height"] as? CGFloat ?? 0) >= 13)
 }
 
 @Test @MainActor func downloadsPageUsesAvailableWidthForStatus() throws {
@@ -170,6 +179,13 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     let status = try #require(labels(row).first { $0.stringValue == "4.0/1,024 KB, 9 minutes left" })
     #expect(row.bounds.width > 300)
     #expect(status.bounds.width > 250)
+    #expect(page.actionButtonsFit)
+    #expect(row.actionButtons.allSatisfy { $0.image != nil && $0.accessibilityLabel()?.contains("a") == true })
+    page.frame.size.width = 198
+    page.layoutSubtreeIfNeeded()
+    page.table.layoutSubtreeIfNeeded()
+    row.layoutSubtreeIfNeeded()
+    #expect(page.actionButtonsFit)
 }
 
 @Test @MainActor func libraryDownloadsIncludesRestoredAndFollowsProfileUpdates() throws {
