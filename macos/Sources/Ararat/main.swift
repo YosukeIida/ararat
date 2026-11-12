@@ -604,6 +604,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var siteControlsCheck: SiteControlsCheck?
   var extensionActionsCheck: ExtensionActionsCheck?
   var extensionSecondTabs: [String: String] = [:]
+  var pinsIsolationChild: Runtime?
   var siteFixture: SiteFixtureServer?
   var siteFixturePorts: SiteFixtureServer.Ports?
   var siteFixtureError: String?
@@ -1677,7 +1678,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     siteState = state
     sidebar?.siteControlsBlocked = state?.blocked ?? false
     // S1: a navigation or tab switch while the region overlay is up cancels the selection.
-    if let overlay = siteOverlay, let state, state.document != siteOverlayDocument {
+    // A nil snapshot (last tab closed) counts as gone too.
+    if let overlay = siteOverlay, state?.document != siteOverlayDocument {
       overlay.cancel()
     }
     let fingerprint = Self.siteFingerprint(state)
@@ -2100,8 +2102,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func pinsVerifyTick(_ host: any ARWindowHostAPI, expected: Bool) {
     let id = "kmgaadhbnkendcanjninlfmfgehagggl"
-    let profile = host.profileDirectory()
     let isolationRun = CommandLine.arguments.contains("--ararat-relaunch-mode=pins-isolated")
+    if isolationRun {
+      pinsIsolationTick(host, id: id)
+      return
+    }
+    let profile = host.profileDirectory()
     guard let item = extensionItems.first(where: { $0.id == id }) else {
       if browserCheckAttempts > 300 {
         finishBrowserCheck(ok: false, values: ["error": "extension fixture action missing", "profile": profile])
@@ -2115,16 +2121,85 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       return
     }
-    if isolationRun, profile != "Profile 1" {
-      // S8: the host follows the workspace's shown space, so --profile-directory alone cannot
-      // move this window. Report honestly instead of claiming the per-profile isolation ran.
-      finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": profile,
-                                            "profile_isolation_verified": false,
-                                            "note": "window profile is \(profile); seed a Profile 1 space to verify isolation"])
-      return
-    }
     finishBrowserCheck(ok: true, values: ["pinned": item.pinned, "expected": expected, "profile": profile,
-                                          "profile_isolation_verified": isolationRun])
+                                          "profile_isolation_verified": false])
+  }
+
+  /// N2: run 3 must really test Profile 1. `--profile-directory` alone does not move the host
+  /// (the shown space picks the profile), so this opens a second window through the same
+  /// session and loads Profile 1 into it, then compares the two profiles' pin state. A window
+  /// that cannot load Profile 1 fails with the named `profile_isolation` condition.
+  func pinsIsolationTick(_ host: any ARWindowHostAPI, id: String) {
+    let startupProfile = host.profileDirectory()
+    switch browserCheckPhase {
+    case 0:
+      guard let startupItem = extensionItems.first(where: { $0.id == id }) else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "extension fixture action missing in the verify window",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      if startupProfile == "Profile 1" {
+        // Chromium honoured --profile-directory; this window is the isolated one.
+        let passed = startupItem.pinned == false
+        finishBrowserCheck(ok: passed, values: ["profile_isolation": passed,
+                                                "profile_isolation_verified": passed,
+                                                "profile": startupProfile,
+                                                "profile1_pinned": startupItem.pinned])
+        return
+      }
+      guard startupItem.pinned else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Default profile lost its pin before the Profile 1 check",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      let child = Runtime()
+      child.root = self.root
+      do {
+        try child.start(session: adapter?.session)
+      } catch {
+        finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                               "error": "cannot start a Profile 1 window: \(error)",
+                                               "profile": startupProfile])
+        return
+      }
+      children.append(child)
+      guard child.host?.setProfileDirectory("Profile 1") == true else {
+        finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                               "error": "the window cannot load Profile 1",
+                                               "profile": startupProfile])
+        return
+      }
+      pinsIsolationChild = child
+      browserCheckPhase = 1
+    case 1:
+      guard let child = pinsIsolationChild, let childHost = child.host else { return }
+      let childProfile = childHost.profileDirectory()
+      guard childProfile == "Profile 1" else {
+        if browserCheckAttempts > 300 {
+          finishBrowserCheck(ok: false, values: ["profile_isolation": false,
+                                                 "error": "Profile 1 window reports \(childProfile)",
+                                                 "profile": startupProfile])
+        }
+        return
+      }
+      guard let profileItem = child.extensionItems.first(where: { $0.id == id }) else { return }
+      let defaultPinned = extensionItems.first(where: { $0.id == id })?.pinned ?? false
+      let isolated = !profileItem.pinned
+      let passed = defaultPinned && isolated
+      finishBrowserCheck(ok: passed, values: ["profile_isolation": passed,
+                                              "profile_isolation_verified": passed,
+                                              "profile": childProfile,
+                                              "default_pinned": defaultPinned,
+                                              "profile1_pinned": profileItem.pinned])
+    default:
+      break
+    }
   }
 
   func relaunchCheckTick(_ host: any ARWindowHostAPI, mode: String) {
