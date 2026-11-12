@@ -12,6 +12,7 @@ func nestedSplitKeepsEveryPaneAndRespectsAxisMinimums() {
     let root = pane("root", 1, .splitHorizontal, [nested, pane("c", 3)])
     let geometry = SplitGeometry(root: root, bounds: CGRect(x: 0, y: 0, width: 1000, height: 400))
     #expect(geometry.panes.count == 3 && geometry.dividers.count == 2)
+    #expect(geometry.dividers.allSatisfy { $0.frame.width == 10 })
     #expect(geometry.panes["a"]!.width >= 240 && geometry.panes["b"]!.width >= 240)
     #expect(geometry.panes["c"]!.width >= 240)
     #expect(abs(geometry.panes["c"]!.maxX - 1000) < 0.001)
@@ -30,7 +31,7 @@ func smallNestedSplitShrinksPanesWithoutHidingThem() {
 @Test
 func draggingKeepsOtherPanesAndClampsAdjacentMinimums() throws {
     let root = pane("root", 1, .splitHorizontal, [pane("a"), pane("b"), pane("c")])
-    let geometry = SplitGeometry(root: root, bounds: CGRect(x: 0, y: 0, width: 1208, height: 400))
+    let geometry = SplitGeometry(root: root, bounds: CGRect(x: 0, y: 0, width: 1220, height: 400))
     let factors = try #require(geometry.factorsAfterDragging(root: root, split: "root", index: 0, delta: 1000))
     #expect(abs(factors[0].factor - 560.0 / 1200) < 0.0001)
     #expect(abs(factors[1].factor - 240.0 / 1200) < 0.0001)

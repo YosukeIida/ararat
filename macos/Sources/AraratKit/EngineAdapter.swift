@@ -42,6 +42,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var keyWindowObserver: NSObjectProtocol?
     private var handoffGeneration = 0
     private var splitHandles: [String: SplitDividerView] = [:]
+    private let splitFocusRing = SplitFocusRingView()
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
     private var failureViews: [String: PageFailureView] = [:]
     private var displayedSelection: String?
@@ -58,6 +59,17 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
     public private(set) var rowStates: [String: RowState] = [:]
     public func setMuted(_ muted: Bool, item: String) { host?.setTabMuted(muted, itemId: item) }
+    public func focusPane(backwards: Bool) {
+        guard let host, let split = displayedSplit, let active = host.activeItemId() else { return }
+        func leaves(_ pane: SplitPane) -> [String] {
+            pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves)
+        }
+        let ids = leaves(split)
+        guard ids.count > 1, let index = ids.firstIndex(of: active) else { return }
+        let next = ids[(index + (backwards ? ids.count - 1 : 1)) % ids.count]
+        guard let tab = ((host.tabs() as? [any ARTabAPI]) ?? []).first(where: { $0.itemId == next }) else { return }
+        select(id: next, url: tab.url)
+    }
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
@@ -904,6 +916,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             return
         }
         if !nearPrevious { appliedSplitFrames = geometry.panes }
+        if geometry.panes.count > 1, let active = host.activeItemId(), let frame = geometry.panes[active] {
+            splitFocusRing.frame = frame
+            if splitFocusRing.superview !== card { card.addSubview(splitFocusRing, positioned: .above, relativeTo: nil) }
+        } else { splitFocusRing.removeFromSuperview() }
         let tabs = Set(leafTabs(split))
         let missing = Set(geometry.panes.keys).subtracting(local)
         for key in splitPlaceholders.keys.filter({ !missing.contains($0) }) { splitPlaceholders.removeValue(forKey: key)?.removeFromSuperview() }
@@ -931,6 +947,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     private func clearSplitHandles() {
+        splitFocusRing.removeFromSuperview()
         for view in splitHandles.values { view.removeFromSuperview() }
         splitHandles.removeAll()
         for view in splitPlaceholders.values { view.removeFromSuperview() }

@@ -1,5 +1,15 @@
 import AppKit
 
+final class SplitFocusRingView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlAccentColor.setStroke()
+        let path = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+        path.lineWidth = 2
+        path.stroke()
+    }
+}
+
 final class SplitDividerView: NSView {
     var horizontal = true
     var onMove: ((CGFloat, Bool) -> Void)?

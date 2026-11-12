@@ -96,6 +96,28 @@ func rowIconsDrawSixteenPointSymbolsWithoutScaling() {
 }
 
 @Test @MainActor
+func splitSegmentsSelectTheirPane() {
+    let split = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
+    let members = ["a", "b", "c"].map { id in
+        Row(folderHasTabs: false, parentId: "split", siblingIndex: 0, collapsed: false, id: id, title: id, url: "https://\(id).example", depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    }
+    var chosen: String?
+    let view = SidebarRowView(row: split, selected: true) { chosen = $0.id }
+    view.updateSegments(members, active: "b")
+    let buttons = descendants(of: view).compactMap { $0 as? NSButton }.filter { ["a", "b", "c"].contains($0.title) }
+    #expect(buttons.map(\.title) == ["a", "b", "c"])
+    buttons[2].performClick(nil)
+    #expect(chosen == "c")
+    #expect(buttons[1].layer?.backgroundColor != buttons[0].layer?.backgroundColor)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: "b", spaces: [
+        SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "pinned", todayId: "today", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [split] + members)
+    ]))
+    let rows = descendants(of: sidebar).compactMap { $0 as? SidebarRowView }
+    #expect(rows.map { $0.row.id } == ["split"])
+    #expect(descendants(of: sidebar).compactMap { $0 as? NSButton }.filter { ["a", "b", "c"].contains($0.title) }.count == 3)
+}
+
+@Test @MainActor
 func rowsKeepPitchIndentAndSplitPlaceholder() {
     for title in ["", "First\nSecond"] {
         let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: title, url: nil, depth: 1, kind: .split, unloaded: false, lastSelectedAt: nil)

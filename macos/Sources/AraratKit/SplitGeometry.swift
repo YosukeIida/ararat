@@ -12,7 +12,7 @@ public struct SplitGeometry {
     public private(set) var frames: [String: CGRect] = [:]
     public private(set) var dividers: [SplitDivider] = []
     private static let minimum: CGFloat = 240
-    private static let gap: CGFloat = 4
+    private static let gap: CGFloat = 10
 
     public init(root: SplitPane, bounds: CGRect) {
         layout(root, in: bounds)

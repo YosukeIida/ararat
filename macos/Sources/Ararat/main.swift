@@ -901,6 +901,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if self?.host?.isClosingAll() != true, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
+      let active = self?.host?.activeItemId()
+      sidebar?.focusedURL = active == snapshot.selectedId && active != nil
+        ? (self?.host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active })?.url : nil
       sidebar?.update(snapshot: snapshot)
       self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
@@ -1462,6 +1465,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     switch command {
     case "cycle_tabs_next": cycleTabs(backwards: false)
     case "cycle_tabs_previous": cycleTabs(backwards: true)
+    case "focus_next_pane": adapter?.focusPane(backwards: false)
+    case "focus_previous_pane": adapter?.focusPane(backwards: true)
     case "force_reload": host?.forceReload()
     case "settings": openSettings()
     case "quit": NSApp.terminate(nil)
@@ -1513,7 +1518,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       undo.target = self
       edit.insertItem(undo, at: min(1, edit.items.count))
     }
-    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "force_reload", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "force_reload", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {

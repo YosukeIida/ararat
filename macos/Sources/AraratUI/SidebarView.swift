@@ -114,6 +114,9 @@ public final class SidebarView: NSView {
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
+    public var focusedURL: String? {
+        didSet { if focusedURL != oldValue { reload() } }
+    }
 
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
@@ -501,9 +504,10 @@ public final class SidebarView: NSView {
         let snapshot = keepingLookPreview(snapshot)
         let selected = Self.sidebarSelection(snapshot)
         let selectionChanged = selectedID != selected
+        let focusedPaneChanged = self.snapshot.selectedId != snapshot.selectedId
         if self.snapshot.spaces == snapshot.spaces {
             self.snapshot = snapshot
-            if selectionChanged { selectedID = selected; reload() }
+            if selectionChanged || focusedPaneChanged { selectedID = selected; reload() }
         }
         else { replaceSnapshot(snapshot) }
         library.update(archive: snapshot.archive)
@@ -667,7 +671,8 @@ public final class SidebarView: NSView {
     @objc private func editURLClicked() { onEditURL?() }
     @objc private func copySelectedLink() {
         guard let space = snapshotSpace,
-              let url = (space.favorites + space.pinned + space.today).first(where: { $0.id == selectedID })?.url else { return }
+              let selected = (space.favorites + space.pinned + space.today).first(where: { $0.id == selectedID }),
+              let url = focusedURL ?? selected.url else { return }
         copyLink(url)
     }
     private func copyLink(_ url: String) {
@@ -999,18 +1004,29 @@ public final class SidebarView: NSView {
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
-        copyLinkButton.isEnabled = selected?.url != nil
-        host.stringValue = selected?.url.flatMap { URL(string: $0)?.host } ?? ""
+        let url = selected.flatMap { focusedURL ?? $0.url }
+        copyLinkButton.isEnabled = url != nil
+        host.stringValue = url.flatMap { URL(string: $0)?.host } ?? ""
         urlField.setAccessibilityValue(host.stringValue)
 
         reloadFavorites()
 
-        let ids = Set((pinned + today).map(\.id))
+        let allRows = pinned + today
+        let splitIDs = Set(allRows.filter { $0.kind == .split }.map(\.id))
+        let hidden = Set(allRows.filter { row in
+            var parent = row.parentId
+            while let ancestor = allRows.first(where: { $0.id == parent }) {
+                if splitIDs.contains(ancestor.id) { return true }
+                parent = ancestor.parentId
+            }
+            return false
+        }.map(\.id))
+        let ids = Set(allRows.map(\.id)).subtracting(hidden)
         for id in Array(rowViews.keys) where !ids.contains(id) { removeRow(id: id) }
         for id in Array(noTabsRows.keys) where !ids.contains(id) {
             noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
-        var ordered: [NSView] = pinned.map { listView(for: $0) }
+        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0) }
         if today.isEmpty {
             todayDivider.removeFromSuperview()
         } else {
@@ -1024,7 +1040,7 @@ public final class SidebarView: NSView {
         } else {
             newTabRow.removeFromSuperview()
         }
-        ordered.append(contentsOf: today.map { listView(for: $0) })
+        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0) })
         arrange(ordered, in: rows)
 
         if dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
@@ -1143,6 +1159,13 @@ public final class SidebarView: NSView {
         view.update(row: row, selected: row.id == selectedID)
         view.crashed = crashedItems.contains(row.id)
         view.unread = unreadItems.contains(row.id)
+        if row.kind == .split {
+            let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
+            func leaves(_ id: String) -> [Row] {
+                all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
+            }
+            view.updateSegments(leaves(row.id), active: snapshot.selectedId)
+        } else { view.updateSegments([], active: nil) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -1220,8 +1243,8 @@ public final class SidebarView: NSView {
             performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
             return
         }
-        selectedID = row.id
         snapshot.selectedId = row.id
+        selectedID = Self.sidebarSelection(snapshot)
         reload()
         revealSelection()
         onSelect?(row)

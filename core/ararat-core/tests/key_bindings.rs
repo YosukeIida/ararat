@@ -25,7 +25,11 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
     assert_eq!(ws.key_binding("cycle_tabs_next").unwrap(), Some(cycle.clone()));
     cycle.shift = true;
     assert_eq!(ws.key_binding("cycle_tabs_previous").unwrap(), Some(cycle));
-    assert_eq!(commands().len(), 35);
+    for (id, key) in [("focus_next_pane", "\u{f703}"), ("focus_previous_pane", "\u{f702}")] {
+        let mut expected = command(key); expected.option = true;
+        assert_eq!(ws.key_binding(id).unwrap(), Some(expected));
+    }
+    assert_eq!(commands().len(), 37);
     for id in ["copy_link", "duplicate", "new_folder", "rename", "delete_folder"].into_iter().map(String::from)
         .chain((1..=9).map(|n| format!("move_to_space_{n}"))) {
         assert_eq!(ws.key_binding(&id).unwrap(), None);

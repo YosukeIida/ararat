@@ -50,6 +50,8 @@ final class SidebarRowView: NSView {
     private let fill = NSView()
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
+    private let segments = NSStackView()
+    private var segmentRows: [Row] = []
     private let unreadDot = NSView()
     private var fillLeading: NSLayoutConstraint!
     private var hintCloseTrailing: NSLayoutConstraint!
@@ -80,6 +82,18 @@ final class SidebarRowView: NSView {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        segments.orientation = .horizontal
+        segments.isHidden = true
+        segments.distribution = .fillEqually
+        segments.spacing = 2
+        segments.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(segments)
+        NSLayoutConstraint.activate([
+            segments.leadingAnchor.constraint(equalTo: fill.leadingAnchor),
+            segments.trailingAnchor.constraint(equalTo: fill.trailingAnchor),
+            segments.centerYAnchor.constraint(equalTo: centerYAnchor),
+            segments.heightAnchor.constraint(equalToConstant: 36),
+        ])
         unreadDot.wantsLayer = true
         unreadDot.layer?.cornerRadius = SidebarMetrics.unreadDotSize / 2
         unreadDot.isHidden = true
@@ -175,6 +189,29 @@ final class SidebarRowView: NSView {
         updateFill()
         updateCloseButton()
         noteFocusRingMaskChanged()
+    }
+
+    func updateSegments(_ members: [Row], active: String?) {
+        segmentRows = members
+        segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        segments.isHidden = members.isEmpty
+        icon.isHidden = !members.isEmpty
+        title.isHidden = !members.isEmpty
+        for (index, member) in members.enumerated() {
+            let button = NSButton(title: member.title, target: self, action: #selector(segmentClicked(_:)))
+            button.tag = index
+            button.isBordered = false
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 8
+            button.layer?.backgroundColor = member.id == active ? NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor : NSColor.clear.cgColor
+            button.setAccessibilityLabel(member.title)
+            segments.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func segmentClicked(_ sender: NSButton) {
+        guard segmentRows.indices.contains(sender.tag) else { return }
+        action(segmentRows[sender.tag])
     }
 
     // R5: crashed and unloaded rows draw at 45 %; R7: the dot marks a title change the window

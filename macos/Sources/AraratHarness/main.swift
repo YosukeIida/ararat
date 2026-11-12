@@ -285,7 +285,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         pin.identifier = NSUserInterfaceItemIdentifier("pin_tab")
         pin.target = self
         pin.toolTip = "Pin or unpin the selected tab."
-        for binding in defaultKeyBindings().filter({ ["cycle_tabs_next", "cycle_tabs_previous", "copy_link", "duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
+        for binding in defaultKeyBindings().filter({ ["cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "copy_link", "duplicate", "new_folder", "rename", "delete_folder"].contains($0.command) || $0.command.hasPrefix("move_to_space_") }) {
             let action = binding.command.hasPrefix("cycle_tabs_") ? #selector(cycleRecentTab(_:)) : #selector(organize(_:))
             let item = tabsMenu.addItem(withTitle: binding.title, action: action, keyEquivalent: "")
             item.identifier = NSUserInterfaceItemIdentifier(binding.command)
