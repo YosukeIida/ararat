@@ -66,6 +66,7 @@
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
+#include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -138,6 +139,12 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_action.h"
+#include "extensions/browser/extension_action_manager.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "extensions/common/manifest.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
@@ -222,7 +229,44 @@ static void PostCaptureError(void (^completion)(NSData*, NSString*), NSString* e
       FROM_HERE, base::BindOnce(^{ completion(nil, error); }));
 }
 
+static void PostExtensionRemoval(void (^completion)(NSString*, NSString*), NSString* result, NSString* detail) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(^{ completion(result, detail); }));
+}
+
 namespace {
+bool CanRemoveExtension(Profile* profile, const extensions::Extension* extension) {
+  if (!profile || !extension || extensions::Manifest::IsComponentLocation(extension->location())) return false;
+  auto* system = extensions::ExtensionSystem::Get(profile);
+  auto* policy = system ? system->management_policy() : nullptr;
+  return policy && policy->UserMayModifySettings(extension, nullptr) &&
+         !policy->MustRemainInstalled(extension, nullptr);
+}
+
+class ExtensionUninstallRequest : public extensions::ExtensionUninstallDialog::Delegate {
+ public:
+  static void Start(Profile* profile, gfx::NativeWindow parent,
+                    const extensions::Extension* extension,
+                    void (^completion)(NSString*, NSString*)) {
+    auto* request = new ExtensionUninstallRequest(completion);
+    request->dialog_ = extensions::ExtensionUninstallDialog::Create(profile, parent, request);
+    request->dialog_->ConfirmUninstall(extension, extensions::UNINSTALL_REASON_USER_INITIATED,
+                                       extensions::UNINSTALL_SOURCE_TOOLBAR_CONTEXT_MENU);
+  }
+
+ private:
+  explicit ExtensionUninstallRequest(void (^completion)(NSString*, NSString*)) : completion_([completion copy]) {}
+  ~ExtensionUninstallRequest() override = default;
+  void OnExtensionUninstallDialogClosed(bool started, const std::u16string& error) override {
+    void (^completion)(NSString*, NSString*) = completion_;
+    NSString* detail = base::SysUTF16ToNSString(error);
+    NSString* result = started ? @"removed" : @"notRemoved";
+    delete this;
+    PostExtensionRemoval(completion, result, detail);
+  }
+  void (^completion_)(NSString*, NSString*);
+  std::unique_ptr<extensions::ExtensionUninstallDialog> dialog_;
+};
 
 bool IsDevToolsCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
@@ -1316,6 +1360,7 @@ NSDictionary* OrphanMoveSnapshot(NSString* window) {
 - (void)emitOpenFailure:(NSString*)commandId;
 - (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost;
 - (void)syncTabs;
+- (void)queueExtensionActionsChanged;
 - (void)closeCancelled:(const tabs::TabInterface*)tab;
 - (void)drainPendingOpens;
 - (void)discardPendingOpens;
@@ -1541,6 +1586,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::unique_ptr<AraratDownloads> downloads_;
   ARSiteState* site_state_;
   ARCapture* capture_;
+  BOOL extension_update_queued_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1651,21 +1697,88 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions {
+  return [self extensionActionsWithIconSize:20];
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActionsWithIconSize:(NSUInteger)size {
   auto* window = core_->window();
   auto* container = window ? window->extensions() : nullptr;
-  if (!container) return @[];
+  auto* model = container ? container->toolbar_model() : nullptr;
+  if (!model || !browser_ || size == 0 || size > 128) return @[];
+  auto* profile = browser_->GetProfile();
+  auto* contents = container->GetActiveWebContents();
+  auto* manager = extensions::ExtensionActionManager::Get(profile);
+  std::vector<std::string> ids = model->pinned_action_ids();
+  for (const auto& id : model->action_ids()) if (!model->IsActionPinned(id)) ids.push_back(id);
   NSMutableArray* result = [NSMutableArray array];
-  for (const auto& [id, action] : container->actions()) {
-    auto image = action->GetIcon(container->GetActiveWebContents(), gfx::Size(20, 20))
+  for (const auto& id : ids) {
+    auto found = container->actions().find(id);
+    if (found == container->actions().end()) continue;
+    auto* action = found->second.get();
+    const auto* extension = action->GetExtension();
+    if (!extension) continue;
+    auto image = action->GetIcon(contents, gfx::Size(static_cast<int>(size), static_cast<int>(size)))
                      .Rasterize(core_->widget()->GetColorProvider());
     NSImage* icon = gfx::Image(image).ToNSImage();
-    const auto action_name = action->GetActionName();
-    NSString* name = [[NSString alloc] initWithCharacters:
-        reinterpret_cast<const unichar*>(action_name.data()) length:action_name.size()];
+    NSString* name = base::SysUTF16ToNSString(action->GetActionName());
+    NSString* tooltip = base::SysUTF16ToNSString(action->GetTooltip(contents));
+    auto* state = manager ? manager->GetExtensionAction(*extension) : nullptr;
+    const int tab_id = sessions::SessionTabHelper::IdForTab(contents).id();
+    NSString* badge = state ? base::SysUTF8ToNSString(state->GetDisplayBadgeText(tab_id)) : @"";
     [result addObject:@{ @"id": [NSString stringWithUTF8String:id.c_str()],
-                         @"name": name, @"icon": icon ?: [NSImage new] }];
+                         @"name": name, @"icon": icon ?: [NSImage new], @"tooltip": tooltip,
+                         @"enabled": @(contents && action->IsEnabled(contents)),
+                         @"pinned": @(model->IsActionPinned(id)),
+                         @"pinMutable": @(!profile->IsOffTheRecord() && !model->IsActionForcePinned(id)),
+                         @"removable": @(CanRemoveExtension(profile, extension)),
+                         @"badgeText": badge,
+                         @"badgeBackgroundColor": @(state ? state->GetBadgeBackgroundColor(tab_id) : 0),
+                         @"badgeTextColor": @(state ? state->GetBadgeTextColor(tab_id) : 0) }];
   }
   return result;
+}
+
+- (NSString*)setExtensionPinned:(NSString*)identifier pinned:(BOOL)pinned {
+  if (!browser_ || !identifier.length) return @"unknown";
+  if (browser_->GetProfile()->IsOffTheRecord()) return @"incognito";
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  auto* model = container ? container->toolbar_model() : nullptr;
+  std::string id = base::SysNSStringToUTF8(identifier);
+  auto* action = container ? static_cast<ExtensionActionViewModel*>(container->GetActionForId(id)) : nullptr;
+  if (!model || !model->HasAction(id) || !action || !action->GetExtension()) return @"unknown";
+  if (model->IsActionForcePinned(id)) return @"forced";
+  if (model->IsActionPinned(id) == static_cast<bool>(pinned)) return @"unchanged";
+  model->SetActionVisibility(id, pinned);
+  return @"done";
+}
+
+- (NSString*)extensionManagementURL:(NSString*)identifier {
+  if (!browser_ || browser_->IsDeleteScheduled() || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_ || !identifier.length) return nil;
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  const std::string id = base::SysNSStringToUTF8(identifier);
+  auto* action = container ? container->GetActionForId(id) : nullptr;
+  auto* extension = action ? static_cast<ExtensionActionViewModel*>(action)->GetExtension() : nullptr;
+  auto* registry = extensions::ExtensionRegistry::Get(browser_->GetProfile());
+  if (!extension || !registry || registry->enabled_extensions().GetByID(id) != extension ||
+      extensions::Manifest::IsComponentLocation(extension->location())) return nil;
+  return base::SysUTF8ToNSString("chrome://extensions/?id=" + id);
+}
+
+- (void)removeExtension:(NSString*)identifier completion:(void (^)(NSString*, NSString*))completion {
+  if (!browser_ || browser_->IsDeleteScheduled() || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_ || !identifier.length) { PostExtensionRemoval(completion, @"unknown", @""); return; }
+  auto* profile = browser_->GetProfile();
+  auto* window = core_->window();
+  auto* container = window ? window->extensions() : nullptr;
+  auto* action = container ? container->GetActionForId(base::SysNSStringToUTF8(identifier)) : nullptr;
+  auto* model = action ? static_cast<ExtensionActionViewModel*>(action) : nullptr;
+  const extensions::Extension* extension = model ? model->GetExtension() : nullptr;
+  if (!extension) { PostExtensionRemoval(completion, @"unknown", @""); return; }
+  if (!CanRemoveExtension(profile, extension)) { PostExtensionRemoval(completion, @"forced", @""); return; }
+  ExtensionUninstallRequest::Start(profile, core_->GetNativeWindow(), extension, completion);
 }
 
 - (void)setExtensionAnchor:(NSRect)rect {
@@ -3525,9 +3638,24 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)tabMetadataChanged {
+  auto* window = core_->window();
+  if (window && window->extensions()) window->extensions()->QueueChanged();
   __weak ARWindowHost* host = self;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(^{ [host emitCause:@"Engine"]; }));
+}
+
+- (void)queueExtensionActionsChanged {
+  if (extension_update_queued_) return;
+  extension_update_queued_ = YES;
+  __weak ARWindowHost* host = self;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
+    ARWindowHost* strong = host;
+    if (!strong) return;
+    strong->extension_update_queued_ = NO;
+    if ([strong.delegate respondsToSelector:@selector(extensionActionsChangedForWindowHost:)])
+      [strong.delegate extensionActionsChangedForWindowHost:strong];
+  }));
 }
 
 - (void)devToolsChanged:(content::WebContents*)inspected {
@@ -3544,6 +3672,15 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
   [site_state_ setContents:active];
   [capture_ selectContents:active];
+  auto* extension_window = core_->window();
+  auto* extension_container = extension_window ? extension_window->extensions() : nullptr;
+  if (extension_container) {
+    __weak ARWindowHost* host = self;
+    extension_container->SetChangedCallback(base::BindRepeating(^{
+      [host queueExtensionActionsChanged];
+    }));
+  }
+  [self queueExtensionActionsChanged];
   NSView* card = [self.delegate pageCardForWindowHost:self];
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;

@@ -152,6 +152,7 @@ source_set("entry") {
     "//chrome/browser/ui/views/extensions:extensions_menu_view",
     "//chrome/browser/tab_list",
     "//components/viz/common",
+    "//components/sessions",
     "//ui/base",
     "//ui/base/accelerators/global_accelerator_listener",
     "//ui/base/interaction",

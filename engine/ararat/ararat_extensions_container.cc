@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/extensions/extension_action_view_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
@@ -52,7 +54,25 @@ AraratExtensionsContainer::~AraratExtensionsContainer() {
   for (const auto& [_, model] : actions_) {
     model->UnregisterCommand();
   }
+  icon_observations_.clear();
   actions_.clear();
+}
+
+void AraratExtensionsContainer::SetChangedCallback(base::RepeatingClosure callback) {
+  changed_ = std::move(callback);
+}
+
+void AraratExtensionsContainer::QueueChanged() {
+  if (change_queued_) return;
+  change_queued_ = true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&AraratExtensionsContainer::DispatchChanged,
+                                notification_weak_.GetWeakPtr()));
+}
+
+void AraratExtensionsContainer::DispatchChanged() {
+  change_queued_ = false;
+  if (changed_) changed_.Run();
 }
 
 void AraratExtensionsContainer::ShowExtensionsMenu() {
@@ -103,6 +123,7 @@ void AraratExtensionsContainer::SetWebContents(
     SetExtensionsContainerViewsForWebContents(web_contents,
                                               weak_ptr_factory_.GetWeakPtr());
   }
+  QueueChanged();
 }
 
 ToolbarActionViewModel* AraratExtensionsContainer::GetActionForId(
@@ -234,11 +255,13 @@ views::BubbleBorder::Arrow AraratExtensionsContainer::GetPopupArrow()
 
 void AraratExtensionsContainer::OnToolbarModelInitialized() {
   CreateActions();
+  QueueChanged();
 }
 
 void AraratExtensionsContainer::OnToolbarActionAdded(
     const ToolbarActionsModel::ActionId& action_id) {
   CreateActionForId(action_id);
+  QueueChanged();
 }
 
 void AraratExtensionsContainer::OnToolbarActionRemoved(
@@ -252,13 +275,15 @@ void AraratExtensionsContainer::OnToolbarActionRemoved(
   }
   it->second->HidePopup();
   it->second->UnregisterCommand();
+  icon_observations_.erase(action_id);
   actions_.erase(it);
+  QueueChanged();
 }
 
 void AraratExtensionsContainer::OnToolbarActionUpdated(
-    const ToolbarActionsModel::ActionId& action_id) {}
+    const ToolbarActionsModel::ActionId& action_id) { QueueChanged(); }
 
-void AraratExtensionsContainer::OnToolbarPinnedActionsChanged() {}
+void AraratExtensionsContainer::OnToolbarPinnedActionsChanged() { QueueChanged(); }
 
 void AraratExtensionsContainer::OnToolbarActionsModelShutdown() {
   toolbar_model_observation_.Reset();
@@ -269,7 +294,9 @@ void AraratExtensionsContainer::OnToolbarActionsModelShutdown() {
   for (const auto& [_, model] : actions_) {
     model->UnregisterCommand();
   }
+  icon_observations_.clear();
   actions_.clear();
+  QueueChanged();
 }
 
 void AraratExtensionsContainer::CreateActions() {
@@ -288,6 +315,9 @@ void AraratExtensionsContainer::CreateActionForId(
   actions_[action_id] = ExtensionActionViewModel::Create(
       action_id, browser_,
       std::make_unique<ExtensionActionDelegateDesktop>(browser_, this, this));
+  icon_observations_[action_id] = actions_[action_id]->RegisterIconUpdateObserver(
+      base::BindRepeating(&AraratExtensionsContainer::QueueChanged,
+                          notification_weak_.GetWeakPtr()));
   if (shortcuts_active_) actions_[action_id]->RegisterCommand();
 }
 

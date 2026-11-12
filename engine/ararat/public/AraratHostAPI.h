@@ -94,6 +94,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
 - (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
+- (void)extensionActionsChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier flight:(BOOL)flight;
 - (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
         container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
@@ -120,6 +121,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSDictionary<NSString*, id>*>*)downloads;
 - (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier;
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;
+- (NSArray<NSDictionary<NSString*, id>*>*)extensionActionsWithIconSize:(NSUInteger)size;
+- (NSString*)setExtensionPinned:(NSString*)identifier pinned:(BOOL)pinned;
+// Open the returned URL through the shown space's existing new-tab command path.
+- (nullable NSString*)extensionManagementURL:(NSString*)identifier;
+// Completion is asynchronous. Chrome's browser-modal fallback requires VM verification.
+// Report-abuse and setUninstallURL tabs require VM verification in the hosted window.
+- (void)removeExtension:(NSString*)identifier completion:(void (^)(NSString* result, NSString* detail))completion;
 - (void)setExtensionAnchor:(NSRect)rect;
 - (void)runExtensionAction:(NSString*)identifier;
 - (BOOL)checkIsExtensionAppPopup;
