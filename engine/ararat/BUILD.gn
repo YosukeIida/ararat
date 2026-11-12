@@ -53,7 +53,7 @@ test("history_files_unittests") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
+  sources = [ "ararat_downloads.h", "ararat_downloads.mm", "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
     ":core",
@@ -76,6 +76,8 @@ source_set("entry") {
     "//chrome/browser/autofill",
     "//chrome/browser/devtools",
     "//chrome/browser/download",
+    "//chrome/browser/download/bubble",
+    "//chrome/browser/download/bubble:impl",
     "//chrome/browser/extensions",
     "//chrome/browser/history",
     "//chrome/browser/devtools:devtools_contents_resizing_strategy",
@@ -109,6 +111,8 @@ source_set("entry") {
     "//chrome/browser/ui:browser_command_controller",
     "//chrome/browser/ui/cocoa",
     "//chrome/browser/ui/dialogs:browser_dialogs",
+    "//chrome/browser/ui/download",
+    "//chrome/browser/ui/download:impl",
     "//chrome/browser/ui/views/download",
     "//chrome/browser/ui/views/file_system_access",
     "//chrome/browser/ui/views/file_system_access:impl",

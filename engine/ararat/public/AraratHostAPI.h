@@ -93,6 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier;
 - (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
         container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host shouldOpenCommand:(NSString*)commandId itemId:(NSString*)itemId;
@@ -102,6 +103,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol ARWindowHostAPI <NSObject>
+- (NSArray<NSDictionary<NSString*, id>*>*)downloads;
+- (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier;
 - (NSArray<NSDictionary<NSString*, id>*>*)extensionActions;
 - (void)setExtensionAnchor:(NSRect)rect;
 - (void)runExtensionAction:(NSString*)identifier;

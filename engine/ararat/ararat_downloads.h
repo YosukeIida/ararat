@@ -1,0 +1,23 @@
+#ifndef ARARAT_CORE_ARARAT_DOWNLOADS_H_
+#define ARARAT_CORE_ARARAT_DOWNLOADS_H_
+
+#import <Foundation/Foundation.h>
+#include <memory>
+
+class Profile;
+
+class AraratDownloads {
+ public:
+  AraratDownloads(Profile* profile, void (^changed)(NSArray*, NSString*));
+  ~AraratDownloads();
+  NSArray* Snapshot();
+  bool Perform(NSString* guid, NSString* action);
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+void AraratConfigurePrivateDownloads(Profile* profile);
+
+#endif

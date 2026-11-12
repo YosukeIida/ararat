@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "ararat/core/ararat_browser_window.h"
+#include "ararat/core/ararat_downloads.h"
 #include "ararat/core/ararat_extensions_container.h"
 #include "ararat/core/ararat_hooks.h"
 #include "ararat/core/ararat_permission_prompt.h"
@@ -523,6 +524,7 @@ AraratWindowHostCore* AraratTakePendingWindowHost(const std::string& profile) {
 
 BrowserWindow* AraratCreateBrowserWindowForPendingHost(
     BrowserWindowInterface* browser) {
+  AraratConfigurePrivateDownloads(browser->GetProfile());
   const auto incoming_name = browser->GetProfile()->GetPath().BaseName().value();
   AraratWindowHostCore* core = browser->GetProfile()->IsOffTheRecord() ||
                                        browser->GetType() != BrowserWindowInterface::TYPE_NORMAL
@@ -1528,6 +1530,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
+  std::unique_ptr<AraratDownloads> downloads_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
@@ -1781,6 +1784,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)dealloc {
+  downloads_.reset();
   [ReportingHosts() removeObject:self];
   if (became_key_observer_) [NSNotificationCenter.defaultCenter removeObserver:became_key_observer_];
   if (resigned_key_observer_) [NSNotificationCenter.defaultCenter removeObserver:resigned_key_observer_];
@@ -2233,6 +2237,25 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (BOOL)isPrivateWindow {
   return browser_ && browser_->GetProfile()->IsOffTheRecord();
+}
+
+- (void)updateDownloads {
+  downloads_.reset();
+  if (browser_ && !browser_->GetProfile()->IsOffTheRecord()) {
+    __weak ARWindowHost* weakHost = self;
+    downloads_ = std::make_unique<AraratDownloads>(browser_->GetProfile(), ^(NSArray* items, NSString* identifier) {
+      ARWindowHost* host = weakHost;
+      if ([host.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:)])
+        [host.delegate windowHost:host downloadsChanged:items newDownload:identifier];
+    });
+  }
+  if ([self.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:)])
+    [self.delegate windowHost:self downloadsChanged:[self downloads] newDownload:nil];
+}
+
+- (NSArray*)downloads { return downloads_ ? downloads_->Snapshot() : @[]; }
+- (BOOL)performDownloadAction:(NSString*)action identifier:(NSString*)identifier {
+  return downloads_ && downloads_->Perform(identifier, action);
 }
 
 - (int)checkInProgressDownloadCount {
@@ -2702,6 +2725,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   strip_observers_[browser] = std::make_unique<StripObserver>(browser->GetTabStripModel(), self);
   if (core_->window() && core_->window()->browser() == browser) {
     browser_ = browser;
+    [self updateDownloads];
     core_->SetShortcutWindow(core_->window(), self.window.isKeyWindow);
     if (self.window.isKeyWindow) [self updateActive:YES];
     if (self.window.isMainWindow)
@@ -2721,7 +2745,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)browserDestroyed:(BrowserWindowInterface*)browser {
   if (strip_observers_.erase(browser)) {
-    if (browser_ == browser) browser_ = nullptr;
+    if (browser_ == browser) { browser_ = nullptr; [self updateDownloads]; }
     [self syncTabs];
     if (core_->closing() || core_->closed()) {
       if (core_->windows().empty()) profile_keep_alives_.clear();
@@ -3757,6 +3781,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (self.window.isKeyWindow) [self updateActive:NO];
   core_->SetProfileName(name.value());
   browser_ = core_->window() ? core_->window()->browser() : nullptr;
+  [self updateDownloads];
   core_->SetShortcutWindow(core_->window(), self.window.isKeyWindow);
   auto* find = browser_ ? FindBarController::From(browser_) : nullptr;
   if (find && find->HasFindBar()) find->find_bar()->UpdateFindBarForChangedWebContents();
