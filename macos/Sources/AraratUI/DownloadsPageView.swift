@@ -54,13 +54,17 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
             return self.onScroll?(event, self.scroll) ?? false
         }
         table.headerView = nil
+        table.style = .plain
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .none
         table.rowHeight = DownloadsPopover.rowHeight
         table.intercellSpacing = .zero
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.autoresizingMask = [.width]
-        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("downloads")))
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("downloads"))
+        column.resizingMask = .autoresizingMask
+        column.minWidth = 0
+        table.addTableColumn(column)
         table.dataSource = self
         table.delegate = self
         table.navigate = { [weak self] event in self?.navigate(event) ?? false }
@@ -95,7 +99,10 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     override var isFlipped: Bool { true }
     override func layout() {
         super.layout()
-        table.tableColumns.first?.width = scroll.contentSize.width
+        scroll.layoutSubtreeIfNeeded()
+        let width = scroll.contentView.bounds.width
+        if table.frame.width != width { table.setFrameSize(NSSize(width: width, height: table.frame.height)) }
+        if table.tableColumns.first?.width != width { table.tableColumns.first?.width = width }
     }
 
     func setModel(_ model: DownloadsModel) { self.model = model; refresh() }

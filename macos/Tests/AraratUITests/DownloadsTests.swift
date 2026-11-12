@@ -184,13 +184,22 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(status.bounds.width > 250)
     #expect(page.actionButtonsFit)
     #expect(row.actionButtons.allSatisfy { $0.image != nil && $0.accessibilityLabel()?.contains("a") == true })
-    page.frame.size.width = 198
-    page.layoutSubtreeIfNeeded()
-    page.table.layoutSubtreeIfNeeded()
-    row.layoutSubtreeIfNeeded()
-    #expect(page.actionButtonsFit)
-    #expect(page.rowsLeadingAndStatusFit)
-    #expect(row.statusTruncates)
+    let clip = try #require(page.table.enclosingScrollView?.contentView)
+    for width: CGFloat in [198, 164, 400] {
+        window.setContentSize(NSSize(width: width, height: 400))
+        page.layoutSubtreeIfNeeded()
+        page.table.layoutSubtreeIfNeeded()
+        row.layoutSubtreeIfNeeded()
+        let visible = clip.bounds
+        let rowFrame = clip.convert(row.bounds, from: row)
+        let statusFrame = row.statusFrame(in: clip)
+        #expect(abs((page.table.tableColumns.first?.width ?? 0) - visible.width) <= 1)
+        #expect(rowFrame.maxX <= visible.maxX + 1)
+        #expect(statusFrame.maxX <= visible.maxX + 1)
+        #expect(page.actionButtonsFit)
+        #expect(page.rowsLeadingAndStatusFit)
+        #expect(row.statusTruncates)
+    }
 }
 
 @Test @MainActor func libraryDownloadsIncludesRestoredAndFollowsProfileUpdates() throws {
