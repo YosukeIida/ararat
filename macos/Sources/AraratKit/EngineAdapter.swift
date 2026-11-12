@@ -63,6 +63,90 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func windowHost(_ host: any ARWindowHostAPI, downloadsChanged items: [[String: Any]], newDownload identifier: String?, flight: Bool) {
         MainActor.assumeIsolated { onDownloads?(items, identifier, flight) }
     }
+
+    // U26e pass 4: the focused site snapshot, permission changes and captures. The engine
+    // creates and rebinds its own PageInfo, so the app only reads and forwards.
+    public var onSiteStateChanged: (@MainActor () -> Void)?
+    public var onExtensionActionsChanged: (@MainActor () -> Void)?
+
+    public func siteStateChanged(forWindowHost host: any ARWindowHostAPI) {
+        MainActor.assumeIsolated { onSiteStateChanged?() }
+    }
+
+    public func extensionActionsChanged(forWindowHost host: any ARWindowHostAPI) {
+        MainActor.assumeIsolated { onExtensionActionsChanged?() }
+    }
+
+    public func siteState() -> SiteState? {
+        precondition(Thread.isMainThread)
+        guard let host else { return nil }
+        return SiteState(host.siteState())
+    }
+
+    public func changeSitePermission(_ request: [String: Any]) -> Bool {
+        precondition(Thread.isMainThread)
+        return host?.changeSitePermission(request) ?? false
+    }
+
+    public func closeSiteControls() {
+        precondition(Thread.isMainThread)
+        host?.closeSiteControls()
+    }
+
+    public func captureFullPage(document: String, completion: @escaping (Data?, String?) -> Void) {
+        precondition(Thread.isMainThread)
+        guard let host else { completion(nil, "tabGone"); return }
+        host.captureFullPage(forDocument: document) { png, error in
+            MainActor.assumeIsolated { completion(png, error) }
+        }
+    }
+
+    public func captureRegion(_ rect: NSRect, document: String, completion: @escaping (Data?, String?) -> Void) {
+        precondition(Thread.isMainThread)
+        guard let host else { completion(nil, "tabGone"); return }
+        host.captureRegion(rect, document: document) { png, error in
+            MainActor.assumeIsolated { completion(png, error) }
+        }
+    }
+
+    public func extensionActions(iconSize: Int = 20) -> [ExtensionActionItem] {
+        precondition(Thread.isMainThread)
+        guard let host else { return [] }
+        return host.extensionActions(withIconSize: UInt(iconSize)).compactMap(ExtensionActionItem.init)
+    }
+
+    public func setExtensionPinned(_ identifier: String, pinned: Bool) -> String {
+        precondition(Thread.isMainThread)
+        return host?.setExtensionPinned(identifier, pinned: pinned) ?? "unknown"
+    }
+
+    public func extensionManagementURL(_ identifier: String) -> String? {
+        precondition(Thread.isMainThread)
+        return host?.extensionManagementURL(identifier)
+    }
+
+    public func removeExtension(_ identifier: String, completion: @escaping (String, String) -> Void) {
+        precondition(Thread.isMainThread)
+        guard let host else { completion("unknown", ""); return }
+        host.removeExtension(identifier) { result, detail in
+            MainActor.assumeIsolated { completion(result, detail) }
+        }
+    }
+
+    public func setExtensionAnchor(_ rect: NSRect) {
+        precondition(Thread.isMainThread)
+        host?.setExtensionAnchor(rect)
+    }
+
+    public func runExtensionAction(_ identifier: String) {
+        precondition(Thread.isMainThread)
+        host?.runExtensionAction(identifier)
+    }
+
+    private func notifySiteState() {
+        MainActor.assumeIsolated { onSiteStateChanged?() }
+    }
+
     public var checkSelectionDispatch: ((String, String, @escaping () -> Void) -> Void)?
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?

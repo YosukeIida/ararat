@@ -1,0 +1,127 @@
+import AppKit
+import AraratKit
+import Testing
+@testable import AraratUI
+
+private func permissionRow(type: String = "geolocation",
+                           setting: Any? = ["kind": "geolocation", "approximate": "block", "precise": "block"],
+                           mutable: Bool = true,
+                           allowed: [[String: Any]] = [
+                               ["kind": "content", "value": "allow"],
+                               ["kind": "content", "value": "block"],
+                               ["kind": "content", "value": "ask"],
+                           ]) -> [String: Any] {
+    [
+        "type": type, "requestingOrigin": "", "embeddingOrigin": "https://127.0.0.1:4444",
+        "setting": setting ?? NSNull(), "defaultSetting": ["kind": "geolocation", "approximate": "ask", "precise": "ask"],
+        "source": "user", "mutable": mutable, "allowed": allowed, "siteSpecificBlock": true,
+    ]
+}
+
+@Test @MainActor
+func siteStateParsesSnapshotAndPermissionSettings() throws {
+    let snapshot: [String: Any] = [
+        "document": "7", "origin": "https://127.0.0.1:4444", "security": "secure",
+        "certificateChain": [Data([1, 2, 3])], "permissions": [permissionRow()],
+        "blocked": true, "internal": false,
+    ]
+    let state = try #require(SiteState(snapshot))
+    #expect(state.document == "7")
+    #expect(state.security == "secure")
+    #expect(state.isSecure)
+    #expect(state.certificateChain.count == 1)
+    #expect(state.blocked)
+    #expect(state.permissions.count == 1)
+    let row = state.permissions[0]
+    #expect(row.displayName == "Location")
+    #expect(row.isExplicit)
+    #expect(row.setting?.title == "Block")
+    #expect(row.setting?.isBlock == true)
+    #expect(row.mutable)
+    #expect(row.allowed.map(\.title) == ["Allow", "Block", "Ask"])
+    #expect(row.defaultSetting?.title == "Ask")
+    #expect(row.current?.title == "Block")
+}
+
+@Test @MainActor
+func siteStateTreatsMissingSettingAsDefaultAndReadOnly() throws {
+    let state = try #require(SiteState([
+        "document": "3", "origin": "http://127.0.0.1:5555", "security": "not_secure",
+        "certificateChain": [Data](), "permissions": [permissionRow(setting: nil, mutable: false, allowed: [])],
+        "blocked": false, "internal": false,
+    ]))
+    let row = state.permissions[0]
+    #expect(row.setting == nil)
+    #expect(!row.isExplicit)
+    #expect(row.isReadOnly)
+    #expect(row.current?.title == "Ask")
+    #expect(state.certificateChain.isEmpty)
+    #expect(!state.canShowCertificate)
+    #expect(state.securityTitle == "Not secure")
+}
+
+@Test @MainActor
+func internalSnapshotHasNoPermissions() throws {
+    let state = try #require(SiteState([
+        "document": "9", "origin": "chrome://version/", "security": "none",
+        "certificateChain": [Data](), "permissions": [[String: Any]](), "blocked": false, "internal": true,
+    ]))
+    #expect(state.isInternal)
+    #expect(state.permissions.isEmpty)
+    #expect(state.security == "none")
+    #expect(!state.canShowCertificate)
+}
+
+@Test @MainActor
+func permissionMenuMapsMixedGeolocationPairsWithoutDuplicatingUniformTitles() {
+    let allow = SiteState.PermissionSetting(dictionary: ["kind": "geolocation", "approximate": "allow", "precise": "block"])
+    #expect(allow?.title == "Allow approximate location")
+    let precise = SiteState.PermissionSetting(dictionary: ["kind": "geolocation", "approximate": "ask", "precise": "allow"])
+    #expect(precise?.title == "Allow precise location")
+    #expect(SiteState.PermissionSetting(dictionary: ["kind": "content", "value": "session_only"])?.title == "Allow for session")
+    #expect(SiteState.PermissionSetting(dictionary: ["kind": "unsupported"]) == nil)
+}
+
+@Test @MainActor
+func extensionActionItemParsesEngineFields() throws {
+    let icon = NSImage(size: NSSize(width: 16, height: 16))
+    let item = try #require(ExtensionActionItem([
+        "id": "abc", "name": "Probe", "tooltip": "Probe action", "icon": icon, "enabled": true,
+        "pinned": true, "pinMutable": false, "removable": true, "badgeText": "3",
+        "badgeBackgroundColor": 0xFFFF0000, "badgeTextColor": 0xFFFFFFFF,
+    ]) as ExtensionActionItem?)
+    #expect(item.badgeText == "3")
+    #expect(item.pinned)
+    #expect(!item.pinMutable)
+    #expect(item.removable)
+    #expect(item.icon.size == NSSize(width: 16, height: 16))
+}
+
+@Test @MainActor
+func siteControlsContentKeepsArcGeometryAndWorkingRowsOnly() throws {
+    let state = try #require(SiteState([
+        "document": "1", "origin": "https://127.0.0.1:4444", "security": "secure",
+        "certificateChain": [Data([0])], "permissions": [permissionRow(), permissionRow(type: "notifications", mutable: false, allowed: [])],
+        "blocked": true, "internal": false,
+    ]))
+    let content = SiteControlsContent(model: state, includesFullPage: true)
+    let size = content.preferredSize
+    #expect(size.width == 262)
+    #expect(size.height.truncatingRemainder(dividingBy: 8) == 0)
+    #expect(content.actionTitles == ["Screenshot a region", "Capture the full page"])
+    let rows = content.checkPermissionRows
+    #expect(rows.count == 2)
+    #expect(rows[0].items.contains("Reset"))
+    #expect(rows[1].readOnly)
+    #expect(rows[1].items.isEmpty)
+}
+
+@Test @MainActor
+func siteControlsContentOmitsFullPageWhenTheConstantDropsIt() throws {
+    let state = try #require(SiteState([
+        "document": "1", "origin": "https://example.test", "security": "secure",
+        "certificateChain": [Data](), "permissions": [[String: Any]](), "blocked": false, "internal": false,
+    ]))
+    let content = SiteControlsContent(model: state, includesFullPage: false)
+    #expect(content.actionTitles == ["Screenshot a region"])
+}

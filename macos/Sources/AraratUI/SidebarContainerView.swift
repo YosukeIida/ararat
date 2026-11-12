@@ -12,8 +12,9 @@ public final class SidebarContainerView: NSView {
     private let toastLabel = NSTextField(labelWithString: "Link copied")
     private var toastGeneration = 0
     public var checkToastAnnouncement: ((String) -> Void)?
-    public var checkToastState: (visible: Bool, frame: NSRect, page: NSRect, generation: Int) {
-        ( !toast.isHidden, toast.frame, page.frame, toastGeneration )
+    public var pageCard: NSView { page }
+    public var checkToastState: (visible: Bool, frame: NSRect, page: NSRect, generation: Int, message: String) {
+        ( !toast.isHidden, toast.frame, page.frame, toastGeneration, toastLabel.stringValue )
     }
     public let findBar = FindBarView()
     private var findPageRect: NSRect?
@@ -233,12 +234,19 @@ public final class SidebarContainerView: NSView {
     }
 
     public func showLinkCopied() {
+        showToast("Link copied")
+    }
+
+    /// One toast per window, sized to its text (the U26d host, generalized in U26e pass 4).
+    public func showToast(_ message: String) {
+        toastLabel.stringValue = message
         toastGeneration += 1
         let generation = toastGeneration
         toast.layer?.removeAllAnimations()
         toast.alphaValue = 1
         toast.isHidden = false
         needsLayout = true
+        layoutSubtreeIfNeeded()
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             toast.alphaValue = 0
             NSAnimationContext.runAnimationGroup { context in
@@ -246,8 +254,8 @@ public final class SidebarContainerView: NSView {
                 toast.animator().alphaValue = 1
             }
         }
-        checkToastAnnouncement?("Link copied")
-        NSAccessibility.post(element: toast, notification: .announcementRequested, userInfo: [.announcement: "Link copied", .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        checkToastAnnouncement?(message)
+        NSAccessibility.post(element: toast, notification: .announcementRequested, userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, self.toastGeneration == generation else { return }
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { self.toast.isHidden = true; return }
@@ -264,7 +272,9 @@ public final class SidebarContainerView: NSView {
     }
 
     private func layoutToast() {
-        toast.frame = NSRect(x: page.frame.midX - 72, y: page.frame.maxY - 56, width: 144, height: 40)
+        let text = toastLabel.fittingSize.width
+        let width = max(144, ceil((text + 32) / 8) * 8)
+        toast.frame = NSRect(x: page.frame.midX - width / 2, y: page.frame.maxY - 56, width: width, height: 40)
     }
 
     override public func layout() {

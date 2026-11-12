@@ -236,8 +236,8 @@ void CheckGuards(int argc, const char** argv) {
       screen_prompts = std::string_view(arg + 16) == "prompts";
       screen_downloads = std::string_view(arg + 16) == "downloads";
       screen_toasts = std::string_view(arg + 16) == "toasts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name") g_check_slice = true;
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
@@ -261,7 +261,7 @@ void CheckGuards(int argc, const char** argv) {
       check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls";
       browser_check = browser_check || name == "errorpages";
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
@@ -404,6 +404,16 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
     parts->AddParts(std::make_unique<AraratBrowserMainExtraParts>());
   };
   std::vector<const char*> browser_args(argv, argv + argc);
+  // The site-controls check serves a throwaway self-signed loopback certificate and allows
+  // exactly that key, so Chromium reports a secure connection without touching trust stores.
+  for (int i = 1; i < argc; ++i) {
+    if (argv[i] && (strcmp(argv[i], "--ararat-check=site-controls") == 0 ||
+                    strcmp(argv[i], "--ararat-screen=site-controls") == 0)) {
+      browser_args.push_back(
+          "--ignore-certificate-errors-spki-list=41bhvYwNSFKJywXg6t2xbgeAoiBIlI83FdLJO/ILKZg=");
+      break;
+    }
+  }
   bool has_no_startup_window = false;
   for (const char* arg : browser_args) {
     if (arg && strcmp(arg, "--") == 0) break;
