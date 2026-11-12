@@ -174,6 +174,17 @@ func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any
           "requested_direction": arguments.contains("--force-ui-direction=rtl") ? "rtl" : "default"]
 }
 
+// Why not compare every record: the page-only popup cannot write workspace rows, but the
+// regular window's own device-local Window/LastSelected rows commit on their one-second batch,
+// so a whole-table compare flakes. Those two kinds are excluded; every workspace kind is not.
+func pageOnlyRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
+  guard let before, let after else { return false }
+  func stable(_ rows: [[String]]) -> [[String]] {
+    rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
+  }
+  return stable(before) == stable(after)
+}
+
 func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
   guard let before, let after else { return [["kind": "missing", "id": "", "fields": ["$snapshot"]]] }
   func indexed(_ rows: [[String]]) -> [String: [String]] {
@@ -2890,12 +2901,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if mode == "screen-links", browserCheckPhase == 42, let popup = popups.first?.host,
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 43
     } else if mode == "screen-links", browserCheckPhase == 43, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       finishBrowserCheck(ok: unchanged && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["command_click": true, "context_menu": true, "popup_placed": true, "page_only_save": true,
                  "rows_unchanged": unchanged, "stock_browsers": host.checkStockBrowsers()])
@@ -6365,12 +6376,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if screen, browserCheckPhase == 62, let popup = popups.first?.host,
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 63
     } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
           "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
@@ -7172,12 +7183,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 63
     } else if browserCheckPhase == 63, let popup = popups.first?.host, popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard captureCheckRows() == quitBefore else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 64
     } else if browserCheckPhase == 64, let popup = popups.first?.host,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
-      let unchanged = captureCheckRows() == quitBefore
+      let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
       devtoolsResults["page_only_save"] = true
       devtoolsResults["app_popup"] = popup.checkIsExtensionAppPopup()
       devtoolsResults["rows_unchanged"] = unchanged

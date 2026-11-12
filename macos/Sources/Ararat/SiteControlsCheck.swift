@@ -82,7 +82,7 @@ extension Runtime {
             let rows = (state?.permissions ?? []).map {
                 "\($0.type):\($0.setting?.title ?? "-"):blockedBySite=\($0.siteSpecificBlock ? 1 : 0):mutable=\($0.mutable ? 1 : 0)"
             }.joined(separator: ",")
-            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") blocked=\(check.blockedRow?.id ?? "nil") clean=\(check.cleanTab)")
+            check.wait(name, "phase=\(browserCheckPhase) key=\(window.isKeyWindow) doc=\(state?.document ?? "nil") origin=\(state?.origin ?? "nil") security=\(state?.security ?? "nil") snapshotBlocked=\(state?.blocked ?? false) rows=[\(rows)] dot=\(sidebar.checkSiteControlsDot) popover=\(siteControls?.isShown ?? false) overlay=\(siteOverlay != nil) overlay_window=\(siteOverlay?.window?.windowNumber ?? -1) first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") blocked=\(check.blockedRow?.id ?? "nil") clean=\(check.cleanTab)")
         }
         func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
@@ -130,23 +130,33 @@ extension Runtime {
             let width = rep.pixelsWide, height = rep.pixelsHigh
             guard width > 10, height > 10 else { return (false, "\(width)x\(height)") }
             var matching = 0, total = 0
+            var centre = ""
             var x = 2
             while x < width - 2 {
                 var y = 2
                 while y < height - 2 {
-                    if let colour = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                    if let colour = rep.colorAt(x: x, y: y) {
                         total += 1
-                        let block = abs(colour.redComponent - 0x33 / 255.0) < 0.03
-                            && abs(colour.greenComponent - 0x66 / 255.0) < 0.03
-                            && abs(colour.blueComponent - 0xFF / 255.0) < 0.03
+                        // Why not usingColorSpace(.sRGB): a PNG without an sRGB chunk reads as
+                        // Generic RGB, and the conversion moves #3366FF to (0.25, 0.50, 1.0),
+                        // which the encoded bytes do not say. Compare the encoded components.
+                        let block = abs(colour.redComponent - 0x33 / 255.0) < 0.04
+                            && abs(colour.greenComponent - 0x66 / 255.0) < 0.04
+                            && abs(colour.blueComponent - 0xFF / 255.0) < 0.04
                         if block { matching += 1 }
+                        if centre.isEmpty, x >= width / 2, y >= height / 2 {
+                            centre = String(format: "centre=%.3f/%.3f/%.3f/%.3f space=%@",
+                                            colour.redComponent, colour.greenComponent,
+                                            colour.blueComponent, colour.alphaComponent,
+                                            colour.colorSpace.localizedName ?? "?")
+                        }
                     }
                     y += 8
                 }
                 x += 8
             }
             let ratio = total > 0 ? Double(matching) / Double(total) : 0
-            return (total > 100 && ratio > 0.98, "\(matching)/\(total) block pixels in \(width)x\(height)")
+            return (total > 100 && ratio > 0.98, "\(matching)/\(total) block pixels in \(width)x\(height) \(centre)")
         }
 
         switch browserCheckPhase {
@@ -216,11 +226,11 @@ extension Runtime {
                   tab.url.hasPrefix("https://127.0.0.1:\(ports.secure)/clean"), !tab.isLoading else { wait("same-origin clean page"); return }
             guard sidebar.checkSiteControlsDot else { wait("dot stays for the same origin"); return }
             check.mark("dot_same_origin")
-            host.checkNavigate("http://127.0.0.1:\(ports.plain)/clean", disposition: "current")
+            host.checkNavigate("http://ararat.test:\(ports.plain)/clean", disposition: "current")
             browserCheckPhase = 6
         case 6:
             guard let ports = fixturePorts(), let tab = activeTab(),
-                  tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"), !tab.isLoading else { wait("other-origin clean page"); return }
+                  tab.url.hasPrefix("http://ararat.test:\(ports.plain)/clean"), !tab.isLoading else { wait("other-origin clean page"); return }
             guard !sidebar.checkSiteControlsDot else { wait("dot cleared on another origin"); return }
             check.mark("dot_cleared_on_navigation")
             host.checkNavigate("https://127.0.0.1:\(ports.secure)/site", disposition: "current")
@@ -232,7 +242,7 @@ extension Runtime {
             check.mark("dot_restored")
             // A second tab through the shown space's open path (a core row plus a live open):
             // a core-only createTab never becomes a live tab or a selection.
-            adapter?.openCommandURL("http://127.0.0.1:\(ports.plain)/clean",
+            adapter?.openCommandURL("http://ararat.test:\(ports.plain)/clean",
                                     expectedSpace: snapshot.shownSpaceId,
                                     profile: host.profileDirectory())
             browserCheckPhase = 8
@@ -240,7 +250,7 @@ extension Runtime {
             guard let ports = fixturePorts(), let row = check.blockedRow,
                   let clean = snapshot.selectedId, clean != row.id,
                   host.activeItemId() == clean,
-                  let tab = activeTab(), tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"),
+                  let tab = activeTab(), tab.url.hasPrefix("http://ararat.test:\(ports.plain)/clean"),
                   !tab.isLoading else { wait("clean tab active"); return }
             guard !sidebar.checkSiteControlsDot else { wait("dot off on the clean tab"); return }
             check.mark("tab_switch_dot")
@@ -352,6 +362,7 @@ extension Runtime {
                   toast.message == "Screenshot copied" else { wait("full page pasteboard and toast"); return }
             guard let image = NSImage(data: data), let tab = activeTab(), let page = tab.view else { wait("full page image"); return }
             let scale = window.backingScaleFactor
+            FileHandle.standardError.write(Data("ararat-trace: site-controls full page image=\(Int(image.size.width))x\(Int(image.size.height)) view=\(Int(page.bounds.width))x\(Int(page.bounds.height)) scale=\(scale)\n".utf8))
             check.mark("full_page_capture", image.size.height > page.bounds.height * scale + 200)
             check.mark("full_page_pasteboard", data.count > 1000)
             check.mark("full_page_toast", toast.message == "Screenshot copied")
@@ -359,13 +370,13 @@ extension Runtime {
         case 20:
             guard !container.checkToastState.visible else { wait("full page toast expiry"); return }
             guard let ports = fixturePorts() else { wait("plain fixture"); return }
-            host.checkNavigate("http://127.0.0.1:\(ports.plain)/clean", disposition: "current")
+            host.checkNavigate("http://ararat.test:\(ports.plain)/clean", disposition: "current")
             browserCheckPhase = 21
         case 21:
             guard let ports = fixturePorts(), let tab = activeTab(),
-                  tab.url.hasPrefix("http://127.0.0.1:\(ports.plain)/clean"), !tab.isLoading else { wait("insecure fixture"); return }
+                  tab.url.hasPrefix("http://ararat.test:\(ports.plain)/clean"), !tab.isLoading else { wait("insecure fixture"); return }
             refreshSiteState()
-            guard let state = siteState, state.origin.hasPrefix("http://127.0.0.1:\(ports.plain)") else { wait("insecure snapshot"); return }
+            guard let state = siteState, state.origin.hasPrefix("http://ararat.test:\(ports.plain)") else { wait("insecure snapshot"); return }
             check.mark("insecure_security", state.security == "not_secure")
             // M5: the capture row closed the popover; open it before reading the footer.
             openPopover()
@@ -402,12 +413,13 @@ extension Runtime {
             browserCheckPhase = 26
         case 26:
             guard let overlay = siteOverlay else { wait("cancel overlay view"); return }
-            // S9/N4: the Esc path itself. AppKit delivers keyDown to the key window, so make it
-            // key and the overlay first responder before posting to the app queue.
+            // S9/N4: the Esc path itself. A local monitor inside the overlay cancels wherever
+            // the key goes; the page view refuses to resign first responder, so that is not an
+            // assertion (the wait trace prints both classes).
             if !window.isKeyWindow { window.makeKeyAndOrderFront(nil) }
             guard window.isKeyWindow else { wait("key window for escape"); return }
             window.makeFirstResponder(overlay)
-            guard window.firstResponder === overlay else { wait("overlay first responder for escape"); return }
+            FileHandle.standardError.write(Data("ararat-trace: site-controls escape first_responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") overlay_window=\(overlay.window?.windowNumber ?? -1) key=\(window.isKeyWindow)\n".utf8))
             guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                                                timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil,

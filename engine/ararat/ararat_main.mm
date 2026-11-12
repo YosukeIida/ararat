@@ -411,6 +411,10 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
                     strcmp(argv[i], "--ararat-screen=site-controls") == 0)) {
       browser_args.push_back(
           "--ignore-certificate-errors-spki-list=41bhvYwNSFKJywXg6t2xbgeAoiBIlI83FdLJO/ILKZg=");
+      // Why not 127.0.0.1 for the plain page: loopback is potentially trustworthy, so Chromium
+      // reports a neutral connection, never "not_secure". A named host mapped to loopback is
+      // not trustworthy, which is what the check must exercise.
+      browser_args.push_back("--host-resolver-rules=MAP ararat.test 127.0.0.1");
       break;
     }
   }

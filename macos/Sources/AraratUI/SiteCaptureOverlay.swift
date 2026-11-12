@@ -12,6 +12,7 @@ public final class SiteCaptureOverlay: NSView {
     public private(set) var isDragging = false
     private var origin: NSPoint?
     private var tracking = false
+    private var escapeMonitor: Any?
 
     public override var isFlipped: Bool { true }
     public override var acceptsFirstResponder: Bool { true }
@@ -28,7 +29,30 @@ public final class SiteCaptureOverlay: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { window?.makeFirstResponder(self) }
+        // Why not depend on the first responder: Chromium's page view re-grabs focus on layout
+        // and refuses to resign it, so makeFirstResponder(self) is best effort only. A local
+        // monitor cancels on Escape while the overlay is up, wherever the key goes.
+        if window != nil {
+            window?.makeFirstResponder(self)
+            installEscapeMonitor()
+        } else {
+            removeEscapeMonitor()
+        }
+    }
+
+    private func installEscapeMonitor() {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.keyCode == 53, let overlayWindow = self.window,
+                  event.window == overlayWindow || overlayWindow.isKeyWindow else { return event }
+            self.cancel()
+            return nil
+        }
+    }
+
+    private func removeEscapeMonitor() {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
     }
 
     public override func resetCursorRects() {
@@ -84,6 +108,7 @@ public final class SiteCaptureOverlay: NSView {
     private func finish(_ rect: NSRect?) {
         guard !tracking else { return }
         tracking = true
+        removeEscapeMonitor()
         // Posting keeps the overlay alive through the mouse-up that finished the drag, so the
         // capture request never tears down the view it came from.
         DispatchQueue.main.async { [weak self] in

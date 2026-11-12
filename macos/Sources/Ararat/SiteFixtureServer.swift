@@ -173,7 +173,7 @@ final class SiteFixtureServer {
     private static let capturePage = """
     <!doctype html><title>Capture fixture</title>
     <style>html,body{margin:0;padding:0}.band{height:200px}</style>
-    <script>
+    <body><script>
     for (let index = 0; index < 12; index += 1) {
       const band = document.createElement('div');
       band.className = 'band';
@@ -181,7 +181,7 @@ final class SiteFixtureServer {
       band.textContent = `band ${index}`;
       document.body.appendChild(band);
     }
-    </script>
+    </script></body>
     """
 
     /// Imports the embedded throwaway PKCS#12 into process memory only (kSecImportToMemoryOnly,
