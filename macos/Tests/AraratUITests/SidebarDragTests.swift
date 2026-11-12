@@ -464,22 +464,24 @@ func adapterMoveAndFolderOpenPublishTheCoreResult() async throws {
 }
 
 @Test @MainActor
-func draggingSplitMemberMovesTheWholeSplit() throws {
+func draggingSplitRowMovesTheWholeSplit() throws {
     let split = dragRow("split", "ps", kind: .split)
     let member = dragRow("member", "split", depth: 1)
     let (window, sidebar) = dragWindow(dragSpace(pinned: [split, member], today: [dragRow("a", "ts")]))
     defer { window.contentView = nil }
-    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "member" })
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
     let frame = sidebar.convert(row.bounds, from: row)
     let press = CGPoint(x: frame.midX, y: sidebar.bounds.height - frame.midY)
     var moved: [String] = []
     sidebar.onMove = { id, _, _, _, done in moved.append(id); done(nil) }
-    row.mouseDown(with: try dragEvent(.leftMouseDown, sidebar: sidebar, position: press))
-    #expect(sidebar.selectedRowID == "member")
+    let down = try dragEvent(.leftMouseDown, sidebar: sidebar, position: press)
+    let hit = try #require(window.contentView?.hitTest(down.locationInWindow))
+    hit.mouseDown(with: down)
+    #expect(sidebar.selectedRowID == "split")
     let target = try #require(sidebar.dragGeometry()?.rows.first { $0.row.id == "a" })
     let point = CGPoint(x: target.frame.midX, y: target.frame.maxY)
-    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
-    row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
+    hit.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+    hit.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
     #expect(moved == ["split"])
 }
 
@@ -515,16 +517,38 @@ func movedRowKeepsTheVisibleScrollAnchorAndDoesNotReveal() throws {
 func clickingSplitMemberSelectsItWithoutMovingTheSplit() throws {
     let (window, sidebar) = dragWindow(dragSpace(pinned: [dragRow("split", "ps", kind: .split), dragRow("member", "split", depth: 1)]))
     defer { window.contentView = nil }
-    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "member" })
-    let rect = sidebar.convert(row.bounds, from: row)
-    let point = CGPoint(x: rect.midX, y: sidebar.bounds.height - rect.midY)
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
+    let button = try #require(dragDescendants(row).compactMap { $0 as? NSButton }.first { $0.title == "member" })
     var selected: [String] = []
     var moves = 0
     sidebar.onSelect = { selected.append($0.id) }
     sidebar.onMove = { _, _, _, _, done in moves += 1; done(nil) }
-    row.mouseDown(with: try dragEvent(.leftMouseDown, sidebar: sidebar, position: point))
-    row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
-    #expect(selected == ["member"] && sidebar.selectedRowID == "member" && moves == 0)
+    let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+    let hit = try #require(window.contentView?.hitTest(point))
+    let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    hit.mouseDown(with: down); hit.mouseUp(with: up)
+    #expect(selected == ["member"] && sidebar.selectedRowID == "split" && moves == 0)
+}
+
+@Test @MainActor
+func splitSegmentForwardsContextAndMiddleClick() throws {
+    let split = dragRow("split", "ts", kind: .split)
+    let member = dragRow("member", "split", depth: 1)
+    let (window, sidebar) = dragWindow(dragSpace(today: [split, member]))
+    defer { window.contentView = nil }
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
+    let button = try #require(dragDescendants(row).compactMap { $0 as? NSButton }.first { $0.title == "member" })
+    let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+    let hit = try #require(window.contentView?.hitTest(point))
+    let right = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    #expect(hit.menu(for: right) == nil)
+    var closed: String?
+    sidebar.onClose = { closed = $0 }
+    let cg = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseUp, mouseCursorPosition: point, mouseButton: .center))
+    let middle = try #require(NSEvent(cgEvent: cg))
+    hit.otherMouseUp(with: middle)
+    #expect(closed == "split")
 }
 
 @Test

@@ -7,6 +7,17 @@ private func pane(_ id: String, _ factor: Double = 1, _ kind: SplitPaneKind = .t
 }
 
 @Test
+func focusWalksNestedPanesAndWraps() {
+    let split = pane("root", 1, .splitHorizontal, [pane("a"), pane("nested", 1, .splitVertical, [pane("b"), pane("c")])])
+    for (from, to) in [("a", "b"), ("b", "c"), ("c", "a")] {
+        #expect(EngineAdapter.nextPane(split, active: from, backwards: false)?.id == to)
+    }
+    #expect(EngineAdapter.nextPane(split, active: "a", backwards: true)?.id == "c")
+    #expect(EngineAdapter.nextPane(split, active: "missing", backwards: false)?.id == nil)
+    #expect(EngineAdapter.nextPane(pane("a"), active: "a", backwards: false)?.id == nil)
+}
+
+@Test
 func nestedSplitKeepsEveryPaneAndRespectsAxisMinimums() {
     let nested = pane("nested", 1, .splitHorizontal, [pane("a"), pane("b")])
     let root = pane("root", 1, .splitHorizontal, [nested, pane("c", 3)])

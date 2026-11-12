@@ -242,6 +242,7 @@ void CheckGuards(int argc, const char** argv) {
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "split-focus") { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -265,6 +266,7 @@ void CheckGuards(int argc, const char** argv) {
       browser_check = browser_check || name == "errorpages";
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
+      browser_check = browser_check || name == "split-focus";
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";

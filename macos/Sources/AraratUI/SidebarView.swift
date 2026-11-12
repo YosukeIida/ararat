@@ -45,7 +45,7 @@ public final class SidebarView: NSView {
     private var scrollPageIndex: Int { libraryOpen ? -1 : createSpaceOpen ? snapshot.spaces.count : spaceIndex }
     public var onItemEdit: ((SidebarItemEdit, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
-    var pasteboard: NSPasteboard = .general
+    public var pasteboard: NSPasteboard = .general
     private(set) var renamingID: String?
     public var onSelect: ((Row) -> Void)?
     public var onClose: ((String) -> Void)?
@@ -114,9 +114,7 @@ public final class SidebarView: NSView {
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
     private var selectedID: String?
-    public var focusedURL: String? {
-        didSet { if focusedURL != oldValue { reload() } }
-    }
+    public var focusedPane: (id: String, url: String)?
 
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
@@ -668,12 +666,19 @@ public final class SidebarView: NSView {
 
     public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
     public func clickURLForCheck() { urlField.performClick(nil) }
+    public var urlHostForCheck: String { host.stringValue }
     @objc private func editURLClicked() { onEditURL?() }
     @objc private func copySelectedLink() {
-        guard let space = snapshotSpace,
-              let selected = (space.favorites + space.pinned + space.today).first(where: { $0.id == selectedID }),
-              let url = focusedURL ?? selected.url else { return }
+        guard let url = selectedURL else { return }
         copyLink(url)
+    }
+    private var selectedURL: String? {
+        guard let space = snapshotSpace, let selectedID else { return nil }
+        let rows = space.favorites + space.pinned + space.today
+        guard rows.contains(where: { $0.id == selectedID }) else { return nil }
+        let member = snapshot.selectedId.flatMap { id in rows.first { $0.id == id } }
+        guard let member, Self.sidebarSelection(snapshot) == selectedID else { return rows.first { $0.id == selectedID }?.url }
+        return focusedPane?.id == member.id ? focusedPane?.url : member.url
     }
     private func copyLink(_ url: String) {
         pasteboard.clearContents()
@@ -1004,7 +1009,7 @@ public final class SidebarView: NSView {
         let pinned = space?.pinned ?? []
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
-        let url = selected.flatMap { focusedURL ?? $0.url }
+        let url = selected == nil ? nil : selectedURL
         copyLinkButton.isEnabled = url != nil
         host.stringValue = url.flatMap { URL(string: $0)?.host } ?? ""
         urlField.setAccessibilityValue(host.stringValue)
@@ -1164,7 +1169,7 @@ public final class SidebarView: NSView {
             func leaves(_ id: String) -> [Row] {
                 all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
             }
-            view.updateSegments(leaves(row.id), active: snapshot.selectedId)
+            view.updateSegments(leaves(row.id), active: snapshot.selectedId, crashed: crashedItems)
         } else { view.updateSegments([], active: nil) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
@@ -1250,9 +1255,7 @@ public final class SidebarView: NSView {
         onSelect?(row)
     }
 
-    // R1/D2: a row's ✕ or middle click acts on the row that showed it (a split member closes
-    // only itself until U25c draws splits as one row); the row-less ⌘W resolves the split in
-    // the adapter.
+    // Why not close a member: the split is one row and ⌘W closes the split in the adapter.
     public enum RowCloseAction { case close, archive }
 
     public func closeTarget(for id: String) -> (id: String, action: RowCloseAction)? {

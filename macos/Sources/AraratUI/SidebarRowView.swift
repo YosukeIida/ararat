@@ -2,6 +2,21 @@ import AppKit
 import AraratKit
 
 @MainActor
+private final class SplitSegmentButton: NSButton {
+    weak var rowView: SidebarRowView?
+    let selectionFill = CALayer()
+    override func layout() {
+        super.layout()
+        selectionFill.frame = bounds.insetBy(dx: 4, dy: 4)
+    }
+    override func mouseDown(with event: NSEvent) { rowView?.mouseDown(with: event) }
+    override func mouseDragged(with event: NSEvent) { rowView?.mouseDragged(with: event) }
+    override func mouseUp(with event: NSEvent) { rowView?.mouseUp(with: event) }
+    override func otherMouseUp(with event: NSEvent) { rowView?.otherMouseUp(with: event) }
+    override func menu(for event: NSEvent) -> NSMenu? { rowView?.menu(for: event) }
+}
+
+@MainActor
 final class SidebarRowView: NSView {
     private(set) var row: Row
     var acceptsKeyboardFocus = true { didSet { refreshHover() } }
@@ -89,8 +104,8 @@ final class SidebarRowView: NSView {
         segments.translatesAutoresizingMaskIntoConstraints = false
         addSubview(segments)
         NSLayoutConstraint.activate([
-            segments.leadingAnchor.constraint(equalTo: fill.leadingAnchor),
-            segments.trailingAnchor.constraint(equalTo: fill.trailingAnchor),
+            segments.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            segments.trailingAnchor.constraint(equalTo: fill.trailingAnchor, constant: -4),
             segments.centerYAnchor.constraint(equalTo: centerYAnchor),
             segments.heightAnchor.constraint(equalToConstant: 36),
         ])
@@ -191,22 +206,29 @@ final class SidebarRowView: NSView {
         noteFocusRingMaskChanged()
     }
 
-    func updateSegments(_ members: [Row], active: String?) {
+    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) {
         segmentRows = members
         segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
         segments.isHidden = members.isEmpty
-        icon.isHidden = !members.isEmpty
         title.isHidden = !members.isEmpty
         for (index, member) in members.enumerated() {
-            let button = NSButton(title: member.title, target: self, action: #selector(segmentClicked(_:)))
+            let button = SplitSegmentButton(title: member.title, target: self, action: #selector(segmentClicked(_:)))
+            button.rowView = self
             button.tag = index
             button.isBordered = false
             button.wantsLayer = true
-            button.layer?.cornerRadius = 8
-            button.layer?.backgroundColor = member.id == active ? NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor : NSColor.clear.cgColor
-            button.setAccessibilityLabel(member.title)
+            button.selectionFill.name = "split-segment-fill"
+            button.selectionFill.cornerRadius = 8
+            button.selectionFill.backgroundColor = member.id == active ? NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor : NSColor.clear.cgColor
+            button.layer?.insertSublayer(button.selectionFill, at: 0)
+            let name = member.title.isEmpty ? (member.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : member.title
+            button.setAccessibilityLabel("Pane \(index + 1) of \(members.count): \(name)")
+            button.setAccessibilityValue(member.id == active ? "Selected" : "")
+            button.setAccessibilitySelected(member.id == active)
+            button.alphaValue = member.unloaded || crashed.contains(member.id) ? 0.45 : 1
             segments.addArrangedSubview(button)
         }
+        if !members.isEmpty { setAccessibilityLabel("Split: " + members.map { $0.title.isEmpty ? ($0.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : $0.title }.joined(separator: ", ")) }
     }
 
     @objc private func segmentClicked(_ sender: NSButton) {
@@ -323,7 +345,9 @@ final class SidebarRowView: NSView {
         if event.clickCount == 2 && pinned && row.kind == .tab { onRename?(row); return }
         trackingPress = true
         pressed = true
-        onDragPress?(row, event.locationInWindow)
+        let point = segments.convert(event.locationInWindow, from: nil)
+        let index = segments.isHidden ? nil : segments.arrangedSubviews.firstIndex { $0.frame.contains(point) }
+        onDragPress?(index.flatMap { segmentRows.indices.contains($0) ? segmentRows[$0] : nil } ?? row, event.locationInWindow)
     }
     override func mouseDragged(with event: NSEvent) {
         onDragMove?(event.locationInWindow)
@@ -334,7 +358,12 @@ final class SidebarRowView: NSView {
         trackingPress = false
         pressed = false
         let handled = onDragRelease?(event.locationInWindow) ?? false
-        if activate && !handled { action(row) }
+        if activate && !handled {
+            let point = segments.convert(event.locationInWindow, from: nil)
+            if !segments.isHidden, let index = segments.arrangedSubviews.firstIndex(where: { $0.frame.contains(point) }), segmentRows.indices.contains(index) {
+                action(segmentRows[index])
+            } else { action(row) }
+        }
     }
     override func otherMouseUp(with event: NSEvent) {
         if event.buttonNumber == 2 && acceptsKeyboardFocus && (row.kind == .tab || (row.kind == .split && !pinned)) { onClose?(row.id) }
