@@ -32,7 +32,14 @@ final class DownloadsButton: SidebarDockButton {
         scheduleHover(task)
     }
     override func mouseExited(with event: NSEvent) { hoverTask?.cancel(); hoverTask = nil }
-    func checkHover() { scheduleHover(DispatchWorkItem { [weak self] in self?.onHover?() }) }
+    func checkHover(_ fired: @escaping () -> Void) {
+        FileHandle.standardError.write(Data("ararat-trace: downloads hover seam: entered\n".utf8))
+        scheduleHover(DispatchWorkItem { [weak self] in
+            FileHandle.standardError.write(Data("ararat-trace: downloads hover seam: timer fired\n".utf8))
+            self?.onHover?()
+            fired()
+        })
+    }
     override func layout() { super.layout(); updateRing() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateRing() }
     private func updateRing() {
@@ -73,9 +80,11 @@ final class DownloadsPopover: NSObject {
         self.model = model; self.anchor = anchor
         super.init()
         popover.behavior = .transient
+        popover.animates = false
         stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 0
         library.target = self; library.action = #selector(open)
         library.bezelStyle = .inline; library.setAccessibilityLabel("Open Library")
+        library.font = .systemFont(ofSize: 13)
         stack.addArrangedSubview(library)
         library.heightAnchor.constraint(equalToConstant: 40).isActive = true
         let controller = NSViewController()
@@ -88,6 +97,19 @@ final class DownloadsPopover: NSObject {
     }
     var isShown: Bool { popover.isShown }
     var checkWindow: NSWindow? { popover.contentViewController?.view.window }
+    var checkMetrics: [String: Any] {
+        let content = popover.contentViewController?.view
+        content?.layoutSubtreeIfNeeded()
+        return ["window_frame": NSStringFromRect(checkWindow?.frame ?? .zero),
+                "content_frame": NSStringFromRect(content?.frame ?? .zero), "content_bounds": NSStringFromRect(content?.bounds ?? .zero),
+                "window_content_frame": NSStringFromRect(checkWindow?.contentView?.frame ?? .zero),
+                "window_content_bounds": NSStringFromRect(checkWindow?.contentView?.bounds ?? .zero),
+                "backing_scale": checkWindow?.backingScaleFactor ?? 0,
+                "content_width": content?.bounds.width ?? 0, "content_alpha": content?.alphaValue ?? 0,
+                "layer_transform": String(describing: content?.layer?.presentation()?.transform),
+                "rows": rows.mapValues { NSStringFromRect($0.frame) },
+                "title_font": rows.values.first?.titleFontSize ?? 0, "title_height": rows.values.first?.titleHeight ?? 0]
+    }
     func close() { popover.performClose(nil) }
     static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
     func show(focus: Bool = false) {
@@ -141,6 +163,8 @@ final class DownloadRowView: NSStackView {
     private let name = NSTextField(labelWithString: "")
     private let status = NSTextField(labelWithString: "")
     private let actions = NSStackView()
+    var titleFontSize: CGFloat { name.font?.pointSize ?? 0 }
+    var titleHeight: CGFloat { name.bounds.height }
     var moveRow: ((Int) -> Void)?
     var tabRow: ((Bool) -> Void)?
     override var acceptsFirstResponder: Bool { true }
@@ -156,7 +180,7 @@ final class DownloadRowView: NSStackView {
         self.model = model
         super.init(frame: .zero)
         icon.setAccessibilityHidden(true)
-        name.lineBreakMode = .byTruncatingMiddle
+        name.font = .systemFont(ofSize: 13); name.lineBreakMode = .byTruncatingMiddle
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor; status.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -183,9 +207,13 @@ final class DownloadRowView: NSStackView {
         actionButtons.removeAll()
         for action in item.actions {
             let titles = ["open": "Open", "show": "Show in Finder", "cancel": "Cancel", "resume": "Resume", "remove": "Remove", "keep": "Keep", "discard": "Discard"]
-            guard let title = titles[action] else { continue }
+            let symbols = ["open": "arrow.up.forward.app", "show": "folder", "cancel": "xmark", "resume": "arrow.clockwise", "remove": "trash", "keep": "checkmark", "discard": "trash"]
+            guard let title = titles[action], let symbol = symbols[action] else { continue }
             let button = DownloadActionButton(title: title, target: self, action: #selector(performDownload(_:)))
             button.downloadID = item.id; button.downloadAction = action; button.bezelStyle = .inline
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            button.imagePosition = .imageOnly; button.toolTip = title
+            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.setAccessibilityLabel("\(title) \(item.name)")
             actionButtons.append(button)
             actions.addArrangedSubview(button)
