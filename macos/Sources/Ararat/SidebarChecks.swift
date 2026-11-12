@@ -407,17 +407,24 @@ extension Runtime {
                 return
             }
             trace("crash the renderer")
-            guard tab.checkCrashRenderer() else { finish(); return }
+            guard tab.checkCrashRenderer() else {
+                // The engine's gate refuses a crash for modes it does not know; say so rather
+                // than finishing with a bare false.
+                check.report("crashed_glyph", false)
+                trace("crash refused for \(check.unreadId)")
+                finish()
+                return
+            }
             step(11)
         case 11:
             guard let info = sidebar.rowCheckInfo(id: check.unreadId),
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.unreadId }), tab.crashed else {
                 let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == check.unreadId }
-                note("today-c not crashed yet: crashed=\(tab?.crashed ?? false) icon=\(sidebar.rowCheckInfo(id: check.unreadId)?.iconDescription ?? "-")")
+                note("today-c not crashed yet: tab crashed=\(tab?.crashed ?? false) crashedItems=\(adapter?.crashedItems.sorted() ?? []) icon=\(sidebar.rowCheckInfo(id: check.unreadId)?.iconDescription ?? "-") opacity=\(sidebar.rowCheckInfo(id: check.unreadId)?.opacity ?? -1)")
                 return
             }
             guard info.iconDescription == "Crashed", abs(info.opacity - 0.45) < 0.01 else {
-                note("crashed glyph is \(info.iconDescription ?? "-") at \(info.opacity)"); return
+                note("crashed glyph is \(info.iconDescription ?? "-") at \(info.opacity), crashedItems=\(adapter?.crashedItems.sorted() ?? [])"); return
             }
             check.report("crashed_glyph", true)
             _ = capture("crashed")
