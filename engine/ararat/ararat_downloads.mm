@@ -14,12 +14,16 @@
 #include "chrome/browser/download/bubble/download_bubble_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/download/download_bubble_security_view_info.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/browser/download_item_utils.h"
 
 namespace {
 using Item = download::DownloadItem;
@@ -41,8 +45,9 @@ NSArray* Actions(Item* item, DownloadItemModel& model) {
     for (auto command : {DownloadCommands::KEEP, DownloadCommands::BYPASS_DEEP_SCANNING, DownloadCommands::DISCARD}) {
       bool offered = (info.has_primary_button() && info.primary_button().command == command) ||
                      (info.has_secondary_button() && info.secondary_button().command == command);
-      if (offered && commands.IsCommandEnabled(command) && ![actions containsObject:command == DownloadCommands::DISCARD ? @"discard" : @"keep"])
-        [actions addObject:command == DownloadCommands::DISCARD ? @"discard" : @"keep"];
+      NSString* action = command == DownloadCommands::DISCARD ? @"discard" : @"keep";
+      if (offered && commands.IsCommandEnabled(command) && ![actions containsObject:action])
+        [actions addObject:action];
     }
     return actions;
   }
@@ -56,7 +61,7 @@ NSArray* Actions(Item* item, DownloadItemModel& model) {
 
 class AraratDownloads::Impl : public content::DownloadManager::Observer, public Item::Observer {
  public:
-  Impl(Profile* profile, void (^changed)(NSArray*, NSString*))
+  Impl(Profile* profile, void (^changed)(NSArray*, NSString*, BrowserWindowInterface*))
       : profile_(profile), manager_(profile->GetDownloadManager()), changed_([changed copy]) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     manager_->AddObserver(this);
@@ -78,7 +83,7 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
   void Observe(Item* item) {
     if (items_.emplace(item->GetGuid(), item).second) item->AddObserver(this);
   }
-  void Notify(NSString* new_guid = nil) { if (changed_) changed_(Snapshot(), new_guid); }
+  void Notify(NSString* new_guid = nil, BrowserWindowInterface* origin = nullptr) { if (changed_) changed_(Snapshot(), new_guid, origin); }
   void OnDownloadCreated(content::DownloadManager*, Item* item) override {
     bool fresh = !items_.contains(item->GetGuid());
     Observe(item);
@@ -88,15 +93,19 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
   }
   void OnManagerInitialized() override { Notify(); }
   void ManagerGoingDown(content::DownloadManager*) override { Clear(); Notify(); }
-void OnDownloadUpdated(Item* item) override {
-  NSString* identifier = nil;
-  if (item->GetState() == Item::CANCELLED) pending_.erase(item->GetGuid());
-  else if (pending_.contains(item->GetGuid()) && !item->GetTargetFilePath().empty() && DownloadItemModel(item).ShouldShowInUi()) {
-    pending_.erase(item->GetGuid());
-    identifier = base::SysUTF8ToNSString(item->GetGuid());
+  void OnDownloadUpdated(Item* item) override {
+    NSString* identifier = nil;
+    BrowserWindowInterface* origin = nullptr;
+    if (item->GetState() == Item::CANCELLED) pending_.erase(item->GetGuid());
+    else if (pending_.contains(item->GetGuid()) && !item->GetTargetFilePath().empty() && DownloadItemModel(item).ShouldShowInUi()) {
+      pending_.erase(item->GetGuid());
+      identifier = base::SysUTF8ToNSString(item->GetGuid());
+      auto* contents = content::DownloadItemUtils::GetWebContents(item);
+      if (contents) origin = GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(contents);
+      if (origin && origin->GetTabStripModel()->GetActiveWebContents() != contents) origin = nullptr;
+    }
+    Notify(identifier, origin);
   }
-  Notify(identifier);
-}
   void OnDownloadRemoved(Item* item) override {
     item->RemoveObserver(this);
     pending_.erase(item->GetGuid());
@@ -125,6 +134,7 @@ void OnDownloadUpdated(Item* item) override {
         @"start": @(item->GetStartTime().InSecondsFSinceUnixEpoch()),
         @"received": @(item->GetReceivedBytes()), @"total": @(item->GetTotalBytes()),
         @"interrupt": @(item->GetLastReason()), @"paused": @(item->IsPaused()),
+        @"running": @(item->GetState() == Item::IN_PROGRESS && !item->IsPaused() && !model.IsDangerous() && !model.IsInsecure() && !IsScanning(item)),
         @"insecure": @(item->GetInsecureDownloadStatus()),
         @"scanning": @(IsScanning(item)),
         @"status": base::SysUTF16ToNSString(model.GetStatusText()),
@@ -163,10 +173,10 @@ void OnDownloadUpdated(Item* item) override {
   content::DownloadManager* manager_;
   std::map<std::string, Item*> items_;
   std::set<std::string> pending_;
-  void (^changed_)(NSArray*, NSString*);
+  void (^changed_)(NSArray*, NSString*, BrowserWindowInterface*);
 };
 
-AraratDownloads::AraratDownloads(Profile* profile, void (^changed)(NSArray*, NSString*)) : impl_(std::make_unique<Impl>(profile, changed)) {}
+AraratDownloads::AraratDownloads(Profile* profile, void (^changed)(NSArray*, NSString*, BrowserWindowInterface*)) : impl_(std::make_unique<Impl>(profile, changed)) {}
 AraratDownloads::~AraratDownloads() = default;
 NSArray* AraratDownloads::Snapshot() { return impl_->Snapshot(); }
 bool AraratDownloads::Perform(NSString* guid, NSString* action) { return impl_->Perform(guid, action); }

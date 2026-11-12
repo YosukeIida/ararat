@@ -2243,14 +2243,22 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   downloads_.reset();
   if (browser_ && !browser_->GetProfile()->IsOffTheRecord()) {
     __weak ARWindowHost* weakHost = self;
-    downloads_ = std::make_unique<AraratDownloads>(browser_->GetProfile(), ^(NSArray* items, NSString* identifier) {
+    downloads_ = std::make_unique<AraratDownloads>(browser_->GetProfile(), ^(NSArray* items, NSString* identifier, BrowserWindowInterface* origin) {
       ARWindowHost* host = weakHost;
-      if ([host.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:)])
-        [host.delegate windowHost:host downloadsChanged:items newDownload:identifier];
+      BOOL flight = NO;
+      if (identifier && host) {
+        bool shown = false;
+        for (AraratWindowHostCore* candidate : AraratHosts()) {
+          if (origin && candidate->window() && candidate->window()->browser() == origin && !candidate->popup() && !candidate->closed()) { shown = true; break; }
+        }
+        flight = shown ? host->browser_ == origin : host.window.isKeyWindow;
+      }
+      if ([host.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:flight:)])
+        [host.delegate windowHost:host downloadsChanged:items newDownload:identifier flight:flight];
     });
   }
-  if ([self.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:)])
-    [self.delegate windowHost:self downloadsChanged:[self downloads] newDownload:nil];
+  if ([self.delegate respondsToSelector:@selector(windowHost:downloadsChanged:newDownload:flight:)])
+    [self.delegate windowHost:self downloadsChanged:[self downloads] newDownload:nil flight:NO];
 }
 
 - (NSArray*)downloads { return downloads_ ? downloads_->Snapshot() : @[]; }

@@ -36,7 +36,9 @@ public final class SidebarView: NSView {
     private(set) public var libraryOpen = false
     private var libraryNeedsFocus = false
     private let library = LibraryView(frame: .zero)
-    private let libraryButton = SidebarDockButton()
+    let libraryButton = DownloadsButton()
+    private var downloadsModel: DownloadsModel?
+    private var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
     private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
@@ -198,6 +200,50 @@ public final class SidebarView: NSView {
 
     @objc public func toggleLibrary(_ sender: Any? = nil) { setLibraryOpen(!libraryOpen) }
 
+    public func setDownloadsModel(_ model: DownloadsModel) {
+        downloadsModel = model
+        let popover = DownloadsPopover(model: model, anchor: libraryButton)
+        popover.openLibrary = { [weak self] in self?.setLibraryOpen(true) }
+        downloadsPopover = popover
+        libraryButton.onHover = { [weak self] in self?.downloadsPopover?.show() }
+        model.onChange = { [weak self, weak model] in
+            guard let self, let model else { return }
+            self.libraryButton.progress = model.progress
+            if !model.hasSessionDownloads { self.downloadsPopover?.close() }
+            else if self.downloadsPopover?.isShown == true { self.downloadsPopover?.show() }
+        }
+        libraryButton.progress = model.progress
+    }
+
+    @objc private func libraryButtonClicked(_ sender: Any?) {
+        if downloadsModel?.hasSessionDownloads == true { downloadsPopover?.show(focus: true) }
+        else { toggleLibrary(sender) }
+    }
+
+    public func flyDownload(from source: NSView, name: String) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let window, source.window === window, let root = window.contentView else { return }
+        let origin = root.convert(NSPoint(x: source.bounds.midX, y: source.bounds.midY), from: source)
+        let destination = root.convert(NSPoint(x: libraryButton.bounds.midX, y: libraryButton.bounds.midY), from: libraryButton)
+        let icon = NSImageView(frame: NSRect(x: origin.x - 12, y: origin.y - 12, width: 24, height: 24))
+        icon.image = downloadIcon(name)
+        icon.setAccessibilityHidden(true)
+        icon.wantsLayer = true
+        root.addSubview(icon, positioned: .above, relativeTo: nil)
+        icon.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        icon.layer?.position = destination
+        let path = CGMutablePath()
+        path.move(to: origin)
+        path.addQuadCurve(to: destination, control: CGPoint(x: (origin.x + destination.x) / 2, y: max(origin.y, destination.y) + 80))
+        let flight = CAKeyframeAnimation(keyPath: "position")
+        flight.path = path; flight.duration = 0.4
+        flight.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { icon.removeFromSuperview() }
+        icon.layer?.add(flight, forKey: "flight")
+        CATransaction.commit()
+    }
+
     public func searchArchive(_ query: String) -> Int {
         library.setSearchQuery(query)
         return library.filteredEntries.count
@@ -217,7 +263,7 @@ public final class SidebarView: NSView {
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
         mainColumn.isHidden = open || createSpaceOpen
-        libraryButton.setAccessibilityValue(open ? 1 : 0)
+        if libraryButton.progress == .none { libraryButton.setAccessibilityValue(open ? 1 : 0) }
         updateDockSelection()
         if open { window?.makeFirstResponder(self) }
         refreshLook()
@@ -635,7 +681,7 @@ public final class SidebarView: NSView {
         libraryFill.cornerRadius = 6
         libraryButton.layer?.insertSublayer(libraryFill, at: 0)
         libraryButton.target = self
-        libraryButton.action = #selector(toggleLibrary(_:))
+        libraryButton.action = #selector(libraryButtonClicked(_:))
         libraryButton.toolTip = "Library"
         libraryButton.setAccessibilityLabel("Library")
         libraryButton.translatesAutoresizingMaskIntoConstraints = false

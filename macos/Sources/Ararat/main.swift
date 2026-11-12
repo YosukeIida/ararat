@@ -822,6 +822,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let downloads = DownloadsModel()
+    sidebar.setDownloadsModel(downloads)
     let container = SidebarContainerView(sidebar: sidebar, page: card)
     typealias Factory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> UnsafeMutableRawPointer?
     let factory = unsafeBitCast(createSymbol, to: Factory.self)
@@ -831,6 +833,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
       throw NSError(domain: "Ararat", code: 3)
     }
     self.host = host
+    downloads.onAction = { [weak host] action, identifier in
+      host?.performDownloadAction(action, identifier: identifier) ?? false
+    }
+    adapter.onDownloads = { [weak sidebar, weak card] items, newDownload, flight in
+      downloads.update(items)
+      if flight, let newDownload, let card { sidebar?.flyDownload(from: card, name: downloads.items.first(where: { $0.id == newDownload })?.name ?? "") }
+    }
     observeClose(host)
     self.adapter = adapter
     self.workspace = workspace

@@ -5,10 +5,11 @@
 #include <memory>
 
 class Profile;
+class BrowserWindowInterface;
 
 class AraratDownloads {
  public:
-  AraratDownloads(Profile* profile, void (^changed)(NSArray*, NSString*));
+  AraratDownloads(Profile* profile, void (^changed)(NSArray*, NSString*, BrowserWindowInterface*));
   ~AraratDownloads();
   NSArray* Snapshot();
   bool Perform(NSString* guid, NSString* action);

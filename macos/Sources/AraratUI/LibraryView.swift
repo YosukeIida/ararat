@@ -424,7 +424,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     }
 }
 
-final class SidebarDockButton: NSButton {
+class SidebarDockButton: NSButton {
     var previousTarget: (() -> NSView?)?
     var previousFocus: (() -> Void)?
     override func keyDown(with event: NSEvent) {
