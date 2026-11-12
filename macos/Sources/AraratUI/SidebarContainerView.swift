@@ -28,6 +28,17 @@ public final class SidebarContainerView: NSView {
     private var findPageRect: NSRect?
     private let panel = SidebarPanelView()
     private let pageMask = CAShapeLayer()
+    private let privateBackdrop = NSView()
+    // U26f: a private window is always dark, and a black mask sits behind the page card.
+    public var privateWindow = false {
+        didSet {
+            privateBackdrop.isHidden = !privateWindow
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
+    }
+    public var privateMaskVisible: Bool { privateWindow && !privateBackdrop.isHidden }
+    public var privateMaskColor: NSColor? { privateBackdrop.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
     public let resizeHandle: SidebarResizeHandle
     private var state = SidebarState()
     private var localMonitor: Any?
@@ -142,6 +153,10 @@ public final class SidebarContainerView: NSView {
         panel.wantsLayer = true
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
+        privateBackdrop.wantsLayer = true
+        privateBackdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.92).cgColor
+        privateBackdrop.isHidden = true
+        addSubview(privateBackdrop, positioned: .below, relativeTo: page)
         toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
         toastLabel.textColor = .white
         toastLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -336,6 +351,7 @@ public final class SidebarContainerView: NSView {
 
     override public func layout() {
         super.layout()
+        privateBackdrop.frame = bounds
         if pageFullscreen {
             panel.isHidden = true
             page.frame = bounds
