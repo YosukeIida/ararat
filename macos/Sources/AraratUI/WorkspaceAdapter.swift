@@ -329,6 +329,21 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().settings().newTabRowShown }, completion: completion)
     }
 
+    // U25b's row switch written from the Appearance pane (U27d): the core record the sidebar
+    // reads, so a second window reads the same value back.
+    public func setNewTabRowShown(_ shown: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setNewTabRowShown(windowId: self.windowID, shown: shown) }, completion: completion)
+    }
+
+    // U27d: the Appearance pane's Tooltips switch, read back on every open like the row above.
+    public func tooltipsShown(completion: @escaping Completion<Bool>) {
+        enqueue({ try self.opened().settings().tooltipsShown }, completion: completion)
+    }
+
+    public func setTooltipsShown(_ shown: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setTooltipsShown(windowId: self.windowID, shown: shown) }, completion: completion)
+    }
+
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

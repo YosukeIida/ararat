@@ -47,7 +47,8 @@ extension SettingsPane {
 enum SettingsRegistry {
     static let panes: [SettingsPane] = [
         SettingsPane(id: .general, title: "General", icon: "gearshape", subtitle: "", page: nil, rows: { _ in [] }),
-        SettingsPane(id: .appearance, title: "Appearance", icon: "paintpalette", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .appearance, title: "Appearance", icon: "paintpalette", subtitle: "How the window looks.",
+                     page: .appearance, rows: appearanceRows),
         SettingsPane(id: .websites, title: "Websites", icon: "globe", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .tabs, title: "Tabs", icon: "square.on.square", subtitle: "Make room for your tabs.",
                      page: .tabs, rows: tabsRows),
@@ -83,6 +84,17 @@ enum SettingsRegistry {
                            subtitle: "Reset the sidebar to its default width of 240 pt."),
          SettingsModel.Row(id: "archive-after", pane: .tabs, title: "Archive Today's tabs after",
                            subtitle: model.archiveSubtitle)]
+    }
+
+    /// U27d: only the rows whose behaviour exists. Theme (U27k) and Page zoom (engine API) have
+    /// no rows here; a placeholder would be a dead control.
+    static func appearanceRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        [SettingsModel.Row(id: SettingsModel.lookRowId, pane: .appearance, title: "Look",
+                           subtitle: "Customize each space in Spaces"),
+         SettingsModel.Row(id: SettingsModel.newTabRowId, pane: .appearance, title: "New Tab row",
+                           subtitle: "Show “New Tab” under Today"),
+         SettingsModel.Row(id: SettingsModel.tooltipsRowId, pane: .appearance, title: "Tooltips",
+                           subtitle: "Show a row’s full title on hover")]
     }
 
     static func shortcutsRows(_ model: SettingsModel) -> [SettingsModel.Row] { model.shortcuts }
@@ -128,6 +140,7 @@ extension SettingsModel.Page {
         case .tabs: .tabs
         case .shortcuts: .shortcuts
         case .airTraffic: .airTraffic
+        case .appearance: .appearance
         case .spaces, .space: .spaces
         }
     }

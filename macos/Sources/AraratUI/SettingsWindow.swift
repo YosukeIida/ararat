@@ -51,6 +51,7 @@ public final class SettingsWindowController: NSWindowController {
         model.readShortcuts()
         model.airTraffic.load()
         model.readSpaceScrollDirection()
+        model.readAppearance()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -71,6 +72,13 @@ public final class SettingsWindowController: NSWindowController {
     /// window holds the pane's value; the sidebar that pages spaces is in the browser window.
     public func setSpaceScrollHandler(_ handler: @escaping (SpaceScrollDirection) -> Void) {
         model.spaceScroll = handler
+    }
+
+    /// Hands the Appearance pane's written values to the windows (U27d): the New Tab row switch
+    /// to each sidebar, the Tooltips switch to each sidebar and header.
+    public func setAppearanceHandlers(newTabRow: @escaping (Bool) -> Void, tooltips: @escaping (Bool) -> Void) {
+        model.newTabRow = newTabRow
+        model.tooltips = tooltips
     }
 
     /// Opens the window on a pane for a check: the ordinary open path (a shown space opens its
@@ -218,6 +226,8 @@ private struct SettingsDetail: View {
                         SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
                     case .airTraffic:
                         SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
+                    case .appearance:
+                        SettingsAppearanceSection(model: model)
                     case .spaces:
                         VStack(spacing: SettingsMetrics.cardGap) {
                             VStack(spacing: 0) {
@@ -356,6 +366,73 @@ private struct SettingsDetail: View {
         default: break
         }
         return true
+    }
+}
+
+/// The Appearance pane (U27d): the board's rows whose behaviour exists. Look is a link row that
+/// pushes the shown space's page in Spaces; the Sidebar card holds the New Tab row switch and the
+/// Tooltips switch. Theme (U27k) and Page zoom (an engine API) have no rows, so the board's Pages
+/// section waits for them.
+private struct SettingsAppearanceSection: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(spacing: SettingsMetrics.cardGap) {
+            lookRow
+            SettingsGroupCard(heading: "Sidebar", marker: "card-sidebar") {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.newTabRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.newTabRowId)) {
+                    SettingsRowLabel(title: "New Tab row", subtitle: "Show “New Tab” under Today")
+                    Toggle("New Tab row", isOn: Binding(get: { model.newTabRowShown }, set: model.setNewTabRowShown))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.newTabRowSwitchMarker))
+                }.id(SettingsModel.newTabRowId)
+                SettingsCardRow(hit: model.highlighted == SettingsModel.tooltipsRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.tooltipsRowId)) {
+                    SettingsRowLabel(title: "Tooltips", subtitle: "Show a row’s full title on hover")
+                    Toggle("Tooltips", isOn: Binding(get: { model.tooltipsShown }, set: model.setTooltipsShown))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.tooltipsSwitchMarker))
+                }.id(SettingsModel.tooltipsRowId)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    /// The board's `.rw.lnk`: the row opens the space page, whose Look card holds the popover.
+    private var lookRow: some View {
+        Button { model.openLook() } label: {
+            HStack(spacing: 12) {
+                SettingsRowLabel(title: "Look", subtitle: "Customize each space in Spaces")
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Look, Customize each space in Spaces")
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == SettingsModel.lookRowId { SettingsHitFill() }
+            }
+        }
+        .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.lookRowId)))
+        .id(SettingsModel.lookRowId)
+    }
+}
+
+/// A grouped card row's title and its one-line caption (the boards' `.tx`).
+private struct SettingsRowLabel: View {
+    let title: String
+    let subtitle: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

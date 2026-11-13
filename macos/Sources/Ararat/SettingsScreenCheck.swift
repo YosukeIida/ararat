@@ -5,7 +5,7 @@ import AraratUI
 // U27a's settings screen checks: `--ararat-screen=settings-<pane>` opens the settings window on
 // that pane and reads it through marker views and the model (the VM's accessibility tree is empty
 // in process, as `SidebarChecks.swift` and `SiteControlsCheck.swift` say). One launch per pane
-// keeps a failure attributable: the four built panes name their own rows, and `settings-frame` and
+// keeps a failure attributable: the five built panes name their own rows, and `settings-frame` and
 // `settings-search` cover the frame and the search's keyboard model.
 @MainActor
 final class SettingsScreenCheck {
@@ -17,13 +17,14 @@ final class SettingsScreenCheck {
         case tabs = "settings-tabs"
         case shortcuts = "settings-shortcuts"
         case airTraffic = "settings-air-traffic"
+        case appearance = "settings-appearance"
         case spaces = "settings-spaces"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs: "tabs"
-            case .shortcuts, .airTraffic, .spaces: String(rawValue.dropFirst("settings-".count))
+            case .shortcuts, .airTraffic, .appearance, .spaces: String(rawValue.dropFirst("settings-".count))
             }
         }
 
@@ -46,6 +47,7 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .shortcuts, .airTraffic: ["rows"]
+            case .appearance: ["rows", "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
             }
         }
@@ -87,6 +89,11 @@ final class SettingsScreenCheck {
     // the reversed wheel must mirror.
     var wheelStart = ""
     var naturalDelta = 0
+    // U27d: the Today row the New Tab row's close-up is measured on, its frame before the switch,
+    // and whether the header tooltip showed before the Tooltips switch was turned off.
+    var appearanceTodayRow = ""
+    var appearanceRowY: CGFloat = 0
+    var appearanceTooltipShown = false
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -133,6 +140,8 @@ extension Runtime {
             values["header_progress"] = probe.headerProgress
             values["history_index"] = probe.historyIndex
             values["space_scroll"] = probe.spaceScrollDirectionLabel
+            values["new_tab_row_shown"] = probe.newTabRowShown
+            values["tooltips_shown"] = probe.tooltipsShown
             values["shown_space"] = snapshot.shownSpaceId as Any? ?? NSNull()
             values["markers"] = probe.markers(prefix: "").map { ["id": $0.id, "frame": rectFields($0.frame)] }
         }
@@ -238,10 +247,15 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
+                return
+            }
+            if mode == .appearance {
+                settingsAppearanceTick(probe, check: check, note: note, trace: trace, step: step,
+                                       end: end, finish: finish, capture: capture)
                 return
             }
             settingsPaneTick(mode, probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, pushSpace: settings.checkPushSpace)
@@ -480,9 +494,9 @@ extension Runtime {
                     note("rows missing: \(markers.filter { probe.marker($0) == nil })"); return
                 }
                 check.report("rows", true)
-            // The frame and search modes have their own phase machines, so a pane switch over
-            // every mode case leaves these two total without a dead default.
-            case .frame, .search:
+            // The frame and search modes have their own phase machines, and the appearance pane
+            // has its own below; leaving them here keeps the pane switch total.
+            case .frame, .search, .appearance:
                 return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }
@@ -500,6 +514,99 @@ extension Runtime {
             guard capture("space-page") else { end("capture", false); return }
             // U27c keeps going on the Spaces pane; the other panes are done here.
             if mode == .spaces { probe.openSpacesPane(); step(4); return }
+            finish()
+        default: break
+        }
+    }
+
+    // MARK: settings-appearance, U27d: the switches and the Look row
+
+    /// Phases 2 to 7 of `settings-appearance`: the pane's three rows; the New Tab row switch off
+    /// hiding the row (the Today rows close up by its 41 pt) and the reopened window reading it
+    /// back; the Tooltips switch off leaving a hovered header control silent; and the Look row
+    /// pushing the shown space's page.
+    private func settingsAppearanceTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
+                                        note: (String) -> Void, trace: (String) -> Void,
+                                        step: (Int) -> Void, end: (String, Bool) -> Void,
+                                        finish: () -> Void, capture: (String) -> Bool) {
+        let owner = root ?? self
+        switch check.phase {
+        case 2:
+            let markers = [SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId]
+                .map(SettingsModel.rowMarker)
+            let rows = markers.map { probe.marker($0) }
+            let switches = [SettingsModel.newTabRowSwitchMarker, SettingsModel.tooltipsSwitchMarker].map { probe.marker($0) }
+            guard let look = rows[0], let newTab = rows[1], let tips = rows[2],
+                  switches.allSatisfy({ $0 != nil }) else {
+                note("appearance rows \(rows.map { $0 != nil }) switches \(switches.map { $0 != nil })")
+                return
+            }
+            // The board's order: the Look link, then the Sidebar group's two switches.
+            check.report("rows", look.maxY <= newTab.minY + 1 && newTab.maxY <= tips.minY + 1
+                && switches.allSatisfy { ($0?.width ?? 0) > 0 && ($0?.height ?? 0) >= 16 })
+            guard let today = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first?.id,
+                  let before = sidebar?.checkRowFrame(today) else {
+                note("no Today row to measure the New Tab row's close-up on"); return
+            }
+            check.appearanceTodayRow = today
+            check.appearanceRowY = before.minY
+            trace("New Tab row off, Today row at \(before.minY)")
+            probe.setNewTabRowShown(false)
+            step(3)
+        case 3:
+            guard probe.newTabRowShown == false, let sidebar, sidebar.newTabRowForCheck == nil else {
+                note("switch off=\(!probe.newTabRowShown) row=\(sidebar?.newTabRowForCheck != nil)"); return
+            }
+            guard let after = sidebar.checkRowFrame(check.appearanceTodayRow)?.minY else {
+                note("the measured Today row is gone"); return
+            }
+            let delta = check.appearanceRowY - after
+            guard abs(delta - probe.newTabRowHeight) < 1 else {
+                // A reload that has not laid out yet reads as no movement; the wait names it.
+                note("rows moved \(delta), want \(probe.newTabRowHeight)"); return
+            }
+            trace("New Tab row gone, rows closed up by \(delta)")
+            check.report("new_tab_hidden", true)
+            trace("closing the settings window")
+            owner.settings?.window?.performClose(nil)
+            step(4)
+        case 4:
+            guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
+            trace("reopening the settings window")
+            owner.settings?.checkOpen(paneID: "appearance", shownSpaceID: snapshot.shownSpaceId)
+            step(5)
+        case 5:
+            guard probe.isVisible, probe.pageID == "appearance", probe.newTabRowShown == false else {
+                note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) switch=\(probe.newTabRowShown)"); return
+            }
+            // The reopened window reads the record, and the sidebar still has the row hidden.
+            check.report("new_tab_reopen", probe.marker(SettingsModel.rowMarker(SettingsModel.newTabRowId)) != nil
+                && sidebar?.newTabRowForCheck == nil)
+            // The gate is proved against a tooltip that did show: the header's Back is asked
+            // through the same path a hover uses.
+            let shown = owner.container?.header.checkTooltip("back")
+            guard let shown, shown.0 != nil else {
+                note("the header tooltip did not show before the switch"); return
+            }
+            trace("header tooltip on: \(shown.0 ?? "-") \(shown.1)")
+            check.appearanceTooltipShown = true
+            probe.setTooltipsShown(false)
+            step(6)
+        case 6:
+            guard probe.tooltipsShown == false else { note("the switch is still on"); return }
+            let hidden = owner.container?.header.checkTooltip("back")
+            trace("header tooltip off: \(hidden?.0 ?? "nil") \(hidden?.1 ?? [])")
+            check.report("tooltips_off", check.appearanceTooltipShown && hidden?.0 == nil)
+            trace("pushing the space page from the Look row")
+            probe.openLook()
+            step(7)
+        case 7:
+            guard let shown = snapshot.shownSpaceId, probe.pageID == "space-" + shown else {
+                note("page after the Look row: \(probe.pageID), want space-\(snapshot.shownSpaceId ?? "-")"); return
+            }
+            check.report("look_to_space", probe.highlightedRowID == SettingsModel.lookRowId
+                && probe.marker(SettingsModel.rowMarker(SettingsModel.lookRowId)) != nil)
+            guard capture("appearance") else { end("capture", false); return }
             finish()
         default: break
         }

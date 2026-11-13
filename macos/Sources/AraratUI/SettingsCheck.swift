@@ -63,6 +63,18 @@ public final class SettingsCheckProbe {
     /// The Spaces pane itself, so the check can return to it after pushing a space page.
     public func openSpacesPane() { model.navigate(.spaces) }
 
+    // MARK: U27d, the Appearance pane
+
+    /// The two switches, and the Look row's page push, so the check drives the same setters the
+    /// pane's bindings call.
+    public var newTabRowShown: Bool { model.newTabRowShown }
+    public var tooltipsShown: Bool { model.tooltipsShown }
+    public func setNewTabRowShown(_ value: Bool) { model.setNewTabRowShown(value) }
+    public func setTooltipsShown(_ value: Bool) { model.setTooltipsShown(value) }
+    public func openLook() { model.openLook() }
+    /// The New Tab row's height, which the Today rows close up by when it is hidden (T4).
+    public var newTabRowHeight: CGFloat { SidebarMetrics.newTabRowHeight }
+
     // MARK: frames
 
     private var content: NSView? { window.contentView }

@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case tabs, shortcuts, airTraffic, spaces, space(String) }
+    enum Page: Hashable { case tabs, shortcuts, airTraffic, appearance, spaces, space(String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -47,6 +47,13 @@ public final class SettingsModel: ObservableObject {
     /// Hands a written direction to the browser windows' sidebars; the app sets it, the pane and
     /// the settings window read `spaceScrollDirection` and the paging pipeline directly.
     var spaceScroll: (SpaceScrollDirection) -> Void = { _ in }
+    /// U27d, the Appearance pane: the New Tab row switch and the Tooltips switch, both read from
+    /// the workspace's settings record on open and written through it. The app hands each written
+    /// value to every window that shows the workspace, as it does the scroll direction.
+    @Published var newTabRowShown = true
+    @Published var tooltipsShown = true
+    var newTabRow: (Bool) -> Void = { _ in }
+    var tooltips: (Bool) -> Void = { _ in }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -132,6 +139,14 @@ public final class SettingsModel: ObservableObject {
     public static let airTrafficCardId = "air-traffic"
     /// U27c's card in the Spaces pane: the search result and the card share this id.
     public static let spaceScrollDirectionCardId = "space-scroll-direction"
+    /// U27d's rows in the Appearance pane: the Look link, and the two switches in the board's
+    /// "Sidebar" card. The search result and the row share each id.
+    public static let lookRowId = "look"
+    public static let newTabRowId = "new-tab-row"
+    public static let tooltipsRowId = "tooltips"
+    /// The switches themselves, so a check can find the pair the board draws.
+    public static let newTabRowSwitchMarker = "new-tab-row-switch"
+    public static let tooltipsSwitchMarker = "tooltips-switch"
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -266,6 +281,56 @@ public final class SettingsModel: ObservableObject {
             self.spaceScrollDirection = direction
         }
     }
+
+    // MARK: U27d, the Appearance pane
+
+    /// Reads the New Tab row switch and the Tooltips switch. The window calls both on every open,
+    /// so the pane shows the record's values rather than the model's last ones.
+    func readAppearance() {
+        let generation = contextGeneration
+        adapter.newTabRowShown { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let shown) = result else { return }
+            self.newTabRowShown = shown
+        }
+        adapter.tooltipsShown { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let shown) = result else { return }
+            self.tooltipsShown = shown
+        }
+    }
+
+    /// Writes the New Tab row switch and hands the stored value to the sidebars. A refused write
+    /// leaves the switch where it was and shows the reason.
+    func setNewTabRowShown(_ value: Bool) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setNewTabRowShown(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.newTabRowShown = value
+            self.newTabRow(value)
+        }
+    }
+
+    /// Writes the Tooltips switch the same way: the stored value reaches every window's sidebar
+    /// and header at once, so a tooltip already waiting is dropped.
+    func setTooltipsShown(_ value: Bool) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setTooltipsShown(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.tooltipsShown = value
+            self.tooltips(value)
+        }
+    }
+
+    /// The Appearance pane's Look row: it opens the shown space's page in the Spaces pane, where
+    /// the Look card's popover sits (the board's link row, E-Appearance).
+    func openLook() {
+        guard let space = archiveSpace else { navigate(.spaces); return }
+        navigate(.space(space.id), highlight: "look")
+    }
+
     /// Writes the direction and, once the core has it, shows it in the control and hands it to
     /// the sidebars. A refused write leaves the control where it was and shows the reason.
     func setSpaceScrollDirection(_ value: SpaceScrollDirection) {

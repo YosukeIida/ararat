@@ -1116,6 +1116,33 @@ fn the_new_tab_row_setting_reads_through_the_ffi_and_survives_reopen() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
+// U27d: the Appearance pane's Tooltips switch is the same synced workspace record, on by
+// default, and it survives a reopen.
+#[test]
+fn the_tooltips_setting_reads_through_the_ffi_and_survives_reopen() {
+    let path = fresh_db("tooltips-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.settings().tooltips_shown);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_tooltips_shown("one".into(), false).unwrap();
+    assert!(!store.settings().tooltips_shown);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.settings().tooltips_shown);
+    // The New Tab row's own value is untouched by the Tooltips record.
+    assert!(store.settings().new_tab_row_shown);
+    store.set_tooltips_shown("one".into(), true).unwrap();
+    assert!(store.settings().tooltips_shown);
+    drop(store);
+    // Back at the built-in value, no row restates it; both writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
 // U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
 // default, and it survives a reopen.
 #[test]

@@ -655,6 +655,17 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // U27d: the Appearance pane's Tooltips switch (D4). The same synced settings record as the
+    // New Tab row switch, so the pane writes it once and every window reads it back.
+    pub fn set_tooltips_shown(&self, window_id: String, shown: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_tooltips_shown(shown);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
         self.store.flush().map_err(Into::into)
     }
@@ -929,12 +940,14 @@ impl From<Look> for ararat_core::model::Look {
 pub struct WorkspaceSettings {
     pub new_tab_row_shown: bool,
     pub space_scroll_direction: SpaceScrollDirection,
+    pub tooltips_shown: bool,
 }
 
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
         Self { new_tab_row_shown: settings.new_tab_row_shown,
-            space_scroll_direction: settings.space_scroll_direction.into() }
+            space_scroll_direction: settings.space_scroll_direction.into(),
+            tooltips_shown: settings.tooltips_shown }
     }
 }
 

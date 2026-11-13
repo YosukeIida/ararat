@@ -255,6 +255,7 @@ void CheckGuards(int argc, const char** argv) {
           std::string_view(arg + 16) == "settings-tabs" ||
           std::string_view(arg + 16) == "settings-shortcuts" ||
           std::string_view(arg + 16) == "settings-air-traffic" ||
+          std::string_view(arg + 16) == "settings-appearance" ||
           std::string_view(arg + 16) == "settings-spaces") {
         valid_screen = true;
         g_check_slice = true;

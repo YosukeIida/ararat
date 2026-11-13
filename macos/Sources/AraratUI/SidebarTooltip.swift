@@ -7,6 +7,9 @@ final class SidebarTooltip {
     var modifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
     var explicitCaps: ((NSView) -> [String]?)?
     var pressedKeys: Set<String> = []
+    /// U27d (D4): the Appearance pane's Tooltips switch. Off, no tooltip is captured for a hover
+    /// and one already shown is dropped; the views keep their accessibility help.
+    var isEnabled = true { didSet { if !isEnabled { dismiss() } } }
     func clearPressed() { pressedKeys.removeAll(); keycaps.forEach { $0.setPressed(false) } }
     var menuTracking = false { didSet { dismiss() } }
     private let texts = NSMapTable<NSView, NSString>.weakToStrongObjects()
@@ -52,6 +55,7 @@ final class SidebarTooltip {
     }
 
     func update(target next: NSView?, point nextPoint: NSPoint?) {
+        guard isEnabled else { dismiss(); return }
         guard !menuTracking else { return }
         let now = clock()
         if point != nextPoint || target !== next { movedAt = now }
@@ -80,6 +84,7 @@ final class SidebarTooltip {
     isolated deinit { idleTimer?.invalidate() }
 
     func target(at hit: NSView?) -> NSView? {
+        guard isEnabled else { return nil }
         var view = hit
         while let current = view {
             if let text = current.toolTip {

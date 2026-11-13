@@ -588,13 +588,18 @@ pub enum SpaceScrollDirection { #[default] Natural, Reversed }
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
+// U27d's Tooltips switch (D4) rides here too, on by default, so it travels with the workspace
+// the way the New Tab row does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub new_tab_row_shown: bool,
     pub space_scroll_direction: SpaceScrollDirection,
+    pub tooltips_shown: bool,
 }
 
 impl Default for Settings {
-    fn default() -> Self { Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural } }
+    fn default() -> Self {
+        Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true }
+    }
 }

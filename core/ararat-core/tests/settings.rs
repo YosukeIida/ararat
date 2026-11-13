@@ -33,6 +33,36 @@ fn turning_the_new_tab_row_off_writes_one_synced_record_and_a_reset_deletes_it()
     assert_eq!(peer, ws);
 }
 
+// U27d: the Tooltips switch (D4) is the same synced settings record, on by default.
+#[test]
+fn tooltips_start_on_and_turning_them_off_writes_one_synced_record() {
+    assert!(Workspace::default().settings.tooltips_shown);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+    let mut ws = Workspace::default();
+    let ops = ws.set_tooltips_shown(false);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if !settings.tooltips_shown));
+    assert!(!ws.settings.tooltips_shown);
+    // The record reads back: a peer that applies it and a store that replays it agree.
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    assert!(ws.to_ops().iter().any(|op|
+        matches!(op, Op::Put(Record::Settings(Settings { tooltips_shown: false, .. })))));
+    // The same value again writes nothing; the New Tab row and the direction stay untouched.
+    let before = ws.clone();
+    assert!(ws.set_tooltips_shown(false).is_empty());
+    assert_eq!(ws, before);
+    assert!(ws.settings.new_tab_row_shown && ws.settings.space_scroll_direction == SpaceScrollDirection::Natural);
+    // Back to the built-in value: a tombstone, not a row restating the default.
+    let reset = ws.set_tooltips_shown(true);
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+    let mut peer = peer;
+    for op in &reset { peer.apply(op); }
+    assert_eq!(peer, ws);
+}
+
 // U27c: one sideways scroll direction for every device, Natural by default (D3).
 #[test]
 fn a_fresh_workspace_scrolls_naturally_and_stores_no_record_for_it() {
@@ -67,17 +97,19 @@ fn reversing_the_scroll_direction_writes_one_synced_record_and_a_reset_deletes_i
 }
 
 #[test]
-fn the_two_settings_share_one_synced_record() {
+fn the_three_settings_share_one_synced_record() {
     let mut ws = Workspace::default();
     ws.set_new_tab_row_shown(false);
     ws.set_space_scroll_direction(SpaceScrollDirection::Reversed);
+    ws.set_tooltips_shown(false);
     let ops = ws.to_ops();
     let records = ops.iter().filter(|op| matches!(op, Op::Put(Record::Settings(_)))).count();
     assert_eq!(records, 1);
-    // Turning the New Tab row back on keeps the reversed direction in the record.
+    // Turning the New Tab row back on keeps the reversed direction and the hidden tooltips.
     let ops = ws.set_new_tab_row_shown(true);
     assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
-        if settings.new_tab_row_shown && settings.space_scroll_direction == SpaceScrollDirection::Reversed));
+        if settings.new_tab_row_shown && settings.space_scroll_direction == SpaceScrollDirection::Reversed
+            && !settings.tooltips_shown));
 }
 
 // A value the core does not know is refused when the record is parsed, so a future device's

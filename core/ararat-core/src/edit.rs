@@ -1364,6 +1364,15 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // The Tooltips switch (U27d, D4): every sidebar and header tooltip. Same record as the New
+    // Tab row switch and the scroll direction, so the three travel together.
+    pub fn set_tooltips_shown(&mut self, shown: bool) -> Vec<Op> {
+        if self.settings.tooltips_shown == shown { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.tooltips_shown = shown;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())
