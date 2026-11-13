@@ -80,6 +80,7 @@ struct LookPopoverView: View {
     static let width: CGFloat = 288
     static let contentPadding: CGFloat = 11
     @ObservedObject var model: LookEditorModel
+    @State private var dragging: Int?
     var body: some View {
         VStack(spacing: 10) {
             ZStack(alignment: .top) {
@@ -103,15 +104,17 @@ struct LookPopoverView: View {
                 Text("\(model.look.colors.count) of 3 colours").font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 3) {
-                Button { model.presetPage = max(0, model.presetPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.presetPage == 0).accessibilityLabel("Previous presets")
+                Button { model.chipPage = max(0, model.chipPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.chipPage == 0).accessibilityLabel("Previous presets")
                 ForEach(0..<9) { index in
-                    let preset = model.presetPage * 9 + index
-                    Button { model.preset(preset) } label: {
-                        Circle().fill(LinearGradient(colors: LookEditorModel.presets[preset].map(Self.swatch), startPoint: .top, endPoint: .bottom))
+                    let chip = LookEditorModel.chipPages[model.chipPage][index]
+                    Button { model.applyChip(page: model.chipPage, index: index) } label: {
+                        Circle().fill(LinearGradient(colors: LookEditorModel.chipSwatch(model.chipPage, chip).map(Self.swatch),
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                             .frame(width: 20, height: 20).overlay(Circle().strokeBorder(.primary.opacity(0.15)))
-                    }.accessibilityLabel("\(model.presetPage == 0 ? "Solid colour" : "Gradient") preset \(index + 1)").accessibilityValue(model.look.colors == LookEditorModel.presets[preset] ? "Selected" : "Not selected")
+                    }.accessibilityLabel("\(model.chipPage == 0 ? "Split" : "Analogous") preset \(index + 1)")
+                        .accessibilityValue(model.isChipApplied(chip) ? "Selected" : "Not selected")
                 }
-                Button { model.presetPage = min(1, model.presetPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.presetPage == 1).accessibilityLabel("Next presets")
+                Button { model.chipPage = min(1, model.chipPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.chipPage == 1).accessibilityLabel("Next presets")
             }.buttonStyle(.plain)
             TransparencyControl(model: model)
             GrainControl(model: model)
@@ -125,41 +128,62 @@ struct LookPopoverView: View {
         }.accessibilityLabel(label + " appearance").accessibilityValue(model.look.appearance == mode ? "Selected" : "Not selected")
     }
     static func swatch(_ color: LookColor) -> Color { Color(red: color.red, green: color.green, blue: color.blue) }
+    /// The polar field: hue around the circle, lightness along the radius (white at the rim, black at
+    /// the centre, the mock's ramp), dots on an 8 pt lattice inside the 116 pt inscribed circle, one spoke
+    /// and one handle per colour. The handles share one radius and turn together.
     private var field: some View {
-        ZStack(alignment: .topLeading) {
-            Canvas { context, _ in
-                let active = model.look.colors[model.selected]
-                for row in 0...14 {
-                    for column in 0...20 {
-                        let x = Double(column) / 20, y = Double(row) / 14
-                        let point = LookEditorModel.fieldPoint(x: x, y: y)
-                        let radius = LookEditorModel.dotRadius(x: x, y: y, around: active)
-                        context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(Self.swatch(LookEditorModel.fieldColor(x: x, y: y))))
-                    }
+        ZStack {
+            Canvas { context, size in
+                let centre = LookEditorModel.fieldCentre
+                var spokes = Path()
+                for color in model.look.colors {
+                    spokes.move(to: centre)
+                    spokes.addLine(to: LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
+                }
+                context.stroke(spokes, with: .color(.primary.opacity(0.3)), lineWidth: 1)
+                let half = LookEditorModel.fieldDotSize / 2
+                for point in LookEditorModel.dotCentres() {
+                    let position = LookEditorModel.fieldPosition(point)
+                    context.fill(Path(ellipseIn: CGRect(x: point.x - half, y: point.y - half,
+                                                        width: LookEditorModel.fieldDotSize, height: LookEditorModel.fieldDotSize)),
+                                 with: .color(Self.swatch(LookEditorModel.fieldColor(x: position.x, y: position.y))))
                 }
             }.accessibilityHidden(true)
             ForEach(model.look.colors.indices, id: \.self) { index in
                 let color = model.look.colors[index]
-                Circle().fill(Self.swatch(color)).overlay(Circle().strokeBorder(.white, lineWidth: 3))
+                let big = dragging == index
+                Circle().fill(Self.swatch(color)).overlay(Circle().strokeBorder(.white, lineWidth: big ? 3 : 2))
                     .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
-                    .frame(width: 30, height: 30)
+                    .frame(width: big ? 32 : 24, height: big ? 32 : 24)
                     .position(LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
                     .onTapGesture { model.selected = index }
-                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("lookField")).onChanged { value in
-                        model.moveHandle(index, dx: value.translation.width / LookEditorModel.fieldSpan.width, dy: value.translation.height / LookEditorModel.fieldSpan.height)
-                    }.onEnded { _ in model.end() })
-                    .accessibilityElement().accessibilityLabel("Colour handle \(index + 1)")
-                    .accessibilityValue("Hue \(Int((color.x * 360).rounded())) degrees, lightness \(Int(((1 - color.y) * 100).rounded())) percent")
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("lookField")).onChanged { value in
+                        dragging = index
+                        model.movePoint(index, translatedBy: value.translation)
+                    }.onEnded { _ in dragging = nil; model.end() })
+                    .accessibilityElement()
+                    .accessibilityLabel(LookEditorModel.handleLabel(index: index, count: model.look.colors.count))
+                    .accessibilityValue(LookEditorModel.handleValue(color))
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { model.selected = index }
                     .accessibilityAdjustableAction { direction in
-                        let x = color.x + (direction == .increment ? 0.02 : -0.02)
-                        model.change { $0.colors[index] = LookEditorModel.color(x: x, y: color.y) }
+                        model.selected = index
+                        model.turnColours(by: direction == .increment ? LookEditorModel.hueKeyStep : -LookEditorModel.hueKeyStep)
                     }
-                    .accessibilityAction(named: "Lighter") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y - 0.02) } }
-                    .accessibilityAction(named: "Darker") { model.change { $0.colors[index] = LookEditorModel.color(x: color.x, y: color.y + 0.02) } }
+                    .accessibilityAction(named: "Lighter") { model.selected = index; model.stepRadius(LookEditorModel.radiusKeyStep) }
+                    .accessibilityAction(named: "Darker") { model.selected = index; model.stepRadius(-LookEditorModel.radiusKeyStep) }
+                    .focusable()
+                    .onMoveCommand { direction in
+                        model.selected = index
+                        if direction == .right { model.turnColours(by: LookEditorModel.hueKeyStep) }
+                        if direction == .left { model.turnColours(by: -LookEditorModel.hueKeyStep) }
+                        if direction == .up { model.stepRadius(LookEditorModel.radiusKeyStep) }
+                        if direction == .down { model.stepRadius(-LookEditorModel.radiusKeyStep) }
+                    }
             }
-        }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height).background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 12))
+        }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height)
+            .background(LookFieldProbe(model: model))
+            .background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -296,6 +320,17 @@ struct LookTrackProbe: NSViewRepresentable {
     }
 }
 
+/// The polar field's frame, so a check can aim at a handle without the accessibility tree.
+struct LookFieldProbe: NSViewRepresentable {
+    let model: LookEditorModel
+    func makeNSView(context: Context) -> LookTrackProbeView {
+        let view = LookTrackProbeView()
+        model.checkFieldView = view
+        return view
+    }
+    func updateNSView(_ view: LookTrackProbeView, context: Context) { model.checkFieldView = view }
+}
+
 final class LookTrackProbeView: NSView {
     var focus: (() -> Void)?
     var focused: (() -> Bool)?
@@ -381,6 +416,19 @@ public final class LookCheckProbe {
     }
     public var trackFrame: NSRect? { frame(model()?.checkTrackView) }
     public var menuFrame: NSRect? { frame(model()?.checkMenuView) }
+    public var fieldFrame: NSRect? { frame(model()?.checkFieldView) }
+    /// The screen point of a stored colour's handle centre.
+    public func fieldPoint(x: Double, y: Double) -> NSPoint? {
+        guard let frame = fieldFrame else { return nil }
+        let point = LookEditorModel.fieldPoint(x: x, y: LookEditorModel.fieldY(y))
+        return NSPoint(x: frame.minX + point.x, y: frame.maxY - point.y)
+    }
+    /// The screen point of a hue at a handle radius in points (0 at the centre, the maximum at the rim).
+    public func fieldPoint(hue: Double, radius: Double) -> NSPoint? {
+        fieldPoint(x: hue, y: LookCheckProbe.storedY(radius: radius))
+    }
+    public static func storedY(radius: Double) -> Double { LookEditorModel.storedY(radius: radius) }
+    public static func colour(x: Double, y: Double) -> LookColor { LookEditorModel.color(x: x, y: y) }
     private func focusView(_ label: String) -> LookTrackProbeView? {
         (label == "Transparency" ? model()?.checkTrackView : model()?.checkGrainView) as? LookTrackProbeView
     }
@@ -388,6 +436,12 @@ public final class LookCheckProbe {
         focusView(label)?.requestControlFocus() == true
     }
     public func hasFocus(_ label: String) -> Bool { focusView(label)?.controlHasFocus == true }
+    /// Sets the whole look through the editor's own commit path, for a check that needs a fixed
+    /// probe (the grain measurement) rather than a gesture.
+    public func setLook(_ edit: (inout Look) -> Void) {
+        model()?.end()
+        model()?.change(edit)
+    }
 }
 
 extension SettingsWindowController {

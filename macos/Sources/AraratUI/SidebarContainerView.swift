@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 private final class ToastView: NSView {
     weak var button: NSView?
@@ -125,12 +126,12 @@ public final class SidebarContainerView: NSView {
     var windowMain: (() -> Bool)?
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
-    public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat) {
+    public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat, color: NSColor?) {
         panel.setCheckReduceTransparency(reduced)
         let glass: Bool
         if #available(macOS 26, *) { glass = panel.subviews.contains { $0 is NSGlassEffectView && !$0.isHidden } }
         else { glass = false }
-        return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
+        return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1, panel.checkDrawnColor)
     }
 
     // U25d: the half of the page a dragged row is over, in this view's coordinates. Only the
@@ -171,6 +172,13 @@ public final class SidebarContainerView: NSView {
         return page.convert(page.bounds, to: nil)
     }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
+    /// The look the sidebar is previewing while an editor drags, for the look check.
+    public var lookPreviewForCheck: Look? { sidebar.lookPreviewForCheck }
+    /// The sidebar panel's rect in screen coordinates, for the grain check's capture band.
+    public var panelRectForCheck: NSRect? {
+        guard let window, panel.superview === self else { return nil }
+        return window.convertToScreen(panel.convert(panel.bounds, to: nil))
+    }
     public func dockCheckSetMain(_ main: Bool) {
         guard CommandLine.arguments.contains("--ararat-check=dock") else { return }
         applicationActive = { true }

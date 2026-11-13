@@ -159,9 +159,9 @@ func lookGradientHasVerticalEqualStopsAndDeterministicGrain() throws {
     let other = lookPanel()
     other.updateLook(look, look, fraction: 0)
     #expect(try pixel(panel.grain) == pixel(other.grain))
-    panel.grain.frame = CGRect(x: 0, y: 0, width: 128, height: 128)
-    #expect(try pixel(panel.grain, x: 3, y: 4, size: 128) == pixel(panel.grain, x: 67, y: 68, size: 128))
-    #expect(try pixel(panel.grain, x: 3, y: 4, size: 128) != pixel(panel.grain, x: 4, y: 4, size: 128))
+    // U24b: the tile is 120 pt, so the same speck sits 120 pt on.
+    panel.grain.frame = CGRect(x: 0, y: 0, width: 240, height: 240)
+    #expect(try pixel(panel.grain, x: 3, y: 4, size: 240) == pixel(panel.grain, x: 123, y: 124, size: 240))
     expectRGB(SidebarPanelView.sample(look, at: 0), 1, 0, 0)
     expectRGB(SidebarPanelView.sample(look, at: 0.5), 0, 1, 0)
     expectRGB(SidebarPanelView.sample(look, at: 1), 0, 0, 1)
@@ -257,17 +257,15 @@ private final class LookScaleWindow: NSWindow {
 }
 
 @Test @MainActor
-func grainUsesTwoPixelsPerPointAtScaleTwoAndFollowsScaleChanges() throws {
+func grainFollowsTheWindowsScaleAndKeepsOnePointTwoPointCells() throws {
     let panel = lookPanel()
-    let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 128,
-        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-        bytesPerRow: 512, bitsPerPixel: 32))
-    let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
-    context.cgContext.scaleBy(x: 2, y: 2)
-    let representation = try #require(SidebarPanelView.noise.bestRepresentation(for: panel.bounds, context: context, hints: nil))
-    #expect(representation.pixelsWide == 128)
-    #expect(representation.pixelsHigh == 128)
-    #expect(representation.size == NSSize(width: 64, height: 64))
+    // One representation per scale, 120 pt large: 120 px at 1x, 240 px at 2x, so a cell stays 1.2 pt.
+    for (scale, side) in [(1.0, 120), (2.0, 240)] {
+        let rep = try #require(LookGrainTile.tile(pointSize: 120, scale: scale).representations.first as? NSBitmapImageRep)
+        #expect(rep.pixelsWide == side && rep.pixelsHigh == side)
+        #expect(rep.size == NSSize(width: 120, height: 120))
+        #expect(LookGrainTile.pixels(pointSize: 120, scale: scale) == side)
+    }
     let window = LookScaleWindow(contentRect: panel.bounds, styleMask: [], backing: .buffered, defer: false)
     defer { window.contentView = nil }
     window.contentView = panel
@@ -283,13 +281,151 @@ func grainUsesTwoPixelsPerPointAtScaleTwoAndFollowsScaleChanges() throws {
 }
 
 @Test @MainActor
-func lookCheckRenderingReadsTheSidebarAndOverridesReduceTransparency() {
+func grainTileHasTheMocksAlphaStatistics() throws {
+    for scale in [1.0, 2.0] {
+        let side = LookGrainTile.pixels(pointSize: 120, scale: scale)
+        let rep = try #require(LookGrainTile.tile(pointSize: 120, scale: scale).representations.first as? NSBitmapImageRep)
+        let bytes = try #require(rep.bitmapData)
+        var alphas: [Double] = []
+        var transparent = 0
+        var white = true
+        for index in 0..<(side * side) {
+            let alpha = Double(bytes[index * 4 + 3]) / 255
+            alphas.append(alpha)
+            if alpha == 0 { transparent += 1 }
+            if alpha > 0, bytes[index * 4] != 255 || bytes[index * 4 + 1] != 255 || bytes[index * 4 + 2] != 255 { white = false }
+        }
+        let mean = alphas.reduce(0, +) / Double(alphas.count)
+        let deviation = (alphas.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(alphas.count)).squareRoot()
+        // The mock's feColorMatrix on a field with mean 0.5 and sd 0.1143: 1.4·0.5 − 0.35 = 0.35.
+        #expect(abs(mean - 0.35) < 0.02)
+        #expect(abs(deviation - 0.16) < 0.02)
+        #expect(white)
+        #expect(Double(transparent) / Double(alphas.count) <= 0.04)
+    }
+    // The same seed draws the same tile in every run.
+    let firstRep = try #require(LookGrainTile.tile(pointSize: 120, scale: 2).representations.first as? NSBitmapImageRep)
+    let secondRep = try #require(LookGrainTile.tile(pointSize: 120, scale: 2).representations.first as? NSBitmapImageRep)
+    let first = try #require(firstRep.bitmapData)
+    let second = try #require(secondRep.bitmapData)
+    #expect(Data(bytes: first, count: 240 * 240 * 4) == Data(bytes: second, count: 240 * 240 * 4))
+}
+
+@Test @MainActor
+func grainTileWrapsWithoutASeam() throws {
+    let side = 120
+    let values = LookGrainTile.field(pointSize: 120, scale: 1)
+    func line(_ offset: Int, byColumn: Bool) -> [Double] {
+        (0..<side).map { step in byColumn ? values[step * side + offset] : values[offset * side + step] }
+    }
+    func difference(_ a: [Double], _ b: [Double]) -> Double {
+        zip(a, b).map { abs($0 - $1) }.reduce(0, +) / Double(a.count)
+    }
+    for byColumn in [true, false] {
+        let seam = difference(line(side - 1, byColumn: byColumn), line(0, byColumn: byColumn))
+        let inner = (1..<side).map { difference(line($0 - 1, byColumn: byColumn), line($0, byColumn: byColumn)) }.sorted()
+        let median = inner[inner.count / 2]
+        // The last row or column continues into the first: the tile repeats with no visible edge.
+        #expect(seam <= median * 2)
+    }
+}
+
+@Test @MainActor
+func drawnGrainMatchesTheMocksRule() throws {
+    // `L′ + 0.35·g·(1 − L′)` for the mean and `0.16·g·(1 − L′)` for the sd, with the mock's white
+    // specks: the colour shows through at 100 % and nothing ever darkens.
+    func drawn(_ grain: Double) throws -> (mean: Double, deviation: Double, chroma: Double) {
+        let panel = SidebarPanelView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        panel.reduceTransparency = { false }
+        panel.systemAppearance = { NSAppearance(named: .aqua)! }
+        var look = solidLook(0, 27.0 / 255, 89.0 / 255)
+        look.grain = grain
+        panel.updateLook(look, look, fraction: 0)
+        panel.layoutSubtreeIfNeeded()
+        return try drawnStatistics(try #require(panel.coating.layer), size: 200)
+    }
+    let base = try drawn(0)
+    #expect(abs(base.mean - (27.0 + 89.0) / 3 / 255) < 0.004)
+    #expect(base.deviation < 0.002)
+    #expect(abs(base.chroma - 89.0 / 255) < 0.004)
+    var previous = base.mean
+    for grain in [0.05, 0.5, 1.0] {
+        let stats = try drawn(grain)
+        let expectedMean = base.mean + 0.35 * grain * (1 - base.mean)
+        let expectedDeviation = 0.16 * grain * (1 - base.mean)
+        #expect(abs(stats.mean - expectedMean) < 0.006)
+        #expect(abs(stats.deviation - expectedDeviation) < 0.1 * expectedDeviation)
+        #expect(stats.mean >= previous)
+        previous = stats.mean
+    }
+    #expect(try drawn(1).chroma >= 0.55 * base.chroma)
+}
+
+@Test @MainActor
+func grainZeroDrawsNothingAndOpacityFollowsTheLook() throws {
+    let panel = SidebarPanelView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+    panel.reduceTransparency = { false }
+    panel.systemAppearance = { NSAppearance(named: .aqua)! }
+    for grain in [0.0, 0.05, 0.5, 1.0] {
+        var look = solidLook(0, 27.0 / 255, 89.0 / 255)
+        look.grain = grain
+        panel.updateLook(look, look, fraction: 0)
+        panel.layoutSubtreeIfNeeded()
+        #expect(abs(panel.grain.opacity - Float(grain)) < 0.0001)
+        if grain == 0 {
+            let plain = try drawnStatistics(try #require(panel.coating.layer), size: 200)
+            let expected = (27.0 + 89.0) / 3 / 255
+            #expect(abs(plain.mean - expected) < 0.004)
+            #expect(plain.deviation < 0.002)
+        }
+    }
+}
+
+@MainActor
+private func drawnStatistics(_ layer: CALayer, size: Int) throws -> (mean: Double, deviation: Double, chroma: Double) {
+    let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: size * 4, bitsPerPixel: 32))
+    let context = try #require(CGContext(data: bitmap.bitmapData, width: size, height: size, bitsPerComponent: 8,
+        bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.clear(CGRect(x: 0, y: 0, width: size, height: size))
+    layer.render(in: context)
+    let bytes = try #require(bitmap.bitmapData)
+    var values: [Double] = []
+    var reds = 0.0, greens = 0.0, blues = 0.0
+    for index in 0..<(size * size) {
+        let red = Double(bytes[index * 4]) / 255, green = Double(bytes[index * 4 + 1]) / 255, blue = Double(bytes[index * 4 + 2]) / 255
+        reds += red; greens += green; blues += blue
+        values.append((red + green + blue) / 3)
+    }
+    let count = Double(size * size)
+    let mean = values.reduce(0, +) / count
+    let deviation = (values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / count).squareRoot()
+    let channels = [reds / count, greens / count, blues / count]
+    return (mean, deviation, channels.max()! - channels.min()!)
+}
+
+@Test @MainActor
+func lookCheckRenderingReadsTheSidebarAndOverridesReduceTransparency() throws {
     let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s", title: "Space", icon: nil, look: solidLook(1, 0, 0, opacity: 0, grain: 0.5, glass: true), favorites: [], pinned: [], today: [])
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil, spaces: [space]))
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     sidebar.refreshLook()
     let reduced = container.lookCheckRendering(reduced: true)
     #expect(reduced.vibrancy && !reduced.glass && abs(reduced.grain - 0.5) < 0.001 && reduced.alpha == 0)
+    #expect(reduced.color?.alphaComponent == 0)
     let normal = container.lookCheckRendering(reduced: false)
     if #available(macOS 26.0, *) { #expect(normal.glass && !normal.vibrancy) }
+    // The grain check waits on the colour it asked for, so the rendering reports it.
+    let probe = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "p", title: "Space", icon: nil, look: solidLook(0, 27.0 / 255, 89.0 / 255), favorites: [], pinned: [], today: [])
+    let probeSidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "p", selectedId: nil, spaces: [probe]))
+    let probeContainer = SidebarContainerView(sidebar: probeSidebar, page: NSView())
+    probeSidebar.refreshLook()
+    let drawing = probeContainer.lookCheckRendering(reduced: false)
+    let color = try #require(drawing.color)
+    #expect(abs(color.redComponent - 0) < 0.01)
+    #expect(abs(color.greenComponent - 27.0 / 255) < 0.01)
+    #expect(abs(color.blueComponent - 89.0 / 255) < 0.01)
+    #expect(color.alphaComponent == 1)
 }

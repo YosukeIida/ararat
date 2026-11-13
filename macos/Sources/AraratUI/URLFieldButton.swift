@@ -5,8 +5,24 @@ import AppKit
 /// real app; sizes and the 4 pt step are ours (the board's 6/2 were not Arc measurements).
 @MainActor
 public final class URLFieldBackgroundButton: NSButton {
-    /// The board's hover and pressed fills on the tinted field. The alpha is the tint's, so both
-    /// appearances gain contrast instead of the light-only white overlay the board draws.
+    /// The board's field fills. The resting fill is the sidebar boards' `--fill`: white 55 % on the
+    /// tinted sidebar, 10 % in dark (`mock-decisions.md` 2026-11-11; the F boards' URL field). Hover
+    /// and pressed are the C-UrlField board's `--fieldH` and `--fieldP`: the field lightens under
+    /// the pointer and darkens a little while pressed, in white for both appearances, so the field
+    /// lightens the tinted sidebar instead of darkening it in light.
+    public static func fillAlpha(pressed: Bool, hovered: Bool, appearance: NSAppearance) -> CGFloat {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if pressed { return dark ? 0.06 : 0.40 }
+        if hovered { return dark ? 0.14 : 0.82 }
+        return dark ? 0.10 : 0.55
+    }
+    /// The fill last drawn, for the checks.
+    public var checkFill: NSColor? { layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    /// Re-runs the fill under a forced appearance, for the checks.
+    public func checkSetAppearance(_ name: NSAppearance.Name) {
+        appearance = NSAppearance(named: name)
+        updateBackground()
+    }
     public var isHovered = false { didSet { updateBackground() } }
     public var isPressed = false { didSet { updateBackground() } }
     public var showsFocusRing = false { didSet { updateFocusRing() } }
@@ -76,9 +92,10 @@ public final class URLFieldBackgroundButton: NSButton {
     }
 
     private func updateBackground() {
-        let alpha: CGFloat = isPressed ? 0.18 : isHovered ? 0.12 : 0.08
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+        let appearance = effectiveAppearance
+        appearance.performAsCurrentDrawingAppearance {
+            let alpha = Self.fillAlpha(pressed: isPressed, hovered: isHovered, appearance: appearance)
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(alpha).cgColor
             focusLayer.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.55).cgColor
         }
     }
