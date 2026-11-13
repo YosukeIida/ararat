@@ -365,6 +365,10 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
         // The item is set on the tab before the move (see performOpenIn), so the destination's
         // strip reports the row and the core maps the live tab to it.
+        if attempt == 0, let adapter = origin.adapter {
+            let mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: row) }
+            FileHandle.standardError.write(Data("ararat-trace: little-window handoff-before live=\(tab.liveId) mapped=\(mapped ?? "nil")\n".utf8))
+        }
         if host.handoffTab(tab, activate: true) {
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1

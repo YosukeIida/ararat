@@ -279,6 +279,8 @@ extension Runtime {
             // The frame survives a reopen: set one, close, reopen from the menu command.
             if let window = popupWindow() {
                 window.setFrame(check.targetFrame, display: true)
+                let frame = window.frame
+                check.details["set_frame"] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
                 controller.saveFrame()
             }
             browserCheckPhase = 10
@@ -356,6 +358,7 @@ extension Runtime {
             details["item"] = openedIn?.item ?? ""
             details["row"] = todayRow?.url ?? ""
             details["same_live"] = tab != nil
+            details["handoff_live"] = check.handoffLive
             details["tabs_with_live"] = tabsWithLive.count
             details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
@@ -383,6 +386,9 @@ extension Runtime {
             guard let controller = controller(), let tab = popupTab(), !tab.isLoading, tab.url == check.pageURL else {
                 if phaseTicks() > 300 { check.mark("menu_handoff", false); finish(); return }
                 wait("third little window"); return
+            }
+            if !screen, let popup = controller.window, !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
             }
             controller.bar.checkClickChevron()
             browserCheckPhase = 17
@@ -418,6 +424,7 @@ extension Runtime {
             details["reading"] = reading?.id ?? ""
             details["row"] = row(opened.item)?.url ?? ""
             details["live"] = tab != nil
+            details["handoff_live"] = check.handoffLive
             details["tabs_with_live"] = tabsWithLive.count
             details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
@@ -434,6 +441,9 @@ extension Runtime {
                   tab.url == check.pageURL else {
                 if phaseTicks() > 300 { check.mark("profile_switch", false); finish(); return }
                 wait("fourth little window"); return
+            }
+            if !screen, let popup = controller.window, !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
             }
             controller.bar.checkClickProfile()
             browserCheckPhase = 21
