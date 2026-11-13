@@ -747,7 +747,9 @@ impl Live {
         workspace.apply(&op);
         let mut ops = vec![op];
         if workspace.is_private() && sole_inactive && workspace.selected(window).is_none() {
-            ops.extend(workspace.record_active(window, &id, workspace.lifecycle_time()).ok()?);
+            if let Ok(selection) = workspace.record_active(window, &id, workspace.lifecycle_time()) {
+                ops.extend(selection);
+            }
         }
         Some((ops, id))
     }
