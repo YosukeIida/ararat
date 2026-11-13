@@ -79,6 +79,12 @@ func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     probe.setQuery("nothing matches this")
     try await waitUntil { probe.layout(); return probe.noResults }
     #expect(probe.selectedResultTitle == nil && probe.marker(SettingsModel.noResultsMarker) != nil)
+    probe.setQuery("")
+    try await waitUntil {
+        probe.layout()
+        return probe.query.isEmpty && probe.marker(SettingsModel.noResultsMarker) == nil
+            && probe.railRows.count == probe.railPanes.count
+    }
 
     // Return opens the hit row, the pane scrolls to it, and the fill sits inside the card at the
     // boards' inset: 1.5 pt in from the card's edge is card grey, 6 pt in is the selection grey.

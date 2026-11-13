@@ -328,7 +328,11 @@ extension Runtime {
             probe.setQuery("")
             step(8)
         case 8:
-            guard !probe.noResults else { note("query not cleared"); return }
+            guard probe.query.isEmpty, probe.marker(SettingsModel.noResultsMarker) == nil,
+                  !probe.railRows.isEmpty else {
+                note("after clearing: query=\(probe.query.debugDescription) noResults=\(probe.noResults) rail=\(probe.railRows.count)"); return
+            }
+            trace("after clearing: query=\(probe.query.debugDescription) noResults=\(probe.noResults) rail=\(probe.railRows.count)")
             check.report("no_results", check.noResultsShown && probe.pageID == check.pageWithoutResults
                 && probe.marker(SettingsModel.noResultsMarker) == nil)
             guard capture("frame") else { end("capture", false); return }
