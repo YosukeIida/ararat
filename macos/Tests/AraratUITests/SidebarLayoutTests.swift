@@ -250,3 +250,116 @@ func rowFocusSurvivesWidthChanges() {
         }
     }
 }
+
+@MainActor
+private func urlFieldSidebar(live: String?, width: CGFloat = 240, select: Bool = true) -> SidebarView {
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "url-row", title: "Page", url: "https://saved.example/", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "pinned", todayId: "today", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: "space", selectedId: select ? "url-row" : nil, spaces: [space])
+    let sidebar = SidebarView(snapshot: snapshot)
+    sidebar.translatesAutoresizingMaskIntoConstraints = false
+    sidebar.widthAnchor.constraint(equalToConstant: width).isActive = true
+    sidebar.heightAnchor.constraint(equalToConstant: 720).isActive = true
+    sidebar.layoutSubtreeIfNeeded()
+    if select, let live { sidebar.focusedPane = ("url-row", live) }
+    sidebar.update(snapshot: snapshot)
+    sidebar.layoutSubtreeIfNeeded()
+    return sidebar
+}
+
+@Test @MainActor
+func urlFieldContentRuleCoversEveryURLFamily() {
+    #expect(URLFieldContent(url: "https://a.example/x", hasTab: true).text == "a.example")
+    #expect(URLFieldContent(url: "file:///Users/yosuke/Notes/spec.md", hasTab: true).text == "spec.md")
+    #expect(URLFieldContent(url: "data:text/html,<title>x</title>", hasTab: true).text == "data:")
+    #expect(URLFieldContent(url: "about:blank", hasTab: true).showsPlaceholder)
+    #expect(URLFieldContent(url: "about:blank", hasTab: true).canCopy)
+    #expect(URLFieldContent(url: "about:preferences", hasTab: true).showsGear)
+    #expect(URLFieldContent(url: "chrome://newtab/", hasTab: true).showsPlaceholder)
+    #expect(URLFieldContent(url: "chrome://settings/", hasTab: true).text == "chrome://settings/")
+    #expect(URLFieldContent(url: "chrome://settings/", hasTab: true).showsGear)
+    #expect(URLFieldContent(url: "view-source:https://a.example/", hasTab: true).showsGear)
+    #expect(URLFieldContent(url: nil, hasTab: true).showsPlaceholder)
+    #expect(!URLFieldContent(url: nil, hasTab: true).hidesButtons)
+    #expect(URLFieldContent(url: nil, hasTab: false).hidesButtons)
+    #expect(!URLFieldContent(url: nil, hasTab: false).canCopy)
+}
+
+@Test @MainActor
+func urlFieldShowsEachFamilyInTheView() {
+    let host = urlFieldSidebar(live: "https://docs.example.com/spec")
+    #expect(host.urlHostForCheck == "docs.example.com")
+    #expect(!host.urlFieldShowsPlaceholder)
+    #expect(!host.urlFieldShowsGear)
+    #expect(host.urlFieldCopyLinkVisible && host.urlFieldSiteControlsVisible)
+    #expect(host.urlFieldCopyLinkEnabled)
+
+    let file = urlFieldSidebar(live: "file:///Users/yosuke/Notes/spec.md")
+    #expect(file.urlHostForCheck == "spec.md")
+
+    let data = urlFieldSidebar(live: "data:text/html,<title>x</title>")
+    #expect(data.urlHostForCheck == "data:")
+    #expect(!data.urlFieldShowsPlaceholder)
+
+    for blank in ["about:blank", "chrome://newtab/"] {
+        let view = urlFieldSidebar(live: blank)
+        #expect(view.urlFieldShowsPlaceholder)
+        #expect(view.urlFieldCopyLinkVisible && view.urlFieldSiteControlsVisible)
+        #expect(view.urlFieldCopyLinkEnabled)
+    }
+
+    let settings = urlFieldSidebar(live: "chrome://settings/")
+    #expect(settings.urlFieldShowsGear)
+    #expect(settings.urlHostForCheck == "chrome://settings/")
+
+    // A failed navigation keeps its failed URL, so the host is still the site's.
+    let failed = urlFieldSidebar(live: "http://localhost:9/unreachable")
+    #expect(failed.urlHostForCheck == "localhost")
+
+    let none = urlFieldSidebar(live: nil, select: false)
+    #expect(none.urlFieldShowsPlaceholder)
+    #expect(!none.urlFieldCopyLinkVisible)
+    #expect(!none.urlFieldSiteControlsVisible)
+    #expect(!none.urlFieldCopyLinkEnabled)
+    #expect(none.urlFieldPlaceholderText == "Search or enter URL")
+}
+
+@Test @MainActor
+func longHostKeepsItsEndAtBothWidths() {
+    let url = "https://averyveryveryverylongsubdomainname.docs.example.com/path"
+    for width in [240.0, 164] {
+        let sidebar = urlFieldSidebar(live: url, width: width)
+        sidebar.layoutSubtreeIfNeeded()
+        #expect(sidebar.urlHostForCheck == "averyveryveryverylongsubdomainname.docs.example.com")
+        #expect(sidebar.urlFieldHostRightAligned)
+        #expect(sidebar.urlFieldHostHasLeadingFade)
+    }
+    let short = urlFieldSidebar(live: "https://a.example/", width: 164)
+    short.layoutSubtreeIfNeeded()
+    #expect(!short.urlFieldHostRightAligned)
+    #expect(!short.urlFieldHostHasLeadingFade)
+}
+
+@Test @MainActor
+func urlFieldAndButtonsKeepTheBoardGeometryAndStates() {
+    let sidebar = urlFieldSidebar(live: "https://a.example/")
+    #expect(sidebar.urlField.layer?.cornerRadius == 11)
+    #expect(sidebar.urlField.frame.height == 36)
+    let copy = sidebar.urlFieldCopyButton
+    let site = sidebar.urlFieldSiteControlsButton
+    #expect(copy.frame.width == 24)
+    #expect(copy.frame.height == 24)
+    #expect(copy.layer?.cornerRadius == 6 && site.layer?.cornerRadius == 6)
+    #expect(copy.checkBackgroundAlpha == 0)
+    copy.isHovered = true
+    #expect(copy.checkBackgroundAlpha == 0.07)
+    copy.isPressed = true
+    #expect(copy.checkBackgroundAlpha == 0.14)
+    copy.isHovered = false
+    copy.isPressed = false
+    copy.showsCopied = true
+    #expect(copy.checkImageIsTick())
+    copy.showsCopied = false
+    #expect(!copy.checkImageIsTick())
+}
+

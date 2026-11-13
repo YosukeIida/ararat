@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -709,6 +709,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var headerCheck: HeaderCheck?
   var siteControlsCheck: SiteControlsCheck?
   var extensionActionsCheck: ExtensionActionsCheck?
+  var urlFieldCheck: URLFieldCheckState?
   var pinsIsolationChild: Runtime?
   var siteFixture: SiteFixtureServer?
   var siteFixturePorts: SiteFixtureServer.Ports?
@@ -843,10 +844,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "header", "site-controls", "ext-actions"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "header", "urlfield", "site-controls", "ext-actions"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "header", "site-controls", "ext-actions"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "header", "urlfield", "site-controls", "ext-actions"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -879,9 +880,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "private-window" { browserCheckMode = "screen-private-window" }
       if screenName == "split-focus" { browserCheckMode = "screen-split-focus" }
       if screenName == "header" { browserCheckMode = "screen-header" }
+      if screenName == "urlfield" { browserCheckMode = "screen-urlfield" }
       if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
       if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "sidebar-rows", "header", "private-downloads"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "header" || screenName == "split-focus" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "sidebar-rows", "header", "urlfield", "private-downloads"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "header" || screenName == "urlfield" || screenName == "split-focus" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1215,7 +1217,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" {
+      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -2819,7 +2821,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
+    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
@@ -2842,6 +2844,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "private-downloads" { timeoutValues.merge(privateDownloadsCheck?.diagnostics() ?? [:]) { _, new in new } }
       if mode == "split-focus" || mode == "screen-split-focus" { timeoutValues.merge((splitFocusCheck ?? SplitFocusCheck()).diagnostics(screen: mode == "screen-split-focus")) { _, new in new } }
       if mode == "header" || mode == "screen-header" { timeoutValues.merge((headerCheck ?? HeaderCheck()).diagnostics(screen: mode == "screen-header")) { _, new in new } }
+      if mode == "urlfield" || mode == "screen-urlfield" { timeoutValues.merge((urlFieldCheck ?? URLFieldCheckState()).diagnostics(screen: mode == "screen-urlfield")) { _, new in new } }
       if mode == "site-controls" || mode == "screen-site-controls" { timeoutValues.merge((siteControlsCheck ?? SiteControlsCheck()).diagnostics(screen: mode == "screen-site-controls")) { _, new in new } }
       if mode == "ext-actions" || mode == "screen-ext-actions" { timeoutValues.merge((extensionActionsCheck ?? ExtensionActionsCheck()).diagnostics(screen: mode == "screen-ext-actions")) { _, new in new } }
       finishBrowserCheck(ok: false, values: timeoutValues); return
@@ -2972,6 +2975,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "private-durability-seed" || mode == "private-durability-verify" { privateDurabilityTick(host, mode: mode); return }
     if mode == "split-focus" || mode == "screen-split-focus" { splitFocusCheckTick(host, screen: mode == "screen-split-focus"); return }
     if mode == "header" || mode == "screen-header" { headerCheckTick(host, screen: mode == "screen-header"); return }
+    if mode == "urlfield" || mode == "screen-urlfield" { urlFieldCheckTick(host, screen: mode == "screen-urlfield"); return }
     if mode == "site-controls" || mode == "screen-site-controls" { siteControlsCheckTick(host, screen: mode == "screen-site-controls"); return }
     if mode == "ext-actions" || mode == "screen-ext-actions" { extensionActionsCheckTick(host, screen: mode == "screen-ext-actions"); return }
     if mode == "errorpages" || mode == "screen-errorpages" { errorPagesCheckTick(host, screen: mode == "screen-errorpages"); return }
@@ -7826,6 +7830,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-private-window" { result["check"] = "private-window"; result["screen"] = "private-window" }
     if browserCheckMode == "screen-split-focus" { result["check"] = "split-focus"; result["screen"] = "split-focus" }
     if browserCheckMode == "screen-header" { result["check"] = "header"; result["screen"] = "header" }
+    if browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" {
+      let names = URLFieldCheckState.conditionNames(screen: browserCheckMode == "screen-urlfield")
+      result["check"] = "urlfield"
+      if browserCheckMode == "screen-urlfield" { result["screen"] = "urlfield" }
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, (urlFieldCheck?.conditions[$0] == true)) })
+      result["failed_conditions"] = names.filter { urlFieldCheck?.conditions[$0] != true }
+    }
     if browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" {
       let names = SiteControlsCheck.conditionNames(screen: browserCheckMode == "screen-site-controls")
       result["check"] = "site-controls"
@@ -8642,7 +8653,7 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
-  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "header", "site-controls", "ext-actions"].contains(name) ? 120 : 60
+  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "urlfield", "screen-urlfield", "header", "site-controls", "ext-actions"].contains(name) ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
   timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {
@@ -8653,6 +8664,7 @@ if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-ch
     if name == "split-focus" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the split-focus check" }
     if name == "downloads" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the downloads check" }
     if name == "header" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the header check" }
+    if name == "urlfield" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the urlfield check" }
     if name == "site-controls" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the site-controls check" }
     if name == "ext-actions" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the ext-actions check" }
     if name == "private-window" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the private-window check" }

@@ -26,7 +26,7 @@ public final class SidebarView: NSView {
         guard item.isEnabled, let action = item.action else { return false }
         return NSApp.sendAction(action, to: item.target, from: item)
     }
-    private let copyLinkButton = NSButton()
+    private let copyLinkButton = URLFieldButton(role: .copyLink)
     private var historySession: WorkspaceSession?
     private var historyObserver: NSObjectProtocol?
     public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
@@ -139,18 +139,26 @@ public final class SidebarView: NSView {
     public var focusedPane: (id: String, url: String)?
 
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
-    let urlField = NSButton()
+    let urlField = URLFieldBackgroundButton()
     private let host = NSTextField(labelWithString: "")
-    private let privateLock = NSImageView()
-    private let privateLabel = NSTextField(labelWithString: "Private")
-    private var hostLeadingDefault: NSLayoutConstraint!
-    private var hostLeadingPrivate: NSLayoutConstraint!
+    private let placeholder = NSTextField(labelWithString: URLFieldContent.placeholderText)
+    private let gearIcon = URLFieldGlyphView()
+    private let privateBadgeGlyph = URLFieldGlyphView()
+    private let hostFade = CAGradientLayer()
+    private var privateBadgeLeading: NSLayoutConstraint!
+    private var gearLeadingDefault: NSLayoutConstraint!
+    private var gearLeadingAfterBadge: NSLayoutConstraint!
+    private var textLeadingDefault: [NSLayoutConstraint] = []
+    private var textLeadingAfterBadge: [NSLayoutConstraint] = []
+    private var textLeadingAfterGear: [NSLayoutConstraint] = []
+    private var copiedGeneration = 0
     private let siteControlsButton = SiteControlsButton()
     private let inFieldActions = ExtensionActionsStrip()
     public let actionsRow = ExtensionActionsRow()
-    private var hostTrailingToActions: NSLayoutConstraint?
+    private var hostTrailingToActions: [NSLayoutConstraint] = []
     private var inFieldActionsWidth: NSLayoutConstraint?
-    private var hostTrailingToCopy: NSLayoutConstraint?
+    private var hostTrailingToCopy: [NSLayoutConstraint] = []
+    private var hostTrailingToEdge: [NSLayoutConstraint] = []
     public var siteControlsBlocked = false {
         didSet {
             siteControlsButton.showsBlockedDot = siteControlsBlocked
@@ -397,10 +405,14 @@ public final class SidebarView: NSView {
     public var downloadsCheckPopoverWindow: NSWindow? { downloadsCheckEnabled ? downloadsPopover?.checkWindow : nil }
 
     // U26f private-window check seams.
-    public var checkPrivateBadgeVisible: Bool { !privateLabel.isHidden && privateLabel.superview != nil }
+    public var checkPrivateBadgeVisible: Bool { !privateBadgeGlyph.isHidden && privateBadgeGlyph.superview != nil }
+    /// D5: the badge is the board's mask glyph, 16 pt, template, described as "Private".
+    public var checkPrivateBadgeGlyph: NSImageView { privateBadgeGlyph }
+    public var checkPrivateSpaceRowVisible: Bool { !spaceNameRow.isHidden }
+    public var checkPrivateSpaceName: String { spaceNameRow.checkName }
+    public var checkPrivateSpaceNameFontSize: CGFloat { spaceNameRow.checkNameFontSize }
     public var checkPrivateDockHidden: Bool { dock.isHidden }
     public var checkPrivateFavoritesHidden: Bool { favorites.isHidden }
-    public var checkPrivateSpaceRowHidden: Bool { spaceNameRow.isHidden }
     public var checkPrivateLibraryOpen: Bool { libraryOpen }
     public var checkPrivateDownloadsLibraryRowHidden: Bool { downloadsPopover?.showsLibrary == false }
     public var checkDownloadIDs: [String] { downloadsModel?.items.map(\.id) ?? [] }
@@ -540,14 +552,13 @@ public final class SidebarView: NSView {
     }
 
     private func applyPrivateMode() {
-        guard privateWindow else { return }
+        guard privateWindow, privateBadgeGlyph.superview != nil else { return }
         dock.isHidden = true
         favorites.isHidden = true
-        spaceNameRow.isHidden = true
-        privateLock.isHidden = false
-        privateLabel.isHidden = false
-        hostLeadingDefault?.isActive = false
-        hostLeadingPrivate?.isActive = true
+        // D5: the mask sits in the field; "Private" is the space row in its normal place.
+        privateBadgeGlyph.isHidden = false
+        spaceNameRow.isHidden = false
+        spaceNameRow.interactive = false
         downloadsPopover?.showsLibrary = false
         if libraryOpen { setLibraryOpen(false) }
         reload()
@@ -749,6 +760,17 @@ public final class SidebarView: NSView {
     public var urlFieldCheckFrame: NSRect { urlField.convert(urlField.bounds, to: nil) }
     public func clickURLForCheck() { urlField.performClick(nil) }
     public var urlHostForCheck: String { host.stringValue }
+    public var urlFieldShowsPlaceholder: Bool { !placeholder.isHidden }
+    public var urlFieldPlaceholderText: String { placeholder.stringValue }
+    public var urlFieldShowsGear: Bool { !gearIcon.isHidden }
+    public var urlFieldCopyLinkVisible: Bool { !copyLinkButton.isHidden }
+    public var urlFieldSiteControlsVisible: Bool { !siteControlsButton.isHidden }
+    public var urlFieldCopyLinkEnabled: Bool { copyLinkButton.isEnabled }
+    public var urlFieldHostRightAligned: Bool { host.alignment == .right }
+    public var urlFieldHostHasLeadingFade: Bool { host.layer?.mask != nil }
+    public var urlFieldCopyIsTick: Bool { copyLinkButton.checkImageIsTick() }
+    public var urlFieldCopyButton: URLFieldButton { copyLinkButton }
+    public var urlFieldSiteControlsButton: URLFieldButton { siteControlsButton }
     @objc private func editURLClicked() { onEditURL?() }
     @objc private func copySelectedLink() {
         guard let url = selectedURL else { return }
@@ -764,7 +786,15 @@ public final class SidebarView: NSView {
     }
     private func copyLink(_ url: String) {
         pasteboard.clearContents()
-        if pasteboard.setString(url, forType: .string) { onLinkCopied?() }
+        guard pasteboard.setString(url, forType: .string) else { return }
+        copiedGeneration += 1
+        let generation = copiedGeneration
+        copyLinkButton.showsCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.copiedGeneration == generation else { return }
+            self.copyLinkButton.showsCopied = false
+        }
+        onLinkCopied?()
     }
     public func copySelectedLinkForCommand() { copySelectedLink() }
     @objc private func retryHistory() { onRetryHistory?() }
@@ -802,30 +832,38 @@ public final class SidebarView: NSView {
         layer?.masksToBounds = true
         library.onScroll = { [weak self] event, scroll in self?.handleSpaceScroll(event, from: scroll) ?? false }
         urlField.title = ""
-        urlField.isBordered = false
         urlField.target = self
         urlField.action = #selector(editURLClicked)
         urlField.setAccessibilityLabel("Edit URL")
-        urlField.wantsLayer = true
-        urlField.layer?.cornerRadius = 11
-        urlField.layer?.cornerCurve = .continuous
         host.font = .systemFont(ofSize: 13)
         host.lineBreakMode = .byTruncatingTail
+        host.alignment = .left
+        host.wantsLayer = true
         host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
+        placeholder.font = .systemFont(ofSize: 13)
+        placeholder.textColor = .placeholderTextColor
+        placeholder.alignment = .left
+        placeholder.lineBreakMode = .byTruncatingTail
+        placeholder.isHidden = true
+        placeholder.setAccessibilityElement(false)
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
-        privateLock.image = PrivateMaskGlyph.image(size: 16)
-        privateLock.contentTintColor = .secondaryLabelColor
-        privateLock.imageScaling = .scaleProportionallyDown
-        privateLock.setAccessibilityElement(false)
-        privateLock.isHidden = true
-        privateLock.translatesAutoresizingMaskIntoConstraints = false
-        urlField.addSubview(privateLock)
-        privateLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        privateLabel.textColor = .secondaryLabelColor
-        privateLabel.isHidden = true
-        privateLabel.translatesAutoresizingMaskIntoConstraints = false
-        urlField.addSubview(privateLabel)
+        urlField.addSubview(placeholder)
+        gearIcon.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Internal page")
+        gearIcon.contentTintColor = .secondaryLabelColor
+        gearIcon.imageScaling = .scaleProportionallyDown
+        gearIcon.setAccessibilityElement(false)
+        gearIcon.isHidden = true
+        gearIcon.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(gearIcon)
+        privateBadgeGlyph.image = PrivateMaskGlyph.image(size: 16)
+        privateBadgeGlyph.contentTintColor = .secondaryLabelColor
+        privateBadgeGlyph.imageScaling = .scaleProportionallyDown
+        privateBadgeGlyph.setAccessibilityElement(false)
+        privateBadgeGlyph.isHidden = true
+        privateBadgeGlyph.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(privateBadgeGlyph)
         spaceNameRow.translatesAutoresizingMaskIntoConstraints = false
         spaceNameRow.menuProvider = { [weak self] in
             guard let self, let id = self.snapshotSpace?.id else { return nil }
@@ -833,16 +871,12 @@ public final class SidebarView: NSView {
         }
         spaceNameRow.onToggle = { [weak self] in self?.toggleSection() }
         spaceNameRow.onRenameEnded = { [weak self] in self?.spaceRenameEnded() }
-        copyLinkButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy Link")
-        copyLinkButton.isBordered = false
         copyLinkButton.target = self
         copyLinkButton.action = #selector(copySelectedLink)
         copyLinkButton.setAccessibilityLabel("Copy Link")
         copyLinkButton.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(copyLinkButton)
 
-        siteControlsButton.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Site controls")
-        siteControlsButton.isBordered = false
         siteControlsButton.target = self
         siteControlsButton.action = #selector(siteControlsClicked)
         siteControlsButton.setAccessibilityLabel("Site controls")
@@ -926,9 +960,16 @@ public final class SidebarView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         favoritesHeight = favorites.heightAnchor.constraint(equalToConstant: 0)
         actionsHeight = actionsRow.heightAnchor.constraint(equalToConstant: 0)
-        hostTrailingToActions = host.trailingAnchor.constraint(equalTo: inFieldActions.leadingAnchor, constant: -4)
+        hostTrailingToActions = [host, placeholder].map {
+            $0.trailingAnchor.constraint(equalTo: inFieldActions.leadingAnchor, constant: -4)
+        }
         inFieldActionsWidth = inFieldActions.widthAnchor.constraint(equalToConstant: 0)
-        hostTrailingToCopy = host.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
+        hostTrailingToCopy = [host, placeholder].map {
+            $0.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
+        }
+        hostTrailingToEdge = [host, placeholder].map {
+            $0.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12)
+        }
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -939,11 +980,14 @@ public final class SidebarView: NSView {
             actionsHeight,
             bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
-            privateLock.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 10),
-            privateLock.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
-            privateLabel.leadingAnchor.constraint(equalTo: privateLock.trailingAnchor, constant: 4),
-            privateLabel.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            privateBadgeGlyph.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            privateBadgeGlyph.widthAnchor.constraint(equalToConstant: 16),
+            privateBadgeGlyph.heightAnchor.constraint(equalToConstant: 16),
+            gearIcon.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            gearIcon.widthAnchor.constraint(equalToConstant: 16),
+            gearIcon.heightAnchor.constraint(equalToConstant: 16),
             host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             inFieldActions.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
             inFieldActions.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             inFieldActions.heightAnchor.constraint(equalToConstant: 24),
@@ -972,9 +1016,21 @@ public final class SidebarView: NSView {
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: rows.heightAnchor),
         ])
-        hostLeadingDefault = host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
-        hostLeadingPrivate = host.leadingAnchor.constraint(equalTo: privateLabel.trailingAnchor, constant: 6)
-        hostLeadingDefault.isActive = true
+        privateBadgeLeading = privateBadgeGlyph.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
+        gearLeadingDefault = gearIcon.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
+        gearLeadingAfterBadge = gearIcon.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8)
+        textLeadingDefault = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12) }
+        textLeadingAfterBadge = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8) }
+        textLeadingAfterGear = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: gearIcon.trailingAnchor, constant: 8) }
+        privateBadgeLeading.isActive = false
+        gearLeadingDefault.isActive = true
+        gearLeadingAfterBadge.isActive = false
+        textLeadingDefault.forEach { $0.isActive = true }
+        textLeadingAfterBadge.forEach { $0.isActive = false }
+        textLeadingAfterGear.forEach { $0.isActive = false }
+        hostFade.startPoint = CGPoint(x: 0, y: 0.5)
+        hostFade.endPoint = CGPoint(x: 1, y: 0.5)
+        hostFade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
         library.isHidden = true
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
@@ -1028,7 +1084,6 @@ public final class SidebarView: NSView {
             dock.leadingAnchor.constraint(equalTo: libraryButton.trailingAnchor),
             dock.trailingAnchor.constraint(equalTo: plusButton.leadingAnchor),
         ])
-        updateFill()
         addSubview(pullIndicator)
     }
 
@@ -1115,6 +1170,7 @@ public final class SidebarView: NSView {
         }
         actionsRow.columns = columns
         updateExtensionLayout()
+        updateHostFade()
     }
 
     private func updateExtensionLayout() {
@@ -1122,14 +1178,57 @@ public final class SidebarView: NSView {
         let pinned = extensionActions.filter(\.pinned)
         let actionsWidth = pinned.isEmpty ? 0 : CGFloat(pinned.count) * 24 + CGFloat(pinned.count - 1) * 4
         // Arc keeps the pinned actions in the URL field while the host keeps 64 pt (§7); below
-        // that all of them move to one 32 pt row on the favourites' columns.
+        // that all of them move to the overflow rows on the favourites' columns.
         let inField = !pinned.isEmpty && hostWidth - 4 - actionsWidth >= 64
         inFieldActions.isHidden = !inField
         actionsRow.isHidden = inField || pinned.isEmpty
         actionsHeight.constant = actionsRow.isHidden ? 0 : actionsRow.requiredHeight
-        hostTrailingToActions?.isActive = inField
-        hostTrailingToCopy?.isActive = !inField
+        let buttonsHidden = copyLinkButton.isHidden && siteControlsButton.isHidden
+        hostTrailingToActions.forEach { $0.isActive = inField }
+        hostTrailingToCopy.forEach { $0.isActive = !inField && !buttonsHidden }
+        hostTrailingToEdge.forEach { $0.isActive = !inField && buttonsHidden }
         if !inField, !pinned.isEmpty { actionsRow.needsLayout = true }
+    }
+
+    /// D5: the badge and the internal-page gear share the field's leading area; the text starts
+    /// after whichever prefix is visible.
+    private func updateFieldContentLayout() {
+        guard privateBadgeGlyph.superview != nil else { return }
+        let badge = !privateBadgeGlyph.isHidden
+        let gear = !gearIcon.isHidden
+        privateBadgeLeading.isActive = badge
+        gearLeadingDefault.isActive = !badge
+        gearLeadingAfterBadge.isActive = badge
+        textLeadingDefault.forEach { $0.isActive = !badge && !gear }
+        textLeadingAfterBadge.forEach { $0.isActive = badge && !gear }
+        textLeadingAfterGear.forEach { $0.isActive = gear }
+        updateExtensionLayout()
+    }
+
+    /// D6: a host wider than the field keeps its registrable domain: the text is right-aligned
+    /// and its start fades out under a leading gradient mask.
+    private func updateHostFade() {
+        guard host.superview != nil else { return }
+        // The trailing constraint that sizes the label is activated during the same layout pass,
+        // so resolve the field's subviews before reading the label's width.
+        urlField.layoutSubtreeIfNeeded()
+        let available = host.bounds.width
+        let font = host.font ?? .systemFont(ofSize: 13)
+        let needed = (host.stringValue as NSString).size(withAttributes: [.font: font]).width
+        let truncated = available > 0 && needed > available + 0.5
+        host.alignment = truncated ? .right : .left
+        host.lineBreakMode = truncated ? .byClipping : .byTruncatingTail
+        if truncated {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            hostFade.frame = host.bounds
+            let fade = min(18, available)
+            hostFade.locations = [0, NSNumber(value: Double(fade / available))]
+            host.layer?.mask = hostFade
+            CATransaction.commit()
+        } else {
+            host.layer?.mask = nil
+        }
     }
 
     private func urlFieldValueWidth() -> CGFloat? {
@@ -1208,14 +1307,7 @@ public final class SidebarView: NSView {
 
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        updateFill()
         updateDockSelection()
-    }
-
-    private func updateFill() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            urlField.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
-        }
     }
 
     private func reload() {
@@ -1232,9 +1324,17 @@ public final class SidebarView: NSView {
         let today = space?.today ?? []
         let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
         let url = selected == nil ? nil : selectedURL
-        copyLinkButton.isEnabled = url != nil
-        host.stringValue = url.flatMap { URL(string: $0)?.host } ?? ""
-        urlField.setAccessibilityValue(host.stringValue)
+        let content = URLFieldContent(url: url, hasTab: selected != nil)
+        copyLinkButton.isEnabled = content.canCopy
+        copyLinkButton.isHidden = content.hidesButtons
+        siteControlsButton.isHidden = content.hidesButtons
+        host.stringValue = content.text
+        host.isHidden = content.showsPlaceholder
+        placeholder.isHidden = !content.showsPlaceholder
+        gearIcon.isHidden = !content.showsGear
+        urlField.setAccessibilityValue(content.accessibilityValue)
+        updateFieldContentLayout()
+        updateHostFade()
 
         reloadFavorites()
 
@@ -1301,6 +1401,7 @@ public final class SidebarView: NSView {
     private func reloadFavorites() {
         if privateWindow {
             favoritesHeight.constant = 0
+            spaceColumn.setCustomSpacing(0, after: favorites)
             for id in Array(favoriteTiles.keys) { favoriteTiles.removeValue(forKey: id)?.removeFromSuperview() }
             favorites.arrangedSubviews.forEach { $0.removeFromSuperview() }
             return

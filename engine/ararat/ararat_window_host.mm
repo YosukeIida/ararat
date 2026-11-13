@@ -2474,6 +2474,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
       [screen isEqualToString:@"split-focus"] ||
       [screen isEqualToString:@"header"] ||
+      [screen isEqualToString:@"urlfield"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&

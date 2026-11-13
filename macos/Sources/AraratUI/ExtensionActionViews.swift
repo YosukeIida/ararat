@@ -28,7 +28,7 @@ public final class ExtensionActionButton: NSButton {
 
     public func update(item: ExtensionActionItem) {
         self.item = item
-        image = item.icon
+        image = Self.sixteenPointIcon(item.icon)
         isEnabled = item.enabled
         toolTip = item.badgeText.isEmpty ? item.tooltip : "\(item.tooltip) — \(item.badgeText)"
         setAccessibilityLabel(item.name)
@@ -37,6 +37,26 @@ public final class ExtensionActionButton: NSButton {
         setAccessibilityIdentifier("extension-action-\(item.id)")
         needsDisplay = true
     }
+
+    /// The board draws both the 24 pt field button and the 32 pt overflow tile with a 16 pt
+    /// icon; the engine hands 20 pt (ararat_window_host.mm `extensionActions`), so every button
+    /// scales a copy to 16 without touching the item's image.
+    private static func sixteenPointIcon(_ icon: NSImage) -> NSImage {
+        let size = NSSize(width: 16, height: 16)
+        if let copy = icon.copy() as? NSImage {
+            copy.size = size
+            return copy
+        }
+        let image = NSImage(size: size, flipped: false) { rect in
+            icon.draw(in: rect)
+            return true
+        }
+        image.isTemplate = icon.isTemplate
+        image.accessibilityDescription = icon.accessibilityDescription
+        return image
+    }
+
+    public var checkIconSize: NSSize { image?.size ?? .zero }
 
     /// The action-specific anchor the engine's popup uses, in window coordinates. Passed
     /// immediately before every menu command and action invocation.
@@ -113,8 +133,10 @@ public final class ExtensionActionsStrip: NSView {
     }
 }
 
-/// One row of pinned actions when the URL field cannot keep them (the host would drop below
-/// 64 pt). Tiles are 32 pt tall with 16 pt icons on the favourites' column pitch, one row only.
+/// The pinned actions when the URL field cannot keep them (the host would drop below 64 pt).
+/// Tiles are 32 pt tall with 16 pt icons on the favourites' column pitch; when they do not fit
+/// one line they wrap onto further 32 pt lines rather than dropping an action (D4: the
+/// site-controls grid that would hold the rest is not built yet).
 @MainActor
 public final class ExtensionActionsRow: NSView {
     public private(set) var items: [ExtensionActionItem] = []

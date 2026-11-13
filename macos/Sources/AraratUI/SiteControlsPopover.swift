@@ -5,10 +5,15 @@ import SecurityInterface
 /// The URL field's site-controls button. A blocked permission lights a red dot (the engine's
 /// snapshot `blocked` flag, not a URL-scheme guess).
 @MainActor
-public final class SiteControlsButton: NSButton {
+public final class SiteControlsButton: URLFieldButton {
     public var showsBlockedDot = false {
         didSet { if showsBlockedDot != oldValue { needsDisplay = true } }
     }
+
+    public init() { super.init(role: .siteControls) }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     public override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)

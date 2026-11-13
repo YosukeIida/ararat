@@ -6,7 +6,7 @@ import AraratUI
 @MainActor
 final class PrivateWindowCheckState {
     static let names = [
-        "private_window", "private_one_space_today_only", "private_sidebar", "private_mask",
+        "private_window", "private_one_space_today_only", "private_sidebar", "private_badge", "private_mask",
         "private_dark", "private_close_label", "private_selected_active", "private_second_shares",
         "private_sibling_rows", "private_sibling_selection", "private_cross_move_refused",
         "private_close_removes", "private_clear_no_toast_no_undo", "private_downloads_library_row",
@@ -152,8 +152,13 @@ extension Runtime {
             check.mark("private_selected_active", child.snapshot.selectedId == item && child.host?.activeItemId() == item)
             guard child.snapshot.selectedId == item, child.host?.activeItemId() == item else { wait("private selection"); return }
             guard let sidebar = child.sidebar, let container = child.container else { wait("private views"); return }
-            let side = sidebar.checkPrivateBadgeVisible && sidebar.checkPrivateDockHidden &&
-                sidebar.checkPrivateFavoritesHidden && sidebar.checkPrivateSpaceRowHidden
+            let glyph = sidebar.checkPrivateBadgeGlyph
+            let badgeOK = sidebar.checkPrivateBadgeVisible && glyph.image?.size == NSSize(width: 16, height: 16)
+                && glyph.image?.isTemplate == true && glyph.image?.accessibilityDescription == "Private"
+            check.mark("private_badge", badgeOK)
+            let side = badgeOK && sidebar.checkPrivateDockHidden && sidebar.checkPrivateFavoritesHidden &&
+                sidebar.checkPrivateSpaceRowVisible && sidebar.checkPrivateSpaceName == "Private" &&
+                sidebar.checkPrivateSpaceNameFontSize == 14
             check.mark("private_sidebar", side)
             guard side else { wait("private sidebar shape"); return }
             check.mark("private_mask", container.privateMaskVisible)

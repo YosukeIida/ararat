@@ -25,6 +25,8 @@ public final class SidebarSpaceNameRow: NSView {
     private var trackingPress = false
     // Check hook: the pointer is not moved by a check, so the hover state is driven directly.
     public var hovered = false { didSet { update() } }
+    /// D5: the private window shows "Private" as a plain label: no chevron, no … menu, no toggle.
+    public var interactive = true { didSet { update() } }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -96,9 +98,9 @@ public final class SidebarSpaceNameRow: NSView {
         let title = [space?.icon, space?.title].compactMap { $0 }.joined(separator: " ")
         name.stringValue = title
         name.toolTip = title.isEmpty ? nil : title
-        let showsChevron = hovered || collapsed
+        let showsChevron = (hovered || collapsed) && interactive
         chevron.isHidden = !showsChevron
-        moreButton.isHidden = !hovered
+        moreButton.isHidden = !hovered || !interactive
         nameLeading.constant = showsChevron ? SidebarMetrics.spaceNameIndented : SidebarMetrics.spaceNameLeading
         chevron.image = NSImage(systemSymbolName: collapsed ? "chevron.right" : "chevron.down",
                                 accessibilityDescription: nil)?
@@ -116,22 +118,25 @@ public final class SidebarSpaceNameRow: NSView {
     public override func mouseUp(with event: NSEvent) {
         let inside = trackingPress && bounds.contains(convert(event.locationInWindow, from: nil))
         trackingPress = false
-        if inside { onToggle?() }
+        if inside && interactive { onToggle?() }
     }
 
     public override func accessibilityPerformPress() -> Bool {
+        guard interactive else { return false }
         onToggle?()
         return true
     }
 
     @objc private func chevronPressed() { onToggle?() }
 
-    public override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
+    public override func menu(for event: NSEvent) -> NSMenu? { interactive ? menuProvider?() : nil }
 
     public var checkNameFrame: NSRect {
         // alignmentRect(forFrame:) already answers in the superview’s coordinates.
         name.alignmentRect(forFrame: name.frame)
     }
+    public var checkName: String { name.stringValue }
+    public var checkNameFontSize: CGFloat { name.font?.pointSize ?? 0 }
     public var checkChevronVisible: Bool { !chevron.isHidden }
     public var checkRenameFieldFrame: NSRect? { renameField?.frame }
     public func finishRenameForCheck(_ commit: Bool) { renameField?.finish(commit: commit) }
