@@ -443,6 +443,10 @@ extension Runtime {
             guard let look = stored(), look.glass, look.opacity == 0, let count = check.journalCount(quitPath) else { return }
             let rendering = sidebarContainer.lookCheckRendering(reduced: true)
             end(count == check.count + 1 && rendering.vibrancy && !rendering.glass && rendering.grain > 0 && rendering.alpha == 0, "reduced_transparency")
+        case 19 where !screen:
+            // The grain phases capture the window and measure its pixels, which only screen-look
+            // does; a hidden run must not record conditions it never measured (review S2).
+            check.phase = 23; browserCheckPhase = 23
         case 19, 20, 21, 22:
             // U24b's grain: one fixed probe at four settings. Each capture's flat-patch sd is the
             // drawn noise's contrast, calibrated by that run's own grain-0 capture (L′), so the

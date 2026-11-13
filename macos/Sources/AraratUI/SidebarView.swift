@@ -1408,12 +1408,11 @@ public final class SidebarView: NSView {
         if !privateWindow {
             for (index, space) in snapshot.spaces.enumerated() {
                 let button = dock.subviews[index] as! SpaceDockButton
-                button.title = space.icon ?? String(space.title.prefix(1))
+                button.setGlyph(space.icon ?? String(space.title.prefix(1)), bold: index == spaceIndex)
                 button.tag = index
                 button.toolTip = space.title
                 button.setAccessibilityLabel(space.title)
                 button.setAccessibilityHelp(space.title)
-                button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
             }
             dock.selectedIndex = spaceIndex
             updateDockSelection()
