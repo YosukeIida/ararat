@@ -501,6 +501,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var incognitoPrivateProfile = ""
   var incognitoPrivateBrowser = ""
   var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+  // A check that owns this window's profile (relaunch-pins' isolation child) keeps the snapshot
+  // delivery from setting it back to the space the window shows.
+  var profilePinned = false
   var sliceTimer: Timer?
   var sliceRows: [Row] = []
   var relaunchSeedRows: [Row] = []
@@ -969,7 +972,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.snapshot = snapshot
       self?.updatePageVisibility(snapshot)
       if let self, (self.root ?? self).settingsOwner === self { (self.root ?? self).settings?.modelUpdate(snapshot: snapshot) }
-      if self?.host?.isClosingAll() != true, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
+      if self?.host?.isClosingAll() != true, self?.profilePinned != true,
+         let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
+        // A check that pinned this window's profile (relaunch-pins' isolation child) keeps it:
+        // the child's own first snapshot names the Default space and would otherwise undo the
+        // switch the check made, which is the race that flake showed.
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
       let active = self?.host?.activeItemId()
@@ -2243,6 +2250,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         return
       }
       children.append(child)
+      // The check owns this window's profile from here on: its snapshot delivery must not set it
+      // back to the space it shows (relaunch-pins isolation flake, u25d-implementation-2-10).
+      child.profilePinned = true
       guard child.host?.setProfileDirectory("Profile 1") == true else {
         finishBrowserCheck(ok: false, values: ["profile_isolation": false,
                                                "error": "the window cannot load Profile 1",
