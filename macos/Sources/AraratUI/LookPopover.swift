@@ -163,9 +163,10 @@ struct LookPopoverView: View {
                     .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
                     .frame(width: big ? 28 : 20, height: big ? 28 : 20)
                     .position(LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
+                    .onTapGesture { model.selected = index }
                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("lookField")).onChanged { value in
                         dragging = index
-                        model.movePoint(index, to: LookEditorModel.fieldPosition(value.location))
+                        model.movePoint(index, translatedBy: value.translation)
                     }.onEnded { _ in dragging = nil; model.end() })
                     .accessibilityElement()
                     .accessibilityLabel(LookEditorModel.handleLabel(index: index, count: model.look.colors.count))

@@ -14,6 +14,18 @@ private func lookValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Complet
 @MainActor
 private final class LookPreview { var look: Look? }
 
+/// The translation a drag sends from a grabbed handle to a target field position (hue, radial y).
+@MainActor
+private func lookDrag(from grip: CGPoint, to x: Double, _ y: Double) -> CGSize {
+    let target = LookEditorModel.fieldPoint(x: x, y: y)
+    return CGSize(width: target.x - grip.x, height: target.y - grip.y)
+}
+
+@MainActor
+private func lookGrip(_ colour: LookColor) -> CGPoint {
+    LookEditorModel.fieldPoint(x: colour.x, y: LookEditorModel.fieldY(colour.y))
+}
+
 @MainActor
 private final class LookFixture {
     let preview = LookPreview()
@@ -135,13 +147,51 @@ func thePolarFieldMapsHuesAndRadiiBothWays() {
 }
 
 @Test @MainActor
+func aPressWithoutMovementDoesNotMoveTheGroupOrWrite() async throws {
+    // The grab offset: a press that does not move (including the off-centre press a click makes) maps
+    // back to the handle's own position, so nothing changes and nothing is written.
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.2, y: 0.5), LookEditorModel.fieldColor(x: 0.4, y: 0.3)] }
+    let count = try await fixture.writes()
+    let before = editor.look
+    editor.movePoint(0, translatedBy: .zero)
+    #expect(editor.look == before && !editor.editing)
+    editor.end()
+    #expect(try await fixture.writes() == count)
+    try await fixture.close()
+}
+
+@Test @MainActor
+func aPressOnAHandleSelectsItWithoutMovingTheGroup() async throws {
+    // The handle's gesture starts on the press with the pointer's translation (the grab offset); a
+    // press with no movement selects that handle and edits nothing. The view sends this same call on
+    // mouse-down, and `picker_input` in the look check drags the field for real.
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    let look = Look(colors: [LookEditorModel.fieldColor(x: 0.2, y: 0.5), LookEditorModel.fieldColor(x: 0.6, y: 0.3)],
+                    opacity: 1, grain: 0, glass: false, appearance: .light)
+    editor.change { $0 = look }
+    editor.selected = 1
+    let count = try await fixture.writes()
+    #expect(editor.selected == 1)
+    editor.movePoint(0, translatedBy: .zero)
+    #expect(editor.selected == 0)
+    #expect(editor.look == look && !editor.editing)
+    editor.end()
+    #expect(try await fixture.writes() == count)
+    try await fixture.close()
+}
+
+@Test @MainActor
 func theGroupTurnWrapsPastRed() async throws {
     let fixture = try await LookFixture()
     let editor = fixture.editor
     // The check's own case: 0.4 / 0.9 + 0.25 -> 0.65 / 0.15, not 0.65 / 1.0.
     editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.4, y: 0.5), LookEditorModel.fieldColor(x: 0.9, y: 0.5)] }
     let count = try await fixture.writes()
-    editor.movePoint(0, to: (x: 0.65, y: 0.5))
+    let grip = lookGrip(editor.look.colors[0])
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.65, 0.5))
     #expect(abs(editor.look.colors[0].x - 0.65) < 0.000001)
     #expect(abs(editor.look.colors[1].x - 0.15) < 0.000001)
     editor.end()
@@ -157,7 +207,8 @@ func theGroupTurnWrapsPastRed() async throws {
     #expect(abs(editor.look.colors[2].x - (0.99 - 15.0 / 360)) < 0.000001)
     // Three handles dragged across the seam keep their offsets.
     editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.2, y: 0.5), LookEditorModel.fieldColor(x: 0.6, y: 0.5), LookEditorModel.fieldColor(x: 0.9, y: 0.5)] }
-    editor.movePoint(1, to: (x: 0.75, y: 0.5))
+    let middleGrip = lookGrip(editor.look.colors[1])
+    editor.movePoint(1, translatedBy: lookDrag(from: middleGrip, to: 0.75, 0.5))
     #expect(abs(editor.look.colors[0].x - 0.35) < 0.000001)
     #expect(abs(editor.look.colors[1].x - 0.75) < 0.000001)
     #expect(abs(editor.look.colors[2].x - 0.05) < 0.000001)
@@ -174,7 +225,8 @@ func thePolarGroupTurnsAsOneSharesOneRadiusAndClampsAtTheRim() async throws {
     editor.change { $0.colors = [first, second] }
     let count = try await fixture.writes()
     // A quarter turn outward: both hues move by the same angle and both take the dragged radius.
-    editor.movePoint(0, to: (x: 0.45, y: 0.25))
+    let grip = lookGrip(first)
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.45, 0.25))
     #expect(editor.selected == 0 && editor.editing)
     #expect(editor.look.colors.count == 2)
     #expect(abs(editor.look.colors[0].x - 0.45) < 0.000001)
@@ -185,13 +237,12 @@ func thePolarGroupTurnsAsOneSharesOneRadiusAndClampsAtTheRim() async throws {
     let expected = LookEditorModel.fieldColor(x: 0.45, y: 0.25)
     #expect(abs(editor.look.colors[0].red - expected.red) < 0.000001 && abs(editor.look.colors[0].blue - expected.blue) < 0.000001)
     // Repeated events of one gesture do not accumulate: the second event is still based on the start.
-    editor.movePoint(0, to: (x: 0.45, y: 0.25))
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.45, 0.25))
     #expect(abs(editor.look.colors[1].x - 0.95) < 0.000001)
     #expect(fixture.sidebar?.lookPreviewForCheck == editor.look)
     #expect(try await fixture.writes() == count)
     // Dragging past the edge keeps the hue at the maximum radius (stored y 0.05), one write on release.
-    let edge = LookEditorModel.fieldPosition(CGPoint(x: LookEditorModel.fieldCentre.x + 600, y: LookEditorModel.fieldCentre.y))
-    editor.movePoint(0, to: edge)
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0, 0))
     #expect(editor.look.colors.allSatisfy { $0.y == 0.05 })
     #expect(abs(editor.look.colors[0].x) < 0.000001)
     #expect(abs(LookEditorModel.wrapped(editor.look.colors[1].x - editor.look.colors[0].x) - 0.5) < 0.000001)
@@ -262,14 +313,15 @@ func lookDragPreviewsWithoutWritingAndCommitsExactlyOnce() async throws {
     editor.begin()
     editor.end()
     #expect(try await fixture.writes() == count)
-    editor.movePoint(0, to: (x: 0.7, y: 0.5))
-    editor.movePoint(0, to: (x: 0.6, y: 0.5))
+    let grip = lookGrip(editor.look.colors[0])
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.7, 0.5))
+    editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.6, 0.5))
     editor.end()
     #expect(try await fixture.writes() == count)
     #expect(fixture.preview.look == nil)
     for frame in 1...20 {
         let step = Double(frame) / 20
-        editor.movePoint(0, to: (x: 0.6 + 0.2 * step, y: 0.5 - 0.1 * step))
+        editor.movePoint(0, translatedBy: lookDrag(from: grip, to: 0.6 + 0.2 * step, 0.5 - 0.1 * step))
     }
     #expect(editor.editing)
     #expect(try await fixture.writes() == count)
@@ -282,7 +334,7 @@ func lookDragPreviewsWithoutWritingAndCommitsExactlyOnce() async throws {
     #expect(try await fixture.writes() == count + 1)
     #expect(try await fixture.stored().spaces[0].look == final)
     #expect(fixture.settings.snapshot.spaces[0].look == final)
-    editor.movePoint(0, to: (x: 0.2, y: 0.7))
+    editor.movePoint(0, translatedBy: lookDrag(from: lookGrip(editor.look.colors[0]), to: 0.2, 0.7))
     editor.dismiss()
     #expect(editor.look == final && !editor.editing)
     #expect(fixture.preview.look == final)
@@ -413,7 +465,7 @@ func lookPopoverHostsOffscreenAndDropsAnUnfinishedGestureOnClose() async throws 
     #expect(abs(host.fittingSize.width - 288) < 1)
     #expect(!anchor.popover.isShown && host.window?.isVisible != true)
     let count = try await fixture.writes()
-    editor.movePoint(0, to: (x: 0.3, y: 0.3))
+    editor.movePoint(0, translatedBy: lookDrag(from: lookGrip(editor.look.colors[0]), to: 0.3, 0.3))
     anchor.popoverWillClose(Notification(name: NSPopover.willCloseNotification, object: anchor.popover))
     #expect(!editor.editing)
     #expect(try await fixture.writes() == count)
@@ -496,7 +548,7 @@ func importedLookKeepsItsRGBAndPositionsUntilAHandleMoves() async throws {
     #expect(editor.look == imported)
     editor.change { $0.appearance = .light }
     #expect(try await fixture.stored().spaces[0].look?.colors == imported.colors)
-    editor.movePoint(0, to: (x: 0.8, y: 0.1))
+    editor.movePoint(0, translatedBy: lookDrag(from: lookGrip(imported.colors[0]), to: 0.8, 0.1))
     editor.end()
     let stored = try #require(try await fixture.stored().spaces[0].look)
     #expect(abs(stored.colors[0].x - 0.8) < 0.000001 && abs(stored.colors[0].y - 0.14) < 0.000001)
@@ -514,7 +566,7 @@ func anEarlierWriteReplyKeepsTheNextDragPreviewWithoutPersistingIt() async throw
     let initial = try await fixture.writes()
     editor.change { $0.grain = 0.3 }
     let submitted = editor.look
-    editor.movePoint(0, to: (x: 0.5, y: 0.6))
+    editor.movePoint(0, translatedBy: lookDrag(from: lookGrip(editor.look.colors[0]), to: 0.5, 0.6))
     let preview = editor.look
     #expect(try await fixture.stored().spaces[0].look == submitted)
     #expect(fixture.preview.look == preview)

@@ -120,16 +120,31 @@ final class LookEditorModel: ObservableObject {
         preview(look, active: editing)
         if !editing { commit() }
     }
-    /// A drag of one handle: the handle follows the pointer's hue and the whole group turns by the
-    /// same angle and takes the pointer's radius, so the one to three handles always share one
-    /// radius and turn together (the approved F-LookStates behaviour). Edits are based on the
-    /// gesture's start, so repeated drag events do not accumulate.
-    func movePoint(_ index: Int, to position: (x: Double, y: Double)) {
+    /// A drag of one handle. The handle follows the pointer by the gesture's translation from where it
+    /// was grabbed, so a press that does not move changes nothing (the tap selects it instead); the
+    /// whole group turns by the same angle and takes the dragged handle's radius, so the one to three
+    /// handles always share one radius and turn together (the approved F-LookStates behaviour). Edits
+    /// are based on the gesture's start, so repeated drag events do not accumulate.
+    func movePoint(_ index: Int, translatedBy translation: CGSize) {
         guard look.colors.indices.contains(index) else { return }
-        begin()
+        if gestureStart == nil {
+            selected = index
+            let grip = Self.fieldPoint(x: look.colors[index].x, y: Self.fieldY(look.colors[index].y))
+            let position = Self.fieldPosition(CGPoint(x: grip.x + translation.width, y: grip.y + translation.height))
+            guard abs(position.x - look.colors[index].x) > 0.000000001
+                || abs(position.y - Self.fieldY(look.colors[index].y)) > 0.000000001
+            else { return }
+            begin()
+        }
         selected = index
-        guard let start = gestureStart else { return }
-        let delta = position.x - start.colors[index].x
+        guard let start = gestureStart, start.colors.indices.contains(index) else { return }
+        let base = start.colors[index]
+        let grip = Self.fieldPoint(x: base.x, y: Self.fieldY(base.y))
+        var position = Self.fieldPosition(CGPoint(x: grip.x + translation.width, y: grip.y + translation.height))
+        // A drag that ends where it was grabbed restores the start exactly, so it writes nothing.
+        let baseY = Self.fieldY(base.y)
+        if abs(position.x - base.x) < 0.000000001 && abs(position.y - baseY) < 0.000000001 { position = (base.x, baseY) }
+        let delta = position.x - base.x
         let radius = Self.clamp(position.y)
         let hues = start.colors.map(\.x)
         change { look in
