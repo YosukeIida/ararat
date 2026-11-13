@@ -688,9 +688,17 @@ public final class SidebarView: NSView {
     }
 
     public func selectRow(id: String) -> Bool {
-        guard snapshot.spaces.indices.contains(spaceIndex) else { return false }
+        let trace = CommandLine.arguments.contains("--ararat-check=private-window") || CommandLine.arguments.contains("--ararat-screen=private-window")
+        guard snapshot.spaces.indices.contains(spaceIndex) else {
+            if trace { FileHandle.standardError.write(Data("ararat-trace: private-sidebar select item=\(id) missing-space\n".utf8)) }
+            return false
+        }
         let space = snapshot.spaces[spaceIndex]
-        guard let row = (space.favorites + space.pinned + space.today).first(where: { $0.id == id }) else { return false }
+        guard let row = (space.favorites + space.pinned + space.today).first(where: { $0.id == id }) else {
+            if trace { FileHandle.standardError.write(Data("ararat-trace: private-sidebar select item=\(id) missing-row selected=\(snapshot.selectedId ?? "nil") window=\(window?.windowNumber ?? -1)\n".utf8)) }
+            return false
+        }
+        if trace { FileHandle.standardError.write(Data("ararat-trace: private-sidebar select item=\(id) found selected=\(snapshot.selectedId ?? "nil") window=\(window?.windowNumber ?? -1)\n".utf8)) }
         select(row)
         return true
     }
