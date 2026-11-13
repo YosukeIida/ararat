@@ -122,12 +122,12 @@ func thePolarFieldMapsHuesAndRadiiBothWays() {
     let centre = LookEditorModel.fieldCentre
     #expect(LookEditorModel.fieldCanvasSize == CGSize(width: 264, height: 232))
     #expect(centre == CGPoint(x: 132, y: 116))
-    #expect(LookEditorModel.fieldMaxRadius == 108)
-    #expect(LookEditorModel.fieldPoint(x: 0, y: 0) == CGPoint(x: 240, y: 116))
+    #expect(LookEditorModel.fieldMaxRadius == 100)
+    #expect(LookEditorModel.fieldPoint(x: 0, y: 0) == CGPoint(x: 232, y: 116))
     #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).x - 132) < 0.000001)
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).y - 224) < 0.000001)
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).y - 216) < 0.000001)
     #expect(LookEditorModel.fieldPoint(x: 0.5, y: 1) == centre)
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).x - 24) < 0.000001)
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).x - 32) < 0.000001)
     #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).y - 116) < 0.000001)
     for (x, y) in [(0.0, 0.0), (0.13, 0.3), (0.5, 0.6), (0.79, 0.95), (0.999, 0.5)] {
         let back = LookEditorModel.fieldPosition(LookEditorModel.fieldPoint(x: x, y: y))
@@ -139,11 +139,39 @@ func thePolarFieldMapsHuesAndRadiiBothWays() {
     #expect(abs(far.x - 0.875) < 0.000001)
     #expect(far.y == 0)
     #expect(abs(LookEditorModel.radius(of: 0.95)) < 0.000001)
-    #expect(LookEditorModel.radius(of: 0.05) == 108)
-    #expect(abs(LookEditorModel.storedY(radius: 54) - 0.5) < 0.000001)
-    #expect(LookEditorModel.fieldY(radius: 108) == 0 && LookEditorModel.fieldY(radius: 216) == 0)
+    #expect(LookEditorModel.radius(of: 0.05) == 100)
+    #expect(abs(LookEditorModel.storedY(radius: 50) - 0.5) < 0.000001)
+    #expect(LookEditorModel.fieldY(radius: 100) == 0 && LookEditorModel.fieldY(radius: 200) == 0)
     // The centre has no hue of its own; it answers the first one instead of a NaN.
     #expect(LookEditorModel.fieldPosition(centre) == (x: 0, y: 1))
+}
+
+@Test @MainActor
+func theDotLatticeIsCentredAndCoversTheHandleReach() {
+    // 8 pt lattice: dot centres are odd multiples of 4 from the centre (so none sits at the centre
+    // and the pattern is symmetric), out to the inscribed circle less the dot's half.
+    let dots = LookEditorModel.dotCentres()
+    let centre = LookEditorModel.fieldCentre
+    #expect(LookEditorModel.fieldDotPitch == 8 && LookEditorModel.fieldDotSize == 4)
+    #expect(LookEditorModel.fieldDotDiscRadius == 116)
+    #expect(dots.count > 300)
+    var maximum = 0.0
+    for dot in dots {
+        let dx = Double(dot.x - centre.x), dy = Double(dot.y - centre.y)
+        let radius = hypot(dx, dy)
+        maximum = max(maximum, radius)
+        #expect(radius <= Double(LookEditorModel.fieldDotDiscRadius) - 2 + 0.000001)
+        #expect(Int((dx / 4).rounded()) % 2 != 0 && Int((dy / 4).rounded()) % 2 != 0)
+        #expect(abs(dx / 4 - (dx / 4).rounded()) < 0.000001 && abs(dy / 4 - (dy / 4).rounded()) < 0.000001)
+    }
+    // The dots cover every handle position, and no dot sits on the centre itself.
+    #expect(maximum >= Double(LookEditorModel.fieldMaxRadius))
+    #expect(!dots.contains { hypot(Double($0.x - centre.x), Double($0.y - centre.y)) < 2 })
+    // The derived sizes: a dragged 32 pt handle at the maximum radius stays inside the inscribed
+    // circle (100 + 16 = 116), a resting 24 pt handle leaves 4 pt.
+    #expect(Double(LookEditorModel.fieldMaxRadius) + 16 == Double(LookEditorModel.fieldDotDiscRadius))
+    #expect(Double(LookEditorModel.fieldMaxRadius) + 12 < Double(LookEditorModel.fieldDotDiscRadius))
+    #expect(Double(LookEditorModel.fieldMaxRadius) <= Double(min(LookEditorModel.fieldCanvasSize.width, LookEditorModel.fieldCanvasSize.height) / 2) - 16)
 }
 
 @Test @MainActor
@@ -266,7 +294,7 @@ func thePickerStepsTurnAndResizeTheWholeGroup() async throws {
     #expect(abs(editor.look.colors[1].x - (0.6 + 5.0 / 360)) < 0.000001)
     #expect(editor.look.colors.allSatisfy { abs($0.y - 0.5) < 0.000001 })
     editor.stepRadius(LookEditorModel.radiusKeyStep)
-    #expect(abs(LookEditorModel.radius(of: editor.look.colors[0].y) - 60) < 0.000001)
+    #expect(abs(LookEditorModel.radius(of: editor.look.colors[0].y) - (LookEditorModel.radius(of: 0.5) + LookEditorModel.radiusKeyStep)) < 0.000001)
     #expect(abs(editor.look.colors[0].y - editor.look.colors[1].y) < 0.000001)
     #expect(try await fixture.writes() == count + 2)
     for _ in 0..<30 { editor.stepRadius(LookEditorModel.radiusKeyStep) }
@@ -289,25 +317,71 @@ func thePickerStepsTurnAndResizeTheWholeGroup() async throws {
 }
 
 @Test @MainActor
-func thePresetPagesAreNineSolidsAndNineAdjacentHuePairs() {
-    #expect(LookEditorModel.presets.count == 18)
-    for index in 0..<9 {
-        let solid = LookEditorModel.presets[index]
-        #expect(solid.count == 1)
-        #expect(abs(solid[0].x - Double(index) / 9) < 0.000001)
-        #expect(solid[0].y == 0.5)
-        // Page 2 is analogous: two hues 40 degrees apart on the one radius, page 1's split is untouched.
-        let pair = LookEditorModel.presets[index + 9]
-        #expect(pair.count == 2)
-        #expect(abs(pair[0].x - Double(index) / 9) < 0.000001)
-        // 40 degrees is exactly a ninth of the wheel: the second hue is the next preset step on.
-        #expect(abs(pair[1].x - LookEditorModel.wrapped(Double(index + 1) / 9)) < 0.000001)
-        #expect(pair.allSatisfy { $0.y == 0.5 })
-        #expect(LookEditorModel.radius(of: pair[0].y) == LookEditorModel.radius(of: pair[1].y))
+func chipsKeepTheHandleCountAndApplyTheirPagesHarmony() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    #expect(LookEditorModel.chipPages.count == 2)
+    #expect(LookEditorModel.chipPages.allSatisfy { $0.count == 9 })
+    #expect(Set(LookEditorModel.chipPages[0].map(\.name)).count == 9)
+    #expect(Set(LookEditorModel.chipPages[1].map(\.name)).count == 9)
+    #expect(LookEditorModel.harmonies[0][1] == [0, 180] && LookEditorModel.harmonies[0][2] == [0, -150, 150])
+    #expect(LookEditorModel.harmonies[1][1] == [0, 40] && LookEditorModel.harmonies[1][2] == [0, -40, 40])
+    // The chip's lightness sets the shared radius: White sits at the rim, Slate near the centre.
+    let white = LookEditorModel.chipPages[0][0], slate = LookEditorModel.chipPages[0][8]
+    #expect(white.y == 0.05 && LookEditorModel.radius(of: white.y) == Double(LookEditorModel.fieldMaxRadius))
+    #expect(slate.y > 0.8 && LookEditorModel.radius(of: slate.y) < 20)
+    func prepare(_ hues: [Double], selected: Int) async throws -> Int {
+        editor.change { $0.colors = hues.map { LookEditorModel.fieldColor(x: $0, y: 0.5) } }
+        editor.selected = selected
+        return try await fixture.writes()
     }
-    // 40 degrees is a ninth of the wheel, so each pair sits one preset step apart.
-    #expect(abs(LookEditorModel.presets[10][1].x - 2.0 / 9) < 0.000001)
-    #expect(LookEditorModel.presets[17][1].x == 0)
+    // One handle: the chip's own colour on either page, and one write on the tap.
+    for page in 0...1 {
+        let chip = LookEditorModel.chipPages[page][1]
+        let count = try await prepare([0.1], selected: 0)
+        editor.applyChip(page: page, index: 1)
+        #expect(editor.look.colors.count == 1 && editor.selected == 0)
+        #expect(abs(editor.look.colors[0].x - chip.x) < 0.000001 && abs(editor.look.colors[0].y - chip.y) < 0.000001)
+        #expect(try await fixture.writes() == count + 1)
+        #expect(editor.isChipApplied(chip))
+        #expect(!editor.isChipApplied(LookEditorModel.chipPages[page][2]))
+    }
+    // Page 1 (split), two handles: 0 / 180 degrees around the chip.
+    let orange = LookEditorModel.chipPages[0][4]
+    var count = try await prepare([0.1, 0.6], selected: 0)
+    editor.applyChip(page: 0, index: 4)
+    #expect(editor.look.colors.count == 2 && editor.selected == 0)
+    #expect(abs(editor.look.colors[0].x - orange.x) < 0.000001)
+    #expect(abs(editor.look.colors[1].x - LookEditorModel.wrapped(orange.x + 0.5)) < 0.000001)
+    #expect(editor.look.colors.allSatisfy { abs($0.y - orange.y) < 0.000001 })
+    #expect(try await fixture.writes() == count + 1)
+    // Page 1, three handles with the middle selected: the chip on the selected handle, -150 / +150
+    // on the others in handle order.
+    count = try await prepare([0.1, 0.3, 0.5], selected: 1)
+    editor.applyChip(page: 0, index: 4)
+    #expect(editor.look.colors.count == 3 && editor.selected == 1)
+    #expect(abs(editor.look.colors[1].x - orange.x) < 0.000001)
+    #expect(abs(editor.look.colors[0].x - LookEditorModel.wrapped(orange.x - 150.0 / 360)) < 0.000001)
+    #expect(abs(editor.look.colors[2].x - LookEditorModel.wrapped(orange.x + 150.0 / 360)) < 0.000001)
+    #expect(try await fixture.writes() == count + 1)
+    // Page 2 (analogous), three handles: -40 / +40, and Rose's +40 wraps past red to 30 degrees.
+    let rose = LookEditorModel.chipPages[1][5]
+    count = try await prepare([0.1, 0.3, 0.5], selected: 1)
+    editor.applyChip(page: 1, index: 5)
+    #expect(abs(editor.look.colors[1].x - rose.x) < 0.000001)
+    #expect(abs(editor.look.colors[0].x - LookEditorModel.wrapped(rose.x - 40.0 / 360)) < 0.000001)
+    #expect(abs(editor.look.colors[2].x - 30.0 / 360) < 0.000001)
+    #expect(try await fixture.writes() == count + 1)
+    // Page 2 with two handles: 0 / 40 degrees.
+    count = try await prepare([0.1, 0.6], selected: 1)
+    editor.applyChip(page: 1, index: 5)
+    #expect(abs(editor.look.colors[1].x - rose.x) < 0.000001)
+    #expect(abs(editor.look.colors[0].x - LookEditorModel.wrapped(rose.x + 40.0 / 360)) < 0.000001)
+    #expect(try await fixture.writes() == count + 1)
+    // A chip's swatch is its own colour on page 1 and the analogous three on page 2.
+    #expect(LookEditorModel.chipSwatch(0, orange) == [LookEditorModel.chipColour(orange)])
+    #expect(LookEditorModel.chipSwatch(1, rose).count == 3)
+    try await fixture.close()
 }
 
 @Test @MainActor
@@ -371,11 +445,12 @@ func lookHandleLimitsPresetsModesAndResetReachTheCore() async throws {
     model.remove()
     #expect(model.look.colors.count == 1 && model.selected == 0)
     #expect(try await fixture.writes() == initial + 4)
-    #expect(LookEditorModel.presets.count == 18)
-    for index in 0..<18 {
-        model.preset(index)
-        #expect(model.look.colors.count == (index < 9 ? 1 : 2))
-        #expect(try await fixture.stored().spaces[0].look?.colors == LookEditorModel.presets[index])
+    for page in 0...1 {
+        for index in 0..<9 {
+            model.applyChip(page: page, index: index)
+            #expect(model.look.colors.count == 1)
+            #expect(try await fixture.stored().spaces[0].look?.colors == [LookEditorModel.chipColour(LookEditorModel.chipPages[page][index])])
+        }
     }
     for mode: Appearance in [.light, .dark, .auto] {
         model.change { $0.appearance = mode }
@@ -438,7 +513,7 @@ func lookSlidersWriteOnReleaseAndGlassClearsWhenTransparencyMoves() async throws
 @Test @MainActor
 func lookUseForAllWritesEverySpaceAndKeepsTheSelection() async throws {
     let fixture = try await LookFixture()
-    fixture.editor.preset(12)
+    fixture.editor.applyChip(page: 1, index: 3)
     let before = try await fixture.stored()
     let count = try await fixture.writes()
     fixture.editor.useForAll()

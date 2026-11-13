@@ -104,15 +104,17 @@ struct LookPopoverView: View {
                 Text("\(model.look.colors.count) of 3 colours").font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 3) {
-                Button { model.presetPage = max(0, model.presetPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.presetPage == 0).accessibilityLabel("Previous presets")
+                Button { model.chipPage = max(0, model.chipPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.chipPage == 0).accessibilityLabel("Previous presets")
                 ForEach(0..<9) { index in
-                    let preset = model.presetPage * 9 + index
-                    Button { model.preset(preset) } label: {
-                        Circle().fill(LinearGradient(colors: LookEditorModel.presets[preset].map(Self.swatch), startPoint: .top, endPoint: .bottom))
+                    let chip = LookEditorModel.chipPages[model.chipPage][index]
+                    Button { model.applyChip(page: model.chipPage, index: index) } label: {
+                        Circle().fill(LinearGradient(colors: LookEditorModel.chipSwatch(model.chipPage, chip).map(Self.swatch),
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                             .frame(width: 20, height: 20).overlay(Circle().strokeBorder(.primary.opacity(0.15)))
-                    }.accessibilityLabel("\(model.presetPage == 0 ? "Solid colour" : "Analogous") preset \(index + 1)").accessibilityValue(model.look.colors == LookEditorModel.presets[preset] ? "Selected" : "Not selected")
+                    }.accessibilityLabel("\(model.chipPage == 0 ? "Split" : "Analogous") preset \(index + 1)")
+                        .accessibilityValue(model.isChipApplied(chip) ? "Selected" : "Not selected")
                 }
-                Button { model.presetPage = min(1, model.presetPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.presetPage == 1).accessibilityLabel("Next presets")
+                Button { model.chipPage = min(1, model.chipPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.chipPage == 1).accessibilityLabel("Next presets")
             }.buttonStyle(.plain)
             TransparencyControl(model: model)
             GrainControl(model: model)
@@ -133,27 +135,18 @@ struct LookPopoverView: View {
         ZStack {
             Canvas { context, size in
                 let centre = LookEditorModel.fieldCentre
-                let reach = min(size.width, size.height) / 2
-                let pitch: CGFloat = 10
                 var spokes = Path()
                 for color in model.look.colors {
                     spokes.move(to: centre)
                     spokes.addLine(to: LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
                 }
                 context.stroke(spokes, with: .color(.primary.opacity(0.3)), lineWidth: 1)
-                var dy = -reach + pitch / 2
-                while dy <= reach {
-                    var dx = -reach + pitch / 2
-                    while dx <= reach {
-                        let point = CGPoint(x: centre.x + dx, y: centre.y + dy)
-                        if hypot(Double(dx), Double(dy)) <= Double(reach) - 2 {
-                            let position = LookEditorModel.fieldPosition(point)
-                            context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)),
-                                         with: .color(Self.swatch(LookEditorModel.fieldColor(x: position.x, y: position.y))))
-                        }
-                        dx += pitch
-                    }
-                    dy += pitch
+                let half = LookEditorModel.fieldDotSize / 2
+                for point in LookEditorModel.dotCentres() {
+                    let position = LookEditorModel.fieldPosition(point)
+                    context.fill(Path(ellipseIn: CGRect(x: point.x - half, y: point.y - half,
+                                                        width: LookEditorModel.fieldDotSize, height: LookEditorModel.fieldDotSize)),
+                                 with: .color(Self.swatch(LookEditorModel.fieldColor(x: position.x, y: position.y))))
                 }
             }.accessibilityHidden(true)
             ForEach(model.look.colors.indices, id: \.self) { index in
@@ -161,7 +154,7 @@ struct LookPopoverView: View {
                 let big = dragging == index
                 Circle().fill(Self.swatch(color)).overlay(Circle().strokeBorder(.white, lineWidth: big ? 3 : 2))
                     .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
-                    .frame(width: big ? 28 : 20, height: big ? 28 : 20)
+                    .frame(width: big ? 32 : 24, height: big ? 32 : 24)
                     .position(LookEditorModel.fieldPoint(x: color.x, y: LookEditorModel.fieldY(color.y)))
                     .onTapGesture { model.selected = index }
                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("lookField")).onChanged { value in

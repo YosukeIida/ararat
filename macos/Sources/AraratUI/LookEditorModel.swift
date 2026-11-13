@@ -2,11 +2,24 @@ import AppKit
 import AraratKit
 import SwiftUI
 
+/// One of the mock's chips: a base colour (its hue and HSL lightness) that sets the shared radius
+/// and, with the page's harmony, the other handles' hues.
+struct LookChip: Equatable {
+    let name: String
+    let hue: Double        // degrees, as the mock's PAGES list them
+    let saturation: Double
+    let value: Double
+    var lightness: Double { value * (1 - saturation / 2) }
+    /// The hue as the stored x (0…1) and the stored y the chip's colour takes (0.05 white … 0.95 black).
+    var x: Double { hue / 360 }
+    var y: Double { min(0.95, max(0.05, 1 - lightness)) }
+}
+
 @MainActor
 final class LookEditorModel: ObservableObject {
     @Published private(set) var look: Look
     @Published var selected = 0
-    @Published var presetPage = 0
+    @Published var chipPage = 0
     @Published private(set) var editing = false
     @Published private(set) var error: String?
     weak var checkTrackView: NSView?
@@ -62,10 +75,30 @@ final class LookEditorModel: ObservableObject {
     /// coordinate (0 rim, 1 centre).
     static func fieldColor(x: Double, y: Double) -> LookColor { color(x: wrapped(x), y: 0.05 + 0.9 * clamp(y)) }
     static let fieldCanvasSize = CGSize(width: 264, height: 232)
-    /// The furthest a handle sits from the centre; the dots reach the inscribed circle (116 pt) a
-    /// little further, as the mock's do (RMAX 141 of R1 150, at this field's scale).
-    static let fieldMaxRadius: CGFloat = 108
+    /// The inscribed circle. The dots fill it, centres on an 8 pt half-pitch lattice (no dot at the
+    /// centre) out to 114 pt; the handles reach 100 pt, so a dragged 32 pt handle stays inside the
+    /// circle (100 + 16 = 116) and the dots always reach the handle range.
+    static let fieldDotDiscRadius: CGFloat = 116
+    static let fieldDotPitch: CGFloat = 8
+    static let fieldDotSize: CGFloat = 4
+    static let fieldMaxRadius: CGFloat = 100
     static var fieldCentre: CGPoint { CGPoint(x: fieldCanvasSize.width / 2, y: fieldCanvasSize.height / 2) }
+    /// The dots' centres in field coordinates.
+    static func dotCentres() -> [CGPoint] {
+        let disc = fieldDotDiscRadius
+        let count = Int(disc / fieldDotPitch)
+        var points: [CGPoint] = []
+        for row in (-count)..<count {
+            let dy = (CGFloat(row) + 0.5) * fieldDotPitch
+            for column in (-count)..<count {
+                let dx = (CGFloat(column) + 0.5) * fieldDotPitch
+                if hypot(dx, dy) <= disc - fieldDotSize / 2 {
+                    points.append(CGPoint(x: fieldCentre.x + dx, y: fieldCentre.y + dy))
+                }
+            }
+        }
+        return points
+    }
     /// The radial field coordinate of a handle radius in points.
     static func fieldY(radius: Double) -> Double { 1 - clamp(radius / Double(fieldMaxRadius)) }
     /// The stored y of a handle radius; the inverse of `radius(of:)`.
@@ -98,13 +131,48 @@ final class LookEditorModel: ObservableObject {
     static func opacity(transparency: Double) -> Double { 1 - clamp(transparency / 100) }
     var transparency: Double { Self.transparency(opacity: look.opacity) }
     var transparencyLabel: String { "Transparency \(Int(transparency.rounded()))%" }
-    static let presets: [[LookColor]] = (0..<9).map { [color(x: Double($0) / 9, y: 0.5)] }
-        + (0..<9).map { [color(x: Double($0) / 9, y: 0.5), color(x: wrapped((Double($0) + 1) / 9), y: 0.5)] }
     static func handleLabel(index: Int, count: Int) -> String { "Colour \(index + 1) of \(count)" }
     static func handleValue(_ color: LookColor) -> String {
         let hue = Int((wrapped(color.x) * 360).rounded()) % 360
         let lightness = Int(((1 - color.y) * 100).rounded())
         return "Hue \(hue) degrees, lightness \(lightness) percent"
+    }
+    /// The mock's chips (common.py :76-77 and the F-LookStates board): nine base colours per page.
+    /// The chip keeps the current handle count and applies its page's harmony around the selected
+    /// handle; its colour's HSL lightness sets the shared radius.
+    static let chipPages: [[LookChip]] = [
+        [
+            LookChip(name: "White", hue: 0, saturation: 0.06, value: 1),
+            LookChip(name: "Pink", hue: 340, saturation: 0.4, value: 1),
+            LookChip(name: "Mauve", hue: 290, saturation: 0.45, value: 1),
+            LookChip(name: "Red", hue: 0, saturation: 1, value: 0.9),
+            LookChip(name: "Orange", hue: 28, saturation: 1, value: 1),
+            LookChip(name: "Yellow", hue: 52, saturation: 0.85, value: 1),
+            LookChip(name: "Green", hue: 130, saturation: 1, value: 0.7),
+            LookChip(name: "Sky", hue: 205, saturation: 0.5, value: 1),
+            LookChip(name: "Slate", hue: 220, saturation: 1, value: 0.35),
+        ],
+        [
+            LookChip(name: "Teal", hue: 180, saturation: 1, value: 0.6),
+            LookChip(name: "Blue", hue: 225, saturation: 1, value: 0.85),
+            LookChip(name: "Indigo", hue: 250, saturation: 1, value: 0.7),
+            LookChip(name: "Violet", hue: 275, saturation: 0.8, value: 1),
+            LookChip(name: "Magenta", hue: 310, saturation: 1, value: 0.9),
+            LookChip(name: "Rose", hue: 350, saturation: 0.6, value: 1),
+            LookChip(name: "Amber", hue: 42, saturation: 1, value: 1),
+            LookChip(name: "Lime", hue: 90, saturation: 0.8, value: 1),
+            LookChip(name: "Sand", hue: 40, saturation: 0.25, value: 1),
+        ],
+    ]
+    /// The page's harmony offsets for one, two and three handles: page 1 split, page 2 analogous.
+    static let harmonies: [[[Double]]] = [
+        [[0], [0, 180], [0, -150, 150]],
+        [[0], [0, 40], [0, -40, 40]],
+    ]
+    static func chipColour(_ chip: LookChip) -> LookColor { fieldColor(x: chip.x, y: fieldY(chip.y)) }
+    /// A chip's swatch colours: its own colour, or the three analogous hues the mock draws for page 2.
+    static func chipSwatch(_ page: Int, _ chip: LookChip) -> [LookColor] {
+        (page == 1 ? harmonies[1][2] : [0]).map { fieldColor(x: chip.x + $0 / 360, y: fieldY(chip.y)) }
     }
 
     func begin() {
@@ -199,10 +267,32 @@ final class LookEditorModel: ObservableObject {
         selected = max(0, selected - 1)
         change { $0.colors.remove(at: index) }
     }
-    func preset(_ index: Int) {
-        guard Self.presets.indices.contains(index) else { return }
-        selected = 0
-        change { $0.colors = Self.presets[index] }
+    /// Applies one chip: the current handle count stays, the selected handle takes the chip's hue and
+    /// lightness (so the shared radius comes from the chip), and the other handles take the page's
+    /// harmony offsets in handle order. One write, on release, through begin()/end().
+    func applyChip(page: Int, index: Int) {
+        guard Self.chipPages.indices.contains(page), Self.chipPages[page].indices.contains(index) else { return }
+        let chip = Self.chipPages[page][index]
+        let offsets = Self.harmonies[page][max(0, min(2, look.colors.count - 1))]
+        let anchor = look.colors.indices.contains(selected) ? selected : 0
+        begin()
+        change { look in
+            var next = 1
+            for i in look.colors.indices {
+                let offset: Double
+                if i == anchor || offsets.count == 1 { offset = 0 }
+                else { offset = next < offsets.count ? offsets[next] : 0; next += 1 }
+                look.colors[i] = Self.fieldColor(x: chip.x + offset / 360, y: Self.fieldY(chip.y))
+            }
+        }
+        end()
+    }
+    /// Whether the selected handle sits on the chip's own hue and lightness (the mock marks a chip
+    /// as chosen by its base point, whatever the other handles are doing).
+    func isChipApplied(_ chip: LookChip) -> Bool {
+        guard look.colors.indices.contains(selected) else { return false }
+        let colour = look.colors[selected]
+        return abs(colour.x - chip.x) < 0.0005 && abs(colour.y - chip.y) < 0.0005
     }
     func setTransparency(_ value: Double, glass: Bool = false) {
         change { $0.opacity = glass ? 0 : Self.opacity(transparency: value); $0.glass = glass }
