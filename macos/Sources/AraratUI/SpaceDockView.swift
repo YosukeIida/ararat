@@ -61,6 +61,28 @@ final class SpaceDockButton: NSButton {
     private var hovered = false
     private var pressInside = false
     var backgroundAlpha: CGFloat { openFraction > 0 ? Self.openFillAlpha(fraction: openFraction, appearance: effectiveAppearance) : pressInside ? 0.078 : hovered ? 0.045 : 0 }
+    /// The glyph keeps the normal label colour, accent-coloured only never (design's N2 ruling: the
+    /// F boards supersede the A board's accent-tinted open cell). Drawn through `attributedTitle`,
+    /// because an `NSButton` draws its plain `title` with the system's control colour.
+    static let glyphColor = NSColor.labelColor
+    static let dotAlpha: CGFloat = 0.55
+    var checkGlyphColor: NSColor { Self.glyphColor }
+    /// The dot's fill as the cell draws it, resolved in `appearance` (`.labelColor` is a dynamic
+    /// colour, so the check must resolve it while that appearance is current).
+    func checkDotColor(_ appearance: NSAppearance) -> NSColor? {
+        var value: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            value = Self.glyphColor.withAlphaComponent(Self.dotAlpha).usingColorSpace(.sRGB)
+        }
+        return value
+    }
+    /// The cell's glyph: the space's icon or its first letter, in the normal glyph colour.
+    func setGlyph(_ text: String, bold: Bool) {
+        attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: bold ? .bold : .regular),
+            .foregroundColor: Self.glyphColor,
+        ])
+    }
     /// The fill `draw` puts under the glyph, nil when the cell draws none: white for the open cell,
     /// the label colour for hover and press. The checks read this to pin the drawn colours.
     var checkFill: NSColor? {
@@ -85,7 +107,7 @@ final class SpaceDockButton: NSButton {
             NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
         }
         if glyph == .dot {
-            NSColor.labelColor.withAlphaComponent(0.55).setFill()
+            Self.glyphColor.withAlphaComponent(Self.dotAlpha).setFill()
             NSBezierPath(ovalIn: NSRect(x: bounds.midX - 2.5, y: bounds.midY - 2.5, width: 5, height: 5)).fill()
         } else { super.draw(dirtyRect) }
     }

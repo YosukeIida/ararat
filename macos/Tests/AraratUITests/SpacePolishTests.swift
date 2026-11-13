@@ -448,6 +448,34 @@ func dockOpenCellUsesTheMocksWhiteOverlayInBothAppearances() throws {
 }
 
 @Test @MainActor
+func dockOpenCellKeepsTheNormalGlyphColourInBothAppearances() throws {
+    // The A board tinted the open cell's glyph with the accent; the F boards (the later treatment,
+    // design's N2 ruling) draw the normal glyph colour on the white overlay. Pin that: the open
+    // cell's letter and its dot resolve to `labelColor` in light and dark.
+    let button = SpaceDockButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+    button.setGlyph("S", bold: true)
+    button.openFraction = 1
+    func resolved(_ color: NSColor, _ appearance: NSAppearance) -> NSColor? {
+        var value: NSColor?
+        appearance.performAsCurrentDrawingAppearance { value = color.usingColorSpace(.sRGB) }
+        return value
+    }
+    for name in [NSAppearance.Name.aqua, .darkAqua] {
+        let appearance = try #require(NSAppearance(named: name))
+        button.appearance = appearance
+        let label = try #require(resolved(.labelColor, appearance))
+        let glyph = try #require(resolved(button.checkGlyphColor, appearance))
+        #expect(glyph == label)
+        #expect(button.checkGlyphColor != NSColor.controlAccentColor)
+        let title = try #require(button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+        #expect(try #require(resolved(title, appearance)) == label)
+        let dot = try #require(button.checkDotColor(appearance))
+        #expect(abs(dot.redComponent - label.redComponent) < 0.001 && abs(dot.greenComponent - label.greenComponent) < 0.001 && abs(dot.blueComponent - label.blueComponent) < 0.001)
+        #expect(abs(dot.alphaComponent - 0.55) < 0.001)
+    }
+}
+
+@Test @MainActor
 func urlFieldFillUsesTheBoardsWhiteOverlayInBothAppearances() throws {
     let field = URLFieldBackgroundButton(frame: NSRect(x: 0, y: 0, width: 224, height: 36))
     for (name, resting, hovered, pressed) in [
