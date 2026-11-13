@@ -171,6 +171,11 @@ public final class SidebarContainerView: NSView {
         return page.convert(page.bounds, to: nil)
     }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
+    /// The sidebar panel's rect in screen coordinates, for the grain check's capture band.
+    public var panelRectForCheck: NSRect? {
+        guard let window, panel.superview === self else { return nil }
+        return window.convertToScreen(panel.convert(panel.bounds, to: nil))
+    }
     public func dockCheckSetMain(_ main: Bool) {
         guard CommandLine.arguments.contains("--ararat-check=dock") else { return }
         applicationActive = { true }

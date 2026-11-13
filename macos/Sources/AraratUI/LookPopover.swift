@@ -388,6 +388,12 @@ public final class LookCheckProbe {
         focusView(label)?.requestControlFocus() == true
     }
     public func hasFocus(_ label: String) -> Bool { focusView(label)?.controlHasFocus == true }
+    /// Sets the whole look through the editor's own commit path, for a check that needs a fixed
+    /// probe (the grain measurement) rather than a gesture.
+    public func setLook(_ edit: (inout Look) -> Void) {
+        model()?.end()
+        model()?.change(edit)
+    }
 }
 
 extension SettingsWindowController {
