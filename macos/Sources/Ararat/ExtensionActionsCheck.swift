@@ -25,7 +25,7 @@ final class ExtensionActionsCheck {
     var fixtureID = ""
     var secondID = ""
     var thirdID = ""
-    var viewport240: CGFloat = 0
+    var viewportField: CGFloat = 0
     var seedRow: Row?
     var iconBefore: Data?
     var secondTab = ""
@@ -385,26 +385,25 @@ extension Runtime {
             check.mark("gaps4", xs.count == 3
                        && abs((xs[1] - xs[0]) - 28) < 0.01 && abs((xs[2] - xs[1]) - 28) < 0.01
                        && abs(sidebar.checkURLFieldCopyFrame.minX - sidebar.checkInFieldActionsFrame.maxX - 4) < 0.01)
-            check.viewport240 = sidebar.checkSpaceViewportFrame.maxY
             if screen { check.mark("capture_three_actions", capture("three-actions")) }
             setWidth(232)
             browserCheckPhase = 15
         case 15:
             let ids = [check.fixtureID, check.secondID, check.thirdID]
-            guard sidebar.checkInFieldActionIDs.isEmpty, Set(sidebar.checkRowActionIDs) == Set(ids),
-                  sidebar.checkActionsRowHeight == 32 else {
+            guard Set(sidebar.checkInFieldActionIDs) == Set(ids), sidebar.checkRowActionIDs.isEmpty else {
                 if phaseTicks() > 100 {
                     check.mark("fit_three_232", false)
                     browserCheckPhase = 16
                     return
                 }
-                wait("three in the row at 232"); return
+                wait("three in the field at 232"); return
             }
+            // With the 8 pt inset the host keeps exactly 64 pt with three actions at 232, so the
+            // actions stay in the field (the old 12 pt inset sent them to the row).
             check.mark("fit_three_232")
-            let tiles = ids.compactMap { sidebar.checkActionButton($0) }
-            check.mark("icons16", check.conditions["icons16"] == true
-                       && tiles.count == 3 && tiles.allSatisfy { $0.checkIconSize == NSSize(width: 16, height: 16) })
-            check.mark("favourite_shift", abs((check.viewport240 - sidebar.checkSpaceViewportFrame.maxY) - 40) < 0.01)
+            let buttons = ids.compactMap { sidebar.checkActionButton($0) }
+            check.mark("icons16", buttons.count == 3
+                       && buttons.allSatisfy { $0.checkIconSize == NSSize(width: 16, height: 16) })
             _ = adapter?.setExtensionPinned(check.thirdID, pinned: false)
             refreshExtensionActions()
             browserCheckPhase = 16
@@ -421,6 +420,7 @@ extension Runtime {
                 wait("two in the field at 232"); return
             }
             check.mark("fit_two_232")
+            check.viewportField = sidebar.checkSpaceViewportFrame.maxY
             setWidth(199)
             browserCheckPhase = 17
         case 17:
@@ -435,6 +435,8 @@ extension Runtime {
                 wait("two in the row at 199"); return
             }
             check.mark("fit_two_199")
+            // The overflow row adds 8 + 32 pt above the favourites' old place: 40 pt down.
+            check.mark("favourite_shift", abs((check.viewportField - sidebar.checkSpaceViewportFrame.maxY) - 40) < 0.01)
             setWidth(164)
             browserCheckPhase = 18
         case 18:

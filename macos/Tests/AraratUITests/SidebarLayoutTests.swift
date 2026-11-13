@@ -387,3 +387,20 @@ func urlFieldAndButtonsKeepTheBoardGeometryAndStates() {
     #expect(!copy.checkImageIsTick())
 }
 
+
+@Test @MainActor
+func fieldTextInsetAndGlyphStepFollowTheStepRule() {
+    let plain = urlFieldSidebar(live: "https://a.example/")
+    plain.layoutSubtreeIfNeeded()
+    let plainField = plain.convert(plain.urlField.bounds, from: plain.urlField)
+    #expect(abs(plain.checkHostClipFrame.minX - plainField.minX - 8) <= 0.5)
+    let gear = urlFieldSidebar(live: "chrome://settings/")
+    gear.layoutSubtreeIfNeeded()
+    let gearField = gear.convert(gear.urlField.bounds, from: gear.urlField)
+    #expect(abs(gear.checkHostClipFrame.minX - gearField.minX - 32) <= 0.5)
+    let privateWindow = urlFieldSidebar(live: "https://a.example/")
+    privateWindow.privateWindow = true
+    privateWindow.layoutSubtreeIfNeeded()
+    let privateField = privateWindow.convert(privateWindow.urlField.bounds, from: privateWindow.urlField)
+    #expect(abs(privateWindow.checkHostClipFrame.minX - privateField.minX - 32) <= 0.5)
+}

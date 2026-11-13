@@ -998,7 +998,7 @@ public final class SidebarView: NSView {
             $0.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
         }
         hostTrailingToEdge = [hostClip].map {
-            $0.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12)
+            $0.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -SidebarView.fieldTextInset)
         }
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1046,12 +1046,12 @@ public final class SidebarView: NSView {
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: rows.heightAnchor),
         ])
-        privateBadgeLeading = privateBadgeGlyph.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
-        gearLeadingDefault = gearIcon.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
-        gearLeadingAfterBadge = gearIcon.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8)
-        textLeadingDefault = [hostClip].map { $0.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12) }
-        textLeadingAfterBadge = [hostClip].map { $0.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8) }
-        textLeadingAfterGear = [hostClip].map { $0.leadingAnchor.constraint(equalTo: gearIcon.trailingAnchor, constant: 8) }
+        privateBadgeLeading = privateBadgeGlyph.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: SidebarView.fieldTextInset)
+        gearLeadingDefault = gearIcon.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: SidebarView.fieldTextInset)
+        gearLeadingAfterBadge = gearIcon.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: SidebarView.fieldGlyphGap)
+        textLeadingDefault = [hostClip].map { $0.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: SidebarView.fieldTextInset) }
+        textLeadingAfterBadge = [hostClip].map { $0.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: SidebarView.fieldGlyphGap) }
+        textLeadingAfterGear = [hostClip].map { $0.leadingAnchor.constraint(equalTo: gearIcon.trailingAnchor, constant: SidebarView.fieldGlyphGap) }
         privateBadgeLeading.isActive = false
         gearLeadingDefault.isActive = true
         gearLeadingAfterBadge.isActive = false
@@ -1233,14 +1233,24 @@ public final class SidebarView: NSView {
         updateExtensionLayout()
     }
 
+    // The field's text geometry, derived once: the 8 pt step inset, a 16 pt glyph plus an 8 pt
+    // gap, and the Copy Link/site-controls cluster (gaps 4, buttons 24).
+    private static let fieldTextInset: CGFloat = 8
+    private static let fieldGlyphGap: CGFloat = 8
+    private static let fieldGlyphSize: CGFloat = 16
+    private static let fieldGlyphStep: CGFloat = fieldGlyphSize + fieldGlyphGap
+    private static let fieldButtonCluster: CGFloat = 4 + 24 + 4 + 24 + 4
+
     private func urlFieldValueWidth() -> CGFloat? {
         urlField.layoutSubtreeIfNeeded()
         guard urlField.bounds.width > 0 else { return nil }
-        // S4: the text starts after whichever leading prefix is visible (16 pt glyph + 8 pt gap).
-        let prefix: CGFloat = (privateBadgeGlyph.isHidden ? 0 : 24) + (gearIcon.isHidden ? 0 : 24)
-        // The buttons hidden (no tab) leave the text area open to the field's 12 pt inset.
-        let trailing: CGFloat = copyLinkButton.isHidden && siteControlsButton.isHidden ? 12 : 60
-        return urlField.bounds.width - 12 - trailing - prefix
+        // S4: the text starts after whichever leading prefix is visible (one glyph step each).
+        let prefix: CGFloat = (privateBadgeGlyph.isHidden ? 0 : Self.fieldGlyphStep)
+            + (gearIcon.isHidden ? 0 : Self.fieldGlyphStep)
+        // With no buttons (no tab) the text area runs to the same inset on the right.
+        let trailing = copyLinkButton.isHidden && siteControlsButton.isHidden
+            ? Self.fieldTextInset : Self.fieldButtonCluster
+        return urlField.bounds.width - Self.fieldTextInset - trailing - prefix
     }
 
     private func updateExtensionActions() {
