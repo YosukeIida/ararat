@@ -6518,8 +6518,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               let privateHost = privateChild.host, privateHost.isPrivateWindow() {
       // U26f: a normal OTR window is a full private window, not the old page-only popup.
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
-        guard let rows = captureCheckRows() else { return }
-        quitBefore = rows
         privateHost.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
         privateHost.window().makeKeyAndOrderFront(nil)
         browserCheckPhase = 61
@@ -6534,6 +6532,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
               let privateHost = privateChild.host,
               let tab = (privateHost.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
+      guard let rows = captureCheckRows() else { return }
+      quitBefore = rows
       // Save Page on the full private window: Chrome's own command, no key-window dispatch.
       privateHost.checkSavePage()
       browserCheckPhase = 62

@@ -71,11 +71,12 @@ extension Runtime {
             browserCheckPhase = 1
         case 1:
             guard let seed = browserCheckSeedID, snapshot.selectedId == seed, sliceActive == seed,
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }), !tab.isLoading else {
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }), !tab.isLoading,
+                  let rows = captureCheckRows(), checkStoredTabMetadata(rows, item: seed, url: tab.url, title: tab.title) else {
                 wait("regular seed selected"); return
             }
             browserCheckBefore = snapshot
-            quitBefore = captureCheckRows()
+            quitBefore = rows
             host.checkCreateIncognito()
             browserCheckPhase = 2
         case 2:
@@ -98,6 +99,7 @@ extension Runtime {
                   let item = snap.spaces.first?.today.first(where: { $0.url == "about:blank?private-isolation" })?.id,
                   first.sidebar?.checkPrivateTodayRows.contains(item) == true else { wait("shared private row"); return }
             check.mark("private_shared")
+            guard regularRowsUnchanged() else { wait("regular rows before child"); return }
             // A regular window opened from the root shares the regular store, never the private one.
             host.checkNewWindow()
             browserCheckPhase = 5
@@ -119,7 +121,11 @@ extension Runtime {
             }
             guard let privateTab = (first.host?.tabs() as? [any ARTabAPI])?.first,
                   let privateHost = first.host, let regularHost = regular.host,
-                  let regularTab = (regularHost.tabs() as? [any ARTabAPI])?.first else { wait("tabs for the move"); return }
+                  let regularTab = (regularHost.tabs() as? [any ARTabAPI])?.first,
+                  !regularTab.isLoading, let regularItem = regularTab.itemId,
+                  let rows = captureCheckRows(),
+                  checkStoredTabMetadata(rows, item: regularItem, url: regularTab.url, title: regularTab.title) else { wait("tabs for the move"); return }
+            quitBefore = rows
             let refused = !privateHost.checkMoveTab(privateTab, toHost: regularHost) && !regularHost.checkMoveTab(regularTab, toHost: privateHost)
             check.mark("private_cross_refused", refused)
             guard refused else { wait("refused cross move"); return }

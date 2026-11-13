@@ -144,6 +144,11 @@ extension Runtime {
                   !live.isEmpty,
                   let tabs = child.host?.tabs() as? [any ARTabAPI], tabs.count == 1,
                   tabs[0].itemId == item, tabs[0].liveId == live else { wait("private adopted tab"); return }
+            if screen, child.host?.window().isKeyWindow != true {
+                child.host?.window().makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                wait("private window key"); return
+            }
             check.mark("private_selected_active", child.snapshot.selectedId == item && child.host?.activeItemId() == item)
             guard child.snapshot.selectedId == item, child.host?.activeItemId() == item else { wait("private selection"); return }
             guard let sidebar = child.sidebar, let container = child.container else { wait("private views"); return }
@@ -232,17 +237,20 @@ extension Runtime {
                 wait("sibling tab in window 1"); return
             }
             check.mark("private_sibling_rows")
-            if screen {
-                first.host?.window().makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-                guard first.host?.window().isKeyWindow == true else { wait("window 1 key"); return }
-            }
+            first.host?.window().makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            guard first.host?.window().isKeyWindow == true else { wait("window 1 key"); return }
             // Selecting in window 1 a row whose live tab is in window 2 moves it (same OTR domain).
             first.sidebar?.selectRow(id: sibling)
             browserCheckPhase = 5
         case 5:
-            guard let first = privateChildren().first(where: { $0.windowID == privateFirstWindowID }),
-                  let second = privateChildren().first(where: { $0 !== first }),
+            guard let first = privateChildren().first(where: { $0.windowID == privateFirstWindowID }) else { wait("window 1"); return }
+            guard first.host?.window().isKeyWindow == true else {
+                first.host?.window().makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                wait("window 1 key"); return
+            }
+            guard let second = privateChildren().first(where: { $0 !== first }),
                   let sibling = first.adapter?.session.queue.sync(execute: {
                       first.adapter?.session.store?.snapshot(windowId: first.windowID).spaces.first?.today.first(where: { $0.url == "about:blank?private-sibling" })?.id
                   }),
