@@ -178,10 +178,13 @@ extension Runtime {
             browserCheckPhase = 10
         case 10:
             guard let first = privateChildren().first, let presenter = first.commandPresenter else { wait("private bar query"); return }
+            guard let typed = presenter.controller.result.rows.first, case .search = typed.target,
+                  typed.title == check.learnTitle else { wait("private bar query session"); return }
+            FileHandle.standardError.write(Data("ararat-trace: private-isolation query_rows=\(presenter.controller.result.rows.map { "\($0.title)|\($0.url ?? "nil")|\($0.target)" })\n".utf8))
             let noHistory = !presenter.controller.result.rows.contains { row in
                 if case .history = row.target { return true } else { return false }
             }
-            let noLearnedTab = !presenter.controller.result.rows.contains { row in
+            let noLearnedTab = !presenter.controller.result.rows.dropFirst().contains { row in
                 row.title == check.learnTitle || row.url == check.learnURL
             }
             check.mark("private_bar_no_history", noHistory)
@@ -192,6 +195,14 @@ extension Runtime {
             browserCheckPhase = 11
         case 11:
             guard let first = privateChildren().first, let presenter = first.commandPresenter else { wait("private bar recents"); return }
+            presenter.controller.update(query: check.learnTitle)
+            browserCheckPhase = 12
+        case 12:
+            guard let first = privateChildren().first, let presenter = first.commandPresenter,
+                  let typed = presenter.controller.result.rows.first, case .search = typed.target,
+                  typed.title == check.learnTitle else { wait("private bar recents session"); return }
+            presenter.controller.update(query: "")
+            FileHandle.standardError.write(Data("ararat-trace: private-isolation recent_rows=\(presenter.controller.result.rows.map { "\($0.title)|\($0.url ?? "nil")|\($0.target)" })\n".utf8))
             let recents = presenter.controller.result.rows.contains { row in
                 row.title == check.learnTitle || row.url == check.learnURL
             }

@@ -237,25 +237,29 @@ extension Runtime {
                 wait("sibling tab in window 1"); return
             }
             check.mark("private_sibling_rows")
-            first.host?.window().makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            guard first.host?.window().isKeyWindow == true else { wait("window 1 key"); return }
-            // Selecting in window 1 a row whose live tab is in window 2 moves it (same OTR domain).
-            first.sidebar?.selectRow(id: sibling)
-            browserCheckPhase = 5
-        case 5:
-            guard let first = privateChildren().first(where: { $0.windowID == privateFirstWindowID }) else { wait("window 1"); return }
-            guard first.host?.window().isKeyWindow == true else {
+            if screen, first.host?.window().isKeyWindow != true {
                 first.host?.window().makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 wait("window 1 key"); return
             }
-            guard let second = privateChildren().first(where: { $0 !== first }),
+            // Selecting in window 1 a row whose live tab is in window 2 moves it (same OTR domain).
+            let selected = first.sidebar?.selectRow(id: sibling) == true
+            if screen && !selected { wait("sibling row in sidebar"); return }
+            browserCheckPhase = 5
+        case 5:
+            guard let first = privateChildren().first(where: { $0.windowID == privateFirstWindowID }),
+                  let second = privateChildren().first(where: { $0 !== first }),
                   let sibling = first.adapter?.session.queue.sync(execute: {
                       first.adapter?.session.store?.snapshot(windowId: first.windowID).spaces.first?.today.first(where: { $0.url == "about:blank?private-sibling" })?.id
-                  }),
+                  }) else { wait("sibling row lookup"); return }
+            let firstHasTab = (first.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == sibling }) == true
+            let secondHasTab = (second.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == sibling }) == true
+            if check.waitCount % 20 == 0 {
+                FileHandle.standardError.write(Data("ararat-trace: private-window sibling=\(sibling) first_selected=\(first.snapshot.selectedId ?? "nil") first_active=\(first.host?.activeItemId() ?? "nil") first_has=\(firstHasTab) second_has=\(secondHasTab) first_key=\(first.host?.window().isKeyWindow ?? false)\n".utf8))
+            }
+            guard
                   first.host?.activeItemId() == sibling,
-                  (second.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == sibling }) != true,
+                  !secondHasTab,
                   let s1 = privateSnapshot(first),
                   let titleRow = s1.spaces.first?.today.first(where: { $0.title == check.title })?.id else {
                 wait("sibling row selected in window 1"); return
