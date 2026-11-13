@@ -353,6 +353,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
                     fail()
                     return
                 }
+                FileHandle.standardError.write(Data("ararat-trace: little-window row-created item=\(row) live=\(tab.liveId)\n".utf8))
                 // The row exists; the tab takes it before the move so the destination's strip
                 // reports the row instead of the core adopting the page elsewhere.
                 tab.itemId = row
@@ -376,8 +377,9 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             let mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: row) }
             FileHandle.standardError.write(Data("ararat-trace: little-window handoff-before live=\(tab.liveId) mapped=\(mapped ?? "nil")\n".utf8))
         }
+        let live = tab.liveId
         if host.handoffTab(tab, activate: true) {
-            engine.endLittleWindowHandoff()
+            engine.awaitLittleWindowHandoff(item: row, live: live)
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
             // The popup has no tabs left; Chrome closes it. Closing here makes the order the

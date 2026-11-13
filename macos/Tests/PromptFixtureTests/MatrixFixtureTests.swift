@@ -168,13 +168,18 @@ func littleWindowHandoffAdoptsTheMovedTabWhenTheDestinationBecomesKey() async th
     adapter.beginLittleWindowHandoff()
     let item = try session.queue.sync { try #require(session.store?.createTab(windowId: "destination", url: "https://example.test/").selectedId) }
     NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: target.window())
+    adapter.awaitLittleWindowHandoff(item: item, live: "chrome-moved")
     try await Task.sleep(for: .milliseconds(100))
+    #expect(target.opened.isEmpty)
+    applied = false
+    adapter.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: "destination", epoch: 1, rev: 1, command: nil))
+    try await matrixWait { applied }
+    #expect(target.opened.isEmpty)
     let tab = MatrixFakeTab(item: item, live: "chrome-moved", profile: "Default", owner: target)
     target.entries.append(tab)
     target.active = item
     applied = false
-    adapter.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: "destination", epoch: 1, rev: 1, command: nil))
-    adapter.endLittleWindowHandoff()
+    adapter.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: "destination", epoch: 1, rev: 2, command: nil))
     try await matrixWait { applied || !target.opened.isEmpty }
     #expect(target.opened.isEmpty)
     #expect(session.queue.sync { session.store?.liveTab(item: item) } == "chrome-moved")
