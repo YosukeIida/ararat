@@ -274,6 +274,14 @@ func thePickerStepsTurnAndResizeTheWholeGroup() async throws {
     for _ in 0..<30 { editor.stepRadius(-LookEditorModel.radiusKeyStep) }
     #expect(editor.look.colors.allSatisfy { abs($0.y - 0.95) < 0.000001 })
     #expect(LookEditorModel.handleLabel(index: 0, count: 2) == "Colour 1 of 2")
+    // A step is taken from the handle the action names (the view selects it first), even when the
+    // group still sits on two radii.
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.2, y: 0.5), LookEditorModel.fieldColor(x: 0.6, y: 0.2)] }
+    editor.selected = 1
+    let second = LookEditorModel.radius(of: editor.look.colors[1].y)
+    editor.stepRadius(LookEditorModel.radiusKeyStep)
+    #expect(abs(LookEditorModel.radius(of: editor.look.colors[0].y) - (second + LookEditorModel.radiusKeyStep)) < 0.000001)
+    #expect(abs(editor.look.colors[0].y - editor.look.colors[1].y) < 0.000001)
     #expect(LookEditorModel.handleLabel(index: 2, count: 3) == "Colour 3 of 3")
     #expect(LookEditorModel.handleValue(LookEditorModel.color(x: 220.0 / 360, y: 0.5)) == "Hue 220 degrees, lightness 50 percent")
     #expect(LookEditorModel.handleValue(LookEditorModel.color(x: 0.999, y: 0.05)) == "Hue 0 degrees, lightness 95 percent")

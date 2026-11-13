@@ -172,13 +172,16 @@ struct LookPopoverView: View {
                     .accessibilityLabel(LookEditorModel.handleLabel(index: index, count: model.look.colors.count))
                     .accessibilityValue(LookEditorModel.handleValue(color))
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { model.selected = index }
                     .accessibilityAdjustableAction { direction in
+                        model.selected = index
                         model.turnColours(by: direction == .increment ? LookEditorModel.hueKeyStep : -LookEditorModel.hueKeyStep)
                     }
-                    .accessibilityAction(named: "Lighter") { model.stepRadius(LookEditorModel.radiusKeyStep) }
-                    .accessibilityAction(named: "Darker") { model.stepRadius(-LookEditorModel.radiusKeyStep) }
+                    .accessibilityAction(named: "Lighter") { model.selected = index; model.stepRadius(LookEditorModel.radiusKeyStep) }
+                    .accessibilityAction(named: "Darker") { model.selected = index; model.stepRadius(-LookEditorModel.radiusKeyStep) }
                     .focusable()
                     .onMoveCommand { direction in
+                        model.selected = index
                         if direction == .right { model.turnColours(by: LookEditorModel.hueKeyStep) }
                         if direction == .left { model.turnColours(by: -LookEditorModel.hueKeyStep) }
                         if direction == .up { model.stepRadius(LookEditorModel.radiusKeyStep) }
