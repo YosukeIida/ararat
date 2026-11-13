@@ -26,6 +26,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private var closeObserver: NSObjectProtocol?
     private var moveObservers: [NSObjectProtocol] = []
     private var frameSaveGeneration = 0
+    private var lastValidFrame: NSRect?
     private var lastShownSpace: String?
     private let toast = LittleWindowToastView()
     private var toastGeneration = 0
@@ -492,9 +493,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
 
     func saveFrame(debounced: Bool = false) {
         guard let window, let adapter = origin?.workspace else { return }
+        let current = window.frame
+        if current.origin.x.isFinite, current.origin.y.isFinite,
+           current.width.isFinite, current.height.isFinite, current.width > 0, current.height > 0 {
+            lastValidFrame = current
+        }
+        guard let frame = lastValidFrame else { return }
         frameSaveGeneration += 1
         let generation = frameSaveGeneration
-        let frame = window.frame
         let write: () -> Void = { [weak self] in
             guard let self, self.frameSaveGeneration == generation else { return }
             adapter.setLittleWindowFrame(LittleWindowFrame(x: frame.minX, y: frame.minY,

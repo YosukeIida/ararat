@@ -6,9 +6,14 @@ import ObjectiveC.runtime
 import Testing
 @testable import Ararat
 
+@MainActor private final class LittleWindowTestWindow: NSWindow {
+    var reportedFrame: NSRect?
+    override var frame: NSRect { reportedFrame ?? super.frame }
+}
+
 @MainActor private final class LittleWindowNavigationHost: NSObject {
     @objc dynamic weak var delegate: AnyObject?
-    let value = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let value = LittleWindowTestWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
     var navigated: [String] = []
     var pageURL = "https://example.test/"
     var opened: [String] = []
@@ -27,6 +32,32 @@ import Testing
         opened.append(url)
         return true
     }
+}
+
+@Test @MainActor
+func littleWindowIgnoresAnEmptyFrameAfterClosing() throws {
+    _ = NSApplication.shared
+    class_addProtocol(LittleWindowNavigationHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("db").path, windowID: "origin", card: NSView(), seedCheck: true, session: session)
+    let origin = Runtime(windowID: "origin")
+    origin.adapter = adapter
+    origin.workspace = WorkspaceAdapter(windowID: "origin", session: session)
+    let host = LittleWindowNavigationHost()
+    let popup = PopupHost()
+    popup.rootView.addSubview(popup.card)
+    popup.host = host as? any ARWindowHostAPI
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    defer { controller.close(); popup.littleWindow = nil }
+    host.value.reportedFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
+    controller.saveFrame(debounced: true)
+    host.value.reportedFrame = .zero
+    controller.saveFrame()
+    let stored = session.queue.sync { session.store?.littleWindowFrame() }
+    #expect(stored == LittleWindowFrame(x: 200, y: 150, width: 720, height: 480))
 }
 
 @Test @MainActor
