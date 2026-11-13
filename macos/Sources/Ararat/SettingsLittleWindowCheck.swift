@@ -1,6 +1,7 @@
 // The settings-little-window tick, appended to SettingsScreenCheck's extension.
 import AppKit
 import AraratEngineAPI
+import AraratKit
 import AraratUI
 
 extension Runtime {
@@ -92,12 +93,18 @@ extension Runtime {
             probe.recordLittleWindowHotKey(event)
             step(9)
         case 9:
-            let ok = probe.littleWindowHotKey.map { $0.keyCode == 40 && $0.key == "k" && $0.command && $0.control && $0.option && !$0.shift } ?? false
+            // The write runs through the adapter, so the model sees the recorded key a tick or two
+            // later; report both conditions only once it has.
+            let recorded = LittleWindowHotKey(keyCode: 40, key: "k", command: true, control: true,
+                                              option: true, shift: false)
+            guard probe.littleWindowHotKey == recorded else {
+                note("the recorded key has not reached the pane yet"); return
+            }
             let registered = probe.littleWindowHotKeyStatus == .registered && probe.littleWindowHotKeyMessage == nil
             check.details["hot_key"] = ["caps": probe.littleWindowHotKeyCaps,
                                         "status": String(describing: probe.littleWindowHotKeyStatus),
                                         "message": probe.littleWindowHotKeyMessage ?? ""]
-            check.report("shortcut_recorder", ok && probe.littleWindowHotKeyCaps == ["⌃", "⌥", "⌘", "K"])
+            check.report("shortcut_recorder", probe.littleWindowHotKeyCaps == ["⌃", "⌥", "⌘", "K"])
             check.report("hot_key_registration", registered)
             trace("opening a Little Window for the bar")
             owner.openLittleWindow(url: check.littlePageURL)
