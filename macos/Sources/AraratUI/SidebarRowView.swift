@@ -54,6 +54,11 @@ final class SidebarRowView: NSView {
     var closeCaps: [String] = ["⌘", "W"]
     var closeShortcutCaps: [String]? { selected ? closeCaps : nil }
     var pinned = false { didSet { updateCloseButton() } }
+    // U26f: a private window's Today rows close (removal) and never archive; the hover words
+    // say "Close Tab" while the glyph stays ✕.
+    var privateWindow = false { didSet { updateCloseButton() } }
+    // The words the hover button and its accessibility label carry, without asking AX.
+    private(set) var closeLabel = "Archive Tab"
     var onDragPress: ((Row, NSPoint) -> Void)?
     var onDragMove: ((NSPoint) -> Void)?
     var onDragRelease: ((NSPoint) -> Bool)?
@@ -390,7 +395,8 @@ final class SidebarRowView: NSView {
         // pin, a Today tab and an unloaded pin go to the Archive).
         let close = pinned && !row.unloaded
         closeButton.image = NSImage(systemSymbolName: close ? "minus" : "xmark", accessibilityDescription: nil)
-        let label = close ? "Close Tab" : "Archive Tab"
+        let label = (close || privateWindow) ? "Close Tab" : "Archive Tab"
+        closeLabel = label
         let actions: [NSAccessibilityCustomAction] = row.kind == .tab && acceptsKeyboardFocus ? [
             NSAccessibilityCustomAction(name: label) { [weak self] in
                 guard let self, self.acceptsKeyboardFocus else { return false }

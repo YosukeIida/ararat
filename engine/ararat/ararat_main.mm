@@ -207,6 +207,7 @@ void CheckGuards(int argc, const char** argv) {
   bool screen_downloads = false;
   bool check_toasts = false;
   bool screen_toasts = false;
+  bool screen_private = false;
   for (int i = 0; i < argc; ++i) {
     const char* arg = argv[i] ? argv[i] : "";
     if (strcmp(arg, "--") == 0) option_terminator = true;
@@ -236,12 +237,14 @@ void CheckGuards(int argc, const char** argv) {
       screen_prompts = std::string_view(arg + 16) == "prompts";
       screen_downloads = std::string_view(arg + 16) == "downloads";
       screen_toasts = std::string_view(arg + 16) == "toasts";
-      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions";
-      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions") g_check_slice = true;
+      screen_private = std::string_view(arg + 16) == "private-window";
+      valid_screen = std::string_view(arg + 16) == "quit" || std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions" || std::string_view(arg + 16) == "private-window";
+      if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions" || std::string_view(arg + 16) == "private-window") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
+      if (screen_private) { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-focus") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-commands") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
@@ -264,7 +267,7 @@ void CheckGuards(int argc, const char** argv) {
       check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify";
       browser_check = browser_check || name == "errorpages";
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
@@ -365,10 +368,12 @@ bool AraratUsesSharedCompositor() { return g_shared_compositor; }
 unsigned long AraratStockBrowserCount() { return g_stock_browsers; }
 bool AraratCheckDevToolsDestroyed() { return g_check_devtools_destroyed; }
 bool AraratHasHostCallback() { return g_ararat_callbacks.create_host != nullptr; }
-void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect& bounds) {
+void* AraratRequestHost(bool popup, bool off_the_record, void* profile,
+                        const std::string& profile_name, const gfx::Rect& bounds) {
   return g_ararat_callbacks.create_host
-      ? g_ararat_callbacks.create_host(g_ararat_callbacks.ctx, popup, profile.c_str(), bounds.x(),
-                                       bounds.y(), bounds.width(), bounds.height())
+      ? g_ararat_callbacks.create_host(g_ararat_callbacks.ctx, popup, off_the_record, profile,
+                                       profile_name.c_str(), bounds.x(), bounds.y(),
+                                       bounds.width(), bounds.height())
       : nullptr;
 }
 

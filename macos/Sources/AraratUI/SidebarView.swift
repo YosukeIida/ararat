@@ -133,7 +133,7 @@ public final class SidebarView: NSView {
     public var showPaneDrop: ((PaneDropHalf?) -> Void)?
     // A private window takes no split from a drop (U26f: its workspace has one Today list and
     // the page is not the sidebar's surface there); the copy springs back like a refused drop.
-    public var privateWindow = false
+    // The flag itself is `privateWindow` below (U26f's declaration, shared by every private mode).
     // The tab that was showing when the drag began, and the half the pointer is over now.
     private var dragShownPane: String?
     private var dragShownVertical = false
@@ -157,6 +157,10 @@ public final class SidebarView: NSView {
     public let spaceNameRow = SidebarSpaceNameRow(frame: .zero)
     let urlField = NSButton()
     private let host = NSTextField(labelWithString: "")
+    private let privateLock = NSImageView()
+    private let privateLabel = NSTextField(labelWithString: "Private")
+    private var hostLeadingDefault: NSLayoutConstraint!
+    private var hostLeadingPrivate: NSLayoutConstraint!
     private let siteControlsButton = SiteControlsButton()
     private let inFieldActions = ExtensionActionsStrip()
     public let actionsRow = ExtensionActionsRow()
@@ -216,6 +220,9 @@ public final class SidebarView: NSView {
     public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var onNewTab: (() -> Void)?
     public var onClearToday: (() -> Void)?
+    // U26f: a private window is one space with Today only: no pins, favourites, folders, dock
+    // or space menu, a "Private" badge by the URL field, and Close instead of Archive.
+    public var privateWindow = false { didSet { applyPrivateMode() } }
     private enum ScrollOrigin { case page, rail, list }
     private enum ScrollAxis { case horizontal, vertical }
     private var scrollOrigin: ScrollOrigin?
@@ -310,12 +317,13 @@ public final class SidebarView: NSView {
         newSpaceMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
     }
 
-    @objc public func toggleLibrary(_ sender: Any? = nil) { setLibraryOpen(!libraryOpen) }
+    @objc public func toggleLibrary(_ sender: Any? = nil) { if !privateWindow { setLibraryOpen(!libraryOpen) } }
 
     public func setDownloadsModel(_ model: DownloadsModel) {
         downloadsModel = model
         library.setDownloadsModel(model)
         let popover = DownloadsPopover(model: model, anchor: libraryButton)
+        popover.showsLibrary = !privateWindow
         popover.openLibrary = { [weak self] in self?.setLibraryOpen(true, downloads: true) }
         downloadsPopover = popover
         libraryButton.onHover = { [weak self] in self?.downloadsPopover?.show() }
@@ -331,7 +339,7 @@ public final class SidebarView: NSView {
 
     @objc private func libraryButtonClicked(_ sender: Any?) {
         if downloadsModel?.hasSessionDownloads == true { downloadsPopover?.show(focus: true) }
-        else { toggleLibrary(sender) }
+        else if !privateWindow { toggleLibrary(sender) }
     }
 
     public func flyDownload(from source: NSView, name: String) {
@@ -404,12 +412,27 @@ public final class SidebarView: NSView {
     public func downloadsCheckShowPage() { if downloadsCheckEnabled { library.downloadsButton.performClick(nil) } }
     public var downloadsCheckPopoverWindow: NSWindow? { downloadsCheckEnabled ? downloadsPopover?.checkWindow : nil }
 
+    // U26f private-window check seams.
+    public var checkPrivateBadgeVisible: Bool { !privateLabel.isHidden && privateLabel.superview != nil }
+    public var checkPrivateDockHidden: Bool { dock.isHidden }
+    public var checkPrivateFavoritesHidden: Bool { favorites.isHidden }
+    public var checkPrivateSpaceRowHidden: Bool { spaceNameRow.isHidden }
+    public var checkPrivateLibraryOpen: Bool { libraryOpen }
+    public var checkPrivateDownloadsLibraryRowHidden: Bool { downloadsPopover?.showsLibrary == false }
+    public var checkDownloadIDs: [String] { downloadsModel?.items.map(\.id) ?? [] }
+    public func checkPrivateCloseLabel(_ id: String) -> String? { rowViews[id]?.closeLabel }
+    public var checkPrivateTodayRows: [String] { snapshotSpace?.today.map(\.id) ?? [] }
+    public var checkPrivatePinnedRows: [String] { snapshotSpace?.pinned.map(\.id) ?? [] }
+    public var checkPrivateFavoriteRows: [String] { snapshotSpace?.favorites.map(\.id) ?? [] }
+
     public func searchArchive(_ query: String) -> Int {
         library.setSearchQuery(query)
         return library.filteredEntries.count
     }
 
     public func setLibraryOpen(_ open: Bool, scrolling: Bool = false, downloads: Bool = false) {
+        // A private workspace has no Library archive page (design: hide the "Open Library" row).
+        if privateWindow && open { return }
         if open { if downloads { library.showDownloads() } else { library.showArchive() } }
         guard open != libraryOpen else { return }
         if open && createSpaceOpen { setCreateSpaceOpen(false, scrolling: scrolling) }
@@ -507,6 +530,9 @@ public final class SidebarView: NSView {
         return true
     }
 
+    private static let privateLook = Look(colors: [LookColor(red: 0.11, green: 0.11, blue: 0.12, x: 0.5, y: 0.5)],
+                                         opacity: 1, grain: 0, glass: false, appearance: .dark)
+
     private static func sidebarSelection(_ snapshot: WorkspaceSnapshot) -> String? {
         guard let selected = snapshot.selectedId else { return nil }
         let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
@@ -527,6 +553,20 @@ public final class SidebarView: NSView {
         tooltip.capture(in: library)
         layoutSubtreeIfNeeded()
         rowViews.values.forEach { $0.refreshHover() }
+    }
+
+    private func applyPrivateMode() {
+        guard privateWindow else { return }
+        dock.isHidden = true
+        favorites.isHidden = true
+        spaceNameRow.isHidden = true
+        privateLock.isHidden = false
+        privateLabel.isHidden = false
+        hostLeadingDefault?.isActive = false
+        hostLeadingPrivate?.isActive = true
+        downloadsPopover?.showsLibrary = false
+        if libraryOpen { setLibraryOpen(false) }
+        reload()
     }
 
     public func updateSelection(id: String?) {
@@ -790,6 +830,18 @@ public final class SidebarView: NSView {
         host.setAccessibilityElement(false)
         host.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(host)
+        privateLock.image = PrivateMaskGlyph.image(size: 16)
+        privateLock.contentTintColor = .secondaryLabelColor
+        privateLock.imageScaling = .scaleProportionallyDown
+        privateLock.setAccessibilityElement(false)
+        privateLock.isHidden = true
+        privateLock.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(privateLock)
+        privateLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        privateLabel.textColor = .secondaryLabelColor
+        privateLabel.isHidden = true
+        privateLabel.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(privateLabel)
         spaceNameRow.translatesAutoresizingMaskIntoConstraints = false
         spaceNameRow.menuProvider = { [weak self] in
             guard let self, let id = self.snapshotSpace?.id else { return nil }
@@ -903,7 +955,10 @@ public final class SidebarView: NSView {
             actionsHeight,
             bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
-            host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12),
+            privateLock.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 10),
+            privateLock.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            privateLabel.leadingAnchor.constraint(equalTo: privateLock.trailingAnchor, constant: 4),
+            privateLabel.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             inFieldActions.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
             inFieldActions.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
@@ -933,6 +988,9 @@ public final class SidebarView: NSView {
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: rows.heightAnchor),
         ])
+        hostLeadingDefault = host.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
+        hostLeadingPrivate = host.leadingAnchor.constraint(equalTo: privateLabel.trailingAnchor, constant: 6)
+        hostLeadingDefault.isActive = true
         library.isHidden = true
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
@@ -1228,7 +1286,7 @@ public final class SidebarView: NSView {
         ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0) })
         arrange(ordered, in: rows)
 
-        if dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
+        if !privateWindow, dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
             dockLookPopover.performClose(nil)
             dock.subviews.forEach { $0.removeFromSuperview() }
             for space in snapshot.spaces {
@@ -1239,22 +1297,30 @@ public final class SidebarView: NSView {
                 dock.addSubview(button)
             }
         }
-        for (index, space) in snapshot.spaces.enumerated() {
-            let button = dock.subviews[index] as! SpaceDockButton
-            button.title = space.icon ?? String(space.title.prefix(1))
-            button.tag = index
-            button.toolTip = space.title
-            button.setAccessibilityLabel(space.title)
-            button.setAccessibilityHelp(space.title)
-            button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
+        if !privateWindow {
+            for (index, space) in snapshot.spaces.enumerated() {
+                let button = dock.subviews[index] as! SpaceDockButton
+                button.title = space.icon ?? String(space.title.prefix(1))
+                button.tag = index
+                button.toolTip = space.title
+                button.setAccessibilityLabel(space.title)
+                button.setAccessibilityHelp(space.title)
+                button.font = .systemFont(ofSize: 15, weight: index == spaceIndex ? .bold : .regular)
+            }
+            dock.selectedIndex = spaceIndex
+            updateDockSelection()
+            dock.layoutSubtreeIfNeeded()
         }
-        dock.selectedIndex = spaceIndex
-        updateDockSelection()
-        dock.layoutSubtreeIfNeeded()
         tooltip.capture(in: self)
     }
 
     private func reloadFavorites() {
+        if privateWindow {
+            favoritesHeight.constant = 0
+            for id in Array(favoriteTiles.keys) { favoriteTiles.removeValue(forKey: id)?.removeFromSuperview() }
+            favorites.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            return
+        }
         var models: [Row?] = (snapshotSpace?.favorites ?? []).map { $0 }
         if let index = dragFavoriteIndex, let drag {
             models.removeAll { $0?.id == drag.row.id }
@@ -1337,6 +1403,7 @@ public final class SidebarView: NSView {
             self.renamingID = nil; self.notifyAutoArchiveReady()
         }
         view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
+        view.privateWindow = privateWindow
         view.onClose = { [weak self] id in
             guard let self, let target = self.closeTarget(for: id) else { return }
             // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
@@ -1442,7 +1509,7 @@ public final class SidebarView: NSView {
     public func closeTarget(for id: String) -> (id: String, action: RowCloseAction)? {
         guard let space = snapshotSpace,
               let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }) else { return nil }
-        return (id, rowCloseArchives(row, in: space) ? .archive : .close)
+        return (id, !privateWindow && rowCloseArchives(row, in: space) ? .archive : .close)
     }
 
     public func revealSelection(animated: Bool = true) {
@@ -1641,6 +1708,11 @@ public final class SidebarView: NSView {
 
     func refreshLook(offset: Double = 0) {
         guard let onLookChanged else { return }
+        // U26f: a private window is always dark, whatever its space's look (it has none).
+        if privateWindow {
+            onLookChanged(Self.privateLook, Self.privateLook, 0)
+            return
+        }
         let position = Double(scrollPageIndex) - (spacePagePitch > 0 ? offset / spacePagePitch : 0)
         let lower = Int(floor(position))
         func look(at index: Int) -> Look? {
@@ -2244,7 +2316,13 @@ extension SidebarView: NSMenuDelegate {
     }
 
     func todayMenu(row: Row) -> NSMenu {
-        itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
+        if privateWindow {
+            // A private Today row closes (removal, no archive entry) and has no duplicate,
+            // folder or other-space move.
+            return itemMenu([copyItem(row), renameItem(row),
+                             SidebarMenuItem("Close Tab") { [weak self] in self?.onClose?(row.id) }])
+        }
+        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
                   SidebarMenuItem("Archive Tab") { [weak self] in self?.onArchive?(row.id) }])
     }
 
@@ -2290,28 +2368,41 @@ extension SidebarView: NSMenuDelegate {
         return leaves(split)
     }
 
+    // U26f: the core's private admission (admit_today) in sidebar terms — a pane may be edited
+    // only when its outermost row is in the shown space's Today. Every row of a private window is
+    // in Today today, but the rule is the core's, so the menu answers it rather than assuming it.
+    private func isInToday(_ id: String) -> Bool {
+        guard let space = snapshotSpace else { return false }
+        let all = space.pinned + space.today
+        guard var row = all.first(where: { $0.id == id }) else { return false }
+        while let ancestor = all.first(where: { $0.id == row.parentId }) { row = ancestor }
+        return space.today.contains { $0.id == row.id }
+    }
+
     // U25d D7: the segment menu on the pane that was right-clicked. Move's words follow the
     // split's axis, Add names the side the new pane joins, Convert names the axis it switches to,
-    // and Close Pane carries the close binding's caps.
+    // and Close Pane carries the close binding's caps. A private window keeps the menu but
+    // disables every pane op outside its Today (the core refuses those).
     func splitMenu(row: Row, pane: Row?) -> NSMenu {
         let members = paneRows(of: row.id)
         guard let focused = pane ?? members.first else { return itemMenu([]) }
+        let admitted = !privateWindow || isInToday(focused.id)
         let index = members.firstIndex { $0.id == focused.id } ?? 0
         let vertical = splitIsVertical?(row.id) ?? false
-        let close = paneItem("Close Pane", image: "xmark", identifier: "close_tab") { [weak self] in
+        let close = paneItem("Close Pane", image: "xmark", identifier: "close_tab", enabled: admitted) { [weak self] in
             self?.onPaneCommand?(.close, focused.id)
         }
         let moveBack = paneItem(vertical ? "Move Up" : "Move Left", image: vertical ? "arrow.up" : "arrow.left",
-                                enabled: index > 0) { [weak self] in self?.onPaneCommand?(.moveBackward, focused.id) }
+                                enabled: admitted && index > 0) { [weak self] in self?.onPaneCommand?(.moveBackward, focused.id) }
         let moveForward = paneItem(vertical ? "Move Down" : "Move Right", image: vertical ? "arrow.down" : "arrow.right",
-                                   enabled: index + 1 < members.count) { [weak self] in self?.onPaneCommand?(.moveForward, focused.id) }
+                                   enabled: admitted && index + 1 < members.count) { [weak self] in self?.onPaneCommand?(.moveForward, focused.id) }
         return itemMenu([
             moveBack, moveForward, NSMenuItem.separator(),
-            paneItem("Add Right Split", image: "rectangle.righthalf.inset.filled") { [weak self] in self?.onPaneCommand?(.addRight, focused.id) },
-            paneItem("Add Left Split", image: "rectangle.lefthalf.inset.filled") { [weak self] in self?.onPaneCommand?(.addLeft, focused.id) },
-            paneItem("Separate Tab from Split", image: "arrow.up.right.square") { [weak self] in self?.onPaneCommand?(.separate, focused.id) },
+            paneItem("Add Right Split", image: "rectangle.righthalf.inset.filled", enabled: admitted) { [weak self] in self?.onPaneCommand?(.addRight, focused.id) },
+            paneItem("Add Left Split", image: "rectangle.lefthalf.inset.filled", enabled: admitted) { [weak self] in self?.onPaneCommand?(.addLeft, focused.id) },
+            paneItem("Separate Tab from Split", image: "arrow.up.right.square", enabled: admitted) { [weak self] in self?.onPaneCommand?(.separate, focused.id) },
             paneItem(vertical ? "Convert to Horizontal Split View" : "Convert to Vertical Split View",
-                     image: vertical ? "rectangle.split.2x1" : "rectangle.split.1x2") { [weak self] in self?.onPaneCommand?(.convert, focused.id) },
+                     image: vertical ? "rectangle.split.2x1" : "rectangle.split.1x2", enabled: admitted) { [weak self] in self?.onPaneCommand?(.convert, focused.id) },
             NSMenuItem.separator(), close,
         ])
     }

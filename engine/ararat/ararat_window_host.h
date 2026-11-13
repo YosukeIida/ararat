@@ -69,6 +69,12 @@ class AraratWindowHostCore {
   bool closed() const { return closed_; }
   bool popup() const { return popup_; }
   bool devtools() const { return devtools_; }
+  // An off-the-record window is a full window whose workspace lives in memory (U26f). The
+  // flag is set from the Profile* the window was requested for, before its Browser exists.
+  bool private_window() const { return private_; }
+  Profile* private_profile() const { return private_profile_; }
+  const std::string& private_directory() const { return private_name_; }
+  void SetPrivateProfile(Profile* profile);
   const std::string& profile_name() const { return profile_name_; }
   void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
@@ -132,6 +138,9 @@ class AraratWindowHostCore {
   bool closed_ = false;
   bool popup_ = false;
   bool devtools_ = false;
+  bool private_ = false;
+  raw_ptr<Profile> private_profile_ = nullptr;
+  std::string private_name_;
   bool check_fullscreen_ = false;
   bool fullscreen_transitioning_ = false;
   uint64_t fullscreen_transition_generation_ = 0;
@@ -148,7 +157,8 @@ unsigned long AraratStockBrowserCount();
 bool AraratCheckDevToolsDestroyed();
 void AraratInstallWindowFactory();
 bool AraratHasHostCallback();
-void* AraratRequestHost(bool popup, const std::string& profile, const gfx::Rect& bounds);
+void* AraratRequestHost(bool popup, bool off_the_record, void* profile,
+                        const std::string& profile_name, const gfx::Rect& bounds);
 
 #ifdef __OBJC__
 #import "ararat/core/public/ARWindowHost.h"

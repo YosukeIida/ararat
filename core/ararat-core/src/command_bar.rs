@@ -75,6 +75,22 @@ pub struct Index {
     private_window: bool,
 }
 
+// A private workspace has no pins, folders, duplicates, other spaces or Library, so its command
+// bar does not offer commands it would refuse (U26f S3). One list, used by a private workspace's
+// index and by the UI's private-window flag.
+fn private_command_allowed(target: &Target) -> bool {
+    const PRIVATE_COMMANDS: &[&str] = &[
+        "settings", "quit", "close_tab", "new_tab", "edit_url", "copy_link",
+        "cycle_tabs_next", "cycle_tabs_previous", "rename", "toggle_sidebar",
+        "force_reload", "reset_sidebar_width",
+    ];
+    match target {
+        Target::Tab { .. } => true,
+        Target::Command { id } => PRIVATE_COMMANDS.contains(&id.as_str()),
+        _ => false,
+    }
+}
+
 // Scoring and the per-open index are adapted from Cra's MIT-licensed SuggestionEngine.swift.
 impl Index {
     pub fn new(ws: &Workspace, window: &str, now: u64) -> Self {
@@ -142,7 +158,7 @@ impl Index {
                 entries.push(Entry { suggestion: Suggestion { title, subtitle: "Space".into(), url: None, key: None, target, score: 0.0 }, custom_title: false, selected: None });
             }
         }
-        if ws.is_private() { entries.retain(|entry| matches!(entry.suggestion.target, Target::Tab { .. } | Target::Command { .. })); }
+        if ws.is_private() { entries.retain(|entry| private_command_allowed(&entry.suggestion.target)); }
         let entries = entries.into_iter().map(|entry| {
             let key = entry.suggestion.url.as_ref().map(|url| {
                 let mut key = SearchKey::new(&entry.suggestion.title, url);
@@ -161,6 +177,7 @@ impl Index {
     /// the rows itself, so a caller that passes history anyway cannot leak it.
     pub fn private_window(mut self, private: bool) -> Self {
         self.private_window = private;
+        if private { self.entries.retain(|(entry, _)| private_command_allowed(&entry.suggestion.target)); }
         self
     }
 

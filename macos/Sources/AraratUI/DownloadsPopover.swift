@@ -74,6 +74,8 @@ final class DownloadsPopover: NSObject {
     private let anchor: NSView
     private let stack = NSStackView()
     let library = NSButton(title: "Open Library", target: nil, action: nil)
+    // U26f: a private workspace has no Library page, so its download list hides this row.
+    var showsLibrary = true { didSet { library.isHidden = !showsLibrary } }
     private(set) var rows: [String: DownloadRowView] = [:]
     var openLibrary: (() -> Void)?
     init(model: DownloadsModel, anchor: NSView) {

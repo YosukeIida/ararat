@@ -73,7 +73,8 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
   }
 }
 
-if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" }) {
+if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" || $0 == "--ararat-check=private-durability" }) {
+  if check == "--ararat-check=private-durability" { exit(runPrivateDurabilityDriver()) }
   exit(runRelaunchDriver(check == "--ararat-check=relaunch-pins" ? "pins" : String(check.dropFirst(15))))
 }
 
@@ -85,6 +86,46 @@ enum Launcher {
   @MainActor static var runtime: Runtime?
   @MainActor static var pendingURLs: [(url: String, untrusted: Bool)] = []
   @MainActor static var browserCheckFinished = false
+}
+
+/// One in-memory workspace per off-the-record `Profile*`, shared by that profile's windows and
+/// released when the last of them closes (U26f). The key is the Profile pointer, never the
+/// directory name: an OTR profile's name is its parent's, which two OTR profiles share.
+@MainActor
+enum PrivateWorkspaces {
+  struct Entry {
+    let session: WorkspaceSession
+    var windows = 0
+  }
+  private static var entries: [UInt: Entry] = [:]
+
+  static func acquire(pointer: UInt, profile: String) -> WorkspaceSession {
+    if var entry = entries[pointer] {
+      entry.windows += 1
+      entries[pointer] = entry
+      return entry.session
+    }
+    let session = WorkspaceSession()
+    session.store = WorkspaceStore.openPrivate(profile: profile == "Default" ? .default : .named(profile))
+    entries[pointer] = Entry(session: session, windows: 1)
+    return session
+  }
+
+  static func release(pointer: UInt) {
+    guard var entry = entries[pointer] else { return }
+    entry.windows -= 1
+    if entry.windows <= 0 {
+      // The workspace, its command-bar state and its downloads model go together: nothing
+      // restores a private window, and a crash keeps nothing.
+      entry.session.store = nil
+      entries.removeValue(forKey: pointer)
+    } else {
+      entries[pointer] = entry
+    }
+  }
+
+  static var liveCount: Int { entries.values.reduce(0) { $0 + $1.windows } }
+  static func session(pointer: UInt) -> WorkspaceSession? { entries[pointer]?.session }
 }
 
 final class TeardownDeadline {
@@ -165,6 +206,13 @@ func checkCoverageFlags(_ arguments: [String]) -> [String] {
   return arguments.filter { argument in names.contains { argument == $0 || argument.hasPrefix($0 + "=") } }
 }
 
+/// U26f: the commands a private workspace (one space, Today only) can run. One list for the
+/// command dispatcher and the menu validation, so the two cannot drift.
+let privateWorkspaceCommands: Set<String> = [
+  "cycle_tabs_next", "cycle_tabs_previous", "force_reload", "settings", "quit", "new_tab",
+  "edit_url", "copy_link", "close_tab", "rename", "toggle_sidebar", "reset_sidebar_width",
+]
+
 func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any] {
   guard check == "incognito" else { return [:] }
   let regular = arguments.contains("--ararat-incognito-window-check")
@@ -177,6 +225,16 @@ func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any
 // Why not compare every record: the page-only popup cannot write workspace rows, but the
 // regular window's own device-local Window/LastSelected rows commit on their one-second batch,
 // so a whole-table compare flakes. Those two kinds are excluded; every workspace kind is not.
+// A private run must not touch the regular workspace rows; the regular window's own
+// Window/LastSelected rows can commit on their own batch and are not workspace content.
+func workspaceRowsMatch(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
+  guard let before, let after else { return false }
+  func stable(_ rows: [[String]]) -> [[String]] {
+    rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
+  }
+  return stable(before) == stable(after)
+}
+
 func pageOnlyRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
   guard let before, let after else { return false }
   func stable(_ rows: [[String]]) -> [[String]] {
@@ -352,8 +410,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if !target.hasUsableHost { _ = target.reopen() }
     target.adapter?.openExternalURLs(urls)
   }
-  func createHost(popup: Bool, profile: String, bounds: NSRect) -> UnsafeMutableRawPointer? {
-    if ["incognito", "keyboard"].contains(browserCheckMode ?? "") {
+  func createHost(popup: Bool, offTheRecord: Bool, profilePointer: UInt?, profile: String, bounds: NSRect) -> UnsafeMutableRawPointer? {
+    if ["incognito", "keyboard", "private-window"].contains(browserCheckMode ?? "") {
       FileHandle.standardError.write(Data("ararat-trace: create-host phase=\(browserCheckPhase) popup=\(popup) profile=\(profile)\n".utf8))
     }
     func fallback(_ reason: String) -> UnsafeMutableRawPointer? {
@@ -382,8 +440,28 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       return Unmanaged.passUnretained(host as AnyObject).toOpaque()
     }
+    if offTheRecord {
+      // A private window is a full window with the sidebar, backed by the private workspace of
+      // its OTR profile. The engine creates it before its Browser exists, so the pointer is the
+      // only stable identity; the store is shared until this profile's last window closes.
+      guard let profilePointer else { return fallback("no-private-profile") }
+      let session = PrivateWorkspaces.acquire(pointer: profilePointer, profile: profile)
+      let child = Runtime(windowID: UUID().uuidString)
+      child.root = self
+      child.isPrivateWindow = true
+      child.privatePointer = profilePointer
+      do { try child.start(session: session, privateProfile: profile) }
+      catch { report(error); PrivateWorkspaces.release(pointer: profilePointer); return fallback("private-child-start") }
+      guard let host = child.host else {
+        child.host?.close()
+        PrivateWorkspaces.release(pointer: profilePointer)
+        return fallback("private-child-profile")
+      }
+      children.append(child)
+      return Unmanaged.passUnretained(host as AnyObject).toOpaque()
+    }
     let windows = [self] + children
-    let matching = windows.filter { $0.hasUsableHost && $0.host?.profileDirectory() == profile }
+    let matching = windows.filter { !$0.isPrivateWindow && $0.hasUsableHost && $0.host?.profileDirectory() == profile }
     let key = matching.first { $0.host?.window().isKeyWindow == true } ?? matching.first ?? self
     if matching.contains(where: { $0 === key }), key.hasUsableHost, let host = key.host, !host.hasBrowser(forProfile: profile) {
       return Unmanaged.passUnretained(host as AnyObject).toOpaque()
@@ -402,6 +480,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
   var host: (any ARWindowHostAPI)?
   var adapter: EngineAdapter?
+  var isPrivateWindow = false
+  var privatePointer: UInt?
+  var privateProfile: String?
   var sidebar: SidebarView?
   var container: SidebarContainerView?
   var workspace: WorkspaceAdapter?
@@ -419,6 +500,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var commandBarInitialID: String?
   var commandBarReloadCount: UInt = 0
   var commandBarPrivateResult: CommandBarResult?
+  // U26f pass 3: the private-window check's recorded ids and counters.
+  var privateFirstWindowID = ""
+  var privateFirstItem = ""
+  var privateFirstLive = ""
+  var privateRowsBefore: [[String]]?
+  var privateHistoryQueries = 0
+  var privateWindowCheck: PrivateWindowCheckState?
+  var privateIsolationCheck: PrivateIsolationCheckState?
+  var privateDownloadsCheck: PrivateDownloadsCheckState?
+  var privateDurabilityTitles: [String] = []
   var coreMenuInstalled = false
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
@@ -496,6 +587,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var incognitoWindowRows: [[String]]?
   var incognitoWindowID = ""
   var incognitoWindowItem = ""
+  var incognitoPrivateItem = ""
   var incognitoWindowLive = ""
   var incognitoPrivateLive = ""
   var incognitoPrivateProfile = ""
@@ -751,14 +843,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
     ])
   }
 
-  func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false) throws {
+  func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil) throws {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -788,12 +880,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "errorpages" { browserCheckMode = "screen-errorpages" }
       if screenName == "downloads" { browserCheckMode = "screen-downloads" }
       if screenName == "toasts" { browserCheckMode = "screen-toasts" }
+      if screenName == "private-window" { browserCheckMode = "screen-private-window" }
       if screenName == "split-focus" { browserCheckMode = "screen-split-focus" }
       if screenName == "split-commands" { browserCheckMode = "screen-split-commands" }
       if screenName == "header" { browserCheckMode = "screen-header" }
       if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
       if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "private-downloads"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -854,6 +947,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let path = requested ?? (directory as NSString).appendingPathComponent("workspace.sqlite")
     quitPath = path
     let running = session ?? WorkspaceSession()
+    if let privateProfile { self.privateProfile = privateProfile }
     guard let purgeSymbol = dlsym(Launcher.handle, "AraratPurgeTabHistory"),
           let finishSymbol = dlsym(Launcher.handle, "AraratFinishCrashRecovery") else {
       throw NSError(domain: "Ararat.history", code: 1)
@@ -885,7 +979,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let card = NSView()
     promptPageCard = card
     let check = session == nil && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let profileCheck = ["profiles", "ext-windows", "incognito", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let profileCheck = ["profiles", "ext-windows", "incognito", "private-window", "private-isolation", "screen-private-window", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
     self.sidebarChecksActive = sidebarCheckActive
     let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
@@ -893,7 +987,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive, seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -905,12 +999,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if let shownSpace {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
-    let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session)
+    let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session, private: isPrivateWindow)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.privateWindow = isPrivateWindow
     sidebar.observeHistoryFailures(running)
     let downloads = DownloadsModel()
     sidebar.setDownloadsModel(downloads)
     let container = SidebarContainerView(sidebar: sidebar, page: card)
+    container.privateWindow = isPrivateWindow
     typealias Factory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> UnsafeMutableRawPointer?
     let factory = unsafeBitCast(createSymbol, to: Factory.self)
     let hostID = windowID as NSString
@@ -919,6 +1015,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       throw NSError(domain: "Ararat", code: 3)
     }
     self.host = host
+    if isPrivateWindow { host.window().appearance = NSAppearance(named: .darkAqua) }
     downloads.onAction = { [weak host] action, identifier in
       host?.performDownloadAction(action, identifier: identifier) ?? false
     }
@@ -974,7 +1071,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       self?.snapshot = snapshot
       self?.updatePageVisibility(snapshot)
       if let self, (self.root ?? self).settingsOwner === self { (self.root ?? self).settings?.modelUpdate(snapshot: snapshot) }
-      if self?.host?.isClosingAll() != true, self?.profilePinned != true,
+      if self?.isPrivateWindow != true, self?.host?.isClosingAll() != true, self?.profilePinned != true,
          let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
         // A check that pinned this window's profile (relaunch-pins' isolation child) keeps it:
         // the child's own first snapshot names the Default space and would otherwise undo the
@@ -988,6 +1085,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       sidebar?.update(snapshot: snapshot)
       self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
+      container?.privateEmptyShown = self?.isPrivateWindow == true && snapshot.selectedId == nil
       if check {
         let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
         self?.sliceRows = ["One", "Two", "Three"].compactMap { name in
@@ -1126,7 +1224,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     sidebar.pageHalfAt = { [weak container] point, axis in container?.paneDropHalf(at: point, axis: axis) }
     sidebar.showPaneDrop = { [weak container] half in container?.showPaneDrop(half) }
-    sidebar.privateWindow = host.isPrivateWindow()
     adapter.attach(host)
     refreshSiteState()
     refreshExtensionActions()
@@ -1149,7 +1246,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" {
+      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1218,6 +1315,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
         guard let self, let weakHost, (self.host as AnyObject?) === weakHost else { return }
         self.host = nil
         self.root?.children.removeAll { $0 === self }
+        // The last window of an OTR profile releases its workspace here (a cancelled close
+        // never reaches willClose, so the workspace survives it).
+        if let pointer = self.privatePointer {
+          PrivateWorkspaces.release(pointer: pointer)
+          self.privatePointer = nil
+        }
       }
     }
   }
@@ -1581,6 +1684,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func performWorkspaceCommand(_ command: String) {
     guard host?.isClosing() != true, host?.isClosingAll() != true else { return }
+    // A private workspace is one space with Today only: pins, folders, duplicates, space
+    // switching and moves are not its operations (the core would refuse them).
+    if isPrivateWindow {
+      guard privateWorkspaceCommands.contains(command) else { return }
+    }
     if (browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus") && (command == "focus_next_pane" || command == "focus_previous_pane") {
       FileHandle.standardError.write(Data("ararat-trace: split-focus command=\(command) selected=\(snapshot.selectedId ?? "nil") active=\(host?.activeItemId() ?? "nil") count_before=\(splitFocusDispatches[command, default: 0])\n".utf8))
     }
@@ -1614,6 +1722,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func openSettings(spaceID: String? = nil) {
+    // Design: Settings opened from a private window is the normal Settings window acting on
+    // the regular profile; nothing is written through the private workspace.
+    if isPrivateWindow, let root, root !== self {
+      root.openSettings(spaceID: nil)
+      return
+    }
     guard let workspace, let keyBindings, let airTraffic else { return }
     let owner = root ?? self
     let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.show($0) }
@@ -1691,13 +1805,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func validateMenuItem(_ item: NSMenuItem) -> Bool {
-    if item.action == #selector(undoClearTabs(_:)) {
-      let owner = root ?? self
-      return Self.clearUndoMenuEnabled(([owner] + owner.children).first { $0.host?.window().isKeyWindow == true })
-    }
-    guard item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String else { return true }
     let owner = root ?? self
     let target = ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }
+    if let target, target.isPrivateWindow {
+      // The core rejects import into a private workspace; a private workspace has no pins,
+      // folders, duplicates, other spaces or moves either.
+      if item.title.range(of: "import", options: .caseInsensitive) != nil { return false }
+      if item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String,
+         !privateWorkspaceCommands.contains(command) {
+        return false
+      }
+    }
+    if item.action == #selector(undoClearTabs(_:)) {
+      return Self.clearUndoMenuEnabled(target)
+    }
+    guard item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String else { return true }
     if command == "focus_next_pane" || command == "focus_previous_pane" { return target?.adapter?.canFocusPane == true }
     guard command == "delete_folder" else { return true }
     return target?.sidebar?.canDeleteOrganizeFolder == true
@@ -2038,6 +2160,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     presenter.controller.privateWindow = host.isPrivateWindow()
     presenter.controller.onQuery = { [weak self, weak presenter, weak host] text, generation in
       guard let presenter, let host, !presenter.controller.privateWindow, presenter.controller.mode != .search else { return }
+      self?.privateHistoryQueries += 1
       host.queryHistory(text) { [weak presenter, weak self] rows in
         let entries = rows.compactMap { row -> HistoryEntry? in
           guard let title = row["title"] as? String, let url = row["url"] as? String,
@@ -2739,7 +2862,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
+    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
@@ -2755,6 +2878,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       if mode == "downloads" || mode == "screen-downloads" { timeoutValues.merge(downloadsCheck?.diagnostics(screen: mode == "screen-downloads") ?? [:]) { _, new in new } }
       if mode == "toasts" || mode == "screen-toasts" { timeoutValues.merge((toastsCheck ?? ToastsCheck()).diagnostics(screen: mode == "screen-toasts")) { _, new in new } }
+      if mode == "private-window" || mode == "screen-private-window" {
+        timeoutValues.merge(privateWindowCheck?.diagnostics() ?? [:]) { _, new in new }
+      }
+      if mode == "private-isolation" { timeoutValues.merge(privateIsolationCheck?.diagnostics() ?? [:]) { _, new in new } }
+      if mode == "private-downloads" { timeoutValues.merge(privateDownloadsCheck?.diagnostics() ?? [:]) { _, new in new } }
       if mode == "split-focus" || mode == "screen-split-focus" { timeoutValues.merge((splitFocusCheck ?? SplitFocusCheck()).diagnostics(screen: mode == "screen-split-focus")) { _, new in new } }
       if mode == "split-commands" || mode == "screen-split-commands" { timeoutValues.merge((splitCommandsCheck ?? SplitCommandsCheck()).diagnostics(screen: mode == "screen-split-commands")) { _, new in new } }
       if mode == "header" || mode == "screen-header" { timeoutValues.merge((headerCheck ?? HeaderCheck()).diagnostics(screen: mode == "screen-header")) { _, new in new } }
@@ -2882,6 +3010,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "download-close" { downloadCloseCheckTick(host); return }
     if mode == "downloads" || mode == "screen-downloads" { downloadsCheckTick(host, screen: mode == "screen-downloads"); return }
     if mode == "toasts" || mode == "screen-toasts" { toastsCheckTick(host, screen: mode == "screen-toasts"); return }
+    if mode == "private-window" || mode == "screen-private-window" { privateWindowCheckTick(host, screen: mode == "screen-private-window"); return }
+    if mode == "private-isolation" { privateIsolationCheckTick(host); return }
+    if mode == "private-downloads" { privateDownloadsCheckTick(host); return }
+    if mode == "private-durability-seed" || mode == "private-durability-verify" { privateDurabilityTick(host, mode: mode); return }
     if mode == "split-focus" || mode == "screen-split-focus" { splitFocusCheckTick(host, screen: mode == "screen-split-focus"); return }
     if mode == "split-commands" || mode == "screen-split-commands" { splitCommandsCheckTick(host, screen: mode == "screen-split-commands"); return }
     if mode == "header" || mode == "screen-header" { headerCheckTick(host, screen: mode == "screen-header"); return }
@@ -3091,11 +3223,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 23
     } else if mode == "popup", browserCheckPhase == 23, children.allSatisfy({ $0.host == nil }),
               let popup = popups.first?.host {
-      popup.checkKeyboardCommand("incognito")
+      // A normal OTR window is a full private window now, not a page-only popup (U26f).
+      popup.checkNewIncognitoWindow()
       browserCheckPhase = 24
-    } else if mode == "popup", browserCheckPhase == 24, popups.count == 2, let privateHost = popups.last?.host,
-              (privateHost.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
-      privateHost.checkKeyboardCommand("close")
+    } else if mode == "popup", browserCheckPhase == 24,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              privateChild.host?.isPrivateWindow() == true {
+      privateChild.host?.close()
       browserCheckPhase = 25
     } else if mode == "popup", browserCheckPhase == 25, popups.count == 1,
               let tab = (popups.first?.host?.tabs() as? [any ARTabAPI])?.first {
@@ -6424,13 +6558,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "application_active": NSApp.isActive, "application_hidden": NSApp.isHidden,
         "window_key": host.window().isKeyWindow, "focus_wait_ticks": profileFocusPhaseTicks,
         "stock_browsers": host.checkStockBrowsers()])
-    } else if screen, browserCheckPhase == 6, let popup = popups.first?.host,
-              (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
+    } else if screen, browserCheckPhase == 6,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host, privateHost.isPrivateWindow() {
+      // U26f: a normal OTR window is a full private window, not the old page-only popup.
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
-        guard let rows = captureCheckRows() else { return }
-        quitBefore = rows
-        popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
-        popup.window().makeKeyAndOrderFront(nil)
+        privateHost.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
+        privateHost.window().makeKeyAndOrderFront(nil)
         browserCheckPhase = 61
         return
       }
@@ -6438,30 +6572,30 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "focused_hidden_profile": true, "focus_probe": extensionFocusProbe, "focus_none": profileFocusNoneObserved,
         "new_focus_none_event": profileNewFocusNoneEvent, "new_focus_events": newFocusEvents(),
         "focus_events_at_return": profileFocusEventsAtReturn,
-        "app_deactivated": true, "menu_incognito": true, "stock_browsers": host.checkStockBrowsers()])
-    } else if screen, browserCheckPhase == 61, let popup = popups.first?.host,
-              popup.window().isKeyWindow,
-              let tab = (popup.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
-      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
-          context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
-      NSApp.sendEvent(event)
+        "app_deactivated": true, "menu_incognito": true, "private_window": true, "stock_browsers": host.checkStockBrowsers()])
+    } else if screen, browserCheckPhase == 61,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host,
+              let tab = (privateHost.tabs() as? [any ARTabAPI])?.first, tab.title == "Ararat save check", !tab.isLoading {
+      guard let rows = captureCheckRows() else { return }
+      quitBefore = rows
+      // Save Page on the full private window: Chrome's own command, no key-window dispatch.
+      privateHost.checkSavePage()
       browserCheckPhase = 62
-    } else if screen, browserCheckPhase == 62, let popup = popups.first?.host,
-              popup.checkPageOnlySaveCount() == 1,
+    } else if screen, browserCheckPhase == 62,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
       guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 63
-    } else if screen, browserCheckPhase == 63, let popup = popups.first?.host,
+    } else if screen, browserCheckPhase == 63,
               !NSApp.windows.contains(where: { $0 is NSSavePanel && $0.isVisible }) {
       let unchanged = pageOnlyRowsUnchanged(quitBefore, captureCheckRows())
-      finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && popup.checkPageOnlySaveCount() == 1 && host.checkStockBrowsers() == 0,
+      finishBrowserCheck(ok: unchanged && profileFocusNoneObserved && profileNewFocusNoneEvent && host.checkStockBrowsers() == 0,
         values: ["profiles": profileCheckStates, "focused_hidden_profile": true, "focus_probe": extensionFocusProbe,
           "focus_none": profileFocusNoneObserved, "new_focus_none_event": profileNewFocusNoneEvent,
           "new_focus_events": newFocusEvents(),
           "focus_events_at_return": profileFocusEventsAtReturn,
-          "app_deactivated": true, "menu_incognito": true, "page_only_save": true, "rows_unchanged": unchanged,
+          "app_deactivated": true, "menu_incognito": true, "private_window": true, "page_only_save": true, "rows_unchanged": unchanged,
           "stock_browsers": host.checkStockBrowsers()])
     }
   }
@@ -6483,75 +6617,93 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       quitBefore = rows
       host.checkCreateIncognito()
       browserCheckPhase = 2
-    } else if browserCheckPhase == 2, let popup = popups.first?.host,
-              (popup.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
-      if CommandLine.arguments.contains("--ararat-incognito-window-check") {
-        guard let tabs = popup.tabs() as? [any ARTabAPI], tabs.count == 1, let tab = tabs.first, tab.itemId == nil,
-              let browsers = popup.checkProfileState()["browsers"] as? [[String: Any]], browsers.count == 1,
+    } else if browserCheckPhase == 2, let child = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = child.host, privateHost.isPrivateWindow(),
+              let snap = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.snapshot(windowId: child.windowID) }),
+              snap.spaces.count == 1, snap.spaces[0].id == "private",
+              snap.spaces[0].pinned.isEmpty, snap.spaces[0].favorites.isEmpty,
+              snap.spaces[0].today.count == 1, let item = snap.spaces[0].today.first?.id,
+              let tabs = privateHost.tabs() as? [any ARTabAPI], tabs.count == 1, let tab = tabs.first,
+              tab.itemId == item, !tab.liveId.isEmpty,
+              let browsers = privateHost.checkProfileState()["browsers"] as? [[String: Any]], browsers.count == 1,
               browsers[0]["off_the_record"] as? Bool == true,
               let profile = browsers[0]["profile_pointer"] as? String, !profile.isEmpty,
               let browser = browsers[0]["browser_pointer"] as? String, !browser.isEmpty,
-              !tab.liveId.isEmpty, captureCheckRows() == quitBefore else { return }
-        incognitoPrivateLive = tab.liveId
-        incognitoPrivateProfile = profile
-        incognitoPrivateBrowser = browser
-        popup.checkKeyboardCommand("window")
+              workspaceRowsMatch(quitBefore, captureCheckRows()) {
+      incognitoPrivateLive = tab.liveId
+      incognitoPrivateProfile = profile
+      incognitoPrivateBrowser = browser
+      incognitoWindowID = child.windowID
+      incognitoWindowItem = item
+      incognitoPrivateItem = item
+      incognitoWindowLive = tab.liveId
+      if CommandLine.arguments.contains("--ararat-incognito-window-check") {
+        // A regular window opened from the private one is a regular child of the root session.
+        privateHost.checkNewWindow()
         browserCheckPhase = 30
         return
       }
-      incognitoTabsBefore = popup.tabs().count
-      popup.checkKeyboardCommand("location")
-      popup.checkKeyboardCommand("search")
-      popup.checkKeyboardCommand("new")
+      // A private new tab is a row in the private workspace; the regular window is untouched.
+      incognitoTabsBefore = tabs.count
+      privateHost.checkNewTab()
       browserCheckPhase = 21
-    } else if browserCheckPhase == 21, let popup = popups.first?.host,
-              popup.tabs().count > incognitoTabsBefore {
-      guard commandPresenter == nil, snapshot == browserCheckBefore else {
+    } else if browserCheckPhase == 21, let child = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let snap = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.snapshot(windowId: child.windowID) }),
+              snap.spaces.first?.today.count == incognitoTabsBefore + 1,
+              let added = snap.spaces.first?.today.first(where: { $0.id != incognitoWindowItem })?.id {
+      guard snapshot == browserCheckBefore, workspaceRowsMatch(quitBefore, captureCheckRows()) else {
         finishBrowserCheck(ok: false, values: ["private_command_created_workspace_row": true]); return
       }
-      popup.checkKeyboardCommand("close")
+      // Close the new row through the adapter: no key-window command is involved.
+      child.close(added)
       browserCheckPhase = 22
-    } else if browserCheckPhase == 22, let popup = popups.first?.host, popup.tabs().count == incognitoTabsBefore {
-      popup.checkKeyboardCommand("incognito")
+    } else if browserCheckPhase == 22, let child = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let snap = child.adapter?.session.queue.sync(execute: { child.adapter?.session.store?.snapshot(windowId: child.windowID) }),
+              snap.spaces.first?.today.count == incognitoTabsBefore, snap.archive.isEmpty {
+      // Close removed the row and left no archive entry; the private window stays up.
+      child.host?.checkCreateIncognito()
       browserCheckPhase = 25
-    } else if browserCheckPhase == 25, popups.count == 2, let child = popups.last?.host,
-              (child.checkProfileState()["browsers"] as? [[String: Any]])?.first?["off_the_record"] as? Bool == true {
-      child.checkKeyboardCommand("close")
+    } else if browserCheckPhase == 25, children.filter({ $0.isPrivateWindow && $0.host != nil }).count == 2,
+              PrivateWorkspaces.liveCount == 2 {
+      if let extra = children.last(where: { $0.isPrivateWindow && $0.host != nil }) { extra.host?.close() }
       browserCheckPhase = 26
-    } else if browserCheckPhase == 26, popups.count == 1 {
+    } else if browserCheckPhase == 26, children.filter({ $0.isPrivateWindow && $0.host != nil }).count == 1,
+              PrivateWorkspaces.liveCount == 1 {
       host.checkNavigateOffTheRecord()
       browserCheckPhase = 3
-    } else if browserCheckPhase == 3, popups.contains(where: { popup in
-      (popup.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.title == "ararat-otr-navigation" }) == true
+    } else if browserCheckPhase == 3, children.contains(where: { runtime in
+      runtime.isPrivateWindow && (runtime.host?.tabs() as? [any ARTabAPI])?.contains(where: { $0.title == "ararat-otr-navigation" }) == true
     }) {
       let stock = host.checkStockBrowsers()
       let after = captureCheckRows()
-      let rowsUnchanged = snapshot == browserCheckBefore && quitBefore != nil && after == quitBefore
+      let rowsUnchanged = snapshot == browserCheckBefore && workspaceRowsMatch(quitBefore, after)
       finishBrowserCheck(ok: rowsUnchanged && stock == 0, values: ["case": "incognito-private", "off_the_record": true,
         "off_the_record_navigation": true, "native_private_new_tab": true, "private_command_close": true,
         "private_new_incognito_window": true, "location_search_noop": true, "rows_unchanged": rowsUnchanged,
         "rows_before": quitBefore ?? [], "rows_after": after ?? [], "stock_browsers": stock])
-    } else if browserCheckPhase == 30, children.count == 1, popups.count == 1,
-              let child = children.first, let childHost = child.host, childHost.hasBrowser(),
-              let privateHost = popups.first?.host,
-              let privateTabs = privateHost.tabs() as? [any ARTabAPI], privateTabs.count == 1, let privateTab = privateTabs.first,
-              privateTab.liveId == incognitoPrivateLive, privateTab.itemId == nil,
+    } else if browserCheckPhase == 30, children.count == 2,
+              let child = children.first(where: { !$0.isPrivateWindow && $0.host != nil }),
+              let childHost = child.host, childHost.hasBrowser(),
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host,
+              let privateTabs = privateHost.tabs() as? [any ARTabAPI], privateTabs.count == 1,
+              let privateTab = privateTabs.first, privateTab.liveId == incognitoPrivateLive,
               let privateBrowsers = privateHost.checkProfileState()["browsers"] as? [[String: Any]], privateBrowsers.count == 1,
-              let privateBrowser = privateBrowsers.first,
-              privateBrowser["off_the_record"] as? Bool == true,
-              privateBrowser["profile_pointer"] as? String == incognitoPrivateProfile,
-              privateBrowser["browser_pointer"] as? String == incognitoPrivateBrowser,
+              privateBrowsers[0]["off_the_record"] as? Bool == true,
+              privateBrowsers[0]["profile_pointer"] as? String == incognitoPrivateProfile,
+              privateBrowsers[0]["browser_pointer"] as? String == incognitoPrivateBrowser,
               let browsers = childHost.checkProfileState()["browsers"] as? [[String: Any]], browsers.count == 1,
               browsers[0]["profile"] as? String == "Default", browsers[0]["off_the_record"] as? Bool == false,
               childHost.profileDirectory() == "Default",
               let rootBrowser = (host.checkProfileState()["browsers"] as? [[String: Any]])?.first,
               let rootProfile = rootBrowser["profile_pointer"] as? String, !rootProfile.isEmpty,
               browsers[0]["profile_pointer"] as? String == rootProfile,
-              let privateProfile = privateBrowser["profile_pointer"] as? String, !privateProfile.isEmpty, privateProfile != rootProfile,
+              let privateProfile = privateBrowsers[0]["profile_pointer"] as? String, !privateProfile.isEmpty, privateProfile != rootProfile,
               let tabs = childHost.tabs() as? [any ARTabAPI], tabs.count == 1,
               let item = tabs[0].itemId, !item.isEmpty, tabs[0].liveId != incognitoPrivateLive,
               tabs[0].url.hasPrefix("chrome://newtab/"), childHost.activeItemId() == item,
-              child.popupStoreMappings([item: tabs[0].liveId])[item] == tabs[0].liveId,
+              let adapter,
+              adapter.session.queue.sync(execute: { adapter.session.store?.liveTab(item: item) }) == tabs[0].liveId,
               let before = quitBefore, let rows = captureCheckRows(),
               Self.checkIncognitoRegularWindowRows(before: before, during: rows,
                 after: rows.filter { $0.count != 3 || $0[0] != "window" || $0[1] != child.windowID },
@@ -6562,18 +6714,22 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       incognitoWindowLive = tabs[0].liveId
       childHost.close()
       browserCheckPhase = 31
-    } else if browserCheckPhase == 31, children.isEmpty, popups.count == 1,
-              let popup = popups.first?.host,
-              let tabs = popup.tabs() as? [any ARTabAPI],
-              let browsers = popup.checkProfileState()["browsers"] as? [[String: Any]],
+    } else if browserCheckPhase == 31, children.count == 1,
+              let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+              let privateHost = privateChild.host,
+              let tabs = privateHost.tabs() as? [any ARTabAPI],
+              let browsers = privateHost.checkProfileState()["browsers"] as? [[String: Any]],
               let adapter,
               let mapping = adapter.session.queue.sync(execute: { () -> (live: String?, item: String?)? in
                 guard let store = adapter.session.store else { return nil }
                 return (store.liveTab(item: incognitoWindowItem), store.itemForLive(liveId: incognitoWindowLive))
               }),
-              Self.checkIncognitoCloseState(tabs: tabs.map { (live: $0.liveId, item: $0.itemId) }, browsers: browsers,
-                privateLive: incognitoPrivateLive, privateProfile: incognitoPrivateProfile, privateBrowser: incognitoPrivateBrowser,
-                childLive: incognitoWindowLive, childMapping: mapping.live, childReverseMapping: mapping.item),
+              tabs.count == 1, tabs[0].liveId == incognitoPrivateLive,
+              tabs[0].itemId == incognitoPrivateItem,
+              browsers.count == 1, browsers[0]["off_the_record"] as? Bool == true,
+              browsers[0]["profile_pointer"] as? String == incognitoPrivateProfile,
+              browsers[0]["browser_pointer"] as? String == incognitoPrivateBrowser,
+              mapping.live == nil, mapping.item == nil,
               let before = quitBefore, let during = incognitoWindowRows, let after = captureCheckRows() {
       let valid = Self.checkIncognitoRegularWindowRows(before: before, during: during, after: after,
                                                        window: incognitoWindowID, item: incognitoWindowItem)
@@ -7712,6 +7868,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-errorpages" { result["check"] = "errorpages"; result["screen"] = "errorpages" }
     if browserCheckMode == "screen-downloads" { result["check"] = "downloads"; result["screen"] = "downloads" }
     if browserCheckMode == "screen-toasts" { result["check"] = "toasts"; result["screen"] = "toasts" }
+    if browserCheckMode == "screen-private-window" { result["check"] = "private-window"; result["screen"] = "private-window" }
     if browserCheckMode == "screen-split-focus" { result["check"] = "split-focus"; result["screen"] = "split-focus" }
     if browserCheckMode == "screen-split-commands" { result["check"] = "split-commands"; result["screen"] = "split-commands" }
     if browserCheckMode == "screen-header" { result["check"] = "header"; result["screen"] = "header" }
@@ -8495,14 +8652,15 @@ var callbacks = AraratCallbacks(
   reopen: { _, _ in
     MainActor.assumeIsolated { Launcher.runtime?.reopen() ?? false }
   },
-  create_host: { _, popup, profile, x, y, width, height in
+  create_host: { _, popup, offTheRecord, profilePointer, profile, x, y, width, height in
     guard let profile else { return nil }
     let profileName = String(cString: profile)
+    let pointer = profilePointer.map { UInt(bitPattern: $0) }
     let address = MainActor.assumeIsolated {
       if Launcher.runtime == nil && CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") || $0 == "--ararat-screen=links" }) {
         FileHandle.standardError.write(Data("ararat-trace: browser-factory fallback=no-runtime\n".utf8))
       }
-      return Launcher.runtime?.createHost(popup: popup, profile: profileName, bounds: NSRect(x: Int(x), y: Int(y), width: Int(width), height: Int(height))).map { UInt(bitPattern: $0) } ?? 0
+      return Launcher.runtime?.createHost(popup: popup, offTheRecord: offTheRecord, profilePointer: pointer, profile: profileName, bounds: NSRect(x: Int(x), y: Int(y), width: Int(width), height: Int(height))).map { UInt(bitPattern: $0) } ?? 0
     }
     return UnsafeMutableRawPointer(bitPattern: address)
   },
@@ -8530,7 +8688,7 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
-  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(name) ? 120 : 60
+  let watchdogSeconds = ["keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "split-commands", "header", "site-controls", "ext-actions"].contains(name) ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
   timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {
@@ -8544,6 +8702,7 @@ if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-ch
     if name == "header" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the header check" }
     if name == "site-controls" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the site-controls check" }
     if name == "ext-actions" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the ext-actions check" }
+    if name == "private-window" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the private-window check" }
     if !screen { result.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { result["screen"] = name }
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
