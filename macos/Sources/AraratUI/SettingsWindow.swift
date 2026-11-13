@@ -58,6 +58,28 @@ public final class SettingsWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    /// The visible window and the pane the screen check reads it through (`--ararat-screen=
+    /// settings-<pane>`). Nil until the controller has a window.
+    public func checkProbe() -> SettingsCheckProbe? {
+        guard let window else { return nil }
+        return SettingsCheckProbe(controller: self, window: window)
+    }
+
+    /// Opens the window on a pane for a check: the ordinary open path (a shown space opens its
+    /// space page) and then the pane's own page, which is the page the check names.
+    public func checkOpen(paneID: String, shownSpaceID: String?) {
+        open(shownSpaceID: shownSpaceID)
+        if let page = SettingsRegistry.pane(id: paneID)?.page { model.navigate(page) }
+    }
+
+    /// Pushes a space's page, the page the Spaces rows draw, for the spaces check.
+    @discardableResult
+    public func checkPushSpace(_ index: Int) -> Bool {
+        guard model.snapshot.spaces.indices.contains(index) else { return false }
+        model.navigate(.space(model.snapshot.spaces[index].id))
+        return true
+    }
 }
 
 extension SettingsWindowController: NSToolbarDelegate {
@@ -98,43 +120,65 @@ enum SettingsColor {
     static let search = grey(236, 71)
     static let capsule = grey(240, 67)
     static let foreground = grey(35, 235)
+    /// The hairline between a grouped card's rows (`--sep` on the boards).
+    static let separator = grey(235, 57)
 }
 
 private struct SettingsRail: View {
     @ObservedObject var model: SettingsModel
-    let panes: [(SettingsModel.Page, String, String)] = [(.tabs, "Tabs", "square.on.square"), (.shortcuts, "Shortcuts", "keyboard"), (.airTraffic, "Air Traffic Control", "paperplane"), (.spaces, "Spaces", "square.grid.2x2")]
     var body: some View {
         VStack(spacing: 8) {
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(SettingsColor.foreground.opacity(0.6)); TextField("Search", text: $model.query).textFieldStyle(.plain) }
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(SettingsColor.foreground.opacity(0.6))
+                TextField("Search", text: $model.query).textFieldStyle(.plain).accessibilityLabel("Search settings")
+                    // The result list's keyboard model (D7): arrows move the selection, Return opens
+                    // it. A text field would otherwise use the arrows for the caret.
+                    .onKeyPress(.upArrow) { model.handleSearchKey(.up); return .handled }
+                    .onKeyPress(.downArrow) { model.handleSearchKey(.down); return .handled }
+                    .onSubmit { model.openSelectedResult() }
+            }
                 .padding(.horizontal, 10).frame(height: 32).background(SettingsColor.search, in: Capsule()).padding(.top, 8)
             ScrollView {
                 VStack(spacing: 2) {
-                    if model.query.isEmpty {
-                        ForEach(panes, id: \.1) { pane, title, icon in
-                            Button { model.navigate(pane) } label: {
-                                Label(title, systemImage: icon).foregroundStyle(SettingsColor.foreground).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 26)
-                                    .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-                            }.buttonStyle(.plain).accessibilityLabel(title)
-                        }
-                    } else {
-                        ForEach(panes, id: \.1) { pane, title, icon in
-                            let hits = model.results.filter { row in row.pane == pane || (pane == .spaces && { if case .space = row.pane { return true }; return false }()) }
-                            if !hits.isEmpty {
-                                Label(title, systemImage: icon).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
-                                ForEach(Array(hits.enumerated()), id: \.offset) { _, row in
-                                    Button { model.select(row) } label: { Text(model.resultTitle(row)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).frame(height: 26) }.buttonStyle(.plain).help(row.subtitle).accessibilityLabel(row.title + ", " + row.subtitle)
-                                }
-                            }
-                        }
-                        if model.results.isEmpty { Text("No matching settings").foregroundStyle(.secondary) }
-                    }
+                    if model.query.isEmpty { paneList } else { resultList }
                 }
             }
         }.padding(.horizontal, 10).frame(width: 180).foregroundStyle(SettingsColor.foreground).background(SettingsColor.rail)
+            .background(SettingsMarker(id: SettingsModel.railMarkerID))
     }
-    func selected(_ pane: SettingsModel.Page) -> Bool {
-        if case .space = model.page { return pane == .spaces }
-        return model.page == pane
+
+    private var paneList: some View {
+        ForEach(model.panes) { pane in
+            Button { if let page = pane.page { model.navigate(page) } } label: {
+                Label(pane.title, systemImage: pane.icon).foregroundStyle(SettingsColor.foreground).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 26)
+                    .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).accessibilityLabel(pane.title)
+                .background(SettingsMarker(id: pane.railMarker))
+        }
+    }
+
+    @ViewBuilder
+    private var resultList: some View {
+        ForEach(model.resultGroups, id: \.pane.id) { group in
+            Label(group.pane.title, systemImage: group.pane.icon).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                .background(SettingsMarker(id: group.pane.groupMarker))
+            ForEach(Array(group.rows.enumerated()), id: \.offset) { _, row in
+                let hit = model.selectedResult.map { $0.pane.searchKey == row.pane.searchKey && $0.id == row.id } ?? false
+                Button { model.select(row) } label: {
+                    Text(model.resultTitle(row)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).frame(height: 26)
+                }.buttonStyle(.plain).help(row.subtitle).accessibilityLabel(row.title + ", " + row.subtitle)
+                    .background(SettingsMarker(id: SettingsModel.resultMarker(row)))
+                    .background { if hit { SettingsMarker(id: SettingsModel.selectedResultMarker) } }
+            }
+        }
+        if model.results.isEmpty {
+            Text("No matching settings").foregroundStyle(.secondary).background(SettingsMarker(id: SettingsModel.noResultsMarker))
+        }
+    }
+
+    func selected(_ pane: SettingsPane) -> Bool {
+        if case .space = model.page { return pane.id == .spaces }
+        return model.page == pane.page
     }
 }
 
@@ -177,7 +221,9 @@ private struct SettingsDetail: View {
                                         if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
                                         Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                     }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
-                                }.buttonStyle(.plain).background(model.highlighted == space.id ? SettingsColor.selected : .clear)
+                                }.buttonStyle(.plain)
+                                    .background { if model.highlighted == space.id { SettingsHitFill() } }
+                                    .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
                                     .id(space.id).draggable(space.id)
                                     .dropDestination(for: String.self) { ids, _ in
                                         guard ids.count == 1, let id = ids.first, id != space.id, model.snapshot.spaces.contains(where: { $0.id == id }) else { return false }
@@ -204,18 +250,34 @@ private struct SettingsDetail: View {
     }
     var header: some View {
         VStack(spacing: 8) {
-            if let space = model.space { Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56) }
-            else { Image(systemName: model.page == .tabs ? "square.on.square" : model.page == .shortcuts ? "keyboard" : model.page == .airTraffic ? "paperplane" : "square.grid.2x2").font(.system(size: 48)).frame(height: 56) }
-            Text(model.title).font(.title.bold())
-            Text(model.space.map { "\(model.tabCountLabel($0)) · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : model.page == .airTraffic ? SettingsModel.airTrafficSubtitle : "Keep related tabs together.")).foregroundStyle(.secondary)
+            if let space = model.space {
+                Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            } else {
+                Image(systemName: model.icon).font(.system(size: 48)).frame(height: 56)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            }
+            Text(model.title).font(.title.bold()).background(SettingsMarker(id: SettingsModel.headerTitleMarker))
+            Text(model.subtitle).foregroundStyle(.secondary).background(SettingsMarker(id: SettingsModel.headerSubtitleMarker))
         }.frame(maxWidth: .infinity).padding(.vertical, 18).opacity(1 - model.headerProgress).id("header")
     }
+    /// One row per card (the panes built before U27 keep this look, D6). A search hit fills the
+    /// row's inside with the selection grey, inset 3 pt at radius 9 (D7).
     func card<Content: View>(_ id: String, title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
+        let hit = model.highlighted == id
+        return HStack {
             VStack(alignment: .leading, spacing: 3) { Text(title); Text(subtitle).font(.caption).foregroundStyle(.secondary) }
             Spacer(minLength: 12)
             content()
-        }.padding(.horizontal, 12).frame(minHeight: 54).background(model.highlighted == id ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12)).id(id)
+        }.padding(.horizontal, 12).frame(minHeight: 54)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                    if hit { SettingsHitFill() }
+                }
+            }
+            .background(SettingsMarker(id: SettingsModel.rowMarker(id)))
+            .id(id)
     }
     func spacePage(_ space: SpaceSnapshot) -> some View {
         VStack(spacing: 10) {
@@ -341,7 +403,12 @@ private struct SettingsShortcutsSection: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 54)
         .background(ShortcutLayoutMarker(id: "row-\(row.id)"))
-        .background(model.highlighted == row.id ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == row.id { SettingsHitFill() }
+            }
+        }
         .id(row.id)
         .contextMenu {
             if let command = row.command, let binding = keyBindings.binding(command: command) {
@@ -552,7 +619,13 @@ private struct SettingsAirTrafficSection: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
-        .background(model.highlighted == SettingsModel.airTrafficCardId ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == SettingsModel.airTrafficCardId { SettingsHitFill() }
+            }
+        }
+        .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.airTrafficCardId)))
         .id(SettingsModel.airTrafficCardId)
     }
 
@@ -572,6 +645,7 @@ private struct SettingsAirTrafficSection: View {
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
         .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background(SettingsMarker(id: SettingsModel.rowMarker("atc-test")))
         .id("atc-test")
     }
 

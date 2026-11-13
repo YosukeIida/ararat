@@ -1,0 +1,134 @@
+import AppKit
+import SwiftUI
+
+/// One rail pane as the check reads it: the id the check names (`--ararat-screen=settings-<id>`)
+/// and the title the rail and the header draw.
+public struct SettingsRailPaneInfo: Sendable {
+    public let id: String
+    public let title: String
+}
+
+/// What a settings screen check reads from the running window. The VM cannot read SwiftUI's
+/// accessibility tree in process (`docs/HANDOVER.md:251`), so the probe finds the views by the
+/// identifiers `SettingsMarker` sets and reports frames, the model's state and pixels; the check
+/// in the app drives it through the same functions the window's own controls call.
+@MainActor
+public final class SettingsCheckProbe {
+    private let controller: SettingsWindowController
+    private let window: NSWindow
+
+    init(controller: SettingsWindowController, window: NSWindow) {
+        self.controller = controller
+        self.window = window
+    }
+
+    public var model: SettingsModel { controller.model }
+    public var windowFrame: NSRect { window.frame }
+    public var isVisible: Bool { window.isVisible }
+    public var isKey: Bool { window.isKeyWindow }
+
+    /// Lays the tree out before a frame read: SwiftUI updates a frame on the next layout pass.
+    public func layout() { window.contentView?.layoutSubtreeIfNeeded() }
+
+    public var title: String { model.title }
+    public var subtitle: String { model.subtitle }
+    public var paneID: String { model.page.paneID.rawValue }
+    public var railPanes: [SettingsRailPaneInfo] {
+        SettingsRegistry.built.map { SettingsRailPaneInfo(id: $0.id.rawValue, title: $0.title) }
+    }
+
+    public var query: String { model.query }
+    public func setQuery(_ query: String) { model.query = query }
+    public var resultTitles: [String] { model.results.map { model.resultTitle($0) } }
+    public var groupPaneIDs: [String] { model.resultGroups.map { $0.pane.id.rawValue } }
+    public var groupRowCounts: [Int] { model.resultGroups.map { $0.rows.count } }
+    public var noResults: Bool { model.results.isEmpty }
+    public var selectedIndex: Int { model.searchIndex }
+    public var selectedResultTitle: String? { model.selectedResult.map { model.resultTitle($0) } }
+    public var selectedResultID: String? { model.selectedResult?.id }
+    public var selectedResultMarker: String? { model.selectedResult.map { SettingsModel.resultMarker($0) } }
+    public var highlightedRowID: String? { model.highlighted }
+    public var highlightedMarker: String? { model.highlighted.map { SettingsModel.rowMarker($0) } }
+    public var historyIndex: Int { model.historyIndex }
+    public var canGoBack: Bool { model.historyIndex > 0 }
+    public var spaceIDs: [String] { model.snapshot.spaces.map(\.id) }
+    public func searchKey(_ key: SettingsSearchKey) -> Bool { model.handleSearchKey(key) }
+
+    // MARK: frames
+
+    private var content: NSView? { window.contentView }
+
+    private func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(views) }
+
+    /// Frames are reported top-down whatever the content view's own flip is: a smaller y is
+    /// higher on screen, so a check can say "above", "below" and "gap" without knowing AppKit's
+    /// convention. The greys read in the same space.
+    private func topDown(_ rect: NSRect, in content: NSView) -> NSRect {
+        guard !content.isFlipped else { return rect }
+        return NSRect(x: rect.minX, y: content.bounds.height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// The frame of a marker's view, top-down in the window content's coordinates.
+    public func marker(_ id: String) -> NSRect? {
+        guard let content else { return nil }
+        guard let view = views(content).first(where: { $0.identifier?.rawValue == id }) else { return nil }
+        return topDown(view.convert(view.bounds, to: content), in: content)
+    }
+
+    /// Every marker whose identifier starts with `prefix`, top to bottom.
+    public func markers(prefix: String) -> [(id: String, frame: NSRect)] {
+        guard let content else { return [] }
+        return views(content).compactMap { view in
+            guard let id = view.identifier?.rawValue, id.hasPrefix(prefix) else { return nil }
+            return (id, topDown(view.convert(view.bounds, to: content), in: content))
+        }.sorted { $0.frame.minY < $1.frame.minY }
+    }
+
+    /// The rail's rows in rail order (their markers carry the pane ids).
+    public var railRows: [(id: String, frame: NSRect)] { markers(prefix: "rail-") }
+    public var railWidth: CGFloat? { marker(SettingsModel.railMarkerID)?.width }
+
+    // MARK: pixels
+
+    /// Reads the greys the content view's cached bitmap holds at `points`, top-down in the
+    /// content's coordinates. `nil` entries mean the read failed, so the caller decides whether
+    /// to retry.
+    public func greys(at points: [NSPoint]) -> [Int?] {
+        guard let content, !content.bounds.isEmpty,
+              let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else {
+            return points.map { _ in nil }
+        }
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let scale = CGFloat(bitmap.pixelsWide) / max(1, content.bounds.width)
+        return points.map { point in
+            let px = Int(point.x * scale)
+            let py = Int(point.y * scale)
+            guard px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh else { return nil }
+            return bitmap.colorAt(x: px, y: py)?.usingColorSpace(.deviceGray).map { Int(($0.whiteComponent * 255).rounded()) }
+        }
+    }
+
+    // MARK: the detail pane
+
+    /// The pane's scroll view: the detail split item's, not the rail's.
+    public var detailScrollView: NSScrollView? {
+        guard let split = window.contentViewController as? NSSplitViewController,
+              split.splitViewItems.count > 1 else { return nil }
+        let detail = split.splitViewItems[1].viewController.view
+        return views(detail).compactMap { $0 as? NSScrollView }.first
+    }
+
+    public var detailScrollOffset: CGFloat? { detailScrollView?.contentView.bounds.minY }
+
+    /// Scrolls the pane like a pointer would, so the header fade and the scroll-to-row paths run.
+    @discardableResult
+    public func scrollDetail(to y: CGFloat) -> Bool {
+        guard let scroll = detailScrollView else { return false }
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, y)))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        return true
+    }
+
+    public var headerProgress: Double { model.headerProgress }
+    public var pageID: String { model.page.searchKey }
+}
