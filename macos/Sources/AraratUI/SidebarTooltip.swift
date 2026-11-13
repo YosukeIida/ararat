@@ -7,8 +7,9 @@ final class SidebarTooltip {
     var modifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
     var explicitCaps: ((NSView) -> [String]?)?
     var pressedKeys: Set<String> = []
-    /// U27d (D4): the Appearance pane's Tooltips switch. Off, no tooltip is captured for a hover
-    /// and one already shown is dropped; the views keep their accessibility help.
+    /// U27d (D4): the Appearance pane's Tooltips switch. Off, `update` shows nothing and drops a
+    /// tooltip already shown; a hover still strips a view's native `toolTip` into the map, so
+    /// AppKit cannot draw its own, and the views keep their accessibility help.
     var isEnabled = true { didSet { if !isEnabled { dismiss() } } }
     func clearPressed() { pressedKeys.removeAll(); keycaps.forEach { $0.setPressed(false) } }
     var menuTracking = false { didSet { dismiss() } }
@@ -84,9 +85,10 @@ final class SidebarTooltip {
     isolated deinit { idleTimer?.invalidate() }
 
     func target(at hit: NSView?) -> NSView? {
-        guard isEnabled else { return nil }
         var view = hit
         while let current = view {
+            // The lazy strip: a toolTip set after `capture(in:)` ran (a row's mute or close
+            // button, the space name) moves into the map here, so AppKit never draws its own.
             if let text = current.toolTip {
                 texts.setObject(text as NSString, forKey: current)
                 let help = current.accessibilityHelp() ?? text

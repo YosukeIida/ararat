@@ -397,6 +397,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
+  /// This window and every window under it, so a settings change reaches a private window opened
+  /// from a child window as well as the owner's own children (U27d review 1 M2).
+  var windowTree: [Runtime] { [self] + children.flatMap(\.windowTree) }
   var popups: [PopupHost] = []
   var hostClosing = false
   var selectionGeneration = 0
@@ -523,8 +526,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var sidebarChecksActive = false
   var sidebarSeedTraced = false
   var sidebarFirstTransactionTraced = false
-  // U27d: the Tooltips switch is read once per window, like the New Tab row's value.
-  var seededTooltips = false
   var dockCheck: DockScreenCheck?
   var organizeConditions: [String: Bool] = [:]
   var organizeCancelStarted = false
@@ -1682,25 +1683,30 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.rowStates = adapter?.rowStates ?? [:]
     sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
     sidebar.unreadItems = unread.unread
-    guard let workspace else { return }
-    if !seededTooltips {
-      seededTooltips = true
-      workspace.tooltipsShown { [weak self] result in
-        guard case .success(let shown) = result else { return }
-        self?.sidebar?.tooltipsShown = shown
-        self?.container?.header.tooltipsShown = shown
-      }
-    }
-    guard seededNewTabRow != snapshot.shownSpaceId else { return }
+    // D4: the settings record lives in the regular workspace. A private window's own workspace
+    // always holds the built-in values, so it reads the regular one (U27d review 1 M2).
+    guard let settingsSource = settingsSource(), seededNewTabRow != snapshot.shownSpaceId else { return }
     seededNewTabRow = snapshot.shownSpaceId
-    workspace.newTabRowShown { [weak self] result in
+    settingsSource.newTabRowShown { [weak self] result in
       guard case .success(let shown) = result else { return }
       self?.sidebar?.newTabRowShown = shown
     }
-    workspace.spaceScrollDirection { [weak self] result in
+    settingsSource.tooltipsShown { [weak self] result in
+      guard case .success(let shown) = result else { return }
+      self?.sidebar?.tooltipsShown = shown
+      self?.container?.header.tooltipsShown = shown
+    }
+    settingsSource.spaceScrollDirection { [weak self] result in
       guard case .success(let direction) = result else { return }
       self?.sidebar?.spaceScrollDirection = direction
     }
+  }
+
+  /// The adapter a window reads the shared settings record from (U27d review 1 M2): a private
+  /// window's own workspace starts from the built-in values, so it reads the regular workspace's
+  /// record instead, where the settings window writes.
+  func settingsSource() -> WorkspaceAdapter? {
+    isPrivateWindow ? (root?.workspace ?? workspace) : workspace
   }
 
   // The command-bar check drives ⌃Tab through a posted key event, so a run that loses the
@@ -1773,17 +1779,17 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // workspace, so the next sideways scroll pages the other way without a relaunch.
     owner.settings?.setSpaceScrollHandler { [weak owner] direction in
       guard let owner else { return }
-      for window in [owner] + owner.children { window.sidebar?.spaceScrollDirection = direction }
+      for window in owner.windowTree { window.sidebar?.spaceScrollDirection = direction }
     }
     // U27d: the Appearance pane's switches reach every window of this workspace at once. The New
     // Tab row closes the sidebar's rows up; the Tooltips switch silences the sidebar's and the
     // header's tooltips without touching menus or accessibility help.
     owner.settings?.setAppearanceHandlers(newTabRow: { [weak owner] shown in
       guard let owner else { return }
-      for window in [owner] + owner.children { window.sidebar?.newTabRowShown = shown }
+      for window in owner.windowTree { window.sidebar?.newTabRowShown = shown }
     }, tooltips: { [weak owner] shown in
       guard let owner else { return }
-      for window in [owner] + owner.children {
+      for window in owner.windowTree {
         window.sidebar?.tooltipsShown = shown
         window.container?.header.tooltipsShown = shown
       }

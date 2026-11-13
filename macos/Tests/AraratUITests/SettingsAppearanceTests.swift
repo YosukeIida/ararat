@@ -94,7 +94,7 @@ func theAppearancePaneWritesBothSwitchesAndReopenReadsThem() async throws {
 }
 
 @Test @MainActor
-func theTooltipGateSilencesHeaderAndRowTooltipsUntilItIsTurnedBackOn() throws {
+func theTooltipGateSilencesHeaderAndNativeTooltipsUntilItIsTurnedBackOn() throws {
     _ = NSApplication.shared
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [], backing: .buffered, defer: false)
     defer { window.contentView = nil }
@@ -110,16 +110,22 @@ func theTooltipGateSilencesHeaderAndRowTooltipsUntilItIsTurnedBackOn() throws {
     now = 2
     tooltip.update(target: button, point: .zero)
     #expect(tooltip.text == "Go Back")
-    // Off: a shown tooltip goes, and a hover captures no new target or text.
+    // Off: a shown tooltip goes, and a native toolTip set after capture is still stripped into
+    // the map (so AppKit cannot draw its own) while nothing is shown. A row's mute or close
+    // button sets its toolTip the same way.
     tooltip.isEnabled = false
     #expect(tooltip.text == nil)
+    button.toolTip = "Mute Tab"
     tooltip.update(target: button, point: .zero)
-    #expect(tooltip.text == nil && tooltip.target(at: button) == nil)
-    // Back on, the same hover shows again.
+    #expect(tooltip.text == nil)
+    #expect(tooltip.target(at: button) === button)
+    #expect(button.toolTip == nil)
+    #expect(tooltip.text == nil)
+    // Back on, the stripped text is what the same hover shows.
     tooltip.isEnabled = true
     now = 4
     tooltip.update(target: button, point: .zero)
-    #expect(tooltip.text == "Go Back")
+    #expect(tooltip.text == "Mute Tab")
 
     // The header's own gate: the Back control's tooltip with its keycaps, gone when off.
     let header = SidebarHeaderView(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
