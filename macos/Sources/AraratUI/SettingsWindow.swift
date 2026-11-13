@@ -491,6 +491,13 @@ private struct SettingsLittleWindowSection: View {
                     Picker("“Open in” button sends the page to",
                            selection: Binding(get: { model.littleWindowOpenIn },
                                               set: model.setLittleWindowOpenIn)) {
+                        // A space deleted on another device keeps its value until the user picks
+                        // again; the item says why the Little Window ignores it (the ATC pane's
+                        // "Deleted space" pattern).
+                        if case .space(let id) = model.littleWindowOpenIn,
+                           !model.littleWindowSpaces.contains(where: { $0.id == id }) {
+                            Text("Deleted space").tag(LittleWindowOpenIn.space(id)).disabled(true)
+                        }
                         Text("Most Recent Space").tag(LittleWindowOpenIn.mostRecent)
                         ForEach(model.littleWindowSpaces, id: \.id) { space in
                             Text(space.title).tag(LittleWindowOpenIn.space(space.id))

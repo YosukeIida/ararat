@@ -371,12 +371,12 @@ public final class SettingsModel: ObservableObject {
     // MARK: U27i, the Little Window pane
 
     /// The Open-in row's own words: the most recent space of the Little Window's profile, or the
-    /// named space. A named space the workspace no longer has reads as the most recent one, which
-    /// is what the Little Window itself falls back to.
+    /// named space. A named space the workspace no longer has reads as a deleted one — the pane's
+    /// menu draws it disabled, and the Little Window itself falls back to the most recent space.
     var littleWindowOpenInLabel: String {
         switch littleWindowOpenIn {
         case .mostRecent: return "Most Recent Space"
-        case .space(let id): return snapshot.spaces.first { $0.id == id }?.title ?? "Most Recent Space"
+        case .space(let id): return snapshot.spaces.first { $0.id == id }?.title ?? "Deleted space"
         }
     }
 

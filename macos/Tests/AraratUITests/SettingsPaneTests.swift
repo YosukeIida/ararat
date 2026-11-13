@@ -108,8 +108,8 @@ func thePaneRegistryDrawsTheBoardsOrderAndShowsOnlyBuiltPanes() {
     // The boards' order, General to About (D1): the rail draws this list, filtered by `built`.
     #expect(SettingsRegistry.panes.map(\.id.rawValue) == ["general", "appearance", "websites", "tabs", "shortcuts",
         "air-traffic", "spaces", "little-window", "passwords", "privacy", "extensions", "sync", "about"])
-    // What exists today reads Appearance, Tabs, Shortcuts, Air Traffic Control, Spaces, the
-    // order §7 names.
+    // What exists today reads Appearance, Tabs, Shortcuts, Air Traffic Control, Spaces and
+    // Little Window, the order §7 names.
     #expect(SettingsRegistry.built.map(\.id.rawValue) == ["appearance", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
     for pane in SettingsRegistry.panes {
         // A pane exists exactly when it has a page: no empty pane can reach the rail.

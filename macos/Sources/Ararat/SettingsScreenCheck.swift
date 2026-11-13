@@ -160,6 +160,19 @@ extension Runtime {
             values["shown_space"] = snapshot.shownSpaceId as Any? ?? NSNull()
             values["markers"] = probe.markers(prefix: "").map { ["id": $0.id, "frame": rectFields($0.frame)] }
         }
+        if mode == .littleWindow, let probe {
+            values["little_window"] = ["open_in": probe.littleWindowOpenInLabel,
+                                       "close_after": probe.littleWindowCloseAfter,
+                                       "remember": probe.littleWindowRememberFrame,
+                                       "hot_key_caps": probe.littleWindowHotKeyCaps,
+                                       "hot_key_status": probe.littleWindowHotKeyStatus.map { String(describing: $0) } ?? "none",
+                                       "hot_key_message": probe.littleWindowHotKeyMessage ?? ""]
+            values["unverified"] = [
+                "A real system-wide key press (the check reads the registration result)",
+                "Another app holding the key at launch (the taken answer is unit-tested)",
+                "The hover and pressed looks (no cursor in the VM)",
+            ]
+        }
         return values
     }
 

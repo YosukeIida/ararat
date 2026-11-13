@@ -79,7 +79,7 @@ func theLittleWindowPaneListsTheBoardsRowsAndTheStoredValues() {
     model.littleWindowOpenIn = .space("personal")
     #expect(model.littleWindowOpenInLabel == "Personal")
     model.littleWindowOpenIn = .space("gone")
-    #expect(model.littleWindowOpenInLabel == "Most Recent Space")
+    #expect(model.littleWindowOpenInLabel == "Deleted space")
     model.littleWindowCloseAfter = false
     model.littleWindowRememberFrame = false
     let updated = model.rows.filter { $0.pane == .littleWindow }
