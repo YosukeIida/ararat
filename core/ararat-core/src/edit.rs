@@ -1360,6 +1360,16 @@ impl Workspace {
         self.commit_edit(vec![op])
     }
 
+    // U27h D8: the Little Window's frame is per device, so it is its own record kind (kept out
+    // of the sync journal) rather than a field of the synced Settings. `None` forgets it.
+    pub fn set_little_window_frame(&mut self, frame: Option<crate::model::LittleWindowFrame>) -> Vec<Op> {
+        let op = match frame {
+            Some(frame) => Op::Put(Record::LittleWindow(frame)),
+            None => Op::Delete(Kind::LittleWindow, "workspace".into()),
+        };
+        self.commit_edit(vec![op])
+    }
+
     pub fn auto_archive(&mut self, now: u64) -> Result<Vec<Op>, EditError> {
         self.check_tree().map_err(EditError)?;
         let mut protected = HashSet::new();

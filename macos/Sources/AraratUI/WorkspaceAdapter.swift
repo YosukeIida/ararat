@@ -329,3 +329,24 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().settings().newTabRowShown }, completion: completion)
     }
 }
+
+extension WorkspaceAdapter {
+    /// U27h: the profile's most recent space, the Little Window's default destination until
+    /// U27i adds the setting.
+    public func recentSpace(profile: String, completion: @escaping Completion<String?>) {
+        enqueue({
+            try self.opened().recentSpaceForProfile(windowId: self.windowID,
+                                                    profile: profile == "Default" ? .default : .named(profile))
+        }, completion: completion)
+    }
+
+    /// U27h D8: the Little Window's frame is a device record, read and written through the
+    /// store so a reopen reads what the last close wrote.
+    public func littleWindowFrame(completion: @escaping Completion<LittleWindowFrame?>) {
+        enqueue({ try self.opened().littleWindowFrame() }, completion: completion)
+    }
+
+    public func setLittleWindowFrame(_ frame: LittleWindowFrame?, completion: @escaping Completion<Void> = { _ in }) {
+        enqueue({ try self.opened().setLittleWindowFrame(frame: frame) }, completion: completion)
+    }
+}

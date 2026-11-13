@@ -131,6 +131,17 @@ pub struct WindowState {
     pub changed_at: u64,
 }
 
+/// The Little Window's frame on this device (U27h D8). The Open-in default and close-after
+/// are synced settings; the frame is per device, like a `Window` record, so it is stored in
+/// its own kind and kept out of the sync journal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LittleWindowFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
     pub(crate) off_the_record: bool,
@@ -146,6 +157,8 @@ pub struct Workspace {
     pub archive_after: HashMap<Profile, ArchiveAfter>,
     pub last_selected: HashMap<Id, u64>,
     pub windows: HashMap<Id, WindowState>,
+    // The Little Window's remembered frame, per device (U27h D8).
+    pub little_window_frame: Option<LittleWindowFrame>,
     pub history_purges: HashMap<Id, (Profile, Id, u64)>,
     pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
@@ -165,6 +178,7 @@ pub enum Kind {
     Item,
     Favorites,
     Window,
+    LittleWindow,
     ArchiveAfter,
     LastSelected,
     FolderState,
@@ -184,6 +198,7 @@ impl Kind {
             Kind::Item => "item",
             Kind::Favorites => "favorites",
             Kind::Window => "window",
+            Kind::LittleWindow => "little_window",
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
             Kind::FolderState => "folder_state",
@@ -197,7 +212,7 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -212,6 +227,7 @@ pub enum Record {
     Space(Space),
     Item(Item),
     Window(WindowState),
+    LittleWindow(LittleWindowFrame),
     Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
@@ -230,6 +246,7 @@ impl Record {
             Record::Settings(_) => Kind::Settings,
             Record::Space(_) => Kind::Space,
             Record::Window(_) => Kind::Window,
+            Record::LittleWindow(_) => Kind::LittleWindow,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
             Record::RoutingRule { .. } => Kind::RoutingRule,
@@ -249,6 +266,7 @@ impl Record {
             Record::Settings(_) => "workspace".into(),
             Record::Space(s) => s.id.clone(),
             Record::Window(window) => window.id.clone(),
+            Record::LittleWindow(_) => "workspace".into(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
             Record::RoutingRule { rule, .. } => rule.id.clone(),
@@ -268,6 +286,7 @@ impl Record {
             Record::Settings(settings) => serde_json::to_string(settings),
             Record::Space(s) => serde_json::to_string(s),
             Record::Window(window) => serde_json::to_string(window),
+            Record::LittleWindow(frame) => serde_json::to_string(frame),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
             Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
@@ -290,6 +309,7 @@ impl Record {
             Kind::ArchiveAfter => Record::ArchiveAfter { profile: serde_json::from_str(id)?, value: serde_json::from_str(body)? },
             Kind::Space => Record::Space(serde_json::from_str(body)?),
             Kind::Window => Record::Window(serde_json::from_str(body)?),
+            Kind::LittleWindow => Record::LittleWindow(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
             Kind::Favorites => Record::Favorites {
                 profile: serde_json::from_str(id)?,
@@ -452,6 +472,8 @@ impl Workspace {
             Op::Delete(Kind::ArchiveAfter, id) => self.archive_after.retain(|p, _| &profile_id(p) != id),
             Op::Put(Record::Window(window)) => { let mut window = window.clone(); if self.is_private() { window.history.clear(); window.space_history.clear(); } self.windows.insert(window.id.clone(), window); },
             Op::Delete(Kind::Window, id) => { self.windows.remove(id); },
+            Op::Put(Record::LittleWindow(frame)) => { self.little_window_frame = Some(*frame); },
+            Op::Delete(Kind::LittleWindow, _) => { self.little_window_frame = None; },
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);
                 self.spaces.push(space.clone());
@@ -497,7 +519,7 @@ impl Workspace {
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ararat_core::{import, storage::Store};
-use ararat_ffi::{CoreError, LiveCause, LiveStrip, LiveTab, LiveTransaction, Profile, RowKind, SplitFactor, SplitPaneKind, WorkspaceStore, import_arc_sidebar};
+use ararat_ffi::{CoreError, LittleWindowFrame, LiveCause, LiveStrip, LiveTab, LiveTransaction, Profile, RowKind, SplitFactor, SplitPaneKind, WorkspaceStore, import_arc_sidebar};
 use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("../../ararat-core/tests/fixtures/arc-sidebar-synthetic.json");
@@ -1113,6 +1113,35 @@ fn the_new_tab_row_setting_reads_through_the_ffi_and_survives_reopen() {
     let conn = Connection::open(&path).unwrap();
     let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
     assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// U27h D8: the Little Window's frame is a device record: it survives a reopen and stays out
+// of the sync journal.
+#[test]
+fn the_little_window_frame_reads_through_the_ffi_and_stays_off_the_journal() {
+    let path = fresh_db("little-window-frame");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.little_window_frame(), None);
+    let frame = LittleWindowFrame { x: 120.0, y: 80.0, width: 640.0, height: 400.0 };
+    store.set_little_window_frame(Some(frame)).unwrap();
+    assert_eq!(store.little_window_frame(), Some(frame));
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "little_window").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.little_window_frame(), Some(frame));
+    // A moved frame replaces the one record; forgetting it removes the row.
+    let moved = LittleWindowFrame { x: 300.0, y: 200.0, width: 720.0, height: 480.0 };
+    store.set_little_window_frame(Some(moved)).unwrap();
+    assert_eq!(store.little_window_frame(), Some(moved));
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "little_window").count(), 1);
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'little_window'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 0);
+    drop(conn);
+    store.set_little_window_frame(None).unwrap();
+    assert_eq!(store.little_window_frame(), None);
+    drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 

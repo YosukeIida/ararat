@@ -648,6 +648,19 @@ impl WorkspaceStore {
         self.store.flush().map_err(Into::into)
     }
 
+    // U27h D8: the Little Window's frame, per device. A nil frame forgets it.
+    pub fn little_window_frame(&self) -> Option<LittleWindowFrame> {
+        self.workspace.lock().unwrap().little_window_frame.map(Into::into)
+    }
+
+    pub fn set_little_window_frame(&self, frame: Option<LittleWindowFrame>) -> Result<(), CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_frame(frame.map(Into::into));
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
+    }
+
     pub fn last_error(&self) -> Option<String> {
         self.store.last_error()
     }
@@ -918,10 +931,30 @@ impl From<Look> for ararat_core::model::Look {
 pub struct WorkspaceSettings {
     pub new_tab_row_shown: bool,
 }
-
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
         Self { new_tab_row_shown: settings.new_tab_row_shown }
+    }
+}
+
+// U27h D8: the Little Window's frame on this device.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct LittleWindowFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<ararat_core::model::LittleWindowFrame> for LittleWindowFrame {
+    fn from(frame: ararat_core::model::LittleWindowFrame) -> Self {
+        Self { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+    }
+}
+
+impl From<LittleWindowFrame> for ararat_core::model::LittleWindowFrame {
+    fn from(frame: LittleWindowFrame) -> Self {
+        Self { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
     }
 }
 

@@ -170,6 +170,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)setSplitFrames:(NSDictionary<NSString*, NSValue*>*)frames frozen:(BOOL)frozen;
 - (BOOL)transferTab:(id<ARTabAPI>)tab commandId:(NSString*)commandId;
 - (BOOL)handoffTab:(id<ARTabAPI>)tab activate:(BOOL)activate;
+// U27h: a page-only Little Window in this host's profile Browser, at an AppKit screen frame.
+// NO when the profile's Browser is not in this host; the caller keeps the current window.
+- (BOOL)openLittleWindow:(NSString*)url profile:(NSString*)profile frame:(NSRect)frame;
 - (void)prepareTransferProfile:(NSString*)profile;
 - (BOOL)checkMoveTab:(id<ARTabAPI>)tab toHost:(id<ARWindowHostAPI>)destination;
 - (nullable NSDictionary<NSString*, id>*)navigationTarget;

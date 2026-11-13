@@ -2484,6 +2484,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"urlfield"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
+      [screen isEqualToString:@"little-window"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
   // A check that navigates after its last native tab closed has no browser to receive the
@@ -3278,6 +3279,39 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return [self moveTab:(ARTab*)value commandId:nil activate:activate handoff:YES];
 }
 
+// U27h: the Little Window is a popup Browser in the shown profile, so it takes Chrome's
+// page-only window path (no toolbar, no sidebar) and our create_host callback supplies its bar.
+- (BOOL)openLittleWindow:(NSString*)url profile:(NSString*)profile frame:(NSRect)frame {
+  if (!g_epoch || !url.length || !profile.length || core_->popup() || core_->closing() ||
+      core_->closed() || closing_all_ || closing_window_) return NO;
+  auto* window = core_->windowForProfile(profile.UTF8String);
+  auto* browser = window ? window->browser() : nullptr;
+  if (!browser || browser->IsDeleteScheduled() || browser->GetProfile()->IsOffTheRecord()) return NO;
+  GURL parsed(url.UTF8String);
+  if (!parsed.is_valid()) return NO;
+  NavigateParams params(browser, parsed, ui::PAGE_TRANSITION_TYPED);
+  params.disposition = WindowOpenDisposition::NEW_POPUP;
+  params.user_gesture = true;
+  // The frame arrives in AppKit screen coordinates (origin bottom left); the window factory
+  // reads a top-left origin, which PopupHost converts back.
+  NSArray<NSScreen*>* screens = [NSScreen screens];
+  CGFloat screen_top = screens.count ? screens[0].frame.size.height : 0;
+  const BOOL has_frame = frame.size.width > 0 && frame.size.height > 0;
+  blink::mojom::WindowFeatures features;
+  features.bounds = gfx::Rect(static_cast<int>(frame.origin.x),
+                              static_cast<int>(screen_top - frame.origin.y - frame.size.height),
+                              static_cast<int>(frame.size.width),
+                              static_cast<int>(frame.size.height));
+  features.has_x = has_frame;
+  features.has_y = has_frame;
+  features.has_width = has_frame;
+  features.has_height = has_frame;
+  features.is_popup = true;
+  params.window_features = std::move(features);
+  Navigate(&params);
+  return YES;
+}
+
 - (BOOL)checkMoveTab:(id<ARTabAPI>)value toHost:(id<ARWindowHostAPI>)destination {
   if ((base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "transfer-ext" &&
        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "dialogs" &&
@@ -3347,7 +3381,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (BOOL)moveTab:(ARTab*)tab commandId:(NSString*)commandId activate:(BOOL)activate handoff:(BOOL)handoff {
   if (!g_epoch || ![tab isKindOfClass:ARTab.class] || core_->popup() || core_->closing() || core_->closed() || closing_all_ || closing_window_) return NO;
   ARWindowHost* source = tab.ownerHost;
-  if (!source || source == self || source->core_->popup() || source->core_->closed() ||
+  // A page-only popup is a valid source only for the Little Window's Open in (U27h): its tab
+  // moves out with its contents and the popup closes when its last tab leaves.
+  if (!source || source == self || (source->core_->popup() && !handoff) || source->core_->closed() ||
       (source->core_->closing() && !(handoff && source->handoff_ready_))) return NO;
   auto* source_strip = [source stripForTab:tab];
   auto* contents = tab.contents;

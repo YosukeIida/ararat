@@ -56,6 +56,16 @@ public enum CommandBarMetrics {
         let top = windowFrame.midY + height(forRows: maxRows) / 2 + 40
         return NSRect(x: windowFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
     }
+
+    /// U27h: a Little Window is short, so its ⌘L bar sits inside the window (the board puts it
+    /// 78 pt below the top, which the step rule rounds to 80) rather than at the browser
+    /// windows' mid-height.
+    public static func littleWindowPanelFrame(windowFrame: NSRect, width: CGFloat, rows: Int) -> NSRect {
+        let barHeight = height(forRows: rows)
+        let top = windowFrame.maxY - 80
+        let y = max(windowFrame.minY + 8, top - barHeight)
+        return NSRect(x: windowFrame.midX - width / 2, y: y, width: width, height: barHeight)
+    }
 }
 
 /// State + behaviour of the ⌘T / ⌘L bar, adapted from Cra's MIT

@@ -219,7 +219,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, seedLittleWindow: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.isPrivate = isPrivate
         self.windowID = windowID
@@ -229,7 +229,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar || seedLittleWindow) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -268,7 +268,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
                 _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
                 _ = try opened.selectItem(windowId: windowID, id: todayA)
-            } else if seedProfiles || seedDock || seedSplitCommands {
+            } else if seedProfiles || seedDock || seedSplitCommands || seedLittleWindow {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """
@@ -316,6 +316,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     _ = try opened.moveSpace(windowId: windowID, spaceId: "named", index: 12)
                     try opened.showSpace(windowId: windowID, spaceId: "default")
+                }
+                if seedLittleWindow {
+                    // U27h: the profile has several spaces for the ⌄ menu and its search; the
+                    // import above supplies the second profile for the chip's menu.
+                    try opened.showSpace(windowId: windowID, spaceId: "default")
+                    for (id, name) in [("little-work", "Work"), ("little-personal", "Personal"), ("little-reading", "Reading")] {
+                        _ = try opened.createSpace(windowId: windowID, name: name, spaceId: id)
+                    }
+                    try opened.showSpace(windowId: windowID, spaceId: "little-work")
+                    _ = try opened.createTab(windowId: windowID, url: "data:text/html,<title>Little Window seed</title>")
                 }
             } else if empty {
                 _ = try opened.createSpace(windowId: windowID, name: "Space", spaceId: UUID().uuidString)
