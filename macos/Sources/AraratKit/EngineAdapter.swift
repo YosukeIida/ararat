@@ -334,6 +334,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func attach(_ host: any ARWindowHostAPI) {
         precondition(Thread.isMainThread)
+        tracePrivate("attach private=\(isPrivate) generation=\(selectionGeneration) closed=\(selectionClosed)")
         self.host = host
         setSelectionClosed(false)
         session.register(self, window: windowID)
@@ -433,7 +434,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             do {
                 guard !self.selectionClosed, let store = self.store else { abandon(); return }
                 if let restoring, store.restorationCandidate(windowId: self.windowID) != restoring { abandon(); return }
-                if restoring != nil { _ = try store.selectItem(windowId: self.windowID, id: id) }
+                if restoring != nil {
+                    _ = try store.selectItem(windowId: self.windowID, id: id)
+                    self.tracePrivate("selectItem restoration item=\(id) generation=\(generation) storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil")")
+                }
                 let snapshot = store.snapshot(windowId: self.windowID)
                 let selectedSpace = snapshot.shownSpaceId
                 let selectedProfile = snapshot.spaces.first(where: { $0.id == selectedSpace })?.profileName
@@ -467,7 +471,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 // so the row is selected and its page shown while the tab comes over (U25d S4).
                 var loneSnapshot: WorkspaceSnapshot?
                 if lone {
-                    do { _ = try store.selectItem(windowId: self.windowID, id: id) }
+                    do {
+                        _ = try store.selectItem(windowId: self.windowID, id: id)
+                        self.tracePrivate("selectItem lone item=\(id) generation=\(generation) storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil")")
+                    }
                     catch {
                         // The window still takes the member, and its next key change retries the
                         // selection; the error is reported rather than rolled back.
@@ -980,14 +987,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
         let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
-        if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { return }
+        tracePrivate("transaction received private=\(offTheRecord) epoch=\(epoch) rev=\(rev) cause=\(cause) strips=\(strips.map { "\($0.window):active=\($0.active ?? "nil"):tabs=\($0.tabs.map { "\($0.liveId):\($0.item ?? "nil")" })" }) active=\(host.activeItemId() ?? "nil") generation=\(selectionGeneration) closed=\(selectionClosed)")
+        if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { tracePrivate("transaction rejected closing rev=\(rev)"); return }
         let states = rowStates
         let crashed = crashedItems
         let navigated = navigatedLives
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {
-                guard let store = self.store, !(hasClosingTabs && self.selectionClosed) else { return }
+                guard let store = self.store, !(hasClosingTabs && self.selectionClosed) else { self.tracePrivate("transaction rejected on queue rev=\(rev)"); return }
                 var previousOwners: [String: String] = [:]
                 for strip in transaction.strips {
                     for tab in strip.tabs {
@@ -1001,6 +1009,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     self.pendingSelectionCommands.insert(command.id)
                 }
                 let snapshot = store.snapshot(windowId: self.windowID)
+                self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
                 let movedLives = transaction.strips.flatMap { strip in strip.tabs.compactMap { tab -> (String, String)? in
                     guard let item = tab.item, let before = previousOwners[tab.liveId],
                           let after = store.liveWindow(item: item), before != after else { return nil }
@@ -1011,7 +1020,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let workspaceChanged = before != snapshot || mappingChanged || !outcome.adopted.isEmpty || !outcome.commands.isEmpty
                 DispatchQueue.main.async {
-                    guard !(hasClosingTabs && self.selectionClosed) else { return }
+                    guard !(hasClosingTabs && self.selectionClosed) else { self.tracePrivate("transaction rejected on delivery rev=\(rev)"); return }
                     for (live, owner) in movedLives {
                         self.session.noteTransfer(live, destination: owner)
                         if owner == self.windowID { self.restoringSplitMoves.remove(live) }
@@ -1145,7 +1154,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 store.selectedItem(windowId: windowID) == snapshot.selectedId &&
                 latest.shownSpaceId == snapshot.shownSpaceId && latest.spaces == snapshot.spaces && latest.archive == snapshot.archive
         }
-        tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
+        tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
         guard current else { return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
         displayedSelection = snapshot.selectedId

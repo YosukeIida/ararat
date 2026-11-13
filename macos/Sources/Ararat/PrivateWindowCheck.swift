@@ -20,6 +20,7 @@ final class PrivateWindowCheckState {
     var images: [String: String] = [:]
     var waitName = ""
     var waitCount = 0
+    var siblingSelectionAttempts = 0
     var capturing = false
     var title = ""
     var closable = ""
@@ -244,7 +245,20 @@ extension Runtime {
             }
             // Selecting in window 1 a row whose live tab is in window 2 moves it (same OTR domain).
             let selected = first.sidebar?.selectRow(id: sibling) == true
-            if screen && !selected { wait("sibling row in sidebar"); return }
+            if !selected {
+                check.siblingSelectionAttempts += 1
+                let rows = first.snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id)
+                check.wait("sibling row in sidebar", "window=\(first.windowID) sibling=\(sibling) rows=\(rows) attempt=\(check.siblingSelectionAttempts)")
+                if check.siblingSelectionAttempts >= 60 {
+                    check.mark("private_sibling_selection", false)
+                    var result = check.diagnostics()
+                    result["error"] = "sibling row in sidebar timed out"
+                    result["sibling"] = sibling
+                    result["first_delivered_rows"] = rows
+                    finishBrowserCheck(ok: false, values: result)
+                }
+                return
+            }
             browserCheckPhase = 5
         case 5:
             guard let first = privateChildren().first(where: { $0.windowID == privateFirstWindowID }),
