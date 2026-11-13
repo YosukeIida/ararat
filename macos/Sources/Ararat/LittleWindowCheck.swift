@@ -140,11 +140,19 @@ extension Runtime {
             openLittleWindow()
             browserCheckPhase = 1
         case 1:
+            if !screen, let controller = controller(), controller.popup.host?.hasBrowser() == true,
+               let popup = popupWindow(), !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
+            }
             guard let controller = controller(), let popup = popupWindow(),
                   controller.popup.host?.hasBrowser() == true, popup.isVisible, popup.isKeyWindow,
                   controller.model.destination != nil,
                   let tab = popupTab(), tab.url == "about:blank", !tab.isLoading else {
                 if phaseTicks() > 300 { check.mark("window_created", false); finish(); return }
+                check.details["window_wait"] = ["browser": controller()?.popup.host?.hasBrowser() == true,
+                    "visible": popupWindow()?.isVisible == true, "key": popupWindow()?.isKeyWindow == true,
+                    "destination": controller()?.model.destination?.id ?? "nil",
+                    "url": popupTab()?.url ?? "nil", "loading": popupTab()?.isLoading ?? false]
                 wait("little window"); return
             }
             let bar = controller.bar
