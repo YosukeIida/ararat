@@ -219,7 +219,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, seedLittleWindow: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, seedLittleWindow: Bool = false, seedSettings: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.isPrivate = isPrivate
         self.windowID = windowID
@@ -229,7 +229,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar || seedLittleWindow) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar || seedLittleWindow || seedSettings) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -268,6 +268,20 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
                 _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
                 _ = try opened.selectItem(windowId: windowID, id: todayA)
+            } else if seedSettings {
+                // U27a: three spaces with three Today tabs each, so the rail's search finds space
+                // rows and the Spaces pane has more than one row to list and push. U27c's wheel
+                // check needs a third, so the middle space has a neighbour on both sides.
+                _ = try opened.createSpace(windowId: windowID, name: "Personal", spaceId: "settings-personal")
+                _ = try opened.createSpace(windowId: windowID, name: "Work", spaceId: "settings-work")
+                _ = try opened.createSpace(windowId: windowID, name: "Play", spaceId: "settings-play")
+                for space in ["settings-personal", "settings-work", "settings-play"] {
+                    try opened.showSpace(windowId: windowID, spaceId: space)
+                    for name in ["one", "two", "three"] {
+                        _ = try opened.createTab(windowId: windowID, url: "about:blank?settings-\(name)")
+                    }
+                }
+                try opened.showSpace(windowId: windowID, spaceId: "settings-personal")
             } else if seedProfiles || seedDock || seedSplitCommands || seedLittleWindow {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}

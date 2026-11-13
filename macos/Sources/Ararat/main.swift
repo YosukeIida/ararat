@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -66,8 +66,11 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
     return temporary.contains { path.hasPrefix($0) }
   }
   let downloads = args.contains(where: { $0.hasSuffix("=downloads") || $0.hasSuffix("=toasts") })
+  // A settings screen check refused here names itself by its argument (`settings-tabs`), which is
+  // the mode's raw value, so the refusal's `check` is the same name the run would have reported.
+  let settingsScreen = args.first { $0.hasPrefix("--ararat-screen=settings-") }.map { String($0.dropFirst("--ararat-screen=".count)) }
   guard args.contains("--use-mock-keychain"), scratch("--user-data-dir="), scratch("--ararat-db="), !downloads || args.contains("--disable-features=SystemNotifications") else {
-    let result: [String: Any] = ["check": args.contains(where: { $0.hasSuffix("=split-commands") }) ? "split-commands" : args.contains(where: { $0.hasSuffix("=split-focus") }) ? "split-focus" : args.contains(where: { $0.hasSuffix("=header") }) ? "header" : args.contains(where: { $0.hasSuffix("=urlfield") }) ? "urlfield" : args.contains(where: { $0.hasSuffix("=toasts") }) ? "toasts" : downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : "organize", "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
+    let result: [String: Any] = ["check": settingsScreen ?? (args.contains(where: { $0.hasSuffix("=split-commands") }) ? "split-commands" : args.contains(where: { $0.hasSuffix("=split-focus") }) ? "split-focus" : args.contains(where: { $0.hasSuffix("=header") }) ? "header" : args.contains(where: { $0.hasSuffix("=urlfield") }) ? "urlfield" : args.contains(where: { $0.hasSuffix("=toasts") }) ? "toasts" : downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : "organize"), "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
     exit(1)
   }
@@ -405,6 +408,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
+  /// This window and every window under it, so a settings change reaches a private window opened
+  /// from a child window as well as the owner's own children (U27d review 1 M2).
+  var windowTree: [Runtime] { [self] + children.flatMap(\.windowTree) }
   var popups: [PopupHost] = []
   /// U27h: the page-only Little Windows opened from this window.
   var littleWindows: [LittleWindowController] = []
@@ -539,6 +545,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var coreMenuInstalled = false
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
+  var settingsCheck: SettingsScreenCheck?
   var sharedLookProbe: LookCheckProbe?
   // The space-name check waits for the look popover's open animation: the last frame seen.
   var sharedLookFrame: NSRect?
@@ -916,6 +923,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
       if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
       if screenName == "little-window" { browserCheckMode = "screen-little-window" }
+      // U27a: one launch per settings pane, plus the frame and the search. The argument
+      // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
+      if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
       if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
@@ -1012,12 +1022,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileCheck = ["profiles", "ext-windows", "incognito", "private-window", "private-isolation", "screen-private-window", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
     self.sidebarChecksActive = sidebarCheckActive
-    let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && browserCheckMode != "relaunch-seed" && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window") || (quitMode != nil && quitMode != "quit")
+    // U27a's settings screen checks seed their own three spaces (the search needs space rows, the
+    // Spaces pane needs more than one row, and U27c's wheel needs a middle space), so they are
+    // neither single nor sidebar seeds.
+    let settingsCheckActive = SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil
+    let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window" && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -1277,7 +1291,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" {
+      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -1698,12 +1712,30 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.rowStates = adapter?.rowStates ?? [:]
     sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
     sidebar.unreadItems = unread.unread
-    guard let workspace, seededNewTabRow != snapshot.shownSpaceId else { return }
+    // D4: the settings record lives in the regular workspace. A private window's own workspace
+    // always holds the built-in values, so it reads the regular one (U27d review 1 M2).
+    guard let settingsSource = settingsSource(), seededNewTabRow != snapshot.shownSpaceId else { return }
     seededNewTabRow = snapshot.shownSpaceId
-    workspace.newTabRowShown { [weak self] result in
+    settingsSource.newTabRowShown { [weak self] result in
       guard case .success(let shown) = result else { return }
       self?.sidebar?.newTabRowShown = shown
     }
+    settingsSource.tooltipsShown { [weak self] result in
+      guard case .success(let shown) = result else { return }
+      self?.sidebar?.tooltipsShown = shown
+      self?.container?.header.tooltipsShown = shown
+    }
+    settingsSource.spaceScrollDirection { [weak self] result in
+      guard case .success(let direction) = result else { return }
+      self?.sidebar?.spaceScrollDirection = direction
+    }
+  }
+
+  /// The adapter a window reads the shared settings record from (U27d review 1 M2): a private
+  /// window's own workspace starts from the built-in values, so it reads the regular workspace's
+  /// record instead, where the settings window writes.
+  func settingsSource() -> WorkspaceAdapter? {
+    isPrivateWindow ? (root?.workspace ?? workspace) : workspace
   }
 
   // The command-bar check drives ⌃Tab through a posted key event, so a run that loses the
@@ -1826,6 +1858,25 @@ final class Runtime: NSObject, NSMenuItemValidation {
                                preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     owner.settingsOwner = self
+    // U27c: a direction the pane writes reaches the sidebars of every window that shows this
+    // workspace, so the next sideways scroll pages the other way without a relaunch.
+    owner.settings?.setSpaceScrollHandler { [weak owner] direction in
+      guard let owner else { return }
+      for window in owner.windowTree { window.sidebar?.spaceScrollDirection = direction }
+    }
+    // U27d: the Appearance pane's switches reach every window of this workspace at once. The New
+    // Tab row closes the sidebar's rows up; the Tooltips switch silences the sidebar's and the
+    // header's tooltips without touching menus or accessibility help.
+    owner.settings?.setAppearanceHandlers(newTabRow: { [weak owner] shown in
+      guard let owner else { return }
+      for window in owner.windowTree { window.sidebar?.newTabRowShown = shown }
+    }, tooltips: { [weak owner] shown in
+      guard let owner else { return }
+      for window in owner.windowTree {
+        window.sidebar?.tooltipsShown = shown
+        window.container?.header.tooltipsShown = shown
+      }
+    })
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
       owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
     } else {
@@ -2626,7 +2677,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
-    if downloadsCheck?.capturing == true || toastsCheck?.capturing == true || splitFocusCheck?.capturing == true || splitCommandsCheck?.capturing == true || headerCheck?.capturing == true || siteControlsCheck?.capturing == true || extensionActionsCheck?.capturing == true { return }
+    if settingsCheck?.capturing == true || downloadsCheck?.capturing == true || toastsCheck?.capturing == true || splitFocusCheck?.capturing == true || splitCommandsCheck?.capturing == true || headerCheck?.capturing == true || siteControlsCheck?.capturing == true || extensionActionsCheck?.capturing == true { return }
     if browserCheckPhase != browserCheckTracedPhase {
       browserCheckTracedPhase = browserCheckPhase
       FileHandle.standardError.write(Data("ararat-trace: browser-check=\(mode) phase=\(browserCheckPhase) tabs=\(host?.tabs().count ?? 0) children=\(children.count) popups=\(popups.count)\n".utf8))
@@ -2956,7 +3007,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) ? 900 : 300
+    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions"].contains(mode) || SettingsScreenCheck.Mode.mode(mode) != nil ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
@@ -2969,6 +3020,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       if sidebarCheckMode(mode) != nil {
         timeoutValues.merge(sidebarCheckDiagnostics(mode: mode, screen: mode.hasPrefix("screen-"))) { _, new in new }
+      }
+      if SettingsScreenCheck.Mode.mode(mode) != nil {
+        timeoutValues.merge(settingsCheckDiagnostics(mode: mode)) { _, new in new }
       }
       if mode == "downloads" || mode == "screen-downloads" { timeoutValues.merge(downloadsCheck?.diagnostics(screen: mode == "screen-downloads") ?? [:]) { _, new in new } }
       if mode == "toasts" || mode == "screen-toasts" { timeoutValues.merge((toastsCheck ?? ToastsCheck()).diagnostics(screen: mode == "screen-toasts")) { _, new in new } }
@@ -3093,6 +3147,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "relaunch-seed" || mode == "relaunch-verify" { relaunchCheckTick(host, mode: mode); return }
     if mode == "autofill" { autofillCheckTick(host); return }
     if mode == "dock" || mode == "screen-dock" { dockCheckTick(host, screen: mode == "screen-dock"); return }
+    if SettingsScreenCheck.Mode.mode(mode) != nil { settingsCheckTick(mode); return }
     if mode == "look" || mode == "screen-look" { lookCheckTick(host, screen: mode == "screen-look"); return }
     if sidebarCheckMode(mode) != nil { sidebarCheckTick(host, screen: mode.hasPrefix("screen-"), mode: mode); return }
     if mode == "organize" || mode == "screen-organize" { organizeCheckTick(host, screen: mode == "screen-organize"); return }
@@ -7959,6 +8014,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let names = SidebarCheck.conditionNames(mode: mode, screen: browserCheckMode?.hasPrefix("screen-") == true)
       result["check"] = mode.rawValue
       if browserCheckMode?.hasPrefix("screen-") == true { result["screen"] = mode.rawValue }
+      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, check.conditions[$0] == true) })
+      result["failed_conditions"] = names.filter { check.conditions[$0] != true }
+      result["images"] = check.images
+    }
+    if let mode = SettingsScreenCheck.Mode.mode(browserCheckMode ?? ""), let check = settingsCheck {
+      let names = SettingsScreenCheck.conditionNames(mode)
+      result["check"] = mode.rawValue
+      result["screen"] = mode.rawValue
+      result["pane"] = mode.paneID
       result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, check.conditions[$0] == true) })
       result["failed_conditions"] = names.filter { check.conditions[$0] != true }
       result["images"] = check.images

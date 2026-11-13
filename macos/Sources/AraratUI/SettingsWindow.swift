@@ -50,6 +50,8 @@ public final class SettingsWindowController: NSWindowController {
     public func prepare(shownSpaceID: String?) {
         model.readShortcuts()
         model.airTraffic.load()
+        model.readSpaceScrollDirection()
+        model.readAppearance()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -57,6 +59,41 @@ public final class SettingsWindowController: NSWindowController {
         prepare(shownSpaceID: shownSpaceID)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The visible window and the pane the screen check reads it through (`--ararat-screen=
+    /// settings-<pane>`). Nil until the controller has a window.
+    public func checkProbe() -> SettingsCheckProbe? {
+        guard let window else { return nil }
+        return SettingsCheckProbe(controller: self, window: window)
+    }
+
+    /// Hands a written scroll direction to the browser windows' sidebars (U27c). The settings
+    /// window holds the pane's value; the sidebar that pages spaces is in the browser window.
+    public func setSpaceScrollHandler(_ handler: @escaping (SpaceScrollDirection) -> Void) {
+        model.spaceScroll = handler
+    }
+
+    /// Hands the Appearance pane's written values to the windows (U27d): the New Tab row switch
+    /// to each sidebar, the Tooltips switch to each sidebar and header.
+    public func setAppearanceHandlers(newTabRow: @escaping (Bool) -> Void, tooltips: @escaping (Bool) -> Void) {
+        model.newTabRow = newTabRow
+        model.tooltips = tooltips
+    }
+
+    /// Opens the window on a pane for a check: the ordinary open path (a shown space opens its
+    /// space page) and then the pane's own page, which is the page the check names.
+    public func checkOpen(paneID: String, shownSpaceID: String?) {
+        open(shownSpaceID: shownSpaceID)
+        if let page = SettingsRegistry.pane(id: paneID)?.page { model.navigate(page) }
+    }
+
+    /// Pushes a space's page, the page the Spaces rows draw, for the spaces check.
+    @discardableResult
+    public func checkPushSpace(_ index: Int) -> Bool {
+        guard model.snapshot.spaces.indices.contains(index) else { return false }
+        model.navigate(.space(model.snapshot.spaces[index].id))
+        return true
     }
 }
 
@@ -98,43 +135,68 @@ enum SettingsColor {
     static let search = grey(236, 71)
     static let capsule = grey(240, 67)
     static let foreground = grey(35, 235)
+    /// The hairline between a grouped card's rows (`--sep` on the boards).
+    static let separator = grey(235, 57)
 }
 
 private struct SettingsRail: View {
     @ObservedObject var model: SettingsModel
-    let panes: [(SettingsModel.Page, String, String)] = [(.tabs, "Tabs", "square.on.square"), (.shortcuts, "Shortcuts", "keyboard"), (.airTraffic, "Air Traffic Control", "paperplane"), (.spaces, "Spaces", "square.grid.2x2")]
     var body: some View {
         VStack(spacing: 8) {
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(SettingsColor.foreground.opacity(0.6)); TextField("Search", text: $model.query).textFieldStyle(.plain) }
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(SettingsColor.foreground.opacity(0.6))
+                TextField("Search", text: $model.query).textFieldStyle(.plain).accessibilityLabel("Search settings")
+                    // The result list's keyboard model (D7): arrows move the selection, Return opens
+                    // it. A text field would otherwise use the arrows for the caret.
+                    .onKeyPress(.upArrow) { _ = model.handleSearchKey(.up); return .handled }
+                    .onKeyPress(.downArrow) { _ = model.handleSearchKey(.down); return .handled }
+                    .onSubmit { _ = model.handleSearchKey(.return) }
+            }
                 .padding(.horizontal, 10).frame(height: 32).background(SettingsColor.search, in: Capsule()).padding(.top, 8)
             ScrollView {
                 VStack(spacing: 2) {
-                    if model.query.isEmpty {
-                        ForEach(panes, id: \.1) { pane, title, icon in
-                            Button { model.navigate(pane) } label: {
-                                Label(title, systemImage: icon).foregroundStyle(SettingsColor.foreground).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 26)
-                                    .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-                            }.buttonStyle(.plain).accessibilityLabel(title)
-                        }
-                    } else {
-                        ForEach(panes, id: \.1) { pane, title, icon in
-                            let hits = model.results.filter { row in row.pane == pane || (pane == .spaces && { if case .space = row.pane { return true }; return false }()) }
-                            if !hits.isEmpty {
-                                Label(title, systemImage: icon).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
-                                ForEach(Array(hits.enumerated()), id: \.offset) { _, row in
-                                    Button { model.select(row) } label: { Text(model.resultTitle(row)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).frame(height: 26) }.buttonStyle(.plain).help(row.subtitle).accessibilityLabel(row.title + ", " + row.subtitle)
-                                }
-                            }
-                        }
-                        if model.results.isEmpty { Text("No matching settings").foregroundStyle(.secondary) }
-                    }
+                    if model.query.isEmpty { paneList } else { resultList }
                 }
             }
         }.padding(.horizontal, 10).frame(width: 180).foregroundStyle(SettingsColor.foreground).background(SettingsColor.rail)
+            .background(SettingsMarker(id: SettingsModel.railMarkerID))
     }
-    func selected(_ pane: SettingsModel.Page) -> Bool {
-        if case .space = model.page { return pane == .spaces }
-        return model.page == pane
+
+    private var paneList: some View {
+        ForEach(model.panes) { pane in
+            Button { if let page = pane.page { model.navigate(page) } } label: {
+                Label(pane.title, systemImage: pane.icon).foregroundStyle(SettingsColor.foreground).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 26)
+                    .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).accessibilityLabel(pane.title)
+                .background(SettingsMarker(id: pane.railMarker))
+        }
+    }
+
+    @ViewBuilder
+    private var resultList: some View {
+        ForEach(model.resultGroups, id: \.pane.id) { group in
+            Label(group.pane.title, systemImage: group.pane.icon).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                .background(SettingsMarker(id: group.pane.groupMarker))
+            ForEach(Array(group.rows.enumerated()), id: \.offset) { _, row in
+                let hit = model.selectedResult.map { $0.pane.searchKey == row.pane.searchKey && $0.id == row.id } ?? false
+                Button { model.select(row) } label: {
+                    Text(model.resultTitle(row)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).frame(height: 26)
+                }.buttonStyle(.plain).help(row.subtitle).accessibilityLabel(row.title + ", " + row.subtitle)
+                    // The selected result is drawn as the pane rows' selected row is (E-Search's
+                    // `.pr.sel`): the selection grey in a 6 pt rounded rect, so the arrows visibly move.
+                    .background(hit ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .background(SettingsMarker(id: SettingsModel.resultMarker(row)))
+                    .background { if hit { SettingsMarker(id: SettingsModel.selectedResultMarker) } }
+            }
+        }
+        if model.results.isEmpty {
+            Text("No matching settings").foregroundStyle(.secondary).background(SettingsMarker(id: SettingsModel.noResultsMarker))
+        }
+    }
+
+    func selected(_ pane: SettingsPane) -> Bool {
+        if case .space = model.page { return pane.id == .spaces }
+        return model.page == pane.page
     }
 }
 
@@ -164,27 +226,52 @@ private struct SettingsDetail: View {
                         SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
                     case .airTraffic:
                         SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
+                    case .appearance:
+                        SettingsAppearanceSection(model: model)
                     case .spaces:
-                        VStack(spacing: 0) {
-                            ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
-                                Button { model.navigate(.space(space.id)) } label: {
-                                    HStack {
-                                        Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                                        Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
-                                        Text(space.title)
-                                        Spacer()
-                                        Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
-                                        if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
-                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                    }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
-                                }.buttonStyle(.plain).background(model.highlighted == space.id ? SettingsColor.selected : .clear)
-                                    .id(space.id).draggable(space.id)
-                                    .dropDestination(for: String.self) { ids, _ in
-                                        guard ids.count == 1, let id = ids.first, id != space.id, model.snapshot.spaces.contains(where: { $0.id == id }) else { return false }
-                                        model.move(id, to: index); return true
-                                    }
+                        VStack(spacing: SettingsMetrics.cardGap) {
+                            VStack(spacing: 0) {
+                                ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
+                                    Button { model.navigate(.space(space.id)) } label: {
+                                        HStack {
+                                            Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+                                            Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
+                                            Text(space.title)
+                                            Spacer()
+                                            Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
+                                            if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
+                                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                        }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
+                                    }.buttonStyle(.plain)
+                                        .background { if model.highlighted == space.id { SettingsHitFill() } }
+                                        .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
+                                        .id(space.id).draggable(space.id)
+                                        .dropDestination(for: String.self) { ids, _ in
+                                            guard ids.count == 1, let id = ids.first, id != space.id, model.snapshot.spaces.contains(where: { $0.id == id }) else { return false }
+                                            model.move(id, to: index); return true
+                                        }
+                                }
+                            }.background(SettingsColor.card, in: RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius))
+                            // U27c: E-Spaces' row under the list. The caption is the board's: it
+                            // says what Reversed does, so the control needs no second label.
+                            SettingsGroupCard {
+                                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.spaceScrollDirectionCardId,
+                                                marker: SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Scroll sideways to switch spaces")
+                                        Text("Reversed: scrolling right shows the space on the left")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                    Picker("Scroll sideways to switch spaces",
+                                           selection: Binding(get: { model.spaceScrollDirection }, set: model.setSpaceScrollDirection)) {
+                                        Text("Natural").tag(SpaceScrollDirection.natural)
+                                        Text("Reversed").tag(SpaceScrollDirection.reversed)
+                                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                                        .background(SettingsMarker(id: SettingsModel.spaceScrollControlMarker))
+                                        .accessibilityLabel("Scroll sideways to switch spaces")
+                                }.id(SettingsModel.spaceScrollDirectionCardId)
                             }
-                        }.background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+                        }
                     case .space:
                         if let space = model.space { spacePage(space) }
                     }
@@ -204,18 +291,34 @@ private struct SettingsDetail: View {
     }
     var header: some View {
         VStack(spacing: 8) {
-            if let space = model.space { Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56) }
-            else { Image(systemName: model.page == .tabs ? "square.on.square" : model.page == .shortcuts ? "keyboard" : model.page == .airTraffic ? "paperplane" : "square.grid.2x2").font(.system(size: 48)).frame(height: 56) }
-            Text(model.title).font(.title.bold())
-            Text(model.space.map { "\(model.tabCountLabel($0)) · \($0.profileName)" } ?? (model.page == .tabs ? "Make room for your tabs." : model.page == .shortcuts ? "Use the keyboard to move around Ararat." : model.page == .airTraffic ? SettingsModel.airTrafficSubtitle : "Keep related tabs together.")).foregroundStyle(.secondary)
+            if let space = model.space {
+                Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            } else {
+                Image(systemName: model.icon).font(.system(size: 48)).frame(height: 56)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            }
+            Text(model.title).font(.title.bold()).background(SettingsMarker(id: SettingsModel.headerTitleMarker))
+            Text(model.subtitle).foregroundStyle(.secondary).background(SettingsMarker(id: SettingsModel.headerSubtitleMarker))
         }.frame(maxWidth: .infinity).padding(.vertical, 18).opacity(1 - model.headerProgress).id("header")
     }
+    /// One row per card (the panes built before U27 keep this look, D6). A search hit fills the
+    /// row's inside with the selection grey, inset 3 pt at radius 9 (D7).
     func card<Content: View>(_ id: String, title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
+        let hit = model.highlighted == id
+        return HStack {
             VStack(alignment: .leading, spacing: 3) { Text(title); Text(subtitle).font(.caption).foregroundStyle(.secondary) }
             Spacer(minLength: 12)
             content()
-        }.padding(.horizontal, 12).frame(minHeight: 54).background(model.highlighted == id ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12)).id(id)
+        }.padding(.horizontal, 12).frame(minHeight: 54)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                    if hit { SettingsHitFill() }
+                }
+            }
+            .background(SettingsMarker(id: SettingsModel.rowMarker(id)))
+            .id(id)
     }
     func spacePage(_ space: SpaceSnapshot) -> some View {
         VStack(spacing: 10) {
@@ -252,7 +355,7 @@ private struct SettingsDetail: View {
     func handleScroll(_ event: NSEvent) -> Bool {
         guard let space = model.space, let index = model.snapshot.spaces.firstIndex(where: { $0.id == space.id }) else { return false }
         let phase: SpaceScrollEvent.Phase = event.phase.contains(.began) ? .began : event.phase.contains(.ended) ? .ended : event.phase.contains(.cancelled) ? .cancelled : event.phase.isEmpty ? .none : .changed
-        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth)
+        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection)
         switch action {
         case .vertical: return false
         case .follow(let value): followedOffset = SettingsModel.settingsOffset(value, index: index)
@@ -263,6 +366,73 @@ private struct SettingsDetail: View {
         default: break
         }
         return true
+    }
+}
+
+/// The Appearance pane (U27d): the board's rows whose behaviour exists. Look is a link row that
+/// pushes the shown space's page in Spaces; the Sidebar card holds the New Tab row switch and the
+/// Tooltips switch. Theme (U27k) and Page zoom (an engine API) have no rows, so the board's Pages
+/// section waits for them.
+private struct SettingsAppearanceSection: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(spacing: SettingsMetrics.cardGap) {
+            lookRow
+            SettingsGroupCard(heading: "Sidebar", marker: "card-sidebar") {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.newTabRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.newTabRowId)) {
+                    SettingsRowLabel(title: "New Tab row", subtitle: "Show “New Tab” under Today")
+                    Toggle("New Tab row", isOn: Binding(get: { model.newTabRowShown }, set: model.setNewTabRowShown))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.newTabRowSwitchMarker))
+                }.id(SettingsModel.newTabRowId)
+                SettingsCardRow(hit: model.highlighted == SettingsModel.tooltipsRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.tooltipsRowId)) {
+                    SettingsRowLabel(title: "Tooltips", subtitle: "Show a row’s full title on hover")
+                    Toggle("Tooltips", isOn: Binding(get: { model.tooltipsShown }, set: model.setTooltipsShown))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.tooltipsSwitchMarker))
+                }.id(SettingsModel.tooltipsRowId)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    /// The board's `.rw.lnk`: the row opens the space page, whose Look card holds the popover.
+    private var lookRow: some View {
+        Button { model.openLook() } label: {
+            HStack(spacing: 12) {
+                SettingsRowLabel(title: "Look", subtitle: "Customize each space in Spaces")
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Look, Customize each space in Spaces")
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == SettingsModel.lookRowId { SettingsHitFill() }
+            }
+        }
+        .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.lookRowId)))
+        .id(SettingsModel.lookRowId)
+    }
+}
+
+/// A grouped card row's title and its one-line caption (the boards' `.tx`).
+private struct SettingsRowLabel: View {
+    let title: String
+    let subtitle: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -341,7 +511,12 @@ private struct SettingsShortcutsSection: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 54)
         .background(ShortcutLayoutMarker(id: "row-\(row.id)"))
-        .background(model.highlighted == row.id ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == row.id { SettingsHitFill() }
+            }
+        }
         .id(row.id)
         .contextMenu {
             if let command = row.command, let binding = keyBindings.binding(command: command) {
@@ -552,7 +727,13 @@ private struct SettingsAirTrafficSection: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
-        .background(model.highlighted == SettingsModel.airTrafficCardId ? SettingsColor.selected : SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius).fill(SettingsColor.card)
+                if model.highlighted == SettingsModel.airTrafficCardId { SettingsHitFill() }
+            }
+        }
+        .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.airTrafficCardId)))
         .id(SettingsModel.airTrafficCardId)
     }
 
@@ -572,6 +753,7 @@ private struct SettingsAirTrafficSection: View {
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
         .background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+        .background(SettingsMarker(id: SettingsModel.rowMarker("atc-test")))
         .id("atc-test")
     }
 

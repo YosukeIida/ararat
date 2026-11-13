@@ -1145,6 +1145,61 @@ fn the_little_window_frame_reads_through_the_ffi_and_stays_off_the_journal() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
+// U27d: the Appearance pane's Tooltips switch is the same synced workspace record, on by
+// default, and it survives a reopen.
+#[test]
+fn the_tooltips_setting_reads_through_the_ffi_and_survives_reopen() {
+    let path = fresh_db("tooltips-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.settings().tooltips_shown);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_tooltips_shown("one".into(), false).unwrap();
+    assert!(!store.settings().tooltips_shown);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.settings().tooltips_shown);
+    // The New Tab row's own value is untouched by the Tooltips record.
+    assert!(store.settings().new_tab_row_shown);
+    store.set_tooltips_shown("one".into(), true).unwrap();
+    assert!(store.settings().tooltips_shown);
+    drop(store);
+    // Back at the built-in value, no row restates it; both writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
+// default, and it survives a reopen.
+#[test]
+fn the_space_scroll_direction_reads_through_the_ffi_and_survives_reopen() {
+    use ararat_ffi::SpaceScrollDirection;
+    let path = fresh_db("space-scroll-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().space_scroll_direction, SpaceScrollDirection::Natural);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_space_scroll_direction("one".into(), SpaceScrollDirection::Reversed).unwrap();
+    assert_eq!(store.settings().space_scroll_direction, SpaceScrollDirection::Reversed);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().space_scroll_direction, SpaceScrollDirection::Reversed);
+    // The New Tab row's own value is untouched by the direction's record.
+    assert!(store.settings().new_tab_row_shown);
+    store.set_space_scroll_direction("one".into(), SpaceScrollDirection::Natural).unwrap();
+    assert_eq!(store.settings().space_scroll_direction, SpaceScrollDirection::Natural);
+    drop(store);
+    // Back at the built-in value, no row restates it; both writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
 // Design's review-1 decision 3: selection ignores the section's collapse, so the candidates
 // are the space's rows as if the section were open; the holder rule then keeps the chosen
 // pin visible.

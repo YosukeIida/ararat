@@ -600,15 +600,28 @@ impl ArchiveAfter {
     pub fn millis(self) -> u64 { (match self { Self::Hours12 => 12, Self::Hours24 => 24, Self::Days7 => 168, Self::Days30 => 720 }) * 3_600_000 }
 }
 
+// The sideways scroll that pages spaces (D3, architecture §7): Natural is Arc's behaviour as
+// built (the wheel cancels the system's natural-scrolling inversion, a trackpad gesture keeps
+// its sign); Reversed turns the final paging direction around for every device. It is one
+// setting, not one per input device.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpaceScrollDirection { #[default] Natural, Reversed }
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
+// U27d's Tooltips switch (D4) rides here too, on by default, so it travels with the workspace
+// the way the New Tab row does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub new_tab_row_shown: bool,
+    pub space_scroll_direction: SpaceScrollDirection,
+    pub tooltips_shown: bool,
 }
 
 impl Default for Settings {
-    fn default() -> Self { Self { new_tab_row_shown: true } }
+    fn default() -> Self {
+        Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true }
+    }
 }

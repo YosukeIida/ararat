@@ -12,6 +12,9 @@ public final class SidebarHeaderView: NSView {
     public var canGoForward = false { didSet { forward.isEnabled = canGoForward } }
     public var loading = false { didSet { updateReload() } }
     public var hasTab = false { didSet { reload.isEnabled = hasTab } }
+    /// U27d: the Appearance pane's Tooltips switch, applied to the header's controls. Off, the
+    /// buttons keep their tooltips' accessibility help and show no tooltip.
+    public var tooltipsShown = true { didSet { tooltip.isEnabled = tooltipsShown } }
     private let sidebar = NSButton()
     private let back = NSButton()
     private let forward = NSButton()

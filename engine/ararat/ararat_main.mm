@@ -249,6 +249,17 @@ void CheckGuards(int argc, const char** argv) {
       if (std::string_view(arg + 16) == "split-commands") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "urlfield") { valid_screen = true; g_check_slice = true; }
+      // U27a's settings checks: one launch per pane, plus the frame and the search.
+      if (std::string_view(arg + 16) == "settings-frame" ||
+          std::string_view(arg + 16) == "settings-search" ||
+          std::string_view(arg + 16) == "settings-tabs" ||
+          std::string_view(arg + 16) == "settings-shortcuts" ||
+          std::string_view(arg + 16) == "settings-air-traffic" ||
+          std::string_view(arg + 16) == "settings-appearance" ||
+          std::string_view(arg + 16) == "settings-spaces") {
+        valid_screen = true;
+        g_check_slice = true;
+      }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
