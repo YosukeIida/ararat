@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "Ararat URL field action one",
+  "version": "1.0",
+  "action": {"default_title": "URL field action one"},
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0V48ycW2iGEcIXLzkMcyBfUwHRfYJf+GLHoxP8j311bYexh8s9wYfZHa9/e1ClbZwg6yd97/Iyck42fZ1gHAbZ/Cytv/esrcxsb/QKFdd5TFwIWp9qh1XIv+Dq88uwMW76wYjlNPhgoT+vK2L1hkxy3AxXfyeL22C6quirEkxhO1L9XS8KAFceGybBd5cJhMS9oj8sOZc2PTawG4WisGy9VRwCI07NOWfBnizLkyEg7CeImKkphDS+2OLrvhL/WD5k1Qh0uTpEqQewoOethbhi5CLxaJ5IKEDE0AeO6q9SYCx22iEYo9Psn/wjhLk6lN2a5fSVieCUOqPfSxsul23QIDAQAB"
+}

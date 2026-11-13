@@ -11,8 +11,11 @@ final class ExtensionActionsCheck {
     static let common = ["fixture", "seed", "pin", "pin_shown", "menu_items", "manage_enabled",
                          "remove_enabled", "badge_text", "badge_icon", "badge_per_tab", "badge_live",
                          "overflow_row", "overflow_geometry", "overflow_restores", "unpin",
-                         "repin", "action_anchor", "action_popup", "menu_autoenable_off", "ext_actions_labels", "remove_cancel"]
-    static let screens = ["capture_action", "capture_overflow"]
+                         "repin", "action_anchor", "action_popup", "menu_autoenable_off", "ext_actions_labels", "remove_cancel",
+                         "multi_fixtures", "pin_three", "fit_three_240", "fit_three_232",
+                         "fit_two_232", "fit_two_199", "fit_two_164", "icons16", "gaps4",
+                         "favourite_shift", "multi_restores"]
+    static let screens = ["capture_action", "capture_overflow", "capture_three_actions"]
 
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
@@ -20,6 +23,9 @@ final class ExtensionActionsCheck {
     var waitName = ""
     var waitCount = 0
     var fixtureID = ""
+    var secondID = ""
+    var thirdID = ""
+    var viewport240: CGFloat = 0
     var seedRow: Row?
     var iconBefore: Data?
     var secondTab = ""
@@ -140,6 +146,16 @@ extension Runtime {
                   let tab = activeTab(), !tab.isLoading, tab.navigationCount > 0,
                   let item = item() else { wait("active seed tab"); return }
             check.mark("seed")
+            // The multi-action fixtures may load pinned by default; the single-action phases
+            // below assume the fixture is the only pinned action, so unpin the others first.
+            if extensionItems.contains(where: { $0.id != check.fixtureID && $0.pinned }) {
+                for other in extensionItems where other.id != check.fixtureID && other.pinned {
+                    _ = adapter?.setExtensionPinned(other.id, pinned: false)
+                }
+                refreshExtensionActions()
+                wait("other actions unpinned")
+                return
+            }
             if item.pinned {
                 check.mark("pin")
             } else if !["done", "unchanged"].contains(adapter?.setExtensionPinned(check.fixtureID, pinned: true) ?? "") {
@@ -293,8 +309,7 @@ extension Runtime {
             check.removeAttempts += 1
             if !check.removeResult.isEmpty {
                 check.mark("remove_cancel", check.removeResult == "notRemoved")
-                let result = check.diagnostics(screen: screen)
-                finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
+                browserCheckPhase = 12
                 return
             }
             // The dialog is a sheet or a modal child of the host window; closing it is the
@@ -319,6 +334,132 @@ extension Runtime {
                 return
             }
             wait("uninstall dialog")
+        case 12:
+            let names = ["Ararat URL field action one", "Ararat URL field action two"]
+            let found = names.compactMap { name in extensionItems.first { $0.name == name } }
+            guard found.count == 2 else {
+                if phaseTicks() > 100 {
+                    check.mark("multi_fixtures", false)
+                    var values = check.diagnostics(screen: screen)
+                    values["error"] = "the 2- and 3-action cases need test_extensions/urlfield-one and urlfield-two loaded with --load-extension"
+                    finishBrowserCheck(ok: false, values: values)
+                    return
+                }
+                wait("two action fixtures"); return
+            }
+            check.secondID = found[0].id
+            check.thirdID = found[1].id
+            check.mark("multi_fixtures")
+            for id in [check.fixtureID, check.secondID, check.thirdID]
+            where extensionItems.first(where: { $0.id == id })?.pinned != true {
+                _ = adapter?.setExtensionPinned(id, pinned: true)
+            }
+            refreshExtensionActions()
+            browserCheckPhase = 13
+        case 13:
+            let ids = [check.fixtureID, check.secondID, check.thirdID]
+            let all = extensionItems.filter { ids.contains($0.id) }
+            guard all.count == 3, all.allSatisfy(\.pinned),
+                  sidebar.checkInFieldActionIDs.count == 3 || sidebar.checkRowActionIDs.count == 3 else {
+                wait("three pinned actions"); return
+            }
+            check.mark("pin_three")
+            setWidth(240)
+            browserCheckPhase = 14
+        case 14:
+            let ids = [check.fixtureID, check.secondID, check.thirdID]
+            guard Set(sidebar.checkInFieldActionIDs) == Set(ids) else {
+                if phaseTicks() > 100 {
+                    check.mark("fit_three_240", false)
+                    setWidth(232)
+                    browserCheckPhase = 15
+                    return
+                }
+                wait("three in the field at 240"); return
+            }
+            check.mark("fit_three_240")
+            let buttons = ids.compactMap { sidebar.checkActionButton($0) }
+            check.mark("icons16", buttons.count == 3
+                       && buttons.allSatisfy { $0.checkIconSize == NSSize(width: 16, height: 16) })
+            let xs = sidebar.checkInFieldFrames.values.map(\.minX).sorted()
+            check.mark("gaps4", xs.count == 3
+                       && abs((xs[1] - xs[0]) - 28) < 0.01 && abs((xs[2] - xs[1]) - 28) < 0.01
+                       && abs(sidebar.checkURLFieldCopyFrame.minX - sidebar.checkInFieldActionsFrame.maxX - 4) < 0.01)
+            check.viewport240 = sidebar.checkSpaceViewportFrame.maxY
+            if screen { check.mark("capture_three_actions", capture("three-actions")) }
+            setWidth(232)
+            browserCheckPhase = 15
+        case 15:
+            let ids = [check.fixtureID, check.secondID, check.thirdID]
+            guard sidebar.checkInFieldActionIDs.isEmpty, Set(sidebar.checkRowActionIDs) == Set(ids),
+                  sidebar.checkActionsRowHeight == 32 else {
+                if phaseTicks() > 100 {
+                    check.mark("fit_three_232", false)
+                    browserCheckPhase = 16
+                    return
+                }
+                wait("three in the row at 232"); return
+            }
+            check.mark("fit_three_232")
+            let tiles = ids.compactMap { sidebar.checkActionButton($0) }
+            check.mark("icons16", check.conditions["icons16"] == true
+                       && tiles.count == 3 && tiles.allSatisfy { $0.checkIconSize == NSSize(width: 16, height: 16) })
+            check.mark("favourite_shift", abs((check.viewport240 - sidebar.checkSpaceViewportFrame.maxY) - 40) < 0.01)
+            _ = adapter?.setExtensionPinned(check.thirdID, pinned: false)
+            refreshExtensionActions()
+            browserCheckPhase = 16
+        case 16:
+            let two = Set([check.fixtureID, check.secondID])
+            guard extensionItems.first(where: { $0.id == check.thirdID })?.pinned == false,
+                  Set(sidebar.checkInFieldActionIDs) == two else {
+                if phaseTicks() > 100 {
+                    check.mark("fit_two_232", false)
+                    setWidth(199)
+                    browserCheckPhase = 17
+                    return
+                }
+                wait("two in the field at 232"); return
+            }
+            check.mark("fit_two_232")
+            setWidth(199)
+            browserCheckPhase = 17
+        case 17:
+            let two = Set([check.fixtureID, check.secondID])
+            guard sidebar.checkInFieldActionIDs.isEmpty, Set(sidebar.checkRowActionIDs) == two else {
+                if phaseTicks() > 100 {
+                    check.mark("fit_two_199", false)
+                    setWidth(164)
+                    browserCheckPhase = 18
+                    return
+                }
+                wait("two in the row at 199"); return
+            }
+            check.mark("fit_two_199")
+            setWidth(164)
+            browserCheckPhase = 18
+        case 18:
+            let two = Set([check.fixtureID, check.secondID])
+            guard sidebar.checkInFieldActionIDs.isEmpty, Set(sidebar.checkRowActionIDs) == two else {
+                if phaseTicks() > 100 {
+                    check.mark("fit_two_164", false)
+                    browserCheckPhase = 19
+                    return
+                }
+                wait("two in the row at 164"); return
+            }
+            check.mark("fit_two_164")
+            _ = adapter?.setExtensionPinned(check.secondID, pinned: false)
+            refreshExtensionActions()
+            setWidth(sidebar.checkDefaultWidth)
+            browserCheckPhase = 19
+        case 19:
+            guard extensionItems.first(where: { $0.id == check.secondID })?.pinned == false,
+                  sidebar.checkInFieldActionIDs == [check.fixtureID], sidebar.checkRowActionIDs.isEmpty else {
+                wait("the original pin restored"); return
+            }
+            check.mark("multi_restores")
+            let result = check.diagnostics(screen: screen)
+            finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
         default:
             break
         }

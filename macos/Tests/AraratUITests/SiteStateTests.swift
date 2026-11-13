@@ -127,6 +127,47 @@ func extensionActionRowUsesFavouriteColumnsAndOneRow() throws {
 }
 
 @Test @MainActor
+func extensionActionButtonsDrawTheEngineIconAtSixteenPoints() throws {
+    let icon = NSImage(size: NSSize(width: 20, height: 20))
+    let item = try #require(ExtensionActionItem([
+        "id": "a0", "name": "Probe", "tooltip": "Probe", "icon": icon,
+        "enabled": true, "pinned": true, "pinMutable": true, "removable": true,
+        "badgeText": "", "badgeBackgroundColor": 0, "badgeTextColor": 0,
+    ]) as ExtensionActionItem?)
+    let strip = ExtensionActionsStrip(frame: NSRect(x: 0, y: 0, width: 28, height: 24))
+    strip.update(items: [item])
+    strip.layoutSubtreeIfNeeded()
+    #expect(strip.checkButton("a0")?.checkIconSize == NSSize(width: 16, height: 16))
+    let row = ExtensionActionsRow(frame: NSRect(x: 0, y: 0, width: 224, height: 32))
+    row.columns = 4
+    row.update(items: [item])
+    row.layoutSubtreeIfNeeded()
+    #expect(row.checkButton("a0")?.checkIconSize == NSSize(width: 16, height: 16))
+    #expect(item.icon.size == NSSize(width: 20, height: 20))
+}
+
+@Test @MainActor
+func extensionActionRowsWrapRatherThanDroppingPinnedActions() throws {
+    let icon = NSImage(size: NSSize(width: 16, height: 16))
+    func item(_ index: Int) throws -> ExtensionActionItem {
+        try #require(ExtensionActionItem([
+            "id": "a\(index)", "name": "Probe \(index)", "tooltip": "Probe", "icon": icon,
+            "enabled": true, "pinned": true, "pinMutable": true, "removable": true,
+            "badgeText": "", "badgeBackgroundColor": 0, "badgeTextColor": 0,
+        ]) as ExtensionActionItem?)
+    }
+    let row = ExtensionActionsRow(frame: NSRect(x: 0, y: 0, width: 148, height: 96))
+    row.columns = 2
+    row.update(items: try (0..<5).map(item))
+    row.layoutSubtreeIfNeeded()
+    #expect(row.checkRowHeight == 96)
+    let frames = row.checkFrames
+    #expect(frames.count == 5)
+    #expect(Set(frames.values.map { $0.minY }).count == 3)
+    #expect(frames.values.allSatisfy { $0.height == 32 })
+}
+
+@Test @MainActor
 func permissionRowWithoutExplicitSettingShowsItsDefaultNotAllow() throws {
     let state = try #require(SiteState([
         "document": "4", "origin": "https://127.0.0.1:4444", "security": "secure",

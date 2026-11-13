@@ -99,6 +99,7 @@ public final class ExtensionActionsStrip: NSView {
         }
     }
     public func checkButton(_ id: String) -> ExtensionActionButton? { buttons[id] }
+    public var checkFrames: [String: NSRect] { buttons.mapValues { $0.frame } }
 
     public func update(items: [ExtensionActionItem]) {
         let ids = Set(items.map(\.id))

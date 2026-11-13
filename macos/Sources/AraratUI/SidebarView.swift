@@ -1271,6 +1271,10 @@ public final class SidebarView: NSView {
     public var checkRowActionIDs: [String] { actionsRow.isHidden ? [] : actionsRow.items.map(\.id) }
     public var checkActionsRowFrame: NSRect { convert(actionsRow.bounds, from: actionsRow) }
     public var checkActionsRowHeight: CGFloat { actionsRow.isHidden ? 0 : actionsRow.checkRowHeight }
+    public var checkURLFieldCopyFrame: NSRect { copyLinkButton.frame }
+    public var checkInFieldActionsFrame: NSRect { inFieldActions.frame }
+    public var checkSpaceViewportFrame: NSRect { convert(spaceViewport.bounds, from: spaceViewport) }
+    public var checkInFieldFrames: [String: NSRect] { inFieldActions.checkFrames }
     public var checkDefaultWidth: CGFloat { SidebarMetrics.defaultWidth }
     /// The 32 pt tile width the overflow row uses: the favourites' column pitch for the
     /// sidebar's current width.
