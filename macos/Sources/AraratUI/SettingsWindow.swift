@@ -509,8 +509,8 @@ private struct SettingsLittleWindowSection: View {
                 }.id(SettingsModel.littleWindowOpenInRowId)
                 SettingsCardRow(hit: model.highlighted == SettingsModel.littleWindowCloseAfterRowId,
                                 marker: SettingsModel.rowMarker(SettingsModel.littleWindowCloseAfterRowId)) {
-                    SettingsRowLabel(title: "Close the Little Window after opening in a space",
-                                     subtitle: model.littleWindowCloseAfter ? "On" : "Off")
+                    Text("Close the Little Window after opening in a space")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Toggle("Close the Little Window after opening in a space",
                            isOn: Binding(get: { model.littleWindowCloseAfter }, set: model.setLittleWindowCloseAfter))
                         .toggleStyle(.switch).labelsHidden().fixedSize()
@@ -518,8 +518,8 @@ private struct SettingsLittleWindowSection: View {
                 }.id(SettingsModel.littleWindowCloseAfterRowId)
                 SettingsCardRow(hit: model.highlighted == SettingsModel.littleWindowRememberRowId,
                                 marker: SettingsModel.rowMarker(SettingsModel.littleWindowRememberRowId)) {
-                    SettingsRowLabel(title: "Remember its size and place",
-                                     subtitle: model.littleWindowRememberFrame ? "On" : "Off")
+                    Text("Remember its size and place")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Toggle("Remember its size and place",
                            isOn: Binding(get: { model.littleWindowRememberFrame }, set: model.setLittleWindowRememberFrame))
                         .toggleStyle(.switch).labelsHidden().fixedSize()

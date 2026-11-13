@@ -119,10 +119,10 @@ enum SettingsRegistry {
                            subtitle: "Most Recent Space, or one space by name · " + model.littleWindowOpenInLabel),
          SettingsModel.Row(id: SettingsModel.littleWindowCloseAfterRowId, pane: .littleWindow,
                            title: "Close the Little Window after opening in a space",
-                           subtitle: model.littleWindowCloseAfter ? "On" : "Off"),
+                           subtitle: ""),
          SettingsModel.Row(id: SettingsModel.littleWindowRememberRowId, pane: .littleWindow,
                            title: "Remember its size and place",
-                           subtitle: model.littleWindowRememberFrame ? "On" : "Off")]
+                           subtitle: "")]
     }
 
     /// The Spaces pane's own rows, then each space's page rows: the rail groups all of them

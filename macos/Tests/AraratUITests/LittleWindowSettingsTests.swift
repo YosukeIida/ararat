@@ -74,7 +74,7 @@ func theLittleWindowPaneListsTheBoardsRowsAndTheStoredValues() {
     // The built-in values: Most Recent Space, both switches on.
     #expect(model.littleWindowOpenInLabel == "Most Recent Space")
     #expect(rows[2].subtitle.hasSuffix("Most Recent Space"))
-    #expect(rows[3].subtitle == "On" && rows[4].subtitle == "On")
+    #expect(rows[3].subtitle.isEmpty && rows[4].subtitle.isEmpty)
     // A named destination reads by name, and a lost space reads as the fallback the window uses.
     model.littleWindowOpenIn = .space("personal")
     #expect(model.littleWindowOpenInLabel == "Personal")
@@ -83,7 +83,7 @@ func theLittleWindowPaneListsTheBoardsRowsAndTheStoredValues() {
     model.littleWindowCloseAfter = false
     model.littleWindowRememberFrame = false
     let updated = model.rows.filter { $0.pane == .littleWindow }
-    #expect(updated[3].subtitle == "Off" && updated[4].subtitle == "Off")
+    #expect(updated.map(\.title) == rows.map(\.title))
     // The menu offers the shown space's profile only.
     #expect(model.littleWindowSpaces.map(\.id) == ["work", "personal"])
     model.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "other", selectedId: nil,
