@@ -931,8 +931,10 @@ struct SettingsField: View {
 final class SettingsWindow: NSWindow, MenuCommandHost {
     var menuCommandBindings: [KeyBinding] { (windowController as? SettingsWindowController)?.model.keyBindings.bindings ?? [] }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // A recording recorder sees the key first, so a guarded ⌘W is refused instead of closing.
+        // A recording recorder sees the key first, so a guarded ⌘W is refused instead of closing
+        // and a ⌘-combination is recorded rather than run by a menu.
         if let recorder = firstResponder as? ShortcutsRecorderView, recorder.performKeyEquivalent(with: event) { return true }
+        if let recorder = firstResponder as? LittleWindowHotKeyRecorderView, recorder.performKeyEquivalent(with: event) { return true }
         // A table command rebound without Command yields to one of our text fields (the search):
         // the key is claimed here and typed into the field instead of reaching the menu pass.
         if WorkspaceCommands.yieldsToOwnField(menuCommandBindings, event: event, in: self) {
