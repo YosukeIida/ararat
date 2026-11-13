@@ -61,19 +61,22 @@ public struct SplitGeometry {
                 for i in constrained { lengths[i] = minimums[i]; space -= minimums[i]; remaining.remove(i) }
             }
         }
-        var position = horizontal ? bounds.minX : bounds.minY
+        // A vertical split's first pane sits at the top: the card is unflipped, so y grows upward
+        // and the first child takes the band at maxY. Row order and screen order agree, so Move Up
+        // moves a pane up and a drop on the top half inserts before the target.
+        var position = horizontal ? bounds.minX : bounds.maxY
         for i in pane.children.indices {
             let frame = horizontal
                 ? CGRect(x: position, y: bounds.minY, width: lengths[i], height: bounds.height)
-                : CGRect(x: bounds.minX, y: position, width: bounds.width, height: lengths[i])
+                : CGRect(x: bounds.minX, y: position - lengths[i], width: bounds.width, height: lengths[i])
             layout(pane.children[i], in: frame)
-            position += lengths[i]
+            position += horizontal ? lengths[i] : -lengths[i]
             if i + 1 < pane.children.count {
                 let frame = horizontal
                     ? CGRect(x: position, y: bounds.minY, width: gap, height: bounds.height)
-                    : CGRect(x: bounds.minX, y: position, width: bounds.width, height: gap)
+                    : CGRect(x: bounds.minX, y: position - gap, width: bounds.width, height: gap)
                 dividers.append(SplitDivider(split: pane.id, index: i, frame: frame, horizontal: horizontal))
-                position += gap
+                position += horizontal ? gap : -gap
             }
         }
     }
@@ -100,8 +103,11 @@ public struct SplitGeometry {
         let minTotal = minimums.reduce(0, +)
         guard total > 0, minTotal > 0 else { return nil }
         let scale = min(1, total / minTotal)
+        // A divider dragged up (a positive y delta) shrinks the pane above it, which is the first
+        // child of a vertical split after the top-first layout.
+        let moved = horizontal ? delta : -delta
         let bounded = max(minimums[index] * scale - lengths[index],
-                          min(delta, lengths[index + 1] - minimums[index + 1] * scale))
+                          min(moved, lengths[index + 1] - minimums[index + 1] * scale))
         var adjusted = lengths
         adjusted[index] += bounded
         adjusted[index + 1] -= bounded
