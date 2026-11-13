@@ -24,6 +24,7 @@ final class LookScreenCheck {
     var grainStats: [String: LookGrainStats] = [:]
     var grainBand: CGRect?
     var grainExpected: [String: Double] = [:]
+    var grainTries = 0
     var pickerWritten = false
 
     /// U24b: the grain's drawing rule, measured on the real sidebar. `L′` comes from each run's own
@@ -34,6 +35,21 @@ final class LookScreenCheck {
     static let grainSteps: [(capture: String, grain: Double, condition: String)] = [
         ("grain0", 0, "grain_0_flat"), ("grain5", 0.05, "grain_5"), ("grain50", 0.5, "grain_50"), ("grain100", 1, "grain_100")
     ]
+    /// The probe's Slate as a capture of it reads: the flat patch's mean and chroma in 0…255 code
+    /// values. The first VM run accepted a band that measured the Look editor's popover (mean 220,
+    /// chroma 5) as the look's "flat" patch, so the band now has to show Slate before any grain is
+    /// judged (`grain_0_flat`), and a capture that does not is retried and then named.
+    static let probeMean: Double = (0 + 27.0 + 89.0) / 3
+    static let probeChroma: Double = 89
+    /// Whether a capture's band is the look at all: Slate or one of the grain steps over it, whose
+    /// mean rises to about 114 at 100 %, while the colour keeps most of its chroma.
+    static func showsLook(_ stats: LookGrainStats) -> Bool {
+        let top = probeMean + 0.35 * (255 - probeMean)
+        return (probeMean - 8)...(top + 8) ~= stats.mean && stats.chroma >= 0.55 * probeChroma
+    }
+    /// How many captures a band that does not show the look is waited out: the VM's compositor can
+    /// hand back the previous frame, which this many 0.1 s ticks covers.
+    static let grainBandTries = 20
     /// U24 part 2 pass B: the polar picker's drag and its single write. The names run in both the
     /// hidden and the screen check, because the picker needs no capture.
     static let pickerConditionNames = ["picker_write", "picker_input", "picker_preview", "picker_one_write"]
@@ -277,6 +293,8 @@ extension Runtime {
             "journal_count": check?.journalCount(quitPath) as Any? ?? NSNull(),
             "journal_baseline": check?.count as Any? ?? NSNull(), "database_path": quitPath as Any? ?? NSNull(),
             "popover_window_number": window?.windowNumber as Any? ?? NSNull(),
+            "popover_frame": window.map { rectFields($0.frame) } as Any? ?? NSNull(),
+            "popover_alpha": window?.alphaValue as Any? ?? NSNull(),
             "popover_visible": window?.isVisible as Any? ?? NSNull(),
             "popover_key": window?.isKeyWindow as Any? ?? NSNull(),
             "settings_key": (root ?? self).settings?.window?.isKeyWindow as Any? ?? NSNull(),
@@ -292,6 +310,7 @@ extension Runtime {
             } as [String: Any],
             "grain_expected": check?.grainExpected as Any? ?? NSNull(),
             "grain_band": check?.grainBand.map { rectFields($0) } as Any? ?? NSNull(),
+            "grain_tries": check?.grainTries as Any? ?? NSNull(),
             "images": check?.images ?? [:]]
     }
     func lookCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -317,12 +336,21 @@ extension Runtime {
             check.images["\(name)_popover"] = p; check.images["\(name)_sidebar"] = s
             return true
         }
-        /// U24b's grain captures only the window: the popover is not part of the band.
+        /// U24b's grain captures only the window: the popover is not part of the band. The Look
+        /// editor's popover is a child window of the browser window, though, so the window's capture
+        /// composites it over the sidebar — in the first VM run its flat background won the
+        /// estimator's modal patch (mean 220, chroma 5, both grain steps identical). The capture is
+        /// of the sidebar, so the editor is made invisible for it and put back in the same tick; its
+        /// window, model, focus and size are untouched.
         func captureSidebar(_ name: String) -> Bool {
             guard screen else { return true }
             check.capturing = true
             defer { check.capturing = false }
-            FileHandle.standardError.write(Data("ararat-trace: look capturing \(name)\n".utf8))
+            let popover = check.probe?.window
+            let alpha = popover?.alphaValue
+            popover?.alphaValue = 0
+            defer { if let alpha { popover?.alphaValue = alpha } }
+            FileHandle.standardError.write(Data("ararat-trace: look capturing \(name) popover_hidden=\(popover != nil)\n".utf8))
             guard let path = promptScreenScreenshot(host.window(), name: "look-\(name)-sidebar", withoutShadow: true) else { return false }
             check.images["\(name)_sidebar"] = path
             return true
@@ -481,6 +509,20 @@ extension Runtime {
             // The band keeps clear of the header (44 pt from the top) and the panel's edges.
             let band = NSRect(x: panel.minX + 8, y: panel.minY + 8, width: max(0, panel.width - 16), height: max(0, panel.height - 52))
             let stats = LookScreenCheck.grainStats(path: path, windowFrame: host.window().frame, panel: band)
+            // A band that is not the look is the previous frame (the VM presents coarse or no
+            // frames) or something else over the sidebar; both are waited out, then named with the
+            // numbers, so a capture of the wrong pixels can never pass as the look.
+            guard LookScreenCheck.showsLook(stats) else {
+                check.grainTries += 1
+                check.grainStats[step.capture] = stats
+                check.grainBand = band
+                check.wait("\(step.capture)_band", "mean=\(stats.mean) chroma=\(stats.chroma) patches=\(stats.patches) defect=\(stats.defect ?? "") try=\(check.grainTries)")
+                guard check.grainTries < LookScreenCheck.grainBandTries else {
+                    check.report(step.condition, false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return
+                }
+                return
+            }
+            check.grainTries = 0
             check.grainStats[step.capture] = stats
             check.grainBand = band
             if let defect = stats.defect { FileHandle.standardError.write(Data("ararat-trace: look grain \(step.capture) defect=\(defect)\n".utf8)) }
@@ -495,7 +537,10 @@ extension Runtime {
             switch check.phase {
             case 19:
                 check.grainExpected["grain0_mean"] = base.mean
-                end(base.defect == nil && base.sd <= 0.5, "grain_0_flat")
+                // The band has to be the probe's own colour, flat: this is what tells the sidebar's
+                // body from the editor's popover, a page or the window's background.
+                end(base.defect == nil && abs(base.mean - LookScreenCheck.probeMean) <= 8
+                    && base.chroma >= 0.85 * LookScreenCheck.probeChroma && base.sd <= 0.5, "grain_0_flat")
             case 20:
                 check.grainExpected["grain5_expected"] = expected(0.05)
                 end(stats.defect == nil && within(stats.sd, expected(0.05), 0.5, 2.2), "grain_5")
@@ -525,6 +570,11 @@ extension Runtime {
                 check.report("picker_write", false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return
             }
             if !check.pickerWritten {
+                // The journal count before the write, so the drag's "no write" and the release's
+                // "one write" are both counted from a row this check has seen (the engine lands the
+                // store change and its journal row together, but not necessarily in this tick).
+                guard let before = check.journalCount(quitPath) else { return }
+                check.count = before
                 probe.setLook { look in
                     look.colors = [LookCheckProbe.colour(x: 0.4, y: 0.5), LookCheckProbe.colour(x: 0.9, y: 0.5)]
                     look.opacity = 1
@@ -533,7 +583,7 @@ extension Runtime {
                     look.appearance = .light
                 }
                 check.pickerWritten = true
-                check.wait("picker_write", "stored=\(stored().map { "\($0.colors.count) colours" } ?? "nil")")
+                check.wait("picker_write", "stored=\(stored().map { "\($0.colors.count) colours" } ?? "nil") count=\(before)")
                 return
             }
             guard let look = stored(), probe.look == look, look.colors.count == 2,
@@ -542,6 +592,10 @@ extension Runtime {
                 return
             }
             guard let count = check.journalCount(quitPath) else { return }
+            guard count > check.count else {
+                check.wait("picker_journal", "count=\(count) expected=\(check.count + 1)")
+                return
+            }
             check.count = count
             end(true, "picker_write")
         case 24:
@@ -564,10 +618,14 @@ extension Runtime {
                 && look.colors.allSatisfy { abs($0.y - shared) < 0.005 }
             let noWrite = (check.journalCount(quitPath) ?? -1) == check.count
             let previewed = sidebarContainer.lookPreviewForCheck == look
+            // Why the preview is read before the release: the up ends the editor's gesture, which
+            // clears `editing` and commits the look, so read after it the preview is always gone
+            // (the first VM run failed exactly here, with the drag itself correct).
+            let editing = probe.editing
             let up = probe.window.flatMap { window in
                 probe.fieldPoint(hue: 0.65, radius: 80).map { check.event(.leftMouseUp, screen: $0, window: window) }
             } ?? false
-            end(turned && noWrite && previewed && probe.editing && up, "picker_preview")
+            end(turned && noWrite && previewed && editing && up, "picker_preview")
         case 26:
             guard let probe = check.probe, let model = probe.look, !probe.editing else {
                 check.wait("picker_release", "editing=\(String(describing: check.probe?.editing))"); return

@@ -132,3 +132,20 @@ func grainStatsReportsABandOutsideTheCapture() {
     #expect(stats.defect != nil)
     #expect(stats.sd == 0)
 }
+
+@Test @MainActor
+func grainBandAcceptsTheLookAndRejectsWhatSitsOverIt() {
+    // The first VM run's own numbers: the band measured the Look editor's popover (its child window
+    // is composited into the browser window's capture), mean 220 and chroma 5, as if it were the
+    // look's flat patch. Nothing but the look may pass the gate.
+    #expect(!LookScreenCheck.showsLook(LookGrainStats(sd: 0.0004, mean: 220, chroma: 5.2, patches: 327, defect: nil)))
+    #expect(!LookScreenCheck.showsLook(LookGrainStats(sd: 0, mean: 255, chroma: 0, patches: 400, defect: nil)))
+    #expect(!LookScreenCheck.showsLook(LookGrainStats(sd: 0, mean: 0, chroma: 0, patches: 400, defect: nil)))
+    #expect(!LookScreenCheck.showsLook(LookGrainStats(defect: "capture unreadable")))
+    // Slate as the capture reads it, then the mock's grain over it at 5, 50 and 100 %: the mean
+    // rises by 0.35·(255 − L′)·g and the chroma keeps most of its 89.
+    #expect(LookScreenCheck.showsLook(LookGrainStats(sd: 0, mean: 38.67, chroma: 89, patches: 1523, defect: nil)))
+    #expect(LookScreenCheck.showsLook(LookGrainStats(sd: 1.73, mean: 42.5, chroma: 87.5, patches: 1400, defect: nil)))
+    #expect(LookScreenCheck.showsLook(LookGrainStats(sd: 17.3, mean: 76.5, chroma: 75, patches: 1400, defect: nil)))
+    #expect(LookScreenCheck.showsLook(LookGrainStats(sd: 34.6, mean: 114.3, chroma: 60, patches: 1400, defect: nil)))
+}
