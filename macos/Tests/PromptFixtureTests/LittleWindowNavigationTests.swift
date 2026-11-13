@@ -52,6 +52,34 @@ func littleWindowCommandBarSubmitsToItsPopupHost() async throws {
     controller.checkCommitCommandBar()
     for _ in 0..<100 where host.navigated.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
     #expect(host.navigated == ["https://example.test/"])
+    #expect(controller.checkCommandBar?.controller.storeReadyAtSubmission == false)
+}
+
+@Test @MainActor
+func littleWindowFixtureAndWebAddressAreOpenURLInTheRealStore() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("db").path, windowID: "origin", card: NSView(), seedCheck: true, session: session)
+    defer { _ = adapter }
+    let index = try session.queue.sync { try #require(session.store).commandBarSession(windowId: "origin", privateWindow: false) }
+    let store = LittleWindowCommandStore(session: index)
+    let bar = CommandBarController()
+    bar.open(mode: .editURL, prefill: nil, store: store)
+    for url in [LittleWindowCheckState.fixtureURL(port: 12345), "https://example.test/"] {
+        bar.update(query: url)
+        #expect(bar.result.rows.first?.target == .openUrl(url: url))
+        #expect(!URLFieldContent(url: url, hasTab: true).showsPlaceholder)
+    }
+    bar.update(query: "data:text/html,<title>Little Window page</title>")
+    if case .search = bar.result.rows.first?.target {} else { Issue.record("The old fixture must be classified as search") }
+    bar.update(query: "https://example.test/")
+    bar.commit(forceNewTab: false)
+    #expect(bar.storeReadyAtSubmission)
+    bar.open(mode: .editURL, prefill: "https://example.test/", store: store)
+    bar.commit(try #require(bar.result.rows.first))
+    #expect(bar.storeReadyAtSubmission)
 }
 
 @Test @MainActor

@@ -28,7 +28,8 @@ final class LittleWindowCheckState {
     var seedItem = ""
     var originURL = ""
     var originNavigation: UInt = 0
-    var pageURL = "data:text/html,<title>Little Window page</title>"
+    var pageURL = ""
+    static func fixtureURL(port: UInt16) -> String { "http://127.0.0.1:\(port)/search?little-window" }
     var handoffLive = ""
     var handoffNavigation: UInt = 0
     var targetFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
@@ -119,6 +120,8 @@ extension Runtime {
 
         switch browserCheckPhase {
         case 0:
+            guard let port = promptFixturePort else { wait("fixture server"); return }
+            check.pageURL = LittleWindowCheckState.fixtureURL(port: port)
             guard let row = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first,
                   let url = row.url, url.hasPrefix("data:") else {
                 if phaseTicks() > 200 { check.mark("seed", false); finish(); return }
