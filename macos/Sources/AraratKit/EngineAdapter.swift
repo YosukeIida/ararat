@@ -388,6 +388,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func select(id: String, url: String, restoring: RestorationCandidate? = nil, wholeSplit: Bool = true) {
         precondition(Thread.isMainThread)
         guard !selectionClosed, let host, !host.isClosing(), !host.isClosingAll() else { return }
+        // U25d S4/SF1: the split this window is drawing right now, read before anything clears it.
+        // A member of *that* split is never taken alone here: the window already lays the split out.
+        let drawing = displayedSplit?.id
         let space = queue.sync { store?.snapshot(windowId: windowID).shownSpaceId }
         if restoring == nil, let request = selectionRequest, request.item == id, request.space == space, request.url == url, !request.restoring { return }
         invalidateSelection()
@@ -421,19 +424,38 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 // U25d S4: one member of a split shown in another window comes alone — the split
                 // row stays where it is drawn and this window shows the page as a plain tab. The
-                // split row's own selection (wholeSplit) still brings every pane.
-                let lone = !wholeSplit && store.splitLayout(itemId: id).map { pane in
+                // split row's own selection (wholeSplit) still brings every pane, and a split this
+                // window already draws is never dropped to one pane (review 2, SF1).
+                let split = store.splitLayout(itemId: id)
+                let remote = split.map { pane in
                     leaves(pane).contains { other in
                         other.id != id && (store.liveWindow(item: other.id).map { $0 != self.windowID } ?? false)
                     }
-                } == true
-                let siblings = lone ? [] : store.splitLayout(itemId: id).map { leaves($0).filter { $0.id != id } } ?? []
+                } ?? false
+                let lone = Self.takesLoneMember(wholeSplit: wholeSplit, drawingSplit: drawing, split: split?.id, remoteSibling: remote)
+                // A member taken alone is this window's row from now on, whatever the engine's
+                // handoff takes: the core selection is written here, as a restored selection is,
+                // so the row is selected and its page shown while the tab comes over (U25d S4).
+                var loneSnapshot: WorkspaceSnapshot?
+                if lone {
+                    do { _ = try store.selectItem(windowId: self.windowID, id: id) }
+                    catch {
+                        // The window still takes the member, and its next key change retries the
+                        // selection; the error is reported rather than rolled back.
+                        FileHandle.standardError.write(Data("engine adapter: the lone take of \(id) was not recorded: \(error)\n".utf8))
+                    }
+                    loneSnapshot = store.snapshot(windowId: self.windowID)
+                }
+                let siblings = lone ? [] : split.map { leaves($0).filter { $0.id != id } } ?? []
                 DispatchQueue.main.async {
                     guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll() else {
                         self.cancelSelectionCommand(command); return
                     }
                     if self.selectionRequest?.generation == generation { self.selectionRequest?.command = command.id }
                     self.loneSplitPane = lone ? id : nil
+                    // The lone selection is delivered before the engine's reply, so the destination
+                    // shows the row (and no split) even while the tab is still coming over.
+                    if let loneSnapshot { self.deliverIfCurrent(loneSnapshot) }
                     self.selectionDispatchForCheck("registered", command: command) {
                         guard !self.selectionClosed, let host = self.host, !host.isClosing(), !host.isClosingAll(),
                               self.selectionGeneration == generation,
@@ -528,7 +550,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 guard let store = self.store else { return }
                 let split = store.splitLayout(itemId: item)?.id ?? item
                 let snapshot = try store.convertSplit(windowId: self.windowID, splitId: split)
-                DispatchQueue.main.async { self.deliverIfCurrent(snapshot) }
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
             } catch { self.report(error) }
         }
     }
@@ -1387,10 +1412,30 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
     }
 
+    // U25d S4: whether a selection takes one member alone. A tab click (wholeSplit false) takes
+    // one member when the split is drawn somewhere else; a split this window already draws stays
+    // whole, so clicking its pane here never drops its own layout (review 2, SF1).
+    public static func takesLoneMember(wholeSplit: Bool, drawingSplit: String?, split: String?, remoteSibling: Bool) -> Bool {
+        guard !wholeSplit, let split else { return false }
+        if drawingSplit == split { return false }
+        return remoteSibling
+    }
+
+    // U25d S4/MF1: what a key change takes back from another window. A member this window holds
+    // alone is never a reason to re-take the split — the remote siblings stay where they are —
+    // and when it does take that member back it takes it alone. A split-drawing window still
+    // reclaims the page another window borrowed.
+    public static func remoteTake(owner: String?, window: String, remoteSibling: Bool,
+                                  loneMember: String?, item: String) -> (take: Bool, wholeSplit: Bool) {
+        if loneMember == item { return owner == window ? (false, true) : (true, false) }
+        return owner != window || remoteSibling ? (true, true) : (false, true)
+    }
+
     private func takeRemoteSelection() {
         precondition(Thread.isMainThread)
         guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { return }
-        let candidate: (String, String)? = queue.sync {
+        let loneHere = loneSplitPane
+        let candidate: (id: String, url: String, wholeSplit: Bool)? = queue.sync {
             guard let store else { return nil }
             let snapshot = store.snapshot(windowId: windowID)
             guard let id = snapshot.selectedId,
@@ -1401,11 +1446,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 if pane.kind == .tab, let owner = store.liveWindow(item: pane.id), owner != windowID { return true }
                 return pane.children.contains(where: hasRemote)
             }
-            let owner = store.liveWindow(item: id)
             let remoteSplit = store.splitLayout(itemId: id).map(hasRemote) ?? false
-            return owner != windowID || remoteSplit ? (id, url) : nil
+            let take = Self.remoteTake(owner: store.liveWindow(item: id), window: windowID, remoteSibling: remoteSplit,
+                                       loneMember: loneHere, item: id)
+            return take.take ? (id, url, take.wholeSplit) : nil
         }
-        if let (id, url) = candidate { select(id: id, url: url) }
+        if let (id, url, wholeSplit) = candidate { select(id: id, url: url, wholeSplit: wholeSplit) }
     }
 
     private func selectionDispatchForCheck(_ stage: String, command: LiveCommand, action: @escaping () -> Void) {

@@ -1994,8 +1994,11 @@ extension SidebarView {
     private func resolveDrag() {
         guard let state = drag, state.active, let geometry = dragGeometry() else { return }
         // The page's halves are judged before the sidebar's targets: the pointer is outside the
-        // sidebar there, which the sidebar's own resolver calls a refusal.
-        if !privateWindow, let half = pageHalf(at: state.position) {
+        // sidebar there, which the sidebar's own resolver calls a refusal. A drop needs a real,
+        // different target on the page: a row cannot split with itself, and a split row joins
+        // nothing (the core refuses both, so the half is not offered).
+        if !privateWindow, state.row.kind == .tab, let target = dragShownPane, target != state.row.id,
+           let half = pageHalf(at: state.position) {
             dropTarget = .split(half.side)
             showPaneDrop?(half)
             setRefusedDock(nil)

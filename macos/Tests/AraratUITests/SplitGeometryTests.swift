@@ -66,3 +66,22 @@ func aVerticalSplitsFirstPaneIsDrawnAtTheTopAndHorizontalOrderIsUnchanged() thro
     let flat = SplitGeometry(root: horizontal, bounds: CGRect(x: 0, y: 0, width: 400, height: 600))
     #expect(try #require(flat.panes["first"]).maxX <= (try #require(flat.panes["second"]).minX))
 }
+
+@Test
+func aLoneMemberIsNotRetakenAsTheWholeSplitAndADrawingWindowKeepsItsSplit() {
+    // Review 2 MF1: window B holds M alone; B becoming key again must not pull the split out of A.
+    #expect(EngineAdapter.remoteTake(owner: "B", window: "B", remoteSibling: true, loneMember: "M", item: "M") == (false, true))
+    // M's tab moved back to A: B takes M alone, never the split.
+    #expect(EngineAdapter.remoteTake(owner: "A", window: "B", remoteSibling: true, loneMember: "M", item: "M") == (true, false))
+    // A window that draws the split reclaims the page another window borrowed (§4.6).
+    #expect(EngineAdapter.remoteTake(owner: "A", window: "A", remoteSibling: true, loneMember: nil, item: "M") == (true, true))
+    // Nothing remote and nothing lone: nothing to take.
+    #expect(EngineAdapter.remoteTake(owner: "B", window: "B", remoteSibling: false, loneMember: nil, item: "M") == (false, true))
+    // Review 2 SF1: a pane of the split this window draws keeps it whole; another window's split
+    // comes alone; the split row's own selection is whole.
+    #expect(!EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: "S", split: "S", remoteSibling: true))
+    #expect(EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: "X", split: "S", remoteSibling: true))
+    #expect(!EngineAdapter.takesLoneMember(wholeSplit: true, drawingSplit: nil, split: "S", remoteSibling: true))
+    #expect(!EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: nil, split: "S", remoteSibling: false))
+    #expect(!EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: nil, split: nil, remoteSibling: true))
+}
