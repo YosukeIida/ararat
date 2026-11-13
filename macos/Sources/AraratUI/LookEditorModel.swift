@@ -197,21 +197,26 @@ final class LookEditorModel: ObservableObject {
         guard look.colors.indices.contains(index) else { return }
         if gestureStart == nil {
             selected = index
-            let grip = Self.fieldPoint(x: look.colors[index].x, y: Self.fieldY(look.colors[index].y))
-            let position = Self.fieldPosition(CGPoint(x: grip.x + translation.width, y: grip.y + translation.height))
-            guard abs(position.x - look.colors[index].x) > 0.000000001
-                || abs(position.y - Self.fieldY(look.colors[index].y)) > 0.000000001
-            else { return }
+            // No motion is decided on the translation itself, before any geometry: a handle on the
+            // centre (or a stored hue of exactly 1.0) does not round-trip to its own hue, so a
+            // geometry-based test would read a press as a turn to red.
+            guard translation != .zero else { return }
             begin()
         }
         selected = index
         guard let start = gestureStart, start.colors.indices.contains(index) else { return }
         let base = start.colors[index]
-        let grip = Self.fieldPoint(x: base.x, y: Self.fieldY(base.y))
-        var position = Self.fieldPosition(CGPoint(x: grip.x + translation.width, y: grip.y + translation.height))
-        // A drag that ends where it was grabbed restores the start exactly, so it writes nothing.
         let baseY = Self.fieldY(base.y)
-        if abs(position.x - base.x) < 0.000000001 && abs(position.y - baseY) < 0.000000001 { position = (base.x, baseY) }
+        var position: (x: Double, y: Double)
+        if translation == .zero {
+            // Back at the grab point: the start, exactly (the centre and hue 1.0 included).
+            position = (base.x, baseY)
+        } else {
+            let grip = Self.fieldPoint(x: base.x, y: baseY)
+            position = Self.fieldPosition(CGPoint(x: grip.x + translation.width, y: grip.y + translation.height))
+            // A near-return to the grab point restores the start exactly, so it writes nothing.
+            if abs(position.x - base.x) < 0.000000001 && abs(position.y - baseY) < 0.000000001 { position = (base.x, baseY) }
+        }
         let delta = position.x - base.x
         let radius = Self.clamp(position.y)
         let hues = start.colors.map(\.x)

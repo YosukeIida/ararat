@@ -212,6 +212,43 @@ func aPressOnAHandleSelectsItWithoutMovingTheGroup() async throws {
 }
 
 @Test @MainActor
+func aPressWithoutMovementOnTheCentreOrAHueOfOneDoesNotTurnTheGroup() async throws {
+    // A centre handle and a stored hue of exactly 1.0 do not round-trip to their own hue (the centre
+    // answers 0, and 1.0 wraps to 0), so "no motion" must be read from the translation itself.
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.3, y: 1), LookEditorModel.fieldColor(x: 0.6, y: 0.5)] }
+    #expect(abs(LookEditorModel.radius(of: editor.look.colors[0].y)) < 0.000001)
+    editor.selected = 0
+    var count = try await fixture.writes()
+    var before = editor.look
+    editor.movePoint(0, translatedBy: .zero)
+    #expect(editor.look == before && !editor.editing && editor.selected == 0)
+    editor.end()
+    #expect(try await fixture.writes() == count)
+    editor.change { $0.colors = [LookEditorModel.color(x: 1, y: 0.5), LookEditorModel.fieldColor(x: 0.2, y: 0.5)] }
+    #expect(editor.look.colors[0].x == 1)
+    editor.selected = 0
+    count = try await fixture.writes()
+    before = editor.look
+    editor.movePoint(0, translatedBy: .zero)
+    #expect(editor.look == before && !editor.editing && editor.selected == 0)
+    editor.end()
+    #expect(try await fixture.writes() == count)
+    // A real drag from the centre still moves the handle (the fix does not block motion).
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.3, y: 1), LookEditorModel.fieldColor(x: 0.6, y: 0.5)] }
+    editor.selected = 0
+    count = try await fixture.writes()
+    editor.movePoint(0, translatedBy: CGSize(width: 0, height: -20))
+    #expect(editor.editing)
+    #expect(abs(editor.look.colors[0].x - 0.75) < 0.000001)
+    #expect(abs(LookEditorModel.radius(of: editor.look.colors[0].y) - 20) < 0.000001)
+    editor.end()
+    #expect(try await fixture.writes() == count + 1)
+    try await fixture.close()
+}
+
+@Test @MainActor
 func theGroupTurnWrapsPastRed() async throws {
     let fixture = try await LookFixture()
     let editor = fixture.editor
