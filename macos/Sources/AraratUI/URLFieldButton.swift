@@ -8,8 +8,8 @@ public final class URLFieldBackgroundButton: NSButton {
     /// The board's field fills. The resting fill is the sidebar boards' `--fill`: white 55 % on the
     /// tinted sidebar, 10 % in dark (`mock-decisions.md` 2026-11-11; the F boards' URL field). Hover
     /// and pressed are the C-UrlField board's `--fieldH` and `--fieldP`: the field lightens under
-    /// the pointer and darkens a little while pressed, in white for both appearances, so neither
-    /// state gains the light-only white overlay the board draws.
+    /// the pointer and darkens a little while pressed, in white for both appearances, so the field
+    /// lightens the tinted sidebar instead of darkening it in light.
     public static func fillAlpha(pressed: Bool, hovered: Bool, appearance: NSAppearance) -> CGFloat {
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         if pressed { return dark ? 0.06 : 0.40 }
