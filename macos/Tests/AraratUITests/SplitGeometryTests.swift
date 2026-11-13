@@ -85,3 +85,14 @@ func aLoneMemberIsNotRetakenAsTheWholeSplitAndADrawingWindowKeepsItsSplit() {
     #expect(!EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: nil, split: "S", remoteSibling: false))
     #expect(!EngineAdapter.takesLoneMember(wholeSplit: false, drawingSplit: nil, split: nil, remoteSibling: true))
 }
+
+@Test
+func theDrawingWindowTakesTheWholeSplitBackWhenOneMemberIsHeldElsewhere() {
+    // §4.6: the window that drew the split becomes key with a member selected; the sibling window
+    // holds one member alone. The drawing window reclaims every page (whole split), and it never
+    // drops to a lone pane of its own split.
+    #expect(EngineAdapter.remoteTake(owner: "B", window: "A", remoteSibling: true, loneMember: nil, item: "left") == (true, true))
+    #expect(!EngineAdapter.takesLoneMember(wholeSplit: true, drawingSplit: "S", split: "S", remoteSibling: true))
+    // The sibling window, holding the member alone, still takes only that member back if it moved.
+    #expect(EngineAdapter.remoteTake(owner: "A", window: "B", remoteSibling: true, loneMember: "M", item: "M") == (true, false))
+}

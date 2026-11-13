@@ -104,6 +104,9 @@ extension Runtime {
       }
     }
     func rowURL(_ id: String) -> String? { adapter.checkRowURL(id) }
+    func childAdapterLayout(_ check: SplitCommandsCheck) -> Int {
+      check.child?.adapter?.checkSplitLayout().panes ?? -1
+    }
     func pageHalfPoint(_ rightHalf: Bool) -> NSPoint? {
       guard let frame = container.pageFrameInWindowForCheck, frame.width > 0 else { return nil }
       return NSPoint(x: frame.minX + frame.width * (rightHalf ? 0.75 : 0.25), y: frame.midY)
@@ -388,11 +391,25 @@ extension Runtime {
       browserCheckPhase = 23
     case 23:
       guard let child = check.child else { return }
-      // A reclaims: the tab is live in A again and A draws every pane of the split.
-      guard ready("first window reclaims", window.isKeyWindow
-                  && adapter.checkLiveWindow(check.loneMember) == adapter.checkWindowID
-                  && adapter.checkSplitLayout().panes == check.parentPanes
-                  && adapter.checkSplitMembers(check.split).contains(check.loneMember)) else { return }
+      // §4.6 takes back the window's *selected* pages: A's row here is a loose tab, so the key
+      // change alone reclaims nothing. Put A on a member of the split and the selection brings
+      // the borrowed panes back (A passes wholeSplit true through the sidebar's split pick).
+      if snapshot.selectedId != check.left || host.activeItemId() != check.left {
+        select(check.left, next: 23)
+        return
+      }
+      let childLayout = childAdapterLayout(check)
+      check.wait("first window reclaims", "A selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") "
+                 + "A panes=\(adapter.checkSplitLayout().panes) A key=\(window.isKeyWindow) "
+                 + "B key=\(child.host?.window().isKeyWindow == true) m_live_in=\(adapter.checkLiveWindow(check.loneMember) ?? "nil") "
+                 + "m=\(check.loneMember) child_panes=\(childLayout)")
+      guard window.isKeyWindow,
+            adapter.checkLiveWindow(check.loneMember) == adapter.checkWindowID,
+            adapter.checkSplitLayout().panes == check.parentPanes,
+            adapter.checkSplitMembers(check.split).contains(check.loneMember) else {
+        if check.waitCount > 60 { fail("first window reclaims never resolved (\(check.waitName))") }
+        return
+      }
       // …and B becoming key takes only M back, never the whole split.
       child.host?.window().makeKeyAndOrderFront(nil)
       browserCheckPhase = 24
