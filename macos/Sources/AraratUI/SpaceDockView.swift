@@ -49,12 +49,25 @@ final class SpaceDockButton: NSButton {
     static func fillAlpha(fraction: CGFloat, appearance: NSAppearance) -> CGFloat {
         fraction * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.13 : 0.6)
     }
+    /// The open cell's fill: the mock's white overlay on the tinted sidebar (55 % in light, 10 % in
+    /// dark; `mock-decisions.md` 2026-11-11, the F and A-BottomDock boards), scaled by the slide's
+    /// open fraction so the fill cross-fades between cells. The Library keeps the accent fill.
+    static func openFillAlpha(fraction: CGFloat, appearance: NSAppearance) -> CGFloat {
+        fraction * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.10 : 0.55)
+    }
     var refused = false { didSet { alphaValue = refused ? 0.35 : 1 } }
     var menuProvider: (() -> NSMenu?)?
     private var trackingPress = false
     private var hovered = false
     private var pressInside = false
-    var backgroundAlpha: CGFloat { openFraction > 0 ? Self.fillAlpha(fraction: openFraction, appearance: effectiveAppearance) : pressInside ? 0.078 : hovered ? 0.045 : 0 }
+    var backgroundAlpha: CGFloat { openFraction > 0 ? Self.openFillAlpha(fraction: openFraction, appearance: effectiveAppearance) : pressInside ? 0.078 : hovered ? 0.045 : 0 }
+    /// The fill `draw` puts under the glyph, nil when the cell draws none: white for the open cell,
+    /// the label colour for hover and press. The checks read this to pin the drawn colours.
+    var checkFill: NSColor? {
+        if openFraction > 0 { return NSColor.white.withAlphaComponent(backgroundAlpha) }
+        if backgroundAlpha > 0 { return NSColor.labelColor.withAlphaComponent(backgroundAlpha) }
+        return nil
+    }
     override var mouseDownCanMoveWindow: Bool { false }
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     override func updateTrackingAreas() {
@@ -67,11 +80,8 @@ final class SpaceDockButton: NSButton {
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
     override func draw(_ dirtyRect: NSRect) {
         let rect = NSRect(x: 0, y: (bounds.height - 24) / 2, width: bounds.width, height: 24)
-        if openFraction > 0 {
-            NSColor.controlAccentColor.withAlphaComponent(backgroundAlpha).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
-        } else if backgroundAlpha > 0 {
-            NSColor.labelColor.withAlphaComponent(backgroundAlpha).setFill()
+        if let fill = checkFill {
+            fill.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
         }
         if glyph == .dot {

@@ -423,3 +423,51 @@ func dockHoverAndPressUseTheirOwnFillAndTrackPointerExit() {
     button.mouseUp(with: polishMouse(.leftMouseUp, button, inside: false))
     #expect(button.backgroundAlpha == 0)
 }
+
+@Test @MainActor
+func dockOpenCellUsesTheMocksWhiteOverlayInBothAppearances() throws {
+    // The mock draws the open cell as a white overlay on the tinted sidebar (55 % in light, 10 % in
+    // dark), not as the accent; the Library's accent fill stays U22's (`fillAlpha`).
+    let button = SpaceDockButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+    button.openFraction = 1
+    for (name, alpha) in [(NSAppearance.Name.aqua, CGFloat(0.55)), (.darkAqua, 0.10)] {
+        button.appearance = NSAppearance(named: name)
+        let fill = try #require(button.checkFill)
+        let drawn = try #require(fill.usingColorSpace(.sRGB))
+        #expect(drawn.redComponent == 1 && drawn.greenComponent == 1 && drawn.blueComponent == 1)
+        #expect(abs(fill.alphaComponent - alpha) < 0.001)
+        #expect(abs(button.backgroundAlpha - alpha) < 0.001)
+    }
+    // The slide's cross-fade scales the same fill.
+    button.openFraction = 0.5
+    button.appearance = NSAppearance(named: .aqua)
+    #expect(abs(button.backgroundAlpha - 0.275) < 0.001)
+    button.appearance = NSAppearance(named: .darkAqua)
+    #expect(abs(button.backgroundAlpha - 0.05) < 0.001)
+    #expect(abs(SpaceDockButton.fillAlpha(fraction: 1, appearance: NSAppearance(named: .aqua)!) - 0.6) < 0.001)
+}
+
+@Test @MainActor
+func urlFieldFillUsesTheBoardsWhiteOverlayInBothAppearances() throws {
+    let field = URLFieldBackgroundButton(frame: NSRect(x: 0, y: 0, width: 224, height: 36))
+    for (name, resting, hovered, pressed) in [
+        (NSAppearance.Name.aqua, CGFloat(0.55), CGFloat(0.82), CGFloat(0.40)),
+        (.darkAqua, 0.10, 0.14, 0.06),
+    ] {
+        field.checkSetAppearance(name)
+        var fill = try #require(field.checkFill)
+        let drawn = try #require(fill.usingColorSpace(.sRGB))
+        #expect(drawn.redComponent == 1 && drawn.greenComponent == 1 && drawn.blueComponent == 1)
+        #expect(abs(fill.alphaComponent - resting) < 0.001)
+        field.isHovered = true
+        fill = try #require(field.checkFill)
+        #expect(abs(fill.alphaComponent - hovered) < 0.001)
+        field.isPressed = true
+        fill = try #require(field.checkFill)
+        #expect(abs(fill.alphaComponent - pressed) < 0.001)
+        field.isPressed = false
+        field.isHovered = false
+        fill = try #require(field.checkFill)
+        #expect(abs(fill.alphaComponent - resting) < 0.001)
+    }
+}
