@@ -129,7 +129,7 @@ struct LookPopoverView: View {
     }
     static func swatch(_ color: LookColor) -> Color { Color(red: color.red, green: color.green, blue: color.blue) }
     /// The polar field: hue around the circle, lightness along the radius (white at the rim, black at
-    /// the centre, the mock's ramp), dots on a 10 pt lattice inside the inscribed circle, one spoke
+    /// the centre, the mock's ramp), dots on an 8 pt lattice inside the 116 pt inscribed circle, one spoke
     /// and one handle per colour. The handles share one radius and turn together.
     private var field: some View {
         ZStack {
