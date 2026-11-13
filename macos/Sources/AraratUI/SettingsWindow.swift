@@ -133,9 +133,9 @@ private struct SettingsRail: View {
                 TextField("Search", text: $model.query).textFieldStyle(.plain).accessibilityLabel("Search settings")
                     // The result list's keyboard model (D7): arrows move the selection, Return opens
                     // it. A text field would otherwise use the arrows for the caret.
-                    .onKeyPress(.upArrow) { model.handleSearchKey(.up); return .handled }
-                    .onKeyPress(.downArrow) { model.handleSearchKey(.down); return .handled }
-                    .onSubmit { model.openSelectedResult() }
+                    .onKeyPress(.upArrow) { _ = model.handleSearchKey(.up); return .handled }
+                    .onKeyPress(.downArrow) { _ = model.handleSearchKey(.down); return .handled }
+                    .onSubmit { _ = model.handleSearchKey(.return) }
             }
                 .padding(.horizontal, 10).frame(height: 32).background(SettingsColor.search, in: Capsule()).padding(.top, 8)
             ScrollView {
@@ -167,6 +167,9 @@ private struct SettingsRail: View {
                 Button { model.select(row) } label: {
                     Text(model.resultTitle(row)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 26).frame(height: 26)
                 }.buttonStyle(.plain).help(row.subtitle).accessibilityLabel(row.title + ", " + row.subtitle)
+                    // The selected result is drawn as the pane rows' selected row is (E-Search's
+                    // `.pr.sel`): the selection grey in a 6 pt rounded rect, so the arrows visibly move.
+                    .background(hit ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
                     .background(SettingsMarker(id: SettingsModel.resultMarker(row)))
                     .background { if hit { SettingsMarker(id: SettingsModel.selectedResultMarker) } }
             }

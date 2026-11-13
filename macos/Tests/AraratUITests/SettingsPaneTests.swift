@@ -64,6 +64,15 @@ func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     #expect(probe.selectedIndex == 0 && probe.selectedResultTitle == probe.resultTitles.first)
     let first = try #require(probe.marker(SettingsModel.selectedResultMarker))
     #expect(first.height >= 24)
+    // The selection is drawn (M1): the first result is the selection grey inside its 6 pt rect and
+    // its neighbour is not, read 6 pt in from each row's left edge where no title text sits.
+    let selectedID = try #require(probe.selectedResultMarker)
+    let other = try #require(probe.markers(prefix: "result-").first {
+        $0.id != SettingsModel.selectedResultMarker && $0.id != selectedID
+    }?.frame)
+    let fill = probe.greys(at: [NSPoint(x: first.minX + 6, y: first.midY), NSPoint(x: other.minX + 6, y: other.midY)])
+    try #require(fill.allSatisfy { $0 != nil })
+    #expect(abs((fill[0] ?? 0) - (fill[1] ?? 0)) > 10, "the selected result is drawn, not only marked")
     _ = probe.searchKey(.down)
     try await waitUntil { probe.layout(); return probe.selectedIndex == 1 }
     #expect(probe.selectedResultMarker != nil)
@@ -116,7 +125,7 @@ func theSearchIndexFollowsTheRailOrderAndOnlyCoversBuiltPanes() {
     let order = rows.map { $0.pane.paneID.rawValue }
     let firstOfPane = order.enumerated().filter { index, pane in index == 0 || order[index - 1] != pane }
     #expect(firstOfPane.map(\.element) == ["tabs", "shortcuts", "air-traffic", "spaces"])
-    #expect(rows.allSatisfy { SettingsRegistry.pane(page: $0.pane)?.built == true })
+    #expect(rows.allSatisfy { SettingsRegistry.pane(page: $0.pane).built })
     // The builders are the registry's own: a pane's rows are exactly what its closure returns.
     #expect(rows.filter { $0.pane == .tabs }.map(\.id) == ["width", "archive-after"])
     #expect(rows.filter { $0.pane == .shortcuts }.map(\.id) == ["shortcut-one", "shortcut-two"])
@@ -138,6 +147,8 @@ func theSearchSelectsTheFirstResultMovesWithTheArrowsAndOpensOnReturn() {
     model.query = "Utility"
     #expect(model.searchIndex == 0)
     #expect(model.selectedResult?.id == "shortcut-0")
+    // ↑ at the first result stays there (the ends clamp, they do not wrap).
+    #expect(model.handleSearchKey(.up) && model.searchIndex == 0)
     #expect(model.handleSearchKey(.down) && model.searchIndex == 1)
     #expect(model.handleSearchKey(.down) && model.searchIndex == 2)
     // The ends clamp instead of wrapping, so Return never opens a different result than the filled one.
@@ -222,5 +233,26 @@ func theGroupedCardHoldsItsRowsWithTheBoardsMetrics() throws {
     #expect(abs(one.maxY - two.minY) <= 1 && abs(two.maxY - three.minY) <= 1)
     #expect(abs(card.minY - one.minY) <= 1 && abs(card.maxY - three.maxY) <= 1)
     #expect(heading.maxY < one.minY && one.minY - heading.maxY <= 8)
+    // The hairline between rows is drawn (inset 10 pt, absent above the first row): at the
+    // boundary the card grey sits at x = 5 and x = 15 holds a pixel that differs from the row's
+    // own card grey. Values are compared with each other, not with fixed greys, because the
+    // bitmap's colour profile shifts them.
+    let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let scale = CGFloat(bitmap.pixelsWide) / max(1, view.bounds.width)
+    func grey(_ x: CGFloat, _ y: CGFloat) -> Int? {
+        let px = Int(x * scale)
+        let py = Int(y * scale)
+        guard px >= 0, py >= 0, px < bitmap.pixelsWide, py < bitmap.pixelsHigh else { return nil }
+        return bitmap.colorAt(x: px, y: py)?.usingColorSpace(.deviceGray).map { Int(($0.whiteComponent * 255).rounded()) }
+    }
+    let body = try #require(grey(card.minX + 15, two.minY + 4), "the row's own card grey")
+    let boundary = (0...2).compactMap { grey(card.minX + 15, two.minY + CGFloat($0) * 0.5) }
+    let outside = (0...2).compactMap { grey(card.minX + 5, two.minY + CGFloat($0) * 0.5) }
+    let firstRow = (0...2).compactMap { grey(card.minX + 15, one.minY + CGFloat($0) * 0.5) }
+    #expect(boundary.contains { abs($0 - body) > 5 }, "a hairline is drawn between the rows: \(boundary) vs \(body)")
+    #expect(outside.allSatisfy { abs($0 - body) <= 3 }, "the hairline is inset 10 pt, so x = 5 is card grey: \(outside)")
+    #expect(firstRow.allSatisfy { abs($0 - body) <= 3 }, "no hairline sits above the first row: \(firstRow)")
 }
+
 

@@ -8,8 +8,8 @@ public enum SettingsSearchKey: Sendable {
     case `return`
 }
 
-/// The panes the boards draw, in their draw order. Raw values are the check names
-/// (`--ararat-screen=settings-tabs`).
+/// The panes the boards draw, in their draw order. A built pane's raw value names its screen check
+/// (`--ararat-screen=settings-tabs`), which is why Air Traffic Control is `air-traffic`.
 enum SettingsPaneID: String, CaseIterable {
     case general, appearance, websites, tabs, shortcuts
     case airTraffic = "air-traffic"
@@ -71,7 +71,9 @@ enum SettingsRegistry {
 
     static func pane(_ id: SettingsPaneID) -> SettingsPane? { byID[id] }
     static func pane(id: String) -> SettingsPane? { SettingsPaneID(rawValue: id).flatMap(pane) }
-    static func pane(page: SettingsModel.Page) -> SettingsPane? { pane(page.paneID) }
+    /// The pane a page belongs to. Every `Page` case maps to a pane in the registry (the space
+    /// pages map to Spaces), so this cannot miss.
+    static func pane(page: SettingsModel.Page) -> SettingsPane { byID[page.paneID]! }
 
     /// The search index: every built pane's rows, in the rail's order.
     static func rows(_ model: SettingsModel) -> [SettingsModel.Row] { built.flatMap { $0.rows(model) } }

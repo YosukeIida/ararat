@@ -3,28 +3,42 @@ import AraratKit
 import AraratUI
 
 // U27a's settings screen checks: `--ararat-screen=settings-<pane>` opens the settings window on
-// that pane and reads it through marker views and the model (the VM has no accessibility tree in
-// process, `docs/HANDOVER.md:251`). One launch per pane keeps a failure attributable: the four
-// built panes name their own rows, and `settings-frame` and `settings-search` cover the frame
-// and the search's keyboard model.
+// that pane and reads it through marker views and the model (the VM's accessibility tree is empty
+// in process, as `SidebarChecks.swift` and `SiteControlsCheck.swift` say). One launch per pane
+// keeps a failure attributable: the four built panes name their own rows, and `settings-frame` and
+// `settings-search` cover the frame and the search's keyboard model.
 @MainActor
 final class SettingsScreenCheck {
+    /// One mode per `--ararat-screen=` argument. The app's check mode is `screen-` plus the raw
+    /// value, the form every check family uses, and `screenMode`/`mode` are the only two ways in.
     enum Mode: String, CaseIterable {
         case frame = "settings-frame"
         case search = "settings-search"
         case tabs = "settings-tabs"
         case shortcuts = "settings-shortcuts"
-        case airTraffic = "settings-airtraffic"
+        case airTraffic = "settings-air-traffic"
         case spaces = "settings-spaces"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs: "tabs"
-            case .shortcuts: "shortcuts"
-            case .airTraffic: "air-traffic"
-            case .spaces: "spaces"
+            case .shortcuts, .airTraffic, .spaces: String(rawValue.dropFirst("settings-".count))
             }
+        }
+
+        /// The `--ararat-screen=` argument, without the prefix.
+        var screenArgument: String { rawValue }
+
+        /// `screen-settings-tabs`: the check mode `main.swift` sets for the argument.
+        var checkMode: String { "screen-" + rawValue }
+
+        /// The mode an `--ararat-screen=` argument names (`settings-tabs` → `.tabs`).
+        static func screenMode(_ argument: String) -> Mode? { Mode(rawValue: argument) }
+
+        /// The mode a check mode names (`screen-settings-tabs` → `.tabs`), nil for another family.
+        static func mode(_ checkMode: String) -> Mode? {
+            checkMode.hasPrefix("screen-") ? Mode(rawValue: String(checkMode.dropFirst("screen-".count))) : nil
         }
 
         var ledger: [String] {
@@ -35,23 +49,16 @@ final class SettingsScreenCheck {
             case .spaces: ["rows", "space_page"]
             }
         }
-
-        /// The screen name maps to the mode (`--ararat-screen=settings-tabs`); the hidden
-        /// variant is not built, because every condition reads the visible window.
-        static func mode(_ name: String) -> Mode? {
-            name.hasPrefix("screen-") ? Mode(rawValue: String(name.dropFirst("screen-".count))) : nil
-        }
     }
 
     /// Every check reads the frame first, then its own pane (or the search).
     static let common = ["window_open", "window_size", "rail_width", "pane_rows", "header", "title"]
 
-    static func conditionNames(_ mode: Mode, screen: Bool) -> [String] {
-        common + mode.ledger + (screen ? ["capture"] : [])
-    }
+    /// Every condition reads the visible window, so every check is a screen check and captures.
+    static func conditionNames(_ mode: Mode) -> [String] { common + mode.ledger + ["capture"] }
 
-    static func conditionResults(_ conditions: [String: Bool], mode: Mode, screen: Bool) -> (values: [String: Bool], failed: [String]) {
-        let names = conditionNames(mode, screen: screen)
+    static func conditionResults(_ conditions: [String: Bool], mode: Mode) -> (values: [String: Bool], failed: [String]) {
+        let names = conditionNames(mode)
         return (Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
                 names.filter { conditions[$0] != true })
     }
@@ -72,9 +79,10 @@ final class SettingsScreenCheck {
     var previousMarker = ""
     var pageWithoutResults = ""
     var noResultsShown = false
-    // The selection before an arrow moved it, so the check can see it moved rather than stayed.
-    // The history length before a Return, so the check can tell the page was pushed.
+    // The history length before a page push or a Return, so the check can tell it was pushed.
     var historyBefore = -1
+    // The hit row the search opened, so the next tick can see the highlight stayed.
+    var hitRowID = ""
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -86,9 +94,9 @@ final class SettingsScreenCheck {
 }
 
 extension Runtime {
-    func settingsCheckDiagnostics(mode: String, screen: Bool) -> [String: Any] {
+    func settingsCheckDiagnostics(mode: String) -> [String: Any] {
         guard let check = settingsCheck, let mode = SettingsScreenCheck.Mode.mode(mode) else { return ["phase": browserCheckPhase] }
-        let result = SettingsScreenCheck.conditionResults(check.conditions, mode: mode, screen: screen)
+        let result = SettingsScreenCheck.conditionResults(check.conditions, mode: mode)
         let probe = (root ?? self).settings?.checkProbe()
         var values: [String: Any] = [
             "check": mode.rawValue, "screen": mode.rawValue,
@@ -137,11 +145,11 @@ extension Runtime {
         func step(_ next: Int) { check.phase = next; browserCheckPhase = next }
         func end(_ name: String, _ ok: Bool) {
             check.report(name, ok)
-            if !ok { finishBrowserCheck(ok: false, values: settingsCheckDiagnostics(mode: screenName, screen: true)) }
+            if !ok { finishBrowserCheck(ok: false, values: settingsCheckDiagnostics(mode: screenName)) }
             else { step(check.phase + 1) }
         }
         func finish() {
-            let failed = SettingsScreenCheck.conditionNames(mode, screen: true).filter { check.conditions[$0] != true }
+            let failed = SettingsScreenCheck.conditionNames(mode).filter { check.conditions[$0] != true }
             finishBrowserCheck(ok: failed.isEmpty,
                                values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images])
         }
@@ -306,6 +314,21 @@ extension Runtime {
 
     // MARK: settings-search
 
+    /// The selected result is drawn (M1): the selection grey at the row's left inside edge and
+    /// another result's own grey there must differ. Marker frames alone cannot tell a drawn fill.
+    private func selectionIsDrawn(_ probe: SettingsCheckProbe) -> Bool {
+        guard let marker = probe.selectedResultMarker, let row = probe.marker(marker) else { return false }
+        let other = probe.markers(prefix: "result-").first {
+            $0.id != SettingsModel.selectedResultMarker && $0.id != marker
+        }.map(\.frame)
+        guard let other else { return false }
+        // 6 pt in from each row's left edge, level with its middle: inside the fill, left of the title.
+        let greys = probe.greys(at: [NSPoint(x: row.minX + 6, y: row.midY),
+                                     NSPoint(x: other.minX + 6, y: other.midY)])
+        guard let selected = greys[0], let plain = greys[1] else { return false }
+        return abs(selected - plain) > 10
+    }
+
     private func settingsSearchTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck, note: (String) -> Void, trace: (String) -> Void,
                                     step: (Int) -> Void, end: (String, Bool) -> Void, finish: () -> Void, capture: (String) -> Bool,
                                     near: (CGFloat, CGFloat) -> Bool) {
@@ -319,7 +342,7 @@ extension Runtime {
             }
             trace("first=\(probe.selectedResultTitle ?? "-")")
             check.report("first_selected", probe.selectedIndex == 0 && selected.height >= 24
-                && probe.selectedResultTitle == probe.resultTitles.first)
+                && probe.selectedResultTitle == probe.resultTitles.first && selectionIsDrawn(probe))
             _ = probe.searchKey(.down)
             _ = probe.searchKey(.down)
             step(4)
@@ -340,7 +363,9 @@ extension Runtime {
                 note("index after one up: \(probe.selectedIndex) marker=\(probe.selectedResultMarker ?? "-")")
                 return
             }
-            check.report("arrow_moves", true)
+            let drawn = selectionIsDrawn(probe)
+            if !drawn { note("the moved selection is not drawn") }
+            check.report("arrow_moves", drawn)
             check.expectedRowID = probe.selectedResultID ?? ""
             check.historyBefore = probe.historyIndex
             trace("return on \(check.expectedRowID)")
@@ -367,19 +392,35 @@ extension Runtime {
             }
             let greys = probe.greys(at: [NSPoint(x: row.minX + 1.5, y: row.midY), NSPoint(x: row.minX + 6, y: row.midY)])
             trace("hit \(id) row=\(row) offset=\(offset) greys=\(greys)")
+            // Both reads must land: one nil and one dark pixel must not read as an inset.
+            let cards = greys[0]
+            let fills = greys[1]
             check.report("hit_scrolled", offset > 300)
             // Outside the 3 pt fill but inside the card, then inside the fill: the two greys
             // differ, which is the inset render D7 asks for rather than a whole-card fill.
-            check.report("hit_look", row.height >= SettingsMetrics.hitRowHeight
-                && abs((greys[0] ?? 0) - (greys[1] ?? 0)) > 10)
-            check.report("highlight_stays", probe.marker(SettingsModel.rowMarker(id)) != nil)
+            check.report("hit_look", row.height >= SettingsMetrics.hitRowHeight && cards != nil && fills != nil
+                && abs((cards ?? 0) - (fills ?? 0)) > 10)
+            check.hitRowID = id
             guard capture("search") else { end("capture", false); return }
+            step(9)
+        case 9:
+            // With the query cleared the rail is the pane list again; the detail keeps the pane
+            // and the row keeps its fill ("The highlight stays", E-Search).
+            probe.setQuery("")
+            guard let row = probe.marker(SettingsModel.rowMarker(check.hitRowID)), check.hitRowID == probe.highlightedRowID,
+                  probe.pageID == "shortcuts" else {
+                note("after clearing: highlight=\(probe.highlightedRowID ?? "-") page=\(probe.pageID)"); return
+            }
+            let greys = probe.greys(at: [NSPoint(x: row.minX + 1.5, y: row.midY), NSPoint(x: row.minX + 6, y: row.midY)])
+            check.report("highlight_stays", greys[0] != nil && greys[1] != nil
+                && abs((greys[0] ?? 0) - (greys[1] ?? 0)) > 10)
+            guard capture("search-cleared") else { end("capture", false); return }
             finish()
         default: break
         }
     }
 
-    // MARK: settings-tabs, settings-shortcuts, settings-airtraffic, settings-spaces
+    // MARK: settings-tabs, settings-shortcuts, settings-air-traffic, settings-spaces
 
     private func settingsPaneTick(_ mode: SettingsScreenCheck.Mode, _ probe: SettingsCheckProbe, check: SettingsScreenCheck,
                                   note: (String) -> Void, trace: (String) -> Void, step: (Int) -> Void, end: (String, Bool) -> Void,
@@ -401,6 +442,9 @@ extension Runtime {
                 }
                 check.report("rows", rows.count == probe.spaceIDs.count
                     && zip(rows, rows.dropFirst()).allSatisfy { $0.frame.minY < $1.frame.minY })
+                // The page push is what the space page condition is about, so its history length
+                // is read before the push.
+                check.historyBefore = probe.historyIndex
                 guard pushSpace(0) else { note("no space to push"); return }
                 step(3)
                 return
@@ -416,8 +460,10 @@ extension Runtime {
                     note("rows missing: \(markers.filter { probe.marker($0) == nil })"); return
                 }
                 check.report("rows", true)
-            default:
-                check.report("rows", false)
+            // The frame and search modes have their own phase machines, so a pane switch over
+            // every mode case leaves these two total without a dead default.
+            case .frame, .search:
+                return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }
             finish()
@@ -430,7 +476,7 @@ extension Runtime {
                 note("space page rows: \(pageRows.map { $0 != nil })"); return
             }
             trace("space page \(probe.pageID) back=\(probe.canGoBack)")
-            check.report("space_page", probe.canGoBack)
+            check.report("space_page", probe.historyIndex > check.historyBefore && probe.canGoBack)
             guard capture("space-page") else { end("capture", false); return }
             finish()
         default: break

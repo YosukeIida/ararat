@@ -8,8 +8,8 @@ public struct SettingsRailPaneInfo: Sendable {
     public let title: String
 }
 
-/// What a settings screen check reads from the running window. The VM cannot read SwiftUI's
-/// accessibility tree in process (`docs/HANDOVER.md:251`), so the probe finds the views by the
+/// What a settings screen check reads from the running window. The VM's accessibility tree is
+/// empty in process (as `SidebarChecks.swift` says), so the probe finds the views by the
 /// identifiers `SettingsMarker` sets and reports frames, the model's state and pixels; the check
 /// in the app drives it through the same functions the window's own controls call.
 @MainActor

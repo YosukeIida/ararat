@@ -110,14 +110,14 @@ public final class SettingsModel: ObservableObject {
     var panes: [SettingsPane] { SettingsRegistry.built }
     var title: String {
         if case .space = page, let space { return space.title }
-        return SettingsRegistry.pane(page: page)?.title ?? "Settings"
+        return SettingsRegistry.pane(page: page).title
     }
     /// The header's icon, from the pane the page belongs to (a space page shows the space's own).
-    var icon: String { SettingsRegistry.pane(page: page)?.icon ?? "gearshape" }
+    var icon: String { SettingsRegistry.pane(page: page).icon }
     /// The header's one line: a space page names its tabs and profile, a pane its own subtitle.
     var subtitle: String {
         if let space { return "\(tabCountLabel(space)) · \(space.profileName)" }
-        return SettingsRegistry.pane(page: page)?.subtitle ?? ""
+        return SettingsRegistry.pane(page: page).subtitle
     }
     /// The pane says in plain words that the routing arrives with the engine.
     static let airTrafficSubtitle = "Links other apps hand to Ararat follow these routes once the browser engine arrives."

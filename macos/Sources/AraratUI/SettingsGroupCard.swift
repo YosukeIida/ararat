@@ -92,9 +92,9 @@ struct SettingsCardRow<Content: View>: View {
     }
 }
 
-/// A marker the screen check finds by identifier in the window's view tree. The VM cannot read
-/// SwiftUI's accessibility tree in process (`docs/HANDOVER.md:251`), so every frame a check
-/// measures comes from one of these, as the Look popover and the Shortcuts rows do.
+/// A marker the screen check finds by identifier in the window's view tree. The VM's
+/// accessibility tree is empty in process, so every frame a check measures comes from one of
+/// these, as the Look popover and the Shortcuts rows do.
 struct SettingsMarker: NSViewRepresentable {
     let id: String
     func makeNSView(context: Context) -> SettingsMarkerView {
