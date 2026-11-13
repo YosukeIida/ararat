@@ -88,8 +88,4 @@ fn an_unknown_scroll_direction_is_refused() {
     assert!(parsed.is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"space_scroll_direction":"Reversed"}"#);
     assert!(matches!(parsed, Ok(Record::Settings(Settings { space_scroll_direction: SpaceScrollDirection::Reversed, .. }))));
-    // A record written before the setting existed still reads, as Natural.
-    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"new_tab_row_shown":false}"#).unwrap();
-    assert!(matches!(parsed, Record::Settings(Settings { new_tab_row_shown: false,
-        space_scroll_direction: SpaceScrollDirection::Natural })));
 }

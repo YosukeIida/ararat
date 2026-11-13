@@ -269,11 +269,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
                 _ = try opened.selectItem(windowId: windowID, id: todayA)
             } else if seedSettings {
-                // U27a: two spaces with three Today tabs each, so the rail's search finds space
-                // rows and the Spaces pane has more than one row to list and push.
+                // U27a: three spaces with three Today tabs each, so the rail's search finds space
+                // rows and the Spaces pane has more than one row to list and push. U27c's wheel
+                // check needs a third, so the middle space has a neighbour on both sides.
                 _ = try opened.createSpace(windowId: windowID, name: "Personal", spaceId: "settings-personal")
                 _ = try opened.createSpace(windowId: windowID, name: "Work", spaceId: "settings-work")
-                for space in ["settings-personal", "settings-work"] {
+                _ = try opened.createSpace(windowId: windowID, name: "Play", spaceId: "settings-play")
+                for space in ["settings-personal", "settings-work", "settings-play"] {
                     try opened.showSpace(windowId: windowID, spaceId: space)
                     for name in ["one", "two", "three"] {
                         _ = try opened.createTab(windowId: windowID, url: "about:blank?settings-\(name)")

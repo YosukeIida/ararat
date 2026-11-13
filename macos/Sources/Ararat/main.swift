@@ -991,8 +991,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileCheck = ["profiles", "ext-windows", "incognito", "private-window", "private-isolation", "screen-private-window", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
     self.sidebarChecksActive = sidebarCheckActive
-    // U27a's settings screen checks seed their own two spaces (the search needs space rows and
-    // the Spaces pane needs more than one row), so they are neither single nor sidebar seeds.
+    // U27a's settings screen checks seed their own three spaces (the search needs space rows, the
+    // Spaces pane needs more than one row, and U27c's wheel needs a middle space), so they are
+    // neither single nor sidebar seeds.
     let settingsCheckActive = SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil
     let singleCheck = (browserCheckMode != nil && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && browserCheckMode != "relaunch-seed") || (quitMode != nil && quitMode != "quit")
     let linkCheck = browserCheckMode == "screen-links"
