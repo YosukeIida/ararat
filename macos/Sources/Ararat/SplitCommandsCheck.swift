@@ -163,7 +163,9 @@ extension Runtime {
       guard let pane = newMember(in: members, known: [check.left, check.right]) else { fail("no new member after Add Right Split: \(members)"); return }
       check.added = pane
       check.mark("add_right", members == [check.left, check.right, pane])
-      // The sidebar's own focused pane, not the guard's active id (review 2, SF3).
+      // The sidebar's own focused pane, not the guard's active id (review 2, SF3), and waited for:
+      // the screen run's screenshot lands first, so a one-shot read can miss the focus.
+      guard ready("add right focus", sidebar.focusedPane?.id == pane) else { return }
       check.mark("add_right_focus", sidebar.focusedPane?.id == pane)
       check.mark("add_right_new_tab_page", rowURL(pane) == "chrome://newtab/")
       check.frames = adapter.checkSplitFocus().panes
@@ -350,31 +352,51 @@ extension Runtime {
       let members = adapter.checkSplitMembers(check.split)
       check.mark("drop_refused", check.conditions["drop_refused"] == true && members.count == check.memberCount)
       guard members.count == check.memberCount else { fail("the refused drop changed the split: \(members)"); return }
-      check.parentPanes = state.panes
       check.loneMember = members.last ?? ""
-      guard !check.loneMember.isEmpty, let shown = snapshot.shownSpaceId else { fail("no member for the lone check"); return }
+      guard !check.loneMember.isEmpty else { fail("no member for the lone check"); return }
+      // §4.6: the second window takes a member of a split the first window draws — its pane keeps
+      // the row and shows the captured placeholder, and the first window becoming key takes the
+      // page back. The refused drop left A on a loose row, so put A on a member first; then A both
+      // draws the split and holds a member as its selection when the reclaim fires.
+      select(check.left, next: 21)
+    case 21:
+      guard ready("parent split drawn", snapshot.selectedId == check.left && host.activeItemId() == check.left
+                  && state.panes == check.memberCount && state.panes > 1) else { return }
+      // Captured here, while A draws its own split: the claim below is A's pane count staying the
+      // same while a member is borrowed and after it comes back.
+      check.parentPanes = state.panes
+      guard let shown = snapshot.shownSpaceId else { fail("no space for the second window"); return }
       let child = Runtime()
       child.root = self
       do { try child.start(session: adapter.session, shownSpace: shown) } catch { fail("cannot start the second window: \(error)"); return }
       children.append(child)
       check.child = child
-      browserCheckPhase = 21
-    case 21:
+      browserCheckPhase = 22
+    case 22:
       guard let child = check.child, let childAdapter = child.adapter else { return }
       guard ready("second window", child.snapshot.shownSpaceId == snapshot.shownSpaceId),
             let url = rowURL(check.loneMember) else { return }
-      if child.snapshot.selectedId != check.loneMember { childAdapter.select(id: check.loneMember, url: url, wholeSplit: false) }
-      browserCheckPhase = 22
-    case 22:
+      // B is the window the user is in when it takes the member: B key, A not key. A's own key
+      // change at the end of phase 23 is what must reclaim the page.
+      guard ready("second window key", child.host?.window().isKeyWindow == true) else {
+        child.host?.window().makeKeyAndOrderFront(nil)
+        return
+      }
+      if child.snapshot.selectedId != check.loneMember {
+        childAdapter.select(id: check.loneMember, url: url, wholeSplit: false)
+      }
+      browserCheckPhase = 23
+    case 23:
       guard let child = check.child, let childAdapter = child.adapter else { return }
       let childLayout = childAdapter.checkSplitLayout()
       // The verification lives in the child window, so its state is part of the wait's trace and
       // of the failure (review 2/design's VM: the parent's details alone could not tell which
-      // half of the claim failed).
+      // half of the claim failed). Both window ids are printed: m_live_in is only readable when
+      // A's own id sits beside it (design's VM, phase 23).
       let childState = "child_selected=\(child.snapshot.selectedId ?? "nil") child_active=\(child.host?.activeItemId() ?? "nil") "
-        + "child_panes=\(childLayout.panes) child_split=\(childLayout.split) "
-        + "m_live_in=\(childAdapter.checkLiveWindow(check.loneMember) ?? "nil") child_window=\(childAdapter.checkWindowID) "
-        + "m=\(check.loneMember)"
+        + "child_panes=\(childLayout.panes) child_split=\(childLayout.split) child_window=\(childAdapter.checkWindowID) "
+        + "a_selected=\(snapshot.selectedId ?? "nil") a_panes=\(state.panes) a_window=\(adapter.checkWindowID) "
+        + "m_live_in=\(childAdapter.checkLiveWindow(check.loneMember) ?? "nil") m=\(check.loneMember)"
       check.wait("lone member", childState)
       if !(child.snapshot.selectedId == check.loneMember && child.host?.activeItemId() == check.loneMember && childLayout.panes == 0) {
         if check.waitCount > 60 { fail("lone member never resolved (\(childState))") }
@@ -382,27 +404,26 @@ extension Runtime {
       }
       check.mark("lone_member")
       check.mark("lone_engine", childLayout.panes == 0 && !childLayout.split)
+      // The split stays in A's workspace and A still draws it (A is on a member), with M a member
+      // whose page is now in B: the S4 claim, before any key change.
       let parentLayout = adapter.checkSplitLayout()
       check.mark("lone_source_split", parentLayout.panes == check.parentPanes && parentLayout.panes > 1
-                  && adapter.checkSplitMembers(check.split).contains(check.loneMember))
-      // MF1, the real path (review 3, N1): the first window becomes key and reclaims the member,
-      // so it draws the split again with M live here.
+                  && adapter.checkSplitMembers(check.split).contains(check.loneMember)
+                  && childAdapter.checkWindowID != adapter.checkWindowID)
+      // MF1, the real path (review 2, N1 / review 3): A is key and its selection is a split member,
+      // so A's own key change reclaims the borrowed page through takeRemoteSelection.
       window.makeKeyAndOrderFront(nil)
-      browserCheckPhase = 23
-    case 23:
+      browserCheckPhase = 24
+    case 24:
       guard let child = check.child else { return }
-      // §4.6 takes back the window's *selected* pages: A's row here is a loose tab, so the key
-      // change alone reclaims nothing. Put A on a member of the split and the selection brings
-      // the borrowed panes back (A passes wholeSplit true through the sidebar's split pick).
-      if snapshot.selectedId != check.left || host.activeItemId() != check.left {
-        select(check.left, next: 23)
-        return
-      }
+      // A's selection is already a member: the key change alone must bring M's live tab back. A
+      // selection here would reclaim through select(wholeSplit) and hide the key-change path.
+      guard ready("A on a split member", snapshot.selectedId == check.left && host.activeItemId() == check.left) else { return }
       let childLayout = childAdapterLayout(check)
       check.wait("first window reclaims", "A selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") "
-                 + "A panes=\(adapter.checkSplitLayout().panes) A key=\(window.isKeyWindow) "
-                 + "B key=\(child.host?.window().isKeyWindow == true) m_live_in=\(adapter.checkLiveWindow(check.loneMember) ?? "nil") "
-                 + "m=\(check.loneMember) child_panes=\(childLayout)")
+                 + "A window=\(adapter.checkWindowID) A panes=\(adapter.checkSplitLayout().panes) A key=\(window.isKeyWindow) "
+                 + "B window=\(child.adapter?.checkWindowID ?? "nil") B key=\(child.host?.window().isKeyWindow == true) "
+                 + "m_live_in=\(adapter.checkLiveWindow(check.loneMember) ?? "nil") m=\(check.loneMember) child_panes=\(childLayout)")
       guard window.isKeyWindow,
             adapter.checkLiveWindow(check.loneMember) == adapter.checkWindowID,
             adapter.checkSplitLayout().panes == check.parentPanes,
@@ -412,8 +433,8 @@ extension Runtime {
       }
       // …and B becoming key takes only M back, never the whole split.
       child.host?.window().makeKeyAndOrderFront(nil)
-      browserCheckPhase = 24
-    case 24:
+      browserCheckPhase = 25
+    case 25:
       guard let child = check.child, let childAdapter = child.adapter else { return }
       // B is key and has taken M alone, so it draws no split; A keeps its split and its members.
       guard ready("lone stays", child.host?.window().isKeyWindow == true
@@ -427,8 +448,8 @@ extension Runtime {
       if child.snapshot.selectedId == check.loneMember, let url = rowURL(check.loneMember) {
         childAdapter.select(id: check.loneMember, url: url, wholeSplit: true)
       }
-      browserCheckPhase = 25
-    case 25:
+      browserCheckPhase = 26
+    case 26:
       guard let child = check.child, let childAdapter = child.adapter else { return }
       guard ready("whole split in the second window", childAdapter.checkSplitLayout().panes == check.parentPanes
                   && childAdapter.checkSplitLayout().split) else { return }
