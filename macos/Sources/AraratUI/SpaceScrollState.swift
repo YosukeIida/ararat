@@ -1,3 +1,4 @@
+import AraratKit
 import Foundation
 
 struct SpaceScrollEvent {
@@ -31,8 +32,15 @@ struct SpaceScrollState {
     private var wheel: [(time: TimeInterval, delta: Double)] = []
     private var wheelPausedUntil = -Double.infinity
 
-    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double, presentationOffset: Double = 0) -> Action {
+    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double, presentationOffset: Double = 0, direction: SpaceScrollDirection = .natural) -> Action {
         guard count > 0 else { return .vertical }
+        // The one place the Spaces pane's direction applies (D3, architecture §7): the event's
+        // horizontal delta is turned around before the state machine reads it, so the wheel's
+        // paging after its system-inversion cancellation, a trackpad gesture's follow and its
+        // release, and the pull past either end all go the other way. Natural leaves the
+        // numbers below exactly as they were, which is Arc's behaviour as built.
+        var event = event
+        if direction == .reversed { event.dx = -event.dx }
         if event.kind == .wheel {
             guard abs(event.dx) > abs(event.dy) else { return .vertical }
             guard event.time >= wheelPausedUntil else { return .ignored }
