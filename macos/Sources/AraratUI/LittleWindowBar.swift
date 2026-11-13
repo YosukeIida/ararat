@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 /// U27h: the Little Window's bar and its two menus. Values from the D-LittleWindow board
 /// (colours, radii, the 28 pt buttons, the 8 pt dot) with the design's structural step rule:
@@ -71,6 +72,14 @@ public struct LittleWindowBarModel: Equatable {
     /// The destination ⌘O opens in: the stored default, else the profile's first space.
     public var destination: LittleWindowDestination? {
         spaces.first { $0.id == defaultSpaceID } ?? spaces.first
+    }
+
+    /// U27i D9: a stored default that names a space of this profile, or nil so the caller asks
+    /// the core for the profile's most recent space (the built-in value and the fallback for a
+    /// named space of another profile or a deleted one).
+    public static func namedDestination(_ openIn: LittleWindowOpenIn, spaces: [LittleWindowDestination]) -> String? {
+        guard case .space(let id) = openIn, spaces.contains(where: { $0.id == id }) else { return nil }
+        return id
     }
 
     public var openInTitle: String {

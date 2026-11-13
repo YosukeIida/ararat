@@ -446,8 +446,8 @@ func settingsErrorsSearchAndEdgeBounceUseTheirVisibleValues() {
     #expect(model.error == "unknown space missing-id")
     model.navigate(.tabs)
     #expect(model.error == nil)
-    model.query = "name"
-    #expect(model.results.map(model.resultTitle) == ["Name — Work"])
+    model.query = "This space"
+    #expect(model.results.map(model.resultTitle) == ["Name — Work", "Icon — Work", "Look — Work", "Profile — Work"])
     #expect(SettingsModel.iconDraft("🔬😀") == "😀")
     #expect(SettingsModel.iconDraft("👨‍👩‍👧‍👦") == "👨‍👩‍👧‍👦")
     #expect(SettingsModel.settingsOffset(100, index: 0) < 100)

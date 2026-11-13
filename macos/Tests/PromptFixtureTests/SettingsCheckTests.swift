@@ -12,6 +12,7 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.screenMode("settings-air-traffic") == .airTraffic)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-appearance") == .appearance)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-spaces") == .spaces)
+    #expect(SettingsScreenCheck.Mode.screenMode("settings-little-window") == .littleWindow)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-frame") == .frame)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-search") == .search)
     let checkMode = SettingsScreenCheck.Mode.screenMode("settings-tabs")?.checkMode

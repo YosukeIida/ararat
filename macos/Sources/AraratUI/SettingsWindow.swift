@@ -52,6 +52,7 @@ public final class SettingsWindowController: NSWindowController {
         model.airTraffic.load()
         model.readSpaceScrollDirection()
         model.readAppearance()
+        model.readLittleWindow()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -79,6 +80,18 @@ public final class SettingsWindowController: NSWindowController {
     public func setAppearanceHandlers(newTabRow: @escaping (Bool) -> Void, tooltips: @escaping (Bool) -> Void) {
         model.newTabRow = newTabRow
         model.tooltips = tooltips
+    }
+
+    /// Hands the Little Window pane the app-wide shortcut registration (U27i): the pane reads the
+    /// device record into it and every change registers at once.
+    public func setLittleWindowHotKeyCenter(_ center: LittleWindowHotKeyCenter?) {
+        model.hotKeyCenter = center
+    }
+
+    /// Hands a written switch to the Little Windows already open, so the pane's change applies
+    /// without reopening one.
+    public func setLittleWindowHandlers(_ handler: @escaping (LittleWindowOpenIn, Bool, Bool) -> Void) {
+        model.littleWindowSettings = handler
     }
 
     /// Opens the window on a pane for a check: the ordinary open path (a shown space opens its
@@ -228,6 +241,8 @@ private struct SettingsDetail: View {
                         SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
                     case .appearance:
                         SettingsAppearanceSection(model: model)
+                    case .littleWindow:
+                        SettingsLittleWindowSection(model: model)
                     case .spaces:
                         VStack(spacing: SettingsMetrics.cardGap) {
                             VStack(spacing: 0) {
@@ -420,6 +435,112 @@ private struct SettingsAppearanceSection: View {
         }
         .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.lookRowId)))
         .id(SettingsModel.lookRowId)
+    }
+}
+
+/// U27i: the Little Window pane (E-LittleWindow). The board's three cards: the Air Traffic
+/// Control link for which links open in one, the global shortcut's recorder, and the Open-in
+/// destination with the two switches. The shortcut is Carbon's (O3), so the row carries no
+/// permission copy; a registration another app holds shows its message under the row.
+private struct SettingsLittleWindowSection: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(spacing: SettingsMetrics.cardGap) {
+            SettingsGroupCard {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.littleWindowLinkRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.littleWindowLinkRowId)) {
+                    Button { model.openAirTraffic() } label: {
+                        HStack(spacing: 12) {
+                            SettingsRowLabel(title: "Which links open in a Little Window",
+                                             subtitle: "Set in Air Traffic Control: its default destination and routes")
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Which links open in a Little Window, set in Air Traffic Control")
+                }.id(SettingsModel.littleWindowLinkRowId)
+            }
+            SettingsGroupCard {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.littleWindowShortcutRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.littleWindowShortcutRowId)) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Open a Little Window from any app")
+                        Text(model.hotKeyRecording ? "Type shortcut" : "A shortcut that works while Ararat is in the background")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let message = model.hotKeyMessage {
+                            Text(message).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                                .background(SettingsMarker(id: "little-window-shortcut-message"))
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Button { model.toggleLittleWindowHotKeyRecording() } label: {
+                        shortcutFace.frame(width: 140, alignment: .trailing)
+                            .background(SettingsMarker(id: SettingsModel.littleWindowShortcutRecorderMarker))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Record the shortcut that opens a Little Window")
+                }.id(SettingsModel.littleWindowShortcutRowId)
+            }
+            SettingsGroupCard {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.littleWindowOpenInRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.littleWindowOpenInRowId)) {
+                    SettingsRowLabel(title: "“Open in” button sends the page to",
+                                     subtitle: "Most Recent Space, or one space by name")
+                    Picker("“Open in” button sends the page to",
+                           selection: Binding(get: { model.littleWindowOpenIn },
+                                              set: model.setLittleWindowOpenIn)) {
+                        Text("Most Recent Space").tag(LittleWindowOpenIn.mostRecent)
+                        ForEach(model.littleWindowSpaces, id: \.id) { space in
+                            Text(space.title).tag(LittleWindowOpenIn.space(space.id))
+                        }
+                    }
+                    .labelsHidden().frame(width: 170)
+                    .background(SettingsMarker(id: SettingsModel.littleWindowOpenInMenuMarker))
+                    .accessibilityLabel("“Open in” button sends the page to")
+                }.id(SettingsModel.littleWindowOpenInRowId)
+                SettingsCardRow(hit: model.highlighted == SettingsModel.littleWindowCloseAfterRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.littleWindowCloseAfterRowId)) {
+                    SettingsRowLabel(title: "Close the Little Window after opening in a space",
+                                     subtitle: model.littleWindowCloseAfter ? "On" : "Off")
+                    Toggle("Close the Little Window after opening in a space",
+                           isOn: Binding(get: { model.littleWindowCloseAfter }, set: model.setLittleWindowCloseAfter))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.littleWindowCloseAfterSwitchMarker))
+                }.id(SettingsModel.littleWindowCloseAfterRowId)
+                SettingsCardRow(hit: model.highlighted == SettingsModel.littleWindowRememberRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.littleWindowRememberRowId)) {
+                    SettingsRowLabel(title: "Remember its size and place",
+                                     subtitle: model.littleWindowRememberFrame ? "On" : "Off")
+                    Toggle("Remember its size and place",
+                           isOn: Binding(get: { model.littleWindowRememberFrame }, set: model.setLittleWindowRememberFrame))
+                        .toggleStyle(.switch).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.littleWindowRememberSwitchMarker))
+                }.id(SettingsModel.littleWindowRememberRowId)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(LittleWindowHotKeyRecorderBridge(recording: model.hotKeyRecording,
+                                                     onEvent: model.handleLittleWindowHotKeyEvent,
+                                                     onCancel: model.cancelLittleWindowHotKeyRecording)
+            .frame(width: 1, height: 1))
+    }
+
+    /// The board's key column: the keycaps, or the accent recorder box until keys are pressed.
+    @ViewBuilder private var shortcutFace: some View {
+        if model.hotKeyRecording {
+            Text("Type shortcut")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center).padding(.horizontal, 8).frame(height: 30)
+                .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 1))
+        } else if LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey).isEmpty {
+            Text("None").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing).frame(height: 30)
+        } else {
+            SettingsKeycaps(keys: LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey)).fixedSize()
+        }
     }
 }
 

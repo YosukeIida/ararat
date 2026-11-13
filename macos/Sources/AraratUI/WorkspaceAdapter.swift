@@ -374,4 +374,36 @@ extension WorkspaceAdapter {
     public func setLittleWindowFrame(_ frame: LittleWindowFrame?, completion: @escaping Completion<Void> = { _ in }) {
         enqueue({ try self.opened().setLittleWindowFrame(frame: frame) }, completion: completion)
     }
+
+    /// U27i D9: the Open-in destination and close-after are the synced workspace settings; the
+    /// pane reads them on open and writes them through this adapter.
+    public func littleWindowOpenIn(completion: @escaping Completion<LittleWindowOpenIn>) {
+        enqueue({ try self.opened().settings().littleWindowOpenIn }, completion: completion)
+    }
+
+    public func setLittleWindowOpenIn(_ value: LittleWindowOpenIn, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setLittleWindowOpenIn(windowId: self.windowID, openIn: value) }, completion: completion)
+    }
+
+    public func littleWindowCloseAfter(completion: @escaping Completion<Bool>) {
+        enqueue({ try self.opened().settings().littleWindowCloseAfter }, completion: completion)
+    }
+
+    public func setLittleWindowCloseAfter(_ value: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setLittleWindowCloseAfter(windowId: self.windowID, closeAfter: value) }, completion: completion)
+    }
+
+    /// U27i D8: "Remember its size and place" and the global shortcut are device records, read
+    /// beside the frame so a reopen on this Mac reads what the last session wrote.
+    public func littleWindowDevice(completion: @escaping Completion<LittleWindowDevice>) {
+        enqueue({ try self.opened().littleWindowDevice() }, completion: completion)
+    }
+
+    public func setLittleWindowRememberFrame(_ value: Bool, completion: @escaping Completion<Void> = { _ in }) {
+        enqueue({ try self.opened().setLittleWindowRememberFrame(remember: value) }, completion: completion)
+    }
+
+    public func setLittleWindowHotKey(_ value: LittleWindowHotKey?, completion: @escaping Completion<Void> = { _ in }) {
+        enqueue({ try self.opened().setLittleWindowHotKey(key: value) }, completion: completion)
+    }
 }

@@ -1346,3 +1346,58 @@ fn private_workspace_is_volatile_isolated_and_rejects_persistent_operations() {
     std::fs::remove_dir(dir).unwrap();
     assert!(WorkspaceStore::open_private(Profile::Default).snapshot("w".into()).spaces[0].today.is_empty());
 }
+
+// U27i D8/D9: the Little Window's Open-in destination and close-after ride the synced settings
+// record (they survive a reopen and reach the journal); "Remember its size and place" and the
+// global shortcut stay on the device beside the frame (they survive a reopen off the journal).
+#[test]
+fn the_little_window_settings_read_through_the_ffi_and_the_device_stays_off_the_journal() {
+    use ararat_ffi::{LittleWindowHotKey, LittleWindowOpenIn};
+    let path = fresh_db("little-window-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().little_window_open_in, LittleWindowOpenIn::MostRecent);
+    assert!(store.settings().little_window_close_after);
+    assert!(store.little_window_device().remember_frame);
+    assert_eq!(store.little_window_device().hot_key.map(|key| key.key), Some("n".into()));
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings" || kind == "little_window_device"));
+    let snapshot = store.set_little_window_open_in("one".into(), LittleWindowOpenIn::Space("work".into())).unwrap();
+    assert_eq!(snapshot.spaces.len(), store.snapshot("one".into()).spaces.len());
+    store.set_little_window_close_after("one".into(), false).unwrap();
+    store.set_little_window_remember_frame(false).unwrap();
+    let custom = LittleWindowHotKey { key_code: 35, key: "p".into(), command: true, control: false, option: true, shift: false };
+    store.set_little_window_hot_key(Some(custom.clone())).unwrap();
+    assert_eq!(store.settings().little_window_open_in, LittleWindowOpenIn::Space("work".into()));
+    assert!(!store.settings().little_window_close_after);
+    assert!(!store.little_window_device().remember_frame);
+    assert_eq!(store.little_window_device().hot_key, Some(custom.clone()));
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().little_window_open_in, LittleWindowOpenIn::Space("work".into()));
+    assert!(!store.settings().little_window_close_after);
+    assert!(!store.little_window_device().remember_frame);
+    assert_eq!(store.little_window_device().hot_key, Some(custom));
+    // The synced pair reached the journal; the device record never does.
+    let conn = Connection::open(&path).unwrap();
+    let settings: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    let device: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'little_window_device'", [], |row| row.get(0)).unwrap();
+    assert_eq!(settings, 2);
+    assert_eq!(device, 0);
+    drop(conn);
+    // Turning the global shortcut off is a stored None, not the built-in record.
+    store.set_little_window_hot_key(None).unwrap();
+    assert_eq!(store.little_window_device().hot_key, None);
+    // Back at every built-in value, both device rows and the settings row are gone.
+    store.set_little_window_hot_key(Some(LittleWindowHotKey { key_code: 45, key: "n".into(), command: true, control: false, option: true, shift: false })).unwrap();
+    store.set_little_window_remember_frame(true).unwrap();
+    store.set_little_window_open_in("one".into(), LittleWindowOpenIn::MostRecent).unwrap();
+    store.set_little_window_close_after("one".into(), true).unwrap();
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let kinds = records(&path);
+    assert!(!kinds.iter().any(|(kind, _, _)| kind == "little_window_device"));
+    assert_eq!(store.settings().little_window_open_in, LittleWindowOpenIn::MostRecent);
+    assert!(store.settings().little_window_close_after);
+    assert!(store.little_window_device().remember_frame);
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}

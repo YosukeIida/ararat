@@ -683,6 +683,47 @@ impl WorkspaceStore {
         self.store.flush().map_err(Into::into)
     }
 
+    // U27i D8/D9: the Little Window's Open-in destination and close-after ride the synced
+    // settings record; the frame, "Remember its size and place" and the global shortcut stay on
+    // the device.
+    pub fn set_little_window_open_in(&self, window_id: String, open_in: LittleWindowOpenIn) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_open_in(open_in.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn set_little_window_close_after(&self, window_id: String, close_after: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_close_after(close_after);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn little_window_device(&self) -> LittleWindowDevice {
+        self.workspace.lock().unwrap().little_window_device.clone().into()
+    }
+
+    pub fn set_little_window_remember_frame(&self, remember: bool) -> Result<(), CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_remember_frame(remember);
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
+    }
+
+    pub fn set_little_window_hot_key(&self, key: Option<LittleWindowHotKey>) -> Result<(), CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_hot_key(key.map(Into::into));
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
+    }
+
     pub fn last_error(&self) -> Option<String> {
         self.store.last_error()
     }
@@ -954,12 +995,37 @@ pub struct WorkspaceSettings {
     pub new_tab_row_shown: bool,
     pub space_scroll_direction: SpaceScrollDirection,
     pub tooltips_shown: bool,
+    pub little_window_open_in: LittleWindowOpenIn,
+    pub little_window_close_after: bool,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
         Self { new_tab_row_shown: settings.new_tab_row_shown,
             space_scroll_direction: settings.space_scroll_direction.into(),
-            tooltips_shown: settings.tooltips_shown }
+            tooltips_shown: settings.tooltips_shown,
+            little_window_open_in: settings.little_window_open_in.into(),
+            little_window_close_after: settings.little_window_close_after }
+    }
+}
+
+/// U27i D9: the Little Window's Open-in destination, the profile's most recent space or one
+/// space by name (the pane lists the spaces a Little Window of that profile can reach).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum LittleWindowOpenIn { MostRecent, Space(String) }
+impl From<ararat_core::model::LittleWindowOpenIn> for LittleWindowOpenIn {
+    fn from(value: ararat_core::model::LittleWindowOpenIn) -> Self {
+        match value {
+            ararat_core::model::LittleWindowOpenIn::MostRecent => Self::MostRecent,
+            ararat_core::model::LittleWindowOpenIn::Space(id) => Self::Space(id),
+        }
+    }
+}
+impl From<LittleWindowOpenIn> for ararat_core::model::LittleWindowOpenIn {
+    fn from(value: LittleWindowOpenIn) -> Self {
+        match value {
+            LittleWindowOpenIn::MostRecent => Self::MostRecent,
+            LittleWindowOpenIn::Space(id) => Self::Space(id),
+        }
     }
 }
 
@@ -998,6 +1064,48 @@ impl From<ararat_core::model::LittleWindowFrame> for LittleWindowFrame {
 impl From<LittleWindowFrame> for ararat_core::model::LittleWindowFrame {
     fn from(frame: LittleWindowFrame) -> Self {
         Self { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+    }
+}
+
+// U27i D8/O3: the Little Window's global shortcut on this device, flattened so the record needs
+// no nested boundary type. `key_code` is the Carbon virtual key code the registrar registers;
+// the rest is the combination its keycaps show.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LittleWindowHotKey {
+    pub key_code: u16,
+    pub key: String,
+    pub command: bool,
+    pub control: bool,
+    pub option: bool,
+    pub shift: bool,
+}
+
+impl From<ararat_core::model::LittleWindowHotKey> for LittleWindowHotKey {
+    fn from(value: ararat_core::model::LittleWindowHotKey) -> Self {
+        Self { key_code: value.key_code, key: value.combination.key, command: value.combination.command,
+            control: value.combination.control, option: value.combination.option, shift: value.combination.shift }
+    }
+}
+
+impl From<LittleWindowHotKey> for ararat_core::model::LittleWindowHotKey {
+    fn from(value: LittleWindowHotKey) -> Self {
+        Self { key_code: value.key_code,
+            combination: ararat_core::key_bindings::KeyCombination { key: value.key, command: value.command,
+                control: value.control, option: value.option, shift: value.shift } }
+    }
+}
+
+/// U27i D8: the Little Window's per-device switches. `hot_key` nil is the user's "no global
+/// shortcut"; no record at all is the built-in state, which the store reports as the default.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LittleWindowDevice {
+    pub remember_frame: bool,
+    pub hot_key: Option<LittleWindowHotKey>,
+}
+
+impl From<ararat_core::model::LittleWindowDevice> for LittleWindowDevice {
+    fn from(value: ararat_core::model::LittleWindowDevice) -> Self {
+        Self { remember_frame: value.remember_frame, hot_key: value.hot_key.map(Into::into) }
     }
 }
 

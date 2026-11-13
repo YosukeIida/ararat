@@ -58,7 +58,8 @@ enum SettingsRegistry {
                      subtitle: SettingsModel.airTrafficSubtitle, page: .airTraffic, rows: airTrafficRows),
         SettingsPane(id: .spaces, title: "Spaces", icon: "square.grid.2x2", subtitle: "Keep related tabs together.",
                      page: .spaces, rows: spacesRows),
-        SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled",
+                     subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
         SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension", subtitle: "", page: nil, rows: { _ in [] }),
@@ -104,6 +105,26 @@ enum SettingsRegistry {
                            subtitle: SettingsModel.airTrafficSubtitle)]
     }
 
+    /// U27i: the Little Window pane's five rows — the ATC link, the global shortcut and the
+    /// three destinations/switches the board groups in one card.
+    static func littleWindowRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        [SettingsModel.Row(id: SettingsModel.littleWindowLinkRowId, pane: .littleWindow,
+                           title: "Which links open in a Little Window",
+                           subtitle: "Set in Air Traffic Control: its default destination and routes"),
+         SettingsModel.Row(id: SettingsModel.littleWindowShortcutRowId, pane: .littleWindow,
+                           title: "Open a Little Window from any app",
+                           subtitle: "A shortcut that works while Ararat is in the background"),
+         SettingsModel.Row(id: SettingsModel.littleWindowOpenInRowId, pane: .littleWindow,
+                           title: "“Open in” button sends the page to",
+                           subtitle: "Most Recent Space, or one space by name · " + model.littleWindowOpenInLabel),
+         SettingsModel.Row(id: SettingsModel.littleWindowCloseAfterRowId, pane: .littleWindow,
+                           title: "Close the Little Window after opening in a space",
+                           subtitle: model.littleWindowCloseAfter ? "On" : "Off"),
+         SettingsModel.Row(id: SettingsModel.littleWindowRememberRowId, pane: .littleWindow,
+                           title: "Remember its size and place",
+                           subtitle: model.littleWindowRememberFrame ? "On" : "Off")]
+    }
+
     /// The Spaces pane's own rows, then each space's page rows: the rail groups all of them
     /// under Spaces, and a page row's title reads "row — space" in the results.
     static func spacesRows(_ model: SettingsModel) -> [SettingsModel.Row] {
@@ -141,6 +162,7 @@ extension SettingsModel.Page {
         case .shortcuts: .shortcuts
         case .airTraffic: .airTraffic
         case .appearance: .appearance
+        case .littleWindow: .littleWindow
         case .spaces, .space: .spaces
         }
     }

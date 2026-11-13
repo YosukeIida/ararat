@@ -1,4 +1,4 @@
-use ararat_core::model::{Kind, Op, Record, Settings, SpaceScrollDirection, Workspace};
+use ararat_core::model::{Kind, LittleWindowDevice, LittleWindowHotKey, LittleWindowOpenIn, Op, Record, Settings, SpaceScrollDirection, Workspace};
 
 #[test]
 fn a_fresh_workspace_shows_the_new_tab_row_and_stores_no_record_for_it() {
@@ -120,4 +120,75 @@ fn an_unknown_scroll_direction_is_refused() {
     assert!(parsed.is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"space_scroll_direction":"Reversed"}"#);
     assert!(matches!(parsed, Ok(Record::Settings(Settings { space_scroll_direction: SpaceScrollDirection::Reversed, .. }))));
+}
+
+// U27i D8/D9: the Little Window's Open-in destination and close-after are the same synced
+// record as the switches above; the frame, "Remember its size and place" and the global
+// shortcut stay on the device.
+#[test]
+fn the_little_window_pair_is_synced_and_starts_at_most_recent_and_close() {
+    assert_eq!(Workspace::default().settings.little_window_open_in, LittleWindowOpenIn::MostRecent);
+    assert!(Workspace::default().settings.little_window_close_after);
+    let mut ws = Workspace::default();
+    let ops = ws.set_little_window_open_in(LittleWindowOpenIn::Space("work".into()));
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.little_window_open_in == LittleWindowOpenIn::Space("work".into())));
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The same value again writes nothing; the other Little Window switch stays untouched.
+    let before = ws.clone();
+    assert!(ws.set_little_window_open_in(LittleWindowOpenIn::Space("work".into())).is_empty());
+    assert_eq!(ws, before);
+    assert!(ws.settings.little_window_close_after);
+    let ops = ws.set_little_window_close_after(false);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if !settings.little_window_close_after
+            && settings.little_window_open_in == LittleWindowOpenIn::Space("work".into())));
+    // Back to both built-in values: one tombstone, not a row restating the defaults.
+    let reset = ws.set_little_window_open_in(LittleWindowOpenIn::MostRecent);
+    assert!(matches!(&reset[..], [Op::Put(Record::Settings(_))]));
+    let reset = ws.set_little_window_close_after(true);
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+}
+
+#[test]
+fn the_little_window_device_record_starts_at_remember_and_command_option_n_and_stays_off_the_synced_kinds() {
+    let ws = Workspace::default();
+    assert!(ws.little_window_device.remember_frame);
+    assert_eq!(ws.little_window_device.hot_key, Some(LittleWindowHotKey::default_shortcut()));
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::LittleWindowDevice(_)))));
+    let mut ws = Workspace::default();
+    let ops = ws.set_little_window_remember_frame(false);
+    assert!(matches!(&ops[..], [Op::Put(Record::LittleWindowDevice(device))]
+        if !device.remember_frame && device.hot_key == Some(LittleWindowHotKey::default_shortcut())));
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The user's own "no global shortcut" is a stored None, not the absence of a record.
+    let ops = ws.set_little_window_hot_key(None);
+    assert!(matches!(&ops[..], [Op::Put(Record::LittleWindowDevice(device))]
+        if device.hot_key.is_none() && !device.remember_frame));
+    // Back to the built-in state: a tombstone, which reads as the defaults again.
+    ws.set_little_window_remember_frame(true);
+    let reset = ws.set_little_window_hot_key(Some(LittleWindowHotKey::default_shortcut()));
+    assert!(matches!(&reset[..], [Op::Delete(Kind::LittleWindowDevice, id)] if id == "workspace"));
+    assert_eq!(ws.little_window_device, LittleWindowDevice::default());
+    let mut peer = peer;
+    for op in &reset { peer.apply(op); }
+    assert_eq!(peer, ws);
+}
+
+// A record from a device that stored only the remember switch still reads the default shortcut
+// through serde's defaults, and an unknown destination value is refused like the direction.
+#[test]
+fn older_device_records_and_future_destinations_parse_by_the_field_rules() {
+    let parsed = Record::parse(Kind::LittleWindowDevice, "workspace", r#"{"remember_frame":false}"#);
+    assert!(matches!(parsed, Ok(Record::LittleWindowDevice(LittleWindowDevice { remember_frame: false, hot_key: Some(_) }))));
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"little_window_open_in":"Elsewhere"}"#);
+    assert!(parsed.is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"little_window_open_in":{"Space":"work"},"little_window_close_after":false}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings {
+        little_window_open_in: LittleWindowOpenIn::Space(ref id), little_window_close_after: false, .. })) if id == "work"));
 }

@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -95,6 +95,24 @@ enum Launcher {
   @MainActor static var pendingLittleWindow: (origin: Runtime, frame: NSRect, url: String?, profile: String,
                                              replacing: LittleWindowController?)?
   @MainActor static var browserCheckFinished = false
+}
+
+/// U27i O3: the app-wide registration of the Little Window's global shortcut. One for the app, so
+/// the shortcut works from any window and while Ararat is in the background; the settings pane
+/// writes a new key through the same center, which re-registers immediately.
+@MainActor
+enum LittleWindowGlobalShortcut {
+  static var center: LittleWindowHotKeyCenter?
+
+  static func install(_ runtime: Runtime) {
+    let center = LittleWindowHotKeyCenter(registrar: CarbonGlobalHotKey())
+    center.onTrigger = { [weak runtime] in runtime?.newLittleWindow(nil) }
+    self.center = center
+    runtime.hotKeyCenter = center
+    runtime.workspace?.littleWindowDevice { result in
+      if case .success(let device) = result { center.apply(device.hotKey) }
+    }
+  }
 }
 
 /// One in-memory workspace per off-the-record `Profile*`, shared by that profile's windows and
@@ -557,6 +575,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var organizeCancelStarted = false
   var organizeImage: String?
   weak var settingsOwner: Runtime?
+  /// U27i: the app-wide global shortcut registration the settings pane writes through.
+  var hotKeyCenter: LittleWindowHotKeyCenter?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
   var keyboardSidebarBefore = ""
@@ -1797,12 +1817,19 @@ final class Runtime: NSObject, NSMenuItemValidation {
                           replacing: replacing, deadline: .now() + 10)
     }
     if let frame { create(frame); return }
-    adapter.littleWindowFrame { [weak self] result in
+    // D8: the remembered frame is used only while this device remembers it; off opens at the
+    // default size and place.
+    adapter.littleWindowDevice { [weak self] result in
       guard let self else { return }
-      let saved = (try? result.get()) ?? nil
-      let rect = saved.map { NSRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
-        ?? LittleWindowController.defaultFrame()
-      create(rect)
+      let remember = (try? result.get())?.rememberFrame ?? true
+      guard remember else { create(LittleWindowController.defaultFrame()); return }
+      self.workspace?.littleWindowFrame { [weak self] result in
+        guard let self else { return }
+        let saved = (try? result.get()) ?? nil
+        let rect = saved.map { NSRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+          ?? LittleWindowController.defaultFrame()
+        create(rect)
+      }
     }
   }
 
@@ -1858,6 +1885,18 @@ final class Runtime: NSObject, NSMenuItemValidation {
                                preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     owner.settingsOwner = self
+    // U27i: the Little Window pane's shortcut records into the app-wide registration.
+    owner.settings?.setLittleWindowHotKeyCenter(LittleWindowGlobalShortcut.center)
+    // Its two switches reach a Little Window already open, as the Appearance switches reach the
+    // sidebars.
+    owner.settings?.setLittleWindowHandlers { [weak owner] openIn, remember, closeAfter in
+      guard let owner else { return }
+      for window in owner.windowTree {
+        for little in window.littleWindows {
+          little.apply(openIn: openIn, rememberFrame: remember, closeAfter: closeAfter)
+        }
+      }
+    }
     // U27c: a direction the pane writes reaches the sidebars of every window that shows this
     // workspace, so the next sideways scroll pages the other way without a relaunch.
     owner.settings?.setSpaceScrollHandler { [weak owner] direction in
@@ -8783,6 +8822,7 @@ var callbacks = AraratCallbacks(
       do {
         try value.start()
         Launcher.runtime = value
+        LittleWindowGlobalShortcut.install(value)
         value.openURLs(Launcher.pendingURLs)
         Launcher.pendingURLs.removeAll()
         if value.quitMode == nil && value.browserCheckMode == nil {

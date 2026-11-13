@@ -1373,6 +1373,23 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // U27i D9: where the Little Window's Open-in button sends the page. Same synced record as the
+    // switches above, so every device opens a Little Window's page in the same destination.
+    pub fn set_little_window_open_in(&mut self, open_in: crate::model::LittleWindowOpenIn) -> Vec<Op> {
+        if self.settings.little_window_open_in == open_in { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.little_window_open_in = open_in;
+        self.commit_settings(settings)
+    }
+
+    // U27i D8: whether a successful Open in closes the Little Window. Same synced record.
+    pub fn set_little_window_close_after(&mut self, close: bool) -> Vec<Op> {
+        if self.settings.little_window_close_after == close { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.little_window_close_after = close;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())
@@ -1388,6 +1405,31 @@ impl Workspace {
         let op = match frame {
             Some(frame) => Op::Put(Record::LittleWindow(frame)),
             None => Op::Delete(Kind::LittleWindow, "workspace".into()),
+        };
+        self.commit_edit(vec![op])
+    }
+
+    // U27i D8: "Remember its size and place" and the global shortcut are per device too, so they
+    // live in one record beside the frame. The built-in value is derived: a reset is a tombstone.
+    pub fn set_little_window_remember_frame(&mut self, remember: bool) -> Vec<Op> {
+        if self.little_window_device.remember_frame == remember { return Vec::new(); }
+        let mut device = self.little_window_device.clone();
+        device.remember_frame = remember;
+        self.commit_little_window_device(device)
+    }
+
+    pub fn set_little_window_hot_key(&mut self, key: Option<crate::model::LittleWindowHotKey>) -> Vec<Op> {
+        if self.little_window_device.hot_key == key { return Vec::new(); }
+        let mut device = self.little_window_device.clone();
+        device.hot_key = key;
+        self.commit_little_window_device(device)
+    }
+
+    fn commit_little_window_device(&mut self, device: crate::model::LittleWindowDevice) -> Vec<Op> {
+        let op = if device == crate::model::LittleWindowDevice::default() {
+            Op::Delete(Kind::LittleWindowDevice, "workspace".into())
+        } else {
+            Op::Put(Record::LittleWindowDevice(device))
         };
         self.commit_edit(vec![op])
     }

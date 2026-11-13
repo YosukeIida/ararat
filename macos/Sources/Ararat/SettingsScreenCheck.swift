@@ -19,12 +19,14 @@ final class SettingsScreenCheck {
         case airTraffic = "settings-air-traffic"
         case appearance = "settings-appearance"
         case spaces = "settings-spaces"
+        case littleWindow = "settings-little-window"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs: "tabs"
             case .shortcuts, .airTraffic, .appearance, .spaces: String(rawValue.dropFirst("settings-".count))
+            case .littleWindow: "little-window"
             }
         }
 
@@ -49,6 +51,8 @@ final class SettingsScreenCheck {
             case .tabs, .shortcuts, .airTraffic: ["rows"]
             case .appearance: ["rows", "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
+            case .littleWindow: ["rows", "atc_link", "shortcut_recorder", "hot_key_registration",
+                                 "open_in_write_reopen", "open_in_bar", "close_after_keeps", "remember_off_frame"]
             }
         }
     }
@@ -69,6 +73,8 @@ final class SettingsScreenCheck {
     var phase = 0
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
+    /// Readings a phase records for the diagnostics (frames, statuses), never asserted by name.
+    var details: [String: Any] = [:]
     // A screenshot spins the run loop, so a tick that re-enters while one is in flight would
     // read a half-updated phase.
     var capturing = false
@@ -94,6 +100,14 @@ final class SettingsScreenCheck {
     var appearanceTodayRow = ""
     var appearanceRowY: CGFloat = 0
     var appearanceTooltipShown = false
+    // U27i: the Little Window check's page, destination space and the window whose Open in is
+    // driven (kept after it closes so its handoff record stays readable).
+    var littlePageURL = "data:text/html,<title>Little Window settings page</title>"
+    var littleSpaceID = ""
+    var littleSpaceTitle = ""
+    var littlePageLive = ""
+    var littlePageNavigation: UInt = 0
+    var littleOpening: LittleWindowController?
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -115,6 +129,7 @@ extension Runtime {
             "phase": check.phase, "attempts": browserCheckAttempts, "last_wait": check.lastWait,
             "images": check.images, "expected_row": check.expectedRowID,
             "settings_owner": (root ?? self).settingsOwner != nil,
+            "details": check.details,
         ]
         if let probe {
             probe.layout()
@@ -247,7 +262,7 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
@@ -256,6 +271,11 @@ extension Runtime {
             if mode == .appearance {
                 settingsAppearanceTick(probe, check: check, note: note, trace: trace, step: step,
                                        end: end, finish: finish, capture: capture)
+                return
+            }
+            if mode == .littleWindow {
+                settingsLittleWindowTick(probe, check: check, note: note, trace: trace, step: step,
+                                         end: end, finish: finish, capture: capture)
                 return
             }
             settingsPaneTick(mode, probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, pushSpace: settings.checkPushSpace)
@@ -500,7 +520,7 @@ extension Runtime {
                 check.report("rows", true)
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance:
+            case .frame, .search, .appearance, .littleWindow:
                 return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }

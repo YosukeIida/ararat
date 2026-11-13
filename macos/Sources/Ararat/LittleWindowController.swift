@@ -17,6 +17,12 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private(set) var model = LittleWindowBarModel()
     private var defaultSpaceID: String?
     private var opening = false
+    /// U27i D8/D9: the stored settings this window applies. The pair is synced; "Remember its
+    /// size and place" is this device's. They arrive asynchronously before the bar's label and the
+    /// window's Open-in action use them.
+    private(set) var openIn: LittleWindowOpenIn = .mostRecent
+    private(set) var closeAfter = true
+    private(set) var rememberFrame = true
     private var profilePopover: NSPopover?
     private var spacePopover: NSPopover?
     private var profilePanel: LittleWindowMenuPanel?
@@ -45,6 +51,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         installBar(frame: frame)
         refreshModel()
         refreshDefaultDestination()
+        loadSettings()
         installKeyMonitor()
         observeWindow()
     }
@@ -135,6 +142,13 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     func refreshDefaultDestination() {
+        // D9: a named destination wins when the window's profile can reach that space; a space of
+        // another profile or a deleted one falls back to the profile's most recent space.
+        if let id = LittleWindowBarModel.namedDestination(openIn, spaces: model.spaces) {
+            defaultSpaceID = id
+            refreshModel()
+            return
+        }
         origin?.workspace?.recentSpace(profile: profileName) { [weak self] result in
             guard let self else { return }
             if case .success(let space) = result { self.defaultSpaceID = space }
@@ -142,16 +156,48 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// The origin window's shown space changed: the default destination follows it when it is
-    /// a space of this Little Window's profile. Every snapshot refreshes the model so a space
-    /// created or deleted while the Little Window is open shows in the ⌄ menu.
+    /// Reads the two synced settings and the device record once, then rebuilds the label. A
+    /// Little Window opened before the read lands shows the most recent space, which is the
+    /// built-in value, and is corrected a moment later.
+    private func loadSettings() {
+        guard let adapter = origin?.workspace else { return }
+        adapter.littleWindowOpenIn { [weak self] result in
+            guard let self, case .success(let value) = result else { return }
+            self.openIn = value
+            self.refreshDefaultDestination()
+        }
+        adapter.littleWindowCloseAfter { [weak self] result in
+            guard let self, case .success(let value) = result else { return }
+            self.closeAfter = value
+        }
+        adapter.littleWindowDevice { [weak self] result in
+            guard let self, case .success(let device) = result else { return }
+            self.rememberFrame = device.rememberFrame
+        }
+    }
+
+    /// The origin window's shown space changed: with Most Recent as the destination the default
+    /// follows it when it is a space of this Little Window's profile. Every snapshot refreshes the
+    /// model so a space created or deleted while the Little Window is open shows in the ⌄ menu.
     func originSnapshotChanged(_ snapshot: WorkspaceSnapshot) {
-        if let shown = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+        if openIn == .mostRecent,
+           let shown = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
            shown.id != lastShownSpace {
             lastShownSpace = shown.id
             if shown.profileName == profileName { defaultSpaceID = shown.id }
         }
         refreshModel()
+    }
+
+    /// The settings pane's switches, pushed to a window that is already open (U27i).
+    func apply(openIn: LittleWindowOpenIn, rememberFrame: Bool, closeAfter: Bool) {
+        let destinationChanged = self.openIn != openIn
+        self.rememberFrame = rememberFrame
+        self.closeAfter = closeAfter
+        if destinationChanged {
+            self.openIn = openIn
+            refreshDefaultDestination()
+        }
     }
 
     func update() {
@@ -367,9 +413,17 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         if host.handoffTab(tab, activate: true) {
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
-            // The popup has no tabs left; Chrome closes it. Closing here makes the order the
-            // check sees deterministic.
-            DispatchQueue.main.async { [weak self] in self?.close() }
+            // D8: close-after decides the window's fate, not the handoff's. Chrome closes a popup
+            // when its last tab leaves, so keeping it open means opening it again on the page it
+            // just sent — the space keeps the live contents either way.
+            let closeAfter = self.closeAfter
+            let pageURL = tab.url
+            let frame = window?.frame
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if closeAfter { self.close() }
+                else { self.reopenAfterOpenIn(url: pageURL, frame: frame) }
+            }
             return
         }
         guard DispatchTime.now() < deadline else {
@@ -479,7 +533,9 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     func saveFrame(debounced: Bool = false) {
-        guard let window, let adapter = origin?.workspace else { return }
+        // D8: with remembering off this device keeps no frame, so nothing is written (the pane
+        // also forgets the stored one when the switch goes off).
+        guard rememberFrame, let window, let adapter = origin?.workspace else { return }
         frameSaveGeneration += 1
         let generation = frameSaveGeneration
         let frame = window.frame
@@ -489,6 +545,15 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
                                                            width: frame.width, height: frame.height))
         }
         if debounced { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: write) } else { write() }
+    }
+
+    /// D8, close-after off: the window stays on the page it just sent to the space, at the same
+    /// frame. Its popup loses its last tab to the handoff and closes, so this is a new popup on
+    /// the same address rather than a second page in the old one.
+    private func reopenAfterOpenIn(url: String, frame: NSRect?) {
+        guard let origin, origin.hasUsableHost else { return }
+        checkActions["reopen", default: 0] += 1
+        origin.openLittleWindow(url: url, profile: profileName, frame: frame)
     }
 
     // MARK: - Closing

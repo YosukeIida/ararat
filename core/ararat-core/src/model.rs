@@ -142,6 +142,40 @@ pub struct LittleWindowFrame {
     pub height: f64,
 }
 
+/// U27i D8/O3: the Little Window's global shortcut on this device. Carbon registers a virtual
+/// key code, so the record keeps the code the registrar uses beside the combination its keycaps
+/// show. It stays on the device: a shortcut registered on one Mac must not make another Mac's
+/// registration fail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LittleWindowHotKey {
+    pub key_code: u16,
+    pub combination: crate::key_bindings::KeyCombination,
+}
+
+impl LittleWindowHotKey {
+    /// ⌥⌘N, the board's default (key code 45 is N on the ANSI layout).
+    pub fn default_shortcut() -> Self {
+        Self { key_code: 45, combination: crate::key_bindings::KeyCombination {
+            key: "n".into(), command: true, control: false, option: true, shift: false } }
+    }
+}
+
+/// U27i D8: the Little Window's per-device switches, stored beside its frame and kept out of
+/// the sync journal. `None` for the shortcut is the user's own "no global shortcut"; no record
+/// at all is the built-in state (remember on, ⌥⌘N).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LittleWindowDevice {
+    pub remember_frame: bool,
+    pub hot_key: Option<LittleWindowHotKey>,
+}
+
+impl Default for LittleWindowDevice {
+    fn default() -> Self {
+        Self { remember_frame: true, hot_key: Some(LittleWindowHotKey::default_shortcut()) }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
     pub(crate) off_the_record: bool,
@@ -159,6 +193,9 @@ pub struct Workspace {
     pub windows: HashMap<Id, WindowState>,
     // The Little Window's remembered frame, per device (U27h D8).
     pub little_window_frame: Option<LittleWindowFrame>,
+    // The Little Window's per-device switches (U27i D8): whether this Mac remembers the frame
+    // and which global shortcut it registers.
+    pub little_window_device: LittleWindowDevice,
     pub history_purges: HashMap<Id, (Profile, Id, u64)>,
     pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
@@ -179,6 +216,7 @@ pub enum Kind {
     Favorites,
     Window,
     LittleWindow,
+    LittleWindowDevice,
     ArchiveAfter,
     LastSelected,
     FolderState,
@@ -199,6 +237,7 @@ impl Kind {
             Kind::Favorites => "favorites",
             Kind::Window => "window",
             Kind::LittleWindow => "little_window",
+            Kind::LittleWindowDevice => "little_window_device",
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
             Kind::FolderState => "folder_state",
@@ -212,7 +251,7 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::LittleWindowDevice, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -228,6 +267,7 @@ pub enum Record {
     Item(Item),
     Window(WindowState),
     LittleWindow(LittleWindowFrame),
+    LittleWindowDevice(LittleWindowDevice),
     Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
@@ -247,6 +287,7 @@ impl Record {
             Record::Space(_) => Kind::Space,
             Record::Window(_) => Kind::Window,
             Record::LittleWindow(_) => Kind::LittleWindow,
+            Record::LittleWindowDevice(_) => Kind::LittleWindowDevice,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
             Record::RoutingRule { .. } => Kind::RoutingRule,
@@ -267,6 +308,7 @@ impl Record {
             Record::Space(s) => s.id.clone(),
             Record::Window(window) => window.id.clone(),
             Record::LittleWindow(_) => "workspace".into(),
+            Record::LittleWindowDevice(_) => "workspace".into(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
             Record::RoutingRule { rule, .. } => rule.id.clone(),
@@ -287,6 +329,7 @@ impl Record {
             Record::Space(s) => serde_json::to_string(s),
             Record::Window(window) => serde_json::to_string(window),
             Record::LittleWindow(frame) => serde_json::to_string(frame),
+            Record::LittleWindowDevice(device) => serde_json::to_string(device),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
             Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
@@ -310,6 +353,7 @@ impl Record {
             Kind::Space => Record::Space(serde_json::from_str(body)?),
             Kind::Window => Record::Window(serde_json::from_str(body)?),
             Kind::LittleWindow => Record::LittleWindow(serde_json::from_str(body)?),
+            Kind::LittleWindowDevice => Record::LittleWindowDevice(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
             Kind::Favorites => Record::Favorites {
                 profile: serde_json::from_str(id)?,
@@ -474,6 +518,8 @@ impl Workspace {
             Op::Delete(Kind::Window, id) => { self.windows.remove(id); },
             Op::Put(Record::LittleWindow(frame)) => { self.little_window_frame = Some(*frame); },
             Op::Delete(Kind::LittleWindow, _) => { self.little_window_frame = None; },
+            Op::Put(Record::LittleWindowDevice(device)) => { self.little_window_device = device.clone(); },
+            Op::Delete(Kind::LittleWindowDevice, _) => { self.little_window_device = LittleWindowDevice::default(); },
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);
                 self.spaces.push(space.clone());
@@ -519,7 +565,7 @@ impl Workspace {
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain((self.little_window_device != LittleWindowDevice::default()).then(|| Record::LittleWindowDevice(self.little_window_device.clone()))).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 
@@ -611,17 +657,33 @@ pub enum SpaceScrollDirection { #[default] Natural, Reversed }
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
 // U27d's Tooltips switch (D4) rides here too, on by default, so it travels with the workspace
-// the way the New Tab row does.
+// the way the New Tab row does. U27i's Little Window pair (D8) rides here as well: the Open-in
+// destination and close-after are workspace preferences, while the frame and the global
+// shortcut stay on the device (LittleWindowDevice).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub new_tab_row_shown: bool,
     pub space_scroll_direction: SpaceScrollDirection,
     pub tooltips_shown: bool,
+    pub little_window_open_in: LittleWindowOpenIn,
+    pub little_window_close_after: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true }
+        Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
+            little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true }
     }
 }
+
+/// U27i D9: where the Little Window's "Open in" button sends the page: the most recent space of
+/// the window's own profile, or one space by name. A named space of another profile, or one that
+/// has since been deleted, reads as the most recent space when the Little Window applies it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LittleWindowOpenIn {
+    #[default]
+    MostRecent,
+    Space(Id),
+}
+

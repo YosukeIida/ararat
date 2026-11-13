@@ -75,6 +75,32 @@ public final class SettingsCheckProbe {
     /// The New Tab row's height, which the Today rows close up by when it is hidden (T4).
     public var newTabRowHeight: CGFloat { SidebarMetrics.newTabRowHeight }
 
+    // MARK: U27i, the Little Window pane
+
+    /// The pane's five stored values and the same setters its controls call.
+    public var littleWindowOpenIn: LittleWindowOpenIn { model.littleWindowOpenIn }
+    public var littleWindowCloseAfter: Bool { model.littleWindowCloseAfter }
+    public var littleWindowRememberFrame: Bool { model.littleWindowRememberFrame }
+    public var littleWindowHotKey: LittleWindowHotKey? { model.littleWindowHotKey }
+    public var littleWindowHotKeyMessage: String? { model.hotKeyMessage }
+    public var littleWindowHotKeyRecording: Bool { model.hotKeyRecording }
+    public var littleWindowHotKeyStatus: GlobalHotKeyStatus? { model.hotKeyCenter?.status }
+    public var littleWindowOpenInLabel: String { model.littleWindowOpenInLabel }
+    public func setLittleWindowOpenIn(_ value: LittleWindowOpenIn) { model.setLittleWindowOpenIn(value) }
+    public func setLittleWindowCloseAfter(_ value: Bool) { model.setLittleWindowCloseAfter(value) }
+    public func setLittleWindowRememberFrame(_ value: Bool) { model.setLittleWindowRememberFrame(value) }
+    public func startLittleWindowHotKeyRecording() { model.toggleLittleWindowHotKeyRecording() }
+    public func cancelLittleWindowHotKeyRecording() { model.cancelLittleWindowHotKeyRecording() }
+    public func recordLittleWindowHotKey(_ event: NSEvent) { model.handleLittleWindowHotKeyEvent(event) }
+    public func openAirTraffic() { model.openAirTraffic() }
+    public func openLittleWindowPane() { model.navigate(.littleWindow) }
+    /// The spaces the Open-in menu offers (the shown space's profile), so the check can pick one
+    /// and name it in the bar's label.
+    public var littleWindowSpaceIDs: [String] { model.littleWindowSpaces.map(\.id) }
+    public func littleWindowSpaceTitle(_ id: String) -> String? { model.snapshot.spaces.first { $0.id == id }?.title }
+    /// The keycaps the row shows, for the check's recorder condition.
+    public var littleWindowHotKeyCaps: [String] { LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey) }
+
     // MARK: frames
 
     private var content: NSView? { window.contentView }

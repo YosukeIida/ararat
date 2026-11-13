@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case tabs, shortcuts, airTraffic, appearance, spaces, space(String) }
+    enum Page: Hashable { case tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, space(String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -54,6 +54,19 @@ public final class SettingsModel: ObservableObject {
     @Published var tooltipsShown = true
     var newTabRow: (Bool) -> Void = { _ in }
     var tooltips: (Bool) -> Void = { _ in }
+    /// U27i: the Little Window pane. The Open-in destination and close-after are the synced
+    /// settings; "Remember its size and place" and the global shortcut are the device record.
+    /// The shortcut's registration is the app-wide center, which the app hands in.
+    @Published var littleWindowOpenIn: LittleWindowOpenIn = .mostRecent
+    @Published var littleWindowCloseAfter = true
+    @Published var littleWindowRememberFrame = true
+    @Published var littleWindowHotKey: LittleWindowHotKey? = LittleWindowHotKeyRecorder.defaultHotKey
+    @Published var hotKeyRecording = false
+    @Published var hotKeyMessage: String?
+    var hotKeyCenter: LittleWindowHotKeyCenter?
+    /// Hands the written values to the Little Windows already open, so a change applies there
+    /// too (the bar's label, the next Open in and the frame the close writes).
+    var littleWindowSettings: (LittleWindowOpenIn, Bool, Bool) -> Void = { _, _, _ in }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -147,6 +160,17 @@ public final class SettingsModel: ObservableObject {
     /// The switches themselves, so a check can find the pair the board draws.
     public static let newTabRowSwitchMarker = "new-tab-row-switch"
     public static let tooltipsSwitchMarker = "tooltips-switch"
+    /// U27i's Little Window rows: the Air Traffic Control link, the global shortcut's recorder, the
+    /// Open-in destination and the two switches. The search result and the row share each id.
+    public static let littleWindowLinkRowId = "little-window-links"
+    public static let littleWindowShortcutRowId = "little-window-shortcut"
+    public static let littleWindowOpenInRowId = "little-window-open-in"
+    public static let littleWindowCloseAfterRowId = "little-window-close-after"
+    public static let littleWindowRememberRowId = "little-window-remember"
+    public static let littleWindowShortcutRecorderMarker = "little-window-shortcut-recorder"
+    public static let littleWindowOpenInMenuMarker = "little-window-open-in-menu"
+    public static let littleWindowCloseAfterSwitchMarker = "little-window-close-after-switch"
+    public static let littleWindowRememberSwitchMarker = "little-window-remember-switch"
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -343,6 +367,152 @@ public final class SettingsModel: ObservableObject {
             self.spaceScroll(value)
         }
     }
+
+    // MARK: U27i, the Little Window pane
+
+    /// The Open-in row's own words: the most recent space of the Little Window's profile, or the
+    /// named space. A named space the workspace no longer has reads as the most recent one, which
+    /// is what the Little Window itself falls back to.
+    var littleWindowOpenInLabel: String {
+        switch littleWindowOpenIn {
+        case .mostRecent: return "Most Recent Space"
+        case .space(let id): return snapshot.spaces.first { $0.id == id }?.title ?? "Most Recent Space"
+        }
+    }
+
+    /// The spaces the Open-in menu offers: the shown space's profile, in sidebar order. A Little
+    /// Window opened in another profile falls back to that profile's most recent space.
+    var littleWindowSpaces: [SpaceSnapshot] {
+        let profile = archiveSpace?.profile
+        return snapshot.spaces.filter { $0.profile == profile }
+    }
+
+    /// Reads the pane's four stored values on every open: the synced pair from the settings
+    /// record and the device record's switch and shortcut.
+    func readLittleWindow() {
+        let generation = contextGeneration
+        adapter.littleWindowOpenIn { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let value) = result else { return }
+            self.littleWindowOpenIn = value
+        }
+        adapter.littleWindowCloseAfter { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let value) = result else { return }
+            self.littleWindowCloseAfter = value
+        }
+        adapter.littleWindowDevice { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let device) = result else { return }
+            self.littleWindowRememberFrame = device.rememberFrame
+            self.littleWindowHotKey = device.hotKey
+            self.registerHotKey(device.hotKey, generation: generation)
+        }
+    }
+
+    /// Hands the stored shortcut to the app-wide registration and shows its answer under the row.
+    private func registerHotKey(_ hotKey: LittleWindowHotKey?, generation: Int) {
+        guard contextGeneration == generation, let hotKeyCenter else { return }
+        applyHotKeyStatus(hotKeyCenter.apply(hotKey))
+    }
+
+    private func applyHotKeyStatus(_ status: GlobalHotKeyStatus?) {
+        hotKeyMessage = SettingsModel.hotKeyMessage(for: status)
+    }
+
+    /// The sentence the row shows under the shortcut for a registration answer, nil when the
+    /// system took the key.
+    static func hotKeyMessage(for status: GlobalHotKeyStatus?) -> String? {
+        switch status {
+        case .registered, nil: return nil
+        case .taken: return "Another app is already using this shortcut."
+        case .failed(let message): return message
+        }
+    }
+
+    /// The Air Traffic Control link row (E-LittleWindow): which links open in a Little Window is
+    /// ATC's default destination and routes, so the row pushes that pane.
+    func openAirTraffic() { navigate(.airTraffic, highlight: SettingsModel.airTrafficCardId) }
+
+    func setLittleWindowOpenIn(_ value: LittleWindowOpenIn) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setLittleWindowOpenIn(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.littleWindowOpenIn = value
+            self.littleWindowSettings(value, self.littleWindowRememberFrame, self.littleWindowCloseAfter)
+        }
+    }
+
+    func setLittleWindowCloseAfter(_ value: Bool) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setLittleWindowCloseAfter(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.littleWindowCloseAfter = value
+            self.littleWindowSettings(self.littleWindowOpenIn, self.littleWindowRememberFrame, value)
+        }
+    }
+
+    /// Remembering off also forgets this device's frame, so turning it back on starts from the
+    /// default window rather than a size the user had already asked to forget.
+    func setLittleWindowRememberFrame(_ value: Bool) {
+        let generation = contextGeneration
+        adapter.setLittleWindowRememberFrame(value) { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success = result else {
+                if case .failure(let error) = result { self?.report(error) }
+                return
+            }
+            self.littleWindowRememberFrame = value
+            if !value { self.adapter.setLittleWindowFrame(nil) }
+            self.littleWindowSettings(self.littleWindowOpenIn, value, self.littleWindowCloseAfter)
+        }
+    }
+
+    func toggleLittleWindowHotKeyRecording() {
+        hotKeyMessage = nil
+        hotKeyRecording.toggle()
+    }
+
+    func cancelLittleWindowHotKeyRecording() { hotKeyRecording = false }
+
+    /// One key event from the recorder: Esc cancels, ⌫ turns the shortcut off, a combination is
+    /// stored on this device and registered at once.
+    func handleLittleWindowHotKeyEvent(_ event: NSEvent) {
+        switch LittleWindowHotKeyRecorder.entry(for: event) {
+        case .cancelled: hotKeyRecording = false
+        case .cleared: hotKeyRecording = false; setLittleWindowHotKey(nil)
+        case .refused(let message): hotKeyRecording = false; hotKeyMessage = message
+        case .ignored: break
+        case .key(let hotKey): hotKeyRecording = false; setLittleWindowHotKey(hotKey)
+        }
+    }
+
+    func setLittleWindowHotKey(_ value: LittleWindowHotKey?) {
+        let generation = contextGeneration
+        let previous = littleWindowHotKey
+        adapter.setLittleWindowHotKey(value) { [weak self] result in
+            guard let self, self.contextGeneration == generation else { return }
+            switch result {
+            case .success:
+                self.littleWindowHotKey = value
+                self.registerHotKey(value, generation: generation)
+            case .failure(let error):
+                self.littleWindowHotKey = previous
+                self.report(error)
+            }
+        }
+    }
+
+    private func report(_ error: Error) {
+        if let core = error as? CoreError {
+            switch core {
+            case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): self.error = message
+            }
+        } else {
+            self.error = error.localizedDescription
+        }
+    }
+
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { error = "Enter a space name."; return }
