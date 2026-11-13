@@ -12,7 +12,7 @@ final class LittleWindowCheckState {
     static let names = ["seed", "window_created", "bar_geometry", "dark_bar", "profile_chip",
                         "open_disabled", "profile_menu", "space_menu", "space_search",
                         "default_destination", "command_bar_key", "command_bar_width",
-                        "command_bar_navigates", "open_enabled", "copy_link", "extensions_button",
+                        "command_bar_navigates", "origin_unchanged", "open_enabled", "copy_link", "extensions_button",
                         "frame_saved", "frame_remembered", "open_key", "open_in", "handoff_live",
                         "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
                         "profile_switch"]
@@ -26,6 +26,8 @@ final class LittleWindowCheckState {
     var phaseStart = 0
     var lastPhase = -1
     var seedItem = ""
+    var originURL = ""
+    var originNavigation: UInt = 0
     var pageURL = "data:text/html,<title>Little Window page</title>"
     var handoffLive = ""
     var handoffNavigation: UInt = 0
@@ -135,6 +137,8 @@ extension Runtime {
                 wait("seed page"); return
             }
             check.seedItem = row.id
+            check.originURL = tab.url
+            check.originNavigation = tab.navigationCount
             check.mark("seed")
             // The menu command, the same path the File > New Little Window item runs.
             openLittleWindow()
@@ -251,6 +255,8 @@ extension Runtime {
                 wait("command bar navigation"); return
             }
             check.mark("command_bar_navigates")
+            let originTab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == check.seedItem }
+            check.mark("origin_unchanged", originTab?.url == check.originURL && originTab?.navigationCount == check.originNavigation)
             guard let controller = controller() else { wait("little window"); return }
             controller.update()
             check.mark("open_enabled", controller.bar.checkOpenEnabled)

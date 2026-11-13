@@ -419,9 +419,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
     }
 
-    private func navigate(to url: String) {
-        guard let host = popup.host, let target = host.navigationTarget() else { return }
-        _ = host.navigateURL(url, target: target)
+    func navigate(to url: String) {
+        guard popup.host?.navigateLittleWindow(url) == true else { return }
         checkActions["navigate", default: 0] += 1
     }
 

@@ -300,6 +300,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   var createdSize = NSSize.zero
   /// U27h: set for a Little Window; nil for every other page-only popup.
   var littleWindow: LittleWindowController?
+  func isLittleWindow(forWindowHost host: any ARWindowHostAPI) -> Bool { littleWindow != nil }
   var closeObserver: NSObjectProtocol?
   private var windowID: String?
   private var failureView: PageFailureView?
