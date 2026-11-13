@@ -24,6 +24,7 @@ final class LookScreenCheck {
     var grainStats: [String: LookGrainStats] = [:]
     var grainBand: CGRect?
     var grainExpected: [String: Double] = [:]
+    var pickerWritten = false
 
     /// U24b: the grain's drawing rule, measured on the real sidebar. `L′` comes from each run's own
     /// grain-0 capture, so the tolerances need no colour constant; the numbers below are the mock's.
@@ -33,8 +34,11 @@ final class LookScreenCheck {
     static let grainSteps: [(capture: String, grain: Double, condition: String)] = [
         ("grain0", 0, "grain_0_flat"), ("grain5", 0.05, "grain_5"), ("grain50", 0.5, "grain_50"), ("grain100", 1, "grain_100")
     ]
+    /// U24 part 2 pass B: the polar picker's drag and its single write. The names run in both the
+    /// hidden and the screen check, because the picker needs no capture.
+    static let pickerConditionNames = ["picker_write", "picker_input", "picker_preview", "picker_one_write"]
     static func conditionNames(screen: Bool) -> [String] {
-        ["open", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency"] + (screen ? ["capture_55", "capture_detent", "capture_glass"] + grainConditionNames : [])
+        ["open", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency"] + pickerConditionNames + (screen ? ["capture_55", "capture_detent", "capture_glass"] + grainConditionNames : [])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -508,7 +512,71 @@ extension Runtime {
                 else { finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)) }
             }
         case 23:
-            finishBrowserCheck(ok: true, values: ["conditions": check.conditions, "failed_conditions": [], "images": check.images])
+            // U24 part 2 pass B, the polar picker. A fixed two-colour split look on one radius (the
+            // probe look is written through the editor's commit path), then phase 24 turns the first
+            // handle a quarter turn outward. The drag must turn the whole group, set the shared
+            // radius from the pointer, preview the sidebar while the button is down, and write once
+            // on release.
+            guard let probe = check.probe else {
+                check.report("picker_write", false); finishBrowserCheck(ok: false, values: lookCheckDiagnostics(screen: screen)); return
+            }
+            if !check.pickerWritten {
+                probe.setLook { look in
+                    look.colors = [LookCheckProbe.colour(x: 0.4, y: 0.5), LookCheckProbe.colour(x: 0.9, y: 0.5)]
+                    look.opacity = 1
+                    look.grain = 0
+                    look.glass = false
+                    look.appearance = .light
+                }
+                check.pickerWritten = true
+                check.wait("picker_write", "stored=\(stored().map { "\($0.colors.count) colours" } ?? "nil")")
+                return
+            }
+            guard let look = stored(), probe.look == look, look.colors.count == 2,
+                  abs(look.colors[0].x - 0.4) < 0.001, abs(look.colors[1].x - 0.9) < 0.001 else {
+                check.wait("picker_stored", "stored=\(stored().map { "\($0.colors.map(\.x))" } ?? "nil") probe=\(String(describing: probe.look?.colors.map(\.x)))")
+                return
+            }
+            guard let count = check.journalCount(quitPath) else { return }
+            check.count = count
+            end(true, "picker_write")
+        case 24:
+            guard let probe = check.probe, let look = probe.look, look.colors.count == 2, let window = probe.window,
+                  let from = probe.fieldPoint(x: look.colors[0].x, y: look.colors[0].y),
+                  let target = probe.fieldPoint(hue: 0.65, radius: 80) else {
+                check.wait("picker_points", "frame=\(String(describing: check.probe?.fieldFrame))")
+                return
+            }
+            let down = check.event(.leftMouseDown, screen: from, window: window)
+            let start = down && check.event(.leftMouseDragged, screen: from, window: window)
+            let drag = start && check.event(.leftMouseDragged, screen: target, window: window)
+            end(drag, "picker_input")
+        case 25:
+            guard let probe = check.probe, let look = probe.look, look.colors.count == 2 else {
+                check.wait("picker_model", "look=\(String(describing: check.probe?.look?.colors.count))"); return
+            }
+            let shared = LookCheckProbe.storedY(radius: 80)
+            let turned = abs(look.colors[0].x - 0.65) < 0.005 && abs(look.colors[1].x - 0.15) < 0.005
+                && look.colors.allSatisfy { abs($0.y - shared) < 0.005 }
+            let noWrite = (check.journalCount(quitPath) ?? -1) == check.count
+            let previewed = sidebarContainer.lookPreviewForCheck == look
+            let up = probe.window.flatMap { window in
+                probe.fieldPoint(hue: 0.65, radius: 80).map { check.event(.leftMouseUp, screen: $0, window: window) }
+            } ?? false
+            end(turned && noWrite && previewed && probe.editing && up, "picker_preview")
+        case 26:
+            guard let probe = check.probe, let model = probe.look, !probe.editing else {
+                check.wait("picker_release", "editing=\(String(describing: check.probe?.editing))"); return
+            }
+            guard let committed = stored(), committed == model, let count = check.journalCount(quitPath) else {
+                check.wait("picker_commit", "stored=\(stored().map { "\($0.colors.map(\.x))" } ?? "nil") count=\(check.journalCount(quitPath) ?? -1) expected=\(check.count + 1)")
+                return
+            }
+            end(count == check.count + 1, "picker_one_write")
+        case 27:
+            // A passing run carries the measured numbers too (pass A's review S1): the VM reads
+            // grain_stats, grain_expected, grain_band and wait back from the diagnostics.
+            finishBrowserCheck(ok: true, values: lookCheckDiagnostics(screen: screen))
         default: break
         }
     }

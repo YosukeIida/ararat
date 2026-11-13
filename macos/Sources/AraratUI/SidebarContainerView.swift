@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 private final class ToastView: NSView {
     weak var button: NSView?
@@ -171,6 +172,8 @@ public final class SidebarContainerView: NSView {
         return page.convert(page.bounds, to: nil)
     }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
+    /// The look the sidebar is previewing while an editor drags, for the look check.
+    public var lookPreviewForCheck: Look? { sidebar.lookPreviewForCheck }
     /// The sidebar panel's rect in screen coordinates, for the grain check's capture band.
     public var panelRectForCheck: NSRect? {
         guard let window, panel.superview === self else { return nil }

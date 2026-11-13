@@ -9,7 +9,7 @@ func lookConditionResultsListMissingAndFailedConditions() {
     #expect(result.values["menu"] == false)
     #expect(result.failed.contains("menu") && result.failed.contains("keyboard_focus"))
     #expect(!result.failed.contains("open") && !result.failed.contains("capture_55"))
-    let expected: Set<String> = ["open", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency"]
+    let expected: Set<String> = ["open", "initial_preview_input", "menu_open", "menu", "drag_detent_input", "detent", "drag_glass_input", "glass", "stored_glass", "thirty_input", "socket_input", "keyboard_focus", "keyboard_up_input", "keyboard_glass", "keyboard_down_input", "keyboard_down", "grain_focus", "grain_up_input", "keyboard_grain", "transparency_focus_return", "transparency_up_input", "reduced_transparency", "picker_write", "picker_input", "picker_preview", "picker_one_write"]
     #expect(Set(result.values.keys) == expected)
     for name in ["accessibility", "adjustable_elements", "ax_transparency_input", "ax_grain_input"] {
         #expect(result.values[name] == nil)

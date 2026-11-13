@@ -588,6 +588,8 @@ public final class SidebarView: NSView {
         revealSelection()
     }
 
+    /// The look this sidebar is previewing while an editor drags, for the look check.
+    public var lookPreviewForCheck: Look? { lookPreview?.look }
     public func previewLook(spaceID: String, look: Look?, active: Bool = true) {
         guard let index = snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
         if active { lookPreview = (spaceID, look) }
