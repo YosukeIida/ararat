@@ -464,7 +464,7 @@ impl Live {
                         }
                         None => {
                             if claimed_lives.contains(&tab.live_id) { continue; }
-                            if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile) {
+                            if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile, strip.active.is_none() && strip.tabs.len() == 1) {
                                 ops.append(&mut adopt_ops);
                                 outcome.adopted.push((tab.live_id.clone(), id.clone()));
                                 adopted_for.insert(tab.live_id.clone(), id.clone());
@@ -598,7 +598,7 @@ impl Live {
             for tab in &strip.tabs {
                 let Some(item) = &tab.item else {
                     if next_reverse.contains_key(&tab.live_id) { continue; }
-                    if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile) {
+                    if let Some((mut adopt_ops, id)) = Self::adopt(&mut next, &strip.window, &tab.profile, strip.active.is_none() && strip.tabs.len() == 1) {
                         ops.append(&mut adopt_ops);
                         next_map.insert(id.clone(), tab.live_id.clone());
                         next_reverse.insert(tab.live_id.clone(), id.clone());
@@ -729,7 +729,7 @@ impl Live {
     /// Adopts an itemless engine tab: one open row at the end of the shown space's Today,
     /// membership in the same transaction (§5.2). The engine owns the tab's url until
     /// Chrome reports a navigation, so the core's copy stays empty.
-    fn adopt(workspace: &mut Workspace, window: &str, profile: &Profile) -> Option<(Vec<Op>, Id)> {
+    fn adopt(workspace: &mut Workspace, window: &str, profile: &Profile, sole_inactive: bool) -> Option<(Vec<Op>, Id)> {
         let space_id = workspace.recent_space_for_profile(window, profile)?.to_string();
         let today = workspace.spaces.iter().find(|space| space.id == space_id).map(|space| space.today.clone())?;
         let id = Self::fresh_item_id(workspace);
@@ -745,6 +745,10 @@ impl Live {
         };
         let op = Op::Put(Record::Item(item));
         workspace.apply(&op);
-        Some((vec![op], id))
+        let mut ops = vec![op];
+        if workspace.is_private() && sole_inactive && workspace.selected(window).is_none() {
+            ops.extend(workspace.record_active(window, &id, workspace.lifecycle_time()).ok()?);
+        }
+        Some((ops, id))
     }
 }
