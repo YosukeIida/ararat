@@ -1755,9 +1755,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  /// U27b: the ids the Ararat Commands menu carries. A table command missing here has a pane row
-  /// and a command-bar row but no menu item, so a recorded key would never fire; the test reads
-  /// this list so the two cannot drift.
+  /// U27b: the ids the Ararat Commands menu carries; CoreMenuTests checks every one is a table command.
   static let coreMenuCommandIDs = ["cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "force_reload", "clear_cache_site", "clear_cookies_site", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
 
   func installCoreMenu() {
