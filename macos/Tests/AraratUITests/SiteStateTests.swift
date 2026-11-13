@@ -127,8 +127,11 @@ func extensionActionRowUsesFavouriteColumnsAndOneRow() throws {
 }
 
 @Test @MainActor
-func extensionActionButtonsDrawTheEngineIconAtSixteenPoints() throws {
-    let icon = NSImage(size: NSSize(width: 20, height: 20))
+func extensionActionButtonsDrawTheEngineIconAtItsRequestedSize() throws {
+    // The app asks the engine for 16 pt icons (main.swift refreshExtensionActions); the button
+    // draws the item's image as delivered, so a regression of that request fails the check's
+    // icons16 condition and this test's size.
+    let icon = NSImage(size: NSSize(width: 16, height: 16))
     let item = try #require(ExtensionActionItem([
         "id": "a0", "name": "Probe", "tooltip": "Probe", "icon": icon,
         "enabled": true, "pinned": true, "pinMutable": true, "removable": true,
@@ -143,7 +146,7 @@ func extensionActionButtonsDrawTheEngineIconAtSixteenPoints() throws {
     row.update(items: [item])
     row.layoutSubtreeIfNeeded()
     #expect(row.checkButton("a0")?.checkIconSize == NSSize(width: 16, height: 16))
-    #expect(item.icon.size == NSSize(width: 20, height: 20))
+    #expect(row.checkButton("a0")?.image === item.icon)
 }
 
 @Test @MainActor

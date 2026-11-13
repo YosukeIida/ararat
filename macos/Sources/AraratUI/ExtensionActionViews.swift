@@ -28,7 +28,7 @@ public final class ExtensionActionButton: NSButton {
 
     public func update(item: ExtensionActionItem) {
         self.item = item
-        image = Self.sixteenPointIcon(item.icon)
+        image = item.icon
         isEnabled = item.enabled
         toolTip = item.badgeText.isEmpty ? item.tooltip : "\(item.tooltip) — \(item.badgeText)"
         setAccessibilityLabel(item.name)
@@ -36,24 +36,6 @@ public final class ExtensionActionButton: NSButton {
         setAccessibilityValue(item.badgeText.isEmpty ? "" : "Badge \(item.badgeText)")
         setAccessibilityIdentifier("extension-action-\(item.id)")
         needsDisplay = true
-    }
-
-    /// The board draws both the 24 pt field button and the 32 pt overflow tile with a 16 pt
-    /// icon; the engine hands 20 pt (ararat_window_host.mm `extensionActions`), so every button
-    /// scales a copy to 16 without touching the item's image.
-    private static func sixteenPointIcon(_ icon: NSImage) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        if let copy = icon.copy() as? NSImage {
-            copy.size = size
-            return copy
-        }
-        let image = NSImage(size: size, flipped: false) { rect in
-            icon.draw(in: rect)
-            return true
-        }
-        image.isTemplate = icon.isTemplate
-        image.accessibilityDescription = icon.accessibilityDescription
-        return image
     }
 
     public var checkIconSize: NSSize { image?.size ?? .zero }

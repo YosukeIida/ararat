@@ -163,3 +163,4 @@ func reusedRowAndFavoriteActionsDeliverTheUpdatedModels() throws {
     tile.performClick(nil)
     #expect(selected == [renamed, updatedFavorite])
 }
+

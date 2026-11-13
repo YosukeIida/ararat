@@ -142,9 +142,9 @@ public final class SidebarView: NSView {
     let urlField = URLFieldBackgroundButton()
     private let host = NSTextField(labelWithString: "")
     private let placeholder = NSTextField(labelWithString: URLFieldContent.placeholderText)
+    private var hostClip: URLFieldTextClipView!
     private let gearIcon = URLFieldGlyphView()
     private let privateBadgeGlyph = URLFieldGlyphView()
-    private let hostFade = CAGradientLayer()
     private var privateBadgeLeading: NSLayoutConstraint!
     private var gearLeadingDefault: NSLayoutConstraint!
     private var gearLeadingAfterBadge: NSLayoutConstraint!
@@ -766,11 +766,18 @@ public final class SidebarView: NSView {
     public var urlFieldCopyLinkVisible: Bool { !copyLinkButton.isHidden }
     public var urlFieldSiteControlsVisible: Bool { !siteControlsButton.isHidden }
     public var urlFieldCopyLinkEnabled: Bool { copyLinkButton.isEnabled }
-    public var urlFieldHostRightAligned: Bool { host.alignment == .right }
-    public var urlFieldHostHasLeadingFade: Bool { host.layer?.mask != nil }
+    public var urlFieldHostRightAligned: Bool {
+        let label = hostClip.checkLabelFrame
+        return label.minX < 0 && abs(label.maxX - hostClip.bounds.width) < 0.5
+    }
+    public var urlFieldHostHasLeadingFade: Bool { hostClip.checkHasFade }
+    public var checkHostLabelFrame: NSRect { hostClip.convert(hostClip.checkLabelFrame, to: nil) }
+    public var checkHostClipFrame: NSRect { hostClip.convert(hostClip.bounds, to: nil) }
     public var urlFieldCopyIsTick: Bool { copyLinkButton.checkImageIsTick() }
     public var urlFieldCopyButton: URLFieldButton { copyLinkButton }
     public var urlFieldSiteControlsButton: URLFieldButton { siteControlsButton }
+    public var checkCopyButtonWindowFrame: NSRect { copyLinkButton.convert(copyLinkButton.bounds, to: nil) }
+    public var checkURLFieldAccessibilityValue: String { urlField.accessibilityValue() as? String ?? "" }
     @objc private func editURLClicked() { onEditURL?() }
     @objc private func copySelectedLink() {
         guard let url = selectedURL else { return }
@@ -840,16 +847,15 @@ public final class SidebarView: NSView {
         host.alignment = .left
         host.wantsLayer = true
         host.setAccessibilityElement(false)
-        host.translatesAutoresizingMaskIntoConstraints = false
         placeholder.font = .systemFont(ofSize: 13)
         placeholder.textColor = .placeholderTextColor
         placeholder.alignment = .left
         placeholder.lineBreakMode = .byTruncatingTail
         placeholder.isHidden = true
         placeholder.setAccessibilityElement(false)
-        placeholder.translatesAutoresizingMaskIntoConstraints = false
-        urlField.addSubview(host)
-        urlField.addSubview(placeholder)
+        hostClip = URLFieldTextClipView(host: host, placeholder: placeholder)
+        hostClip.translatesAutoresizingMaskIntoConstraints = false
+        urlField.addSubview(hostClip)
         gearIcon.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Internal page")
         gearIcon.contentTintColor = .secondaryLabelColor
         gearIcon.imageScaling = .scaleProportionallyDown
@@ -960,14 +966,14 @@ public final class SidebarView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         favoritesHeight = favorites.heightAnchor.constraint(equalToConstant: 0)
         actionsHeight = actionsRow.heightAnchor.constraint(equalToConstant: 0)
-        hostTrailingToActions = [host, placeholder].map {
+        hostTrailingToActions = [hostClip].map {
             $0.trailingAnchor.constraint(equalTo: inFieldActions.leadingAnchor, constant: -4)
         }
         inFieldActionsWidth = inFieldActions.widthAnchor.constraint(equalToConstant: 0)
-        hostTrailingToCopy = [host, placeholder].map {
+        hostTrailingToCopy = [hostClip].map {
             $0.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
         }
-        hostTrailingToEdge = [host, placeholder].map {
+        hostTrailingToEdge = [hostClip].map {
             $0.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -12)
         }
         NSLayoutConstraint.activate([
@@ -986,8 +992,8 @@ public final class SidebarView: NSView {
             gearIcon.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             gearIcon.widthAnchor.constraint(equalToConstant: 16),
             gearIcon.heightAnchor.constraint(equalToConstant: 16),
-            host.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            hostClip.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            hostClip.heightAnchor.constraint(equalToConstant: URLFieldTextClipView.height),
             inFieldActions.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
             inFieldActions.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             inFieldActions.heightAnchor.constraint(equalToConstant: 24),
@@ -1019,18 +1025,15 @@ public final class SidebarView: NSView {
         privateBadgeLeading = privateBadgeGlyph.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
         gearLeadingDefault = gearIcon.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12)
         gearLeadingAfterBadge = gearIcon.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8)
-        textLeadingDefault = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12) }
-        textLeadingAfterBadge = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8) }
-        textLeadingAfterGear = [host, placeholder].map { $0.leadingAnchor.constraint(equalTo: gearIcon.trailingAnchor, constant: 8) }
+        textLeadingDefault = [hostClip].map { $0.leadingAnchor.constraint(equalTo: urlField.leadingAnchor, constant: 12) }
+        textLeadingAfterBadge = [hostClip].map { $0.leadingAnchor.constraint(equalTo: privateBadgeGlyph.trailingAnchor, constant: 8) }
+        textLeadingAfterGear = [hostClip].map { $0.leadingAnchor.constraint(equalTo: gearIcon.trailingAnchor, constant: 8) }
         privateBadgeLeading.isActive = false
         gearLeadingDefault.isActive = true
         gearLeadingAfterBadge.isActive = false
         textLeadingDefault.forEach { $0.isActive = true }
         textLeadingAfterBadge.forEach { $0.isActive = false }
         textLeadingAfterGear.forEach { $0.isActive = false }
-        hostFade.startPoint = CGPoint(x: 0, y: 0.5)
-        hostFade.endPoint = CGPoint(x: 1, y: 0.5)
-        hostFade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
         library.isHidden = true
         library.update(archive: snapshot.archive)
         tooltip.capture(in: library)
@@ -1170,7 +1173,8 @@ public final class SidebarView: NSView {
         }
         actionsRow.columns = columns
         updateExtensionLayout()
-        updateHostFade()
+        hostClip.needsLayout = true
+        hostClip.layoutSubtreeIfNeeded()
     }
 
     private func updateExtensionLayout() {
@@ -1205,36 +1209,14 @@ public final class SidebarView: NSView {
         updateExtensionLayout()
     }
 
-    /// D6: a host wider than the field keeps its registrable domain: the text is right-aligned
-    /// and its start fades out under a leading gradient mask.
-    private func updateHostFade() {
-        guard host.superview != nil else { return }
-        // The trailing constraint that sizes the label is activated during the same layout pass,
-        // so resolve the field's subviews before reading the label's width.
-        urlField.layoutSubtreeIfNeeded()
-        let available = host.bounds.width
-        let font = host.font ?? .systemFont(ofSize: 13)
-        let needed = (host.stringValue as NSString).size(withAttributes: [.font: font]).width
-        let truncated = available > 0 && needed > available + 0.5
-        host.alignment = truncated ? .right : .left
-        host.lineBreakMode = truncated ? .byClipping : .byTruncatingTail
-        if truncated {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            hostFade.frame = host.bounds
-            let fade = min(18, available)
-            hostFade.locations = [0, NSNumber(value: Double(fade / available))]
-            host.layer?.mask = hostFade
-            CATransaction.commit()
-        } else {
-            host.layer?.mask = nil
-        }
-    }
-
     private func urlFieldValueWidth() -> CGFloat? {
         urlField.layoutSubtreeIfNeeded()
         guard urlField.bounds.width > 0 else { return nil }
-        return urlField.bounds.width - 72
+        // S4: the text starts after whichever leading prefix is visible (16 pt glyph + 8 pt gap).
+        let prefix: CGFloat = (privateBadgeGlyph.isHidden ? 0 : 24) + (gearIcon.isHidden ? 0 : 24)
+        // The buttons hidden (no tab) leave the text area open to the field's 12 pt inset.
+        let trailing: CGFloat = copyLinkButton.isHidden && siteControlsButton.isHidden ? 12 : 60
+        return urlField.bounds.width - 12 - trailing - prefix
     }
 
     private func updateExtensionActions() {
@@ -1338,7 +1320,9 @@ public final class SidebarView: NSView {
         gearIcon.isHidden = !content.showsGear
         urlField.setAccessibilityValue(content.accessibilityValue)
         updateFieldContentLayout()
-        updateHostFade()
+        hostClip.fadesStart = content.isHost
+        hostClip.needsLayout = true
+        hostClip.layoutSubtreeIfNeeded()
 
         reloadFavorites()
 

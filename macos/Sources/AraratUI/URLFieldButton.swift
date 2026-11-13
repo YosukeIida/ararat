@@ -91,7 +91,8 @@ public final class URLFieldBackgroundButton: NSButton {
     }
 }
 
-/// One of the field's two 24 pt buttons: Copy Link and the site controls.@MainActor
+/// One of the field's two 24 pt buttons: Copy Link and the site controls.
+@MainActor
 public class URLFieldButton: NSButton {
     public enum Role { case copyLink, siteControls }
 
@@ -129,19 +130,9 @@ public class URLFieldButton: NSButton {
     // required 24 pt height would render a 33 pt frame. The board's 24 x 24 is the frame.
     public override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    public override var acceptsFirstResponder: Bool { true }
-
-    public override func becomeFirstResponder() -> Bool {
-        let accepted = super.becomeFirstResponder()
-        if accepted { showsFocusRing = true }
-        return accepted
-    }
-
-    public override func resignFirstResponder() -> Bool {
-        let accepted = super.resignFirstResponder()
-        if accepted { showsFocusRing = false }
-        return accepted
-    }
+    // S3: a click on Copy Link or the site controls must not take focus from the page. The
+    // board's focus look is still drawn from `showsFocusRing`.
+    public override var acceptsFirstResponder: Bool { false }
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -213,4 +204,77 @@ public class URLFieldButton: NSButton {
 @MainActor
 public final class URLFieldGlyphView: NSImageView {
     public override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+}
+
+/// The field's text area. The label keeps its intrinsic width; a host wider than the area is
+/// anchored at the trailing edge (its start off the leading edge, under a 16 pt gradient) so the
+/// registrable domain stays visible. A long file name or internal URL keeps its start and is
+/// clipped at the tail (D6).
+@MainActor
+public final class URLFieldTextClipView: NSView {
+    /// The text area's height; the field's constraint uses it, so the labels centre on a value
+    /// that does not depend on a layout pass having seen the final frame.
+    public static let height: CGFloat = 24
+    public let host: NSTextField
+    public let placeholder: NSTextField
+    /// Set for the `.host` kind only.
+    public var fadesStart = false { didSet { needsLayout = true } }
+    private let fadeLayer = CAGradientLayer()
+    private let fadeLength: CGFloat = 16
+
+    public init(host: NSTextField, placeholder: NSTextField) {
+        self.host = host
+        self.placeholder = placeholder
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        addSubview(host)
+        addSubview(placeholder)
+        fadeLayer.startPoint = CGPoint(x: 0, y: 0.5)
+        fadeLayer.endPoint = CGPoint(x: 1, y: 0.5)
+        fadeLayer.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    public override var isFlipped: Bool { true }
+
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    public override func layout() {
+        super.layout()
+        let showsPlaceholder = !placeholder.isHidden
+        let visible = showsPlaceholder ? placeholder : host
+        let hidden = showsPlaceholder ? host : placeholder
+        guard !visible.isHidden else {
+            host.frame = .zero
+            placeholder.frame = .zero
+            layer?.mask = nil
+            return
+        }
+        let intrinsic = visible.intrinsicContentSize
+        let height = min(Self.height, intrinsic.height)
+        let fades = fadesStart && intrinsic.width > bounds.width + 0.5
+        let x = fades ? bounds.width - intrinsic.width : 0
+        let frame = NSRect(x: x, y: (Self.height - height) / 2, width: intrinsic.width, height: height)
+        visible.frame = frame
+        // The hidden label keeps the visible label's frame, so an incremental update and a fresh
+        // view describe the same tree (the hidden label is not drawn either way).
+        hidden.frame = frame
+        guard fades, bounds.width > 0 else { layer?.mask = nil; return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeLayer.frame = bounds
+        fadeLayer.locations = [0, NSNumber(value: Double(min(fadeLength, bounds.width) / bounds.width))]
+        layer?.mask = fadeLayer
+        CATransaction.commit()
+    }
+
+    public var checkLabelFrame: NSRect { (placeholder.isHidden ? host : placeholder).frame }
+    public var checkHasFade: Bool { layer?.mask != nil }
 }

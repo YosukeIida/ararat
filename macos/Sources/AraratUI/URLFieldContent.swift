@@ -24,8 +24,12 @@ public struct URLFieldContent: Equatable {
     public static let placeholderText = "Search or enter URL"
 
     public let kind: Kind
+    /// D2: Copy Link is enabled only when there is a URL to copy; a tab with no URL yet (an
+    /// uncommitted New Tab row) still shows the buttons but cannot copy.
+    public let canCopy: Bool
 
     public init(url: String?, hasTab: Bool) {
+        canCopy = hasTab && !(url?.isEmpty ?? true)
         guard hasTab else {
             kind = .noTab
             return
@@ -90,8 +94,11 @@ public struct URLFieldContent: Equatable {
     /// keeps them.
     public var hidesButtons: Bool { kind == .noTab }
 
-    /// Copy Link has something to copy whenever a tab (and so a URL) is present.
-    public var canCopy: Bool { kind != .noTab }
+    /// D6: only a host gets the leading fade; a file name or an internal URL keeps its start.
+    public var isHost: Bool {
+        if case .host = kind { return true }
+        return false
+    }
 
     /// What VoiceOver reads for the field; the placeholder text when there is nothing to show.
     public var accessibilityValue: String { showsPlaceholder ? Self.placeholderText : text }

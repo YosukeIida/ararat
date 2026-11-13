@@ -87,7 +87,8 @@ func selectedHostTracksVisibleSpace() {
     sidebar.layoutSubtreeIfNeeded()
     sidebar.layoutSubtreeIfNeeded()
     let host = descendants(of: sidebar).compactMap { $0 as? NSTextField }.first { $0.stringValue == "docs.example.com" }!
-    let field = host.superview!
+    var field: NSView = host
+    while !(field is URLFieldBackgroundButton) { field = field.superview! }
     let frame = sidebar.convert(field.bounds, from: field)
     #expect(frame.minX == 8)
     #expect(frame.width == 224)
@@ -279,8 +280,16 @@ func urlFieldContentRuleCoversEveryURLFamily() {
     #expect(URLFieldContent(url: "chrome://settings/", hasTab: true).text == "chrome://settings/")
     #expect(URLFieldContent(url: "chrome://settings/", hasTab: true).showsGear)
     #expect(URLFieldContent(url: "view-source:https://a.example/", hasTab: true).showsGear)
+    // S5: userinfo cannot spoof the host the field shows.
+    #expect(URLFieldContent(url: "https://google.com@evil.example/", hasTab: true).text == "evil.example")
+    #expect(URLFieldContent(url: "https://user:pw@real.example:8443/", hasTab: true).text == "real.example")
+    #expect(URLFieldContent(url: "data:text/html,<title>x</title>", hasTab: true).accessibilityValue == "data:")
+    #expect(URLFieldContent(url: "about:blank", hasTab: true).accessibilityValue == URLFieldContent.placeholderText)
+    #expect(URLFieldContent(url: "chrome://settings/", hasTab: true).accessibilityValue == "chrome://settings/")
     #expect(URLFieldContent(url: nil, hasTab: true).showsPlaceholder)
     #expect(!URLFieldContent(url: nil, hasTab: true).hidesButtons)
+    // S2: no URL, nothing to copy even with a tab.
+    #expect(!URLFieldContent(url: nil, hasTab: true).canCopy)
     #expect(URLFieldContent(url: nil, hasTab: false).hidesButtons)
     #expect(!URLFieldContent(url: nil, hasTab: false).canCopy)
 }
@@ -330,14 +339,29 @@ func longHostKeepsItsEndAtBothWidths() {
     for width in [240.0, 164] {
         let sidebar = urlFieldSidebar(live: url, width: width)
         sidebar.layoutSubtreeIfNeeded()
+        sidebar.layoutSubtreeIfNeeded()
         #expect(sidebar.urlHostForCheck == "averyveryveryverylongsubdomainname.docs.example.com")
-        #expect(sidebar.urlFieldHostRightAligned)
+        let label = sidebar.checkHostLabelFrame
+        let clip = sidebar.checkHostClipFrame
+        #expect(label.minX < clip.minX)
+        #expect(abs(label.maxX - clip.maxX) <= 0.5)
         #expect(sidebar.urlFieldHostHasLeadingFade)
     }
     let short = urlFieldSidebar(live: "https://a.example/", width: 164)
     short.layoutSubtreeIfNeeded()
-    #expect(!short.urlFieldHostRightAligned)
+    short.layoutSubtreeIfNeeded()
+    #expect(abs(short.checkHostLabelFrame.minX - short.checkHostClipFrame.minX) <= 0.5)
     #expect(!short.urlFieldHostHasLeadingFade)
+    // D6 applies to the host only: a long file name or internal URL keeps its start.
+    for other in ["file:///Users/yosuke/Notes/a-very-long-file-name-for-the-url-field-check.md",
+                  "chrome://settings/a-very-long-internal-path-for-the-url-field-check"] {
+        let view = urlFieldSidebar(live: other, width: 240)
+        view.layoutSubtreeIfNeeded()
+        view.layoutSubtreeIfNeeded()
+        #expect(abs(view.checkHostLabelFrame.minX - view.checkHostClipFrame.minX) <= 0.5)
+        #expect(view.checkHostLabelFrame.maxX > view.checkHostClipFrame.maxX)
+        #expect(!view.urlFieldHostHasLeadingFade)
+    }
 }
 
 @Test @MainActor
