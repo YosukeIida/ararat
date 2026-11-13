@@ -132,6 +132,44 @@ public final class SidebarContainerView: NSView {
         else { glass = false }
         return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
     }
+
+    // U25d: the half of the page a dragged row is over, in this view's coordinates. Only the
+    // zones along the shown split's axis are offered (design S1): left/right for a horizontal
+    // split or a lone tab, top/bottom for a vertical one.
+    private let paneDrop = PaneDropIndicator(frame: .zero)
+    public func paneDropHalf(at windowPoint: NSPoint, axis: PaneDropAxis) -> PaneDropHalf? {
+        guard page.superview === self, !page.isHiddenOrHasHiddenAncestor, page.bounds.width > 0, page.bounds.height > 0 else { return nil }
+        // This view is flipped (y grows downward), so the first half is the one nearer minY.
+        let local = convert(windowPoint, from: nil)
+        let pageFrame = page.frame
+        guard pageFrame.contains(local) else { return nil }
+        let vertical = axis == .vertical
+        let first = vertical ? local.y < pageFrame.midY : local.x < pageFrame.midX
+        let half = vertical
+            ? NSRect(x: pageFrame.minX, y: first ? pageFrame.minY : pageFrame.midY, width: pageFrame.width, height: pageFrame.height / 2)
+            : NSRect(x: first ? pageFrame.minX : pageFrame.midX, y: pageFrame.minY, width: pageFrame.width / 2, height: pageFrame.height)
+        // `first` is the order side: left, or top, before the other half.
+        return PaneDropHalf(side: first ? .left : .right, rect: half)
+    }
+
+    public func showPaneDrop(_ half: PaneDropHalf?) {
+        guard let half else {
+            paneDrop.isHidden = true
+            return
+        }
+        paneDrop.frame = half.rect
+        if paneDrop.superview !== self { addSubview(paneDrop) }
+        paneDrop.updateLook()
+        paneDrop.isHidden = false
+    }
+
+    public var paneDropForCheck: NSRect? { paneDrop.isHidden ? nil : paneDrop.frame }
+    public var pageFrameInWindowForCheck: NSRect? {
+        guard page.superview === self, !page.isHiddenOrHasHiddenAncestor else { return nil }
+        layoutSubtreeIfNeeded()
+        // Window coordinates: `paneDropHalf(at:axis:)` converts a window point into the page.
+        return page.convert(page.bounds, to: nil)
+    }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
     public func dockCheckSetMain(_ main: Bool) {
         guard CommandLine.arguments.contains("--ararat-check=dock") else { return }

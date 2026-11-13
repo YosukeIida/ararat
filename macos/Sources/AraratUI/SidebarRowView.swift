@@ -20,7 +20,9 @@ private final class SplitSegmentButton: NSButton {
 final class SidebarRowView: NSView {
     private(set) var row: Row
     var acceptsKeyboardFocus = true { didSet { refreshHover() } }
-    var menuProvider: (() -> NSMenu?)?
+    // The pane a split row's right-click landed on, so the segment menu acts on that pane; nil
+    // for every other row and for a click outside the segments.
+    var menuProvider: ((Row?) -> NSMenu?)?
     var onRename: ((Row) -> Void)?
     var onRenameCommit: ((Row, String, @escaping (Bool) -> Void) -> Void)?
     var onRenameEnd: (() -> Void)?
@@ -481,7 +483,19 @@ final class SidebarRowView: NSView {
         }
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? { acceptsKeyboardFocus ? menuProvider?() : nil }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        acceptsKeyboardFocus ? menuProvider?(paneUnder(event)) : nil
+    }
+
+    // U25d: which segment the event is over. A split draws one segment per pane, and its menu
+    // acts on the pane that was right-clicked (the first pane otherwise).
+    func paneUnder(_ event: NSEvent) -> Row? {
+        guard !segments.isHidden, segments.arrangedSubviews.count == segmentRows.count else { return nil }
+        let point = segments.convert(event.locationInWindow, from: nil)
+        guard let index = segments.arrangedSubviews.firstIndex(where: { $0.frame.contains(point) }),
+              segmentRows.indices.contains(index) else { return nil }
+        return segmentRows[index]
+    }
 
     func beginRename() {
         guard renameField == nil else { return }

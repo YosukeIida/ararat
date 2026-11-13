@@ -26,7 +26,10 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
         #expect(row.menu(for: event)?.items.map(\.title) == titles)
     }
     #expect(rows.contains { $0.row.id == "split-1" })
-    #expect(rows.first { $0.row.id == "split-1" }?.menu(for: event) == nil)
+    // U25d: the split row carries the pane commands (panes side by side, so Move Left/Right).
+    #expect(rows.first { $0.row.id == "split-1" }?.menu(for: event)?.items.filter { !$0.isSeparatorItem }.map(\.title) ==
+            ["Move Left", "Move Right", "Add Right Split", "Add Left Split", "Separate Tab from Split",
+             "Convert to Vertical Split View", "Close Pane"])
     #expect(!rows.contains { $0.row.id == "tab-a" })
     let favorite = try #require(views(sidebar).compactMap { $0 as? FavoriteTile }.first)
     #expect(favorite.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"])

@@ -323,6 +323,12 @@ bool IsMatrixTrace() {
          command->HasSwitch("ararat-space-matrix-check");
 }
 
+bool IsPrivateWindowTrace() {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  return command->GetSwitchValueASCII("ararat-check") == "private-window" ||
+         command->GetSwitchValueASCII("ararat-screen") == "private-window";
+}
+
 bool IsCloseCheck() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
              "ararat-check") == "close";
@@ -2106,6 +2112,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     if (started.is_null()) started = base::Time::Now();
     g_epoch = started.InMillisecondsSinceUnixEpoch();
     g_revision = 0;
+    if (IsPrivateWindowTrace()) std::fprintf(stderr, "ararat-trace: private-epoch initial window=%s epoch=%llu private=%d\n", window_id_.UTF8String, static_cast<unsigned long long>(g_epoch), [self isPrivateWindow]);
     [delegate windowHost:self didReceiveTransaction:@{
       @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"off_the_record": @([self isPrivateWindow]), @"strips": @[]
     }];
@@ -2472,7 +2479,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
-      [screen isEqualToString:@"split-focus"] ||
+      [screen isEqualToString:@"split-focus"] || [screen isEqualToString:@"split-commands"] ||
       [screen isEqualToString:@"header"] ||
       [screen isEqualToString:@"urlfield"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
@@ -4196,9 +4203,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 // A per-recipient flag is safe because a repeated rev 0 in the same epoch is a no-op in the
 // core (rev <= last_rev), and every new store arrives with a new private host.
 - (void)deliverPrivateEpochTo:(ARWindowHost*)recipient offTheRecord:(BOOL)offTheRecord {
+  if (IsPrivateWindowTrace()) std::fprintf(stderr, "ararat-trace: private-epoch attempt source=%s recipient=%s epoch=%llu private=%d delegate=%d popup=%d sent=%d\n", window_id_.UTF8String, recipient ? recipient->window_id_.UTF8String : "nil", static_cast<unsigned long long>(g_epoch), offTheRecord, recipient && recipient.delegate != nil, recipient && recipient->core_->popup(), recipient && recipient->private_epoch_sent_);
   if (!offTheRecord || !g_epoch || !recipient || !recipient.delegate ||
       recipient->core_->popup() || recipient->private_epoch_sent_) return;
   recipient->private_epoch_sent_ = YES;
+  if (IsPrivateWindowTrace()) std::fprintf(stderr, "ararat-trace: private-epoch delivered window=%s epoch=%llu rev=0\n", recipient->window_id_.UTF8String, static_cast<unsigned long long>(g_epoch));
   [recipient.delegate windowHost:recipient didReceiveTransaction:@{
     @"epoch": @(g_epoch), @"rev": @0, @"cause": @"Engine", @"off_the_record": @YES, @"strips": @[]
   }];

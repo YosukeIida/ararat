@@ -548,7 +548,7 @@ func selectingNestedSplitOpensAllThreeMembers() async throws {
     let a = try #require(fake.splitFrames["a"]).rectValue
     let b = try #require(fake.splitFrames["b"]).rectValue
     let c = try #require(fake.splitFrames["c"]).rectValue
-    #expect(a.minX == b.minX && a.maxY <= b.minY && b.maxX < c.minX)
+    #expect(a.minX == b.minX && a.minY >= b.maxY && b.maxX < c.minX)
     #expect(fake.active == "a")
     let divider = try #require(card.subviews.compactMap { $0 as? SplitDividerView }.first { !$0.horizontal })
     func mouse(_ type: NSEvent.EventType, _ y: CGFloat) throws -> NSEvent {

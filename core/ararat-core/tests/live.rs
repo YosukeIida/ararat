@@ -41,6 +41,74 @@ fn strip_empty(window: &str) -> Strip {
 }
 
 #[test]
+fn private_single_tab_adoption_selects_it_when_the_strip_has_no_active_tab() {
+    for initial_snapshot in [true, false] {
+        let mut ws = Workspace::private(Default::default());
+        let mut live = Live::new();
+        if !initial_snapshot {
+            live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 0, cause: Cause::Engine, strips: vec![] });
+        }
+        let tab = LiveTab { off_the_record: true, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live".into(), item: None };
+        let (_, result) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: if initial_snapshot { 0 } else { 1 }, cause: Cause::Chrome,
+            strips: vec![Strip { window: "private-window".into(), tabs: vec![tab], active: None }] });
+        assert!(result.applied);
+        assert_eq!(result.adopted.len(), 1);
+        assert_eq!(ws.selected("private-window"), Some(result.adopted[0].1.as_str()));
+        assert!(ws.last_selected.is_empty());
+        assert!(ws.windows["private-window"].history.is_empty());
+    }
+}
+
+#[test]
+fn regular_single_tab_adoption_without_active_does_not_select() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let tab = LiveTab { off_the_record: false, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: "live".into(), item: None };
+    let (_, result) = live.apply(&mut ws, snapshot_tx(vec![Strip { window: "one".into(), tabs: vec![tab], active: None }]));
+    assert!(result.applied);
+    assert_eq!(result.adopted.len(), 1);
+    assert_eq!(ws.selected("one"), None);
+}
+
+#[test]
+fn private_mapped_tab_alone_or_with_a_new_tab_does_not_select() {
+    let mut ws = Workspace::private(Default::default());
+    let mut live = Live::new();
+    let tab = |id: &str, item: Option<String>| LiveTab { off_the_record: true, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: id.into(), item };
+    let (_, initial) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 0, cause: Cause::Chrome,
+        strips: vec![Strip { window: "w".into(), tabs: vec![tab("a", None), tab("b", None)], active: None }] });
+    assert!(initial.applied);
+    let mapped = initial.adopted.iter().find(|(live, _)| live == "a").unwrap().1.clone();
+    let (_, alone) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 1, cause: Cause::Engine,
+        strips: vec![Strip { window: "w".into(), tabs: vec![tab("a", Some(mapped.clone()))], active: None }] });
+    assert!(alone.applied);
+    assert!(alone.adopted.is_empty());
+    assert_eq!(ws.selected("w"), None);
+    let (_, mixed) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 2, cause: Cause::Chrome,
+        strips: vec![Strip { window: "w".into(), tabs: vec![tab("a", Some(mapped)), tab("c", None)], active: None }] });
+    assert!(mixed.applied);
+    assert_eq!(mixed.adopted.len(), 1);
+    assert_eq!(ws.selected("w"), None);
+}
+
+#[test]
+fn adoption_without_an_active_tab_does_not_guess_among_multiple_tabs_or_replace_a_selection() {
+    let tab = |id: &str| LiveTab { off_the_record: true, profile: Default::default(), opener: None, navigated: false, url: None, title: None, live_id: id.into(), item: None };
+    let mut ws = Workspace::private(Default::default());
+    let mut live = Live::new();
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 0, cause: Cause::Chrome,
+        strips: vec![Strip { window: "w".into(), tabs: vec![tab("a"), tab("b")], active: None }] });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("w"), None);
+    ws.create_tab("w", "about:blank").unwrap();
+    let selected = ws.selected("w").unwrap().to_string();
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 1, cause: Cause::Chrome,
+        strips: vec![Strip { window: "w".into(), tabs: vec![tab("c")], active: None }] });
+    assert!(outcome.applied);
+    assert_eq!(ws.selected("w"), Some(selected.as_str()));
+}
+
+#[test]
 fn remote_selection_survives_detach_until_explicit_local_activation() {
     let mut ws = workspace();
     let mut live = Live::new();

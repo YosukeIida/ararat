@@ -246,6 +246,7 @@ void CheckGuards(int argc, const char** argv) {
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (screen_private) { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-focus") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "split-commands") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "urlfield") { valid_screen = true; g_check_slice = true; }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
@@ -272,6 +273,7 @@ void CheckGuards(int argc, const char** argv) {
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
       browser_check = browser_check || name == "split-focus";
+      browser_check = browser_check || name == "split-commands";
       browser_check = browser_check || name == "header";
       browser_check = browser_check || name == "urlfield";
       g_check_tabs = name == "tabs";
