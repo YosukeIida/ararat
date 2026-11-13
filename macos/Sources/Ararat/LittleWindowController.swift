@@ -335,6 +335,9 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         checkHandoffLive = tab.liveId
         checkHandoffNavigationCount = tab.navigationCount
         let deadline = DispatchTime.now() + 10
+        // L1: a refused handoff leaves the Little Window open, so the tab must go back to the
+        // item id it had (a page-only tab has none) rather than report the closed row.
+        let previousItem = tab.itemId
         func fail() {
             opening = false
             FileHandle.standardError.write(Data("ararat-trace: little-window open-in failed space=\(space.id)\n".utf8))
@@ -346,13 +349,19 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
                 // The row exists; the tab takes it before the move so the destination's strip
                 // reports the row instead of the core adopting the page elsewhere.
                 tab.itemId = row
-                self.handoff(tab: tab, row: row, space: space.id, deadline: deadline, attempt: 0)
+                self.handoff(tab: tab, row: row, space: space.id, previousItem: previousItem,
+                             deadline: deadline, attempt: 0)
             }
         }
     }
 
-    private func handoff(tab: any ARTabAPI, row: String, space: String, deadline: DispatchTime, attempt: Int) {
-        guard let origin, origin.hasUsableHost, let host = origin.host else { closeRow(row); return }
+    private func handoff(tab: any ARTabAPI, row: String, space: String, previousItem: String?,
+                         deadline: DispatchTime, attempt: Int) {
+        guard let origin, origin.hasUsableHost, let host = origin.host else {
+            tab.itemId = previousItem
+            closeRow(row)
+            return
+        }
         // The item is set on the tab before the move (see performOpenIn), so the destination's
         // strip reports the row and the core maps the live tab to it.
         if host.handoffTab(tab, activate: true) {
@@ -364,12 +373,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             return
         }
         guard DispatchTime.now() < deadline else {
+            tab.itemId = previousItem
             closeRow(row)
             opening = false
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-            self?.handoff(tab: tab, row: row, space: space, deadline: deadline, attempt: attempt + 1)
+            self?.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
+                          deadline: deadline, attempt: attempt + 1)
         }
     }
 
@@ -498,16 +509,15 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     /// The profile menu's switch: a popup hosts one profile's Browser, so the page reopens in
-    /// the chosen profile at the same frame and URL.
+    /// the chosen profile at the same frame and URL. The old window stays until the new one
+    /// exists (M1): `openLittleWindow` hands this controller to the create_host callback as the
+    /// one to close, so a refused open loses nothing.
     private func reopenInProfile(_ name: String) {
         guard let origin, origin.hasUsableHost, let window else { return }
         let frame = window.frame
         let url = pageTab?.url ?? initialURL
         saveFrame()
-        close()
-        DispatchQueue.main.async {
-            origin.openLittleWindow(url: url, profile: name, frame: frame)
-        }
+        origin.openLittleWindow(url: url, profile: name, frame: frame, replacing: self)
     }
 }
 

@@ -3286,7 +3286,14 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       core_->closed() || closing_all_ || closing_window_) return NO;
   auto* window = core_->windowForProfile(profile.UTF8String);
   auto* browser = window ? window->browser() : nullptr;
-  if (!browser || browser->IsDeleteScheduled() || browser->GetProfile()->IsOffTheRecord()) return NO;
+  if (!browser || browser->IsDeleteScheduled()) {
+    // The profile's Browser may not be in this host yet (a profile switch's Little Window).
+    // Loading it must not change which profile this window shows: ensureProfileBrowser adds a
+    // Browser beside the shown one, the way moveTab: does, and the caller retries.
+    [self ensureProfileBrowser:profile];
+    return NO;
+  }
+  if (browser->GetProfile()->IsOffTheRecord()) return NO;
   GURL parsed(url.UTF8String);
   if (!parsed.is_valid()) return NO;
   NavigateParams params(browser, parsed, ui::PAGE_TRANSITION_TYPED);

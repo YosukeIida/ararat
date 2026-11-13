@@ -14,7 +14,8 @@ final class LittleWindowCheckState {
                         "default_destination", "command_bar_key", "command_bar_width",
                         "command_bar_navigates", "open_enabled", "copy_link", "extensions_button",
                         "frame_saved", "frame_remembered", "open_key", "open_in", "handoff_live",
-                        "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff"]
+                        "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
+                        "profile_switch"]
     static let screens = ["capture_bar", "capture_profile_menu", "capture_space_menu", "capture_command_bar"]
 
     var conditions: [String: Bool] = [:]
@@ -328,16 +329,25 @@ extension Runtime {
             var todayRow: Row?
             if let openedIn { todayRow = row(openedIn.item) }
             let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.liveId == check.handoffLive }
+            let tabsWithLive = (host.tabs() as? [any ARTabAPI])?.filter { $0.liveId == check.handoffLive } ?? []
+            var mapped: String?
+            if let openedIn, let adapter {
+                mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: openedIn.item) }
+            }
             var details: [String: Any] = [:]
             details["space"] = openedIn?.space ?? ""
             details["item"] = openedIn?.item ?? ""
             details["row"] = todayRow?.url ?? ""
             details["same_live"] = tab != nil
+            details["tabs_with_live"] = tabsWithLive.count
+            details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
             details["shown"] = snapshot.shownSpaceId ?? ""
             check.details["open_in"] = details
             check.mark("open_in", openedIn != nil && todayRow?.url == check.pageURL && snapshot.shownSpaceId == openedIn?.space)
-            check.mark("handoff_live", tab != nil && tab?.liveId == check.handoffLive)
+            // L2: the live tab is the only tab with that id, and the core maps the row to it.
+            check.mark("handoff_live", tab != nil && tabsWithLive.count == 1
+                       && mapped == check.handoffLive)
             // A moved tab is a new ARTab wrapper in the destination, so its own navigation
             // count starts at zero: any count there would be a navigation the app made (the
             // reload this check rules out). The live id proves it is the same contents.
@@ -381,15 +391,68 @@ extension Runtime {
             }
             let reading = snapshot.spaces.first { $0.title == "Reading" }
             let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.liveId == check.handoffLive }
+            let tabsWithLive = (host.tabs() as? [any ARTabAPI])?.filter { $0.liveId == check.handoffLive } ?? []
+            var mapped: String?
+            if let adapter {
+                mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: opened.item) }
+            }
             var details: [String: Any] = [:]
             details["space"] = opened.space
             details["reading"] = reading?.id ?? ""
             details["row"] = row(opened.item)?.url ?? ""
             details["live"] = tab != nil
+            details["tabs_with_live"] = tabsWithLive.count
+            details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
             check.details["menu_handoff"] = details
             check.mark("menu_handoff", opened.space == reading?.id && row(opened.item)?.url == check.pageURL
-                       && tab != nil && tab?.navigationCount == 0)
+                       && tab != nil && tab?.navigationCount == 0
+                       && tabsWithLive.count == 1 && mapped == check.handoffLive)
+            // The profile switch: the Little Window reopens in the chosen profile and the
+            // origin window keeps its own profile (H1).
+            openLittleWindow(url: check.pageURL)
+            browserCheckPhase = 20
+        case 20:
+            guard let controller = controller(), let tab = popupTab(), !tab.isLoading,
+                  tab.url == check.pageURL else {
+                if phaseTicks() > 300 { check.mark("profile_switch", false); finish(); return }
+                wait("fourth little window"); return
+            }
+            controller.bar.checkClickProfile()
+            browserCheckPhase = 21
+        case 21:
+            guard let controller = controller(), let panel = controller.checkProfilePanel else {
+                if phaseTicks() > 60 { check.mark("profile_switch", false); finish(); return }
+                wait("profile menu"); return
+            }
+            let originProfile = host.profileDirectory()
+            let before = littleWindows.count
+            panel.checkClickRow("Profile 1")
+            check.details["profile_switch"] = ["origin_before": originProfile, "windows_before": before]
+            browserCheckPhase = 22
+        case 22:
+            // The old window stays until the new one exists; then only the Profile 1 one is left
+            // and the origin window still shows Default.
+            guard let controller = controller(), controller.profileName == "Profile 1",
+                  let tab = popupTab(), !tab.isLoading, tab.url == check.pageURL,
+                  littleWindows.count == 1 else {
+                if phaseTicks() > 400 {
+                    let names = littleWindows.map(\.profileName)
+                    check.details["profile_switch_after"] = ["windows": names, "origin": host.profileDirectory()]
+                    check.mark("profile_switch", false)
+                    finish()
+                    return
+                }
+                wait("profile switch"); return
+            }
+            var details = check.details["profile_switch"] as? [String: Any] ?? [:]
+            details["origin_after"] = host.profileDirectory()
+            details["new_profile"] = controller.profileName
+            details["windows_after"] = littleWindows.count
+            details["url"] = tab.url
+            check.details["profile_switch"] = details
+            check.mark("profile_switch", host.profileDirectory() == "Default"
+                       && controller.profileName == "Profile 1" && tab.url == check.pageURL)
             finish()
         default:
             break

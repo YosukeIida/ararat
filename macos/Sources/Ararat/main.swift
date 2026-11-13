@@ -87,7 +87,10 @@ enum Launcher {
   @MainActor static var pendingURLs: [(url: String, untrusted: Bool)] = []
   /// U27h: set just before the engine creates a Little Window's popup Browser. The create_host
   /// callback runs on the root Runtime whichever window asked, so the request lives here.
-  @MainActor static var pendingLittleWindow: (origin: Runtime, frame: NSRect, url: String?, profile: String)?
+  /// `replacing` is the Little Window a profile switch is replacing: it is closed only after
+  /// the new one exists, so a refused open never loses the page.
+  @MainActor static var pendingLittleWindow: (origin: Runtime, frame: NSRect, url: String?, profile: String,
+                                             replacing: LittleWindowController?)?
   @MainActor static var browserCheckFinished = false
 }
 
@@ -445,6 +448,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
         if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
           pending.origin.lastLittleWindow = controller
         }
+        // M1: the window a profile switch replaces closes only now that its replacement exists.
+        pending.replacing?.close()
       }
       value.closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: host.window(), queue: .main) { [weak self, weak value] _ in
         DispatchQueue.main.async {
@@ -1747,23 +1752,17 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  /// U27h: opens a page-only Little Window on `url` (about:blank from the menu command) in the
-  /// host's profile, at the remembered frame. The engine creates the popup Browser and our
-  /// create_host callback builds the bar.
-  func openLittleWindow(url: String? = nil, profile: String? = nil, frame: NSRect? = nil) {
+  /// U27h: opens a page-only Little Window on `url` (about:blank from the menu command) in
+  /// `profile`, at the remembered frame. The engine creates the popup Browser and our
+  /// create_host callback builds the bar. `replacing` is closed by that callback once the new
+  /// window exists (a profile switch must not lose the page when the open is refused).
+  func openLittleWindow(url: String? = nil, profile: String? = nil, frame: NSRect? = nil,
+                        replacing: LittleWindowController? = nil) {
     guard !isPrivateWindow, let host, hasUsableHost, let adapter = workspace else { return }
     let name = profile ?? host.profileDirectory()
     func create(_ rect: NSRect) {
-      let rect = LittleWindowController.clampedFrame(rect)
-      Launcher.pendingLittleWindow = (self, rect, url, name)
-      _ = host.setProfileDirectory(name)
-      // The engine's create_host callback consumes the pending request; if it is still there,
-      // the engine did not make a popup (the profile's Browser may still be loading).
-      if host.openLittleWindow(url ?? "about:blank", profile: name, frame: rect) == false
-          || Launcher.pendingLittleWindow != nil {
-        Launcher.pendingLittleWindow = nil
-        retryLittleWindow(url: url, profile: name, frame: rect, deadline: .now() + 10)
-      }
+      attemptLittleWindow(url: url, profile: name, frame: LittleWindowController.clampedFrame(rect),
+                          replacing: replacing, deadline: .now() + 10)
     }
     if let frame { create(frame); return }
     adapter.littleWindowFrame { [weak self] result in
@@ -1775,15 +1774,25 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  private func retryLittleWindow(url: String?, profile: String, frame: NSRect, deadline: DispatchTime) {
+  /// One attempt, used for the first try and every retry. The engine's create_host callback
+  /// consumes `Launcher.pendingLittleWindow`; a request still set afterwards means no popup was
+  /// made, so it is cleared (never left for an unrelated `window.open` to adopt) and retried
+  /// until the deadline. The origin window's own profile is never touched: the engine loads the
+  /// profile's Browser into the host without switching what the window shows.
+  private func attemptLittleWindow(url: String?, profile: String, frame: NSRect,
+                                   replacing: LittleWindowController?, deadline: DispatchTime) {
+    guard let host, hasUsableHost else {
+      Launcher.pendingLittleWindow = nil
+      return
+    }
+    Launcher.pendingLittleWindow = (self, frame, url, profile, replacing)
+    let accepted = host.openLittleWindow(url ?? "about:blank", profile: profile, frame: frame)
+    if accepted, Launcher.pendingLittleWindow == nil { return }
+    Launcher.pendingLittleWindow = nil
     guard DispatchTime.now() < deadline else { return }
     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-      guard let self, let host = self.host, self.hasUsableHost else { return }
-      Launcher.pendingLittleWindow = (self, frame, url, profile)
-      if host.openLittleWindow(url ?? "about:blank", profile: profile, frame: frame) == false {
-        Launcher.pendingLittleWindow = nil
-        self.retryLittleWindow(url: url, profile: profile, frame: frame, deadline: deadline)
-      }
+      self?.attemptLittleWindow(url: url, profile: profile, frame: frame,
+                                replacing: replacing, deadline: deadline)
     }
   }
 
