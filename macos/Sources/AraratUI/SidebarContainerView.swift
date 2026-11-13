@@ -125,12 +125,12 @@ public final class SidebarContainerView: NSView {
     var windowMain: (() -> Bool)?
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
-    public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat) {
+    public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat, color: NSColor?) {
         panel.setCheckReduceTransparency(reduced)
         let glass: Bool
         if #available(macOS 26, *) { glass = panel.subviews.contains { $0 is NSGlassEffectView && !$0.isHidden } }
         else { glass = false }
-        return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1)
+        return (!panel.vibrancy.isHidden, glass, panel.grain.opacity, panel.gradient.backgroundColor?.alpha ?? -1, panel.checkDrawnColor)
     }
 
     // U25d: the half of the page a dragged row is over, in this view's coordinates. Only the
