@@ -135,6 +135,37 @@ func thePolarFieldMapsHuesAndRadiiBothWays() {
 }
 
 @Test @MainActor
+func theGroupTurnWrapsPastRed() async throws {
+    let fixture = try await LookFixture()
+    let editor = fixture.editor
+    // The check's own case: 0.4 / 0.9 + 0.25 -> 0.65 / 0.15, not 0.65 / 1.0.
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.4, y: 0.5), LookEditorModel.fieldColor(x: 0.9, y: 0.5)] }
+    let count = try await fixture.writes()
+    editor.movePoint(0, to: (x: 0.65, y: 0.5))
+    #expect(abs(editor.look.colors[0].x - 0.65) < 0.000001)
+    #expect(abs(editor.look.colors[1].x - 0.15) < 0.000001)
+    editor.end()
+    #expect(try await fixture.writes() == count + 1)
+    // Turning forward across the seam and backward from red both continue the group.
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.99, y: 0.5), LookEditorModel.fieldColor(x: 0.1, y: 0.5)] }
+    editor.turnColours(by: LookEditorModel.hueKeyStep)
+    #expect(abs(editor.look.colors[0].x - (0.99 + 5.0 / 360 - 1)) < 0.000001)
+    #expect(abs(editor.look.colors[1].x - (0.1 + 5.0 / 360)) < 0.000001)
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0, y: 0.5), LookEditorModel.fieldColor(x: 0.5, y: 0.5), LookEditorModel.fieldColor(x: 0.99, y: 0.5)] }
+    for _ in 0..<3 { editor.turnColours(by: -LookEditorModel.hueKeyStep) }
+    #expect(abs(editor.look.colors[0].x - (1 - 15.0 / 360)) < 0.000001)
+    #expect(abs(editor.look.colors[2].x - (0.99 - 15.0 / 360)) < 0.000001)
+    // Three handles dragged across the seam keep their offsets.
+    editor.change { $0.colors = [LookEditorModel.fieldColor(x: 0.2, y: 0.5), LookEditorModel.fieldColor(x: 0.6, y: 0.5), LookEditorModel.fieldColor(x: 0.9, y: 0.5)] }
+    editor.movePoint(1, to: (x: 0.75, y: 0.5))
+    #expect(abs(editor.look.colors[0].x - 0.35) < 0.000001)
+    #expect(abs(editor.look.colors[1].x - 0.75) < 0.000001)
+    #expect(abs(editor.look.colors[2].x - 0.05) < 0.000001)
+    editor.end()
+    try await fixture.close()
+}
+
+@Test @MainActor
 func thePolarGroupTurnsAsOneSharesOneRadiusAndClampsAtTheRim() async throws {
     let fixture = try await LookFixture(sidebarPreview: true)
     let editor = fixture.editor

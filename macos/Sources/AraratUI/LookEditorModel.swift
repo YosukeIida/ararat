@@ -58,7 +58,9 @@ final class LookEditorModel: ObservableObject {
     /// The field's radial coordinate for a stored y: 0 at the rim, 1 at the centre. Stored y keeps
     /// Arc's sense (0.05 white, 0.95 black), so lightness grows along the radius as the mock draws it.
     static func fieldY(_ y: Double) -> Double { clamp((y - 0.05) / 0.9) }
-    static func fieldColor(x: Double, y: Double) -> LookColor { color(x: x, y: 0.05 + 0.9 * clamp(y)) }
+    /// The field's colour: `x` is a hue that wraps (a turn past red continues at 0), `y` the radial
+    /// coordinate (0 rim, 1 centre).
+    static func fieldColor(x: Double, y: Double) -> LookColor { color(x: wrapped(x), y: 0.05 + 0.9 * clamp(y)) }
     static let fieldCanvasSize = CGSize(width: 264, height: 232)
     /// The furthest a handle sits from the centre; the dots reach the inscribed circle (116 pt) a
     /// little further, as the mock's do (RMAX 141 of R1 150, at this field's scale).
