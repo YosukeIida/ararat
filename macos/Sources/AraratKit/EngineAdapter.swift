@@ -49,6 +49,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var cardResizeObserver: NSObjectProtocol?
     private var keyWindowObserver: NSObjectProtocol?
     private var handoffGeneration = 0
+    private var littleWindowHandoffs = 0
+    private var littleWindowKeyTakePending = false
     private var splitHandles: [String: SplitDividerView] = [:]
     private let splitFocusRing = SplitFocusRingView()
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
@@ -383,6 +385,22 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         // regular Browser. The engine sets the private directory itself.
         if let profile, !isPrivate { _ = host.setProfileDirectory(profile) }
         publish()
+    }
+
+    public func beginLittleWindowHandoff() {
+        precondition(Thread.isMainThread)
+        littleWindowHandoffs += 1
+    }
+
+    public func endLittleWindowHandoff() {
+        precondition(Thread.isMainThread)
+        queue.sync {}
+        precondition(littleWindowHandoffs > 0)
+        littleWindowHandoffs -= 1
+        if littleWindowHandoffs == 0 && littleWindowKeyTakePending {
+            littleWindowKeyTakePending = false
+            takeRemoteSelection()
+        }
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, performWorkspaceCommand command: String) {
@@ -1538,6 +1556,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func takeRemoteSelection() {
         precondition(Thread.isMainThread)
+        if littleWindowHandoffs > 0 { littleWindowKeyTakePending = true; return }
         guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { tracePrivate("key take skipped closed=\(selectionClosed) restoring=\(restoringSelection)"); return }
         tracePrivate("key take generation=\(selectionGeneration) displayed=\(displayedSelection ?? "nil") active=\(host.activeItemId() ?? "nil") lone=\(loneSplitPane ?? "nil")")
         let loneHere = loneSplitPane

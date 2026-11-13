@@ -152,6 +152,58 @@ private func matrixTransaction(_ fake: MatrixFakeHost, window: String, epoch: UI
 }
 
 @Test @MainActor
+func littleWindowHandoffAdoptsTheMovedTabWhenTheDestinationBecomesKey() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "destination", card: NSView(), seedProfiles: true, session: session)
+    let (target, host) = matrixFake()
+    adapter.attach(host)
+    defer { adapter.shutdown() }
+    var applied = false
+    adapter.onTransaction = { _, accepted in applied = accepted }
+    adapter.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: "destination", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { applied }
+    adapter.beginLittleWindowHandoff()
+    let item = try session.queue.sync { try #require(session.store?.createTab(windowId: "destination", url: "https://example.test/").selectedId) }
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: target.window())
+    try await Task.sleep(for: .milliseconds(100))
+    let tab = MatrixFakeTab(item: item, live: "chrome-moved", profile: "Default", owner: target)
+    target.entries.append(tab)
+    target.active = item
+    applied = false
+    adapter.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: "destination", epoch: 1, rev: 1, command: nil))
+    adapter.endLittleWindowHandoff()
+    try await matrixWait { applied || !target.opened.isEmpty }
+    #expect(target.opened.isEmpty)
+    #expect(session.queue.sync { session.store?.liveTab(item: item) } == "chrome-moved")
+    #expect(applied)
+}
+
+@Test @MainActor
+func aFailedLittleWindowHandoffReplaysTheKeySelection() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "destination", card: NSView(), seedProfiles: true, session: session)
+    let (target, host) = matrixFake()
+    adapter.attach(host)
+    defer { adapter.shutdown() }
+    let item = try session.queue.sync { () -> String in
+        let store = try #require(session.store)
+        return try #require(store.createTab(windowId: "destination", url: "https://example.test/").selectedId)
+    }
+    adapter.beginLittleWindowHandoff()
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: target.window())
+    #expect(target.opened.isEmpty)
+    adapter.endLittleWindowHandoff()
+    try await matrixWait { !target.opened.isEmpty }
+    #expect(target.entries.first?.itemId == item)
+}
+
+@Test @MainActor
 func closeFromAnotherWindowReachesTheOwningHost() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

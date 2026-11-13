@@ -344,23 +344,30 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             FileHandle.standardError.write(Data("ararat-trace: little-window open-in failed space=\(space.id)\n".utf8))
         }
         origin.switchWorkspaceSpace(space.id) { [weak self, weak origin] in
-            guard let self, let origin, origin.hasUsableHost, let adapter = origin.workspace else { fail(); return }
+            guard let self, let origin, origin.hasUsableHost, let adapter = origin.workspace,
+                  let engine = origin.adapter else { fail(); return }
+            engine.beginLittleWindowHandoff()
             adapter.createTab(url: url) { [weak self] result in
-                guard let self, case .success(let snapshot) = result, let row = snapshot.selectedId else { fail(); return }
+                guard let self, case .success(let snapshot) = result, let row = snapshot.selectedId else {
+                    engine.endLittleWindowHandoff()
+                    fail()
+                    return
+                }
                 // The row exists; the tab takes it before the move so the destination's strip
                 // reports the row instead of the core adopting the page elsewhere.
                 tab.itemId = row
                 self.handoff(tab: tab, row: row, space: space.id, previousItem: previousItem,
-                             deadline: deadline, attempt: 0)
+                             deadline: deadline, attempt: 0, engine: engine)
             }
         }
     }
 
     private func handoff(tab: any ARTabAPI, row: String, space: String, previousItem: String?,
-                         deadline: DispatchTime, attempt: Int) {
+                         deadline: DispatchTime, attempt: Int, engine: EngineAdapter) {
         guard let origin, origin.hasUsableHost, let host = origin.host else {
             tab.itemId = previousItem
             closeRow(row)
+            engine.endLittleWindowHandoff()
             return
         }
         // The item is set on the tab before the move (see performOpenIn), so the destination's
@@ -370,6 +377,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             FileHandle.standardError.write(Data("ararat-trace: little-window handoff-before live=\(tab.liveId) mapped=\(mapped ?? "nil")\n".utf8))
         }
         if host.handoffTab(tab, activate: true) {
+            engine.endLittleWindowHandoff()
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
             // The popup has no tabs left; Chrome closes it. Closing here makes the order the
@@ -380,12 +388,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         guard DispatchTime.now() < deadline else {
             tab.itemId = previousItem
             closeRow(row)
+            engine.endLittleWindowHandoff()
             opening = false
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-            self?.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
-                          deadline: deadline, attempt: attempt + 1)
+            guard let self else { engine.endLittleWindowHandoff(); return }
+            self.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
+                         deadline: deadline, attempt: attempt + 1, engine: engine)
         }
     }
 
