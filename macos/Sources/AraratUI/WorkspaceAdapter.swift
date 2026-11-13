@@ -328,4 +328,14 @@ extension WorkspaceAdapter {
     public func newTabRowShown(completion: @escaping Completion<Bool>) {
         enqueue({ try self.opened().settings().newTabRowShown }, completion: completion)
     }
+
+    // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
+    // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
+    public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {
+        enqueue({ try self.opened().settings().spaceScrollDirection }, completion: completion)
+    }
+
+    public func setSpaceScrollDirection(_ value: SpaceScrollDirection, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setSpaceScrollDirection(windowId: self.windowID, direction: value) }, completion: completion)
+    }
 }

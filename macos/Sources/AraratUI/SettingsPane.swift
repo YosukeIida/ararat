@@ -95,7 +95,11 @@ enum SettingsRegistry {
     /// The Spaces pane's own rows, then each space's page rows: the rail groups all of them
     /// under Spaces, and a page row's title reads "row — space" in the results.
     static func spacesRows(_ model: SettingsModel) -> [SettingsModel.Row] {
-        var rows: [SettingsModel.Row] = []
+        var rows: [SettingsModel.Row] = [
+            SettingsModel.Row(id: SettingsModel.spaceScrollDirectionCardId, pane: .spaces,
+                              title: "Scroll sideways to switch spaces",
+                              subtitle: "Natural or Reversed · " + model.spaceScrollDirectionLabel),
+        ]
         for space in model.snapshot.spaces {
             rows.append(SettingsModel.Row(id: space.id, pane: .spaces, title: space.title,
                                           subtitle: "\(model.tabCountLabel(space)) · \(space.profileName)"))

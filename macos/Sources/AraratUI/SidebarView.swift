@@ -222,6 +222,9 @@ public final class SidebarView: NSView {
     // and the live strip’s crashed and unread tabs. The section’s chevron rides in the space
     // snapshot (pinned_collapsed), so every window shows the same one.
     public var newTabRowShown = true { didSet { reload() } }
+    // The Spaces pane's Natural / Reversed choice (U27c): one setting for every window, read
+    // from the workspace's settings record and handed to the paging pipeline.
+    public var spaceScrollDirection: SpaceScrollDirection = .natural
     public var rowStates: [String: EngineAdapter.RowState] = [:] { didSet { applyRowStatus() } }
     public var onMute: ((String, Bool) -> Void)?
     public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
@@ -1710,7 +1713,8 @@ public final class SidebarView: NSView {
             ? layer?.transform.m41 : (layer?.presentation()?.transform.m41 ?? layer?.transform.m41)
         let logicalIndex = scrollPageIndex
         let action = spaceScroll.handle(input, index: logicalIndex, count: snapshot.spaces.count,
-                                        pitch: spacePagePitch, presentationOffset: Double(offset ?? 0))
+                                        pitch: spacePagePitch, presentationOffset: Double(offset ?? 0),
+                                        direction: spaceScrollDirection)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }

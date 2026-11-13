@@ -256,3 +256,61 @@ func theGroupedCardHoldsItsRowsWithTheBoardsMetrics() throws {
 }
 
 
+// U27c: the Spaces pane's "Scroll sideways to switch spaces" card writes the workspace's one
+// direction setting back through the same record the sidebars read, and reads it back on reopen.
+@MainActor
+private func settingsValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in start { continuation.resume(with: $0) } }
+}
+
+@Test @MainActor
+func theSpacesPaneWritesTheScrollDirectionAndReadsItBack() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "u27c-space-scroll")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+    let snapshot = try await settingsValue {
+        adapter.open(path: directory.appendingPathComponent("space-scroll.sqlite").path, json: { json },
+                     windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
+    }
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+    var handed: [SpaceScrollDirection] = []
+    model.spaceScroll = { handed.append($0) }
+    // The card is one of the Spaces pane's rows, so the search finds it like the others.
+    let row = try #require(model.rows.first { $0.id == SettingsModel.spaceScrollDirectionCardId })
+    #expect(row.pane == .spaces && row.title == "Scroll sideways to switch spaces")
+    #expect(row.subtitle == "Natural or Reversed · Natural")
+    model.query = "scroll sideways"
+    #expect(model.results.contains { $0.id == SettingsModel.spaceScrollDirectionCardId })
+    model.query = ""
+
+    model.setSpaceScrollDirection(.reversed)
+    try await waitUntil { model.spaceScrollDirection == .reversed }
+    #expect(handed == [.reversed])
+    // The write reached the core, not only the model.
+    let stored = try await settingsValue { adapter.spaceScrollDirection(completion: $0) }
+    #expect(stored == .reversed)
+    // A second window's settings model on the same workspace reads the stored value back.
+    let reopened = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+                                 keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+    reopened.readSpaceScrollDirection()
+    try await waitUntil { reopened.spaceScrollDirection == .reversed }
+    #expect(reopened.spaceScrollDirectionLabel == "Reversed")
+    // The control is on the pane: the card and its segmented control are in the window's tree.
+    reopened.navigate(.spaces)
+    let controller = SettingsWindowController(model: reopened)
+    let window = try #require(controller.window)
+    defer { window.contentViewController = nil }
+    let probe = try #require(controller.checkProbe())
+    try await waitUntil {
+        probe.layout()
+        return probe.marker(SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) != nil
+            && probe.marker(SettingsModel.spaceScrollControlMarker) != nil
+    }
+    #expect(probe.spaceScrollDirection == .reversed)
+    _ = try await settingsValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}

@@ -46,7 +46,7 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .shortcuts, .airTraffic: ["rows"]
-            case .spaces: ["rows", "space_page"]
+            case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
             }
         }
     }
@@ -83,6 +83,10 @@ final class SettingsScreenCheck {
     var historyBefore = -1
     // The hit row the search opened, so the next tick can see the highlight stayed.
     var hitRowID = ""
+    // U27c: the space a wheel run starts from, and the delta the natural wheel landed on, which
+    // the reversed wheel must mirror.
+    var wheelStart = ""
+    var naturalDelta = 0
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -128,6 +132,8 @@ extension Runtime {
             values["scroll"] = probe.detailScrollOffset as Any? ?? NSNull()
             values["header_progress"] = probe.headerProgress
             values["history_index"] = probe.historyIndex
+            values["space_scroll"] = probe.spaceScrollDirectionLabel
+            values["shown_space"] = snapshot.shownSpaceId as Any? ?? NSNull()
             values["markers"] = probe.markers(prefix: "").map { ["id": $0.id, "frame": rectFields($0.frame)] }
         }
         return values
@@ -233,6 +239,11 @@ extension Runtime {
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .tabs, .shortcuts, .airTraffic, .spaces:
+            if mode == .spaces, check.phase >= 4 {
+                settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
+                                         end: end, finish: finish, capture: capture)
+                return
+            }
             settingsPaneTick(mode, probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, pushSpace: settings.checkPushSpace)
         }
     }
@@ -440,6 +451,15 @@ extension Runtime {
                 guard probe.spaceIDs.count >= 2, rows.count == markers.count else {
                     note("space rows: \(markers.filter { probe.marker($0) == nil })"); return
                 }
+                // U27c: the direction card sits under the spaces list in a card of its own, with
+                // the segmented control on the row (E-Spaces).
+                let card = probe.marker(SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId))
+                let control = probe.marker(SettingsModel.spaceScrollControlMarker)
+                guard let card, let control, let last = rows.last else {
+                    note("scroll direction card=\(card != nil) control=\(control != nil)"); return
+                }
+                check.report("scroll_card", card.minY >= last.frame.maxY - 1 && control.width > 0
+                    && control.height >= 16)
                 check.report("rows", rows.count == probe.spaceIDs.count
                     && zip(rows, rows.dropFirst()).allSatisfy { $0.frame.minY < $1.frame.minY })
                 // The page push is what the space page condition is about, so its history length
@@ -478,6 +498,117 @@ extension Runtime {
             trace("space page \(probe.pageID) back=\(probe.canGoBack)")
             check.report("space_page", probe.historyIndex > check.historyBefore && probe.canGoBack)
             guard capture("space-page") else { end("capture", false); return }
+            // U27c keeps going on the Spaces pane; the other panes are done here.
+            if mode == .spaces { probe.openSpacesPane(); step(4); return }
+            finish()
+        default: break
+        }
+    }
+
+    // MARK: settings-spaces, U27c: the direction card's write, and both wheels
+
+    /// Sends a sideways wheel to the sidebar the way a trackball does. The pipeline judges a
+    /// wheel after cancelling the system's natural-scrolling inversion, so a machine with
+    /// natural scrolling on gets the inverse CGEvent and lands on the same delta.
+    @discardableResult
+    func settingsSpacesSendWheel() -> Bool {
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -5, wheel3: 0),
+              var input = NSEvent(cgEvent: event) else { return false }
+        if input.isDirectionInvertedFromDevice,
+           let inverse = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: 5, wheel3: 0),
+           let corrected = NSEvent(cgEvent: inverse) { input = corrected }
+        FileHandle.standardError.write(Data("ararat-trace: settings-spaces send wheel\n".utf8))
+        sidebar?.scrollWheel(with: input)
+        return true
+    }
+
+    /// Phases 4 to 11 of `settings-spaces` (U27c): with Natural the sidebar's wheel pages to
+    /// the next space; the pane then writes Reversed, the window closes and reopens on the card
+    /// with Reversed still chosen, and the same wheel pages the other way.
+    private func settingsSpacesScrollTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
+                                          note: (String) -> Void, trace: (String) -> Void,
+                                          step: (Int) -> Void, end: (String, Bool) -> Void,
+                                          finish: () -> Void, capture: (String) -> Bool) {
+        let owner = root ?? self
+        let spaces = snapshot.spaces
+        func index(_ id: String) -> Int? { spaces.firstIndex { $0.id == id } }
+        /// A start space with a neighbour on both sides, so either wheel switches rather than
+        /// opening the Library or pulling into space creation.
+        var startIndex: Int { max(1, min(spaces.count - 2, spaces.count / 2)) }
+        switch check.phase {
+        case 4:
+            guard spaces.count >= 3 else { note("the wheel needs 3 spaces, there are \(spaces.count)"); return }
+            guard probe.pageID == "spaces" else {
+                probe.openSpacesPane()
+                note("back to the spaces pane from \(probe.pageID)")
+                return
+            }
+            trace("writing natural")
+            probe.setSpaceScrollDirection(.natural)
+            step(5)
+        case 5:
+            guard probe.spaceScrollDirection == .natural else { note("direction \(probe.spaceScrollDirectionLabel)"); return }
+            let start = startIndex
+            guard let sidebar, spaces.indices.contains(start) else { note("no sidebar"); return }
+            if snapshot.shownSpaceId != spaces[start].id {
+                sidebar.showSpace(at: start)
+                note("moving to space \(spaces[start].title)")
+                return
+            }
+            check.wheelStart = spaces[start].id
+            trace("natural wheel from \(start)")
+            guard settingsSpacesSendWheel() else { end("scroll_wheel_natural", false); return }
+            step(6)
+        case 6:
+            guard let start = index(check.wheelStart), snapshot.shownSpaceId != check.wheelStart,
+                  let shown = snapshot.shownSpaceId.flatMap(index) else {
+                note("shown after the natural wheel: \(snapshot.shownSpaceId ?? "-")"); return
+            }
+            check.naturalDelta = shown - start
+            trace("natural wheel landed on \(shown) from \(start)")
+            check.report("scroll_wheel_natural", check.naturalDelta == 1)
+            guard let sidebar, spaces.indices.contains(start) else { return }
+            sidebar.showSpace(at: start)
+            step(7)
+        case 7:
+            guard index(check.wheelStart) != nil, snapshot.shownSpaceId == check.wheelStart else {
+                note("back at \(snapshot.shownSpaceId ?? "-"), wanted \(check.wheelStart)"); return
+            }
+            trace("writing reversed")
+            probe.setSpaceScrollDirection(.reversed)
+            step(8)
+        case 8:
+            guard probe.spaceScrollDirection == .reversed else {
+                note("direction after the write: \(probe.spaceScrollDirectionLabel)"); return
+            }
+            trace("closing the settings window")
+            owner.settings?.window?.performClose(nil)
+            step(9)
+        case 9:
+            guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
+            trace("reopening the settings window")
+            owner.settings?.checkOpen(paneID: "spaces", shownSpaceID: snapshot.shownSpaceId)
+            step(10)
+        case 10:
+            guard probe.isVisible, probe.pageID == "spaces", probe.spaceScrollDirection == .reversed,
+                  snapshot.shownSpaceId == check.wheelStart else {
+                note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) direction=\(probe.spaceScrollDirectionLabel) shown=\(snapshot.shownSpaceId ?? "-")")
+                return
+            }
+            // The reopened window's card shows the value the record kept.
+            check.report("scroll_write_reopen", probe.marker(SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) != nil)
+            trace("reversed wheel")
+            guard settingsSpacesSendWheel() else { end("scroll_wheel_reversed", false); return }
+            step(11)
+        case 11:
+            guard let start = index(check.wheelStart), snapshot.shownSpaceId != check.wheelStart,
+                  let shown = snapshot.shownSpaceId.flatMap(index) else {
+                note("shown after the reversed wheel: \(snapshot.shownSpaceId ?? "-")"); return
+            }
+            let delta = shown - start
+            trace("reversed wheel landed on \(shown) from \(start)")
+            check.report("scroll_wheel_reversed", delta == -1 && check.naturalDelta == 1)
+            guard capture("spaces") else { end("capture", false); return }
             finish()
         default: break
         }

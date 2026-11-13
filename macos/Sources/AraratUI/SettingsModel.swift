@@ -41,6 +41,12 @@ public final class SettingsModel: ObservableObject {
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
+    /// The Spaces pane's scroll direction (U27c): read from the workspace's settings record, so
+    /// a reopen shows the stored value, and written through the same record the sidebar reads.
+    @Published var spaceScrollDirection: SpaceScrollDirection = .natural
+    /// Hands a written direction to the browser windows' sidebars; the app sets it, the pane and
+    /// the settings window read `spaceScrollDirection` and the paging pipeline directly.
+    var spaceScroll: (SpaceScrollDirection) -> Void = { _ in }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -124,6 +130,8 @@ public final class SettingsModel: ObservableObject {
     /// The id the search result for the Air Traffic Control pane carries, and the id the pane's
     /// default destination card carries: a result scrolls to and fills the same row (§7).
     public static let airTrafficCardId = "air-traffic"
+    /// U27c's card in the Spaces pane: the search result and the card share this id.
+    public static let spaceScrollDirectionCardId = "space-scroll-direction"
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -176,6 +184,8 @@ public final class SettingsModel: ObservableObject {
     public static func rowMarker(_ id: String) -> String { "row-\(id)" }
     public static let selectedResultMarker = "result-selected"
     public static let noResultsMarker = "no-results"
+    /// The Spaces pane's segmented control, found by the screen check through its marker.
+    public static let spaceScrollControlMarker = "space-scroll-control"
     public static let headerIconMarker = "header-icon"
     public static let headerTitleMarker = "header-title"
     public static let headerSubtitleMarker = "header-subtitle"
@@ -209,6 +219,13 @@ public final class SettingsModel: ObservableObject {
     }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
+    /// The chosen scroll direction in the pane's own words.
+    var spaceScrollDirectionLabel: String {
+        switch spaceScrollDirection {
+        case .natural: "Natural"
+        case .reversed: "Reversed"
+        }
+    }
     /// The profile the default destination's and the New Route's fresh Little-window picks
     /// write — the only picks that name no rule: the shown space's own `Profile` from the
     /// FFI snapshot, not the display name mapped back, which a named profile called
@@ -239,6 +256,27 @@ public final class SettingsModel: ObservableObject {
     func setArchiveAfter(_ value: ArchiveAfter) {
         guard let space = archiveSpace else { return }
         adapter.setArchiveAfter(spaceID: space.id, value: value, completion: editCompletion())
+    }
+    /// Reads the stored direction. The window calls this on every open, so the control shows the
+    /// record's value rather than the model's last one.
+    func readSpaceScrollDirection() {
+        let generation = contextGeneration
+        adapter.spaceScrollDirection { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let direction) = result else { return }
+            self.spaceScrollDirection = direction
+        }
+    }
+    /// Writes the direction and, once the core has it, shows it in the control and hands it to
+    /// the sidebars. A refused write leaves the control where it was and shows the reason.
+    func setSpaceScrollDirection(_ value: SpaceScrollDirection) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setSpaceScrollDirection(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.spaceScrollDirection = value
+            self.spaceScroll(value)
+        }
     }
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)

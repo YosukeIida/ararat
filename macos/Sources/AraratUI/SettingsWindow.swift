@@ -50,6 +50,7 @@ public final class SettingsWindowController: NSWindowController {
     public func prepare(shownSpaceID: String?) {
         model.readShortcuts()
         model.airTraffic.load()
+        model.readSpaceScrollDirection()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -64,6 +65,12 @@ public final class SettingsWindowController: NSWindowController {
     public func checkProbe() -> SettingsCheckProbe? {
         guard let window else { return nil }
         return SettingsCheckProbe(controller: self, window: window)
+    }
+
+    /// Hands a written scroll direction to the browser windows' sidebars (U27c). The settings
+    /// window holds the pane's value; the sidebar that pages spaces is in the browser window.
+    public func setSpaceScrollHandler(_ handler: @escaping (SpaceScrollDirection) -> Void) {
+        model.spaceScroll = handler
     }
 
     /// Opens the window on a pane for a check: the ordinary open path (a shown space opens its
@@ -212,28 +219,49 @@ private struct SettingsDetail: View {
                     case .airTraffic:
                         SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
                     case .spaces:
-                        VStack(spacing: 0) {
-                            ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
-                                Button { model.navigate(.space(space.id)) } label: {
-                                    HStack {
-                                        Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                                        Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
-                                        Text(space.title)
-                                        Spacer()
-                                        Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
-                                        if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
-                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                    }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
-                                }.buttonStyle(.plain)
-                                    .background { if model.highlighted == space.id { SettingsHitFill() } }
-                                    .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
-                                    .id(space.id).draggable(space.id)
-                                    .dropDestination(for: String.self) { ids, _ in
-                                        guard ids.count == 1, let id = ids.first, id != space.id, model.snapshot.spaces.contains(where: { $0.id == id }) else { return false }
-                                        model.move(id, to: index); return true
-                                    }
+                        VStack(spacing: SettingsMetrics.cardGap) {
+                            VStack(spacing: 0) {
+                                ForEach(Array(model.snapshot.spaces.enumerated()), id: \.element.id) { index, space in
+                                    Button { model.navigate(.space(space.id)) } label: {
+                                        HStack {
+                                            Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+                                            Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
+                                            Text(space.title)
+                                            Spacer()
+                                            Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
+                                            if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
+                                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                        }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
+                                    }.buttonStyle(.plain)
+                                        .background { if model.highlighted == space.id { SettingsHitFill() } }
+                                        .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
+                                        .id(space.id).draggable(space.id)
+                                        .dropDestination(for: String.self) { ids, _ in
+                                            guard ids.count == 1, let id = ids.first, id != space.id, model.snapshot.spaces.contains(where: { $0.id == id }) else { return false }
+                                            model.move(id, to: index); return true
+                                        }
+                                }
+                            }.background(SettingsColor.card, in: RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius))
+                            // U27c: E-Spaces' row under the list. The caption is the board's: it
+                            // says what Reversed does, so the control needs no second label.
+                            SettingsGroupCard {
+                                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.spaceScrollDirectionCardId,
+                                                marker: SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Scroll sideways to switch spaces")
+                                        Text("Reversed: scrolling right shows the space on the left")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                    Picker("Scroll sideways to switch spaces",
+                                           selection: Binding(get: { model.spaceScrollDirection }, set: model.setSpaceScrollDirection)) {
+                                        Text("Natural").tag(SpaceScrollDirection.natural)
+                                        Text("Reversed").tag(SpaceScrollDirection.reversed)
+                                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                                        .background(SettingsMarker(id: SettingsModel.spaceScrollControlMarker))
+                                        .accessibilityLabel("Scroll sideways to switch spaces")
+                                }.id(SettingsModel.spaceScrollDirectionCardId)
                             }
-                        }.background(SettingsColor.card, in: RoundedRectangle(cornerRadius: 12))
+                        }
                     case .space:
                         if let space = model.space { spacePage(space) }
                     }
@@ -317,7 +345,7 @@ private struct SettingsDetail: View {
     func handleScroll(_ event: NSEvent) -> Bool {
         guard let space = model.space, let index = model.snapshot.spaces.firstIndex(where: { $0.id == space.id }) else { return false }
         let phase: SpaceScrollEvent.Phase = event.phase.contains(.began) ? .began : event.phase.contains(.ended) ? .ended : event.phase.contains(.cancelled) ? .cancelled : event.phase.isEmpty ? .none : .changed
-        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth)
+        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection)
         switch action {
         case .vertical: return false
         case .follow(let value): followedOffset = SettingsModel.settingsOffset(value, index: index)

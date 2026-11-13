@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 import SwiftUI
 
 /// One rail pane as the check reads it: the id the check names (`--ararat-screen=settings-<id>`)
@@ -53,6 +54,14 @@ public final class SettingsCheckProbe {
     public var canGoBack: Bool { model.historyIndex > 0 }
     public var spaceIDs: [String] { model.snapshot.spaces.map(\.id) }
     public func searchKey(_ key: SettingsSearchKey) -> Bool { model.handleSearchKey(key) }
+
+    // MARK: U27c, the Spaces pane's scroll direction
+
+    public var spaceScrollDirection: SpaceScrollDirection { model.spaceScrollDirection }
+    public var spaceScrollDirectionLabel: String { model.spaceScrollDirectionLabel }
+    public func setSpaceScrollDirection(_ value: SpaceScrollDirection) { model.setSpaceScrollDirection(value) }
+    /// The Spaces pane itself, so the check can return to it after pushing a space page.
+    public func openSpacesPane() { model.navigate(.spaces) }
 
     // MARK: frames
 

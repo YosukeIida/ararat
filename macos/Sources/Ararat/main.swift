@@ -1685,6 +1685,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard case .success(let shown) = result else { return }
       self?.sidebar?.newTabRowShown = shown
     }
+    workspace.spaceScrollDirection { [weak self] result in
+      guard case .success(let direction) = result else { return }
+      self?.sidebar?.spaceScrollDirection = direction
+    }
   }
 
   // The command-bar check drives ⌃Tab through a posted key event, so a run that loses the
@@ -1753,6 +1757,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
                                preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     owner.settingsOwner = self
+    // U27c: a direction the pane writes reaches the sidebars of every window that shows this
+    // workspace, so the next sideways scroll pages the other way without a relaunch.
+    owner.settings?.setSpaceScrollHandler { [weak owner] direction in
+      guard let owner else { return }
+      for window in [owner] + owner.children { window.sidebar?.spaceScrollDirection = direction }
+    }
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
       owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
     } else {
