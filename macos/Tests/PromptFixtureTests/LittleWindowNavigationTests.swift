@@ -1,6 +1,7 @@
 import AppKit
 import AraratEngineAPI
 import AraratKit
+import AraratUI
 import ObjectiveC.runtime
 import Testing
 @testable import Ararat
@@ -26,6 +27,31 @@ import Testing
         opened.append(url)
         return true
     }
+}
+
+@Test @MainActor
+func littleWindowCommandBarSubmitsToItsPopupHost() async throws {
+    _ = NSApplication.shared
+    class_addProtocol(LittleWindowNavigationHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("db").path, windowID: "origin", card: NSView(), seedCheck: true, session: session)
+    let origin = Runtime(windowID: "origin")
+    origin.adapter = adapter
+    origin.workspace = WorkspaceAdapter(windowID: "origin", session: session)
+    let host = LittleWindowNavigationHost()
+    let popup = PopupHost()
+    popup.rootView.addSubview(popup.card)
+    popup.host = host as? any ARWindowHostAPI
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    defer { controller.close(); popup.littleWindow = nil }
+    controller.openCommandBar()
+    controller.checkTypeCommandBar("https://example.test/")
+    controller.checkCommitCommandBar()
+    for _ in 0..<100 where host.navigated.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(host.navigated == ["https://example.test/"])
 }
 
 @Test @MainActor

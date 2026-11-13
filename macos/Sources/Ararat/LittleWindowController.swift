@@ -398,7 +398,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         let presenter = CommandBarPresenter(parent: window, visible: true, bindings: defaultKeyBindings(),
                                             highlight: .selectedContentBackgroundColor,
                                             width: LittleWindowMetrics.commandBarWidth)
-        presenter.controller.onCommit = { [weak self] suggestion, mode, _ in
+        presenter.onCommit = { [weak self] suggestion, mode, _ in
             self?.commit(suggestion, mode: mode)
         }
         self.presenter = presenter
@@ -412,15 +412,27 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     private func commit(_ suggestion: Suggestion?, mode: CommandBarMode) {
-        guard let suggestion else { return }
+        guard let suggestion else {
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=none\n".utf8))
+            return
+        }
         switch suggestion.target {
-        case .openUrl(let url), .search(let url): navigate(to: url)
-        default: break
+        case .openUrl(let url):
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=open-url\n".utf8))
+            navigate(to: url)
+        case .search(let url):
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=search\n".utf8))
+            navigate(to: url)
+        default:
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=unsupported\n".utf8))
         }
     }
 
     func navigate(to url: String) {
-        guard popup.host?.navigateLittleWindow(url) == true else { return }
+        let host = popup.host
+        let accepted = host?.navigateLittleWindow(url) == true
+        FileHandle.standardError.write(Data("ararat-trace: little-window navigate popup_host=\(host != nil) accepted=\(accepted)\n".utf8))
+        guard accepted else { return }
         checkActions["navigate", default: 0] += 1
     }
 
