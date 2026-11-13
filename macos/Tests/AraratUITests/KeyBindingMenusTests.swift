@@ -154,6 +154,41 @@ func forceReloadRebindingUpdatesItsMenuShortcut() async throws {
 }
 
 @Test @MainActor
+func recordingAKeyForASiteCommandBindsItInTheMenuThePaneAndTheStore() async throws {
+    // U27b D2: both ship with no key; the menu item and the Shortcuts row carry the id, so a
+    // recorded key fires from the menu (the pane writes through the same model).
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openBindings(directory)
+    let harness = HarnessDelegate(adapter: adapter)
+    harness.snapshot = snapshot
+    let menu = harness.makeMenu()
+    let cache = try #require(commandItems(menu).first { $0.identifier?.rawValue == "clear_cache_site" })
+    let cookies = try #require(commandItems(menu).first { $0.identifier?.rawValue == "clear_cookies_site" })
+    for (item, title) in [(cache, "Clear Cache"), (cookies, "Clear Cookies")] {
+        #expect(item.title == title && item.menu?.title == "View")
+        #expect(item.keyEquivalent.isEmpty && item.keyEquivalentModifierMask == [])
+        #expect(item.action != nil)
+    }
+    let key = KeyCombination(key: "c", command: false, control: true, option: true, shift: false)
+    try await bindingValue { harness.keyBindings.set(command: "clear_cache_site", key: key, completion: $0) }
+    #expect(cache.keyEquivalent == "c" && cache.keyEquivalentModifierMask == [.control, .option])
+    #expect(harness.keyBindings.binding(command: "clear_cache_site")?.customized == true)
+    // The store keeps it: a fresh model reads the row back as the pane would after a reopen.
+    let reopened = KeyBindingsModel(adapter: adapter)
+    try await bindingValue { reopened.load(completion: $0) }
+    let row = try #require(reopened.binding(command: "clear_cache_site"))
+    #expect(row.key == key && row.customized)
+    // Clearing to none removes the override too, because none is the default; Reset is a no-op
+    // afterwards and the menu item stays without a key.
+    try await bindingValue { harness.keyBindings.set(command: "clear_cache_site", key: nil, completion: $0) }
+    #expect(cache.keyEquivalent.isEmpty && harness.keyBindings.binding(command: "clear_cache_site")?.customized == false)
+    try await bindingValue { harness.keyBindings.reset(command: "clear_cache_site", completion: $0) }
+    #expect(cache.keyEquivalent.isEmpty && harness.keyBindings.binding(command: "clear_cache_site")?.customized == false)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func overridingClearingAndResettingUpdateExistingMenusAndSettingsImmediately() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

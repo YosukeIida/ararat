@@ -87,3 +87,24 @@ func headerToggleCapsAndPressedStateFollowRebinding() throws {
     header.toggleBinding = { nil }
     #expect(header.checkTooltip("toggle_sidebar").1.isEmpty)
 }
+
+@Test @MainActor
+func headerSiteCommandsUseTheCoreTableIds() {
+    // U27b: the … menu is not a second dispatch path. Its two site commands carry the core
+    // table's ids, so the window's onHeaderCommand can hand them to the one dispatcher that the
+    // Ararat Commands menu, the command bar and a recorded key use.
+    let header = SidebarHeaderView(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+    header.hasTab = true
+    header.siteDomain = { "example.com" }
+    var commands: [String] = []
+    header.onCommand = { commands.append($0) }
+    let menu = header.makeMenu()
+    let items = menu.items.filter { !$0.isSeparatorItem }
+    let table = defaultKeyBindings()
+    for (index, command) in [(3, "clear_cache_site"), (4, "clear_cookies_site")] {
+        #expect(items[index].representedObject as? String == command)
+        #expect(table.contains { $0.command == command })
+        menu.performActionForItem(at: menu.index(of: items[index]))
+    }
+    #expect(commands == ["clear_cache_site", "clear_cookies_site"])
+}

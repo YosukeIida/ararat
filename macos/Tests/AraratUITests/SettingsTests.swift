@@ -141,6 +141,20 @@ func aShortcutsSearchResultHighlightsItsRowId() throws {
     #expect(model.filteredShortcuts.contains { $0.id == model.highlighted })
 }
 
+@Test @MainActor
+func theShortcutsPaneListsClearCacheAndClearCookiesWithoutAKey() throws {
+    // U27b D2: the rows come from the core table, so the pane lists both before anything is
+    // recorded: no keys ("None" in the view), the core's description, neither customized.
+    let rows = SettingsModel.shortcutRows(defaultKeyBindings())
+    for (id, title, subtitle) in [("clear_cache_site", "Clear Cache", "Clear the cache for the current site."),
+                                  ("clear_cookies_site", "Clear Cookies", "Clear cookies for the current site.")] {
+        let row = try #require(rows.first { $0.id == "shortcut-\(id)" })
+        #expect(row.title == title && row.subtitle == subtitle)
+        #expect(row.keys.isEmpty && !row.customized && !row.conflicting)
+        #expect(SettingsModel.shortcutHit(row, query: "clear", customized: false, conflicting: false, customizedOnly: false, conflictingOnly: false))
+    }
+}
+
 // The rendered pane fills the result's row with the selection grey and its neighbours with the
 // card grey, read 6 pt inside each card's left edge off a cached bitmap of the detail view,
 // against the same `SettingsColor` values the pane draws, rendered to a bitmap of its own. The

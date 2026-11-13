@@ -579,6 +579,26 @@ func theRealSessionAnswersQueriesAndRecentTabsWithoutTyping() async throws {
 }
 
 @Test @MainActor
+func theRealSessionListsTheTwoSiteCommandsWithoutAKey() async throws {
+    // U27b D2: the bar's command rows come from the core table, so both are reachable after
+    // typing and carry no key until one is recorded. The ids are the Ararat Commands menu's.
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (_, adapter) = try await commitHarness(directory)
+    let session = try await commitValue { adapter.commandBarSession(completion: $0) }
+    let store = CommandBarSessionStore(session: session)
+    let controller = CommandBarController()
+    controller.open(mode: .newTab, prefill: nil, store: store)
+    for (query, id) in [("clear cache", "clear_cache_site"), ("clear cookies", "clear_cookies_site")] {
+        controller.update(query: query)
+        let row = try #require(controller.result.rows.first { $0.target == .command(id: id) })
+        #expect(row.key == nil && row.subtitle == "Command")
+    }
+    controller.close()
+    _ = try await commitValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func thePanelFollowsTheRowCountOnEveryQuery() throws {
     // The panel's height follows the row count on every query, not only at open: the field
     // stays put and shorter lists hang below it (the note's formula; Cra repositions in

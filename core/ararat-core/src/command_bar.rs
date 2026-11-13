@@ -82,7 +82,7 @@ fn private_command_allowed(target: &Target) -> bool {
     const PRIVATE_COMMANDS: &[&str] = &[
         "settings", "quit", "close_tab", "new_tab", "edit_url", "copy_link",
         "cycle_tabs_next", "cycle_tabs_previous", "rename", "toggle_sidebar",
-        "force_reload", "reset_sidebar_width",
+        "force_reload", "clear_cache_site", "clear_cookies_site", "reset_sidebar_width",
     ];
     match target {
         Target::Tab { .. } => true,

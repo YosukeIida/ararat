@@ -327,6 +327,16 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let reset = viewMenu.addItem(withTitle: "Reset Sidebar Width", action: #selector(resetSidebarWidth(_:)), keyEquivalent: "")
         reset.identifier = NSUserInterfaceItemIdentifier("reset_sidebar_width")
         reset.target = self
+        // U27b: the header's site commands are table rows now. The harness has no pages, so the
+        // items carry the ids for the table, the Shortcuts pane and the menu tests only.
+        for command in ["clear_cache_site", "clear_cookies_site"] {
+            let binding = defaultKeyBindings().first { $0.command == command }!
+            let item = viewMenu.addItem(withTitle: binding.title, action: #selector(clearSite(_:)), keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(command)
+            item.representedObject = command
+            item.target = self
+            item.toolTip = binding.description
+        }
         viewMenu.addItem(.separator())
         for index in 0..<9 {
             let item = viewMenu.addItem(withTitle: "Show Space \(index + 1)", action: WorkspaceCommands.showSpace, keyEquivalent: "")
@@ -772,6 +782,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
     @objc func forceReload(_ sender: Any?) {
         // The harness has no pages; the item carries the key for the Shortcuts pane's tests.
+    }
+
+    @objc func clearSite(_ sender: NSMenuItem) {
+        // The harness has no pages and no site; the item carries the id and the key for the
+        // Shortcuts pane's and the menu tests' sake.
     }
 
     @objc private func resetSidebarWidth(_ sender: Any?) {

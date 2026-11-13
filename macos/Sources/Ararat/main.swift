@@ -210,7 +210,8 @@ func checkCoverageFlags(_ arguments: [String]) -> [String] {
 /// command dispatcher and the menu validation, so the two cannot drift.
 let privateWorkspaceCommands: Set<String> = [
   "cycle_tabs_next", "cycle_tabs_previous", "force_reload", "settings", "quit", "new_tab",
-  "edit_url", "copy_link", "close_tab", "rename", "toggle_sidebar", "reset_sidebar_width",
+  "edit_url", "copy_link", "close_tab", "rename", "toggle_sidebar", "clear_cache_site",
+  "clear_cookies_site", "reset_sidebar_width",
 ]
 
 func incognitoResultIdentity(check: String, arguments: [String]) -> [String: Any] {
@@ -1053,6 +1054,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     container.findBar.onAction = { [weak host] action, text, selection, live, profile in host?.findAction(action, text: text, selection: selection, liveId: live, profile: profile) }
     container.onHeaderCommand = { [weak self, weak host] command in
       if command == "settings" { self?.openSettings() }
+      // U27b: the header's two site commands are core commands now, so its ids go through the
+      // one dispatcher the Ararat Commands menu, the command bar and a recorded key use.
+      else if command == "clear_cache_site" || command == "clear_cookies_site" { self?.performWorkspaceCommand(command) }
       else { _ = host?.runCommand(command) }
     }
     container.header.siteDomain = { [weak host] in host?.currentSiteDomain() }
@@ -1703,6 +1707,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case "focus_next_pane": splitFocusDispatches[command, default: 0] += 1; adapter?.focusPane(backwards: false)
     case "focus_previous_pane": splitFocusDispatches[command, default: 0] += 1; adapter?.focusPane(backwards: true)
     case "force_reload": host?.forceReload()
+    case "clear_cache_site", "clear_cookies_site": _ = host?.runCommand(command)
     case "settings": openSettings()
     case "quit": NSApp.terminate(nil)
     case "new_tab": openCommandBar(.newTab)
@@ -1750,6 +1755,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  /// U27b: the ids the Ararat Commands menu carries. A table command missing here has a pane row
+  /// and a command-bar row but no menu item, so a recorded key would never fire; the test reads
+  /// this list so the two cannot drift.
+  static let coreMenuCommandIDs = ["cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "force_reload", "clear_cache_site", "clear_cookies_site", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
@@ -1759,7 +1769,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       undo.target = self
       edit.insertItem(undo, at: min(1, edit.items.count))
     }
-    let ids = ["cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "force_reload", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
+    let ids = Self.coreMenuCommandIDs
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
     if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
@@ -1823,6 +1833,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     guard item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String else { return true }
     if command == "focus_next_pane" || command == "focus_previous_pane" { return target?.adapter?.canFocusPane == true }
+    // U27b: the two site commands match the header's … menu, which disables them without an
+    // http(s) page; the menu item is the recorded key's own gate.
+    if command == "clear_cache_site" || command == "clear_cookies_site" { return target?.host?.currentSiteDomain() != nil }
     guard command == "delete_folder" else { return true }
     return target?.sidebar?.canDeleteOrganizeFolder == true
   }

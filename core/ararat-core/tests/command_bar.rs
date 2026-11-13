@@ -82,6 +82,27 @@ fn every_default_command_is_reachable_by_its_full_title() {
 }
 
 #[test]
+fn clear_cache_and_clear_cookies_are_command_rows_without_a_key() {
+    // U27b D2: both commands join the bar's list from the same table the Shortcuts pane reads.
+    // Their rows carry no key until one is recorded, and the subtitle stays "Command".
+    let workspace = fixture();
+    let index = Index::new(&workspace, "one", 0);
+    for (query, id) in [("clear cache", "clear_cache_site"), ("clear cookies", "clear_cookies_site")] {
+        let rows = index.query(query, &[]).rows;
+        // The exact title is promoted to the row after the typed row.
+        assert!(matches!(&rows[1].target, Target::Command { id: found } if found == id), "{query}");
+        let row = rows.iter().find(|row| matches!(&row.target, Target::Command { id: found } if found == id)).unwrap();
+        assert_eq!(row.key, None);
+        assert_eq!(row.subtitle, "Command");
+        assert_eq!(row.url, None);
+    }
+    let clear = index.query("clear", &[]).rows;
+    for id in ["clear_cache_site", "clear_cookies_site"] {
+        assert!(clear.iter().any(|row| matches!(&row.target, Target::Command { id: found } if found == id)), "{id}");
+    }
+}
+
+#[test]
 fn recency_boundaries() {
     let mut ws = fixture();
     ws.items.get_mut("tab-a").unwrap().membership.parent = Some("today-work".into());
@@ -553,6 +574,10 @@ fn a_private_command_bar_offers_only_the_commands_a_private_space_has() {
     assert!(!private.contains(&"pin_tab".to_string()), "no pin in a private window: {private:?}");
     assert!(ids("Pin Tab", false).contains(&"pin_tab".to_string()), "the regular bar keeps Pin Tab");
     assert!(ids("New Tab", true).contains(&"new_tab".to_string()), "a command a private space has stays");
+    // U27b: both site commands act on the current tab's site, not on the workspace, so a private
+    // window keeps them; the recorded key would otherwise be silently dead there.
+    assert!(ids("Clear Cache", true).contains(&"clear_cache_site".to_string()), "the site commands keep working in a private space");
+    assert!(ids("Clear Cookies", true).contains(&"clear_cookies_site".to_string()));
 }
 
 #[test]
