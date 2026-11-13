@@ -1,0 +1,439 @@
+import AppKit
+import AraratEngineAPI
+import AraratKit
+import AraratUI
+
+// U25d part 3: the split commands, drag-to-split and the one-page-one-place selection.
+//
+// One condition per claim the unit makes. The check drives the sidebar's own seams (the menu a
+// right-click shows, the drag's press/move/release), so nothing here runs a second copy of the
+// rule. Every wait is bounded and names itself when it gives up, so a hung phase reports which
+// claim failed instead of running into the watchdog.
+@MainActor
+final class SplitCommandsCheck {
+  static let names = ["seed", "menu_titles", "menu_icons", "menu_leftmost", "add_right", "add_right_focus",
+                      "add_right_new_tab_page", "move_left_order", "move_left_engine", "convert_axis",
+                      "convert_engine", "convert_top", "menu_vertical", "menu_vertical_moves", "add_left_order",
+                      "separate_row", "separate_one_pane", "close_pane", "drag_indicator", "drag_left_joins",
+                      "focus_after_drop", "drag_right_joins", "drop_refused", "lone_member", "lone_engine",
+                      "lone_source_split", "lone_stays", "lone_row_select", "move_leaves_split"]
+  static let screenNames = ["capture_menu", "capture_vertical", "capture_split"]
+  var conditions: [String: Bool] = [:]
+  var images: [String: String] = [:]
+  var capturing = false
+  var waitName = ""
+  var waitCount = 0
+  var split = ""
+  var left = ""
+  var right = ""
+  var added = ""
+  var addedLeft = ""
+  var dragged = ""
+  var draggedRight = ""
+  var refusedRow = ""
+  var loneMember = ""
+  var frames: [String: NSRect] = [:]
+  var points: [String: NSPoint] = [:]
+  var parentPanes = 0
+  var memberCount = 0
+  var indicatorSeen = false
+  var child: Runtime?
+  func mark(_ name: String, _ value: Bool = true) {
+    conditions[name] = value
+    FileHandle.standardError.write(Data("ararat-trace: split-commands \(name)=\(value)\n".utf8))
+  }
+  func wait(_ name: String, _ details: String) {
+    if name != waitName || waitCount % 20 == 0 { FileHandle.standardError.write(Data("ararat-trace: split-commands wait=\(name) \(details)\n".utf8)) }
+    if name != waitName { waitCount = 0; waitName = name }
+    waitCount += 1
+  }
+  func diagnostics(screen: Bool) -> [String: Any] {
+    let required = Self.names + (screen ? Self.screenNames : [])
+    return ["conditions": Dictionary(uniqueKeysWithValues: required.map { ($0, conditions[$0] == true) }),
+            "failed_conditions": required.filter { conditions[$0] != true }, "wait": waitName,
+            "images": images, "split": split, "member": loneMember, "phase": conditions.count]
+  }
+}
+
+extension Runtime {
+  // The check's own failure path, so a completion that fires after the tick can fail the run.
+  fileprivate func splitCommandsFail(_ message: String, screen: Bool) {
+    var result = (splitCommandsCheck ?? SplitCommandsCheck()).diagnostics(screen: screen)
+    result["error"] = message
+    finishBrowserCheck(ok: false, values: result)
+  }
+
+  func splitCommandsCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    if splitCommandsCheck == nil { splitCommandsCheck = SplitCommandsCheck() }
+    guard let check = splitCommandsCheck, !check.capturing, let adapter, let sidebar, let container, let workspace else { return }
+    let window = host.window()
+    let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
+    let state = adapter.checkSplitLayout()
+    func details() -> String {
+      let drag = sidebar.dragStateForCheck
+      return "phase=\(browserCheckPhase) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") "
+        + "panes=\(state.panes) members=\(check.split.isEmpty ? [] : adapter.checkSplitMembers(check.split)) "
+        + "split=\(check.split) left=\(check.left.isEmpty ? "nil" : check.left) right=\(check.right.isEmpty ? "nil" : check.right) "
+        + "added=\(check.added.isEmpty ? "nil" : check.added) addedLeft=\(check.addedLeft.isEmpty ? "nil" : check.addedLeft) "
+        + "drag=\(drag.active)/\(drag.settling)/\(drag.drop)"
+    }
+    func fail(_ message: String) {
+      var result = check.diagnostics(screen: screen); result["error"] = message
+      finishBrowserCheck(ok: false, values: result)
+    }
+    // A bounded hold: true once the condition holds, false after 6 s with a named failure.
+    func ready(_ name: String, _ condition: @autoclosure () -> Bool) -> Bool {
+      if condition() { return true }
+      check.wait(name, details())
+      if check.waitCount > 60 { fail("\(name) never resolved (\(details()))") }
+      return false
+    }
+    func capture(_ name: String) {
+      guard screen else { return }
+      check.capturing = true; defer { check.capturing = false }
+      if let path = promptScreenScreenshot(window, name: "split-commands-\(name)", withoutShadow: true) {
+        check.images[name] = path; check.mark("capture_\(name)")
+      }
+    }
+    func select(_ id: String, next: Int) {
+      browserCheckPhase = 100
+      workspace.select(id: id) { result in
+        guard case .success = result else { self.splitCommandsFail("select \(id)", screen: screen); return }
+        self.showAndSelect(result)
+        self.browserCheckPhase = next
+      }
+    }
+    func rowURL(_ id: String) -> String? { adapter.checkRowURL(id) }
+    func pageHalfPoint(_ rightHalf: Bool) -> NSPoint? {
+      guard let frame = container.pageFrameInWindowForCheck, frame.width > 0 else { return nil }
+      return NSPoint(x: frame.minX + frame.width * (rightHalf ? 0.75 : 0.25), y: frame.midY)
+    }
+    func awaitTab(_ id: String) -> Bool { tabs.contains { $0.itemId == id && !$0.isLoading } }
+    // A row that exists only in the store (created by WorkspaceAdapter.createTab: a core row plus
+    // the window's selection, no live tab) is waited for by its delivered row, not by a tab: the
+    // press's own select opens the tab.
+    func rowInSnapshot(_ id: String) -> Bool {
+      snapshot.spaces.flatMap { $0.today + $0.pinned }.contains { $0.id == id }
+    }
+    func menuTitles(_ pane: String) -> [String]? {
+      sidebar.paneMenuForCheck(paneID: pane)?.items.filter { !$0.isSeparatorItem }.map(\.title)
+    }
+    // The pane that became a member: the one id that was not there before.
+    func newMember(in members: [String], known: Set<String>) -> String? {
+      members.first { !known.contains($0) }
+    }
+    switch browserCheckPhase {
+    case 0:
+      guard ready("seed", window.isKeyWindow && window.isVisible && host.hasBrowser()
+                  && snapshot.spaces.first { $0.id == snapshot.shownSpaceId }?.today.contains { $0.kind == .split } == true) else { return }
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+            let splitRow = space.today.first(where: { $0.kind == .split }) else { fail("no split row in the seed space"); return }
+      check.split = splitRow.id
+      let members = adapter.checkSplitMembers(splitRow.id)
+      guard let left = members.first(where: { rowURL($0)?.contains("split-commands-left") == true }),
+            let right = members.first(where: { rowURL($0)?.contains("split-commands-right") == true }) else {
+        fail("the seed split is not the two seeded tabs: \(members.map { rowURL($0) ?? "nil" })"); return
+      }
+      check.left = left
+      check.right = right
+      check.mark("seed", members == [left, right])
+      select(left, next: 1)
+    case 1:
+      guard ready("split pages", snapshot.selectedId == check.left && host.activeItemId() == check.left
+                  && state.panes == 2 && awaitTab(check.left)) else { return }
+      guard let menu = sidebar.paneMenuForCheck(paneID: check.left) else { fail("no menu for the split pane"); return }
+      let titles = menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+      check.mark("menu_titles", titles == ["Move Left", "Move Right", "Add Right Split", "Add Left Split",
+                                           "Separate Tab from Split", "Convert to Vertical Split View", "Close Pane"])
+      let items = menu.items.filter { !$0.isSeparatorItem }
+      check.mark("menu_icons", !items.isEmpty && items.allSatisfy { $0.image != nil })
+      let rightMenu = sidebar.paneMenuForCheck(paneID: check.right)
+      check.mark("menu_leftmost", menu.items[0].isEnabled == false && menu.items[1].isEnabled == true
+                  && rightMenu?.items[0].isEnabled == true && rightMenu?.items[1].isEnabled == false)
+      capture("menu")
+      check.frames = adapter.checkSplitFocus().panes
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.right, titled: "Add Right Split") else { fail("add right split item"); return }
+      browserCheckPhase = 2
+    case 2:
+      let members = adapter.checkSplitMembers(check.split)
+      guard ready("add right split", members.count == 3 && state.panes == 3 && awaitTab(members.last ?? "")) else { return }
+      guard let pane = newMember(in: members, known: [check.left, check.right]) else { fail("no new member after Add Right Split: \(members)"); return }
+      check.added = pane
+      check.mark("add_right", members == [check.left, check.right, pane])
+      // The sidebar's own focused pane, not the guard's active id (review 2, SF3).
+      check.mark("add_right_focus", sidebar.focusedPane?.id == pane)
+      check.mark("add_right_new_tab_page", rowURL(pane) == "chrome://newtab/")
+      check.frames = adapter.checkSplitFocus().panes
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.added, titled: "Move Left") else { fail("move left item"); return }
+      browserCheckPhase = 3
+    case 3:
+      let members = adapter.checkSplitMembers(check.split)
+      guard ready("move left", members == [check.left, check.added, check.right] && state.panes == 3) else { return }
+      check.mark("move_left_order")
+      let before = check.frames[check.added]
+      guard ready("move left frames", before.map { old in
+        adapter.checkSplitFocus().panes[check.added].map { abs($0.minX - old.minX) > 1 } ?? false
+      } ?? false) else { return }
+      check.mark("move_left_engine")
+      // The frames the Convert must change, captured after the move has been drawn.
+      check.frames = adapter.checkSplitFocus().panes
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.left, titled: "Convert to Vertical Split View") else { fail("convert item"); return }
+      browserCheckPhase = 4
+    case 4:
+      // The core turns the axis before main delivers the new frames, so the changed geometry is
+      // part of the wait (review 3, N2): a stale tick cannot mark these false.
+      func converted() -> Bool {
+        guard adapter.checkSplitAxis(check.split) == "vertical", state.panes == 3,
+              !check.frames.isEmpty, adapter.checkSplitFocus().panes != check.frames else { return false }
+        return true
+      }
+      guard ready("convert", converted()) else { return }
+      check.mark("convert_axis")
+      let members = adapter.checkSplitMembers(check.split)
+      let frames = adapter.checkSplitFocus().panes
+      // The card is unflipped, so a greater y is higher on screen: the first pane must be on top.
+      let top = frames.max { $0.value.minY < $1.value.minY }?.key
+      let stacked = frames.values.sorted { $0.minY < $1.minY }
+      check.mark("convert_engine", stacked.count == 3
+                  && abs(stacked[0].minX - stacked[1].minX) < 1 && abs(stacked[1].minX - stacked[2].minX) < 1
+                  && abs(stacked[0].minY - stacked[1].minY) > 1)
+      check.mark("convert_top", top == members.first)
+      capture("vertical")
+      // Move's words follow the axis, and the ends disable as they do side by side.
+      let vertical = sidebar.paneMenuForCheck(paneID: check.left)
+      let verticalTitles = vertical?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? []
+      check.mark("menu_vertical", verticalTitles == ["Move Up", "Move Down", "Add Right Split", "Add Left Split",
+                                                     "Separate Tab from Split", "Convert to Horizontal Split View", "Close Pane"])
+      check.mark("menu_vertical_moves", vertical?.items[0].isEnabled == false && vertical?.items[1].isEnabled == true)
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.left, titled: "Convert to Horizontal Split View") else { fail("convert back item"); return }
+      browserCheckPhase = 5
+    case 5:
+      guard ready("convert back", adapter.checkSplitAxis(check.split) == "horizontal") else { return }
+      check.frames = adapter.checkSplitFocus().panes
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.left, titled: "Add Left Split") else { fail("add left item"); return }
+      browserCheckPhase = 6
+    case 6:
+      let members = adapter.checkSplitMembers(check.split)
+      guard ready("add left split", members.count == 4 && state.panes == 4) else { return }
+      guard let pane = newMember(in: members, known: [check.left, check.right, check.added]) else { fail("no new member after Add Left Split: \(members)"); return }
+      check.addedLeft = pane
+      check.mark("add_left_order", members == [pane, check.left, check.added, check.right])
+      capture("split")
+      // Separate acts on the focused pane: make it the selection and wait for the core and the
+      // engine to agree before the command runs (design's VM, phase 7).
+      select(check.addedLeft, next: 7)
+    case 7:
+      guard ready("separate pane focused", snapshot.selectedId == check.addedLeft && host.activeItemId() == check.addedLeft),
+            ready("separate split drawn", adapter.checkSplitMembers(check.split).count == 4 && state.panes == 4) else { return }
+      check.frames = adapter.checkSplitFocus().panes
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.addedLeft, titled: "Separate Tab from Split") else { fail("separate item"); return }
+      browserCheckPhase = 8
+    case 8:
+      // The pane leaves the split: one less member, and its own top-level Today row right after
+      // the split's row. The window keeps the separated pane as its page, so no split is drawn.
+      // The row lives in the delivered snapshot, so the wait includes it (review 3, N2).
+      func separated() -> ([String], Bool) {
+        let members = adapter.checkSplitMembers(check.split)
+        let rows = (snapshot.spaces.first { $0.id == snapshot.shownSpaceId }?.today ?? []).filter { $0.depth == 0 }
+        let splitIndex = rows.firstIndex { $0.id == check.split }
+        let paneIndex = rows.firstIndex { $0.id == check.addedLeft }
+        return (members, splitIndex != nil && paneIndex != nil && paneIndex == splitIndex.map { $0 + 1 })
+      }
+      let (members, rowAfterSplit) = separated()
+      guard ready("separate result", members == [check.left, check.added, check.right] && rowAfterSplit) else { return }
+      check.mark("separate_one_pane")
+      check.mark("separate_row", rowAfterSplit)
+      select(check.left, next: 9)
+    case 9:
+      guard ready("close pane ready", snapshot.selectedId == check.left && host.activeItemId() == check.left
+                  && state.panes == 3) else { return }
+      guard sidebar.runPaneMenuItemForCheck(paneID: check.added, titled: "Close Pane") else { fail("close pane item"); return }
+      browserCheckPhase = 10
+    case 10:
+      let members = adapter.checkSplitMembers(check.split)
+      guard ready("close pane", members == [check.left, check.right] && state.panes == 2) else { return }
+      check.mark("close_pane")
+      check.frames = adapter.checkSplitFocus().panes
+      workspace.createTab(url: "https://split-commands-drag.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("drag row", screen: screen); return
+        }
+        check.dragged = id
+        self.browserCheckPhase = 11
+      }
+    case 11:
+      guard ready("drag row ready", rowInSnapshot(check.dragged) && sidebar.rowFrameForCheck(check.dragged) != nil) else { return }
+      // The frame is measured after the shown pane is selected again: selecting it may scroll the
+      // list, and the press point must be the row's place at the press.
+      select(check.left, next: 12)
+    case 12:
+      guard ready("drag shown tab", snapshot.selectedId == check.left && host.activeItemId() == check.left) else { return }
+      guard let frame = sidebar.rowFrameForCheck(check.dragged), let left = pageHalfPoint(false) else {
+        fail("no frame for the drag row"); return
+      }
+      let origin = NSPoint(x: frame.midX, y: frame.midY)
+      guard sidebar.beginDragForCheck(id: check.dragged, at: origin) else { fail("begin drag"); return }
+      for step in 1...5 { sidebar.moveDragForCheck(to: NSPoint(x: origin.x - CGFloat(step) * 16, y: origin.y)) }
+      sidebar.moveDragForCheck(to: left)
+      check.points["target"] = left
+      browserCheckPhase = 13
+    case 13:
+      if container.paneDropForCheck != nil, sidebar.dragStateForCheck.drop == "split" { check.indicatorSeen = true }
+      guard ready("drop indicator", check.indicatorSeen) else { return }
+      check.mark("drag_indicator")
+      guard let left = check.points["target"] else { fail("no drop point"); return }
+      _ = sidebar.releaseDragForCheck(at: left)
+      browserCheckPhase = 14
+    case 14:
+      guard ready("left drop settle", !sidebar.dragStateForCheck.active && !sidebar.dragStateForCheck.settling) else { return }
+      // The core's members and the delivered selection/focus are both waited for (review 3, N2).
+      guard ready("left drop", adapter.checkSplitMembers(check.split) == [check.dragged, check.left, check.right]
+                  && snapshot.selectedId == check.dragged && sidebar.focusedPane?.id == check.dragged) else { return }
+      check.mark("drag_left_joins")
+      check.mark("focus_after_drop")
+      workspace.createTab(url: "https://split-commands-drag-right.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("right drag row", screen: screen); return
+        }
+        check.draggedRight = id
+        self.browserCheckPhase = 15
+      }
+    case 15:
+      guard ready("right drag row", rowInSnapshot(check.draggedRight) && sidebar.rowFrameForCheck(check.draggedRight) != nil) else { return }
+      select(check.left, next: 16)
+    case 16:
+      guard ready("right drag shown tab", snapshot.selectedId == check.left && host.activeItemId() == check.left) else { return }
+      guard let frame = sidebar.rowFrameForCheck(check.draggedRight), let right = pageHalfPoint(true) else {
+        fail("no frame for the right drag row"); return
+      }
+      let origin = NSPoint(x: frame.midX, y: frame.midY)
+      guard sidebar.beginDragForCheck(id: check.draggedRight, at: origin) else { fail("begin right drag"); return }
+      sidebar.moveDragForCheck(to: NSPoint(x: origin.x - 40, y: origin.y))
+      sidebar.moveDragForCheck(to: right)
+      _ = sidebar.releaseDragForCheck(at: right)
+      browserCheckPhase = 17
+    case 17:
+      guard ready("right drop settle", !sidebar.dragStateForCheck.active && !sidebar.dragStateForCheck.settling) else { return }
+      guard ready("right drop", adapter.checkSplitMembers(check.split) == [check.dragged, check.left, check.draggedRight, check.right]) else { return }
+      check.mark("drag_right_joins")
+      check.memberCount = adapter.checkSplitMembers(check.split).count
+      // A row dragged onto the page while it is the shown tab has no half to land on.
+      workspace.createTab(url: "https://split-commands-refused.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("refused row", screen: screen); return
+        }
+        check.refusedRow = id
+        self.browserCheckPhase = 18
+      }
+    case 18:
+      guard ready("refused row", rowInSnapshot(check.refusedRow) && sidebar.rowFrameForCheck(check.refusedRow) != nil) else { return }
+      // The new tab is the shown row: dragging it onto the page offers nothing.
+      select(check.refusedRow, next: 19)
+    case 19:
+      guard ready("refused drag ready", snapshot.selectedId == check.refusedRow && host.activeItemId() == check.refusedRow) else { return }
+      guard let frame = sidebar.rowFrameForCheck(check.refusedRow), let point = pageHalfPoint(false) else {
+        fail("no frame for the refused row"); return
+      }
+      let origin = NSPoint(x: frame.midX, y: frame.midY)
+      guard sidebar.beginDragForCheck(id: check.refusedRow, at: origin) else { fail("begin refused drag"); return }
+      sidebar.moveDragForCheck(to: NSPoint(x: origin.x - 40, y: origin.y))
+      sidebar.moveDragForCheck(to: point)
+      let offered = container.paneDropForCheck != nil || sidebar.dragStateForCheck.drop == "split"
+      _ = sidebar.releaseDragForCheck(at: point)
+      check.mark("drop_refused", !offered)
+      browserCheckPhase = 20
+    case 20:
+      guard ready("refused settle", !sidebar.dragStateForCheck.settling && !sidebar.dragStateForCheck.active) else { return }
+      let members = adapter.checkSplitMembers(check.split)
+      check.mark("drop_refused", check.conditions["drop_refused"] == true && members.count == check.memberCount)
+      guard members.count == check.memberCount else { fail("the refused drop changed the split: \(members)"); return }
+      check.parentPanes = state.panes
+      check.loneMember = members.last ?? ""
+      guard !check.loneMember.isEmpty, let shown = snapshot.shownSpaceId else { fail("no member for the lone check"); return }
+      let child = Runtime()
+      child.root = self
+      do { try child.start(session: adapter.session, shownSpace: shown) } catch { fail("cannot start the second window: \(error)"); return }
+      children.append(child)
+      check.child = child
+      browserCheckPhase = 21
+    case 21:
+      guard let child = check.child, let childAdapter = child.adapter else { return }
+      guard ready("second window", child.snapshot.shownSpaceId == snapshot.shownSpaceId),
+            let url = rowURL(check.loneMember) else { return }
+      if child.snapshot.selectedId != check.loneMember { childAdapter.select(id: check.loneMember, url: url, wholeSplit: false) }
+      browserCheckPhase = 22
+    case 22:
+      guard let child = check.child, let childAdapter = child.adapter else { return }
+      let childLayout = childAdapter.checkSplitLayout()
+      // The verification lives in the child window, so its state is part of the wait's trace and
+      // of the failure (review 2/design's VM: the parent's details alone could not tell which
+      // half of the claim failed).
+      let childState = "child_selected=\(child.snapshot.selectedId ?? "nil") child_active=\(child.host?.activeItemId() ?? "nil") "
+        + "child_panes=\(childLayout.panes) child_split=\(childLayout.split) "
+        + "m_live_in=\(childAdapter.checkLiveWindow(check.loneMember) ?? "nil") child_window=\(childAdapter.checkWindowID) "
+        + "m=\(check.loneMember)"
+      check.wait("lone member", childState)
+      if !(child.snapshot.selectedId == check.loneMember && child.host?.activeItemId() == check.loneMember && childLayout.panes == 0) {
+        if check.waitCount > 60 { fail("lone member never resolved (\(childState))") }
+        return
+      }
+      check.mark("lone_member")
+      check.mark("lone_engine", childLayout.panes == 0 && !childLayout.split)
+      let parentLayout = adapter.checkSplitLayout()
+      check.mark("lone_source_split", parentLayout.panes == check.parentPanes && parentLayout.panes > 1
+                  && adapter.checkSplitMembers(check.split).contains(check.loneMember))
+      // MF1, the real path (review 3, N1): the first window becomes key and reclaims the member,
+      // so it draws the split again with M live here.
+      window.makeKeyAndOrderFront(nil)
+      browserCheckPhase = 23
+    case 23:
+      guard let child = check.child else { return }
+      // A reclaims: the tab is live in A again and A draws every pane of the split.
+      guard ready("first window reclaims", window.isKeyWindow
+                  && adapter.checkLiveWindow(check.loneMember) == adapter.checkWindowID
+                  && adapter.checkSplitLayout().panes == check.parentPanes
+                  && adapter.checkSplitMembers(check.split).contains(check.loneMember)) else { return }
+      // …and B becoming key takes only M back, never the whole split.
+      child.host?.window().makeKeyAndOrderFront(nil)
+      browserCheckPhase = 24
+    case 24:
+      guard let child = check.child, let childAdapter = child.adapter else { return }
+      // B is key and has taken M alone, so it draws no split; A keeps its split and its members.
+      guard ready("lone stays", child.host?.window().isKeyWindow == true
+                  && childAdapter.checkLiveWindow(check.loneMember) == childAdapter.checkWindowID
+                  && childAdapter.checkSplitLayout().panes == 0
+                  && !childAdapter.checkSplitLayout().split
+                  && adapter.checkSplitLayout().panes == check.parentPanes
+                  && adapter.checkSplitMembers(check.split).contains(check.loneMember)) else { return }
+      check.mark("lone_stays")
+      // The split row's own selection in B takes the whole split, as before.
+      if child.snapshot.selectedId == check.loneMember, let url = rowURL(check.loneMember) {
+        childAdapter.select(id: check.loneMember, url: url, wholeSplit: true)
+      }
+      browserCheckPhase = 25
+    case 25:
+      guard let child = check.child, let childAdapter = child.adapter else { return }
+      guard ready("whole split in the second window", childAdapter.checkSplitLayout().panes == check.parentPanes
+                  && childAdapter.checkSplitLayout().split) else { return }
+      check.mark("lone_row_select")
+      // S4 (1): Move Tab to another space leaves the split (the core's own rule).
+      workspace.createSpace(name: "Split Commands Other") { [weak self] result in
+        guard let self, case .success(let next) = result,
+              let other = next.spaces.first(where: { $0.id == next.shownSpaceId }) else {
+          self?.splitCommandsFail("second space", screen: screen); return
+        }
+        workspace.move(id: check.loneMember, container: other.todayId, index: 0, openFolder: false) { [weak self] moved in
+          guard let self, case .success(let after) = moved else {
+            self?.splitCommandsFail("move to another space", screen: screen); return
+          }
+          check.mark("move_leaves_split", !adapter.checkSplitMembers(check.split).contains(check.loneMember)
+                      && after.spaces.first { $0.id == other.id }?.today.contains { $0.id == check.loneMember } == true)
+          self.show(after)
+          let result = check.diagnostics(screen: screen)
+          self.finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
+        }
+      }
+    default: break
+    }
+  }
+}

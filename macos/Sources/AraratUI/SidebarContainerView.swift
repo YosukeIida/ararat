@@ -120,15 +120,17 @@ public final class SidebarContainerView: NSView {
     private let paneDrop = PaneDropIndicator(frame: .zero)
     public func paneDropHalf(at windowPoint: NSPoint, axis: PaneDropAxis) -> PaneDropHalf? {
         guard page.superview === self, !page.isHiddenOrHasHiddenAncestor, page.bounds.width > 0, page.bounds.height > 0 else { return nil }
-        let local = page.convert(windowPoint, from: nil)
-        guard page.bounds.contains(local) else { return nil }
+        // This view is flipped (y grows downward), so the first half is the one nearer minY.
+        let local = convert(windowPoint, from: nil)
+        let pageFrame = page.frame
+        guard pageFrame.contains(local) else { return nil }
         let vertical = axis == .vertical
-        let first = vertical ? local.y < page.bounds.midY : local.x < page.bounds.midX
+        let first = vertical ? local.y < pageFrame.midY : local.x < pageFrame.midX
         let half = vertical
-            ? NSRect(x: 0, y: first ? 0 : page.bounds.height / 2, width: page.bounds.width, height: page.bounds.height / 2)
-            : NSRect(x: first ? 0 : page.bounds.width / 2, y: 0, width: page.bounds.width / 2, height: page.bounds.height)
+            ? NSRect(x: pageFrame.minX, y: first ? pageFrame.minY : pageFrame.midY, width: pageFrame.width, height: pageFrame.height / 2)
+            : NSRect(x: first ? pageFrame.minX : pageFrame.midX, y: pageFrame.minY, width: pageFrame.width / 2, height: pageFrame.height)
         // `first` is the order side: left, or top, before the other half.
-        return PaneDropHalf(side: first ? .left : .right, rect: convert(half, from: page))
+        return PaneDropHalf(side: first ? .left : .right, rect: half)
     }
 
     public func showPaneDrop(_ half: PaneDropHalf?) {
@@ -143,6 +145,12 @@ public final class SidebarContainerView: NSView {
     }
 
     public var paneDropForCheck: NSRect? { paneDrop.isHidden ? nil : paneDrop.frame }
+    public var pageFrameInWindowForCheck: NSRect? {
+        guard page.superview === self, !page.isHiddenOrHasHiddenAncestor else { return nil }
+        layoutSubtreeIfNeeded()
+        // Window coordinates: `paneDropHalf(at:axis:)` converts a window point into the page.
+        return page.convert(page.bounds, to: nil)
+    }
     public var spaceTintVisible: Bool { !panel.coating.isHidden }
     public func dockCheckSetMain(_ main: Bool) {
         guard CommandLine.arguments.contains("--ararat-check=dock") else { return }

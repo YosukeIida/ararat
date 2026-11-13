@@ -214,7 +214,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.windowID = windowID
         self.card = card
@@ -262,7 +262,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
                 _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
                 _ = try opened.selectItem(windowId: windowID, id: todayA)
-            } else if seedProfiles || seedDock {
+            } else if seedProfiles || seedDock || seedSplitCommands {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """
@@ -285,6 +285,20 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     _ = try opened.createTab(windowId: windowID, url: profileCheckURL)
                 }
                 try opened.showSpace(windowId: windowID, spaceId: "default")
+                if seedSplitCommands {
+                    // A split in Today, where drag-to-split, separate and close follow the row
+                    // rules (a pinned split's pane would go elsewhere on Separate).
+                    var ids: [String] = []
+                    for name in ["left", "right", "extra"] {
+                        let snapshot = try opened.createTab(windowId: windowID, url: "https://split-commands-\(name).example/")
+                        if let id = snapshot.selectedId { ids.append(id) }
+                    }
+                    guard ids.count == 3 else { throw NSError(domain: "Ararat.split-commands", code: 1) }
+                    // New tabs land at the top: `ids` is in creation order (left, right, extra), so
+                    // the oldest (`ids[0]`, left) is the tail of the Today list; the split wraps it
+                    // with `right` after it, leaving `extra` as a loose row in front.
+                    _ = try opened.makeSplit(windowId: windowID, draggedId: ids[1], targetId: ids[0], side: .right)
+                }
                 if seedDock {
                     let look = Look(colors: [LookColor(red: 0.4, green: 0.3, blue: 0.8, x: 0.7, y: 0.5)], opacity: 0.5, grain: 0, glass: false, appearance: .auto)
                     _ = try opened.setSpaceLook(windowId: windowID, spaceId: "default", look: look)
@@ -589,6 +603,36 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             return split.kind == .splitVertical
         }
     }
+
+    // What the split checks read: the core's rows and a row's URL without a pointer.
+    public func checkSplitMembers(_ item: String) -> [String] {
+        queue.sync {
+            guard let split = store?.splitLayout(itemId: item) else { return [] }
+            func leaves(_ pane: SplitPane) -> [String] { pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves) }
+            return leaves(split)
+        }
+    }
+
+    public func checkSplitAxis(_ item: String) -> String? {
+        queue.sync {
+            guard let split = store?.splitLayout(itemId: item) else { return nil }
+            return split.kind == .splitVertical ? "vertical" : "horizontal"
+        }
+    }
+
+    public func checkRowURL(_ id: String) -> String? {
+        queue.sync {
+            store?.snapshot(windowId: windowID).spaces.flatMap { $0.pinned + $0.today + $0.favorites }
+                .first { $0.id == id }?.url
+        }
+    }
+
+    // The window that holds this item's live tab, for the two-window check (its own id included).
+    public func checkLiveWindow(_ id: String) -> String? {
+        queue.sync { store?.liveWindow(item: id) }
+    }
+
+    public var checkWindowID: String { windowID }
 
     // What the split-commands check reads: the panes this window lays out as a split (0: a plain
     // page, which is what a member taken alone from another window must show).

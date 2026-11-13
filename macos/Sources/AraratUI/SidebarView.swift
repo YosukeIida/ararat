@@ -2660,6 +2660,62 @@ public struct SidebarDropCheck: Sendable {
 }
 
 extension SidebarView {
+    // U25d's check seams: the segment menu a right-click shows for a pane, the item it would run,
+    // and the drag's own press/move/release with window points — the same calls the pointer makes,
+    // so the check tests the rule rather than a copy of it.
+    public func paneMenuForCheck(paneID: String) -> NSMenu? {
+        guard let space = snapshotSpace,
+              let row = (space.pinned + space.today).first(where: { $0.kind == .split && paneRows(of: $0.id).contains { $0.id == paneID } }),
+              let pane = paneRows(of: row.id).first(where: { $0.id == paneID }) else { return nil }
+        return splitMenu(row: row, pane: pane)
+    }
+
+    @discardableResult
+    public func runPaneMenuItemForCheck(paneID: String, titled title: String) -> Bool {
+        guard let menu = paneMenuForCheck(paneID: paneID),
+              let item = menu.items.first(where: { $0.title == title }), item.isEnabled,
+              let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+
+    public func rowFrameForCheck(_ id: String) -> NSRect? {
+        guard let view = rowViews[id], view.superview != nil else { return nil }
+        layoutSubtreeIfNeeded()
+        // Window coordinates: the drag seams take the pointer's own `locationInWindow`.
+        return view.convert(view.bounds, to: nil)
+    }
+
+    @discardableResult
+    public func beginDragForCheck(id: String, at windowPoint: NSPoint) -> Bool {
+        guard let view = rowViews[id] else { return false }
+        pressDrag(row: view.row, view: view, windowPoint: windowPoint)
+        return drag != nil
+    }
+
+    public func moveDragForCheck(to windowPoint: NSPoint) {
+        moveDrag(to: dragPoint(windowPoint))
+    }
+
+    @discardableResult
+    public func releaseDragForCheck(at windowPoint: NSPoint) -> Bool {
+        releaseDrag(at: dragPoint(windowPoint))
+    }
+
+    public var dragStateForCheck: (active: Bool, settling: Bool, drop: String) {
+        let drop: String
+        switch dropTarget {
+        case .refused: drop = "refused"
+        case .split: drop = "split"
+        case .insert: drop = "insert"
+        case .folder: drop = "folder"
+        case .favorites: drop = "favorites"
+        case .dock: drop = "dock"
+        }
+        return (drag?.active ?? false, dragSettling, drop)
+    }
+}
+
+extension SidebarView {
     public func resolveDropForCheck(position: CGPoint, draggedID: String) -> SidebarDropCheck? {
         guard let space = snapshotSpace,
               let dragged = (space.today + space.pinned + space.favorites).first(where: { $0.id == draggedID }),
