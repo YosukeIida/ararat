@@ -313,8 +313,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func menuManageExtension(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let url = popup.host?.extensionManagementURL(id) else { return }
-        navigate(to: url)
+        guard let id = sender.representedObject as? String else { return }
+        origin?.manageExtension(id)
     }
 
     @objc private func menuRemoveExtension(_ sender: NSMenuItem) {
