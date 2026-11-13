@@ -1757,7 +1757,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let rect = LittleWindowController.clampedFrame(rect)
       Launcher.pendingLittleWindow = (self, rect, url, name)
       _ = host.setProfileDirectory(name)
-      if host.openLittleWindow(url ?? "about:blank", profile: name, frame: rect) == false {
+      // The engine's create_host callback consumes the pending request; if it is still there,
+      // the engine did not make a popup (the profile's Browser may still be loading).
+      if host.openLittleWindow(url ?? "about:blank", profile: name, frame: rect) == false
+          || Launcher.pendingLittleWindow != nil {
         Launcher.pendingLittleWindow = nil
         retryLittleWindow(url: url, profile: name, frame: rect, deadline: .now() + 10)
       }
