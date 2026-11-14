@@ -107,7 +107,15 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func setKeyBinding(command: String, key: KeyCombination?, completion: @escaping Completion<[KeyBinding]>) {
-        enqueue({ try self.opened().setKeyBinding(command: command, key: key) }, completion: completion)
+        enqueue({
+            let store = try self.opened()
+            if let key, let hotKey = store.littleWindowDevice().hotKey,
+               key == KeyCombination(key: hotKey.key, command: hotKey.command, control: hotKey.control,
+                                     option: hotKey.option, shift: hotKey.shift) {
+                throw CoreError.Edit(message: "Used by New Little Window (global)")
+            }
+            return try store.setKeyBinding(command: command, key: key)
+        }, completion: completion)
     }
 
     public func resetKeyBinding(command: String, completion: @escaping Completion<[KeyBinding]>) {
