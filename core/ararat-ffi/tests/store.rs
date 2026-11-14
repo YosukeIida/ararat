@@ -1211,7 +1211,8 @@ fn the_theme_reads_through_the_ffi_and_survives_reopen() {
 }
 
 // U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
-// default, and it survives a reopen.#[test]
+// default, and it survives a reopen.
+#[test]
 fn the_space_scroll_direction_reads_through_the_ffi_and_survives_reopen() {
     use ararat_ffi::SpaceScrollDirection;
     let path = fresh_db("space-scroll-settings");

@@ -614,7 +614,8 @@ extension Runtime {
             // report is made once, so a retried phase does not repeat it.
             if check.conditions["rows"] != true {
                 check.report("rows", theme.maxY <= look.minY + 1 && look.maxY <= newTab.minY + 1
-                    && newTab.maxY <= tips.minY + 1 && (control?.width ?? 0) > 0 && (control?.height ?? 0) >= 16)
+                    && newTab.maxY <= tips.minY + 1 && (control?.width ?? 0) > 0 && (control?.height ?? 0) >= 16
+                    && switches.allSatisfy { ($0?.width ?? 0) > 0 && ($0?.height ?? 0) >= 16 })
             }
             // The page reports what `prefers-color-scheme` resolves to. It gets its own tab through
             // the command bar's own URL path (the engine's check-only navigation gate does not name

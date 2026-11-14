@@ -173,7 +173,8 @@ func theThemeWritesTheSyncedRecordAndSetsTheWholeAppearance() async throws {
 }
 
 @Test @MainActor
-func theTooltipGateSilencesHeaderAndNativeTooltipsUntilItIsTurnedBackOn() throws {    _ = NSApplication.shared
+func theTooltipGateSilencesHeaderAndNativeTooltipsUntilItIsTurnedBackOn() throws {
+    _ = NSApplication.shared
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [], backing: .buffered, defer: false)
     defer { window.contentView = nil }
     let button = NSButton(title: "Back", target: nil, action: nil)
