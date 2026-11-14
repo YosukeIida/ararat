@@ -21,12 +21,13 @@ final class SettingsScreenCheck {
         case appearance = "settings-appearance"
         case spaces = "settings-spaces"
         case littleWindow = "settings-little-window"
+        case websites = "settings-websites"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs: "tabs"
-            case .shortcuts, .airTraffic, .appearance, .spaces: String(rawValue.dropFirst("settings-".count))
+            case .shortcuts, .airTraffic, .appearance, .spaces, .websites: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
             }
         }
@@ -55,6 +56,9 @@ final class SettingsScreenCheck {
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
             case .littleWindow: ["rows", "atc_link", "shortcut_recorder", "hot_key_registration", "hot_key_exclusive",
                                  "open_in_write_reopen", "open_in_bar", "close_after_keeps", "remember_off_frame"]
+            case .websites: ["rows", "defaults_write", "defaults_reopen", "notification_denied", "camera_prompt",
+                             "popover_exception", "pane_site_row", "all_site_settings", "site_page_rows",
+                             "clear_site_data", "other_origin_kept", "reset_removes"]
             }
         }
     }
@@ -119,6 +123,18 @@ final class SettingsScreenCheck {
     var littleSpaceTitle = ""
     var littlePageLive = ""
     var littleOpening: LittleWindowController?
+    // U27w: the Websites check's fixture origins, profile and the values its phases carry over.
+    var websiteSecureBase = ""
+    var websitePlainBase = ""
+    var websiteSecureOrigin = ""
+    var websitePlainOrigin = ""
+    var websiteProfile = "Default"
+    var websiteShownSpace = ""
+    var websitePromptsBefore = 0
+    var websiteClearFinished = false
+    var websiteReadSecure: String?
+    var websiteReadPlain: String?
+    var websiteSiteRow: SettingsSiteRow?
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -289,7 +305,7 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
@@ -303,6 +319,11 @@ extension Runtime {
             if mode == .littleWindow {
                 settingsLittleWindowTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
+                return
+            }
+            if mode == .websites {
+                settingsWebsitesTick(probe, check: check, note: note, trace: trace, step: step,
+                                     end: end, finish: finish, capture: capture)
                 return
             }
             settingsPaneTick(mode, probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, pushSpace: settings.checkPushSpace)
@@ -552,7 +573,7 @@ extension Runtime {
                 check.report("rows", true)
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow:
+            case .frame, .search, .appearance, .littleWindow, .websites:
                 return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }
@@ -795,8 +816,273 @@ extension Runtime {
         }
     }
 
-    // MARK: settings-spaces, U27c: the direction card's write, and both wheels
+    // MARK: settings-websites, U27w: the pane, the defaults, a site's page and its two actions
 
+    /// The fixture tab a step is waiting for: the newest tab whose URL starts with `prefix`.
+    private func websiteTab(_ host: any ARWindowHostAPI, prefix: String) -> (any ARTabAPI)? {
+        (host.tabs() as? [any ARTabAPI])?.last { $0.url.hasPrefix(prefix) }
+    }
+
+    /// Phases 2 to 23 of `settings-websites`. The pane's rows and the core's record; the engine's
+    /// application of the record (a fixture page's `Notification.requestPermission()` resolves
+    /// denied); Camera back to Ask and the prompt sheet; a site exception through the popover; the
+    /// pane's row and summary; All Site Settings…; a site page's Reset; and Clear cookies and site
+    /// data proved with a cookie and a localStorage value on two origins (W1–W4).
+    private func settingsWebsitesTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
+                                      note: (String) -> Void, trace: (String) -> Void,
+                                      step: (Int) -> Void, end: (String, Bool) -> Void,
+                                      finish: () -> Void, capture: (String) -> Bool) {
+        let owner = root ?? self
+        if let ports = siteFixturePorts, check.websiteSecureBase.isEmpty {
+            check.websiteSecureBase = "https://127.0.0.1:\(ports.secure)"
+            check.websitePlainBase = "http://ararat.test:\(ports.plain)"
+            check.websiteSecureOrigin = check.websiteSecureBase
+            check.websitePlainOrigin = check.websitePlainBase
+        }
+        if let shown = snapshot.shownSpaceId, check.websiteShownSpace.isEmpty,
+           let space = snapshot.spaces.first(where: { $0.id == shown }) {
+            check.websiteShownSpace = shown
+            check.websiteProfile = space.profileName
+        }
+        func openTab(_ path: String) {
+            guard let adapter, !check.websiteShownSpace.isEmpty else { return }
+            adapter.openCommandURL(check.websiteSecureBase + path, expectedSpace: check.websiteShownSpace,
+                                   profile: check.websiteProfile)
+        }
+        func openPlainTab(_ path: String) {
+            guard let adapter, !check.websiteShownSpace.isEmpty else { return }
+            adapter.openCommandURL(check.websitePlainBase + path, expectedSpace: check.websiteShownSpace,
+                                   profile: check.websiteProfile)
+        }
+        switch check.phase {
+        case 2:
+            let rows = SitePermissionKind.allCases.map { SettingsModel.rowMarker(SettingsModel.websiteRowID($0)) }
+            let menus = SitePermissionKind.allCases.map { SettingsModel.websiteMenuMarker($0) }
+            let found = rows.map { probe.marker($0) }
+            let foundMenus = menus.map { probe.marker($0) }
+            let defaults = probe.marker(SettingsModel.rowMarker(SettingsModel.websitesDefaultsCardID))
+            let sites = probe.marker(SettingsModel.rowMarker(SettingsModel.websitesSitesCardID))
+            guard siteFixturePorts != nil, !check.websiteSecureBase.isEmpty,
+                  defaults != nil, sites != nil,
+                  found.allSatisfy({ $0 != nil }), foundMenus.allSatisfy({ $0 != nil }) else {
+                note("websites rows \(found.map { $0 != nil }) menus \(foundMenus.map { $0 != nil }) cards \(defaults != nil)/\(sites != nil) fixture \(siteFixturePorts != nil)")
+                return
+            }
+            // The board's order, and the built-in values: Ask for five, Block for pop-ups, Allow
+            // for sound. The empty card says no site has its own settings yet.
+            let ordered = zip(found, found.dropFirst()).allSatisfy { first, second in
+                guard let first, let second else { return false }
+                return first.maxY <= second.minY + 1
+            }
+            let stored = probe.siteDefaults
+            let values = SitePermissionKind.allCases.map { stored.value(for: $0) }
+            let expected: [SitePermissionValue] = [.ask, .ask, .ask, .ask, .block, .ask, .allow]
+            let menusSized = foundMenus.allSatisfy { menu in
+                guard let menu else { return false }
+                return menu.width >= 64 && menu.height >= 16
+            }
+            let empty = probe.siteRows.isEmpty && probe.marker(SettingsModel.websitesEmptyMarker) != nil
+            check.report("rows", ordered && values == expected && menusSized && empty)
+            guard capture("websites") else { end("capture", false); return }
+            trace("writing notifications block")
+            probe.setSiteDefault(.notifications, .block)
+            step(3)
+        case 3:
+            guard probe.siteDefaults.notifications == .block else {
+                note("notifications after the write: \(probe.siteDefaults.notifications)")
+                return
+            }
+            check.report("defaults_write", true)
+            trace("closing the settings window")
+            owner.settings?.window?.performClose(nil)
+            step(4)
+        case 4:
+            guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
+            trace("reopening the settings window")
+            owner.settings?.checkOpen(paneID: "websites", shownSpaceID: snapshot.shownSpaceId)
+            step(5)
+        case 5:
+            // The reopened window reads the record from the core, not its own last model.
+            guard probe.isVisible, probe.pageID == "websites", probe.siteDefaults.notifications == .block else {
+                note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) notifications=\(probe.siteDefaults.notifications)")
+                return
+            }
+            check.report("defaults_reopen", probe.marker(SettingsModel.websiteMenuMarker(.notifications)) != nil)
+            trace("opening the notification fixture")
+            check.websitePromptsBefore = websitePromptCount()
+            openTab("/websites?do=notification")
+            step(6)
+        case 6:
+            guard let host, let tab = websiteTab(host, prefix: check.websiteSecureBase + "/websites?do=notification"),
+                  !tab.isLoading, tab.title.hasPrefix("notification:") else {
+                note("notification fixture not ready")
+                return
+            }
+            // Block is the engine's default now: the page resolves denied and nothing asked.
+            check.report("notification_denied", tab.title == "notification:denied"
+                && websitePromptCount() == check.websitePromptsBefore)
+            trace("camera to block, then back to ask")
+            probe.setSiteDefault(.camera, .block)
+            step(7)
+        case 7:
+            guard probe.siteDefaults.camera == .block else { note("camera after block: \(probe.siteDefaults.camera)"); return }
+            probe.setSiteDefault(.camera, .ask)
+            step(8)
+        case 8:
+            guard probe.siteDefaults.camera == .ask else { note("camera after ask: \(probe.siteDefaults.camera)"); return }
+            check.websitePromptsBefore = websitePromptCount()
+            // Chromium shows a permission prompt for the active tab of a visible window; the
+            // fixture window goes back to the front for this step, and the settings window stays
+            // readable through its markers.
+            host?.window().makeKeyAndOrderFront(nil)
+            trace("opening the camera fixture")
+            openTab("/websites?do=camera")
+            step(9)
+        case 9:
+            guard let host, let tab = websiteTab(host, prefix: check.websiteSecureBase + "/websites?do=camera") else {
+                note("camera fixture tab"); return
+            }
+            guard websitePromptCount() > check.websitePromptsBefore else {
+                note("camera prompt has not shown (title \(tab.title), shown \(websitePromptCount()) want > \(check.websitePromptsBefore))")
+                return
+            }
+            check.report("camera_prompt", true)
+            trace("allowing the camera prompt")
+            guard tab.checkPermissionDecision(0) else { note("camera decision refused"); return }
+            step(10)
+        case 10:
+            guard let host, let tab = websiteTab(host, prefix: check.websiteSecureBase + "/websites?do=camera"),
+                  !tab.checkPermissionPending() else {
+                note("camera prompt still pending"); return
+            }
+            trace("opening the site controls popover")
+            sidebar?.checkClickSiteControls()
+            step(11)
+        case 11:
+            guard let controls = siteControls, controls.isShown else { note("site controls popover"); return }
+            let rows = controls.checkPermissionRows
+            guard let index = rows.firstIndex(where: { $0.type == SitePermissionKind.camera.rawValue }),
+                  let block = rows[index].items.firstIndex(of: "Block") else {
+                note("camera row in the popover: \(rows.map { "\($0.type)=\($0.current)" })"); return
+            }
+            trace("choosing Block in the popover")
+            guard controls.checkChoosePermission(row: index, item: block) else { note("popover write refused"); return }
+            step(12)
+        case 12:
+            guard let controls = siteControls,
+                  controls.checkPermissionRows.first(where: { $0.type == SitePermissionKind.camera.rawValue })?.current == "Block" else {
+                note("popover camera row after the write: \(siteControls?.checkPermissionRows.map { "\($0.type)=\($0.current)" } ?? [])")
+                return
+            }
+            controls.close()
+            trace("reading the pane's site rows")
+            probe.readWebsites()
+            step(13)
+        case 13:
+            guard let row = probe.siteRows.first(where: {
+                $0.origin == check.websiteSecureOrigin && $0.profile == check.websiteProfile
+            }) else {
+                note("pane site rows: \(probe.siteRows.map { "\($0.origin)|\($0.profile)" }) want \(check.websiteSecureOrigin)|\(check.websiteProfile)")
+                return
+            }
+            let summary = probe.siteSummary(row)
+            let expected = "Camera: Block · " + check.websiteProfile
+            check.websiteSiteRow = row
+            check.report("popover_exception", row.settings[.camera]?.title == "Block")
+            // W2's summary: the board's kinds in order, then the profile because this workspace
+            // has two.
+            check.report("pane_site_row", summary == expected
+                && probe.marker(SettingsModel.rowMarker(SettingsModel.websiteSiteRowID(row))) != nil)
+            check.details["site_summary"] = summary
+            trace("site row \(summary)")
+            guard capture("site-row") else { end("capture", false); return }
+            sidebar?.checkClickSiteControls()
+            step(14)
+        case 14:
+            guard let controls = siteControls, controls.isShown else { note("popover for All Site Settings"); return }
+            trace("clicking All Site Settings…")
+            guard controls.checkClickAllSiteSettings() else { note("All Site Settings… refused"); return }
+            step(15)
+        case 15:
+            let page = "site-" + check.websiteSecureOrigin + "|" + check.websiteProfile
+            guard probe.isVisible, probe.pageID == page,
+                  probe.marker(SettingsModel.rowMarker(SettingsModel.sitePermissionRowID(.camera))) != nil,
+                  probe.marker(SettingsModel.siteResetButtonMarker) != nil,
+                  probe.marker(SettingsModel.siteClearButtonMarker) != nil else {
+                note("site page \(probe.pageID) want \(page) rows=\(probe.marker(SettingsModel.rowMarker(SettingsModel.sitePermissionRowID(.camera))) != nil)")
+                return
+            }
+            check.report("all_site_settings", true)
+            check.report("site_page_rows", probe.marker(SettingsModel.sitePermissionMenuMarker(.camera)) != nil
+                && probe.marker(SettingsModel.rowMarker(SettingsModel.siteResetRowID)) != nil
+                && probe.marker(SettingsModel.rowMarker(SettingsModel.siteClearRowID)) != nil)
+            trace("writing storage on both origins")
+            openTab("/websites?do=storage")
+            openPlainTab("/websites?do=storage")
+            step(16)
+        case 16:
+            guard let host,
+                  let secure = websiteTab(host, prefix: check.websiteSecureBase + "/websites?do=storage"),
+                  let plain = websiteTab(host, prefix: check.websitePlainBase + "/websites?do=storage"),
+                  !secure.isLoading, !plain.isLoading,
+                  secure.title == "storage:written", plain.title == "storage:written" else {
+                note("storage fixtures: records not written yet"); return
+            }
+            trace("clearing cookies and site data")
+            probe.clearSiteData(origin: check.websiteSecureOrigin, profile: check.websiteProfile) {
+                check.websiteClearFinished = true
+            }
+            step(17)
+        case 17:
+            guard check.websiteClearFinished else { note("clear still running"); return }
+            check.websiteClearFinished = false
+            trace("reading both origins back")
+            openTab("/websites?do=read")
+            step(18)
+        case 18:
+            guard let host, let tab = websiteTab(host, prefix: check.websiteSecureBase + "/websites?do=read"),
+                  !tab.isLoading, tab.title.hasPrefix("storage:") else { note("secure read-back"); return }
+            check.websiteReadSecure = tab.title
+            openPlainTab("/websites?do=read")
+            step(19)
+        case 19:
+            guard let host, let tab = websiteTab(host, prefix: check.websitePlainBase + "/websites?do=read"),
+                  !tab.isLoading, tab.title.hasPrefix("storage:") else { note("plain read-back"); return }
+            check.websiteReadPlain = tab.title
+            check.details["storage_read"] = ["secure": check.websiteReadSecure ?? "nil", "plain": tab.title]
+            // The cleared site's cookie and localStorage are gone; the other origin's stay.
+            check.report("clear_site_data", check.websiteReadSecure == "storage:none:nocookie")
+            check.report("other_origin_kept", tab.title == "storage:value:cookie")
+            trace("resetting the site's permissions")
+            probe.openWebsitesPane()
+            step(20)
+        case 20:
+            guard probe.pageID == "websites" else { note("pane after the site page: \(probe.pageID)"); return }
+            probe.resetSitePermissions(origin: check.websiteSecureOrigin, profile: check.websiteProfile)
+            step(21)
+        case 21:
+            guard probe.siteRows.first(where: {
+                $0.origin == check.websiteSecureOrigin && $0.profile == check.websiteProfile
+            }) == nil else {
+                note("site rows after Reset: \(probe.siteRows.map { "\($0.origin)|\($0.profile)" })")
+                return
+            }
+            check.report("reset_removes", probe.marker(SettingsModel.websitesEmptyMarker) != nil)
+            trace("Rows reset")
+            guard capture("websites-reset") else { end("capture", false); return }
+            finish()
+        default: break
+        }
+    }
+
+    /// The prompts the engine has shown in this process, through the focused tab's check API.
+    private func websitePromptCount() -> Int {
+        guard let host, let active = host.activeItemId(),
+              let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active }) else { return 0 }
+        return Int(tab.checkPermissionShownCount())
+    }
+
+    // MARK: settings-spaces, U27c: the direction card's write, and both wheels
     /// Sends a sideways wheel to the sidebar the way a trackball does. The pipeline judges a
     /// wheel after cancelling the system's natural-scrolling inversion, so a machine with
     /// natural scrolling on gets the inverse CGEvent and lands on the same delta.

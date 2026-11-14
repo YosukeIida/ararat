@@ -37,7 +37,7 @@ func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     let probe = try #require(controller.checkProbe())
 
     try await waitUntil { probe.layout(); return probe.railRows.count == probe.railPanes.count }
-    #expect(probe.railRows.map(\.id) == ["rail-appearance", "rail-tabs", "rail-shortcuts", "rail-air-traffic", "rail-spaces", "rail-little-window"])
+    #expect(probe.railRows.map(\.id) == ["rail-appearance", "rail-websites", "rail-tabs", "rail-shortcuts", "rail-air-traffic", "rail-spaces", "rail-little-window"])
     #expect(abs((probe.railWidth ?? 0) - 180) <= 1)
     #expect(probe.railRows.allSatisfy { abs($0.frame.height - 26) <= 2 })
     let pitches = zip(probe.railRows, probe.railRows.dropFirst()).map { $1.frame.minY - $0.frame.minY }
@@ -110,14 +110,14 @@ func thePaneRegistryDrawsTheBoardsOrderAndShowsOnlyBuiltPanes() {
         "air-traffic", "spaces", "little-window", "passwords", "privacy", "extensions", "sync", "about"])
     // What exists today reads Appearance, Tabs, Shortcuts, Air Traffic Control, Spaces and
     // Little Window, the order §7 names.
-    #expect(SettingsRegistry.built.map(\.id.rawValue) == ["appearance", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
+    #expect(SettingsRegistry.built.map(\.id.rawValue) == ["appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
     for pane in SettingsRegistry.panes {
         // A pane exists exactly when it has a page: no empty pane can reach the rail.
         #expect(pane.built == (pane.page != nil))
         #expect(pane.built == !pane.subtitle.isEmpty, "a built pane needs the header's line: \(pane.id)")
     }
     let model = settingsTestModel()
-    #expect(model.panes.map(\.id.rawValue) == ["appearance", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
+    #expect(model.panes.map(\.id.rawValue) == ["appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
 }
 
 @Test @MainActor
@@ -131,7 +131,7 @@ func theSearchIndexFollowsTheRailOrderAndOnlyCoversBuiltPanes() {
     // Every row is a built pane's and the panes come in the rail's order.
     let order = rows.map { $0.pane.paneID.rawValue }
     let firstOfPane = order.enumerated().filter { index, pane in index == 0 || order[index - 1] != pane }
-    #expect(firstOfPane.map(\.element) == ["appearance", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
+    #expect(firstOfPane.map(\.element) == ["appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
     #expect(rows.allSatisfy { SettingsRegistry.pane(page: $0.pane).built })
     // The builders are the registry's own: a pane's rows are exactly what its closure returns.
     #expect(rows.filter { $0.pane == .appearance }.map(\.id) == [SettingsModel.themeRowId, SettingsModel.lookRowId,

@@ -38,6 +38,8 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     public var onCaptureFullPage: ((SiteState) -> Void)?
     /// Returns false when the engine rejected the request (stale document, read-only row).
     public var onPermissionChange: ((SiteState, [String: Any]) -> Bool)?
+    /// U27w W4: the popover's last row opens Settings › Websites on this site's page.
+    public var onAllSiteSettings: ((SiteState) -> Void)?
     public var onClose: (() -> Void)?
 
     /// The window the certificate sheet attaches to (the host window, not the popover).
@@ -75,6 +77,11 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
         content.onPermission = { [weak self] request in
             guard let self, let model = self.model else { return false }
             return self.onPermissionChange?(model, request) ?? false
+        }
+        content.onAllSiteSettings = { [weak self] in
+            guard let self, let model = self.model else { return }
+            self.close()
+            self.onAllSiteSettings?(model)
         }
         content.onCertificate = { [weak self] in self?.showCertificatePanel() }
         self.content = content
@@ -179,6 +186,8 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     }
 
     public var checkLabelsComplete: Bool { content?.checkLabelsComplete ?? false }
+    public var checkAllSiteSettingsTitle: String { content?.allSiteSettingsTitle ?? "" }
+    public func checkClickAllSiteSettings() -> Bool { content?.checkClickAllSiteSettings() ?? false }
 }
 
 @MainActor
@@ -192,6 +201,7 @@ final class SiteControlsContent: NSView {
     var onCaptureRegion: (() -> Void)?
     var onCaptureFullPage: (() -> Void)?
     var onPermission: (([String: Any]) -> Bool)?
+    var onAllSiteSettings: (() -> Void)?
     var onCertificate: (() -> Void)?
 
     private let stack = NSStackView()
@@ -200,6 +210,7 @@ final class SiteControlsContent: NSView {
     private var actions: [NSButton] = []
     private var rows: [(button: NSButton?, icon: NSImageView, label: NSTextField, control: NSView, row: SiteState.Permission)] = []
     private var footer = NSButton()
+    private var allSiteSettings = NSButton()
     private var permissionPopups: [NSPopUpButton] = []
 
     var actionTitles: [String] { actions.map(\.title) }
@@ -207,6 +218,7 @@ final class SiteControlsContent: NSView {
     var footerTitle: String { footer.title }
     var footerEnabled: Bool { footer.isEnabled }
     var footerFrame: NSRect { convert(footer.bounds, from: footer) }
+    var allSiteSettingsTitle: String { allSiteSettings.title }
 
     var checkPermissionRows: [(type: String, name: String, current: String, items: [String], readOnly: Bool, frame: NSRect)] {
         rows.map { entry in
@@ -302,6 +314,15 @@ final class SiteControlsContent: NSView {
         footerLine.alignment = .leading
         footerLine.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
         stack.addArrangedSubview(footerLine)
+        // U27w W4: the site's own page in Settings, the last row above the footer. A site with no
+        // exceptions still opens the pane's list, which the settings window decides.
+        allSiteSettings = plainButton(title: "All Site Settings…", symbol: "gearshape",
+                                      action: #selector(openAllSiteSettings))
+        let settingsLine = NSStackView(views: [allSiteSettings])
+        settingsLine.orientation = .vertical
+        settingsLine.alignment = .leading
+        settingsLine.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
+        stack.insertArrangedSubview(settingsLine, at: stack.arrangedSubviews.count - 1)
     }
 
     func rebuild(model: SiteState) {
@@ -316,6 +337,14 @@ final class SiteControlsContent: NSView {
     }
 
     private func actionButton(title: String, symbol: String, action: Selector) -> NSButton {
+        let button = plainButton(title: title, symbol: symbol, action: action)
+        actions.append(button)
+        return button
+    }
+
+    /// A row that is not one of the capture actions (U27w's All Site Settings…): same look, but
+    /// the site-controls check's action list and geometry stay the two capture rows.
+    private func plainButton(title: String, symbol: String, action: Selector) -> NSButton {
         let button = NSButton(title: title, image: NSImage(systemSymbolName: symbol, accessibilityDescription: title) ?? NSImage(), target: self, action: action)
         button.isBordered = false
         button.bezelStyle = .inline
@@ -325,7 +354,6 @@ final class SiteControlsContent: NSView {
         button.imageHugsTitle = true
         button.setAccessibilityLabel(title)
         button.heightAnchor.constraint(equalToConstant: Self.actionHeight).isActive = true
-        actions.append(button)
         return button
     }
 
@@ -433,6 +461,7 @@ final class SiteControlsContent: NSView {
     @objc private func captureRegion() { onCaptureRegion?() }
     @objc private func captureFullPage() { onCaptureFullPage?() }
     @objc private func openCertificate() { onCertificate?() }
+    @objc private func openAllSiteSettings() { onAllSiteSettings?() }
 
     @objc private func permissionChosen(_ item: NSMenuItem) {
         guard let info = item.representedObject as? [String: Int] else { return }
@@ -471,11 +500,18 @@ final class SiteControlsContent: NSView {
         return true
     }
 
+    func checkClickAllSiteSettings() -> Bool {
+        guard allSiteSettings.isEnabled else { return false }
+        allSiteSettings.performClick(nil)
+        return true
+    }
+
     /// Every control a keyboard or screen reader reaches names itself and its value.
     var checkLabelsComplete: Bool {
         !actions.isEmpty && actions.allSatisfy { ($0.accessibilityLabel() ?? "").isEmpty == false }
             && rows.allSatisfy { ($0.control.accessibilityLabel() ?? "").isEmpty == false }
             && (footer.accessibilityLabel() ?? "").isEmpty == false
+            && (allSiteSettings.accessibilityLabel() ?? "").isEmpty == false
     }
 
     override var isFlipped: Bool { true }

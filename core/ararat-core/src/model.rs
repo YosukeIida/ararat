@@ -659,6 +659,36 @@ pub enum SpaceScrollDirection { #[default] Natural, Reversed }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme { #[default] System, Light, Dark }
 
+// U27w W1: the seven per-permission defaults, one value each. Ask, Allow and Block are
+// Chromium's three uniform values; a kind Chromium only lets Allow or Block (pop-ups, sound)
+// never stores Ask.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SitePermissionValue { #[default] Ask, Allow, Block }
+
+// U27w W1: the Websites pane's defaults, one synced record. The names follow the pane's board
+// order; the built-in values are the board's (Ask everywhere, pop-ups Block, sound Allow).
+// Chromium's own default prefs are written from this record, never read back as a second source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SiteDefaults {
+    pub camera: SitePermissionValue,
+    pub microphone: SitePermissionValue,
+    pub location: SitePermissionValue,
+    pub notifications: SitePermissionValue,
+    pub popups: SitePermissionValue,
+    pub automatic_downloads: SitePermissionValue,
+    pub sound: SitePermissionValue,
+}
+
+impl Default for SiteDefaults {
+    fn default() -> Self {
+        Self { camera: SitePermissionValue::Ask, microphone: SitePermissionValue::Ask,
+            location: SitePermissionValue::Ask, notifications: SitePermissionValue::Ask,
+            popups: SitePermissionValue::Block, automatic_downloads: SitePermissionValue::Ask,
+            sound: SitePermissionValue::Allow }
+    }
+}
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
@@ -666,7 +696,8 @@ pub enum Theme { #[default] System, Light, Dark }
 // the way the New Tab row does. U27i's Little Window pair (D8) rides here as well: the Open-in
 // destination and close-after are workspace preferences, while the frame and the global
 // shortcut stay on the device (LittleWindowDevice). U27k's Theme is synced on purpose, so a
-// second Mac shows the same theme.
+// second Mac shows the same theme. U27w's seven site defaults (W1) ride here too: one record,
+// so a second Mac asks, allows and blocks the same seven kinds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -676,12 +707,14 @@ pub struct Settings {
     pub little_window_open_in: LittleWindowOpenIn,
     pub little_window_close_after: bool,
     pub theme: Theme,
+    pub site_defaults: SiteDefaults,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
-            little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System }
+            little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System,
+            site_defaults: SiteDefaults::default() }
     }
 }
 

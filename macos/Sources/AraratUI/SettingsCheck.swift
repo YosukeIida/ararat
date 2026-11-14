@@ -115,6 +115,34 @@ public final class SettingsCheckProbe {
     /// The keycaps the row shows, for the check's recorder condition.
     public var littleWindowHotKeyCaps: [String] { LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey) }
 
+    // MARK: U27w, the Websites pane
+
+    /// The seven defaults the pane draws, read from the core, and the same setter its menus call.
+    public var siteDefaults: SiteDefaults { model.siteDefaults }
+    public func setSiteDefault(_ kind: SitePermissionKind, _ value: SitePermissionValue) { model.setSiteDefault(kind, value) }
+    /// The engine is the source of the site rows: the check re-reads the list through the same
+    /// call the window makes on every open.
+    public func readWebsites() { model.readWebsites() }
+    public func refreshSiteExceptions() { model.refreshSiteExceptions() }
+    public var siteRows: [SettingsSiteRow] { model.siteRows }
+    public var siteProfiles: [String] { model.siteProfiles }
+    public func siteSummary(_ row: SettingsSiteRow) -> String {
+        SettingsModel.siteSummary(row, profiles: model.siteProfiles)
+    }
+    public func openSite(_ origin: String, _ profile: String) { model.openSite(origin: origin, profile: profile) }
+    public func openWebsitesPane() { model.navigate(.websites) }
+    @discardableResult
+    public func setSitePermission(origin: String, profile: String, kind: SitePermissionKind,
+                                  setting: SiteState.PermissionSetting?) -> Bool {
+        model.setSitePermission(origin: origin, profile: profile, kind: kind, setting: setting)
+    }
+    public func resetSitePermissions(origin: String, profile: String) {
+        model.resetSitePermissions(origin: origin, profile: profile)
+    }
+    public func clearSiteData(origin: String, profile: String, completion: (() -> Void)? = nil) {
+        model.clearSiteData(origin: origin, profile: profile, completion: completion)
+    }
+
     // MARK: frames
 
     private var content: NSView? { window.contentView }

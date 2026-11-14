@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, space(String) }
+    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -71,6 +71,17 @@ public final class SettingsModel: ObservableObject {
     /// Hands the written values to the Little Windows already open, so a change applies there
     /// too (the bar's label, the next Open in and the frame the close writes).
     var littleWindowSettings: (LittleWindowOpenIn, Bool, Bool) -> Void = { _, _, _ in }
+    /// U27w W1/W2: the Websites pane. The seven defaults are the synced core record; the engine
+    /// is the source of the per-site exceptions, read on every open. The host is the app's
+    /// engine bridge (a fake in the model tests), and a written default goes to Chromium's
+    /// profiles through the app's handler.
+    @Published var siteDefaults: SiteDefaults = .board
+    @Published private(set) var siteExceptions: [SiteException] = []
+    /// The regular profiles the workspace names, in the order the snapshot lists them: a site
+    /// row names its profile only when there is more than one (W2).
+    @Published private(set) var siteProfiles: [String] = []
+    var siteHost: SiteSettingsHost?
+    var siteDefaultsApplied: (SiteDefaults) -> Void = { _ in }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -90,6 +101,7 @@ public final class SettingsModel: ObservableObject {
         // "Deleted space" set: the set is the core's answer, so it reloads with the spaces
         // instead of waiting for the next routing answer the pane triggers.
         if spaceIds != snapshot.spaces.map(\.id) { airTraffic.reloadDeletedSpaces() }
+        siteProfiles = Self.profileOrder(snapshot, exceptions: siteExceptions)
     }
 
     public func retarget(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void,
@@ -142,13 +154,18 @@ public final class SettingsModel: ObservableObject {
     var panes: [SettingsPane] { SettingsRegistry.built }
     var title: String {
         if case .space = page, let space { return space.title }
+        if case .site(let origin, _) = page { return SiteOrigin.display(origin) }
         return SettingsRegistry.pane(page: page).title
     }
     /// The header's icon, from the pane the page belongs to (a space page shows the space's own).
     var icon: String { SettingsRegistry.pane(page: page).icon }
-    /// The header's one line: a space page names its tabs and profile, a pane its own subtitle.
+    /// The header's one line: a space page names its tabs and profile, a site page its profile
+    /// when there is more than one, a pane its own subtitle.
     var subtitle: String {
         if let space { return "\(tabCountLabel(space)) · \(space.profileName)" }
+        if case .site(_, let profile) = page {
+            return siteProfiles.count > 1 ? "Site settings · \(profile)" : "Site settings"
+        }
         return SettingsRegistry.pane(page: page).subtitle
     }
     /// The pane says in plain words that the routing arrives with the engine.
@@ -179,6 +196,21 @@ public final class SettingsModel: ObservableObject {
     public static let littleWindowOpenInMenuMarker = "little-window-open-in-menu"
     public static let littleWindowCloseAfterSwitchMarker = "little-window-close-after-switch"
     public static let littleWindowRememberSwitchMarker = "little-window-remember-switch"
+    /// U27w's Websites pane: the two grouped cards, the seven defaults rows and their menus, the
+    /// site rows and the empty state, then the site page's permission rows and its two buttons.
+    /// A search result and its row share the row id, as the other panes' do.
+    public static let websitesDefaultsCardID = "website-defaults"
+    public static let websitesSitesCardID = "website-sites"
+    public static let websitesEmptyMarker = "website-sites-empty"
+    public static let siteResetRowID = "site-reset"
+    public static let siteClearRowID = "site-clear"
+    public static let siteResetButtonMarker = "site-reset-button"
+    public static let siteClearButtonMarker = "site-clear-button"
+    public static func websiteRowID(_ kind: SitePermissionKind) -> String { "website-" + kind.rawValue }
+    public static func websiteMenuMarker(_ kind: SitePermissionKind) -> String { "website-menu-" + kind.rawValue }
+    public static func websiteSiteRowID(_ row: SettingsSiteRow) -> String { "website-site-" + row.id }
+    public static func sitePermissionRowID(_ kind: SitePermissionKind) -> String { "site-permission-" + kind.rawValue }
+    public static func sitePermissionMenuMarker(_ kind: SitePermissionKind) -> String { "site-permission-menu-" + kind.rawValue }
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -589,6 +621,125 @@ public final class SettingsModel: ObservableObject {
             }
         } else {
             self.error = error.localizedDescription
+        }
+    }
+
+    // MARK: U27w, the Websites pane
+
+    /// Every profile the workspace or the engine's exceptions name, in the snapshot's order with
+    /// any extra exception profile appended: a site row names its profile when this holds more
+    /// than one (W2). The workspace's own order keeps the names stable across opens.
+    static func profileOrder(_ snapshot: WorkspaceSnapshot, exceptions: [SiteException]) -> [String] {
+        var names: [String] = []
+        for name in snapshot.spaces.map(\.profileName) + exceptions.map(\.profile) where !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    /// Reads the seven defaults from the core and the per-site exceptions from the engine. The
+    /// window calls this on every open, so the pane never shows another session's values.
+    func readWebsites() {
+        let generation = contextGeneration
+        adapter.siteDefaults { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let defaults) = result else { return }
+            self.siteDefaults = defaults
+        }
+        refreshSiteExceptions()
+    }
+
+    /// The engine is the source of the rows: the list is read again after every write and after a
+    /// popover change, so a row never restates a value Chromium no longer holds.
+    func refreshSiteExceptions() {
+        siteExceptions = siteHost?.siteExceptions() ?? []
+        siteProfiles = Self.profileOrder(snapshot, exceptions: siteExceptions)
+    }
+
+    /// The rows of "Sites with their own settings": one per site and profile, in origin order,
+    /// kinds in the board's order, no row for a site whose exceptions are all gone (W2).
+    var siteRows: [SettingsSiteRow] {
+        var rows: [SettingsSiteRow] = []
+        for exception in siteExceptions {
+            if let index = rows.firstIndex(where: { $0.origin == exception.origin && $0.profile == exception.profile }) {
+                rows[index].settings[exception.kind] = exception.setting
+            } else {
+                rows.append(SettingsSiteRow(origin: exception.origin, profile: exception.profile,
+                                            settings: [exception.kind: exception.setting]))
+            }
+        }
+        return rows.filter { !$0.settings.isEmpty }
+            .sorted { ($0.origin, $0.profile) < ($1.origin, $1.profile) }
+    }
+
+    func siteRow(origin: String, profile: String) -> SettingsSiteRow? {
+        siteRows.first { $0.origin == origin && $0.profile == profile }
+    }
+
+    /// The summary a site row draws, with the profile named only when the workspace has more
+    /// than one (W2): "Camera: Allow · Microphone: Allow".
+    static func siteSummary(_ row: SettingsSiteRow, profiles: [String]) -> String {
+        let parts = SitePermissionKind.allCases.compactMap { kind in
+            row.settings[kind].map { "\(kind.title): \($0.title)" }
+        }
+        var text = parts.joined(separator: " · ")
+        if profiles.count > 1 { text += " · " + row.profile }
+        return text
+    }
+
+    /// Writes one of the seven defaults as the whole synced record and hands it to Chromium. A
+    /// refused write leaves the menu where it was and shows the reason.
+    func setSiteDefault(_ kind: SitePermissionKind, _ value: SitePermissionValue) {
+        guard siteDefaults.value(for: kind) != value else { return }
+        let generation = contextGeneration
+        let completion = editCompletion()
+        let defaults = siteDefaults.replacing(kind, with: value)
+        adapter.setSiteDefaults(defaults) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.siteDefaults = defaults
+            self.siteDefaultsApplied(defaults)
+        }
+    }
+
+    /// Writes one origin's exception of one kind in one profile through the engine (W3), then
+    /// reads the list back. False when the engine refused the write.
+    @discardableResult
+    func setSitePermission(origin: String, profile: String, kind: SitePermissionKind,
+                           setting: SiteState.PermissionSetting?) -> Bool {
+        guard let host = siteHost,
+              host.setSiteException(profile: profile, origin: origin, kind: kind.rawValue, setting: setting) else {
+            return false
+        }
+        refreshSiteExceptions()
+        return true
+    }
+
+    /// W3's Reset permissions: every exception the site holds of the seven kinds, removed.
+    func resetSitePermissions(origin: String, profile: String) {
+        guard let row = siteRow(origin: origin, profile: profile) else { return }
+        for kind in SitePermissionKind.allCases where row.settings[kind] != nil {
+            _ = siteHost?.setSiteException(profile: profile, origin: origin, kind: kind.rawValue, setting: nil)
+        }
+        refreshSiteExceptions()
+    }
+
+    /// W3's Clear cookies and site data: the engine clears the site's registrable domain's
+    /// cookies and its origin's storage and cache, so another origin's stay.
+    func clearSiteData(origin: String, profile: String, completion: (() -> Void)? = nil) {
+        guard let host = siteHost else { completion?(); return }
+        host.clearSiteData(profile: profile, origin: origin) { [weak self] _ in
+            self?.refreshSiteExceptions()
+            completion?()
+        }
+    }
+
+    /// The site page the board draws (W3), pushed like a space page.
+    func openSite(origin: String, profile: String) {
+        refreshSiteExceptions()
+        if siteRow(origin: origin, profile: profile) != nil {
+            navigate(.site(origin, profile))
+        } else {
+            navigate(.websites)
         }
     }
 

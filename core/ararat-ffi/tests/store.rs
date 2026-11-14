@@ -1210,6 +1210,43 @@ fn the_theme_reads_through_the_ffi_and_survives_reopen() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
+// U27w W1: the Websites pane's seven defaults are the same synced workspace record, at the
+// board's values until changed, and a change survives a reopen as one row.
+#[test]
+fn the_site_defaults_read_through_the_ffi_and_survive_reopen() {
+    use ararat_ffi::SitePermissionValue;
+    let path = fresh_db("site-defaults-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let initial = store.settings().site_defaults;
+    assert_eq!(initial.camera, SitePermissionValue::Ask);
+    assert_eq!(initial.popups, SitePermissionValue::Block);
+    assert_eq!(initial.sound, SitePermissionValue::Allow);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let mut changed = initial.clone();
+    changed.notifications = SitePermissionValue::Block;
+    changed.camera = SitePermissionValue::Allow;
+    store.set_site_defaults("one".into(), changed.clone()).unwrap();
+    assert_eq!(store.settings().site_defaults, changed);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().site_defaults, changed);
+    // The switches that share the record keep their own values.
+    assert!(store.settings().new_tab_row_shown && store.settings().tooltips_shown);
+    store.set_site_defaults("one".into(), ararat_ffi::SiteDefaults {
+        camera: SitePermissionValue::Ask, microphone: SitePermissionValue::Ask, location: SitePermissionValue::Ask,
+        notifications: SitePermissionValue::Ask, popups: SitePermissionValue::Block,
+        automatic_downloads: SitePermissionValue::Ask, sound: SitePermissionValue::Allow,
+    }).unwrap();
+    drop(store);
+    // Back at the built-in values, no row restates them; both writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
 // U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
 // default, and it survives a reopen.
 #[test]

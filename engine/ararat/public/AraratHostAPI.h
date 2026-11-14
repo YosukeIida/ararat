@@ -262,6 +262,24 @@ __attribute__((visibility("default")))
 void AraratFinishCrashRecovery(void);
 __attribute__((visibility("default")))
 NSDictionary* AraratCheckCrashState(NSString* profile);
+// U27w: Settings › Websites. The app's synced core record is the source of the seven
+// per-permission defaults; applying it writes every regular profile's HostContentSettingsMap
+// default now and for a profile added later. A private profile inherits through Chromium.
+__attribute__((visibility("default")))
+void AraratApplySiteDefaults(NSDictionary<NSString*, NSString*>* defaults);
+// One entry per stored user exception of the seven kinds: profile directory, origin, kind and
+// the permission-setting dictionary the site snapshot uses. Policy, extension, one-time and
+// default (wildcard) entries are not listed.
+__attribute__((visibility("default")))
+NSArray<NSDictionary<NSString*, id>*>* AraratSiteExceptions(void);
+// Writes one origin's exception of one kind in one profile; a nil setting resets that kind.
+__attribute__((visibility("default")))
+BOOL AraratSetSiteException(NSString* profile, NSString* origin, NSString* kind,
+                            NSDictionary<NSString*, id>* _Nullable setting);
+// Clears the site's cookies (its registrable domain) and its storage and cache (its origin) in
+// one profile. The reply is the number of failed removals; the completion is always called.
+__attribute__((visibility("default")))
+void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)(uint64_t failed));
 __attribute__((visibility("default")))
 void AraratCheckCommitProfilePrefs(NSString* profile, void (^completion)(BOOL done));
 __attribute__((visibility("default")))

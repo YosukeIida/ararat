@@ -5,8 +5,8 @@ import Foundation
 /// Every field is optional except the document id and origin: an internal page carries no
 /// permission rows and no certificate chain, and an empty snapshot means "not ready yet".
 public struct SiteState {
-    public struct PermissionSetting: Equatable {
-        public enum Kind: Equatable {
+    public struct PermissionSetting: Equatable, Sendable {
+        public enum Kind: Equatable, Sendable {
             case content(String)
             case geolocation(approximate: String, precise: String)
         }

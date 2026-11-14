@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=onboarding", "--ararat-check=onboarding"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=onboarding", "--ararat-check=onboarding"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -976,7 +976,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
           }
         }
       }
-      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" {
+      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" || screenName == "settings-websites" {
         do {
           let fixture = try SiteFixtureServer()
           siteFixture = fixture
@@ -1060,8 +1060,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     self.sidebarChecksActive = sidebarCheckActive
     // U27a's settings screen checks seed their own three spaces (the search needs space rows, the
     // Spaces pane needs more than one row, and U27c's wheel needs a middle space), so they are
-    // neither single nor sidebar seeds.
+    // neither single nor sidebar seeds. U27w's Websites check seeds two profiles instead, so the
+    // site summaries name their profile (W2), and seeds it instead of the three spaces.
     let settingsCheckActive = SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil
+    let websitesCheckActive = browserCheckMode == "screen-settings-websites"
     // U27j: the onboarding flow imports Arc into the check's db itself, so the window starts with
     // an empty workspace and no seed of any kind.
     let onboardingCheckActive = ["onboarding", "screen-onboarding"].contains(browserCheckMode ?? "")
@@ -1070,7 +1072,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && !onboardingCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && !onboardingCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive && !websitesCheckActive, seedWebsites: check && websitesCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -1090,6 +1092,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let themeSession = isPrivateWindow ? (root?.adapter?.session ?? adapter.session) : adapter.session
     if let theme = themeSession.queue.sync(execute: { themeSession.store?.settings().theme }) {
       NSApp.appearance = theme.appearance
+    }
+    // U27w W1: the Websites defaults are the core's record, pushed into Chromium's profiles
+    // before the first page of this window can ask for one.
+    if let defaults = themeSession.queue.sync(execute: { themeSession.store?.settings().siteDefaults }) {
+      EngineSiteSettingsHost.apply(defaults)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.privateWindow = isPrivateWindow
@@ -1933,6 +1940,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     owner.settingsOwner = self
     // U27i: the Little Window pane's shortcut records into the app-wide registration.
     owner.settings?.setLittleWindowHotKeyCenter(LittleWindowGlobalShortcut.center)
+    // U27w: the Websites pane reads and writes Chromium's site settings through the app's
+    // engine bridge, and a written default record reaches every regular profile at once.
+    owner.settings?.setSiteSettings(host: EngineSiteSettingsHost.shared) { defaults in
+      EngineSiteSettingsHost.apply(defaults)
+    }
     // Its two switches reach a Little Window already open, as the Appearance switches reach the
     // sidebars.
     owner.settings?.setLittleWindowHandlers { [weak owner] openIn, remember, closeAfter in
@@ -2157,6 +2169,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       controls.onCaptureRegion = { [weak self] model in self?.beginRegionCapture(model) }
       controls.onCaptureFullPage = { [weak self] model in self?.captureFullPage(model) }
       controls.onPermissionChange = { [weak self] _, request in self?.changePermission(request) ?? false }
+      controls.onAllSiteSettings = { [weak self] model in self?.openAllSiteSettings(model) }
       controls.onClose = { [weak self] in self?.adapter?.closeSiteControls() }
       controls.hostWindow = { [weak host] in host?.window() }
       siteControls = controls
@@ -2172,6 +2185,17 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let changed = adapter?.changeSitePermission(request) ?? false
     refreshSiteState()
     return changed
+  }
+
+  /// U27w W4: "All Site Settings…" closes the popover and opens Settings › Websites on this
+  /// site's page in the page's own profile; a site with no exception opens the list.
+  func openAllSiteSettings(_ model: SiteState) {
+    siteControls?.close()
+    openSettings()
+    let owner = root ?? self
+    let shown = owner.snapshot.shownSpaceId
+    let profile = host?.profileDirectory() ?? ""
+    owner.settings?.openSite(origin: model.origin, profile: profile, shownSpaceID: shown)
   }
 
   func beginRegionCapture(_ model: SiteState) {

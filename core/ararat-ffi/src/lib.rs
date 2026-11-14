@@ -715,6 +715,17 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // U27w W1: the Websites pane's seven defaults, the same synced settings record. The pane
+    // writes one kind at a time as the whole record; the app pushes the record into Chromium.
+    pub fn set_site_defaults(&self, window_id: String, defaults: SiteDefaults) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_site_defaults(defaults.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn little_window_device(&self) -> LittleWindowDevice {
         self.workspace.lock().unwrap().little_window_device.clone().into()
     }
@@ -1009,6 +1020,7 @@ pub struct WorkspaceSettings {
     pub little_window_open_in: LittleWindowOpenIn,
     pub little_window_close_after: bool,
     pub theme: Theme,
+    pub site_defaults: SiteDefaults,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1017,7 +1029,51 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             tooltips_shown: settings.tooltips_shown,
             little_window_open_in: settings.little_window_open_in.into(),
             little_window_close_after: settings.little_window_close_after,
-            theme: settings.theme.into() }
+            theme: settings.theme.into(),
+            site_defaults: settings.site_defaults.into() }
+    }
+}
+
+/// U27w W1: one Chromium permission's default: Ask, Allow or Block. Pop-ups and sound only take
+/// Allow or Block; the pane offers the two for those kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SitePermissionValue { Ask, Allow, Block }
+impl From<ararat_core::model::SitePermissionValue> for SitePermissionValue {
+    fn from(value: ararat_core::model::SitePermissionValue) -> Self {
+        use ararat_core::model::SitePermissionValue as Core;
+        match value { Core::Ask => Self::Ask, Core::Allow => Self::Allow, Core::Block => Self::Block }
+    }
+}
+impl From<SitePermissionValue> for ararat_core::model::SitePermissionValue {
+    fn from(value: SitePermissionValue) -> Self {
+        use ararat_core::model::SitePermissionValue as Core;
+        match value { SitePermissionValue::Ask => Core::Ask, SitePermissionValue::Allow => Core::Allow, SitePermissionValue::Block => Core::Block }
+    }
+}
+
+/// U27w W1: the Websites pane's seven defaults, one synced settings record in the board's order.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SiteDefaults {
+    pub camera: SitePermissionValue,
+    pub microphone: SitePermissionValue,
+    pub location: SitePermissionValue,
+    pub notifications: SitePermissionValue,
+    pub popups: SitePermissionValue,
+    pub automatic_downloads: SitePermissionValue,
+    pub sound: SitePermissionValue,
+}
+impl From<ararat_core::model::SiteDefaults> for SiteDefaults {
+    fn from(value: ararat_core::model::SiteDefaults) -> Self {
+        Self { camera: value.camera.into(), microphone: value.microphone.into(), location: value.location.into(),
+            notifications: value.notifications.into(), popups: value.popups.into(),
+            automatic_downloads: value.automatic_downloads.into(), sound: value.sound.into() }
+    }
+}
+impl From<SiteDefaults> for ararat_core::model::SiteDefaults {
+    fn from(value: SiteDefaults) -> Self {
+        Self { camera: value.camera.into(), microphone: value.microphone.into(), location: value.location.into(),
+            notifications: value.notifications.into(), popups: value.popups.into(),
+            automatic_downloads: value.automatic_downloads.into(), sound: value.sound.into() }
     }
 }
 

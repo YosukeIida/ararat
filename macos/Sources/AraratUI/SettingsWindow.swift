@@ -64,6 +64,7 @@ public final class SettingsWindowController: NSWindowController {
         model.readSpaceScrollDirection()
         model.readAppearance()
         model.readLittleWindow()
+        model.readWebsites()
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -100,6 +101,25 @@ public final class SettingsWindowController: NSWindowController {
     /// device record into it and every change registers at once.
     public func setLittleWindowHotKeyCenter(_ center: LittleWindowHotKeyCenter?) {
         model.hotKeyCenter = center
+    }
+
+    /// U27w: the engine side of the Websites pane. The app hands in the AraratHostAPI bridge (the
+    /// model tests hand in a fake) and the handler that pushes a written record into Chromium's
+    /// profiles, so the pane and the engine never disagree about the seven defaults.
+    public func setSiteSettings(host: SiteSettingsHost, defaultsApplied: @escaping (SiteDefaults) -> Void) {
+        model.siteHost = host
+        model.siteDefaultsApplied = defaultsApplied
+    }
+
+    /// W4: the site-controls popover's "All Site Settings…" opens this pane on the origin's page,
+    /// or the list when the engine lists no exception for the origin (or its profile). The pane
+    /// is pushed first, so Back from the site page returns to the websites list.
+    public func openSite(origin: String, profile: String, shownSpaceID: String?) {
+        prepare(shownSpaceID: shownSpaceID)
+        model.navigate(.websites)
+        model.openSite(origin: origin, profile: profile)
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
     }
 
     /// Hands a written switch to the Little Windows already open, so the pane's change applies
@@ -222,8 +242,7 @@ private struct SettingsRail: View {
     }
 
     func selected(_ pane: SettingsPane) -> Bool {
-        if case .space = model.page { return pane.id == .spaces }
-        return model.page == pane.page
+        pane.id == model.page.paneID
     }
 }
 
@@ -255,6 +274,10 @@ private struct SettingsDetail: View {
                         SettingsAirTrafficSection(model: model, airTraffic: model.airTraffic)
                     case .appearance:
                         SettingsAppearanceSection(model: model)
+                    case .websites:
+                        SettingsWebsitesSection(model: model)
+                    case .site(let origin, let profile):
+                        SettingsSitePage(model: model, origin: origin, profile: profile)
                     case .littleWindow:
                         SettingsLittleWindowSection(model: model)
                     case .spaces:
@@ -322,6 +345,9 @@ private struct SettingsDetail: View {
         VStack(spacing: 8) {
             if let space = model.space {
                 Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            } else if case .site(let origin, _) = model.page {
+                Text(SiteOrigin.letter(origin)).font(.system(size: 40)).frame(height: 56)
                     .background(SettingsMarker(id: SettingsModel.headerIconMarker))
             } else {
                 Image(systemName: model.icon).font(.system(size: 48)).frame(height: 56)

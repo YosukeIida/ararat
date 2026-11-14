@@ -1,3 +1,4 @@
+import AraratKit
 import Foundation
 
 /// The keys the rail's search field acts on: the result list's selection moves with the arrows
@@ -49,7 +50,9 @@ enum SettingsRegistry {
         SettingsPane(id: .general, title: "General", icon: "gearshape", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .appearance, title: "Appearance", icon: "paintpalette", subtitle: "How the window looks.",
                      page: .appearance, rows: appearanceRows),
-        SettingsPane(id: .websites, title: "Websites", icon: "globe", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .websites, title: "Websites", icon: "globe",
+                     subtitle: "What sites may do, and the sites with their own rules.",
+                     page: .websites, rows: websitesRows),
         SettingsPane(id: .tabs, title: "Tabs", icon: "square.on.square", subtitle: "Make room for your tabs.",
                      page: .tabs, rows: tabsRows),
         SettingsPane(id: .shortcuts, title: "Shortcuts", icon: "keyboard",
@@ -102,6 +105,21 @@ enum SettingsRegistry {
     }
 
     static func shortcutsRows(_ model: SettingsModel) -> [SettingsModel.Row] { model.shortcuts }
+
+    /// U27w: the seven defaults ("For every site"), then each site Chromium lists with its own
+    /// settings, so the search reaches both and Return opens the site's page.
+    static func websitesRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        var rows = SitePermissionKind.allCases.map { kind in
+            SettingsModel.Row(id: SettingsModel.websiteRowID(kind), pane: .websites, title: kind.title,
+                              subtitle: "For every site · " + model.siteDefaults.value(for: kind).label)
+        }
+        rows += model.siteRows.map { row in
+            SettingsModel.Row(id: "website-site-\(row.id)", pane: .site(row.origin, row.profile),
+                              title: row.display,
+                              subtitle: SettingsModel.siteSummary(row, profiles: model.siteProfiles))
+        }
+        return rows
+    }
 
     static func airTrafficRows(_ model: SettingsModel) -> [SettingsModel.Row] {
         [SettingsModel.Row(id: SettingsModel.airTrafficCardId, pane: .airTraffic, title: "Air Traffic Control",
@@ -161,6 +179,7 @@ enum SettingsRegistry {
 extension SettingsModel.Page {
     var paneID: SettingsPaneID {
         switch self {
+        case .websites, .site: .websites
         case .tabs: .tabs
         case .shortcuts: .shortcuts
         case .airTraffic: .airTraffic
@@ -173,6 +192,7 @@ extension SettingsModel.Page {
     /// Tells two panes' rows with the same id apart (every space page has a "name" row).
     var searchKey: String {
         if case .space(let id) = self { return "space-" + id }
+        if case .site(let origin, let profile) = self { return "site-" + origin + "|" + profile }
         return paneID.rawValue
     }
 }

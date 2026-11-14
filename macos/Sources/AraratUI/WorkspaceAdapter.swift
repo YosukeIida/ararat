@@ -362,6 +362,16 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setTheme(windowId: self.windowID, theme: value) }, completion: completion)
     }
 
+    // U27w W1: the Websites pane's seven defaults, the same synced settings record, read on
+    // every open so a reopened settings window shows the stored values.
+    public func siteDefaults(completion: @escaping Completion<SiteDefaults>) {
+        enqueue({ try self.opened().settings().siteDefaults }, completion: completion)
+    }
+
+    public func setSiteDefaults(_ value: SiteDefaults, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setSiteDefaults(windowId: self.windowID, defaults: value) }, completion: completion)
+    }
+
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

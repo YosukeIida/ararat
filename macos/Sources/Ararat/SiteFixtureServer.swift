@@ -136,6 +136,7 @@ final class SiteFixtureServer {
                 case "/site": status = "200 OK"; body = Self.sitePage
                 case "/clean": status = "200 OK"; body = Self.cleanPage
                 case "/capture": status = "200 OK"; body = Self.capturePage
+                case "/websites": status = "200 OK"; body = Self.websitesPage
                 default: status = "404 Not Found"; body = "Not found"
                 }
                 let bodyData = Data(body.utf8)
@@ -168,6 +169,33 @@ final class SiteFixtureServer {
     private static let cleanPage = """
     <!doctype html><title>Clean site fixture</title>
     <p>nothing to ask for</p>
+    """
+
+    /// U27w's Websites fixtures. Every action writes its answer into the title, because the
+    /// check reads a tab's title rather than scripting the page: `notification:<permission>` after
+    /// `Notification.requestPermission()`, `camera:<name>` after `getUserMedia`, `storage:written`
+    /// after a cookie and a localStorage value, and `storage:<value>:<cookie>` when read back.
+    private static let websitesPage = """
+    <!doctype html><title>websites:idle</title>
+    <script>
+    const action = new URLSearchParams(location.search).get('do');
+    const set = value => { document.title = value; };
+    if (action === 'notification') {
+      Notification.requestPermission().then(result => set('notification:' + result), () => set('notification:error'));
+    } else if (action === 'camera') {
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        stream.getTracks().forEach(track => track.stop());
+        set('camera:granted');
+      }, error => set('camera:' + error.name));
+    } else if (action === 'storage') {
+      localStorage.setItem('ws', 'value');
+      document.cookie = 'ws=value; path=/';
+      set('storage:written');
+    } else if (action === 'read') {
+      const cookie = document.cookie.split('; ').includes('ws=value');
+      set('storage:' + (localStorage.getItem('ws') ?? 'none') + ':' + (cookie ? 'cookie' : 'nocookie'));
+    }
+    </script>
     """
 
     private static let capturePage = """

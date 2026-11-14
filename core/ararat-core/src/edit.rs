@@ -1399,6 +1399,15 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // U27w W1: the seven site defaults, one write of the whole record. The pane edits one kind at
+    // a time and the app pushes the whole record into Chromium's profiles.
+    pub fn set_site_defaults(&mut self, defaults: crate::model::SiteDefaults) -> Vec<Op> {
+        if self.settings.site_defaults == defaults { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.site_defaults = defaults;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())

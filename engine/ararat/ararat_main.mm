@@ -257,7 +257,8 @@ void CheckGuards(int argc, const char** argv) {
           std::string_view(arg + 16) == "settings-air-traffic" ||
           std::string_view(arg + 16) == "settings-appearance" ||
           std::string_view(arg + 16) == "settings-spaces" ||
-          std::string_view(arg + 16) == "settings-little-window") {
+          std::string_view(arg + 16) == "settings-little-window" ||
+          std::string_view(arg + 16) == "settings-websites") {
         valid_screen = true;
         g_check_slice = true;
       }
@@ -440,7 +441,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   // exactly that key, so Chromium reports a secure connection without touching trust stores.
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && (strcmp(argv[i], "--ararat-check=site-controls") == 0 ||
-                    strcmp(argv[i], "--ararat-screen=site-controls") == 0)) {
+                    strcmp(argv[i], "--ararat-screen=site-controls") == 0 ||
+                    strcmp(argv[i], "--ararat-screen=settings-websites") == 0)) {
       browser_args.push_back(
           "--ignore-certificate-errors-spki-list=41bhvYwNSFKJywXg6t2xbgeAoiBIlI83FdLJO/ILKZg=");
       // Why not 127.0.0.1 for the plain page: loopback is potentially trustworthy, so Chromium

@@ -1,4 +1,4 @@
-use ararat_core::model::{Kind, LittleWindowDevice, LittleWindowHotKey, LittleWindowOpenIn, Op, Record, Settings, SpaceScrollDirection, Theme, Workspace};
+use ararat_core::model::{Kind, LittleWindowDevice, LittleWindowHotKey, LittleWindowOpenIn, Op, Record, Settings, SiteDefaults, SitePermissionValue, SpaceScrollDirection, Theme, Workspace};
 
 #[test]
 fn a_fresh_workspace_shows_the_new_tab_row_and_stores_no_record_for_it() {
@@ -160,6 +160,62 @@ fn an_unknown_theme_is_refused() {
     assert!(Record::parse(Kind::Settings, "workspace", r#"{"theme":"Sepia"}"#).is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
     assert!(matches!(parsed, Ok(Record::Settings(Settings { theme: Theme::Dark, .. }))));
+}
+
+// U27w W1: the Websites pane's seven defaults are one synced record; Ask is the built-in value
+// except for pop-ups (Block) and sound (Allow), a change writes that record, and a reset is a
+// tombstone. The core record is what the app pushes into Chromium, so the values round-trip.
+#[test]
+fn the_site_defaults_start_at_the_boards_values_and_write_one_synced_record() {
+    let defaults = SiteDefaults::default();
+    assert_eq!(defaults.camera, SitePermissionValue::Ask);
+    assert_eq!(defaults.microphone, SitePermissionValue::Ask);
+    assert_eq!(defaults.location, SitePermissionValue::Ask);
+    assert_eq!(defaults.notifications, SitePermissionValue::Ask);
+    assert_eq!(defaults.popups, SitePermissionValue::Block);
+    assert_eq!(defaults.automatic_downloads, SitePermissionValue::Ask);
+    assert_eq!(defaults.sound, SitePermissionValue::Allow);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let mut changed = SiteDefaults::default();
+    changed.notifications = SitePermissionValue::Block;
+    let ops = ws.set_site_defaults(changed.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.site_defaults.notifications == SitePermissionValue::Block));
+    // The other six keep the built-in values, and the record reads back on a peer.
+    assert_eq!(ws.settings.site_defaults, changed);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    assert!(ws.to_ops().iter().any(|op| matches!(op,
+        Op::Put(Record::Settings(Settings { site_defaults: SiteDefaults { notifications: SitePermissionValue::Block, .. }, .. })))));
+    // The same record again writes nothing; the New Tab row and the theme stay untouched.
+    let before = ws.clone();
+    assert!(ws.set_site_defaults(changed).is_empty());
+    assert_eq!(ws, before);
+    assert!(ws.settings.new_tab_row_shown && ws.settings.theme == Theme::System);
+    // A second kind changes the same one record, not a second one.
+    let mut second = ws.settings.site_defaults.clone();
+    second.camera = SitePermissionValue::Allow;
+    let ops = ws.set_site_defaults(second.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.site_defaults == second));
+    assert_eq!(ws.to_ops().iter().filter(|op| matches!(op, Op::Put(Record::Settings(_)))).count(), 1);
+    // Back to the built-in values: one tombstone, not a row restating them.
+    let reset = ws.set_site_defaults(SiteDefaults::default());
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+}
+
+// A value this build does not know is refused when the record is parsed, so a future device's
+// third state never reads as one of today's.
+#[test]
+fn an_unknown_site_default_value_is_refused() {
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Sometimes"}}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Allow"}}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { site_defaults: SiteDefaults { camera: SitePermissionValue::Allow, .. }, .. }))));
 }
 
 // U27i D8/D9: the Little Window's Open-in destination and close-after are the same synced
