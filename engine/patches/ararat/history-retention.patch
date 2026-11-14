@@ -12,11 +12,11 @@
  
  namespace history {
  
-+// ararat (U27p): the app's Privacy pane sets the browsing-history retention, in days. 0 never
-+// expires anything (the pane's Forever, and the state before the first window applies the
-+// record), and a positive value replaces Chromium's own threshold. The expiry loop reads it on
-+// every pass, so a shortened retention deletes the older visits at a later pass (30 s in the
-+// first minute, then five minutes) without a relaunch.
++// ararat (U27p): the app's Privacy pane sets the browsing-history retention, in days. 0 makes
++// every expiry pass a no-op (the pane's Forever, and the state before the first window applies the
++// record); a positive value replaces Chromium's own threshold. The expiry loop reads it on every
++// pass, so a shortened retention deletes the older visits at a later pass (30 s in the first
++// minute, then five minutes) without a relaunch.
 +extern std::atomic<int> g_ararat_history_retention_days;
 +
  class HistoryBackendClient;
@@ -48,3 +48,20 @@
  // Helpers --------------------------------------------------------------------
  
  namespace {
+@@ -655,6 +658,16 @@
+     return;
+   }
+ 
++  // ararat (U27p): no expiry (the app's Forever, or before its first record) makes this pass a
++  // no-op: no reader runs and the segment cleanup never sees a null Time's LocalMidnight
++  // (visitsegment_database.cc:371-376 calls base::Time().LocalMidnight(), whose DST fallback
++  // DCHECK is not known to hold for year 1601). The queue and the schedule continue, so a
++  // retention set later takes effect at a later pass.
++  if (g_ararat_history_retention_days.load(std::memory_order_relaxed) <= 0) {
++    ScheduleExpire();
++    return;
++  }
++
+   const ExpiringVisitsReader* reader = work_queue_.front();
+   bool more_to_expire = ExpireSomeOldHistory(
+       GetCurrentExpirationTime(), reader, kNumExpirePerIteration);

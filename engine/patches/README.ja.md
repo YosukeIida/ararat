@@ -70,7 +70,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 `ararat/history-deletion-hook.patch` は、HistoryService が履歴削除を予約する前に任意の hook を呼び、Ararat がファイル用シーケンスでタブ履歴を無効化できるようにする。
 mode 1 の検査は `DeleteURLs` を要求し、ファイル用シーケンスの barrier を待つ。要求時の hook が無効化を予約したことを確認するもので、history backend の完了や後続の削除通知は待たない。
 
-`ararat/history-retention.patch` は `ExpireHistoryBackend::GetCurrentExpirationTime()` に日数の保持値を足し、アプリの Privacy のペインが期限切れのループごとに Chromium の固定の 90 日を置き換えられるようにする（`0` は何も期限切れにしない。Forever と、最初の適用より前の状態）。
+`ararat/history-retention.patch` は `ExpireHistoryBackend::GetCurrentExpirationTime()` に日数の保持値を足し、アプリの Privacy のペインが期限切れのループごとに Chromium の固定の 90 日を置き換えられるようにする。0（ペインの Forever と、最初の適用より前の状態）では `DoExpireIteration()` がどの reader よりも前に戻り、segment の後片付けも走らないので、何も期限切れにならず、null の `Time` の `LocalMidnight` での削除も起きない。
 
 `ararat/crash-lock-abandon.patch` は、workspace の復旧完了前にプロファイルが破棄された場合、クラッシュを確認済みにせず crash lock を解放できるようにする。
 
