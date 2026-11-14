@@ -17,14 +17,15 @@ private func onboardingTestModel(_ data: OnboardingData = OnboardingFixtures.sho
     return (model, directory)
 }
 
+/// Walks screens 1–4 through the model's own steps, then lets the run loop turn so the import the
+/// progress screen scheduled runs (M1: the caller never calls performImport).
 @MainActor
 private func runImport(_ model: OnboardingModel) {
     model.advance()   // welcome → source
     model.advance()   // source → what to import
     model.advance()   // what to import → default browser
-    model.notNow()    // default browser → progress
-    model.beginImport()
-    model.performImport()
+    model.notNow()    // default browser → progress; the import is scheduled
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
 }
 
 final class FakeSetter: DefaultBrowserSetter {
@@ -32,8 +33,8 @@ final class FakeSetter: DefaultBrowserSetter {
     func requestDefaultBrowser() { calls += 1 }
 }
 
-/// F-Import screen 6's numbers are the fixture's: five counts from the imported snapshot and the
-/// routes from the report. The summary text is the board's line.
+/// F-Import screen 6's numbers are the fixture's: the report counts what the import produced, not
+/// the store's totals. The summary text is the board's line.
 @Test @MainActor
 func theShowcaseFixtureImportsTheBoardsNumbers() throws {
     let (model, directory) = try onboardingTestModel()
@@ -56,6 +57,21 @@ func theShowcaseFixtureImportsTheBoardsNumbers() throws {
     #expect(Int(report.skippedKeyBindings) == expectation.skippedKeyBindings)
     #expect(Int(report.skippedProfileDestinations) == expectation.skippedProfileDestinations)
     #expect(report.windowsError == nil && report.keyBindingsError == nil && report.linkRoutingError == nil)
+}
+
+/// H1: a store that already held a space does not change the done line, and the check's store
+/// keeps both spaces — the report counts the import, never the store.
+@Test @MainActor
+func theDoneLineCountsOnlyWhatTheImportBrought() throws {
+    let (model, directory) = try onboardingTestModel()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let before = try WorkspaceStore.open(path: model.storePath)
+    _ = try before.createSpace(windowId: "before", name: "Before the import", spaceId: "before-space")
+    runImport(model)
+    #expect(model.summary?.line == "3 spaces · 21 pinned tabs · 5 folders · 8 favourites · 3 looks · 6 routes")
+    let reopened = try WorkspaceStore.open(path: model.storePath)
+    let titles = Set(reopened.snapshot(windowId: "after").spaces.map(\.title))
+    #expect(titles == Set(["Before the import", "Work", "Personal", "Reading"]))
 }
 
 /// The store the flow wrote is the one it was given: a fresh open at the same path reads the three
@@ -95,7 +111,8 @@ func theReportLinesComeOnlyFromTheReportsCounters() throws {
                              missingKeyBindings: false, keyBindingsError: nil, skippedKeyBindings: 0,
                              unknownSpaceLooks: 0, missingWindows: false, windowsError: nil,
                              differingFolderStates: 0, skippedDates: 0, peekedFolders: 0,
-                             unknownWindowIds: 0, malformedWindowEntries: 0)
+                             unknownWindowIds: 0, malformedWindowEntries: 0,
+                             spaces: 0, pinnedTabs: 0, folders: 0, favouriteTabs: 0, spacesWithLook: 0)
     #expect(OnboardingModel.reportLines(empty).isEmpty)
 }
 
@@ -115,7 +132,7 @@ func theImportScreenListsTheFixturesSpacesAndWhatTheImporterCarries() throws {
 }
 
 /// Screen 7: a malformed sidebar stops the import with `ImportError`'s own message; nothing is
-/// summarised, and the message is the only detail.
+/// summarised, and the message is the only detail. "Try Again" runs the same walk again.
 @Test @MainActor
 func aMalformedSidebarLandsOnTheStoppedImportScreen() throws {
     let (model, directory) = try onboardingTestModel(OnboardingFixtures.malformedSidebar)
@@ -127,6 +144,14 @@ func aMalformedSidebarLandsOnTheStoppedImportScreen() throws {
     }
     #expect(message == "sidebar.containers has no container with spaces")
     #expect(model.summary == nil && model.lines.isEmpty)
+    model.retry()
+    #expect(model.stage == .progress)
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    guard case .error(let again) = model.stage else {
+        Issue.record("expected the error stage again, got \(model.stage)")
+        return
+    }
+    #expect(again == message)
 }
 
 /// Screen 8: the sidebar imports and the sibling file's error is a report field; the screen names
@@ -162,10 +187,10 @@ func theDefaultBrowserButtonUsesTheInjectedSetter() throws {
     #expect(setter.calls == 1 && model.defaultBrowserCalls == 1 && model.stage == .progress)
 }
 
-/// Screens 1–5 and the back path: each step is the board's order and the progress screen's rows are
-/// the steps the one synchronous call runs.
+/// M1: screens 1–5 walk in the board's order, back works, and screen 5 runs the import itself on
+/// the next run-loop turn — no caller reaches into the model.
 @Test @MainActor
-func theFlowWalksTheBoardsScreensInOrder() throws {
+func theFlowWalksTheBoardsScreensAndTheProgressScreenRunsTheImport() throws {
     let (model, directory) = try onboardingTestModel()
     defer { try? FileManager.default.removeItem(at: directory) }
     #expect(model.stage == .welcome)
@@ -175,21 +200,23 @@ func theFlowWalksTheBoardsScreensInOrder() throws {
     model.goBack(); #expect(model.stage == .welcome)
     model.advance(); model.advance(); model.advance()
     #expect(model.stage == .defaultBrowser)
-    model.advance(); #expect(model.stage == .progress)
-    #expect(OnboardingModel.progressSteps == ["Spaces, tabs and folders", "Looks", "Air Traffic Control routes"])
-    // The dots mark the five screens that have them; the done and error screens draw none.
+    model.advance()
+    #expect(model.stage == .progress)
     #expect(model.dotIndex == 4)
-    model.beginImport()
-    model.performImport()
+    #expect(model.summary == nil)
+    // Nothing else calls the import: the progress screen scheduled it.
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    #expect(model.stage == .done)
+    #expect(model.summary?.spaces == 3)
     #expect(model.dotIndex == nil)
     // A second run over the same store is the core's idempotent override path.
     model.restart()
     runImport(model)
     #expect(model.summary?.spaces == 3)
-    #expect(model.importCount == 2)
 }
 
 /// O7: the command bar row is the app's, not the core table's, so a shipping build can hide it.
+/// Its matcher is the core's (title prefix or word prefix), not a substring.
 @Test @MainActor
 func theCommandBarRowMatchesItsWordsAndOnlyCarriesTheCommand() {
     let store = OnboardingCommandStore(base: StubStore())
@@ -203,6 +230,9 @@ func theCommandBarRowMatchesItsWordsAndOnlyCarriesTheCommand() {
     }
     #expect(store.query("settings", history: []).rows.isEmpty)
     #expect(store.query("", history: []).rows.isEmpty)
+    // A substring the core would not match stays out.
+    #expect(store.query("rom", history: []).rows.isEmpty)
+    #expect(store.query("port", history: []).rows.isEmpty)
 }
 
 @MainActor

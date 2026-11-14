@@ -7,6 +7,19 @@ use ararat_core::model::{ItemKind, Orientation, Profile};
 const FIXTURE: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
 
 #[test]
+fn the_report_counts_only_what_the_import_produced() {
+    let (_, report) = arc_sidebar(FIXTURE, None, None, None, None).unwrap();
+    assert_eq!(report.spaces, 2);
+    // Pinned: Work holds folder-docs (tab-spec) and split-1 (tab-a, tab-b).
+    assert_eq!(report.pinned_tabs, 3);
+    assert_eq!(report.folders, 1);
+    assert_eq!(report.favourite_tabs, 1);
+    // Both spaces carry an importable look (Work's basic colour, Home's gradient).
+    assert_eq!(report.spaces_with_look, 2);
+    assert_eq!(report.imported_rules, 0);
+}
+
+#[test]
 fn imports_spaces_with_their_containers_and_profiles() {
     let ws = arc_sidebar(FIXTURE, None, None, None, None).unwrap().0;
     let titles: Vec<_> = ws.spaces.iter().map(|s| s.title.as_str()).collect();

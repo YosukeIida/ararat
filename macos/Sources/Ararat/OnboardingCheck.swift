@@ -5,11 +5,11 @@ import AraratUI
 
 /// U27j's check: the onboarding window opened by the command the File menu and the command bar
 /// carry under a check. It walks the eight screens — welcome, source, what to import, default
-/// browser, progress, done, the stopped import and the sibling-file warning — captures each, and
-/// asserts that the report's numbers are the showcase fixture's (so the import read the injected
-/// strings, not the owner's Arc), that the store is the check's `--ararat-db`, that the default
-/// browser button went through the fake and the host's handler did not move, and that the
-/// sign-in and Passwords rows and line are absent.
+/// browser, progress, done, the stopped import and the sibling-file warning — through the
+/// window's own buttons, captures each, and asserts that the report's numbers are the showcase
+/// fixture's (so the import read the injected strings, not the owner's Arc), that the store is the
+/// check's `--ararat-db`, that the default browser button went through the fake and the host's
+/// handler did not move, and that the sign-in and Passwords rows and line are absent.
 
 /// The screen 4 seam as the check injects it: counts the calls and never touches LaunchServices.
 final class FakeDefaultBrowserSetter: DefaultBrowserSetter {
@@ -27,6 +27,7 @@ final class OnboardingCheckState {
         "fixture_store_only", "error_screen", "error_message", "copy_details",
         "sibling_screen", "sibling_message", "sibling_continue",
     ]
+    /// Every screen the check captures. `capture` is set once at the end from this list (L8).
     static let screens = ["welcome", "source", "what-to-import", "default-browser", "progress", "done", "error", "sibling-file"]
 
     var values: [String: Bool] = [:]
@@ -36,7 +37,6 @@ final class OnboardingCheckState {
     var details: [String: Any] = [:]
     var realDefaultBefore = ""
     var errorMessage = ""
-    var replayedFirstScreen = false
 
     func report(_ name: String, _ ok: Bool) {
         values[name] = ok
@@ -94,57 +94,73 @@ extension Runtime {
         if onboardingCheck == nil { onboardingCheck = OnboardingCheckState() }
         guard let check = onboardingCheck, !check.capturing else { return }
         let owner = root ?? self
-        let window = host.window()
         func wait(_ name: String) {
             if check.lastWait != name {
                 check.lastWait = name
-                FileHandle.standardError.write(Data("ararat-trace: onboarding wait=\(name) phase=\(browserCheckPhase) window=\(owner.onboardingWindow != nil)\n".utf8))
+                FileHandle.standardError.write(Data("ararat-trace: onboarding wait=\(name) phase=\(browserCheckPhase) window=\(owner.onboardingWindow != nil) stage=\(owner.onboardingWindow.map { String(describing: $0.model.stage) } ?? "nil")\n".utf8))
             }
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
-            guard let target = owner.onboardingWindow?.window else { return false }
+            guard let target = owner.onboardingWindow?.window else { wait("capture \(name): no window"); return false }
             check.capturing = true
             defer { check.capturing = false }
-            guard let path = promptScreenScreenshot(target, name: "onboarding-\(name)", withoutShadow: true) else { return false }
+            guard let path = promptScreenScreenshot(target, name: "onboarding-\(name)", withoutShadow: true) else {
+                wait("capture \(name)")
+                return false
+            }
             check.images[name] = path
             return true
         }
         func finish() {
+            if screen { check.report("capture", Set(check.images.keys) == Set(OnboardingCheckState.screens)) }
             let result = check.diagnostics(screen: screen)
             finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
         }
-        func probe() -> OnboardingCheckProbe? { owner.onboardingWindow?.checkProbe() }
+        func probe() -> OnboardingCheckProbe? {
+            guard let probe = owner.onboardingWindow?.checkProbe() else { wait("onboarding window"); return nil }
+            probe.layout()
+            return probe
+        }
         func mark(_ name: String, _ ok: Bool) { check.report(name, ok) }
-        func walkToProgress(_ model: OnboardingModel) {
-            model.advance()   // welcome → source
-            model.advance()   // source → what to import
-            model.advance()   // what to import → default browser
-            model.notNow()    // default browser → progress
+        /// The flow's own buttons, so the check proves the window rather than the model.
+        func walkToProgressThroughTheWindow(_ model: OnboardingModel, probe: OnboardingCheckProbe) {
+            model.restart()
+            probe.render()
+            _ = probe.click("onboarding-next")        // welcome → source
+            _ = probe.click("onboarding-next")        // source → what to import
+            _ = probe.click("onboarding-next")        // what to import → default browser
+            _ = probe.click("onboarding-not-now")     // default browser → progress; its import is scheduled
         }
 
         switch browserCheckPhase {
         case 0:
             guard workspace != nil, quitPath != nil else { wait("workspace"); return }
-            // The entry the check proves: a File menu item and a command bar row, both named.
             let menuItem = NSApp.mainMenu?.item(withTitle: "File")?.submenu?.items.first {
                 $0.identifier?.rawValue == OnboardingCommandStore.commandID
             }
             mark("entry_menu", menuItem != nil && menuItem?.action == #selector(Runtime.importFromArc(_:)))
-            let store = OnboardingCommandStore(base: StubCommandStore())
-            let rows = store.query("import", history: []).rows
-            var rowIsEntry = false
-            if let target = rows.first?.target {
-                if case .command(let id) = target { rowIsEntry = id == OnboardingCommandStore.commandID }
-            }
-            mark("entry_command_bar", rows.count == 1 && rows.first?.title == "Import from Arc…" && rowIsEntry)
             check.realDefaultBefore = onboardingDefaultHandler()
-            openOnboarding()
+            // The command bar's own path, so removing the decorator line in main.swift fails here.
+            openCommandBar(.newTab)
             browserCheckPhase = 1
         case 1:
-            guard let probe = probe() else { wait("onboarding window"); return }
-            probe.layout()
-            guard probe.isVisible, probe.stage == .welcome else { wait("welcome"); return }
+            guard let presenter = commandPresenter, presenter.controller.isOpen else { wait("command bar"); return }
+            presenter.controller.update(query: "import")
+            let rows = presenter.controller.result.rows
+            guard rows.contains(where: {
+                if case .command(let id) = $0.target { return id == OnboardingCommandStore.commandID }
+                return false
+            }) else {
+                wait("command bar row")
+                return
+            }
+            mark("entry_command_bar", rows.contains { $0.title == "Import from Arc…" })
+            presenter.close()
+            openOnboarding()
+            browserCheckPhase = 2
+        case 2:
+            guard let probe = probe(), probe.stage == .welcome else { wait("welcome"); return }
             let size = probe.contentSize
             mark("window_open", true)
             mark("window_size", abs(size.width - OnboardingMetrics.size.width) <= 1
@@ -155,12 +171,11 @@ extension Runtime {
                  && probe.dots == 5 && probe.filledDot == 0)
             mark("welcome_buttons", start != nil && next != nil && (start?.minX ?? 0) < (next?.minX ?? 0)
                  && abs((next?.height ?? 0) - OnboardingMetrics.buttonHeight) <= 1)
-            mark("capture", capture("welcome"))
+            guard capture("welcome") else { wait("capture welcome"); return }
             probe.click("onboarding-next")
-            browserCheckPhase = 2
-        case 2:
+            browserCheckPhase = 3
+        case 3:
             guard let probe = probe(), probe.stage == .source else { wait("source"); return }
-            probe.layout()
             let rows = probe.sourceRows
             let arc = rows.first { $0.id == "onboarding-source-arc" }
             mark("source_rows", probe.title == "Bring your browser with you" && arc?.text.contains("3 spaces") == true)
@@ -168,12 +183,11 @@ extension Runtime {
             mark("source_later", later.count == 4 && later.allSatisfy { $0.text.contains("Later") }
                  && Set(later.map(\.id)) == Set(["onboarding-source-later-dia", "onboarding-source-later-chrome",
                                                  "onboarding-source-later-safari", "onboarding-source-later-firefox"]))
-            mark("capture", capture("source"))
+            guard capture("source") else { wait("capture source"); return }
             probe.click("onboarding-next")
-            browserCheckPhase = 3
-        case 3:
+            browserCheckPhase = 4
+        case 4:
             guard let probe = probe(), probe.stage == .whatToImport else { wait("what to import"); return }
-            probe.layout()
             let spaces = probe.spaceRows.map(\.text)
             let expected = ["Work Profile University · 6 pinned",
                             "Personal Profile Default · 4 pinned",
@@ -184,96 +198,89 @@ extension Runtime {
             // O4/O5, the site-controls rule: the rows have no producer, so they are absent.
             let all = (spaces + also).joined(separator: " ").lowercased()
             mark("no_signin_rows", !all.contains("sign-in") && !all.contains("password") && !all.contains("archive") && !all.contains("history"))
-            mark("capture", capture("what-to-import"))
+            guard capture("what-to-import") else { wait("capture what to import"); return }
             probe.click("onboarding-next")
-            browserCheckPhase = 4
-        case 4:
+            browserCheckPhase = 5
+        case 5:
             guard let probe = probe(), probe.stage == .defaultBrowser else { wait("default browser"); return }
-            probe.layout()
             mark("default_browser", probe.title.contains("default browser")
                  && probe.frame("onboarding-set-default") != nil && probe.frame("onboarding-not-now") != nil)
-            guard let model = owner.onboardingWindow?.model else { return }
+            guard let model = owner.onboardingWindow?.model else { wait("model"); return }
+            guard capture("default-browser") else { wait("capture default browser"); return }
             let calls = model.defaultBrowserCalls
             probe.click("onboarding-set-default")
             mark("setter_called", model.defaultBrowserCalls == calls + 1
                  && owner.onboardingDefaultBrowser?.calls == 1)
             mark("real_default_unchanged", onboardingDefaultHandler() == check.realDefaultBefore)
-            browserCheckPhase = 5
-        case 5:
-            guard let probe = probe(), probe.stage == .progress, let model = owner.onboardingWindow?.model else {
-                wait("progress"); return
-            }
-            probe.layout()
+            // The window moved to screen 5 and the model scheduled the import for the next run-loop
+            // turn, so this tick can still read and capture the progress screen.
+            guard probe.stage == .progress else { wait("progress after set as default"); return }
             let steps = probe.progressRows.map(\.text)
-            mark("progress_steps", steps == OnboardingModel.progressSteps && steps.count == 3)
-            mark("capture", capture("progress"))
-            model.beginImport()
-            probe.render()
-            guard probe.stage == .progress else { wait("progress stage"); return }
-            model.performImport()
-            probe.render()
+            mark("progress_steps", steps == OnboardingModel.progressSteps && steps.count == 4)
+            guard capture("progress") else { wait("capture progress"); return }
             browserCheckPhase = 6
         case 6:
             guard let probe = probe(), probe.stage == .done, let model = owner.onboardingWindow?.model else {
-                wait("done"); return
+                wait("done")
+                return
             }
-            probe.layout()
             let line = OnboardingFixtureLine(OnboardingFixtures.expected).line
             mark("report_numbers", probe.summaryLine == line
                  && model.summary?.line == line && probe.title == "Your spaces are here")
             // Every row has a producer in the report; the sign-in line and the unread look have
             // none in this fixture and are dropped (D10, O5).
-            let ids = probe.reportLines
-            mark("report_lines", ids.count == 4
-                 && ids.contains { $0.contains("2 folders were peeked") }
-                 && ids.contains { $0.contains("2 folders were open in one Arc window") }
-                 && ids.contains { $0.contains("1 route sent links to a profile") }
-                 && ids.contains { $0.contains("3 custom keyboard shortcuts") })
-            mark("no_signin_line", !ids.contains { $0.lowercased().contains("sign-in") })
-            // The store the flow wrote is the check's database, and the numbers are this fixture's,
-            // so no other store and no other sidebar fed it.
-            var reopened = 0
+            let texts = probe.reportLines
+            mark("report_lines", texts.count == 4
+                 && texts.contains { $0.contains("2 folders were peeked") }
+                 && texts.contains { $0.contains("2 folders were open in one Arc window") }
+                 && texts.contains { $0.contains("1 route sent links to a profile") }
+                 && texts.contains { $0.contains("3 custom keyboard shortcuts") })
+            mark("no_signin_line", !texts.contains { $0.lowercased().contains("sign-in") })
+            // The store the flow wrote is the check's database and its fixture's spaces are in it.
+            // The store may hold the empty-check space EngineAdapter makes before the window opens:
+            // the imported counts come from the report, not from this reopen (H1).
+            var titles = Set<String>()
             if let path = quitPath, let store = try? WorkspaceStore.open(path: path) {
-                reopened = store.snapshot(windowId: "onboarding-check").spaces.count
+                titles = Set(store.snapshot(windowId: "onboarding-check").spaces.map(\.title))
             }
-            mark("fixture_store_only", model.storePath == quitPath && reopened == OnboardingFixtures.expected.spaces
+            mark("fixture_store_only", model.storePath == quitPath
+                 && Set(["Work", "Personal", "Reading"]).isSubset(of: titles)
                  && model.data.sidebar == OnboardingFixtures.showcaseSidebar)
             check.details["summary"] = probe.summaryLine
-            check.details["lines"] = ids
-            mark("capture", capture("done"))
-            // Screen 7: the malformed sidebar. The same window walks the second fixture; its
-            // ImportError text is the whole of the screen's detail.
-            model.restart()
+            check.details["lines"] = texts
+            check.details["store_titles"] = titles.sorted()
+            guard capture("done") else { wait("capture done"); return }
+            // Screen 7: the malformed sidebar, walked through the window with "Not Now".
             model.data = OnboardingFixtures.malformedSidebar
-            walkToProgress(model)
-            model.performImport()
-            probe.render()
+            walkToProgressThroughTheWindow(model, probe: probe)
+            browserCheckPhase = 7
+        case 7:
+            guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("error model"); return }
             guard case .error(let message) = probe.stage else { wait("error stage"); return }
             check.errorMessage = message
             mark("error_screen", probe.title == "The import stopped")
             mark("error_message", message.contains("sidebar.containers has no container with spaces"))
             check.details["error"] = message
-            mark("capture", capture("error"))
+            guard capture("error") else { wait("capture error"); return }
             model.copyDetails()
             mark("copy_details", NSPasteboard.general.string(forType: .string) == message)
-            // Screen 8: the sibling file. The import finished and the report names the file.
-            model.restart()
+            // Screen 8: the sibling file, through the window's "Not Now" again.
             model.data = OnboardingFixtures.badKeyBindings
-            walkToProgress(model)
-            model.performImport()
-            probe.render()
-            browserCheckPhase = 7
-        case 7:
-            guard let probe = probe(), case .siblingFile(let message) = probe.stage,
-                  let model = owner.onboardingWindow?.model else { wait("sibling-file stage"); return }
-            probe.layout()
+            walkToProgressThroughTheWindow(model, probe: probe)
+            browserCheckPhase = 8
+        case 8:
+            guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("sibling model"); return }
+            guard case .siblingFile(let message) = probe.stage else { wait("sibling-file stage"); return }
             mark("sibling_screen", probe.title == "One file could not be read")
             mark("sibling_message", message == "StorableKeyBindings.json: unsupported key bindings version"
                  && probe.warningMessage.contains("unsupported key bindings version"))
             check.details["sibling"] = message
-            mark("capture", capture("sibling-file"))
+            guard capture("sibling-file") else { wait("capture sibling"); return }
             probe.click("onboarding-continue")
-            guard probe.stage == .done else { wait("sibling continue"); return }
+            browserCheckPhase = 9
+        case 9:
+            guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("sibling continue"); return }
+            guard probe.stage == .done else { wait("sibling continue stage"); return }
             mark("sibling_continue", model.summary?.spaces == OnboardingFixtures.expected.spaces
                  && probe.summaryLine == OnboardingFixtureLine(OnboardingFixtures.expected).line)
             finish()
@@ -281,15 +288,6 @@ extension Runtime {
             break
         }
     }
-}
-
-/// The check's empty command-bar base: the decorator only needs to prove the row it adds.
-@MainActor
-final class StubCommandStore: CommandBarStore {
-    func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult {
-        CommandBarResult(rows: [], privateWindow: false)
-    }
-    func searchURL(_ text: String) -> String { "https://www.google.com/search?q=" }
 }
 
 /// The board's six counts as the fixture declares them, so the check has a second, independent

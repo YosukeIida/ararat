@@ -98,15 +98,15 @@ public struct OnboardingSummary: Equatable, Sendable {
         self.routes = routes
     }
 
-    init(snapshot: WorkspaceSnapshot, report: ImportReport) {
-        func tabs(_ rows: [Row]) -> Int { rows.filter { $0.kind == .tab }.count }
-        spaces = snapshot.spaces.count
-        pinnedTabs = snapshot.spaces.reduce(0) { $0 + tabs($1.pinned) }
-        folders = snapshot.spaces.reduce(0) { $0 + $1.pinned.filter { $0.kind == .folder }.count }
-        // The favourites container is one per profile, so two spaces of the same profile list the
-        // same rows: the count is the distinct row set, not the sum over spaces.
-        favourites = Set(snapshot.spaces.flatMap { $0.favorites.filter { $0.kind == .tab }.map(\.id) }).count
-        looks = snapshot.spaces.filter { $0.look != nil }.count
+    /// The report alone: the import counts these from the workspace it produced, so a store that
+    /// held spaces before the import cannot inflate them (H1). Routes are the routing import's
+    /// `imported_rules`.
+    init(report: ImportReport) {
+        spaces = Int(report.spaces)
+        pinnedTabs = Int(report.pinnedTabs)
+        folders = Int(report.folders)
+        favourites = Int(report.favouriteTabs)
+        looks = Int(report.spacesWithLook)
         routes = Int(report.importedRules)
     }
 
@@ -149,12 +149,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
     }
     @Published public private(set) var summary: OnboardingSummary?
     @Published public private(set) var lines: [OnboardingReportLine] = []
-    @Published public private(set) var finished = false
     public private(set) var report: ImportReport?
-    public private(set) var importedSnapshot: WorkspaceSnapshot?
-    public private(set) var store: WorkspaceStore?
-    /// How many times the core import ran; the check reads it, nothing in the flow branches on it.
-    public private(set) var importCount = 0
     /// Screen 4's fake-call count: the model counts the setter it was given, so the check reads
     /// one number whether the setter is the fake or the LaunchServices one.
     public private(set) var defaultBrowserCalls = 0
@@ -217,7 +212,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
         case .welcome: stage = .source
         case .source: stage = .whatToImport
         case .whatToImport: stage = .defaultBrowser
-        case .defaultBrowser: stage = .progress
+        case .defaultBrowser: enterProgress()
         default: break
         }
     }
@@ -233,10 +228,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
 
     /// "Start Fresh" and a done window's "Continue": the flow ends without an import (or after
     /// one), the window closes, and the browser stays as it was.
-    public func startFresh() {
-        finished = true
-        onFinish?()
-    }
+    public func startFresh() { onFinish?() }
 
     /// Back to the first screen with nothing imported. A shipping build never calls it; the check
     /// uses it to walk a second fixture through the same window.
@@ -245,8 +237,6 @@ public final class OnboardingModel: NSObject, ObservableObject {
         summary = nil
         lines = []
         report = nil
-        importedSnapshot = nil
-        store = nil
         onChange?()
     }
 
@@ -262,33 +252,34 @@ public final class OnboardingModel: NSObject, ObservableObject {
 
     // MARK: - The import (screen 5)
 
-    /// Screen 5's stage: one synchronous core call follows, which is why the progress screen's
-    /// rows are exactly the steps the call runs and there is no cancel or timer.
-    public func beginImport() {
-        guard stage == .progress else { return }
+    /// Screen 5's stage, then the one synchronous core call on the next run-loop turn, so the
+    /// progress screen is drawn first. Not a timer: `RunLoop.main.perform` is the same turn the
+    /// workspace writes use. The rows are the four files the call reads, in its order.
+    private func enterProgress() {
+        stage = .progress
         summary = nil
         lines = []
         report = nil
-        importedSnapshot = nil
         onChange?()
+        RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self] in
+            MainActor.assumeIsolated { self?.performImport() }
+        }
     }
 
-    public static let progressSteps = ["Spaces, tabs and folders", "Looks", "Air Traffic Control routes"]
+    /// One row per file the import consumes, in the order `arc_sidebar` reads them.
+    public static let progressSteps = ["Spaces, tabs, folders and looks", "Folder states", "Keyboard shortcuts", "Air Traffic Control routes"]
 
     /// Runs the core's string-based import into the store at `storePath`. The error is the
     /// ImportError message; a sibling file's error is a report field and becomes screen 8.
-    public func performImport() {
+    private func performImport() {
         guard case .progress = stage else { return }
-        importCount += 1
         do {
             let store = try WorkspaceStore.open(path: storePath)
-            self.store = store
             let result = try store.importArcSidebar(windowId: "onboarding", json: data.sidebar,
                                                     windowsJson: data.windows, keyBindingsJson: data.keyBindings,
                                                     linkRoutingJson: data.routing, ownerProfile: nil)
             report = result.report
-            importedSnapshot = result.snapshot
-            summary = OnboardingSummary(snapshot: result.snapshot, report: result.report)
+            summary = OnboardingSummary(report: result.report)
             lines = Self.reportLines(result.report)
             stage = Self.siblingError(result.report).map { .siblingFile($0) } ?? .done
         } catch {
@@ -296,13 +287,11 @@ public final class OnboardingModel: NSObject, ObservableObject {
         }
     }
 
-    /// Screen 7's "Try Again": the same fixture, a fresh progress stage, and the import runs again.
-    /// Importing the same strings twice is the core's idempotent override path.
+    /// Screen 7's "Try Again": the same fixture, a fresh progress stage, and the import runs again
+    /// on the next turn. Importing the same strings twice is the core's idempotent override path.
     public func retry() {
         guard case .error = stage else { return }
-        stage = .progress
-        beginImport()
-        performImport()
+        enterProgress()
     }
 
     /// Screen 8's "Continue": the counts the import produced.

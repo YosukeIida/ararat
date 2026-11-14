@@ -15,11 +15,12 @@ public final class OnboardingCommandStore: CommandBarStore {
 
     public init(base: CommandBarStore) { self.base = base }
 
-    /// The row matches "import", "arc", "from" and the whole title, so typing either word finds it.
+    /// The core's matcher (`command_bar.rs`): a title prefix or a word prefix, never a substring.
     public static func matches(_ text: String) -> Bool {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return false }
-        return title.lowercased().contains(query) || ["import", "from", "arc"].contains { $0.hasPrefix(query) }
+        let title = title.lowercased()
+        return title.hasPrefix(query) || title.split(separator: " ").contains { $0.hasPrefix(query) }
     }
 
     public func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult {

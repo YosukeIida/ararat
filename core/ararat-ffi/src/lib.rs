@@ -1176,6 +1176,13 @@ pub struct ImportReport {
     pub peeked_folders: u64,
     pub unknown_window_ids: u64,
     pub malformed_window_entries: u64,
+    // What the import produced, counted from the imported workspace (import.rs): the done screen
+    // shows these rather than the store's totals.
+    pub spaces: u64,
+    pub pinned_tabs: u64,
+    pub folders: u64,
+    pub favourite_tabs: u64,
+    pub spaces_with_look: u64,
 }
 
 impl From<import::ImportReport> for ImportReport {
@@ -1187,7 +1194,9 @@ impl From<import::ImportReport> for ImportReport {
             missing_key_bindings: report.missing_key_bindings, key_bindings_error: report.key_bindings_error, skipped_key_bindings: report.skipped_key_bindings as u64, unknown_space_looks: report.unknown_space_looks as u64, missing_windows: report.missing_windows,
             windows_error: report.windows_error, differing_folder_states: report.differing_folder_states as u64,
             skipped_dates: report.skipped_dates as u64, peeked_folders: report.peeked_folders as u64,
-            unknown_window_ids: report.unknown_window_ids as u64, malformed_window_entries: report.malformed_window_entries as u64 }
+            unknown_window_ids: report.unknown_window_ids as u64, malformed_window_entries: report.malformed_window_entries as u64,
+            spaces: report.spaces as u64, pinned_tabs: report.pinned_tabs as u64, folders: report.folders as u64,
+            favourite_tabs: report.favourite_tabs as u64, spaces_with_look: report.spaces_with_look as u64 }
     }
 }
 

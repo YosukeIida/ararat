@@ -4,8 +4,9 @@ import SwiftUI
 
 /// The onboarding window's measurements: the boards' 640 × 480 sheet, its 48 pt content margins,
 /// 32 pt flat buttons at an 8 pt radius, 40 pt list rows in a 12 pt card, and the five step dots.
-/// Spacing lands on 8 (4 the only smaller step); the board's 6 pt dot and 30 pt button are drawn
-/// at 8 and 32 because those are the values the app sets.
+/// Board values are kept as drawn (44 pt top, 28 pt title, 12 pt card radius, 20 pt footer gaps),
+/// as the other settings and bar metrics do; only the board's 6 pt dot and 30 pt button were
+/// rounded to 8 and 32, the two sizes the app sets rather than measures.
 public enum OnboardingMetrics {
     public static let size = NSSize(width: 640, height: 480)
     public static let margin: CGFloat = 48

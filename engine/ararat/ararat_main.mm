@@ -261,6 +261,11 @@ void CheckGuards(int argc, const char** argv) {
         valid_screen = true;
         g_check_slice = true;
       }
+      // U27j's onboarding checks: the flow and its captures, with the scratch database.
+      if (std::string_view(arg + 16) == "onboarding") {
+        valid_screen = true;
+        g_check_slice = true;
+      }
     } else if (strcmp(arg, "--ararat-screen") == 0) {
       has_screen = true;
     }
@@ -282,6 +287,8 @@ void CheckGuards(int argc, const char** argv) {
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
                            name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify" || name == "little-window";
       browser_check = browser_check || name == "errorpages";
+      // U27j's onboarding flow; the scratch database is required below, as for the slice checks.
+      browser_check = browser_check || name == "onboarding";
       browser_check = browser_check || check_downloads;
       browser_check = browser_check || check_toasts;
       browser_check = browser_check || name == "split-focus";

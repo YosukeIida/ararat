@@ -35,6 +35,14 @@ pub struct ImportReport {
     pub peeked_folders: usize,
     pub unknown_window_ids: usize,
     pub malformed_window_entries: usize,
+    // What the import itself produced, counted from the imported workspace before it is written:
+    // the done screen shows these, never the store's totals, because a store may already hold
+    // spaces from before the import (records are only ever put, never deleted, model.rs).
+    pub spaces: usize,
+    pub pinned_tabs: usize,
+    pub folders: usize,
+    pub favourite_tabs: usize,
+    pub spaces_with_look: usize,
 }
 
 type Result<T> = std::result::Result<T, ImportError>;
@@ -121,7 +129,39 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
             Err(error) => report.link_routing_error = Some(error.0),
         },
     }
+    count_import(&workspace, &mut report);
     Ok((workspace, report))
+}
+
+/// The five totals the import produced: spaces, every tab under a pinned container (splits and
+/// folders included), those folders, the distinct favourite tabs (one container serves a profile)
+/// and the spaces whose look imported. Routes are `imported_rules`, the routing import's counter.
+fn count_import(workspace: &Workspace, report: &mut ImportReport) {
+    fn walk(workspace: &Workspace, container: &str, tabs: &mut usize, folders: &mut usize) {
+        for child in workspace.children(container) {
+            match child.kind {
+                ItemKind::Tab { .. } => *tabs += 1,
+                ItemKind::Folder => {
+                    *folders += 1;
+                    walk(workspace, &child.id, tabs, folders);
+                }
+                ItemKind::Split { .. } => walk(workspace, &child.id, tabs, folders),
+                ItemKind::Container => {}
+            }
+        }
+    }
+    report.spaces = workspace.spaces.len();
+    for space in &workspace.spaces {
+        walk(workspace, &space.pinned, &mut report.pinned_tabs, &mut report.folders);
+        if space.look.is_some() { report.spaces_with_look += 1; }
+    }
+    let mut favourites = HashSet::new();
+    for container in workspace.favorites.values() {
+        for child in workspace.children(container) {
+            if matches!(child.kind, ItemKind::Tab { .. }) { favourites.insert(child.id.clone()); }
+        }
+    }
+    report.favourite_tabs = favourites.len();
 }
 
 // An imported routing installs in file order (the matching reads by key, ties fall back to the
