@@ -178,11 +178,14 @@ public final class SettingsCheckProbe {
     /// The record the pane draws, read from the core, and the same setters its menu and switch call.
     public var privacy: PrivacySettings { model.privacy }
     public var privacyProfile: String { model.privacyProfile }
+    public var privacyLoaded: Bool { model.privacyLoaded }
     public func readPrivacy(shownSpaceID: String?) { model.readPrivacy(shownSpaceID: shownSpaceID) }
+    /// M4: puts a value the core does not hold in the model before a reopen, so the check's
+    /// `reopen_reads_record` can only pass on a read that really answered.
+    public func resetPrivacyForRead() { model.privacy = .board }
     public func setThirdPartyCookies(_ value: ThirdPartyCookies) { model.setThirdPartyCookies(value) }
     public func setGlobalPrivacyControl(_ value: Bool) { model.setGlobalPrivacyControl(value) }
     public func setHistoryRetention(_ value: HistoryRetention) { model.setHistoryRetention(value) }
-    public func openPrivacyPane() { model.navigate(.privacy) }
     /// P4's sheet: the same open, choose, cancel and Clear the pane and the sheet call.
     public var clearSheetShown: Bool { model.clearSheetShown }
     public var clearSheetVisible: Bool { window.attachedSheet != nil }
@@ -199,13 +202,6 @@ public final class SettingsCheckProbe {
         guard let content = window.attachedSheet?.contentView else { return nil }
         guard let view = views(content).first(where: { $0.identifier?.rawValue == id }) else { return nil }
         return topDown(view.convert(view.bounds, to: content), in: content)
-    }
-    public func sheetMarkers(prefix: String) -> [(id: String, frame: NSRect)] {
-        guard let content = window.attachedSheet?.contentView else { return [] }
-        return views(content).compactMap { view in
-            guard let id = view.identifier?.rawValue, id.hasPrefix(prefix) else { return nil }
-            return (id, topDown(view.convert(view.bounds, to: content), in: content))
-        }.sorted { $0.frame.minY < $1.frame.minY }
     }
     public var clearSheetTitle: String? {
         guard let content = window.attachedSheet?.contentView else { return nil }

@@ -88,6 +88,9 @@ public final class SettingsModel: ObservableObject {
     /// Settings, which the clear sheet names and clears.
     @Published var privacy: PrivacySettings = .board
     @Published private(set) var privacyProfile = "Default"
+    /// Whether the last `readPrivacy` answered. The check waits for it before comparing the rows,
+    /// so its `rows`/`reopen_reads_record` conditions cannot pass on the model's initial value.
+    @Published private(set) var privacyLoaded = false
     var privacyHost: PrivacySettingsHost?
     /// P4: the Clear browsing data sheet's state. The window presents it; its range and types are
     /// the model's, so the pane, the sheet and the check agree about what Clear sends.
@@ -268,6 +271,7 @@ public final class SettingsModel: ObservableObject {
     public static let privacyCookiesRowID = "privacy-cookies"
     public static let privacyGPCRowID = "privacy-gpc"
     public static let privacyHistoryRowID = "privacy-history"
+    public static let privacyHistoryCardID = "privacy-history-card"
     public static let privacyClearButtonMarker = "privacy-clear-button"
     public static let privacyCookiesMenuMarker = "privacy-cookies-menu"
     public static let privacyGPCSwitchMarker = "privacy-gpc-switch"
@@ -987,10 +991,12 @@ public final class SettingsModel: ObservableObject {
         } else if let space = snapshot.spaces.first {
             privacyProfile = space.profileName
         }
+        privacyLoaded = false
         let generation = contextGeneration
         adapter.privacySettings { [weak self] result in
             guard let self, self.contextGeneration == generation, case .success(let settings) = result else { return }
             self.privacy = settings
+            self.privacyLoaded = true
         }
     }
 

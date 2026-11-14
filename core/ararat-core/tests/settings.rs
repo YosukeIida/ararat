@@ -316,11 +316,6 @@ fn the_privacy_record_starts_at_the_boards_values_and_writes_one_synced_record()
         global_privacy_control: true,
         history_retention: HistoryRetention::Year,
     });
-    assert_eq!(HistoryRetention::Week.days(), Some(7));
-    assert_eq!(HistoryRetention::Month.days(), Some(30));
-    assert_eq!(HistoryRetention::ThreeMonths.days(), Some(90));
-    assert_eq!(HistoryRetention::Year.days(), Some(365));
-    assert_eq!(HistoryRetention::Forever.days(), None);
     assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
 
     let mut ws = Workspace::default();

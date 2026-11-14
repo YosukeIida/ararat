@@ -5,12 +5,14 @@ import AraratKit
 import AraratUI
 
 extension Runtime {
-    /// Phases 2 to 16 of `settings-privacy`: the pane's four rows; the cross-site cookie fixture
-    /// allowed then blocked; the GPC switch on (the fixture reads `Sec-GPC: 1` and
-    /// `navigator.globalPrivacyControl`) and off (reads neither); One week removing a seeded
-    /// 10-day-old visit while a 2-day-old one stays; the clear sheet over the Settings window
-    /// clearing the last hour's history and a fixture cookie while an older visit stays; and a
-    /// reopen reading the record from the core.
+    /// Phases 2 to 17 of `settings-privacy`: the pane's four rows after the core has answered; the
+    /// cross-site cookie fixture allowed then blocked; the GPC switch on (the fixture reads the
+    /// navigation's and the fetch's `Sec-GPC` and `navigator.globalPrivacyControl`) and off (reads
+    /// none); One week removing a seeded 10-day-old visit while a 2-day-old one stays, within a
+    /// named 420 s wait (the expiry pass can be five minutes apart); the clear sheet over the
+    /// Settings window clearing the last hour's history and a fixture cookie while an older visit
+    /// stays; and a reopen, after a sentinel the core does not hold, reading the record from the
+    /// core.
     func settingsPrivacyTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
                              note: @escaping (String) -> Void, trace: @escaping (String) -> Void,
                              step: @escaping (Int) -> Void, end: (String, Bool) -> Void,
@@ -58,6 +60,8 @@ extension Runtime {
                 note("privacy rows \(rows.map { $0 != nil }) controls \(controls.map { $0 != nil }) fixture \(siteFixturePorts != nil)")
                 return
             }
+            // M4: `rows` must not pass on the model's initial value; the read has to have answered.
+            guard probe.privacyLoaded else { note("privacy record read pending"); return }
             let ordered = zip(rows, rows.dropFirst()).allSatisfy { first, second in
                 guard let first, let second else { return false }
                 return first.maxY <= second.minY + 1
@@ -107,7 +111,7 @@ extension Runtime {
             guard let tab = fixtureTab("/privacy?do=gpc&n=on"), !tab.isLoading,
                   tab.title.hasPrefix("gpc:") else { note("GPC fixture on"); return }
             check.privacyGPCTitle = tab.title
-            check.report("gpc_on", tab.title == "gpc:1:api")
+            check.report("gpc_on", tab.title == "gpc:1:1:api")
             trace("turning GPC off")
             probe.setGlobalPrivacyControl(false)
             step(8)
@@ -119,11 +123,10 @@ extension Runtime {
             guard let tab = fixtureTab("/privacy?do=gpc&n=off"), !tab.isLoading,
                   tab.title.hasPrefix("gpc:") else { note("GPC fixture off"); return }
             check.privacyGPCTitle += " / " + tab.title
-            check.report("gpc_off", tab.title == "gpc:none:noapi")
+            check.report("gpc_off", tab.title == "gpc:none:none:noapi")
             trace("seeding history visits and writing One week")
             guard !check.privacyRetentionSeeded else { return }
             check.privacyRetentionSeeded = true
-            check.privacyRetentionStart = browserCheckAttempts
             PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyTenDayVisitURL, daysAgo: 10) { _ in }
             PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyTwoDayVisitURL, daysAgo: 2) { _ in }
             probe.setHistoryRetention(.week)
@@ -135,21 +138,46 @@ extension Runtime {
             check.report("retention_write", true)
             step(11)
         case 11:
-            // The engine's expiry loop runs every 30 s; a shortened retention deletes the older
-            // visits on its next pass.
+            // M1: the expiry loop waits 30 s only in a profile's first minute and five minutes once
+            // its queue is empty, at 32 visits per pass. The wait is bounded at 420 s and names
+            // itself in the trace, so a timeout fails `retention_removes` instead of the harness.
+            if check.privacyRetentionStartedAt == nil {
+                check.privacyRetentionStartedAt = Date()
+                trace("waiting for the expiry pass (up to 420 s)")
+            }
+            if check.privacyRetentionTimedOut {
+                check.privacyRetentionTimedOut = false
+                end("retention_removes", false)
+                return
+            }
+            guard !check.privacyPolling else { return }
+            check.privacyPolling = true
             PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyTenDayVisitURL) { ten in
+                guard check.phase == 11 else { check.privacyPolling = false; return }
                 PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyTwoDayVisitURL) { two in
-                    guard ten.isEmpty, !two.isEmpty else {
-                        note("expiry pass: ten=\(ten.count) two=\(two.count) attempts=\(self.browserCheckAttempts - check.privacyRetentionStart)")
+                    check.privacyPolling = false
+                    guard check.phase == 11 else { return }
+                    check.privacyLastTen = ten.count
+                    check.privacyLastTwo = two.count
+                    if ten.isEmpty && !two.isEmpty {
+                        check.report("retention_removes", true)
+                        check.report("retention_keeps", true)
+                        trace("seeding the clear sheet's visits and cookie")
+                        PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyRecentVisitURL, daysAgo: 0.014) { _ in }
+                        PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyOlderVisitURL, daysAgo: 3) { _ in }
+                        openTab("/privacy?do=firstcookie")
+                        step(12)
                         return
                     }
-                    check.report("retention_removes", true)
-                    check.report("retention_keeps", true)
-                    trace("seeding the clear sheet's visits and cookie")
-                    PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyRecentVisitURL, daysAgo: 0.014) { _ in }
-                    PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyOlderVisitURL, daysAgo: 3) { _ in }
-                    openTab("/privacy?do=firstcookie")
-                    step(12)
+                    let elapsed = check.privacyRetentionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+                    if elapsed > 420 {
+                        check.details["retention_wait"] = ["elapsed": Int(elapsed), "ten": ten.count, "two": two.count]
+                        check.report("retention_removes", false)
+                        check.report("retention_keeps", false)
+                        check.privacyRetentionTimedOut = true
+                        return
+                    }
+                    note("expiry pass: ten=\(ten.count) two=\(two.count) elapsed=\(Int(elapsed))s")
                 }
             }
         case 12:
@@ -196,8 +224,13 @@ extension Runtime {
                 note("clear sheet still running shown=\(probe.clearSheetShown) clearing=\(probe.clearing)")
                 return
             }
+            guard !check.privacyClearPolling else { return }
+            check.privacyClearPolling = true
             PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyRecentVisitURL) { recent in
+                guard check.phase == 14 else { check.privacyClearPolling = false; return }
                 PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyOlderVisitURL) { older in
+                    check.privacyClearPolling = false
+                    guard check.phase == 14 else { return }
                     check.privacyRecentGone = recent.isEmpty
                     check.privacyOlderKept = !older.isEmpty
                     check.report("sheet_clears_history", recent.isEmpty)
@@ -212,6 +245,9 @@ extension Runtime {
             check.privacyClearCookieTitle = tab.title
             check.report("sheet_clears_cookie", tab.title == "clear:nocookie")
             trace("closing and reopening the settings window")
+            // M4: the controller and model survive the close, so put a value the core does not hold
+            // in the model; `reopen_reads_record` can then only pass on a read that answered.
+            probe.resetPrivacyForRead()
             owner.settings?.window?.performClose(nil)
             step(16)
         case 16:
@@ -219,8 +255,8 @@ extension Runtime {
             owner.settings?.checkOpen(paneID: "privacy", shownSpaceID: snapshot.shownSpaceId)
             step(17)
         case 17:
-            guard probe.isVisible, probe.pageID == "privacy" else {
-                note("reopened on \(probe.pageID) visible=\(probe.isVisible)"); return
+            guard probe.isVisible, probe.pageID == "privacy", probe.privacyLoaded else {
+                note("reopened on \(probe.pageID) visible=\(probe.isVisible) loaded=\(probe.privacyLoaded)"); return
             }
             let stored = probe.privacy
             guard stored.thirdPartyCookies == .block, stored.globalPrivacyControl == false,

@@ -10,7 +10,7 @@ final class EnginePrivacySettingsHost: PrivacySettingsHost {
     static let shared = EnginePrivacySettingsHost()
 
     private typealias Apply = @convention(c) (UnsafeRawPointer) -> Void
-    private typealias Clear = @convention(c) (UnsafeRawPointer, Double, Double, UInt64,
+    private typealias Clear = @convention(c) (UnsafeRawPointer, Double, UInt64,
                                               @escaping @convention(block) (UInt64) -> Void) -> Void
 
     private lazy var applySettings: Apply? = Self.symbol("AraratApplyPrivacySettings")
@@ -39,16 +39,16 @@ final class EnginePrivacySettingsHost: PrivacySettingsHost {
 
     func applyPrivacy(_ settings: PrivacySettings) { applyRecord(settings) }
 
-    /// P4: the range's start is seconds since 1970; 0 means the beginning of time. The engine
-    /// clears the three types through BrowsingDataRemover and answers the failed types bitmask.
+    /// P4: the range's start is seconds since 1970; 0 means the beginning of time, and the engine
+    /// ends at Chromium's Time::Max() as Chrome's own dialog does. The engine clears the three
+    /// types through BrowsingDataRemover and answers the failed types bitmask; a missing symbol
+    /// answers every requested type as failed, so the pane does not read 0 as success.
     func clearBrowsingData(profile: String, range: ClearBrowsingRange, types: ClearBrowsingTypes,
                            completion: @escaping (UInt64) -> Void) {
-        guard let clearData else { completion(0); return }
-        let now = Date()
-        let begin = range.start(now: now)?.timeIntervalSince1970 ?? 0
+        guard let clearData else { completion(types.rawValue); return }
+        let begin = range.start(now: Date())?.timeIntervalSince1970 ?? 0
         let profileObject = profile as NSString
-        clearData(Unmanaged.passUnretained(profileObject).toOpaque(), begin, now.timeIntervalSince1970,
-                  types.rawValue) { failed in
+        clearData(Unmanaged.passUnretained(profileObject).toOpaque(), begin, types.rawValue) { failed in
             MainActor.assumeIsolated { completion(failed) }
         }
     }

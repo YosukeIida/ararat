@@ -142,7 +142,9 @@ final class SiteFixtureServer {
                 case "/clean": status = "200 OK"; body = Self.cleanPage
                 case "/capture": status = "200 OK"; body = Self.capturePage
                 case "/websites": status = "200 OK"; body = Self.websitesPage
-                case "/privacy": status = "200 OK"; body = Self.privacyPage
+                // The document request's Sec-GPC value is written into the page, so the check can tell
+                // the navigation header from the fetch header (L8).
+                case "/privacy": status = "200 OK"; body = Self.privacyPage.replacingOccurrences(of: "%DOC_GPC%", with: secGPC)
                 case "/echo": status = "200 OK"; body = secGPC
                 default: status = "404 Not Found"; body = "Not found"
                 }
@@ -209,13 +211,20 @@ final class SiteFixtureServer {
     ///
     /// - `?do=cookie&n=...` loads a cross-site iframe (`?do=framecookie` on the other origin),
     ///   which writes its own cookie and reports whether the write stuck: `cookie:set:present`
-    ///   under Allow and `cookie:blocked:absent` under Block.
-    /// - `?do=gpc&n=...` fetches `/echo` (which answers the request's `Sec-GPC` header) and reads
-    ///   `navigator.globalPrivacyControl`: `gpc:1:api` with the signal on, `gpc:none:noapi` off.
+    ///   under Allow and `cookie:blocked:absent` under Block. The frame's cookie is
+    ///   `SameSite=None; Secure` because a cross-site script set of a Lax cookie is refused
+    ///   whatever the cookie-controls mode (`net/cookies/cookie_util.cc`, `cookie_base.cc`), so a
+    ///   Lax cookie would read "blocked" under Allow too (H1).
+    /// - `?do=gpc&n=...` reports the document request's `Sec-GPC` (the server writes it into
+    ///   `%DOC_GPC%`), the fetch's (`/echo`) and `navigator.globalPrivacyControl`:
+    ///   `gpc:<doc>:<fetch>:api` with the signal on, `gpc:<doc>:<fetch>:noapi` off.
     /// - `?do=firstcookie` writes a first-party cookie and reports `clear:cookie`; `?do=clear`
     ///   reports whether it is still there after the sheet cleared cookies.
+    ///
+    /// The script sits after `<body>` so `document.body` exists when it runs (H1).
     private static let privacyPage = """
     <!doctype html><title>privacy:idle</title>
+    <body>
     <script>
     const params = new URLSearchParams(location.search);
     const action = params.get('do');
@@ -229,13 +238,14 @@ final class SiteFixtureServer {
       });
       document.body.appendChild(frame);
     } else if (action === 'framecookie') {
-      document.cookie = 'pf=1; path=/; SameSite=Lax';
+      document.cookie = 'pf=1; path=/; SameSite=None; Secure';
       const present = document.cookie.split('; ').includes('pf=1');
       parent.postMessage({ set: present, cookie: present }, '*');
     } else if (action === 'gpc') {
+      const documentSignal = '%DOC_GPC%';
       fetch('/echo').then(response => response.text()).then(header => {
-        set('gpc:' + header + ':' + (navigator.globalPrivacyControl === true ? 'api' : 'noapi'));
-      }, () => set('gpc:error:noapi'));
+        set('gpc:' + documentSignal + ':' + header + ':' + (navigator.globalPrivacyControl === true ? 'api' : 'noapi'));
+      }, () => set('gpc:' + documentSignal + ':error:noapi'));
     } else if (action === 'firstcookie') {
       document.cookie = 'pf=1; path=/; SameSite=Lax';
       set('clear:' + (document.cookie.split('; ').includes('pf=1') ? 'cookie' : 'nocookie'));
@@ -243,6 +253,7 @@ final class SiteFixtureServer {
       set('clear:' + (document.cookie.split('; ').includes('pf=1') ? 'cookie' : 'nocookie'));
     }
     </script>
+    </body>
     """
 
     private static let capturePage = """

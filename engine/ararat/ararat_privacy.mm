@@ -16,6 +16,7 @@
 
 #include "ararat/core/public/AraratHostAPI.h"
 
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
@@ -41,6 +42,13 @@
 #include "url/gurl.h"
 
 namespace {
+
+// The check entries below write a real profile's history, so they are refused outside a check
+// run (the extensions entries' rule).
+bool IsCheckRun() {
+  auto* command = base::CommandLine::ForCurrentProcess();
+  return command->HasSwitch("ararat-check") || command->HasSwitch("ararat-screen");
+}
 
 // The cookie-controls pref's two values the pane writes: Block third-party cookies and the off
 // mode (kOff behaves as kIncognitoOnly since June 2025, so third-party cookies stay in regular
@@ -130,26 +138,29 @@ void AraratApplyPrivacySettings(NSDictionary<NSString*, id>* settings) {
   NSNumber* gpcNumber = settings[@"gpc"];
   const bool gpc = [gpcNumber isKindOfClass:NSNumber.class] ? gpcNumber.boolValue : true;
   NSNumber* daysNumber = settings[@"history_days"];
-  int days = -1;
+  int days = 0;
   if ([daysNumber isKindOfClass:NSNumber.class]) {
     days = daysNumber.intValue;
-    if (days < 0) days = -1;
+    if (days < 0) days = 0;
   }
-  // The expiry loop reads this on its next pass (30 s), so shortening the retention deletes the
-  // older visits without a relaunch; 0 is the pane's Forever and -1 leaves Chromium's threshold.
+  // 0 is the pane's Forever and the state before the first apply (nothing expires); a positive
+  // value replaces Chromium's threshold. The expiry loop reads it at a later pass (30 s in the
+  // profile's first minute, then five minutes), so shortening the retention needs no relaunch.
   history::g_ararat_history_retention_days.store(days, std::memory_order_relaxed);
   auto& watcher = PrivacyWatcher::Get();
   watcher.Set(cookies, gpc);
   for (Profile* profile : RegularProfiles()) ApplyToProfile(profile, cookies, gpc);
 }
 
-void AraratClearBrowsingData(NSString* profile, double begin_seconds, double end_seconds,
-                             uint64_t types, void (^completion)(uint64_t failed)) {
+void AraratClearBrowsingData(NSString* profile, double begin_seconds, uint64_t types,
+                             void (^completion)(uint64_t failed)) {
   void (^report)(uint64_t) = [completion copy];
   Profile* target = ProfileForDirectory(profile);
   auto* remover = target ? target->GetBrowsingDataRemover() : nullptr;
   if (!remover) {
-    if (report) report(0);
+    // Nothing ran: report every requested type as failed, so the pane shows its error line
+    // instead of reading 0 as success (L2).
+    if (report) report(types);
     return;
   }
   // The app's three bits: 1 history, 2 cookies and other site data, 4 cache. Site data is
@@ -163,10 +174,11 @@ void AraratClearBrowsingData(NSString* profile, double begin_seconds, double end
     if (report) report(0);
     return;
   }
+  // Chrome deletes up to Time::Max() for every period; ending at "now" would miss
+  // `DeleteAllHistory`, the storage-partition cleanup and the all-time-only clears (M3).
   const base::Time begin = begin_seconds > 0 ? base::Time::FromSecondsSinceUnixEpoch(begin_seconds)
                                              : base::Time();
-  const base::Time end = end_seconds > 0 ? base::Time::FromSecondsSinceUnixEpoch(end_seconds)
-                                         : base::Time::Max();
+  const base::Time end = base::Time::Max();
   auto* observer = new ClearObserver(remover, report);
   remover->RemoveAndReply(begin, end, mask, content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
                           observer);
@@ -174,6 +186,10 @@ void AraratClearBrowsingData(NSString* profile, double begin_seconds, double end
 
 void AraratCheckSeedHistoryVisit(NSString* profile, NSString* url, double days_ago,
                                  void (^completion)(BOOL done)) {
+  if (!IsCheckRun()) {
+    if (completion) completion(NO);
+    return;
+  }
   Profile* target = ProfileForDirectory(profile);
   const GURL gurl([url isKindOfClass:NSString.class] ? base::SysNSStringToUTF8(url) : std::string());
   auto* service = target ? HistoryServiceFactory::GetForProfile(target, ServiceAccessType::EXPLICIT_ACCESS)
@@ -189,6 +205,10 @@ void AraratCheckSeedHistoryVisit(NSString* profile, NSString* url, double days_a
 
 void AraratCheckHistoryVisitTimes(NSString* profile, NSString* url,
                                   void (^completion)(NSArray<NSNumber*>* times)) {
+  if (!IsCheckRun()) {
+    if (completion) completion(@[]);
+    return;
+  }
   Profile* target = ProfileForDirectory(profile);
   const GURL gurl([url isKindOfClass:NSString.class] ? base::SysNSStringToUTF8(url) : std::string());
   auto* service = target ? HistoryServiceFactory::GetForProfile(target, ServiceAccessType::EXPLICIT_ACCESS)

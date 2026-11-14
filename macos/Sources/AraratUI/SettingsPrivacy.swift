@@ -45,7 +45,7 @@ struct SettingsPrivacySection: View {
                         .background(SettingsMarker(id: SettingsModel.privacyGPCSwitchMarker))
                 }.id(SettingsModel.privacyGPCRowID)
             }
-            SettingsGroupCard(heading: "History", marker: SettingsModel.rowMarker(SettingsModel.privacyHistoryRowID)) {
+            SettingsGroupCard(heading: "History", marker: SettingsModel.rowMarker(SettingsModel.privacyHistoryCardID)) {
                 SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.privacyHistoryRowID,
                                 marker: SettingsModel.rowMarker(SettingsModel.privacyHistoryRowID)) {
                     SettingsRowLabel(title: "Keep history for", subtitle: "")
@@ -113,8 +113,11 @@ struct SettingsPrivacyClearSheet: View {
                 .background(SettingsMarker(id: SettingsModel.privacySheetNoteMarker))
             HStack(spacing: 8) {
                 Spacer()
+                // L3: the unit's rule is Cancel as the default (Return and Esc both cancel); one
+                // SwiftUI button cannot take both shortcuts, so Cancel takes Return and a hidden
+                // button in the row's background carries Esc.
                 Button("Cancel") { model.cancelClearSheet() }
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(.defaultAction)
                     .background(SettingsMarker(id: SettingsModel.privacySheetCancelMarker))
                 Button("Clear") { model.confirmClearSheet() }
                     .buttonStyle(.borderedProminent)
@@ -122,8 +125,16 @@ struct SettingsPrivacyClearSheet: View {
                     .disabled(model.clearTypes.isEmpty || model.clearing)
                     .background(SettingsMarker(id: SettingsModel.privacySheetClearMarker))
             }
+            .background {
+                Button("") { model.cancelClearSheet() }
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(24)
-        .frame(width: 720)
+        .frame(width: 504)
+        .onExitCommand { model.cancelClearSheet() }
     }
 }

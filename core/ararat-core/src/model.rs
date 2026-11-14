@@ -767,18 +767,6 @@ pub enum ThirdPartyCookies { #[default] Block, Allow }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HistoryRetention { Week, Month, ThreeMonths, #[default] Year, Forever }
 
-impl HistoryRetention {
-    /// The days the engine's expiry thresholds to; None means every visit stays.
-    pub fn days(&self) -> Option<i32> {
-        match self {
-            Self::Week => Some(7),
-            Self::Month => Some(30),
-            Self::ThreeMonths => Some(90),
-            Self::Year => Some(365),
-            Self::Forever => None,
-        }
-    }
-}
 
 // U27p P2/P3: the Privacy pane's one synced record — the third-party cookie choice, the Global
 // Privacy Control signal and the history retention. The board's built-in values are Block, on and

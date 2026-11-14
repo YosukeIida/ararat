@@ -165,9 +165,15 @@ final class SettingsScreenCheck {
     var privacyOlderVisitURL = "https://history.example/older"
     var privacyTenDayVisitURL = "https://history.example/ten-days"
     var privacyTwoDayVisitURL = "https://history.example/two-days"
-    var privacySeeded = false
     var privacyRetentionSeeded = false
-    var privacyRetentionStart = -1
+    /// M1: the retention wait is bounded by wall clock (the expiry pass can be 5 minutes once the
+    /// queue is empty), and an in-flight query keeps each tick from queueing more (L10).
+    var privacyRetentionStartedAt: Date?
+    var privacyRetentionTimedOut = false
+    var privacyPolling = false
+    var privacyClearPolling = false
+    var privacyLastTen = -1
+    var privacyLastTwo = -1
     var privacyRecentGone = false
     var privacyOlderKept = false
     var privacySheetTitle = ""
@@ -266,6 +272,7 @@ extension Runtime {
                                  "gpc": probe.privacy.globalPrivacyControl,
                                  "retention": probe.privacy.historyRetention.label,
                                  "profile": probe.privacyProfile,
+                                 "loaded": probe.privacyLoaded,
                                  "sheet_shown": probe.clearSheetShown,
                                  "sheet_visible": probe.clearSheetVisible,
                                  "range": probe.clearRange.title,
@@ -274,8 +281,9 @@ extension Runtime {
             values["privacy_titles"] = ["cookie": check.privacyCookieTitle,
                                         "gpc": check.privacyGPCTitle,
                                         "clear": check.privacyClearCookieTitle]
-            values["privacy_visits"] = ["seeded": check.privacySeeded,
-                                        "retention_seeded": check.privacyRetentionSeeded,
+            values["privacy_visits"] = ["retention_seeded": check.privacyRetentionSeeded,
+                                        "ten": check.privacyLastTen,
+                                        "two": check.privacyLastTwo,
                                         "recent_gone": check.privacyRecentGone,
                                         "older_kept": check.privacyOlderKept]
         }

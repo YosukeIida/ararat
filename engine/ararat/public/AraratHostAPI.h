@@ -341,24 +341,28 @@ NSString* AraratCheckExtensionDialog(NSWindow* _Nullable parent, NSString* actio
 // U27p: Settings › Privacy. The app's synced core record is the source of the third-party cookie
 // mode, the Global Privacy Control signal and the browsing-history retention. Applying it writes
 // every regular profile's cookie-controls pref and GPC pref now and for a profile added later,
-// and sets the history expiry's retention (days; 0 is Forever, -1 keeps Chromium's 90 days).
+// and sets the history expiry's retention in days (0 never expires anything: the pane's Forever
+// and the state before the first window applies the record; a positive value replaces Chromium's
+// 90-day threshold).
 // Chromium 157's GPC needs kUniversalOptOut and kUniversalOptOutSettings enabled plus the
 // universal_optout.enabled pref, which AraratMain adds to the process's feature list.
 __attribute__((visibility("default")))
 void AraratApplyPrivacySettings(NSDictionary<NSString*, id>* settings);
 // P4: clears the chosen types (1 history, 2 cookies and other site data, 4 cached images and
-// files) for the range in one profile, through one BrowsingDataRemover task. The times are
-// seconds since 1970; a 0 begin is the beginning of time. The reply is the failed data types
-// bitmask, not a count, and is always called.
+// files) for the range in one profile, through one BrowsingDataRemover task. The begin is
+// seconds since 1970 (0 is the beginning of time) and the end is Chromium's Time::Max(), as its
+// own clear-browsing-data dialog uses. The reply is the failed data types bitmask, not a count,
+// and is always called; a missing profile or remover answers the requested types as failed.
 __attribute__((visibility("default")))
-void AraratClearBrowsingData(NSString* profile, double beginSeconds, double endSeconds,
-                             uint64_t types, void (^completion)(uint64_t failedDataTypes));
+void AraratClearBrowsingData(NSString* profile, double beginSeconds, uint64_t types,
+                             void (^completion)(uint64_t failedDataTypes));
 // Check-only: adds one history visit for a URL at the given age, and answers whether the service
-// accepted it. Refused outside a check run by the launch guard's screen list.
+// accepted it. Refused outside a check run (`ararat-check` or `ararat-screen`), answering NO.
 __attribute__((visibility("default")))
 void AraratCheckSeedHistoryVisit(NSString* profile, NSString* url, double daysAgo,
                                  void (^completion)(BOOL done));
 // Check-only: the URL's visit times, seconds since 1970, for the retention and clear conditions.
+// Refused outside a check run, answering an empty array.
 __attribute__((visibility("default")))
 void AraratCheckHistoryVisitTimes(NSString* profile, NSString* url,
                                   void (^completion)(NSArray<NSNumber*>* times));
