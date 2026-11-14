@@ -270,6 +270,16 @@ func pageOnlyRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool 
   return stable(before) == stable(after)
 }
 
+func pageOnlyTraceRows(_ rows: [[String]]?) -> [[String: String]]? {
+  rows?.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }.map { row in
+    var result = ["kind": row[0], "id": row[1]]
+    if row[0] == "space", let data = row[2].data(using: .utf8),
+       let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+       let title = body["title"] as? String { result["title"] = title }
+    return result
+  }
+}
+
 func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
   guard let before, let after else { return [["kind": "missing", "id": "", "fields": ["$snapshot"]]] }
   func indexed(_ rows: [[String]]) -> [String: [String]] {
@@ -3297,6 +3307,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
         guard placed, let rows = captureCheckRows() else { return }
         quitBefore = rows
+        let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "before", "rows": pageOnlyTraceRows(rows) ?? []]
+        if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
+           let line = String(data: data, encoding: .utf8) {
+          FileHandle.standardError.write(Data("ararat-trace: page-only-rows \(line)\n".utf8))
+        }
         popup.checkNavigate("data:text/html,<title>Ararat save check</title>save", disposition: "current")
         popup.window().makeKeyAndOrderFront(nil)
         browserCheckPhase = 41
@@ -3317,7 +3332,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if mode == "screen-links", browserCheckPhase == 42, let popup = popups.first?.host,
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
-      guard pageOnlyRowsUnchanged(quitBefore, captureCheckRows()) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
+      let rows = captureCheckRows()
+      let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "after", "rows": pageOnlyTraceRows(rows) as Any? ?? NSNull(), "diff": checkRecordDiff(quitBefore, rows)]
+      if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
+         let line = String(data: data, encoding: .utf8) {
+        FileHandle.standardError.write(Data("ararat-trace: page-only-rows \(line)\n".utf8))
+      }
+      guard pageOnlyRowsUnchanged(quitBefore, rows) else { finishBrowserCheck(ok: false, values: ["page_only_menu_rows": false]); return }
       save.cancel(nil)
       browserCheckPhase = 43
     } else if mode == "screen-links", browserCheckPhase == 43, let popup = popups.first?.host,
