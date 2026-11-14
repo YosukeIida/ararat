@@ -340,8 +340,11 @@ func removalAsksInTheSheetAndTheChangeSignalKeepsThePaneCurrent() async throws {
     #expect(model.pendingRemoval == nil && model.extensions.isEmpty)
 }
 
-// The sheet itself (design's wording and buttons): Cancel is the default and answers Return, Remove
-// is destructive, and cancelling keeps the row.
+// The AppKit sheet tests share the process.s sheets and windows, so they are serialized.
+@Suite(.serialized)
+struct RemoveSheetChecks {
+/// The sheet itself (design's wording and buttons): Cancel is the default and answers Return, Remove
+/// is destructive, and cancelling keeps the row.
 @Test @MainActor
 func theRemoveSheetHasTheDesignsTextAndCancelDefault() async throws {
     _ = NSApplication.shared
@@ -373,6 +376,76 @@ func theRemoveSheetHasTheDesignsTextAndCancelDefault() async throws {
     #expect(model.extensions.map(\.id) == ["windows"])
     #expect(host.removals.isEmpty)
 }
+
+// H1: the sheet's Esc belongs to the sheet alone. An Esc aimed at the alert cancels; one aimed at
+// the Settings window itself (or any other window) passes through and leaves the sheet up.
+@Test @MainActor
+func theRemoveSheetAnswersOnlyItsOwnEsc() async throws {
+    _ = NSApplication.shared
+    func esc(for window: NSWindow) -> NSEvent? {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                         timestamp: ProcessInfo.processInfo.systemUptime,
+                         windowNumber: window.windowNumber, context: nil,
+                         characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                         isARepeat: false, keyCode: 53)
+    }
+    let model = extensionModel(extensionSnapshot())
+    let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
+    model.extensionHost = host
+    model.readExtensions(shownSpaceID: "default")
+    let controller = SettingsWindowController(model: model)
+    controller.setExtensionSettings(host: host, manage: { _, _ in })
+    let window = try #require(controller.window)
+    window.orderFront(nil)
+    defer { window.contentViewController = nil }
+
+    model.requestRemoveExtension("windows")
+    try await waitUntil { window.attachedSheet != nil }
+    let sheet = try #require(window.attachedSheet)
+
+    // Esc typed in the Settings window itself is returned untouched and does not end the sheet.
+    let untouched = try #require(esc(for: window))
+    #expect(controller.handleRemoveSheetKey(untouched) === untouched)
+    #expect(window.attachedSheet === sheet && model.pendingRemoval?.id == "windows")
+
+    // Esc aimed at the sheet cancels it; the extension stays.
+    #expect(controller.handleRemoveSheetKey(try #require(esc(for: sheet))) == nil)
+    try await waitUntil { model.pendingRemoval == nil }
+    #expect(window.attachedSheet == nil && model.extensions.map(\.id) == ["windows"])
+    #expect(host.removals.isEmpty)
+}
+
+// H2: a Settings window closed with the sheet up clears the sheet state, and Remove… works again.
+@Test @MainActor
+func closingSettingsWithTheRemoveSheetUpClearsIt() async throws {
+    _ = NSApplication.shared
+    let model = extensionModel(extensionSnapshot())
+    let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
+    model.extensionHost = host
+    model.readExtensions(shownSpaceID: "default")
+    let controller = SettingsWindowController(model: model)
+    controller.setExtensionSettings(host: host, manage: { _, _ in })
+    let window = try #require(controller.window)
+    window.orderFront(nil)
+    defer { window.contentViewController = nil }
+
+    model.requestRemoveExtension("windows")
+    try await waitUntil { window.attachedSheet != nil }
+    window.close()
+    try await waitUntil { model.pendingRemoval == nil && window.attachedSheet == nil }
+    #expect(model.extensions.map(\.id) == ["windows"])
+
+    // The next Remove… is not refused by leftover state.
+    controller.open(shownSpaceID: "default")
+    try await waitUntil { window.isVisible }
+    model.requestRemoveExtension("windows")
+    try await waitUntil { window.attachedSheet != nil }
+    let sheet = try #require(window.attachedSheet)
+    window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+    try await waitUntil { model.pendingRemoval == nil }
+    #expect(model.extensions.map(\.id) == ["windows"])
+}
+}  // struct RemoveSheetChecks
 
 // The pane draws the chooser, the Installed card and a row's switch or Review…, and the empty
 // state; the search reaches the profile row and the extensions.

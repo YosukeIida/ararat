@@ -38,7 +38,11 @@ public final class SettingsWindowController: NSWindowController {
         // close itself ends the recording and gives the shortcut back (N1).
         littleWindowRecordingCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.cancelLittleWindowHotKeyRecording() }
+            MainActor.assumeIsolated {
+                self?.model.cancelLittleWindowHotKeyRecording()
+                // A window closed with the Remove sheet up may not run the sheet's completion.
+                self?.dismissRemoveSheet()
+            }
         }
     }
     @available(*, unavailable)
@@ -147,9 +151,7 @@ public final class SettingsWindowController: NSWindowController {
         alert.window.title = alert.messageText
         removeSheet = alert
         removeSheetMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }
-            self?.dismissRemoveSheet()
-            return nil
+            self?.handleRemoveSheetKey(event) ?? event
         }
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
@@ -162,11 +164,23 @@ public final class SettingsWindowController: NSWindowController {
         }
     }
 
+    /// One key event for the Remove sheet: Esc aimed at the sheet cancels it, and every other event
+    /// (another window's Esc, a page load's Stop, the find bar, leaving full screen) passes through.
+    /// Internal so the tests drive the same decision the monitor makes.
+    func handleRemoveSheetKey(_ event: NSEvent) -> NSEvent? {
+        guard event.keyCode == 53, event.window === removeSheet?.window else { return event }
+        dismissRemoveSheet()
+        return nil
+    }
+
     /// Ends the sheet as Cancel. The completion closes the model's pending state; a removal reported
     /// by the Extensions observer also ends an open sheet this way.
     private func dismissRemoveSheet() {
         guard let alert = removeSheet, let window else { return }
         window.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+        // Every exit path clears the sheet and the monitor, even when AppKit skips the completion.
+        endRemoveSheet()
+        model.cancelRemoveExtension()
     }
 
     private func endRemoveSheet() {
