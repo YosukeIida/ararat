@@ -18,7 +18,7 @@ private func onboardingTestModel(_ data: OnboardingData = OnboardingFixtures.sho
 }
 
 /// Walks screens 1–4 through the model's own steps, then lets the run loop turn so the import the
-/// progress screen scheduled runs (M1: the caller never calls performImport).
+/// progress screen scheduled runs; the caller never calls the import.
 @MainActor
 private func runImport(_ model: OnboardingModel) {
     model.advance()   // welcome → source
@@ -59,7 +59,7 @@ func theShowcaseFixtureImportsTheBoardsNumbers() throws {
     #expect(report.windowsError == nil && report.keyBindingsError == nil && report.linkRoutingError == nil)
 }
 
-/// H1: a store that already held a space does not change the done line, and the check's store
+/// A store that already held a space does not change the done line, and the check's store
 /// keeps both spaces — the report counts the import, never the store.
 @Test @MainActor
 func theDoneLineCountsOnlyWhatTheImportBrought() throws {
@@ -72,6 +72,29 @@ func theDoneLineCountsOnlyWhatTheImportBrought() throws {
     let reopened = try WorkspaceStore.open(path: model.storePath)
     let titles = Set(reopened.snapshot(windowId: "after").spaces.map(\.title))
     #expect(titles == Set(["Before the import", "Work", "Personal", "Reading"]))
+}
+
+/// N1's seam: the progress screen hands the import to the injected scheduler, so a caller can
+/// draw (and screenshot) the progress screen before the import runs. The default scheduler is the
+/// next main run-loop turn.
+@Test @MainActor
+func theProgressImportWaitsForTheScheduler() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var held: (@MainActor () -> Void)?
+    let model = OnboardingModel(storePath: directory.appendingPathComponent("held.sqlite").path,
+                                data: OnboardingFixtures.showcase,
+                                detector: OnboardingFixtures.FixtureSourceDetector(),
+                                defaultBrowser: FakeSetter(), schedule: { held = $0 })
+    model.advance(); model.advance(); model.advance()
+    model.notNow()
+    #expect(model.stage == .progress)
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    #expect(model.stage == .progress && model.summary == nil)
+    let block = try #require(held)
+    block()
+    #expect(model.stage == .done)
+    #expect(model.summary?.spaces == 3)
 }
 
 /// The store the flow wrote is the one it was given: a fresh open at the same path reads the three
@@ -187,7 +210,7 @@ func theDefaultBrowserButtonUsesTheInjectedSetter() throws {
     #expect(setter.calls == 1 && model.defaultBrowserCalls == 1 && model.stage == .progress)
 }
 
-/// M1: screens 1–5 walk in the board's order, back works, and screen 5 runs the import itself on
+/// Screens 1–5 walk in the board's order, back works, and screen 5 runs the import itself on
 /// the next run-loop turn — no caller reaches into the model.
 @Test @MainActor
 func theFlowWalksTheBoardsScreensAndTheProgressScreenRunsTheImport() throws {

@@ -71,13 +71,24 @@ extension Runtime {
             return
         }
         let setter = FakeDefaultBrowserSetter()
+        // The check holds the progress screen's import: `promptScreenScreenshot` spins the default
+        // run loop while `screencapture` runs, so a scheduled import would redraw the window under
+        // the capture. The phase releases it after the progress shot.
         let model = OnboardingModel(storePath: path, data: OnboardingFixtures.showcase,
-                                    detector: OnboardingFixtures.FixtureSourceDetector(), defaultBrowser: setter)
+                                    detector: OnboardingFixtures.FixtureSourceDetector(), defaultBrowser: setter,
+                                    schedule: { [weak owner] block in owner?.onboardingPendingImport = block })
         let controller = OnboardingWindowController(model: model)
         owner.onboardingWindow = controller
         owner.onboardingDefaultBrowser = setter
         controller.open()
         FileHandle.standardError.write(Data("ararat-trace: onboarding opened store=\(path)\n".utf8))
+    }
+
+    /// Runs the import the progress screen handed to the holding scheduler (the check's only).
+    func releaseHeldOnboardingImport() {
+        guard let block = (root ?? self).onboardingPendingImport else { return }
+        (root ?? self).onboardingPendingImport = nil
+        block()
     }
 
     func onboardingCheckDiagnostics(screen: Bool) -> [String: Any] {
@@ -212,18 +223,23 @@ extension Runtime {
             mark("setter_called", model.defaultBrowserCalls == calls + 1
                  && owner.onboardingDefaultBrowser?.calls == 1)
             mark("real_default_unchanged", onboardingDefaultHandler() == check.realDefaultBefore)
-            // The window moved to screen 5 and the model scheduled the import for the next run-loop
-            // turn, so this tick can still read and capture the progress screen.
-            guard probe.stage == .progress else { wait("progress after set as default"); return }
+            // The click moved the window to screen 5, whose import the check holds (N1). Phase 6
+            // reads and captures the held progress screen; a retry there cannot re-enter this
+            // phase's screen-4 guard.
+            browserCheckPhase = 6
+        case 6:
+            guard let probe = probe(), probe.stage == .progress else { wait("progress after set as default"); return }
             let steps = probe.progressRows.map(\.text)
             mark("progress_steps", steps == OnboardingModel.progressSteps && steps.count == 4)
             guard capture("progress") else { wait("capture progress"); return }
-            browserCheckPhase = 6
-        case 6:
-            guard let probe = probe(), probe.stage == .done, let model = owner.onboardingWindow?.model else {
-                wait("done")
-                return
-            }
+            // The screenshot spins the run loop; the import was held, so the window still shows
+            // screen 5 here, and it runs only now, after the capture.
+            guard probe.stage == .progress else { wait("progress held under the capture"); return }
+            owner.releaseHeldOnboardingImport()
+            browserCheckPhase = 7
+        case 7:
+            guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("done model"); return }
+            guard probe.stage == .done else { wait("done"); return }
             let line = OnboardingFixtureLine(OnboardingFixtures.expected).line
             mark("report_numbers", probe.summaryLine == line
                  && model.summary?.line == line && probe.title == "Your spaces are here")
@@ -238,7 +254,7 @@ extension Runtime {
             mark("no_signin_line", !texts.contains { $0.lowercased().contains("sign-in") })
             // The store the flow wrote is the check's database and its fixture's spaces are in it.
             // The store may hold the empty-check space EngineAdapter makes before the window opens:
-            // the imported counts come from the report, not from this reopen (H1).
+            // the imported counts come from the report, not from this reopen.
             var titles = Set<String>()
             if let path = quitPath, let store = try? WorkspaceStore.open(path: path) {
                 titles = Set(store.snapshot(windowId: "onboarding-check").spaces.map(\.title))
@@ -253,8 +269,9 @@ extension Runtime {
             // Screen 7: the malformed sidebar, walked through the window with "Not Now".
             model.data = OnboardingFixtures.malformedSidebar
             walkToProgressThroughTheWindow(model, probe: probe)
-            browserCheckPhase = 7
-        case 7:
+            owner.releaseHeldOnboardingImport()
+            browserCheckPhase = 8
+        case 8:
             guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("error model"); return }
             guard case .error(let message) = probe.stage else { wait("error stage"); return }
             check.errorMessage = message
@@ -267,8 +284,9 @@ extension Runtime {
             // Screen 8: the sibling file, through the window's "Not Now" again.
             model.data = OnboardingFixtures.badKeyBindings
             walkToProgressThroughTheWindow(model, probe: probe)
-            browserCheckPhase = 8
-        case 8:
+            owner.releaseHeldOnboardingImport()
+            browserCheckPhase = 9
+        case 9:
             guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("sibling model"); return }
             guard case .siblingFile(let message) = probe.stage else { wait("sibling-file stage"); return }
             mark("sibling_screen", probe.title == "One file could not be read")
@@ -277,8 +295,8 @@ extension Runtime {
             check.details["sibling"] = message
             guard capture("sibling-file") else { wait("capture sibling"); return }
             probe.click("onboarding-continue")
-            browserCheckPhase = 9
-        case 9:
+            browserCheckPhase = 10
+        case 10:
             guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("sibling continue"); return }
             guard probe.stage == .done else { wait("sibling continue stage"); return }
             mark("sibling_continue", model.summary?.spaces == OnboardingFixtures.expected.spaces

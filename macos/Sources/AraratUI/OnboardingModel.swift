@@ -99,7 +99,7 @@ public struct OnboardingSummary: Equatable, Sendable {
     }
 
     /// The report alone: the import counts these from the workspace it produced, so a store that
-    /// held spaces before the import cannot inflate them (H1). Routes are the routing import's
+    /// held spaces before the import cannot inflate them. Routes are the routing import's
     /// `imported_rules`.
     init(report: ImportReport) {
         spaces = Int(report.spaces)
@@ -162,17 +162,33 @@ public final class OnboardingModel: NSObject, ObservableObject {
     public let defaultBrowser: DefaultBrowserSetter
     /// The window redraws when the stage moves; the check calls the same path directly.
     public var onChange: (() -> Void)?
+    /// Where the progress screen hands its one import. The default is the next main run-loop turn;
+    /// a check injects a holding scheduler, because a screenshot's `waitUntilExit()` spins the
+    /// default run loop and would otherwise run the import under the capture.
+    public typealias ImportScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
+    public let schedule: ImportScheduler
     /// "Start Fresh", a done window's "Continue" and the close button all end here.
     public var onFinish: (() -> Void)?
 
     public init(storePath: String, data: OnboardingData,
                 detector: OnboardingSourceDetector = LaunchServicesSourceDetector(),
-                defaultBrowser: DefaultBrowserSetter = LaunchServicesDefaultBrowser()) {
+                defaultBrowser: DefaultBrowserSetter = LaunchServicesDefaultBrowser(),
+                schedule: @escaping ImportScheduler = OnboardingModel.runLoopScheduler) {
         self.storePath = storePath
         self.data = data
         self.detector = detector
         self.defaultBrowser = defaultBrowser
+        self.schedule = schedule
         super.init()
+    }
+
+    /// The shipping path: the import runs on the next main run-loop turn, so the window can draw
+    /// the progress screen first. Not a timer.
+    @MainActor
+    public static func runLoopScheduler(_ block: @escaping @MainActor () -> Void) {
+        RunLoop.main.perform(inModes: [.common, .modalPanel]) {
+            MainActor.assumeIsolated { block() }
+        }
     }
 
     /// The five step dots: welcome through progress. The done and error screens carry none of
@@ -261,9 +277,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
         lines = []
         report = nil
         onChange?()
-        RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self] in
-            MainActor.assumeIsolated { self?.performImport() }
-        }
+        schedule { [weak self] in self?.performImport() }
     }
 
     /// One row per file the import consumes, in the order `arc_sidebar` reads them.

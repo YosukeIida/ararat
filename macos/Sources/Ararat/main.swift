@@ -575,8 +575,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
   var settingsCheck: SettingsScreenCheck?
-  // U27j: the onboarding window, the fake screen-4 setter the check injects, and the check's state.
+  // U27j: the onboarding window, the fake screen-4 setter the check injects, the import the
+  // progress screen schedules (held while a check captures it), and the check's state.
   var onboardingWindow: OnboardingWindowController?
+  var onboardingPendingImport: (@MainActor () -> Void)?
   var onboardingDefaultBrowser: FakeDefaultBrowserSetter?
   var onboardingCheck: OnboardingCheckState?
   var sharedLookProbe: LookCheckProbe?
