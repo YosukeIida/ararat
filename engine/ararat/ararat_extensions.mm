@@ -31,6 +31,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
@@ -40,6 +41,8 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_manager_observer.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_prefs.h"
@@ -456,12 +459,37 @@ class ReviewRequest {
 
 // Check-only: installs a fixture directory into one loaded profile.
 void InstallUnpacked(Profile* profile, const base::FilePath& directory, void (^report)(NSString*)) {
+  // Chrome disables an unpacked extension when the profile's developer mode is off
+  // (ExtensionManagement::IsAllowedByUnpackedDeveloperModePolicy, extension_management.cc:455-473,
+  // reached through StandardManagementPolicyProvider::MustRemainDisabled,
+  // standard_management_policy_provider.cc:276-281), and a fresh profile has it off. The check turns
+  // it on for the scratch profile, as chrome://extensions' Developer mode switch does; a
+  // --load-extension fixture is kCommandLine instead and needs no such switch (:463-465).
+  profile->GetPrefs()->SetBoolean(prefs::kExtensionsUIDeveloperMode, true);
   auto installer = extensions::UnpackedInstaller::Create(profile);
   installer->set_be_noisy_on_failure(false);
   installer->set_completion_callback(
-      base::BindOnce(^(const extensions::Extension* extension, const base::FilePath&,
+      base::BindOnce(^(const extensions::Extension* extension, const base::FilePath& path,
                        const std::u16string& error) {
         if (!report) return;
+        if (extension && IsCheckRun()) {
+          // The install's context, what was loaded and whether the action manager knows its action
+          // right away; the per-row trace reports the same lookups on every later list.
+          std::string keys;
+          for (const auto& [key, value] : extension->manifest()->available_values()) {
+            if (!keys.empty()) keys += ",";
+            keys += key;
+          }
+          auto* actions = extensions::ExtensionActionManager::Get(profile);
+          std::fprintf(stderr,
+                       "ararat-trace: extension-install profile=%s path=%s otr=%d original=%d "
+                       "id=%s location=%d manifest_version=%d keys=%s action_now=%d\n",
+                       profile->GetPath().BaseName().value().c_str(), path.value().c_str(),
+                       profile->IsOffTheRecord(), profile->GetOriginalProfile() == profile,
+                       extension->id().c_str(), static_cast<int>(extension->location()),
+                       extension->manifest_version(), keys.c_str(),
+                       actions && actions->GetExtensionAction(*extension) != nullptr);
+        }
         report(extension ? @"loaded" : base::SysUTF16ToNSString(error));
       }));
   installer->Load(directory);
