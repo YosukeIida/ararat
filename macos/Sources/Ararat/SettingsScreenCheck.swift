@@ -1307,7 +1307,7 @@ extension Runtime {
                   probe.extensionProfile == check.extensionDefaultProfile,
                   let row = probe.extensions.first(where: { $0.name.hasPrefix("Ararat windows check") }),
                   row.canPin else {
-                note("phase 2 waits for loaded fixtures (default=\(check.extensionDefaultLoaded) second=\(check.extensionSecondLoaded)), the Default profile (\(check.extensionDefaultProfile), now \(probe.extensionProfile)), the windows row, and canPin=true (now \(fixtureRow(probe, check.extensionDefaultID)?.canPin ?? false)); rows=\(probe.extensions.map(\.name)); in_field=\(sidebar?.checkInFieldActionIDs ?? [])")
+                note("phase 2 waits for loaded fixtures (default=\(check.extensionDefaultLoaded) second=\(check.extensionSecondLoaded)), the Default profile (\(check.extensionDefaultProfile), now \(probe.extensionProfile)), the windows row, and canPin=true (now \(probe.extensions.first(where: { $0.name.hasPrefix("Ararat windows check") })?.canPin ?? false)); rows=\(probe.extensions.map(\.name)); in_field=\(sidebar?.checkInFieldActionIDs ?? [])")
                 return
             }
             check.extensionDefaultID = row.id

@@ -183,27 +183,27 @@ bool CanDisable(Profile* profile, const extensions::Extension& extension) {
 }
 
 // The pane's own change signal: one observer for every regular profile's registry, and one for its
-// ToolbarActionsModel. The toolbar side matters because the model is created lazily and initializes
-// after the profile's extensions load; a list read before that would show canPin=false with nothing
-// to correct it (design's phase-2 stall). Site access writes notify directly because they fire no
-// registry event. A profile loaded on demand reaches the pane through OnProfileAdded.
+// ToolbarActionsModel. The toolbar observer re-lists when an action is added or removed or the pins
+// change, so a pin made from the URL field reaches the pane. Site access writes notify directly
+// because they fire no registry event. A profile loaded on demand reaches the pane through
+// OnProfileAdded.
 class ExtensionWatcher;
 
-class ToolbarWatcher : public extensions::ToolbarActionsModel::Observer {
+class ToolbarWatcher : public ToolbarActionsModel::Observer {
  public:
-  ToolbarWatcher(extensions::ToolbarActionsModel* model, ExtensionWatcher* owner);
+  ToolbarWatcher(ToolbarActionsModel* model, ExtensionWatcher* owner);
   ~ToolbarWatcher() override;
 
   // ToolbarActionsModel::Observer:
-  void OnToolbarActionAdded(const extensions::ToolbarActionsModel::ActionId& action_id) override;
-  void OnToolbarActionRemoved(const extensions::ToolbarActionsModel::ActionId& action_id) override;
-  void OnToolbarActionUpdated(const extensions::ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarActionAdded(const ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarActionRemoved(const ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarActionUpdated(const ToolbarActionsModel::ActionId& action_id) override;
   void OnToolbarModelInitialized() override;
   void OnToolbarPinnedActionsChanged() override;
   void OnToolbarActionsModelShutdown() override;
 
  private:
-  raw_ptr<extensions::ToolbarActionsModel> model_;
+  raw_ptr<ToolbarActionsModel> model_;
   raw_ptr<ExtensionWatcher> owner_;
 };
 
@@ -268,10 +268,11 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
 
  private:
   void Watch(Profile* profile) {
-    if (auto* registry = extensions::ExtensionRegistry::Get(profile))
-      registries_.AddObservation(registry);
+    if (auto* registry = extensions::ExtensionRegistry::Get(profile)) {
+      if (!registries_.IsObservingSource(registry)) registries_.AddObservation(registry);
+    }
     if (toolbars_.contains(profile)) return;
-    if (auto* model = extensions::ToolbarActionsModel::Get(profile)) {
+    if (auto* model = ToolbarActionsModel::Get(profile)) {
       toolbars_.emplace(profile, std::make_unique<ToolbarWatcher>(model, this));
     }
   }
@@ -285,7 +286,7 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
   void (^handler_)(void) = nil;
 };
 
-ToolbarWatcher::ToolbarWatcher(extensions::ToolbarActionsModel* model, ExtensionWatcher* owner)
+ToolbarWatcher::ToolbarWatcher(ToolbarActionsModel* model, ExtensionWatcher* owner)
     : model_(model), owner_(owner) {
   model_->AddObserver(this);
 }
@@ -294,17 +295,17 @@ ToolbarWatcher::~ToolbarWatcher() {
   if (model_) model_->RemoveObserver(this);
 }
 
-void ToolbarWatcher::OnToolbarActionAdded(const extensions::ToolbarActionsModel::ActionId&) {
+void ToolbarWatcher::OnToolbarActionAdded(const ToolbarActionsModel::ActionId&) {
   owner_->NotifyChanged();
 }
 
-void ToolbarWatcher::OnToolbarActionRemoved(const extensions::ToolbarActionsModel::ActionId&) {
+void ToolbarWatcher::OnToolbarActionRemoved(const ToolbarActionsModel::ActionId&) {
   owner_->NotifyChanged();
 }
 
 // The action's badge or state changed; the pin state did not, and a re-list on every badge would
 // churn the pane for nothing.
-void ToolbarWatcher::OnToolbarActionUpdated(const extensions::ToolbarActionsModel::ActionId&) {}
+void ToolbarWatcher::OnToolbarActionUpdated(const ToolbarActionsModel::ActionId&) {}
 
 void ToolbarWatcher::OnToolbarModelInitialized() {
   owner_->NotifyChanged();
