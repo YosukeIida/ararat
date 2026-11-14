@@ -93,6 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (BOOL)isLittleWindowForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)extensionActionsChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier flight:(BOOL)flight;
@@ -170,10 +171,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)setSplitFrames:(NSDictionary<NSString*, NSValue*>*)frames frozen:(BOOL)frozen;
 - (BOOL)transferTab:(id<ARTabAPI>)tab commandId:(NSString*)commandId;
 - (BOOL)handoffTab:(id<ARTabAPI>)tab activate:(BOOL)activate;
+// U27h: a page-only Little Window in this host's profile Browser, at an AppKit screen frame.
+// NO when the profile's Browser is not in this host; the caller keeps the current window.
+- (BOOL)openLittleWindow:(NSString*)url profile:(NSString*)profile frame:(NSRect)frame;
 - (void)prepareTransferProfile:(NSString*)profile;
 - (BOOL)checkMoveTab:(id<ARTabAPI>)tab toHost:(id<ARWindowHostAPI>)destination;
 - (nullable NSDictionary<NSString*, id>*)navigationTarget;
 - (BOOL)navigateURL:(NSString*)url target:(NSDictionary<NSString*, id>*)target;
+- (BOOL)navigateLittleWindow:(NSString*)url;
 - (void)findAction:(NSString*)action text:(NSString*)text selection:(NSRange)selection liveId:(NSString*)liveId profile:(NSString*)profile;
 - (nullable NSString*)activeItemId;
 - (BOOL)runCommand:(NSString*)command;

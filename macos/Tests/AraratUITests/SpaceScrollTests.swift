@@ -608,3 +608,67 @@ func trackpadTakeoverDoesNotRubberBandThePresentedOffsetTwice() {
         #expect(abs(position - offset) < 0.000001)
     }
 }
+
+// U27c: the Spaces pane's Natural / Reversed setting (D3). Natural is today's behaviour exactly;
+// Reversed turns the final paging direction around for every device. The setting is applied once
+// at the start of the pipeline, so the wheel's system-inversion cancellation and the trackpad's
+// own sign are both already in the event by the time it is turned around.
+
+@Test @MainActor
+func theDirectionSettingSwapsTheWheelForBothInversionStates() {
+    for inverted in [false, true] {
+        var natural = SpaceScrollState()
+        var reversed = SpaceScrollState()
+        let n = natural.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3,
+                               pitch: 180, direction: .natural)
+        let r = reversed.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3,
+                                pitch: 180, direction: .reversed)
+        // Natural keeps the existing rule: a wheel that arrived inverted was cancelled in the
+        // pixel the event carries, so the same physical turn pages either way.
+        #expect(n == .settle(index: inverted ? 0 : 2, offset: 0, switched: true))
+        #expect(r == .settle(index: inverted ? 2 : 0, offset: 0, switched: true))
+    }
+}
+
+@Test @MainActor
+func theDirectionSettingTurnsTheWheelTheOtherWayAtEitherEnd() {
+    // Reversed at the first space still goes to the Library, and at the last to creation, because
+    // the whole pipeline is turned around rather than the neighbours being relabelled: a wheel
+    // that reads leftward under Natural reads rightward here.
+    var reversed = SpaceScrollState()
+    #expect(reversed.handle(.init(dx: -2, time: 0), index: 0, count: 3, pitch: 180, direction: .reversed)
+        == .settle(index: -1, offset: 0, switched: true))
+    reversed = SpaceScrollState()
+    #expect(reversed.handle(.init(dx: 2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed) == .pull)
+    reversed = SpaceScrollState()
+    #expect(reversed.handle(.init(dx: -2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed)
+        == .settle(index: 1, offset: 0, switched: true))
+}
+
+@Test @MainActor
+func theDirectionSettingSwapsTheTrackpadFollowAndRelease() {
+    for direction in [SpaceScrollDirection.natural, .reversed] {
+        let sign = direction == .natural ? 1.0 : -1.0
+        // The same events for both: Reversed turns this one motion the other way.
+        var state = SpaceScrollState()
+        let first = state.handle(.init(dx: -4, phase: .began, time: 0), index: 1, count: 3,
+                                 pitch: 180, direction: direction)
+        let next = state.handle(.init(dx: -8, phase: .changed, time: 0.010), index: 1, count: 3,
+                                pitch: 180, direction: direction)
+        #expect(first == .follow(-2 * sign))
+        #expect(next == .follow(-6 * sign))
+        let release = state.handle(.init(dx: -40, phase: .ended, time: 0.020), index: 1, count: 3,
+                                   pitch: 180, direction: direction)
+        // Natural: the gesture releases to the next space. Reversed: to the previous one.
+        #expect(release == .settle(index: direction == .natural ? 2 : 0, offset: -26 * sign, switched: true))
+    }
+}
+
+@Test @MainActor
+func theDirectionSettingLeavesVerticalScrollingAlone() {
+    var reversed = SpaceScrollState()
+    #expect(reversed.handle(.init(dx: 1, dy: 4, phase: .changed, time: 0), index: 1, count: 3,
+                            pitch: 180, direction: .reversed) == .vertical)
+    #expect(reversed.handle(.init(dx: 1, dy: 4, time: 0.010), index: 1, count: 3,
+                            pitch: 180, direction: .reversed) == .vertical)
+}

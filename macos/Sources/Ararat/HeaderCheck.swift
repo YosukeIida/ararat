@@ -12,10 +12,11 @@ final class HeaderCheck {
   var navigation: UInt = 0
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
+  var details: [String: Any] = [:]
   var lastWait = ""
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = Self.names + (screen ? ["capture"] : [])
-    return ["conditions": conditions, "failed_conditions": names.filter { conditions[$0] != true }, "images": images, "item": id, "live": live, "wait": lastWait, "unverified": ["Print preview and cancellation", "Force Reload network cache bypass", "Clear Cache and Cookies data isolation"]]
+    return ["conditions": conditions, "failed_conditions": names.filter { conditions[$0] != true }, "images": images, "details": details, "item": id, "live": live, "wait": lastWait, "unverified": ["Print preview and cancellation", "Force Reload network cache bypass", "Clear Cache and Cookies data isolation"]]
   }
 }
 
@@ -69,8 +70,11 @@ extension Runtime {
       container.layoutSubtreeIfNeeded()
       check.conditions["menu"] = header.makeMenu().items.filter { !$0.isSeparatorItem }.map(\.title) == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"]
       var capsOK = true
+      check.details["tooltips_shown"] = header.tooltipsShown
+      check.details["loading"] = header.loading
       for (command, label, caps) in [("toggle_sidebar", "Toggle Sidebar", ["⌘", "S"]), ("back", "Go Back", ["⌘", "["]), ("forward", "Go Forward", ["⌘", "]"]), ("reload", "Reload", ["⌘", "R"])] {
         let tip = header.checkTooltip(command, keep: screen)
+        check.details["tooltip_\(command)"] = ["text": tip.0 ?? "nil", "caps": tip.1] as [String: Any]
         capsOK = capsOK && tip.0 == label && tip.1 == caps
         if screen {
           check.capturing = true
@@ -114,7 +118,9 @@ extension Runtime {
           if let image { check.images["command_r_narrow"] = image }
         }
         container.checkShortcutKeys(["W"], event: event)
-        check.conditions["pressed"] = commandCap && direct && menuPressed && sidebar.checkClosePressed(id: check.id)
+        let closePressed = sidebar.checkClosePressed(id: check.id)
+        check.details["pressed"] = ["command_cap": commandCap, "direct": direct, "menu": menuPressed, "close": closePressed]
+        check.conditions["pressed"] = commandCap && direct && menuPressed && closePressed
         if screen {
           check.capturing = true
           let image = promptScreenScreenshot(host.window(), name: "header-command-w", withoutShadow: true)

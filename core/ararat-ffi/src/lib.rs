@@ -644,7 +644,42 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // U27c: the Spaces pane's scroll direction. The same synced record as the New Tab row
+    // switch, so the pane writes it once and every window reads it back from the workspace.
+    pub fn set_space_scroll_direction(&self, window_id: String, direction: SpaceScrollDirection) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_space_scroll_direction(direction.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // U27d: the Appearance pane's Tooltips switch (D4). The same synced settings record as the
+    // New Tab row switch, so the pane writes it once and every window reads it back.
+    pub fn set_tooltips_shown(&self, window_id: String, shown: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_tooltips_shown(shown);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn flush(&self) -> Result<(), CoreError> {
+        self.store.flush().map_err(Into::into)
+    }
+
+    // U27h D8: the Little Window's frame, per device. A nil frame forgets it.
+    pub fn little_window_frame(&self) -> Option<LittleWindowFrame> {
+        self.workspace.lock().unwrap().little_window_frame.map(Into::into)
+    }
+
+    pub fn set_little_window_frame(&self, frame: Option<LittleWindowFrame>) -> Result<(), CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_little_window_frame(frame.map(Into::into));
+        self.store.write(ops);
         self.store.flush().map_err(Into::into)
     }
 
@@ -917,11 +952,52 @@ impl From<Look> for ararat_core::model::Look {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct WorkspaceSettings {
     pub new_tab_row_shown: bool,
+    pub space_scroll_direction: SpaceScrollDirection,
+    pub tooltips_shown: bool,
 }
-
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
-        Self { new_tab_row_shown: settings.new_tab_row_shown }
+        Self { new_tab_row_shown: settings.new_tab_row_shown,
+            space_scroll_direction: settings.space_scroll_direction.into(),
+            tooltips_shown: settings.tooltips_shown }
+    }
+}
+
+/// The Spaces pane's Natural / Reversed choice (D3). Natural keeps today's behaviour: the wheel
+/// cancels the system's natural-scrolling inversion and a trackpad gesture keeps its sign.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SpaceScrollDirection { Natural, Reversed }
+impl From<ararat_core::model::SpaceScrollDirection> for SpaceScrollDirection {
+    fn from(value: ararat_core::model::SpaceScrollDirection) -> Self {
+        use ararat_core::model::SpaceScrollDirection as Core;
+        match value { Core::Natural => Self::Natural, Core::Reversed => Self::Reversed }
+    }
+}
+impl From<SpaceScrollDirection> for ararat_core::model::SpaceScrollDirection {
+    fn from(value: SpaceScrollDirection) -> Self {
+        use ararat_core::model::SpaceScrollDirection as Core;
+        match value { SpaceScrollDirection::Natural => Core::Natural, SpaceScrollDirection::Reversed => Core::Reversed }
+    }
+}
+
+// U27h D8: the Little Window's frame on this device.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct LittleWindowFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<ararat_core::model::LittleWindowFrame> for LittleWindowFrame {
+    fn from(frame: ararat_core::model::LittleWindowFrame) -> Self {
+        Self { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+    }
+}
+
+impl From<LittleWindowFrame> for ararat_core::model::LittleWindowFrame {
+    fn from(frame: LittleWindowFrame) -> Self {
+        Self { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
     }
 }
 

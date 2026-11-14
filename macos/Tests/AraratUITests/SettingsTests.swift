@@ -108,7 +108,7 @@ func delayedLookCompletionDoesNotClearRetargetedPreview() async throws {
                               keyBindings: KeyBindingsModel(adapter: first), airTraffic: AirTrafficModel(adapter: first))
     let oldEditor = LookEditorModel(settings: model, space: space)
     first.checkLookCompletion = { release = $0 }
-    oldEditor.preset(1)
+    oldEditor.applyChip(page: 0, index: 1)
     oldEditor.dismiss()
     try await waitUntil { release != nil }
     model.retarget(snapshot: secondSnapshot, adapter: second, publish: { _ in }, resetWidth: {},
@@ -119,7 +119,7 @@ func delayedLookCompletionDoesNotClearRetargetedPreview() async throws {
     newEditor.change { $0.opacity = 0.21 }
     let expectedPreview = newEditor.look
     release?()
-    #expect(firstPublished?.spaces.first(where: { $0.id == space.id })?.look?.colors == LookEditorModel.presets[1])
+    #expect(firstPublished?.spaces.first(where: { $0.id == space.id })?.look?.colors == [LookEditorModel.chipColour(LookEditorModel.chipPages[0][1])])
     #expect(secondPreviewActive && secondPreview == expectedPreview)
     #expect(newEditor.editing)
 }

@@ -336,6 +336,7 @@ func returnCommitsTheSelectedRowCommandReturnForcesANewTabAndEscapeCloses() thro
     try #require(commits.count == 1)
     #expect(commits[0].0?.target == .command(id: "c1"))
     #expect(commits[0].1 == .newTab && commits[0].2 == false)
+    #expect(controller.storeReadyAtSubmission)
     #expect(closed == 1 && !controller.isOpen)
 
     // ⌘Return forces a new tab. The command-modified key arrives in the key-equivalent pass
@@ -785,6 +786,7 @@ func returnBeforeTheSessionArrivesCommitsWhenItLands() throws {
     try #require(commits.count == 1)
     #expect(commits[0].0?.target == .openUrl(url: "https://a.test"))
     #expect(commits[0].1 == .newTab && commits[0].2 == false)
+    #expect(!controller.storeReadyAtSubmission)
     #expect(closed == 1 && !controller.isOpen)
     #expect(store.queries == ["https://a.test"])
 
@@ -800,6 +802,7 @@ func returnBeforeTheSessionArrivesCommitsWhenItLands() throws {
     forced.applyStore(store)
     try #require(forcedCommits.count == 1)
     #expect(forcedCommits[0] == true && !forced.isOpen)
+    #expect(!forced.storeReadyAtSubmission)
 }
 
 

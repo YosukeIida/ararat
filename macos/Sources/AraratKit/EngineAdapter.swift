@@ -16,6 +16,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard CommandLine.arguments.contains("--ararat-check=private-window") || CommandLine.arguments.contains("--ararat-screen=private-window") else { return }
         FileHandle.standardError.write(Data("ararat-trace: private-selection window=\(windowID) \(message())\n".utf8))
     }
+    private func traceLittleWindow(_ message: @autoclosure () -> String) {
+        guard CommandLine.arguments.contains("--ararat-check=little-window") || CommandLine.arguments.contains("--ararat-screen=little-window") else { return }
+        FileHandle.standardError.write(Data("ararat-trace: little-handoff window=\(windowID) \(message())\n".utf8))
+    }
     public let session: WorkspaceSession
     public let isPrivate: Bool
     private var queue: DispatchQueue { session.queue }
@@ -49,6 +53,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var cardResizeObserver: NSObjectProtocol?
     private var keyWindowObserver: NSObjectProtocol?
     private var handoffGeneration = 0
+    private var littleWindowHandoffs = 0
+    private var littleWindowKeyTakePending = false
+    private var littleWindowAwaiting: [String: String] = [:]
     private var splitHandles: [String: SplitDividerView] = [:]
     private let splitFocusRing = SplitFocusRingView()
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
@@ -219,7 +226,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var checkSelectionActivated: ((String) -> Void)?
     public var checkSelectionCommand: ((String, String, Bool) -> Void)?
 
-    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
+    public init(path: String, windowID: String, card: NSView, seedCheck: Bool = false, seedSingleCheck: Bool = false, seedLinkCheck: Bool = false, seedProfiles: Bool = false, seedSplitCheck: Bool = false, seedSplitCommands: Bool = false, seedToastSplit: Bool = false, seedOrganize: Bool = false, seedDock: Bool = false, seedSidebar: Bool = false, seedLittleWindow: Bool = false, seedSettings: Bool = false, profileCheckURL: String = "about:blank", singleCheckURL: String? = nil, requireExisting: Bool = false, private isPrivate: Bool = false, session: WorkspaceSession = WorkspaceSession()) throws {
         self.session = session
         self.isPrivate = isPrivate
         self.windowID = windowID
@@ -229,7 +236,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let opened = try store ?? WorkspaceStore.open(path: path)
             let empty = opened.snapshot(windowId: windowID).spaces.isEmpty
             if requireExisting && empty { throw NSError(domain: "Ararat.relaunch", code: 1) }
-            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar) && !empty {
+            if (seedCheck || seedSingleCheck || seedLinkCheck || seedProfiles || seedOrganize || seedDock || seedSidebar || seedLittleWindow || seedSettings) && !empty {
                 throw NSError(domain: "Ararat.slice", code: 1)
             }
             if seedOrganize {
@@ -268,7 +275,21 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.moveItem(windowId: windowID, id: unloadedPin, container: "sidebar-work:pinned", index: 3, openFolder: false)
                 _ = try opened.closeItem(windowId: windowID, id: unloadedPin)
                 _ = try opened.selectItem(windowId: windowID, id: todayA)
-            } else if seedProfiles || seedDock || seedSplitCommands {
+            } else if seedSettings {
+                // U27a: three spaces with three Today tabs each, so the rail's search finds space
+                // rows and the Spaces pane has more than one row to list and push. U27c's wheel
+                // check needs a third, so the middle space has a neighbour on both sides.
+                _ = try opened.createSpace(windowId: windowID, name: "Personal", spaceId: "settings-personal")
+                _ = try opened.createSpace(windowId: windowID, name: "Work", spaceId: "settings-work")
+                _ = try opened.createSpace(windowId: windowID, name: "Play", spaceId: "settings-play")
+                for space in ["settings-personal", "settings-work", "settings-play"] {
+                    try opened.showSpace(windowId: windowID, spaceId: space)
+                    for name in ["one", "two", "three"] {
+                        _ = try opened.createTab(windowId: windowID, url: "about:blank?settings-\(name)")
+                    }
+                }
+                try opened.showSpace(windowId: windowID, spaceId: "settings-personal")
+            } else if seedProfiles || seedDock || seedSplitCommands || seedLittleWindow {
                 var json = """
                 {"sidebar":{"containers":[{"global":{}},{"spaces":["default",{"id":"default","title":"Default","profile":{"default":true},"containerIDs":["pinned","pin-default","unpinned","today-default"]},"named",{"id":"named","title":"Profile 1","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","pin-named","unpinned","today-named"]}],"topAppsContainerIDs":[],"items":["pin-default",{"id":"pin-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"today-default",{"id":"today-default","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"default"}}}}},"pin-named",{"id":"pin-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}},"today-named",{"id":"today-named","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"named"}}}}}]}]}}
                 """
@@ -317,6 +338,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     _ = try opened.moveSpace(windowId: windowID, spaceId: "named", index: 12)
                     try opened.showSpace(windowId: windowID, spaceId: "default")
                 }
+                if seedLittleWindow {
+                    // U27h: the profile has several spaces for the ⌄ menu and its search; the
+                    // import above supplies the second profile for the chip's menu.
+                    try opened.showSpace(windowId: windowID, spaceId: "default")
+                    for (id, name) in [("little-work", "Work"), ("little-personal", "Personal"), ("little-reading", "Reading")] {
+                        _ = try opened.createSpace(windowId: windowID, name: name, spaceId: id)
+                    }
+                    try opened.showSpace(windowId: windowID, spaceId: "little-work")
+                    _ = try opened.createTab(windowId: windowID, url: "data:text/html,<title>Little Window seed</title>")
+                }
             } else if empty {
                 _ = try opened.createSpace(windowId: windowID, name: "Space", spaceId: UUID().uuidString)
             }
@@ -359,6 +390,36 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         // regular Browser. The engine sets the private directory itself.
         if let profile, !isPrivate { _ = host.setProfileDirectory(profile) }
         publish()
+    }
+
+    public func beginLittleWindowHandoff() {
+        precondition(Thread.isMainThread)
+        littleWindowHandoffs += 1
+        traceLittleWindow("scope-begin count=\(littleWindowHandoffs)")
+    }
+
+    public func endLittleWindowHandoff() {
+        precondition(Thread.isMainThread)
+        queue.sync {}
+        precondition(littleWindowHandoffs > 0)
+        littleWindowHandoffs -= 1
+        traceLittleWindow("scope-end count=\(littleWindowHandoffs) deferred=\(littleWindowKeyTakePending) replay=\(littleWindowHandoffs == 0 && littleWindowKeyTakePending)")
+        if littleWindowHandoffs == 0 && littleWindowKeyTakePending {
+            littleWindowKeyTakePending = false
+            takeRemoteSelection()
+        }
+    }
+
+    public func awaitLittleWindowHandoff(item: String, live: String) {
+        precondition(Thread.isMainThread)
+        littleWindowAwaiting[live] = item
+        traceLittleWindow("await item=\(item) live=\(live)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, self.littleWindowAwaiting[live] == item else { return }
+            self.littleWindowAwaiting.removeValue(forKey: live)
+            self.traceLittleWindow("await-timeout item=\(item) live=\(live)")
+            self.endLittleWindowHandoff()
+        }
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, performWorkspaceCommand command: String) {
@@ -409,7 +470,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         session.finishCrashRecovery?()
     }
 
-    public func select(id: String, url: String, restoring: RestorationCandidate? = nil, wholeSplit: Bool = true) {
+    public func select(id: String, url: String, restoring: RestorationCandidate? = nil, wholeSplit: Bool = true, source: String = #fileID, line: UInt = #line) {
         precondition(Thread.isMainThread)
         tracePrivate("select item=\(id) whole=\(wholeSplit) generation=\(selectionGeneration) displayed=\(displayedSelection ?? "nil") active=\(host?.activeItemId() ?? "nil") lone=\(loneSplitPane ?? "nil")")
         guard !selectionClosed, let host, !host.isClosing(), !host.isClosingAll() else { tracePrivate("select refused item=\(id) closed or missing host"); return }
@@ -442,12 +503,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 let selectedSpace = snapshot.shownSpaceId
                 let selectedProfile = snapshot.spaces.first(where: { $0.id == selectedSpace })?.profileName
                 let needsOpen = store.liveTab(item: id) == nil
+                self.traceLittleWindow("select item=\(id) source=\(source):\(line) needs_open=\(needsOpen)")
                 if CommandLine.arguments.contains("--ararat-check=close") {
                     FileHandle.standardError.write(Data("ararat-trace: select-open=\(needsOpen)\n".utf8))
                 }
                 let command = try needsOpen
                     ? store.liveOpen(item: id, url: url)
                     : store.liveActivate(item: id)
+                if needsOpen { self.traceLittleWindow("reserve source=select item=\(id) command=\(command.id)") }
                 if !needsOpen { _ = store.liveSelectionIntent(commandId: command.id, windowId: self.windowID) }
                 self.pendingSelectionCommands.insert(command.id)
                 func leaves(_ pane: SplitPane) -> [SplitPane] {
@@ -679,6 +742,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     let current = try store.createTab(windowId: self.windowID, url: entry.url)
                     if let id = current.selectedId {
                         let command = try store.liveOpen(item: id, url: entry.url)
+                        self.traceLittleWindow("reserve source=external item=\(id) command=\(command.id)")
                         self.pendingSelectionCommands.insert(command.id)
                         commands.append((command, entry.untrusted))
                     }
@@ -702,6 +766,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 let snapshot = try store.createTab(windowId: self.windowID, url: url)
                 guard let item = snapshot.selectedId else { return }
                 let command = try store.liveOpen(item: item, url: url)
+                self.traceLittleWindow("reserve source=open-command item=\(item) command=\(command.id)")
                 self.pendingSelectionCommands.insert(command.id)
                 DispatchQueue.main.async {
                     self.execute(command)
@@ -986,6 +1051,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
         let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
+        traceLittleWindow("transaction-arrived epoch=\(epoch) rev=\(rev) cause=\(cause) tabs=\(strips.flatMap { strip in strip.tabs.map { "\(strip.window):\($0.item ?? "nil"):\($0.liveId)" } }.joined(separator: ","))")
         let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
         tracePrivate("transaction received private=\(offTheRecord) epoch=\(epoch) rev=\(rev) cause=\(cause) strips=\(strips.map { "\($0.window):active=\($0.active ?? "nil"):tabs=\($0.tabs.map { "\($0.liveId):\($0.item ?? "nil")" })" }) active=\(host.activeItemId() ?? "nil") generation=\(selectionGeneration) closed=\(selectionClosed)")
         if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { tracePrivate("transaction rejected closing rev=\(rev)"); return }
@@ -1004,6 +1070,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let before = store.snapshot(windowId: self.windowID)
                 let outcome = try store.liveApply(transaction: transaction)
+                self.traceLittleWindow("transaction-result rev=\(rev) applied=\(outcome.applied) mappings=\(transaction.strips.flatMap { strip in strip.tabs.compactMap { tab in tab.item.map { "\($0):\(tab.liveId):\(store.liveTab(item: $0) ?? "nil")" } } }.joined(separator: ","))")
+                let settled = outcome.applied ? transaction.strips.filter { $0.window == self.windowID }.flatMap { strip in
+                    strip.tabs.compactMap { tab -> (String, String)? in
+                        guard let item = tab.item, store.liveTab(item: item) == tab.liveId else { return nil }
+                        return (item, tab.liveId)
+                    }
+                } : []
                 if let error = outcome.persistenceError { self.report(CoreError.Store(message: error)) }
                 for command in outcome.commands where command.kind == .activate || command.kind == .open {
                     self.pendingSelectionCommands.insert(command.id)
@@ -1020,6 +1093,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 }
                 let workspaceChanged = before != snapshot || mappingChanged || !outcome.adopted.isEmpty || !outcome.commands.isEmpty
                 DispatchQueue.main.async {
+                    for (item, live) in settled where self.littleWindowAwaiting[live] == item {
+                        self.littleWindowAwaiting.removeValue(forKey: live)
+                        self.traceLittleWindow("settled item=\(item) live=\(live)")
+                        self.endLittleWindowHandoff()
+                    }
                     guard !(hasClosingTabs && self.selectionClosed) else { self.tracePrivate("transaction rejected on delivery rev=\(rev)"); return }
                     for (live, owner) in movedLives {
                         self.session.noteTransfer(live, destination: owner)
@@ -1434,6 +1512,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     guard let url = pane.url else { continue }
                     do {
                         let command = try store.liveOpen(item: pane.id, url: url)
+                        self.traceLittleWindow("reserve source=split-sibling item=\(pane.id) command=\(command.id)")
                         self.pendingSelectionCommands.insert(command.id)
                         commands.append(command)
                     } catch { self.report(error) }
@@ -1514,6 +1593,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func takeRemoteSelection() {
         precondition(Thread.isMainThread)
+        if littleWindowHandoffs > 0 { littleWindowKeyTakePending = true; traceLittleWindow("key-selection deferred=true count=\(littleWindowHandoffs)"); return }
         guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { tracePrivate("key take skipped closed=\(selectionClosed) restoring=\(restoringSelection)"); return }
         tracePrivate("key take generation=\(selectionGeneration) displayed=\(displayedSelection ?? "nil") active=\(host.activeItemId() ?? "nil") lone=\(loneSplitPane ?? "nil")")
         let loneHere = loneSplitPane
@@ -1535,7 +1615,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             tracePrivate("key decision item=\(id) owner=\(owner ?? "nil") remoteSibling=\(remoteSplit) lone=\(loneHere ?? "nil") take=\(take.take) whole=\(take.wholeSplit)")
             return take.take ? (id, url, take.wholeSplit) : nil
         }
-        if let (id, url, wholeSplit) = candidate { select(id: id, url: url, wholeSplit: wholeSplit) }
+        if let (id, url, wholeSplit) = candidate { select(id: id, url: url, wholeSplit: wholeSplit, source: "key") }
         else { tracePrivate("key no candidate") }
     }
 

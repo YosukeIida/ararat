@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case tabs, shortcuts, airTraffic, spaces, space(String) }
+    enum Page: Hashable { case tabs, shortcuts, airTraffic, appearance, spaces, space(String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -17,7 +17,10 @@ public final class SettingsModel: ObservableObject {
     }
     @Published var snapshot: WorkspaceSnapshot
     @Published var page: Page = .spaces
-    @Published var query = ""
+    @Published var query = "" { didSet { if query != oldValue { searchIndex = 0 } } }
+    /// The result the search's arrows move and Return opens: the first one until an arrow moves
+    /// it (D7). It is an index into `results`, which is why a new query starts it over.
+    @Published var searchIndex = 0
     @Published var highlighted: String?
     @Published var error: String?
     @Published var pendingDelete: String?
@@ -38,6 +41,19 @@ public final class SettingsModel: ObservableObject {
     var resetWidth: () -> Void
     @Published var shortcuts: [Row] = []
     @Published var spaceKeys: [Int: [String]] = [:]
+    /// The Spaces pane's scroll direction (U27c): read from the workspace's settings record, so
+    /// a reopen shows the stored value, and written through the same record the sidebar reads.
+    @Published var spaceScrollDirection: SpaceScrollDirection = .natural
+    /// Hands a written direction to the browser windows' sidebars; the app sets it, the pane and
+    /// the settings window read `spaceScrollDirection` and the paging pipeline directly.
+    var spaceScroll: (SpaceScrollDirection) -> Void = { _ in }
+    /// U27d, the Appearance pane: the New Tab row switch and the Tooltips switch, both read from
+    /// the workspace's settings record on open and written through it. The app hands each written
+    /// value to every window that shows the workspace, as it does the scroll direction.
+    @Published var newTabRowShown = true
+    @Published var tooltipsShown = true
+    var newTabRow: (Bool) -> Void = { _ in }
+    var tooltips: (Bool) -> Void = { _ in }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -103,30 +119,65 @@ public final class SettingsModel: ObservableObject {
         guard case .space(let id) = page else { return nil }
         return snapshot.spaces.first { $0.id == id }
     }
+    /// The rail's panes, in the boards' order with only the built ones (D1).
+    var panes: [SettingsPane] { SettingsRegistry.built }
     var title: String {
-        switch page { case .tabs: "Tabs"; case .shortcuts: "Shortcuts"; case .airTraffic: "Air Traffic Control"; case .spaces: "Spaces"; case .space: space?.title ?? "Spaces" }
+        if case .space = page, let space { return space.title }
+        return SettingsRegistry.pane(page: page).title
+    }
+    /// The header's icon, from the pane the page belongs to (a space page shows the space's own).
+    var icon: String { SettingsRegistry.pane(page: page).icon }
+    /// The header's one line: a space page names its tabs and profile, a pane its own subtitle.
+    var subtitle: String {
+        if let space { return "\(tabCountLabel(space)) · \(space.profileName)" }
+        return SettingsRegistry.pane(page: page).subtitle
     }
     /// The pane says in plain words that the routing arrives with the engine.
     static let airTrafficSubtitle = "Links other apps hand to Ararat follow these routes once the browser engine arrives."
     /// The id the search result for the Air Traffic Control pane carries, and the id the pane's
     /// default destination card carries: a result scrolls to and fills the same row (§7).
-    static let airTrafficCardId = "air-traffic"
-    var rows: [Row] {
-        var result = [Row(id: "width", pane: .tabs, title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt."), Row(id: "archive-after", pane: .tabs, title: "Archive Today's tabs after", subtitle: archiveSubtitle)] + shortcuts
-        result.append(Row(id: Self.airTrafficCardId, pane: .airTraffic, title: "Air Traffic Control", subtitle: Self.airTrafficSubtitle))
-        for space in snapshot.spaces {
-            result.append(Row(id: space.id, pane: .spaces, title: space.title, subtitle: "\(tabCountLabel(space)) · \(space.profileName)"))
-            result += [
-                Row(id: "name", pane: .space(space.id), title: "Name", subtitle: "\(space.title) · This space"),
-                Row(id: "icon", pane: .space(space.id), title: "Icon", subtitle: "Choose one character · \(space.title) · This space"),
-                Row(id: "look", pane: .space(space.id), title: "Look", subtitle: "Colour and texture · \(space.title) · This space"),
-                Row(id: "profile", pane: .space(space.id), title: "Profile", subtitle: "Read-only · \(space.title) · This space · \(space.profileName)"),
-                Row(id: "delete", pane: .space(space.id), title: "Delete Space", subtitle: "\(space.title) · " + (snapshot.spaces.count == 1 ? "The last space cannot be deleted." : "Move pinned and Today tabs to the Archive."))
-            ]
-        }
-        return result
-    }
+    public static let airTrafficCardId = "air-traffic"
+    /// U27c's card in the Spaces pane: the search result and the card share this id.
+    public static let spaceScrollDirectionCardId = "space-scroll-direction"
+    /// U27d's rows in the Appearance pane: the Look link, and the two switches in the board's
+    /// "Sidebar" card. The search result and the row share each id.
+    public static let lookRowId = "look"
+    public static let newTabRowId = "new-tab-row"
+    public static let tooltipsRowId = "tooltips"
+    /// The switches themselves, so a check can find the pair the board draws.
+    public static let newTabRowSwitchMarker = "new-tab-row-switch"
+    public static let tooltipsSwitchMarker = "tooltips-switch"
+    var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
+    /// The results grouped under their pane, in the rail's order: only panes with a hit get a
+    /// heading, and the flat `results` order is these groups' rows in order.
+    var resultGroups: [(pane: SettingsPane, rows: [Row])] {
+        let results = results
+        return SettingsRegistry.built.compactMap { pane in
+            let hits = results.filter { $0.pane.paneID == pane.id }
+            return hits.isEmpty ? nil : (pane, hits)
+        }
+    }
+    var selectedResult: Row? { results.indices.contains(searchIndex) ? results[searchIndex] : nil }
+    func moveSearchSelection(_ delta: Int) {
+        let count = results.count
+        guard count > 0 else { searchIndex = 0; return }
+        searchIndex = min(max(0, searchIndex + delta), count - 1)
+    }
+    /// Opens the selected result. Return in the search field calls this and so does the check.
+    @discardableResult
+    func openSelectedResult() -> Bool {
+        guard let row = selectedResult else { return false }
+        select(row)
+        return true
+    }
+    func handleSearchKey(_ key: SettingsSearchKey) -> Bool {
+        switch key {
+        case .up: guard !results.isEmpty else { return false }; moveSearchSelection(-1); return true
+        case .down: guard !results.isEmpty else { return false }; moveSearchSelection(1); return true
+        case .return: return openSelectedResult()
+        }
+    }
     func select(_ row: Row) { navigate(row.pane, highlight: row.id) }
     func tabCount(_ space: SpaceSnapshot) -> Int { space.today.filter { $0.kind == .tab || $0.kind == .split }.count }
     func tabCountLabel(_ space: SpaceSnapshot) -> String {
@@ -138,6 +189,22 @@ public final class SettingsModel: ObservableObject {
         guard case .space(let id) = row.pane, let space = snapshot.spaces.first(where: { $0.id == id }) else { return row.title }
         return row.title + " — " + space.title
     }
+    /// The identifiers the rail, the detail and the screen check share. The check finds views
+    /// by these in the window's view tree; nothing here is drawn.
+    static func railMarker(_ pane: SettingsPaneID) -> String { railMarker(id: pane.rawValue) }
+    public static func railMarker(id: String) -> String { "rail-\(id)" }
+    static func groupMarker(_ pane: SettingsPaneID) -> String { groupMarker(id: pane.rawValue) }
+    public static func groupMarker(id: String) -> String { "group-\(id)" }
+    static func resultMarker(_ row: Row) -> String { "result-\(row.pane.searchKey)-\(row.id)" }
+    public static func rowMarker(_ id: String) -> String { "row-\(id)" }
+    public static let selectedResultMarker = "result-selected"
+    public static let noResultsMarker = "no-results"
+    /// The Spaces pane's segmented control, found by the screen check through its marker.
+    public static let spaceScrollControlMarker = "space-scroll-control"
+    public static let headerIconMarker = "header-icon"
+    public static let headerTitleMarker = "header-title"
+    public static let headerSubtitleMarker = "header-subtitle"
+    public static let railMarkerID = "rail"
     static func iconDraft(_ value: String, stored: String = "") -> String {
         if value.count == 2, stored.count == 1, value.contains(where: { String($0) == stored }), value != stored + stored {
             return value.filter { String($0) != stored }
@@ -167,6 +234,13 @@ public final class SettingsModel: ObservableObject {
     }
     var archiveSpace: SpaceSnapshot? { snapshot.spaces.first { $0.id == snapshot.shownSpaceId } ?? snapshot.spaces.first }
     var archiveSubtitle: String { "Idle tabs in \(archiveSpace?.profileName ?? "Default") move to the Archive." }
+    /// The chosen scroll direction in the pane's own words.
+    var spaceScrollDirectionLabel: String {
+        switch spaceScrollDirection {
+        case .natural: "Natural"
+        case .reversed: "Reversed"
+        }
+    }
     /// The profile the default destination's and the New Route's fresh Little-window picks
     /// write — the only picks that name no rule: the shown space's own `Profile` from the
     /// FFI snapshot, not the display name mapped back, which a named profile called
@@ -197,6 +271,77 @@ public final class SettingsModel: ObservableObject {
     func setArchiveAfter(_ value: ArchiveAfter) {
         guard let space = archiveSpace else { return }
         adapter.setArchiveAfter(spaceID: space.id, value: value, completion: editCompletion())
+    }
+    /// Reads the stored direction. The window calls this on every open, so the control shows the
+    /// record's value rather than the model's last one.
+    func readSpaceScrollDirection() {
+        let generation = contextGeneration
+        adapter.spaceScrollDirection { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let direction) = result else { return }
+            self.spaceScrollDirection = direction
+        }
+    }
+
+    // MARK: U27d, the Appearance pane
+
+    /// Reads the New Tab row switch and the Tooltips switch. The window calls both on every open,
+    /// so the pane shows the record's values rather than the model's last ones.
+    func readAppearance() {
+        let generation = contextGeneration
+        adapter.newTabRowShown { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let shown) = result else { return }
+            self.newTabRowShown = shown
+        }
+        adapter.tooltipsShown { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let shown) = result else { return }
+            self.tooltipsShown = shown
+        }
+    }
+
+    /// Writes the New Tab row switch and hands the stored value to the sidebars. A refused write
+    /// leaves the switch where it was and shows the reason.
+    func setNewTabRowShown(_ value: Bool) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setNewTabRowShown(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.newTabRowShown = value
+            self.newTabRow(value)
+        }
+    }
+
+    /// Writes the Tooltips switch the same way: the stored value reaches every window's sidebar
+    /// and header at once, so a tooltip already waiting is dropped.
+    func setTooltipsShown(_ value: Bool) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setTooltipsShown(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.tooltipsShown = value
+            self.tooltips(value)
+        }
+    }
+
+    /// The Appearance pane's Look row: it opens the shown space's page in the Spaces pane, where
+    /// the Look card's popover sits (the board's link row, E-Appearance).
+    func openLook() {
+        guard let space = archiveSpace else { navigate(.spaces); return }
+        navigate(.space(space.id), highlight: "look")
+    }
+
+    /// Writes the direction and, once the core has it, shows it in the control and hands it to
+    /// the sidebars. A refused write leaves the control where it was and shows the reason.
+    func setSpaceScrollDirection(_ value: SpaceScrollDirection) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setSpaceScrollDirection(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.spaceScrollDirection = value
+            self.spaceScroll(value)
+        }
     }
     func rename(_ id: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)

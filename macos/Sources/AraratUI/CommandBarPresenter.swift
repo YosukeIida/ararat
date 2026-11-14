@@ -9,19 +9,25 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
     private weak var parent: NSWindow?
     private let visible: Bool
     private var restoreFocus = true
+    /// U27h: a fixed width means a Little Window's own bar; nil keeps the browser windows' cap.
+    private let fixedWidth: CGFloat?
     public var onClose: () -> Void = {}
     public var onCommit: (Suggestion?, CommandBarMode, Bool) -> Void = { _, _, _ in }
 
-    public init(parent: NSWindow, visible: Bool, bindings: [KeyBinding], highlight: NSColor) {
+    public init(parent: NSWindow, visible: Bool, bindings: [KeyBinding], highlight: NSColor, width: CGFloat? = nil) {
         self.parent = parent
         self.visible = visible
+        fixedWidth = width
         view = CommandBarView(controller: controller)
         super.init()
         panel.contentView = view
         panel.delegate = self
         panel.menuCommandBindings = bindings
         controller.highlight = highlight
-        controller.panelWidth = CommandBarMetrics.cappedWidth(windowWidth: parent.frame.width)
+        // U27h: a Little Window opens the bar at its own 504 pt; every other window keeps the
+        // 766 pt bar capped at the window's width − 80.
+        controller.panelWidth = width.map { min($0, CommandBarMetrics.cappedWidth(windowWidth: parent.frame.width)) }
+            ?? CommandBarMetrics.cappedWidth(windowWidth: parent.frame.width)
         controller.onClose = { [weak self] in self?.finish() }
         controller.onRowsChange = { [weak self] in self?.position() }
     }
@@ -47,8 +53,13 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
 
     private func position() {
         guard let parent else { return }
-        panel.setFrame(CommandBarMetrics.panelFrame(windowFrame: parent.frame, width: controller.panelWidth,
-                                                    rows: controller.result.rows.count, privateWindow: controller.result.privateWindow), display: visible)
+        let rows = controller.result.rows.count
+        let frame = fixedWidth == nil
+            ? CommandBarMetrics.panelFrame(windowFrame: parent.frame, width: controller.panelWidth,
+                                           rows: rows, privateWindow: controller.result.privateWindow)
+            : CommandBarMetrics.littleWindowPanelFrame(windowFrame: parent.frame, width: controller.panelWidth,
+                                                       rows: rows)
+        panel.setFrame(frame, display: visible)
     }
 
     private func finish() {

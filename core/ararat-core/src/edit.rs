@@ -1352,10 +1352,42 @@ impl Workspace {
         if self.settings.new_tab_row_shown == shown { return Vec::new(); }
         let mut settings = self.settings.clone();
         settings.new_tab_row_shown = shown;
+        self.commit_settings(settings)
+    }
+
+    // The sideways scroll direction (D3). Same record as the New Tab row switch, so the two
+    // travel together and either one's reset rewrites the other's value with them.
+    pub fn set_space_scroll_direction(&mut self, direction: crate::model::SpaceScrollDirection) -> Vec<Op> {
+        if self.settings.space_scroll_direction == direction { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.space_scroll_direction = direction;
+        self.commit_settings(settings)
+    }
+
+    // The Tooltips switch (U27d, D4): every sidebar and header tooltip. Same record as the New
+    // Tab row switch and the scroll direction, so the three travel together.
+    pub fn set_tooltips_shown(&mut self, shown: bool) -> Vec<Op> {
+        if self.settings.tooltips_shown == shown { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.tooltips_shown = shown;
+        self.commit_settings(settings)
+    }
+
+    fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())
         } else {
             Op::Put(Record::Settings(settings))
+        };
+        self.commit_edit(vec![op])
+    }
+
+    // U27h D8: the Little Window's frame is per device, so it is its own record kind (kept out
+    // of the sync journal) rather than a field of the synced Settings. `None` forgets it.
+    pub fn set_little_window_frame(&mut self, frame: Option<crate::model::LittleWindowFrame>) -> Vec<Op> {
+        let op = match frame {
+            Some(frame) => Op::Put(Record::LittleWindow(frame)),
+            None => Op::Delete(Kind::LittleWindow, "workspace".into()),
         };
         self.commit_edit(vec![op])
     }

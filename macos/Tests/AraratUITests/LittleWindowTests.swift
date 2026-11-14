@@ -1,0 +1,143 @@
+import AppKit
+import AraratKit
+import Testing
+@testable import AraratUI
+
+/// U27h: the Little Window's bar model — the Open-in label and its disabled states, the space
+/// menu's search (every space of the profile, no Most Recent), and the address rule.
+@Test @MainActor
+func littleWindowOpenInFollowsTheDefaultDestination() {
+    var model = LittleWindowBarModel()
+    model.profileName = "Default"
+    model.profiles = ["Default", "Profile 1"]
+    model.spaces = [.init(id: "work", title: "Work"), .init(id: "personal", title: "Personal"),
+                    .init(id: "reading", title: "Reading")]
+    model.defaultSpaceID = "personal"
+    model.pageURL = "https://example.com/page"
+    #expect(model.destination?.id == "personal")
+    #expect(model.openInTitle == "Open in Personal")
+    #expect(model.openEnabled)
+    // A stale default (the space was deleted) falls back to the profile's first space.
+    model.defaultSpaceID = "gone"
+    #expect(model.destination?.id == "work")
+    #expect(model.openInTitle == "Open in Work")
+    // No page yet: the menu-created Little Window on about:blank has nothing to open.
+    model.pageURL = "about:blank"
+    #expect(!model.openEnabled)
+    model.pageURL = nil
+    #expect(!model.openEnabled)
+    // No space at all: Open is disabled and the label drops the name.
+    model.spaces = []
+    model.defaultSpaceID = nil
+    model.pageURL = "https://example.com/page"
+    #expect(!model.openEnabled)
+    #expect(model.openInTitle == "Open in")
+}
+
+@Test @MainActor
+func littleWindowSpaceMenuSearchesTheProfilesSpaces() {
+    var model = LittleWindowBarModel()
+    model.spaces = [.init(id: "work", title: "Work"), .init(id: "personal", title: "Personal"),
+                    .init(id: "reading", title: "Reading")]
+    #expect(model.filteredSpaces.map(\.title) == ["Work", "Personal", "Reading"])
+    model.search = "per"
+    #expect(model.filteredSpaces.map(\.title) == ["Personal"])
+    model.search = "REA"
+    #expect(model.filteredSpaces.map(\.title) == ["Reading"])
+    model.search = "  "
+    #expect(model.filteredSpaces.count == 3)
+    model.search = "nothing"
+    #expect(model.filteredSpaces.isEmpty)
+    // The menu lists the profile's spaces only: no Most Recent item exists.
+    #expect(!model.spaces.contains { $0.title.localizedCaseInsensitiveContains("most recent") })
+}
+
+@Test @MainActor
+func littleWindowAddressUsesTheURLFieldRule() {
+    var model = LittleWindowBarModel()
+    model.pageURL = "https://user:pw@real.example:8443/a"
+    #expect(model.addressText == "real.example")
+    #expect(model.copyEnabled)
+    model.pageURL = "file:///Users/someone/Notes/spec.md"
+    #expect(model.addressText == "spec.md")
+    model.pageURL = "data:text/html,<title>x</title>"
+    #expect(model.addressText == "data:")
+    model.pageURL = "about:blank"
+    #expect(model.addressText == URLFieldContent.placeholderText)
+    #expect(model.copyEnabled)
+    model.pageURL = "chrome://settings/"
+    #expect(model.address.showsGear)
+    #expect(model.addressText == "chrome://settings/")
+    model.pageURL = nil
+    #expect(model.addressText == URLFieldContent.placeholderText)
+    #expect(!model.copyEnabled)
+}
+
+/// The bar's geometry follows the design's step rule: 48 pt tall, the ⌘L bar 504 pt, the
+/// board's colours and radii.
+@Test @MainActor
+func littleWindowBarLaysOutTheBoardsBand() {
+    let bar = LittleWindowBarView(frame: NSRect(x: 0, y: 0, width: 640, height: LittleWindowMetrics.barHeight))
+    var model = LittleWindowBarModel()
+    model.profileName = "Default"
+    model.profiles = ["Default", "Profile 1"]
+    model.spaces = [.init(id: "work", title: "Work")]
+    model.defaultSpaceID = "work"
+    model.pageURL = "https://example.com/page"
+    bar.model = model
+    bar.layoutSubtreeIfNeeded()
+    #expect(LittleWindowMetrics.barHeight == 48)
+    #expect(LittleWindowMetrics.commandBarWidth == 504)
+    #expect(LittleWindowMetrics.contentRadius == 10)
+    #expect(bar.checkProfileTitle == "Default")
+    #expect(bar.checkOpenTitle == "Open in Work")
+    #expect(bar.checkOpenEnabled)
+    #expect(bar.checkCopyEnabled)
+    #expect(bar.checkAddressText == "example.com")
+    // The chip starts clear of the traffic lights and the buttons end at the trailing inset.
+    let frames = bar.checkButtonFrames
+    #expect((frames["profile"]?.minX ?? 0) >= 80)
+    #expect(abs((frames["chevron"]?.maxX ?? 0) - (640 - LittleWindowMetrics.trailingInset)) <= 1)
+    #expect((frames["open"]?.maxX ?? 0) <= (frames["chevron"]?.minX ?? 0))
+    #expect((frames["copy"]?.maxX ?? 0) <= (frames["open"]?.minX ?? 0))
+    #expect((frames["address"]?.maxX ?? 0) <= (frames["copy"]?.minX ?? 0))
+    let colour = bar.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+    #expect(abs((colour?.redComponent ?? 0) - 0x23 / 255) < 0.01)
+    #expect(abs((colour?.blueComponent ?? 0) - 0x27 / 255) < 0.01)
+}
+
+/// The space menu's panel: a search field and the rows it filters, at the board's width.
+@Test @MainActor
+func littleWindowMenuPanelFiltersItsRows() {
+    let panel = LittleWindowMenuPanel(width: LittleWindowMetrics.menuWidth, rows: [
+        .init(id: "work", title: "Work", selected: true),
+        .init(id: "personal", title: "Personal"),
+        .init(id: "reading", title: "Reading"),
+    ], showsSearch: true)
+    panel.layoutSubtreeIfNeeded()
+    #expect(panel.checkWidth == 210)
+    #expect(panel.checkRowTitles.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "✓ ")) } == ["Work", "Personal", "Reading"])
+    #expect(panel.checkHeight > 0)
+    var selected: String?
+    panel.onSelect = { selected = $0 }
+    panel.checkClickRow("reading")
+    #expect(selected == "reading")
+    var query: String?
+    panel.onSearch = { query = $0 }
+    panel.checkTypeSearch("per")
+    #expect(query == "per")
+}
+
+/// The ⌘L bar sits inside the Little Window (the board's 78 pt below the top, rounded to 80)
+/// and keeps the design's 504 pt width.
+@Test @MainActor
+func littleWindowCommandBarSitsInsideTheWindow() {
+    let window = NSRect(x: 100, y: 100, width: 640, height: 400)
+    let frame = CommandBarMetrics.littleWindowPanelFrame(windowFrame: window, width: LittleWindowMetrics.commandBarWidth, rows: 0)
+    #expect(frame.width == 504)
+    #expect(abs(frame.midX - window.midX) <= 0.5)
+    #expect(abs(frame.maxY - (window.maxY - 80)) <= 0.5)
+    #expect(frame.minY >= window.minY)
+    #expect(CommandBarMetrics.littleWindowPanelFrame(windowFrame: window, width: 504, rows: 5).height
+            == CommandBarMetrics.height(forRows: 5))
+}

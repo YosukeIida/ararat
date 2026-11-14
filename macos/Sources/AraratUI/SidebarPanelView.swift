@@ -11,6 +11,7 @@ final class SidebarPanelView: NSView {
     private var source: Look?
     private var destination: Look?
     private var fraction = 0.0
+    private var drawnColors: [NSColor] = []
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var systemAppearance: () -> NSAppearance = { NSApp.effectiveAppearance }
     /// False while the window is not the active one: the space's colour and grain are dropped, the vibrancy and Glass stay.
@@ -34,7 +35,7 @@ final class SidebarPanelView: NSView {
         gradient.endPoint = CGPoint(x: 0.5, y: 0)
         gradient.locations = [0, 0.5, 1]
         for layer in [gradient, grain] { layer.actions = ["bounds": NSNull(), "position": NSNull()] }
-        grain.backgroundColor = NSColor(patternImage: Self.noise).cgColor
+        updateGrainScale()
         addSubview(coating)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(accessibilityChanged),
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
@@ -75,8 +76,9 @@ final class SidebarPanelView: NSView {
     }
 
     private func updateGrainScale() {
-        grain.contentsScale = window?.backingScaleFactor ?? 1
-        grain.backgroundColor = NSColor(patternImage: Self.noise).cgColor
+        let scale = window?.backingScaleFactor ?? 1
+        grain.contentsScale = scale
+        grain.backgroundColor = NSColor(patternImage: LookGrainTile.tile(pointSize: LookGrainTile.pointSize, scale: scale)).cgColor
     }
 
     func updateLook(_ source: Look?, _ destination: Look?, fraction: Double) {
@@ -90,6 +92,10 @@ final class SidebarPanelView: NSView {
         reduceTransparency = { reduced }
         renderLook()
     }
+
+    /// The colour layer's first drawn colour, for the checks' wait conditions; nil while the tint
+    /// is not drawn (no look, or an inactive window).
+    var checkDrawnColor: NSColor? { coating.isHidden ? nil : drawnColors.first }
 
     @objc nonisolated private func accessibilityChanged() {
         Task { @MainActor [weak self] in self?.renderLook() }
@@ -110,6 +116,7 @@ final class SidebarPanelView: NSView {
         let colors = [0.0, 0.5, 1.0].map { position in
             Self.mix(Self.sample(source, at: position), Self.sample(destination, at: position), fraction: fraction, base: nil)
         }
+        drawnColors = colors
         let dark: Bool
         switch mode {
         case .dark: dark = true
@@ -194,24 +201,4 @@ final class SidebarPanelView: NSView {
         func linear(_ v: CGFloat) -> CGFloat { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
         return 0.2126 * linear(c.redComponent) + 0.7152 * linear(c.greenComponent) + 0.0722 * linear(c.blueComponent) < 0.179
     }
-
-    static let noise: NSImage = {
-        let pointSize = NSSize(width: 64, height: 64)
-        let image = NSImage(size: pointSize)
-        for size in [64, 128] {
-            let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                bytesPerRow: size * 4, bitsPerPixel: 32)!
-            bitmap.size = pointSize
-            var seed: UInt32 = 0x41524152
-            for index in 0..<(size * size) {
-                seed = seed &* 1664525 &+ 1013904223
-                let value = UInt8(seed >> 24)
-                for channel in 0..<3 { bitmap.bitmapData![index * 4 + channel] = value }
-                bitmap.bitmapData![index * 4 + 3] = 255
-            }
-            image.addRepresentation(bitmap)
-        }
-        return image
-    }()
 }
