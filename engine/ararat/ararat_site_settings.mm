@@ -190,7 +190,7 @@ class SiteDataClearObserver : public content::BrowsingDataRemover::Observer {
   }
   void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
     observation_.Reset();
-    completion_(failed_data_types);
+    if (completion_) completion_(failed_data_types);
     delete this;
   }
 
