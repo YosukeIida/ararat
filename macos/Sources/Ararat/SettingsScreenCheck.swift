@@ -84,8 +84,11 @@ final class SettingsScreenCheck {
     // timeout diagnostics without a second VM round.
     var lastWait = ""
     // The row a Return opens, recorded before the action, and the page the detail kept while a
-    // query had no results.
+    // query had no results. `expectedResultPage` is that row's own registry page, so the assertion
+    // follows the result the check navigated rather than a fixed pane name.
     var expectedRowID = ""
+    var expectedResultPage = ""
+    var hitResultPage = ""
     var previousMarker = ""
     var pageWithoutResults = ""
     var noResultsShown = false
@@ -440,22 +443,27 @@ extension Runtime {
             if !drawn { note("the moved selection is not drawn") }
             check.report("arrow_moves", drawn)
             check.expectedRowID = probe.selectedResultID ?? ""
+            check.expectedResultPage = probe.selectedResultPageID ?? ""
             check.historyBefore = probe.historyIndex
-            trace("return on \(check.expectedRowID)")
+            trace("return on \(check.expectedRowID) opening \(check.expectedResultPage)")
             _ = probe.searchKey(.return)
             step(6)
         case 6:
-            guard !check.expectedRowID.isEmpty, probe.highlightedRowID == check.expectedRowID,
+            guard !check.expectedRowID.isEmpty, !check.expectedResultPage.isEmpty,
+                  probe.highlightedRowID == check.expectedRowID,
                   probe.marker(SettingsModel.rowMarker(check.expectedRowID)) != nil else {
                 note("highlight \(probe.highlightedRowID ?? "-") want \(check.expectedRowID)"); return
             }
-            check.report("return_opens", probe.historyIndex > check.historyBefore && probe.pageID == "shortcuts")
+            check.report("return_opens", probe.historyIndex > check.historyBefore
+                && probe.pageID == check.expectedResultPage)
             probe.setQuery("Move to Space 9")
             step(7)
         case 7:
             guard probe.resultTitles.count == 1, probe.selectedIndex == 0 else {
                 note("results for Move to Space 9: \(probe.resultTitles)"); return
             }
+            check.hitResultPage = probe.selectedResultPageID ?? ""
+            guard !check.hitResultPage.isEmpty else { note("the hit result has no page"); return }
             _ = probe.searchKey(.return)
             step(8)
         case 8:
@@ -481,7 +489,7 @@ extension Runtime {
             // and the row keeps its fill ("The highlight stays", E-Search).
             probe.setQuery("")
             guard let row = probe.marker(SettingsModel.rowMarker(check.hitRowID)), check.hitRowID == probe.highlightedRowID,
-                  probe.pageID == "shortcuts" else {
+                  !check.hitResultPage.isEmpty, probe.pageID == check.hitResultPage else {
                 note("after clearing: highlight=\(probe.highlightedRowID ?? "-") page=\(probe.pageID)"); return
             }
             let greys = probe.greys(at: [NSPoint(x: row.minX + 1.5, y: row.midY), NSPoint(x: row.minX + 6, y: row.midY)])

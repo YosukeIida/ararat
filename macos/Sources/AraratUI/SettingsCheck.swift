@@ -47,6 +47,9 @@ public final class SettingsCheckProbe {
     public var selectedIndex: Int { model.searchIndex }
     public var selectedResultTitle: String? { model.selectedResult.map { model.resultTitle($0) } }
     public var selectedResultID: String? { model.selectedResult?.id }
+    /// The page the selected result opens: its own registry page (a space page for a space row),
+    /// so a check asserts the navigation against the result it chose, not a fixed pane name.
+    public var selectedResultPageID: String? { model.selectedResult.map { $0.pane.searchKey } }
     public var selectedResultMarker: String? { model.selectedResult.map { SettingsModel.resultMarker($0) } }
     public var highlightedRowID: String? { model.highlighted }
     public var highlightedMarker: String? { model.highlighted.map { SettingsModel.rowMarker($0) } }
