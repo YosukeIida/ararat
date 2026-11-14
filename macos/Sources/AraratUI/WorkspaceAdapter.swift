@@ -352,6 +352,16 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setTooltipsShown(windowId: self.windowID, shown: shown) }, completion: completion)
     }
 
+    // U27k D5: the Appearance pane's Theme, the same synced settings record, read on every open
+    // so a reopened settings window shows the stored choice.
+    public func theme(completion: @escaping Completion<Theme>) {
+        enqueue({ try self.opened().settings().theme }, completion: completion)
+    }
+
+    public func setTheme(_ value: Theme, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setTheme(windowId: self.windowID, theme: value) }, completion: completion)
+    }
+
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

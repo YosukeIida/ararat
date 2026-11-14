@@ -653,13 +653,20 @@ impl ArchiveAfter {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpaceScrollDirection { #[default] Natural, Reversed }
 
+// The window's theme (U27k, D5): System follows the Mac's appearance, Light and Dark force one
+// for every window. A space's Look still colours only the sidebar; a Look whose mode is Auto
+// follows the appearance this setting resolves to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Theme { #[default] System, Light, Dark }
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
 // U27d's Tooltips switch (D4) rides here too, on by default, so it travels with the workspace
 // the way the New Tab row does. U27i's Little Window pair (D8) rides here as well: the Open-in
 // destination and close-after are workspace preferences, while the frame and the global
-// shortcut stay on the device (LittleWindowDevice).
+// shortcut stay on the device (LittleWindowDevice). U27k's Theme is synced on purpose, so a
+// second Mac shows the same theme.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -668,12 +675,13 @@ pub struct Settings {
     pub tooltips_shown: bool,
     pub little_window_open_in: LittleWindowOpenIn,
     pub little_window_close_after: bool,
+    pub theme: Theme,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
-            little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true }
+            little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System }
     }
 }
 

@@ -704,6 +704,17 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // U27k: the Appearance pane's Theme (D5). The same synced settings record as the switches
+    // above, so every device reads the chosen theme back from the workspace.
+    pub fn set_theme(&self, window_id: String, theme: Theme) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_theme(theme.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn little_window_device(&self) -> LittleWindowDevice {
         self.workspace.lock().unwrap().little_window_device.clone().into()
     }
@@ -997,6 +1008,7 @@ pub struct WorkspaceSettings {
     pub tooltips_shown: bool,
     pub little_window_open_in: LittleWindowOpenIn,
     pub little_window_close_after: bool,
+    pub theme: Theme,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1004,7 +1016,8 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             space_scroll_direction: settings.space_scroll_direction.into(),
             tooltips_shown: settings.tooltips_shown,
             little_window_open_in: settings.little_window_open_in.into(),
-            little_window_close_after: settings.little_window_close_after }
+            little_window_close_after: settings.little_window_close_after,
+            theme: settings.theme.into() }
     }
 }
 
@@ -1043,6 +1056,22 @@ impl From<SpaceScrollDirection> for ararat_core::model::SpaceScrollDirection {
     fn from(value: SpaceScrollDirection) -> Self {
         use ararat_core::model::SpaceScrollDirection as Core;
         match value { SpaceScrollDirection::Natural => Core::Natural, SpaceScrollDirection::Reversed => Core::Reversed }
+    }
+}
+
+/// U27k: the Appearance pane's Theme (D5). System follows the Mac, Light and Dark force one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Theme { System, Light, Dark }
+impl From<ararat_core::model::Theme> for Theme {
+    fn from(value: ararat_core::model::Theme) -> Self {
+        use ararat_core::model::Theme as Core;
+        match value { Core::System => Self::System, Core::Light => Self::Light, Core::Dark => Self::Dark }
+    }
+}
+impl From<Theme> for ararat_core::model::Theme {
+    fn from(value: Theme) -> Self {
+        use ararat_core::model::Theme as Core;
+        match value { Theme::System => Core::System, Theme::Light => Core::Light, Theme::Dark => Core::Dark }
     }
 }
 

@@ -1177,9 +1177,41 @@ fn the_tooltips_setting_reads_through_the_ffi_and_survives_reopen() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
-// U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
-// default, and it survives a reopen.
+// U27k D5: the Theme is the same synced workspace record, System by default, and a Dark or
+// Light choice survives a reopen; a second store on the same file reads it back.
 #[test]
+fn the_theme_reads_through_the_ffi_and_survives_reopen() {
+    use ararat_ffi::Theme;
+    let path = fresh_db("theme-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().theme, Theme::System);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_theme("one".into(), Theme::Dark).unwrap();
+    assert_eq!(store.settings().theme, Theme::Dark);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().theme, Theme::Dark);
+    // The switches that share the record keep their own values.
+    assert!(store.settings().new_tab_row_shown && store.settings().tooltips_shown);
+    store.set_theme("one".into(), Theme::Light).unwrap();
+    assert_eq!(store.settings().theme, Theme::Light);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().theme, Theme::Light);
+    store.set_theme("one".into(), Theme::System).unwrap();
+    assert_eq!(store.settings().theme, Theme::System);
+    drop(store);
+    // Back at the built-in value, no row restates it; all three writes reached the synced journal.
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 3);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// U27c: the Spaces pane's scroll direction is the same synced workspace record, Natural by
+// default, and it survives a reopen.#[test]
 fn the_space_scroll_direction_reads_through_the_ffi_and_survives_reopen() {
     use ararat_ffi::SpaceScrollDirection;
     let path = fresh_db("space-scroll-settings");

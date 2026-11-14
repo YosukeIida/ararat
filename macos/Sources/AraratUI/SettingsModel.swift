@@ -54,6 +54,10 @@ public final class SettingsModel: ObservableObject {
     @Published var tooltipsShown = true
     var newTabRow: (Bool) -> Void = { _ in }
     var tooltips: (Bool) -> Void = { _ in }
+    /// U27k: the Theme, in the same synced record. The app applies a written value to
+    /// `NSApp.appearance`, so every window, the settings window, popovers and menus follow it.
+    @Published var theme: Theme = .system
+    var themeApplied: (Theme) -> Void = { _ in }
     /// U27i: the Little Window pane. The Open-in destination and close-after are the synced
     /// settings; "Remember its size and place" and the global shortcut are the device record.
     /// The shortcut's registration is the app-wide center, which the app hands in.
@@ -154,12 +158,14 @@ public final class SettingsModel: ObservableObject {
     public static let airTrafficCardId = "air-traffic"
     /// U27c's card in the Spaces pane: the search result and the card share this id.
     public static let spaceScrollDirectionCardId = "space-scroll-direction"
-    /// U27d's rows in the Appearance pane: the Look link, and the two switches in the board's
-    /// "Sidebar" card. The search result and the row share each id.
+    /// U27d's rows in the Appearance pane: the Theme card, the Look link, and the two switches in
+    /// the board's "Sidebar" card. The search result and the row share each id.
+    public static let themeRowId = "theme"
     public static let lookRowId = "look"
     public static let newTabRowId = "new-tab-row"
     public static let tooltipsRowId = "tooltips"
     /// The switches themselves, so a check can find the pair the board draws.
+    public static let themeControlMarker = "theme-control"
     public static let newTabRowSwitchMarker = "new-tab-row-switch"
     public static let tooltipsSwitchMarker = "tooltips-switch"
     /// U27i's Little Window rows: the Air Traffic Control link, the global shortcut's recorder, the
@@ -322,6 +328,10 @@ public final class SettingsModel: ObservableObject {
             guard let self, self.contextGeneration == generation, case .success(let shown) = result else { return }
             self.tooltipsShown = shown
         }
+        adapter.theme { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let theme) = result else { return }
+            self.theme = theme
+        }
     }
 
     /// Writes the New Tab row switch and hands the stored value to the sidebars. A refused write
@@ -347,6 +357,19 @@ public final class SettingsModel: ObservableObject {
             guard let self, self.contextGeneration == generation, case .success = result else { return }
             self.tooltipsShown = value
             self.tooltips(value)
+        }
+    }
+
+    /// Writes the Theme and hands the stored value to the app, which sets `NSApp.appearance`. A
+    /// refused write leaves the control where it was and shows the reason.
+    func setTheme(_ value: Theme) {
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setTheme(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.theme = value
+            self.themeApplied(value)
         }
     }
 
@@ -679,4 +702,27 @@ public final class SettingsModel: ObservableObject {
     func resetShortcut(_ command: String) { keyBindings.reset(command: command) }
     func removeShortcut(_ command: String) { keyBindings.set(command: command, key: nil) }
     func resetAllShortcuts() { keyBindings.resetAll() }
+}
+
+/// U27k D5: the Appearance pane's Theme in AppKit's terms. System leaves `NSApp.appearance` nil,
+/// so every window keeps following the Mac; Light and Dark force one appearance for the whole
+/// app, which is how the browser windows, the settings window, popovers, menus and the command
+/// bar follow together. A space's Look still colours only the sidebar.
+extension Theme {
+    public var appearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
+    /// The board's three segment labels (E-Appearance).
+    public var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
 }

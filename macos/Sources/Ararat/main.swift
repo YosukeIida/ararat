@@ -1083,6 +1083,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
       try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
     }
     let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session, private: isPrivateWindow)
+    // U27k D5: the Theme is one synced setting for the whole app, so it is applied before this
+    // window exists (no flash of the other appearance) and again by every later window, which
+    // reads the same record. A private window's own workspace starts from the built-in values,
+    // so it reads the regular one, and a nil answer leaves the app's appearance alone.
+    let themeSession = isPrivateWindow ? (root?.adapter?.session ?? adapter.session) : adapter.session
+    if let theme = themeSession.queue.sync(execute: { themeSession.store?.settings().theme }) {
+      NSApp.appearance = theme.appearance
+    }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.privateWindow = isPrivateWindow
     sidebar.observeHistoryFailures(running)
@@ -1771,6 +1779,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard case .success(let direction) = result else { return }
       self?.sidebar?.spaceScrollDirection = direction
     }
+    // U27k: the theme is app-wide, so a value synced from another device applies here too.
+    settingsSource.theme { result in
+      guard case .success(let theme) = result else { return }
+      NSApp.appearance = theme.appearance
+    }
   }
 
   /// The adapter a window reads the shared settings record from (U27d review 1 M2): a private
@@ -1948,6 +1961,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
         window.sidebar?.tooltipsShown = shown
         window.container?.header.tooltipsShown = shown
       }
+    }, theme: { theme in
+      // U27k D5: one app-wide appearance, so every window, the settings window, popovers, menus
+      // and the command bar change together; System hands each window back to the Mac.
+      NSApp.appearance = theme.appearance
     })
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
       owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)

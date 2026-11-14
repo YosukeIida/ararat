@@ -1,4 +1,5 @@
 import AppKit
+import AraratEngineAPI
 import AraratKit
 import AraratUI
 
@@ -49,7 +50,8 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .shortcuts, .airTraffic: ["rows"]
-            case .appearance: ["rows", "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
+            case .appearance: ["rows", "theme_dark", "theme_light", "theme_page", "theme_reopen", "theme_system",
+                               "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
             case .littleWindow: ["rows", "atc_link", "shortcut_recorder", "hot_key_registration", "hot_key_exclusive",
                                  "open_in_write_reopen", "open_in_bar", "close_after_keeps", "remember_off_frame"]
@@ -100,6 +102,13 @@ final class SettingsScreenCheck {
     var appearanceTodayRow = ""
     var appearanceRowY: CGFloat = 0
     var appearanceTooltipShown = false
+    // U27k: the fixture page's own tab, created once through the core (the engine's check-only
+    // navigation gate does not name settings screens, and this is the path a person's New Tab
+    // takes anyway), and the tick the phase started so a page that never follows fails the named
+    // condition instead of stalling the check.
+    var themePageDark: String?
+    var themePageRequested = false
+    var themePhaseStart = -1
     // U27i: the Little Window check's page, destination space and the window whose Open in is
     // driven (kept after it closes so its handoff record stays readable).
     var littlePageURL = "data:text/html,<title>Little Window settings page</title>"
@@ -156,6 +165,9 @@ extension Runtime {
             values["space_scroll"] = probe.spaceScrollDirectionLabel
             values["new_tab_row_shown"] = probe.newTabRowShown
             values["tooltips_shown"] = probe.tooltipsShown
+            values["theme"] = probe.themeLabel
+            values["theme_app_appearance"] = probe.appAppearanceName as Any? ?? NSNull()
+            values["theme_window_appearance"] = probe.windowAppearanceName
             values["shown_space"] = snapshot.shownSpaceId as Any? ?? NSNull()
             values["markers"] = probe.markers(prefix: "").map { ["id": $0.id, "frame": rectFields($0.frame)] }
         }
@@ -555,31 +567,157 @@ extension Runtime {
         }
     }
 
-    // MARK: settings-appearance, U27d: the switches and the Look row
+    // MARK: settings-appearance, U27d's switches and U27k's Theme
 
-    /// Phases 2 to 7 of `settings-appearance`: the pane's three rows; the New Tab row switch off
-    /// hiding the row (the Today rows close up by its 41 pt) and the reopened window reading it
-    /// back; the Tooltips switch off leaving a hovered header control silent; and the Look row
-    /// pushing the shown space's page.
+    /// The page whose title is the resolved `prefers-color-scheme`, so the check proves Chromium
+    /// follows the app's appearance instead of assuming it. The interval keeps the title current
+    /// even if the media query's change event never fires.
+    static let themeFixturePage = "data:text/html,<title>light</title><script>setInterval(function(){document.title=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'},100)</script>"
+
+    /// "dark" or "light" for an appearance, the same two words the fixture page writes.
+    private static func appearanceWord(_ appearance: NSAppearance) -> String {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light"
+    }
+
+    /// The checked window's active tab's title, which the theme fixture page drives.
+    private func settingsThemePageTitle() -> String? {
+        guard let host, let active = host.activeItemId() else { return nil }
+        return (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == active }?.title
+    }
+
+    /// Phases 2 to 12 of `settings-appearance`: the pane's four rows; U27k's Theme in Dark, Light,
+    /// a reopen that reads Light back from the core, and System (with the fixture page's
+    /// `prefers-color-scheme` following each); then U27d's New Tab row switch hiding the row (the
+    /// Today rows close up by its 41 pt) and the reopened window reading it back, the Tooltips
+    /// switch off leaving a hovered header control silent, and the Look row pushing the shown
+    /// space's page.
     private func settingsAppearanceTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
                                         note: (String) -> Void, trace: (String) -> Void,
                                         step: (Int) -> Void, end: (String, Bool) -> Void,
                                         finish: () -> Void, capture: (String) -> Bool) {
         let owner = root ?? self
+        let mainAppearance = host.map { Self.appearanceWord($0.window().effectiveAppearance) }
+        let windowAppearance = probe.windowAppearanceName
         switch check.phase {
         case 2:
-            let markers = [SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId]
-                .map(SettingsModel.rowMarker)
+            let markers = [SettingsModel.themeRowId, SettingsModel.lookRowId, SettingsModel.newTabRowId,
+                           SettingsModel.tooltipsRowId].map(SettingsModel.rowMarker)
             let rows = markers.map { probe.marker($0) }
+            let control = probe.marker(SettingsModel.themeControlMarker)
             let switches = [SettingsModel.newTabRowSwitchMarker, SettingsModel.tooltipsSwitchMarker].map { probe.marker($0) }
-            guard let look = rows[0], let newTab = rows[1], let tips = rows[2],
-                  switches.allSatisfy({ $0 != nil }) else {
-                note("appearance rows \(rows.map { $0 != nil }) switches \(switches.map { $0 != nil })")
+            guard let theme = rows[0], let look = rows[1], let newTab = rows[2], let tips = rows[3],
+                  control != nil, switches.allSatisfy({ $0 != nil }) else {
+                note("appearance rows \(rows.map { $0 != nil }) control \(control != nil) switches \(switches.map { $0 != nil })")
                 return
             }
-            // The board's order: the Look link, then the Sidebar group's two switches.
-            check.report("rows", look.maxY <= newTab.minY + 1 && newTab.maxY <= tips.minY + 1
-                && switches.allSatisfy { ($0?.width ?? 0) > 0 && ($0?.height ?? 0) >= 16 })
+            // The board's order: the Theme card, then the Look link, then the Sidebar group. The
+            // report is made once, so a retried phase does not repeat it.
+            if check.conditions["rows"] != true {
+                check.report("rows", theme.maxY <= look.minY + 1 && look.maxY <= newTab.minY + 1
+                    && newTab.maxY <= tips.minY + 1 && (control?.width ?? 0) > 0 && (control?.height ?? 0) >= 16)
+            }
+            // The page reports what `prefers-color-scheme` resolves to. It gets its own tab through
+            // the command bar's own URL path (the engine's check-only navigation gate does not name
+            // settings screens, and this unit changes no engine).
+            guard let host, host.hasBrowser() else { note("no browser for the theme fixture page"); return }
+            if !check.themePageRequested {
+                guard let adapter, let shown = snapshot.shownSpaceId,
+                      let space = snapshot.spaces.first(where: { $0.id == shown }) else {
+                    note("no shown space for the theme fixture page"); return
+                }
+                trace("opening the theme fixture tab")
+                check.themePageRequested = true
+                adapter.openCommandURL(Self.themeFixturePage, expectedSpace: shown, profile: space.profileName)
+                return
+            }
+            guard let active = host.activeItemId(),
+                  (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active })?.url.hasPrefix("data:text/html") == true else {
+                note("the theme fixture tab is not active yet")
+                return
+            }
+            trace("writing dark")
+            check.themePhaseStart = browserCheckAttempts
+            probe.setTheme(.dark)
+            step(3)
+        case 3:
+            let page = settingsThemePageTitle()
+            guard probe.theme == .dark, probe.appAppearanceName == NSAppearance.Name.darkAqua.rawValue,
+                  windowAppearance == NSAppearance.Name.darkAqua.rawValue, mainAppearance == "dark" else {
+                note("dark: switch=\(probe.themeLabel) app=\(probe.appAppearanceName ?? "nil") settings=\(windowAppearance) main=\(mainAppearance ?? "nil")")
+                return
+            }
+            // Eight seconds is a slow load, not a media query that ignores the theme.
+            if page != "dark", browserCheckAttempts - check.themePhaseStart < 80 {
+                note("dark applied, page says \(page ?? "nil")")
+                return
+            }
+            check.themePageDark = page
+            check.details["theme_dark"] = ["app": probe.appAppearanceName ?? "nil", "settings": windowAppearance,
+                                           "main": mainAppearance ?? "nil", "page": page ?? "nil"]
+            trace("dark applied, page says \(page ?? "-")")
+            check.report("theme_dark", true)
+            guard capture("theme-dark") else { end("capture", false); return }
+            trace("writing light")
+            check.themePhaseStart = browserCheckAttempts
+            probe.setTheme(.light)
+            step(4)
+        case 4:
+            let page = settingsThemePageTitle()
+            guard probe.theme == .light, probe.appAppearanceName == NSAppearance.Name.aqua.rawValue,
+                  windowAppearance == NSAppearance.Name.aqua.rawValue, mainAppearance == "light" else {
+                note("light: switch=\(probe.themeLabel) app=\(probe.appAppearanceName ?? "nil") settings=\(windowAppearance) main=\(mainAppearance ?? "nil")")
+                return
+            }
+            if page != "light", browserCheckAttempts - check.themePhaseStart < 80 {
+                note("light applied, page says \(page ?? "nil")")
+                return
+            }
+            check.details["theme_page"] = ["dark": check.themePageDark ?? "nil", "light": page ?? "nil"]
+            trace("light applied, page says \(page ?? "-")")
+            check.report("theme_page", check.themePageDark == "dark" && page == "light")
+            check.report("theme_light", true)
+            guard capture("theme-light") else { end("capture", false); return }
+            trace("closing the settings window")
+            owner.settings?.window?.performClose(nil)
+            step(5)
+        case 5:
+            guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
+            trace("reopening the settings window")
+            owner.settings?.checkOpen(paneID: "appearance", shownSpaceID: snapshot.shownSpaceId)
+            step(6)
+        case 6:
+            // The reopened window reads the record: Light, the last value written, so a built-in
+            // default cannot answer instead.
+            guard probe.isVisible, probe.pageID == "appearance", probe.theme == .light,
+                  probe.appAppearanceName == NSAppearance.Name.aqua.rawValue,
+                  probe.windowAppearanceName == NSAppearance.Name.aqua.rawValue, mainAppearance == "light" else {
+                note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) switch=\(probe.themeLabel) app=\(probe.appAppearanceName ?? "nil") settings=\(windowAppearance) main=\(mainAppearance ?? "nil")")
+                return
+            }
+            trace("reopened on light")
+            check.report("theme_reopen", probe.marker(SettingsModel.rowMarker(SettingsModel.themeRowId)) != nil
+                && probe.marker(SettingsModel.themeControlMarker) != nil)
+            trace("writing system")
+            probe.setTheme(.system)
+            step(7)
+        case 7:
+            // System hands every window back to the Mac, so the page and the windows must agree
+            // with the Mac's own appearance rather than with either forced one.
+            let system = Self.appearanceWord(NSApp.effectiveAppearance)
+            let page = settingsThemePageTitle()
+            guard probe.theme == .system, probe.appAppearanceName == nil,
+                  windowAppearance == (system == "dark" ? NSAppearance.Name.darkAqua : .aqua).rawValue,
+                  mainAppearance == system else {
+                note("system: switch=\(probe.themeLabel) app=\(probe.appAppearanceName ?? "nil") settings=\(windowAppearance) main=\(mainAppearance ?? "nil") mac=\(system)")
+                return
+            }
+            // The page's own answer is `theme_page`; here only its value is recorded, so a page
+            // that never follows cannot stall this phase.
+            check.details["theme_system"] = ["app": "nil", "settings": windowAppearance,
+                                             "main": mainAppearance ?? "nil", "mac": system, "page": page ?? "nil"]
+            trace("system applied, page says \(page ?? "-")")
+            check.report("theme_system", true)
+            guard capture("theme-system") else { end("capture", false); return }
             guard let today = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first?.id,
                   let before = sidebar?.checkRowFrame(today) else {
                 note("no Today row to measure the New Tab row's close-up on"); return
@@ -588,8 +726,8 @@ extension Runtime {
             check.appearanceRowY = before.minY
             trace("New Tab row off, Today row at \(before.minY)")
             probe.setNewTabRowShown(false)
-            step(3)
-        case 3:
+            step(8)
+        case 8:
             guard probe.newTabRowShown == false, let sidebar, sidebar.newTabRowForCheck == nil else {
                 note("switch off=\(!probe.newTabRowShown) row=\(sidebar?.newTabRowForCheck != nil)"); return
             }
@@ -605,13 +743,13 @@ extension Runtime {
             check.report("new_tab_hidden", true)
             trace("closing the settings window")
             owner.settings?.window?.performClose(nil)
-            step(4)
-        case 4:
+            step(9)
+        case 9:
             guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
             trace("reopening the settings window")
             owner.settings?.checkOpen(paneID: "appearance", shownSpaceID: snapshot.shownSpaceId)
-            step(5)
-        case 5:
+            step(10)
+        case 10:
             guard probe.isVisible, probe.pageID == "appearance", probe.newTabRowShown == false else {
                 note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) switch=\(probe.newTabRowShown)"); return
             }
@@ -627,16 +765,16 @@ extension Runtime {
             trace("header tooltip on: \(shown.0 ?? "-") \(shown.1)")
             check.appearanceTooltipShown = true
             probe.setTooltipsShown(false)
-            step(6)
-        case 6:
+            step(11)
+        case 11:
             guard probe.tooltipsShown == false else { note("the switch is still on"); return }
             let hidden = owner.container?.header.checkTooltip("back")
             trace("header tooltip off: \(hidden?.0 ?? "nil") \(hidden?.1 ?? [])")
             check.report("tooltips_off", check.appearanceTooltipShown && hidden?.0 == nil)
             trace("pushing the space page from the Look row")
             probe.openLook()
-            step(7)
-        case 7:
+            step(12)
+        case 12:
             guard let shown = snapshot.shownSpaceId, probe.pageID == "space-" + shown else {
                 note("page after the Look row: \(probe.pageID), want space-\(snapshot.shownSpaceId ?? "-")"); return
             }

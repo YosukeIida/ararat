@@ -75,6 +75,17 @@ public final class SettingsCheckProbe {
     /// The New Tab row's height, which the Today rows close up by when it is hidden (T4).
     public var newTabRowHeight: CGFloat { SidebarMetrics.newTabRowHeight }
 
+    // MARK: U27k, the Appearance pane's Theme
+
+    /// The stored theme the pane draws, and the same setter its picker calls.
+    public var theme: Theme { model.theme }
+    public var themeLabel: String { model.theme.label }
+    public func setTheme(_ value: Theme) { model.setTheme(value) }
+    /// What the app and this window resolve to. `appAppearance` is what the theme set on
+    /// `NSApp.appearance` (nil for System, the Mac's own).
+    public var appAppearanceName: String? { NSApp.appearance?.name.rawValue }
+    public var windowAppearanceName: String { window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])?.rawValue ?? window.effectiveAppearance.name.rawValue }
+
     // MARK: U27i, the Little Window pane
 
     /// The pane's five stored values and the same setters its controls call.

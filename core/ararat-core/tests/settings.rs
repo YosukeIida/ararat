@@ -1,4 +1,4 @@
-use ararat_core::model::{Kind, LittleWindowDevice, LittleWindowHotKey, LittleWindowOpenIn, Op, Record, Settings, SpaceScrollDirection, Workspace};
+use ararat_core::model::{Kind, LittleWindowDevice, LittleWindowHotKey, LittleWindowOpenIn, Op, Record, Settings, SpaceScrollDirection, Theme, Workspace};
 
 #[test]
 fn a_fresh_workspace_shows_the_new_tab_row_and_stores_no_record_for_it() {
@@ -120,6 +120,46 @@ fn an_unknown_scroll_direction_is_refused() {
     assert!(parsed.is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"space_scroll_direction":"Reversed"}"#);
     assert!(matches!(parsed, Ok(Record::Settings(Settings { space_scroll_direction: SpaceScrollDirection::Reversed, .. }))));
+}
+
+// U27k D5: the Theme is one synced record, System by default, and a reset is a tombstone. The
+// stored value reads back on a peer that applies the op, which is what the FFI's reopen test checks
+// against the store.
+#[test]
+fn the_theme_starts_at_system_and_writes_one_synced_record() {
+    assert_eq!(Workspace::default().settings.theme, Theme::System);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+    let mut ws = Workspace::default();
+    let ops = ws.set_theme(Theme::Dark);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.theme == Theme::Dark));
+    assert_eq!(ws.settings.theme, Theme::Dark);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    assert!(ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(Settings { theme: Theme::Dark, .. })))));
+    // The same value again writes nothing; the other settings are untouched.
+    let before = ws.clone();
+    assert!(ws.set_theme(Theme::Dark).is_empty());
+    assert_eq!(ws, before);
+    assert!(ws.settings.new_tab_row_shown && ws.settings.tooltips_shown);
+    // Light replaces Dark in the same one record, and System again is a tombstone.
+    let ops = ws.set_theme(Theme::Light);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.theme == Theme::Light));
+    let reset = ws.set_theme(Theme::System);
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+    let mut peer = peer;
+    for op in &reset { peer.apply(op); }
+    assert_eq!(peer, ws);
+}
+
+// A theme this build does not know is refused when the record is parsed (as the direction is).
+#[test]
+fn an_unknown_theme_is_refused() {
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"theme":"Sepia"}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { theme: Theme::Dark, .. }))));
 }
 
 // U27i D8/D9: the Little Window's Open-in destination and close-after are the same synced

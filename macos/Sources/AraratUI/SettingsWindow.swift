@@ -86,11 +86,14 @@ public final class SettingsWindowController: NSWindowController {
         model.spaceScroll = handler
     }
 
-    /// Hands the Appearance pane's written values to the windows (U27d): the New Tab row switch
-    /// to each sidebar, the Tooltips switch to each sidebar and header.
-    public func setAppearanceHandlers(newTabRow: @escaping (Bool) -> Void, tooltips: @escaping (Bool) -> Void) {
+    /// Hands the Appearance pane's written values to the windows (U27d) and the app (U27k): the
+    /// New Tab row switch to each sidebar, the Tooltips switch to each sidebar and header, and the
+    /// Theme to `NSApp.appearance`, which every window, popover, menu and the command bar inherit.
+    public func setAppearanceHandlers(newTabRow: @escaping (Bool) -> Void, tooltips: @escaping (Bool) -> Void,
+                                      theme: @escaping (Theme) -> Void) {
         model.newTabRow = newTabRow
         model.tooltips = tooltips
+        model.themeApplied = theme
     }
 
     /// Hands the Little Window pane the app-wide shortcut registration (U27i): the pane reads the
@@ -395,15 +398,27 @@ private struct SettingsDetail: View {
     }
 }
 
-/// The Appearance pane (U27d): the board's rows whose behaviour exists. Look is a link row that
-/// pushes the shown space's page in Spaces; the Sidebar card holds the New Tab row switch and the
-/// Tooltips switch. Theme (U27k) and Page zoom (an engine API) have no rows, so the board's Pages
-/// section waits for them.
+/// The Appearance pane (U27d's switches and U27k's Theme): the board's rows whose behaviour
+/// exists. The Theme card sits first, above the Look link; the Sidebar card holds the New Tab row
+/// and Tooltips switches. Page zoom (an engine API) has no row, so the board's Pages section
+/// waits for it.
 private struct SettingsAppearanceSection: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
         VStack(spacing: SettingsMetrics.cardGap) {
+            SettingsGroupCard {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.themeRowId,
+                                marker: SettingsModel.rowMarker(SettingsModel.themeRowId)) {
+                    SettingsRowLabel(title: "Theme",
+                                     subtitle: "Pages and settings follow it; a space’s Look can override the sidebar")
+                    Picker("Theme", selection: Binding(get: { model.theme }, set: model.setTheme)) {
+                        ForEach([Theme.system, .light, .dark], id: \.self) { Text($0.label).tag($0) }
+                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                        .background(SettingsMarker(id: SettingsModel.themeControlMarker))
+                        .accessibilityLabel("Theme")
+                }.id(SettingsModel.themeRowId)
+            }
             lookRow
             SettingsGroupCard(heading: "Sidebar", marker: "card-sidebar") {
                 SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.newTabRowId,

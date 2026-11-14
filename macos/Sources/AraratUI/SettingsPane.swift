@@ -87,10 +87,13 @@ enum SettingsRegistry {
                            subtitle: model.archiveSubtitle)]
     }
 
-    /// U27d: only the rows whose behaviour exists. Theme (U27k) and Page zoom (engine API) have
-    /// no rows here; a placeholder would be a dead control.
+    /// U27k: the board's rows whose behaviour exists, in its order — the Theme card, the Look
+    /// link, then the Sidebar card. Page zoom (an engine API) has no row; a placeholder would be
+    /// a dead control.
     static func appearanceRows(_ model: SettingsModel) -> [SettingsModel.Row] {
-        [SettingsModel.Row(id: SettingsModel.lookRowId, pane: .appearance, title: "Look",
+        [SettingsModel.Row(id: SettingsModel.themeRowId, pane: .appearance, title: "Theme",
+                           subtitle: "Pages and settings follow it; a space’s Look can override the sidebar · " + model.theme.label),
+         SettingsModel.Row(id: SettingsModel.lookRowId, pane: .appearance, title: "Look",
                            subtitle: "Customize each space in Spaces"),
          SettingsModel.Row(id: SettingsModel.newTabRowId, pane: .appearance, title: "New Tab row",
                            subtitle: "Show “New Tab” under Today"),

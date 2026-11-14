@@ -134,8 +134,8 @@ func theSearchIndexFollowsTheRailOrderAndOnlyCoversBuiltPanes() {
     #expect(firstOfPane.map(\.element) == ["appearance", "tabs", "shortcuts", "air-traffic", "spaces", "little-window"])
     #expect(rows.allSatisfy { SettingsRegistry.pane(page: $0.pane).built })
     // The builders are the registry's own: a pane's rows are exactly what its closure returns.
-    #expect(rows.filter { $0.pane == .appearance }.map(\.id) == [SettingsModel.lookRowId, SettingsModel.newTabRowId,
-                                                                SettingsModel.tooltipsRowId])
+    #expect(rows.filter { $0.pane == .appearance }.map(\.id) == [SettingsModel.themeRowId, SettingsModel.lookRowId,
+                                                                SettingsModel.newTabRowId, SettingsModel.tooltipsRowId])
     #expect(rows.filter { $0.pane == .tabs }.map(\.id) == ["width", "archive-after"])
     #expect(rows.filter { $0.pane == .shortcuts }.map(\.id) == ["shortcut-one", "shortcut-two"])
     #expect(rows.filter { $0.pane == .airTraffic }.map(\.id) == [SettingsModel.airTrafficCardId])

@@ -38,8 +38,8 @@ func theAppearancePaneWritesBothSwitchesAndReopenReadsThem() async throws {
     model.tooltips = { tips.append($0) }
     // The pane's rows, in the board's order, and the search finds each one under Appearance.
     #expect(model.rows.filter { $0.pane == .appearance }.map(\.id) ==
-        [SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId])
-    #expect(model.rows.filter { $0.pane == .appearance }.map(\.title) == ["Look", "New Tab row", "Tooltips"])
+        [SettingsModel.themeRowId, SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId])
+    #expect(model.rows.filter { $0.pane == .appearance }.map(\.title) == ["Theme", "Look", "New Tab row", "Tooltips"])
     model.query = "tooltips"
     #expect(model.resultGroups.map { $0.pane.id.rawValue } == ["appearance"]
         && model.results.map(\.id) == [SettingsModel.tooltipsRowId])
@@ -63,7 +63,8 @@ func theAppearancePaneWritesBothSwitchesAndReopenReadsThem() async throws {
     reopened.readAppearance()
     try await waitUntil { reopened.newTabRowShown == false && reopened.tooltipsShown == false }
 
-    // The pane draws the board's rows: the Look link, then the Sidebar card's two switches.
+    // The pane draws the board's rows: the Theme card, the Look link, then the Sidebar card's
+    // two switches.
     reopened.navigate(.appearance)
     let controller = SettingsWindowController(model: reopened)
     let window = try #require(controller.window)
@@ -71,15 +72,19 @@ func theAppearancePaneWritesBothSwitchesAndReopenReadsThem() async throws {
     let probe = try #require(controller.checkProbe())
     try await waitUntil {
         probe.layout()
-        return [SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId]
+        return [SettingsModel.themeRowId, SettingsModel.lookRowId, SettingsModel.newTabRowId, SettingsModel.tooltipsRowId]
             .allSatisfy { probe.marker(SettingsModel.rowMarker($0)) != nil }
+            && probe.marker(SettingsModel.themeControlMarker) != nil
             && probe.marker(SettingsModel.newTabRowSwitchMarker) != nil
             && probe.marker(SettingsModel.tooltipsSwitchMarker) != nil
     }
+    let themeRow = try #require(probe.marker(SettingsModel.rowMarker(SettingsModel.themeRowId)))
     let look = try #require(probe.marker(SettingsModel.rowMarker(SettingsModel.lookRowId)))
     let row = try #require(probe.marker(SettingsModel.rowMarker(SettingsModel.newTabRowId)))
     let tipsRow = try #require(probe.marker(SettingsModel.rowMarker(SettingsModel.tooltipsRowId)))
-    #expect(look.maxY <= row.minY + 1 && row.maxY <= tipsRow.minY + 1, "the board's order, top down")
+    #expect(themeRow.maxY <= look.minY + 1 && look.maxY <= row.minY + 1 && row.maxY <= tipsRow.minY + 1,
+            "the board's order, top down")
+    #expect((probe.marker(SettingsModel.themeControlMarker)?.height ?? 0) >= 16)
     #expect((probe.marker(SettingsModel.newTabRowSwitchMarker)?.height ?? 0) >= 16)
     #expect(probe.newTabRowShown == false && probe.tooltipsShown == false)
 
@@ -93,9 +98,82 @@ func theAppearancePaneWritesBothSwitchesAndReopenReadsThem() async throws {
     try FileManager.default.removeItem(at: directory)
 }
 
+// U27k: the Theme writes the shared synced record, the app applies it, a reopened pane reads it
+// back from the core, and a Look whose mode is Auto takes its text from the resolved appearance.
 @Test @MainActor
-func theTooltipGateSilencesHeaderAndNativeTooltipsUntilItIsTurnedBackOn() throws {
+func theThemeWritesTheSyncedRecordAndSetsTheWholeAppearance() async throws {
     _ = NSApplication.shared
+    defer { NSApp.appearance = nil }
+    let directory = try testTemporaryDirectory()
+    let adapter = WorkspaceAdapter(windowID: "u27k-theme")
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+    let snapshot = try await settingsAppearanceValue {
+        adapter.open(path: directory.appendingPathComponent("theme.sqlite").path, json: { json },
+                     windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
+    }
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+    var applied: [Theme] = []
+    model.themeApplied = { applied.append($0) }
+    // System by default, the pane's first row, and the row names the choice.
+    #expect(model.theme == .system)
+    #expect(model.rows.filter { $0.pane == .appearance }.first?.id == SettingsModel.themeRowId)
+    #expect(model.rows.filter { $0.pane == .appearance }.first?.subtitle.contains("System") == true)
+
+    // Each value in AppKit's terms: System leaves the app to the Mac, Light and Dark force one.
+    #expect(Theme.system.appearance == nil)
+    #expect(Theme.light.appearance?.name == .aqua)
+    #expect(Theme.dark.appearance?.name == .darkAqua)
+    // What the app does with a written value: every window inherits it.
+    NSApp.appearance = Theme.dark.appearance
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120), styleMask: [], backing: .buffered, defer: false)
+    defer { window.contentView = nil }
+    #expect(window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+
+    // A space's Look still colours only the sidebar; an Auto look takes its text from the
+    // resolved appearance. A 10 % grey over the dark window is dark enough for light text, the
+    // same value over the light window dark enough for dark text.
+    let panel = SidebarPanelView(frame: NSRect(x: 0, y: 0, width: 64, height: 64))
+    panel.reduceTransparency = { false }
+    let content = NSView()
+    panel.addSubview(content)
+    let auto = Look(colors: [LookColor(red: 0.45, green: 0.45, blue: 0.45, x: 0.5, y: 0.5)],
+                    opacity: 0.1, grain: 0, glass: false, appearance: .auto)
+    panel.updateLook(auto, auto, fraction: 0)
+    #expect(content.appearance?.name == .darkAqua)
+    NSApp.appearance = Theme.light.appearance
+    panel.updateLook(auto, auto, fraction: 0)
+    #expect(content.appearance?.name == .aqua)
+    NSApp.appearance = nil
+
+    // The write reached the core, not only the model.
+    model.setTheme(.dark)
+    try await waitUntil { model.theme == .dark && applied == [.dark] }
+    let storedDark: Theme = try await settingsAppearanceValue { adapter.theme(completion: $0) }
+    #expect(storedDark == .dark)
+    #expect(model.rows.filter { $0.pane == .appearance }.first?.subtitle.contains("Dark") == true)
+
+    // A second window's model on the same workspace reads the stored value on open.
+    let reopened = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+                                 keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+    reopened.readAppearance()
+    try await waitUntil { reopened.theme == .dark }
+
+    model.setTheme(.light)
+    try await waitUntil { model.theme == .light && applied == [.dark, .light] }
+    model.setTheme(.system)
+    try await waitUntil { model.theme == .system && applied == [.dark, .light, .system] }
+    let stored: Theme = try await settingsAppearanceValue { adapter.theme(completion: $0) }
+    #expect(stored == .system)
+
+    _ = try await settingsAppearanceValue { adapter.shutdown(completion: $0) }
+    try FileManager.default.removeItem(at: directory)
+}
+
+@Test @MainActor
+func theTooltipGateSilencesHeaderAndNativeTooltipsUntilItIsTurnedBackOn() throws {    _ = NSApplication.shared
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [], backing: .buffered, defer: false)
     defer { window.contentView = nil }
     let button = NSButton(title: "Back", target: nil, action: nil)

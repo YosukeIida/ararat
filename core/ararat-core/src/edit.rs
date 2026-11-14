@@ -1390,6 +1390,15 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // U27k D5: every window's theme. Same synced record as the switches above, so a second Mac
+    // reads the theme the first one chose.
+    pub fn set_theme(&mut self, theme: crate::model::Theme) -> Vec<Op> {
+        if self.settings.theme == theme { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.theme = theme;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())
