@@ -334,7 +334,9 @@ final class OnboardingContentView: NSView {
             footer.addSubview(button)
             trailing -= OnboardingMetrics.gap
         }
-        for spec in footerButtons() {
+        // The specs are the board's left-to-right order; place runs from the right edge, so it
+        // walks them backwards to leave the first spec leftmost.
+        for spec in footerButtons().reversed() {
             place(button(spec.id, spec.title, primary: spec.primary, action: spec.action, x: 0, y: 0))
         }
         return footer
@@ -413,7 +415,7 @@ final class OnboardingContentView: NSView {
 
     private func card(rows: [NSView], x: CGFloat, y: CGFloat, width: CGFloat, rowHeight: CGFloat = OnboardingMetrics.rowHeight) -> NSView {
         let height = CGFloat(rows.count) * rowHeight + 2
-        let card = NSView(frame: NSRect(x: x, y: y, width: width, height: height))
+        let card = OnboardingFlippedView(frame: NSRect(x: x, y: y, width: width, height: height))
         card.wantsLayer = true
         card.layer?.backgroundColor = OnboardingColor.card.cgColor
         card.layer?.cornerRadius = OnboardingMetrics.cardRadius
@@ -432,7 +434,7 @@ final class OnboardingContentView: NSView {
     }
 
     private func detail(_ message: String, id: String, color: NSColor, y: CGFloat, width: CGFloat) -> NSView {
-        let box = NSView(frame: NSRect(x: OnboardingMetrics.margin, y: y, width: width, height: 56))
+        let box = OnboardingFlippedView(frame: NSRect(x: OnboardingMetrics.margin, y: y, width: width, height: 56))
         box.wantsLayer = true
         box.layer?.backgroundColor = OnboardingColor.card.cgColor
         box.layer?.cornerRadius = 8
@@ -491,9 +493,12 @@ final class OnboardingContentView: NSView {
     }
 }
 
-/// A 40 pt list row: title, optional 11 pt subtitle, the board's 16 pt inset.
+/// A 40 pt list row: title, optional 11 pt subtitle, the board's 16 pt inset. Flipped, so the
+/// title sits above the subtitle and a card's rows run top-down in the order it is given.
 @MainActor
 final class OnboardingRowView: NSView {
+    override var isFlipped: Bool { true }
+
     init(id: String, title: String, subtitle: String, dimmed: Bool, wraps: Bool = false) {
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(id)
@@ -519,6 +524,12 @@ final class OnboardingRowView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+}
+
+/// A top-down container for the cards and the error/warning box.
+@MainActor
+final class OnboardingFlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 /// The flat 32 pt button the boards draw.
