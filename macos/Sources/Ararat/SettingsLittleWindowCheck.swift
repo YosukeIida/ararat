@@ -7,8 +7,8 @@ import AraratUI
 extension Runtime {
     /// Phases 2 to 15 of `settings-little-window` (U27i): the pane's five rows and its recorder;
     /// the Air Traffic Control link; a destination written and read back after the window
-    /// reopens, then used by a Little Window's bar; close-after off leaving the window open on the
-    /// page it sent; and remembering off opening at the default frame. The shortcut's
+    /// reopens, then used by a Little Window's bar; close-after off coming back as the empty start
+    /// (M3); and remembering off opening at the default frame. The shortcut's
     /// registration result is read from the app-wide center, never by pressing a system-wide key.
     func settingsLittleWindowTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
                                   note: @escaping (String) -> Void, trace: @escaping (String) -> Void,

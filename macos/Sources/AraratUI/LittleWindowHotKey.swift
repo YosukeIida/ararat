@@ -104,9 +104,16 @@ public final class CarbonGlobalHotKey: GlobalHotKeyRegistrar {
             let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                          nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
             guard read == noErr, id.signature == hotKeySignature else { return OSStatus(eventNotHandledErr) }
-            let registrar = Unmanaged<CarbonGlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
-            MainActor.assumeIsolated { registrar.fire() }
-            return noErr
+            // N3: every registrar installs its own handler and they share one signature, so a
+            // press must also carry this registrar's id; otherwise the newest handler swallows it
+            // and the key's own registrar never fires.
+            let handled: Bool = MainActor.assumeIsolated {
+                let registrar = Unmanaged<CarbonGlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
+                guard id.id == registrar.hotKeyID else { return false }
+                registrar.fire()
+                return true
+            }
+            return handled ? noErr : OSStatus(eventNotHandledErr)
         }, 1, &spec, pointer, &handlerRef)
     }
 

@@ -180,8 +180,8 @@ fn the_little_window_device_record_starts_at_remember_and_command_option_n_and_s
     assert_eq!(peer, ws);
 }
 
-// A record from a device that stored only the remember switch still reads the default shortcut
-// through serde's defaults, and an unknown destination value is refused like the direction.
+// The device record has no serde defaults (it is new in this unit and always written whole), and
+// an unknown destination value is refused like the direction.
 #[test]
 fn the_device_record_has_no_serde_defaults_and_a_future_destination_is_refused() {
     // L5: the device record is new in this unit and always written whole. A partial body — which
