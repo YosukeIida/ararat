@@ -153,8 +153,7 @@ final class SettingsScreenCheck {
     var extensionSecondLoaded = false
     /// The Views dialog class the seam answered for Review… and Remove… (X3, Major 2).
     var extensionReviewDialog = ""
-    var extensionRemoveDialog = ""
-    var extensionRemoveFinished = false
+    var extensionRemoveSheetTitle = ""
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -240,7 +239,7 @@ extension Runtime {
                                           "second": check.extensionSecondLoaded]
             values["extension_loading"] = probe.extensionsLoading
             values["extension_review_dialog"] = check.extensionReviewDialog
-            values["extension_remove_dialog"] = check.extensionRemoveDialog
+            values["extension_remove_sheet"] = check.extensionRemoveSheetTitle
         }
         return values
     }
@@ -1316,8 +1315,11 @@ extension Runtime {
             let card = probe.marker(SettingsModel.rowMarker(SettingsModel.extensionsListCardID))
             let switchMarker = probe.marker(SettingsModel.extensionSwitchMarker(row.id))
             let titles = probe.extensionMenuTitles(row)
-            let expectedTitles = ["On all sites", "On click", "Pin to Sidebar", "Manage Extension", "Remove…"]
-            let menuOK = expectedTitles.allSatisfy(titles.contains)
+            // The pin item follows the row's own state: Chrome may load the fixture's action pinned.
+            let expectedTitles = ["On all sites", "On click",
+                                  row.pinned ? "Unpin from Sidebar" : "Pin to Sidebar",
+                                  "Manage Extension", "Remove…"]
+            let menuOK = titles == expectedTitles
             check.report("rows", profileRow != nil && menu != nil && card != nil && switchMarker != nil
                 && probe.extensions.count == 1 && row.enabled && !row.needsReview
                 && row.summary == row.siteAccess.title && menuOK)
@@ -1429,26 +1431,38 @@ extension Runtime {
             check.report("review_enables", true)
             check.details["review_dialog"] = check.extensionReviewDialog
             trace("accepted \(check.extensionReviewDialog); the extension is enabled again")
-            check.extensionRemoveFinished = false
-            probe.removeExtension(row.id) { check.extensionRemoveFinished = true }
+            probe.requestRemoveExtension(row.id)
             step(12)
         case 12:
-            let dialog = extensionDialog(action: "cancel")
-            guard !dialog.isEmpty else { note("the uninstall dialog has not opened"); return }
-            check.extensionRemoveDialog = dialog
+            // Design decision B: Remove… is our AppKit sheet on the Settings window. The check ends
+            // it with the Cancel return code, which is the sheet's default button (and Esc).
+            guard let sheet = owner.settings?.window?.attachedSheet, sheet.isVisible else {
+                note("the remove sheet has not opened")
+                return
+            }
+            guard let row = fixtureRow(probe, check.extensionDefaultID) else {
+                note("the removed row is gone before the sheet")
+                return
+            }
+            let expectedTitle = SettingsCheckProbe.removeSheetTitle(for: row.name)
+            guard sheet.title == expectedTitle else {
+                note("remove sheet title \(sheet.title.debugDescription), want \(expectedTitle.debugDescription)")
+                return
+            }
+            check.extensionRemoveSheetTitle = sheet.title
+            trace("cancelling the remove sheet: \(sheet.title)")
+            owner.settings?.window?.endSheet(sheet, returnCode: .alertFirstButtonReturn)
             step(13)
         case 13:
-            guard check.extensionRemoveFinished else { note("the uninstall dialog has not reported"); return }
+            guard probe.pendingRemoval == nil else { note("the remove sheet has not reported"); return }
             guard let row = fixtureRow(probe, check.extensionDefaultID) else {
                 note("the cancelled extension is gone")
                 return
             }
-            // The cancelled dialog was a Views dialog of the settings window and was not the prompt.
             check.report("remove_cancel_keeps", probe.extensions.contains { $0.id == row.id }
-                && !check.extensionRemoveDialog.isEmpty
-                && check.extensionRemoveDialog != "ExtensionInstallDialogView")
-            check.details["remove_dialog"] = check.extensionRemoveDialog
-            trace("cancelled \(check.extensionRemoveDialog); the row stays")
+                && check.extensionRemoveSheetTitle == SettingsCheckProbe.removeSheetTitle(for: row.name))
+            check.details["remove_sheet"] = check.extensionRemoveSheetTitle
+            trace("cancelled \(check.extensionRemoveSheetTitle); the row stays")
             owner.settings?.window?.performClose(nil)
             step(14)
 

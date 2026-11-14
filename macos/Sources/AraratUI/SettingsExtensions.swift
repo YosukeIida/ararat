@@ -108,7 +108,7 @@ private struct ExtensionMenu: View {
                 case .manage:
                     Button(entry.title) { model.manageExtension(row.id) }
                 case .remove:
-                    Button(entry.title, role: .destructive) { model.removeExtension(row.id) }
+                    Button(entry.title, role: .destructive) { model.requestRemoveExtension(row.id) }
                 }
             }
         } label: {

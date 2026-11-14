@@ -24,7 +24,15 @@ private final class FakeExtensionSettingsHost: ExtensionSettingsHost {
     var refuses = false
     var loadingProfiles: Set<String> = []
     var reviewResult = true
-    var removeResult = "notRemoved"
+    var uninstallResult = ""
+
+    func uninstall(profile: String, identifier: String) -> String {
+        removals.append(identifier)
+        if uninstallResult.isEmpty {
+            rowsByProfile[profile]?.removeAll { $0.id == identifier }
+        }
+        return uninstallResult
+    }
 
     init(rowsByProfile: [String: [SettingsExtension]]) {
         self.rowsByProfile = rowsByProfile
@@ -76,15 +84,6 @@ private final class FakeExtensionSettingsHost: ExtensionSettingsHost {
             _ = update(profile, identifier) { $0.enabled = true; $0.needsReview = false }
         }
         completion(reviewResult)
-    }
-
-    func remove(profile: String, identifier: String, window: NSWindow?,
-                completion: @escaping (String, String) -> Void) {
-        removals.append(identifier)
-        if removeResult == "removed" {
-            rowsByProfile[profile]?.removeAll { $0.id == identifier }
-        }
-        completion(removeResult, "")
     }
 
     func setChangeHandler(_ handler: (() -> Void)?) { self.handler = handler }
@@ -290,33 +289,89 @@ func theReviewRowOpensThePromptAndAccepts() {
     #expect(model.extensionRow(id: "windows")?.needsReview == true)
 }
 
-// X2/X5: Remove… reports through the host; a cancelled dialog keeps the row, a removed one takes
-// it away, and an install elsewhere (the registry observer) refreshes the pane.
+// X2/design B/X5: Remove… asks in the sheet the window presents; Cancel keeps the row, Remove calls
+// the engine's uninstall, a removal reported elsewhere ends the sheet, and the observer signal
+// re-reads the pane.
 @Test @MainActor
-func removalAndTheChangeSignalKeepThePaneCurrent() async throws {
+func removalAsksInTheSheetAndTheChangeSignalKeepsThePaneCurrent() async throws {
     let model = extensionModel(extensionSnapshot())
     let host = FakeExtensionSettingsHost(rowsByProfile: [
         "Default": [aRow("windows"), aRow("one", name: "Ararat URL field action one")],
     ])
     model.extensionHost = host
     host.setChangeHandler { [weak model] in model?.extensionsChanged() }
+    var presented: [SettingsExtension] = []
+    var dismissed = 0
+    model.presentRemoveSheet = { presented.append($0) }
+    model.dismissRemoveSheet = { dismissed += 1 }
     model.readExtensions(shownSpaceID: "default")
     #expect(model.extensions.count == 2)
 
-    var finished = false
-    host.removeResult = "notRemoved"
-    model.removeExtension("windows") { finished = true }
-    #expect(finished && host.removals == ["windows"])
+    // The sheet's copy, shared by the pane, the check and this test.
+    #expect(SettingsModel.removeSheetTitle(for: "Ararat windows check") == "Remove \"Ararat windows check\"?")
+    #expect(SettingsModel.removeSheetText == "This removes the extension and its data from this profile.")
+
+    // Remove… only asks; nothing is uninstalled until the sheet's Remove button.
+    model.requestRemoveExtension("windows")
+    #expect(presented.map(\.id) == ["windows"] && model.pendingRemoval?.id == "windows")
+    #expect(host.removals.isEmpty)
+    model.cancelRemoveExtension()
+    #expect(model.pendingRemoval == nil && host.removals.isEmpty)
     #expect(model.extensions.count == 2)
 
-    // The observer's signal re-reads the chosen profile without reopening Settings.
-    host.change("Default", to: [aRow("one", name: "Ararat URL field action one")])
-    try await waitUntil { model.extensions.count == 1 }
-    #expect(model.extensions.first?.id == "one")
+    // The sheet's Remove button goes through the engine's uninstall and the list is read back.
+    model.requestRemoveExtension("windows")
+    model.confirmRemoveExtension("windows")
+    #expect(host.removals == ["windows"] && model.pendingRemoval == nil)
+    #expect(model.extensions.map(\.id) == ["one"])
 
-    host.removeResult = "removed"
-    model.removeExtension("one")
-    #expect(model.extensions.isEmpty)
+    // An uninstall the engine refuses keeps the row and shows the engine's answer.
+    host.uninstallResult = "forced"
+    model.confirmRemoveExtension("one")
+    #expect(model.extensionRow(id: "one") != nil && model.error != nil)
+    host.uninstallResult = ""
+
+    // A removal reported elsewhere (X5) ends an open sheet for that extension.
+    model.error = nil
+    model.requestRemoveExtension("one")
+    #expect(model.pendingRemoval?.id == "one")
+    host.change("Default", to: [])
+    try await waitUntil { dismissed == 1 }
+    #expect(model.pendingRemoval == nil && model.extensions.isEmpty)
+}
+
+// The sheet itself (design's wording and buttons): Cancel is the default and answers Return, Remove
+// is destructive, and cancelling keeps the row.
+@Test @MainActor
+func theRemoveSheetHasTheDesignsTextAndCancelDefault() async throws {
+    _ = NSApplication.shared
+    let model = extensionModel(extensionSnapshot())
+    let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
+    model.extensionHost = host
+    model.readExtensions(shownSpaceID: "default")
+    let controller = SettingsWindowController(model: model)
+    controller.setExtensionSettings(host: host, manage: { _, _ in })
+    let window = try #require(controller.window)
+    window.orderFront(nil)
+    defer { window.contentViewController = nil }
+
+    model.requestRemoveExtension("windows")
+    try await waitUntil { window.attachedSheet != nil }
+    let sheet = try #require(window.attachedSheet)
+    #expect(sheet.title == SettingsModel.removeSheetTitle(for: "Ararat windows check"))
+    func buttons(_ view: NSView) -> [NSButton] {
+        view.subviews.compactMap { $0 as? NSButton } + view.subviews.flatMap(buttons)
+    }
+    let found = buttons(try #require(sheet.contentView))
+    let remove = try #require(found.first { $0.title == "Remove" })
+    // Return answers Cancel (AppKit's default button cell), and Remove is destructive.
+    #expect(sheet.defaultButtonCell?.title == "Cancel")
+    #expect(remove.hasDestructiveAction)
+
+    window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+    try await waitUntil { model.pendingRemoval == nil }
+    #expect(model.extensions.map(\.id) == ["windows"])
+    #expect(host.removals.isEmpty)
 }
 
 // The pane draws the chooser, the Installed card and a row's switch or Review…, and the empty

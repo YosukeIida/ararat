@@ -16,8 +16,7 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
     private typealias SetPinned = @convention(c) (NSString, NSString, ObjCBool) -> Unmanaged<NSString>?
     private typealias Review = @convention(c) (NSString, NSString, NSWindow?,
                                               @escaping @convention(block) (ObjCBool) -> Void) -> Void
-    private typealias Remove = @convention(c) (NSString, NSString, NSWindow?,
-                                               @escaping @convention(block) (NSString, NSString) -> Void) -> Void
+    private typealias Remove = @convention(c) (NSString, NSString) -> Unmanaged<NSString>?
     private typealias SetChangeHandler = @convention(c) (@escaping @convention(block) () -> Void) -> Void
     private typealias CheckLoad = @convention(c) (NSString, NSString,
                                                   @escaping @convention(block) (NSString) -> Void) -> Void
@@ -95,12 +94,9 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
         }
     }
 
-    func remove(profile: String, identifier: String, window: NSWindow?,
-                completion: @escaping (String, String) -> Void) {
-        guard let removeSymbol else { completion("unknown", ""); return }
-        removeSymbol(profile as NSString, identifier as NSString, window) { result, detail in
-            MainActor.assumeIsolated { completion(result as String, detail as String) }
-        }
+    func uninstall(profile: String, identifier: String) -> String {
+        guard let removeSymbol else { return "unknown" }
+        return Self.text(removeSymbol(profile as NSString, identifier as NSString))
     }
 
     func setChangeHandler(_ handler: (() -> Void)?) {

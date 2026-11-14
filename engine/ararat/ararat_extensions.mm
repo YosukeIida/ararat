@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -32,11 +31,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
-#include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/shared_module_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -57,6 +54,7 @@
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/shared_module_service.h"
 #include "extensions/browser/ui_util.h"
+#include "extensions/browser/uninstall_reason.h"
 #include "extensions/browser/unpacked_installer.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/icons/extension_icon_set.h"
@@ -380,39 +378,6 @@ std::vector<scoped_refptr<const extensions::Extension>> ListedExtensions(Profile
   return extensions;
 }
 
-// One notification after Chromium's uninstall dialog closed, as the window host's Remove… does.
-void PostRemoveResult(void (^completion)(NSString*, NSString*), NSString* result, NSString* detail) {
-  if (!completion) return;
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(^{ completion(result, detail); }));
-}
-
-class UninstallRequest : public extensions::ExtensionUninstallDialog::Delegate {
- public:
-  static void Start(Profile* profile, gfx::NativeWindow parent,
-                    const extensions::Extension* extension,
-                    void (^completion)(NSString*, NSString*)) {
-    auto* request = new UninstallRequest(completion);
-    request->dialog_ = extensions::ExtensionUninstallDialog::Create(profile, parent, request);
-    request->dialog_->ConfirmUninstall(extension, extensions::UNINSTALL_REASON_USER_INITIATED,
-                                       extensions::UNINSTALL_SOURCE_TOOLBAR_CONTEXT_MENU);
-  }
-
- private:
-  explicit UninstallRequest(void (^completion)(NSString*, NSString*))
-      : completion_([completion copy]) {}
-  ~UninstallRequest() override = default;
-  void OnExtensionUninstallDialogClosed(bool started, const std::u16string& error) override {
-    void (^completion)(NSString*, NSString*) = completion_;
-    NSString* detail = base::SysUTF16ToNSString(error);
-    NSString* result = started ? @"removed" : @"notRemoved";
-    delete this;
-    PostRemoveResult(completion, result, detail);
-  }
-  void (^completion_)(NSString*, NSString*);
-  std::unique_ptr<extensions::ExtensionUninstallDialog> dialog_;
-};
-
 // Chromium's re-enable prompt (X3), the dialog Chrome shows for an extension it disabled for a
 // permissions increase. This object owns the prompt until the dialog reports, then grants and
 // enables through the same registrar call the management API's enable path uses.
@@ -653,105 +618,30 @@ void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* wi
   ReviewRequest::Start(target, extension.get(), gfx::NativeWindow(window), report);
 }
 
-// Chromium hosts a Views dialog inside a Views widget tree: CreateBrowserModalDialogViews asks
-// CurrentBrowserModalClient()->GetDialogHostView(parent) for the parent window's content view and
-// then NativeWidgetMacNSWindowHost::GetFromNativeView looks the hosting Widget up by that window
-// (ui/views/cocoa/native_widget_mac_ns_window_host.mm:292-296). The Settings window is an AppKit
-// window, not a Views widget, so that lookup is null, SetParent(nullptr) makes the dialog a free
-// window (native_widget_mac.mm:291-330; native_widget_mac.mm:590-604 records that a
-// ModalType::kWindow dialog without a parent host is shown non-modally), and neither
-// parent.attachedSheet nor parent.childWindows sees it. The dialog also opens a tick or two after
-// the call, when its icon has loaded. Attach the new free window to the Settings window as a child
-// so the window relation exists for the pane, the check and the user; a child moves with the
-// Settings window and closes with it.
-namespace {
-
-class ChildWindowAttacher {
- public:
-  static void Start(NSWindow* parent) {
-    if (!parent) return;
-    (new ChildWindowAttacher(parent))->Poll(0);
-  }
-
- private:
-  explicit ChildWindowAttacher(NSWindow* parent) : parent_(parent) {
-    for (NSWindow* window in NSApp.windows) known_.insert(window.windowNumber);
-  }
-
-  void Poll(int attempt) {
-    if (!parent_ || attempt > 40) {
-      if (attempt > 40 && IsCheckRun()) {
-        // Nothing new appeared: name every window so the next run says where Chromium put it.
-        for (NSWindow* window in NSApp.windows) {
-          views::Widget* widget =
-              views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
-          views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
-          views::View* contents = delegate ? delegate->GetContentsView() : nullptr;
-          std::fprintf(stderr,
-                       "ararat-trace: uninstall-dialog window=%s visible=%d parent=%s sheet=%s "
-                       "views=%d contents=%s\n",
-                       NSStringFromClass(window.class).UTF8String, window.isVisible,
-                       window.parentWindow ? NSStringFromClass(window.parentWindow.class).UTF8String
-                                           : "",
-                       window.attachedSheet
-                           ? NSStringFromClass(window.attachedSheet.class).UTF8String
-                           : "",
-                       widget != nullptr,
-                       contents ? std::string(contents->GetClassName()).c_str() : "");
-        }
-      }
-      delete this;
-      return;
-    }
-    for (NSWindow* window in NSApp.windows) {
-      if (!window.isVisible || window == parent_ || window.parentWindow || window.sheetParent)
-        continue;
-      if (known_.contains(window.windowNumber)) continue;
-      views::Widget* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
-      views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
-      views::DialogDelegate* dialog = delegate ? delegate->AsDialogDelegate() : nullptr;
-      if (!dialog) continue;
-      [parent_ addChildWindow:window ordered:NSWindowAbove];
-      if (IsCheckRun()) {
-        views::View* contents = delegate->GetContentsView();
-        std::fprintf(stderr, "ararat-trace: uninstall-dialog attached attempt=%d window=%s contents=%s\n",
-                     attempt, NSStringFromClass(window.class).UTF8String,
-                     contents ? std::string(contents->GetClassName()).c_str() : "");
-      }
-      delete this;
-      return;
-    }
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE, base::BindOnce(^{ Poll(attempt + 1); }), base::Milliseconds(50));
-  }
-
-  std::set<int> known_;
-  NSWindow* parent_;
-};
-
-}  // namespace
-
-void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* window,
-                           void (^completion)(NSString* result, NSString* detail)) {
-  void (^report)(NSString*, NSString*) = [completion copy];
+// The pane's Remove… asks in its own AppKit sheet (Swift) and this entry performs the uninstall.
+// Chromium's ExtensionUninstallDialog cannot host a Views modal under an AppKit window (review 5),
+// and its accept is only this lookup plus the registrar call (extension_uninstall_dialog.cc:224-239),
+// so sync, data removal and the observers are the registrar's own path.
+NSString* AraratRemoveExtension(NSString* profile, NSString* identifier) {
   Profile* target = LoadedProfileForDirectory(profile);
-  auto* registry = target ? extensions::ExtensionRegistry::Get(target) : nullptr;
+  if (!target || ![identifier isKindOfClass:NSString.class] || identifier.length == 0)
+    return @"unknown";
+  const std::string id = base::SysNSStringToUTF8(identifier);
+  auto* registry = extensions::ExtensionRegistry::Get(target);
+  auto* registrar = extensions::ExtensionRegistrar::Get(target);
+  // The registrar CHECKs that the extension exists (extension_registrar.cc:729), so it is looked up
+  // immediately before the call, as the dialog's accept does.
   const extensions::Extension* extension =
-      registry && [identifier isKindOfClass:NSString.class]
-          ? registry->GetInstalledExtension(base::SysNSStringToUTF8(identifier))
-          : nullptr;
-  if (!target || !extension) {
-    PostRemoveResult(report, @"unknown", @"");
-    return;
-  }
-  if (!CanRemove(target, extension)) {
-    PostRemoveResult(report, @"forced", @"");
-    return;
-  }
-  // The attacher takes its window baseline before the dialog exists; the dialog itself opens after
-  // its icon load.
-  ChildWindowAttacher::Start(window);
-  UninstallRequest::Start(target, gfx::NativeWindow(window), extension, report);
+      registry ? registry->GetExtensionById(id, extensions::ExtensionRegistry::EVERYTHING) : nullptr;
+  if (!extension || !registrar) return @"unknown";
+  if (!CanRemove(target, extension)) return @"forced";
+  std::u16string error;
+  // The registrar re-applies UserMayModifySettings and MustRemainInstalled itself
+  // (extension_registrar.cc:749-751).
+  if (!registrar->UninstallExtension(id, extensions::UNINSTALL_REASON_USER_INITIATED, &error))
+    return error.empty() ? @"failed" : base::SysUTF16ToNSString(error);
+  ExtensionWatcher::Get().NotifyChanged();
+  return @"";
 }
 
 void AraratSetExtensionsChangedHandler(void (^handler)(void)) {
@@ -817,16 +707,11 @@ void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifie
   registrar->DisableExtension(id, {extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE});
 }
 
-// Check-only: accepts or cancels the Views dialog a Settings action opened, and returns the
-// dialog's contents class ("ExtensionInstallDialogView" for the re-enable prompt; the uninstall
-// dialog's own class otherwise), or an empty string when no such dialog is up. It is the seam
+// Check-only: accepts the re-enable prompt the Review… action opened, and returns the dialog's
+// contents class (ExtensionInstallDialogView), or an empty string when it is not up. It is the seam
 // accept-download-close uses (views::Widget::GetWidgetForNativeWindow, then the dialog delegate),
-// because the VM's in-process accessibility tree is empty.
-//
-// What the seam may touch is restricted: "accept" accepts only the re-enable prompt
-// (ExtensionInstallDialogView), wherever it was parented; "cancel" cancels a Views dialog that is a
-// sheet or child of the settings window, and never an unrelated bubble. Every other Views dialog
-// stays untouched.
+// because the VM's in-process accessibility tree is empty. Only that prompt's class is accepted, so
+// no other Views dialog is touched; the pane's Remove… is an AppKit sheet and needs no seam.
 namespace {
 
 // The contents class of a Views dialog window, and the dialog itself; empty class means the window
@@ -845,47 +730,33 @@ std::string DialogClassForWindow(NSWindow* window, views::DialogDelegate** dialo
 }  // namespace
 
 NSString* AraratCheckExtensionDialog(NSWindow* parent, NSString* action) {
-  if (!IsCheckRun() || !parent || ![action isKindOfClass:NSString.class]) return @"";
-  const bool accept = [action isEqual:@"accept"];
+  if (!IsCheckRun() || !parent || ![action isEqual:@"accept"]) return @"";
   constexpr char kInstallDialogClass[] = "ExtensionInstallDialogView";
-  // The parent-linked passes: the settings window's sheet, its sheets, its children, and windows
-  // whose parentWindow is the settings window.
-  NSMutableArray<NSWindow*>* linked = [NSMutableArray array];
-  if (parent.attachedSheet) [linked addObject:parent.attachedSheet];
-  for (NSWindow* sheet in parent.sheets) {
-    if (sheet != parent.attachedSheet) [linked addObject:sheet];
-  }
-  for (NSWindow* child in parent.childWindows) [linked addObject:child];
-  for (NSWindow* window in NSApp.windows) {
-    if (window != parent && window.parentWindow == parent) [linked addObject:window];
-  }
   auto resolve = [&](NSWindow* window, const char* pass) -> NSString* {
     if (!window.isVisible) return nil;
     views::DialogDelegate* dialog = nullptr;
     const std::string name = DialogClassForWindow(window, &dialog);
-    if (!dialog || name.empty()) return nil;
-    // Accepting is the re-enable prompt's alone; a parent-linked cancel may take any Views dialog
-    // the settings window opened (the uninstall dialog's contents class is not ours to name).
-    if (accept && name != kInstallDialogClass) return nil;
+    if (!dialog || name != kInstallDialogClass) return nil;
     std::fprintf(stderr, "ararat-trace: extension-dialog pass=%s action=%s class=%s\n", pass,
                  action.UTF8String, name.c_str());
-    if (accept) {
-      dialog->AcceptDialog();
-    } else {
-      dialog->CancelDialog();
-    }
+    dialog->AcceptDialog();
     return base::SysUTF8ToNSString(name);
   };
-  for (NSWindow* window in linked) {
-    if (NSString* name = resolve(window, "linked")) return name;
+  // The prompt is a free window when Chromium cannot host it under the Settings window, so the
+  // search covers the settings window's relations first and then the process's windows.
+  if (parent.attachedSheet) {
+    if (NSString* name = resolve(parent.attachedSheet, "sheet")) return name;
   }
-  // A views dialog parented to a non-Browser window can be a window of its own; only the re-enable
-  // prompt is accepted from that pass, so no unrelated bubble is touched.
-  if (accept) {
-    for (NSWindow* window in NSApp.windows) {
-      if (window == parent) continue;
-      if (NSString* name = resolve(window, "unrestricted")) return name;
-    }
+  for (NSWindow* sheet in parent.sheets) {
+    if (sheet == parent.attachedSheet) continue;
+    if (NSString* name = resolve(sheet, "sheet")) return name;
+  }
+  for (NSWindow* child in parent.childWindows) {
+    if (NSString* name = resolve(child, "child")) return name;
+  }
+  for (NSWindow* window in NSApp.windows) {
+    if (window == parent) continue;
+    if (NSString* name = resolve(window, window.parentWindow == parent ? "parented" : "free")) return name;
   }
   return @"";
 }

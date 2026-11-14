@@ -311,11 +311,13 @@ NSString* AraratSetExtensionPinned(NSString* profile, NSString* identifier, BOOL
 __attribute__((visibility("default")))
 void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* _Nullable window,
                            void (^completion)(BOOL allowed));
-// Chromium's uninstall dialog, parented to the settings window. The reply is "removed",
-// "notRemoved", "forced" or "unknown"; a cancelled dialog keeps the extension.
+// U27x: the pane's Remove… asks in its own AppKit sheet (the app layer) and this entry performs the
+// uninstall through the registrar, which re-applies the management policy. "" on success;
+// "unknown" when the profile or extension is gone, "forced" when the policy forbids it, otherwise
+// the registrar's error text. Chromium's own uninstall dialog is not used by the pane because it
+// cannot host a Views modal under the settings window; the context-menu Remove… keeps it.
 __attribute__((visibility("default")))
-void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* _Nullable window,
-                           void (^completion)(NSString* result, NSString* detail));
+NSString* AraratRemoveExtension(NSString* profile, NSString* identifier);
 // X5: called on the main thread when any regular profile's extension registry changes (install,
 // removal, enable, disable). Pass nil to stop.
 __attribute__((visibility("default")))
@@ -329,11 +331,11 @@ void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
 // Check-only: marks an installed extension as disabled for a permissions increase.
 __attribute__((visibility("default")))
 void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifier);
-// Check-only: accepts ("accept") or cancels ("cancel") the Views dialog a Settings action opened,
-// and returns the dialog's contents class — "ExtensionInstallDialogView" for the re-enable prompt,
-// the uninstall dialog's own class otherwise — or an empty string when no dialog is up. The seam
-// is accept-download-close's (views::Widget::GetWidgetForNativeWindow, then the dialog delegate),
-// because the VM's in-process accessibility tree is empty.
+// Check-only: accepts ("accept") the re-enable prompt the Review… action opened, and returns the
+// dialog's contents class ("ExtensionInstallDialogView") or an empty string when it is not up. The
+// seam is accept-download-close's (views::Widget::GetWidgetForNativeWindow, then the dialog
+// delegate), because the VM's in-process accessibility tree is empty. The pane's Remove… is an
+// AppKit sheet and needs no seam.
 __attribute__((visibility("default")))
 NSString* AraratCheckExtensionDialog(NSWindow* _Nullable parent, NSString* action);
 __attribute__((visibility("default")))

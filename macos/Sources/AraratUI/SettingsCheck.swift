@@ -162,9 +162,12 @@ public final class SettingsCheckProbe {
     @discardableResult
     public func toggleExtensionPin(_ id: String) -> Bool { model.toggleExtensionPin(id) }
     public func reviewExtension(_ id: String) { model.reviewExtension(id) }
-    public func removeExtension(_ id: String, completion: (() -> Void)? = nil) {
-        model.removeExtension(id, completion: completion)
+    public func requestRemoveExtension(_ id: String) { model.requestRemoveExtension(id) }
+    public var pendingRemoval: SettingsExtension? { model.pendingRemoval }
+    public static func removeSheetTitle(for name: String) -> String {
+        SettingsModel.removeSheetTitle(for: name)
     }
+    public static let removeSheetText = SettingsModel.removeSheetText
     public func extensionMenuTitles(_ row: SettingsExtension) -> [String] {
         SettingsModel.extensionMenu(row).filter { $0 != .separator }.map(\.title)
     }

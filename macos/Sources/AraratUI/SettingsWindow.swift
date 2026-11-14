@@ -9,6 +9,9 @@ public final class SettingsWindowController: NSWindowController {
     /// U27i N1: a recording left open when the window closes would keep the Carbon hot key
     /// unregistered until Settings reopens, so the close ends it.
     private var littleWindowRecordingCloseObserver: NSObjectProtocol?
+    /// U27x (design decision B): the pane's Remove… is our AppKit sheet, and this window owns it.
+    private var removeSheet: NSAlert?
+    private var removeSheetMonitor: Any?
     public init(model: SettingsModel) {
         self.model = model
         let split = NSSplitViewController()
@@ -120,7 +123,58 @@ public final class SettingsWindowController: NSWindowController {
         model.extensionHost = host
         model.extensionManage = manage
         model.extensionWindow = { [weak self] in self?.window }
+        model.presentRemoveSheet = { [weak self] row in self?.presentRemoveSheet(for: row) }
+        model.dismissRemoveSheet = { [weak self] in self?.dismissRemoveSheet() }
         host.setChangeHandler { [weak self] in self?.model.extensionsChanged() }
+    }
+
+    // MARK: U27x, the Remove… sheet
+
+    /// The pane's confirmation (design decision B): our own AppKit sheet on this window, because
+    /// Chromium's uninstall dialog is a Views modal and the Settings window is not a Views host.
+    /// Cancel is the default button and answers Esc, so Return never removes.
+    private func presentRemoveSheet(for row: SettingsExtension) {
+        guard removeSheet == nil, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = SettingsModel.removeSheetTitle(for: row.name)
+        alert.informativeText = SettingsModel.removeSheetText
+        let cancel = alert.addButton(withTitle: "Cancel")
+        let remove = alert.addButton(withTitle: "Remove")
+        remove.hasDestructiveAction = true
+        // After both are added, so NSAlert does not overwrite it.
+        cancel.keyEquivalent = "\r"
+        // The sheet carries the question as its title, which the check reads.
+        alert.window.title = alert.messageText
+        removeSheet = alert
+        removeSheetMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            self?.dismissRemoveSheet()
+            return nil
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            self.endRemoveSheet()
+            if response == .alertSecondButtonReturn {
+                self.model.confirmRemoveExtension(row.id)
+            } else {
+                self.model.cancelRemoveExtension()
+            }
+        }
+    }
+
+    /// Ends the sheet as Cancel. The completion closes the model's pending state; a removal reported
+    /// by the Extensions observer also ends an open sheet this way.
+    private func dismissRemoveSheet() {
+        guard let alert = removeSheet, let window else { return }
+        window.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+    }
+
+    private func endRemoveSheet() {
+        removeSheet = nil
+        if let removeSheetMonitor {
+            NSEvent.removeMonitor(removeSheetMonitor)
+            self.removeSheetMonitor = nil
+        }
     }
 
     /// W4: the site-controls popover's "All Site Settings…" opens this pane on the origin's page,

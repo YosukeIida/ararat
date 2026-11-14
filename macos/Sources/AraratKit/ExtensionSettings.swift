@@ -103,9 +103,9 @@ public protocol ExtensionSettingsHost: AnyObject {
     /// Chromium's re-enable prompt; `allowed` is whether it was accepted.
     func review(profile: String, identifier: String, window: NSWindow?,
                 completion: @escaping (Bool) -> Void)
-    /// Chromium's uninstall dialog; the reply is "removed", "notRemoved", "forced" or "unknown".
-    func remove(profile: String, identifier: String, window: NSWindow?,
-                completion: @escaping (String, String) -> Void)
+    /// The engine uninstalls through the registrar; "" on success, or "unknown", "forced" or an
+    /// error text. The pane asks in its own AppKit sheet before calling it.
+    func uninstall(profile: String, identifier: String) -> String
     /// X5: the registry observer's callback, called when an extension is installed, removed,
     /// enabled or disabled in any profile.
     func setChangeHandler(_ handler: (() -> Void)?)

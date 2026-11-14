@@ -96,8 +96,14 @@ public final class SettingsModel: ObservableObject {
     /// Opens chrome://extensions/?id= in a tab of the extension's profile, as the action's menu
     /// does; the app supplies it because it owns the tab.
     var extensionManage: (String, String) -> Void = { _, _ in }
-    /// The settings window, the parent of Chromium's review and uninstall dialogs.
+    /// The settings window: the parent of Chromium's review prompt and of the pane's own Remove sheet.
     var extensionWindow: () -> NSWindow? = { nil }
+    /// U27x (design decision B): Remove… asks in the pane's own AppKit sheet on the settings window.
+    /// The model asks for it and the window presents it; the engine uninstalls through the registrar
+    /// only after the sheet's Remove button. A removal reported elsewhere ends the sheet.
+    @Published var pendingRemoval: SettingsExtension?
+    var presentRemoveSheet: ((SettingsExtension) -> Void)?
+    var dismissRemoveSheet: (() -> Void)?
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -822,6 +828,12 @@ public final class SettingsModel: ObservableObject {
         let list = extensionHost?.extensions(profile: extensionProfile) ?? .empty
         extensionsLoading = list.loading
         if !list.loading { extensions = list.rows }
+        // A removal reported elsewhere (X5) ends a sheet asking about that extension.
+        if !list.loading, let pending = pendingRemoval,
+           !extensions.contains(where: { $0.id == pending.id }) {
+            pendingRemoval = nil
+            dismissRemoveSheet?()
+        }
     }
 
     /// X5: an extension changed somewhere; the pane follows without reopening Settings.
@@ -901,14 +913,32 @@ public final class SettingsModel: ObservableObject {
     }
 
     /// Remove… (X2): Chromium's uninstall dialog; a cancelled dialog keeps the extension.
-    func removeExtension(_ id: String, completion: (() -> Void)? = nil) {
-        guard let host = extensionHost, !extensionProfile.isEmpty else { completion?(); return }
-        host.remove(profile: extensionProfile, identifier: id, window: extensionWindow()) { [weak self] result, _ in
-            guard let self else { completion?(); return }
-            self.refreshExtensions()
-            if result == "forced" { self.error = "Chromium does not allow removing this extension." }
-            completion?()
+    /// The sheet's copy (design's wording), shared by the pane, the check and the tests.
+    static func removeSheetTitle(for name: String) -> String { "Remove \"\(name)\"?" }
+    static let removeSheetText = "This removes the extension and its data from this profile."
+
+    /// Remove… (X2, design decision B): ask in the AppKit sheet the window presents. Nothing is
+    /// removed until its Remove button.
+    func requestRemoveExtension(_ id: String) {
+        guard let row = extensionRow(id: id) else { return }
+        pendingRemoval = row
+        presentRemoveSheet?(row)
+    }
+
+    func cancelRemoveExtension() {
+        pendingRemoval = nil
+    }
+
+    /// The sheet's Remove button: the engine uninstalls (the registrar re-checks the policy), then
+    /// the list is read again. A refusal or failure shows the engine's answer.
+    func confirmRemoveExtension(_ id: String) {
+        guard let host = extensionHost, !extensionProfile.isEmpty else { return }
+        pendingRemoval = nil
+        let result = host.uninstall(profile: extensionProfile, identifier: id)
+        if !result.isEmpty {
+            error = result == "forced" ? "Chromium does not allow removing this extension." : result
         }
+        refreshExtensions()
     }
 
     /// Manage Extension (X2): chrome://extensions/?id= in a tab of the extension's profile.
