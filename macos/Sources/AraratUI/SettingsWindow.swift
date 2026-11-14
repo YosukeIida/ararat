@@ -65,6 +65,7 @@ public final class SettingsWindowController: NSWindowController {
         model.readAppearance()
         model.readLittleWindow()
         model.readWebsites()
+        model.readExtensions(shownSpaceID: shownSpaceID)
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
     public func open(shownSpaceID: String?) {
@@ -109,6 +110,17 @@ public final class SettingsWindowController: NSWindowController {
     public func setSiteSettings(host: SiteSettingsHost, defaultsApplied: @escaping (SiteDefaults) -> Void) {
         model.siteHost = host
         model.siteDefaultsApplied = defaultsApplied
+    }
+
+    /// U27x: the engine side of the Extensions pane. The app hands in the AraratHostAPI bridge,
+    /// the Manage Extension tab opener, and the window Chromium's review and uninstall dialogs are
+    /// parented to. The change handler (X5) re-reads the rows when an extension changes elsewhere.
+    public func setExtensionSettings(host: ExtensionSettingsHost,
+                                     manage: @escaping (String, String) -> Void) {
+        model.extensionHost = host
+        model.extensionManage = manage
+        model.extensionWindow = { [weak self] in self?.window }
+        host.setChangeHandler { [weak self] in self?.model.extensionsChanged() }
     }
 
     /// W4: the site-controls popover's "All Site Settings…" opens this pane on the origin's page,
@@ -278,6 +290,8 @@ private struct SettingsDetail: View {
                         SettingsWebsitesSection(model: model)
                     case .site(let origin, let profile):
                         SettingsSitePage(model: model, origin: origin, profile: profile)
+                    case .extensions:
+                        SettingsExtensionsSection(model: model)
                     case .littleWindow:
                         SettingsLittleWindowSection(model: model)
                     case .spaces:

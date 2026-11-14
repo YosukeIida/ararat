@@ -143,6 +143,33 @@ public final class SettingsCheckProbe {
         model.clearSiteData(origin: origin, profile: profile, completion: completion)
     }
 
+    // MARK: U27x, the Extensions pane
+
+    /// The chooser, its list and the same setters the pane's switch, Review…, … menu and rows call.
+    public var extensionProfiles: [String] { model.extensionProfiles }
+    public var extensionProfile: String { model.extensionProfile }
+    public var extensions: [SettingsExtension] { model.extensions }
+    public var extensionEmpty: Bool { model.extensions.isEmpty }
+    public func readExtensions(shownSpaceID: String?) { model.readExtensions(shownSpaceID: shownSpaceID) }
+    public func refreshExtensions() { model.refreshExtensions() }
+    public func selectExtensionProfile(_ profile: String) { model.selectExtensionProfile(profile) }
+    @discardableResult
+    public func setExtensionEnabled(_ id: String, _ enabled: Bool) -> Bool { model.setExtensionEnabled(id, enabled: enabled) }
+    @discardableResult
+    public func setExtensionSiteAccess(_ id: String, _ access: ExtensionSiteAccess) -> Bool {
+        model.setExtensionSiteAccess(id, access: access)
+    }
+    @discardableResult
+    public func toggleExtensionPin(_ id: String) -> Bool { model.toggleExtensionPin(id) }
+    public func reviewExtension(_ id: String) { model.reviewExtension(id) }
+    public func removeExtension(_ id: String, completion: (() -> Void)? = nil) {
+        model.removeExtension(id, completion: completion)
+    }
+    public func extensionMenuTitles(_ row: SettingsExtension) -> [String] {
+        SettingsModel.extensionMenu(row).filter { $0 != .separator }.map(\.title)
+    }
+    public func extensionRow(id: String) -> SettingsExtension? { model.extensionRow(id: id) }
+
     // MARK: frames
 
     private var content: NSView? { window.contentView }

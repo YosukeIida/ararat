@@ -65,7 +65,8 @@ enum SettingsRegistry {
                      subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
         SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised", subtitle: "", page: nil, rows: { _ in [] }),
-        SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension",
+                     subtitle: "Added and managed per profile.", page: .extensions, rows: extensionsRows),
         SettingsPane(id: .sync, title: "Sync", icon: "arrow.triangle.2.circlepath", subtitle: "", page: nil, rows: { _ in [] }),
         SettingsPane(id: .about, title: "About", icon: "info.circle", subtitle: "", page: nil, rows: { _ in [] }),
     ]
@@ -124,6 +125,19 @@ enum SettingsRegistry {
     static func airTrafficRows(_ model: SettingsModel) -> [SettingsModel.Row] {
         [SettingsModel.Row(id: SettingsModel.airTrafficCardId, pane: .airTraffic, title: "Air Traffic Control",
                            subtitle: SettingsModel.airTrafficSubtitle)]
+    }
+
+    /// U27x: the profile row, then one result per extension of the chosen profile, so the search
+    /// reaches an extension and Return opens the pane on its row.
+    static func extensionsRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        var rows = [SettingsModel.Row(id: SettingsModel.extensionsProfileRowID, pane: .extensions,
+                                      title: "Profile",
+                                      subtitle: "Extensions are installed per profile · " + model.extensionProfile)]
+        rows += model.extensions.map { row in
+            SettingsModel.Row(id: SettingsModel.extensionRowID(row.id), pane: .extensions,
+                              title: row.name, subtitle: row.summary)
+        }
+        return rows
     }
 
     /// U27i: the Little Window pane's five rows — the ATC link, the global shortcut and the
@@ -185,6 +199,7 @@ extension SettingsModel.Page {
         case .airTraffic: .airTraffic
         case .appearance: .appearance
         case .littleWindow: .littleWindow
+        case .extensions: .extensions
         case .spaces, .space: .spaces
         }
     }

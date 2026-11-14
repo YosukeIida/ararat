@@ -283,6 +283,49 @@ BOOL AraratSetSiteException(NSString* profile, NSString* origin, NSString* kind,
 // not a count, and is always called.
 __attribute__((visibility("default")))
 void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)(uint64_t failedDataTypes));
+// U27x: Settings › Extensions. One profile's user-installed (Web Store) and unpacked extensions,
+// as Chromium's own extensions page lists them: id, name, icon (NSImage or NSNull), enabled,
+// needsReview (disabled for a permissions increase), disableReasons (raw values), siteAccess
+// ("all", "specific" or "click"), pinned and canPin (the toolbar action and its pin prefs),
+// removable and unpacked. The list is empty when the profile is not loaded.
+__attribute__((visibility("default")))
+NSArray<NSDictionary<NSString*, id>*>* AraratExtensions(NSString* profile);
+// Enables or disables one extension: "done", "unchanged", "unknown", "policy", or "review" when
+// Chromium disabled it for a permissions increase (only the re-enable prompt may enable it).
+__attribute__((visibility("default")))
+NSString* AraratSetExtensionEnabled(NSString* profile, NSString* identifier, BOOL enabled);
+// Writes the profile's user site access for one extension: "all" or "click" (a site-by-site
+// choice stays Chromium's page). The reply is "done", "unsupported" or "unknown".
+__attribute__((visibility("default")))
+NSString* AraratSetExtensionSiteAccess(NSString* profile, NSString* identifier, NSString* access);
+// Pins or unpins one extension's action in the profile's toolbar, as the action menu does:
+// "done", "unchanged", "forced", "unknown" or "incognito".
+__attribute__((visibility("default")))
+NSString* AraratSetExtensionPinned(NSString* profile, NSString* identifier, BOOL pinned);
+// Opens Chromium's re-enable prompt for an extension disabled for a permissions increase; an
+// accepted prompt grants the permissions and enables it. The completion reports whether it was
+// accepted, and is always called.
+__attribute__((visibility("default")))
+void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* _Nullable window,
+                           void (^completion)(BOOL allowed));
+// Chromium's uninstall dialog, parented to the settings window. The reply is "removed",
+// "notRemoved", "forced" or "unknown"; a cancelled dialog keeps the extension.
+__attribute__((visibility("default")))
+void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* _Nullable window,
+                           void (^completion)(NSString* result, NSString* detail));
+// X5: called on the main thread when any regular profile's extension registry changes (install,
+// removal, enable, disable). Pass nil to stop.
+__attribute__((visibility("default")))
+void AraratSetExtensionsChangedHandler(void (^ _Nullable handler)(void));
+// Check-only: installs an unpacked fixture into one profile ("loaded" or an error). Refused
+// outside a check run. Unpacked updates are trusted locations, so Chrome never disables them for
+// a permissions increase; the next call produces that state for the settings check.
+__attribute__((visibility("default")))
+void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
+                                      void (^completion)(NSString* result));
+// Check-only: marks an installed extension as disabled for a permissions increase.
+__attribute__((visibility("default")))
+void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifier);
 __attribute__((visibility("default")))
 void AraratCheckCommitProfilePrefs(NSString* profile, void (^completion)(BOOL done));
 __attribute__((visibility("default")))

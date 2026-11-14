@@ -22,6 +22,7 @@ final class SettingsScreenCheck {
         case spaces = "settings-spaces"
         case littleWindow = "settings-little-window"
         case websites = "settings-websites"
+        case extensions = "settings-extensions"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
@@ -29,6 +30,7 @@ final class SettingsScreenCheck {
             case .frame, .search, .tabs: "tabs"
             case .shortcuts, .airTraffic, .appearance, .spaces, .websites: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
+            case .extensions: "extensions"
             }
         }
 
@@ -59,6 +61,9 @@ final class SettingsScreenCheck {
             case .websites: ["rows", "defaults_write", "defaults_reopen", "notification_denied", "camera_prompt",
                              "popover_exception", "pane_site_row", "all_site_settings", "site_page_rows",
                              "clear_site_data", "other_origin_kept", "reset_removes"]
+            case .extensions: ["rows", "profile_switch", "site_access_write", "pin_action",
+                               "disable_hides_action", "enable_brings_action", "review_prompt",
+                               "review_enables", "remove_cancel_keeps", "reopen_state"]
             }
         }
     }
@@ -135,6 +140,22 @@ final class SettingsScreenCheck {
     var websiteReadSecure: String?
     var websiteReadPlain: String?
     var websiteSiteRow: SettingsSiteRow?
+    // U27x: the Extensions check's fixture args, the two profiles, the row ids it drives, the
+    // dialog windows it has already seen (so a new one names the prompt), and its carried results.
+    var extensionFixtureDefault = ""
+    var extensionFixtureSecond = ""
+    var extensionDefaultProfile = ""
+    var extensionSecondProfile = ""
+    var extensionDefaultID = ""
+    var extensionSecondID = ""
+    var extensionInstalling = false
+    var extensionDefaultLoaded = false
+    var extensionSecondLoaded = false
+    var extensionKnownWindows: Set<Int> = []
+    var extensionDialogFound = false
+    var extensionRemoveStarted = false
+    var extensionRemoveFinished = false
+    var extensionReviewStarted = false
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -202,6 +223,22 @@ extension Runtime {
                 "Another app holding the key at launch (the taken answer is unit-tested)",
                 "The hover and pressed looks (no cursor in the VM)",
             ]
+        }
+        if mode == .extensions, let probe {
+            values["extension_profiles"] = probe.extensionProfiles
+            values["extension_profile"] = probe.extensionProfile
+            values["extensions"] = probe.extensions.map { row -> [String: Any] in
+                ["id": row.id, "name": row.name, "enabled": row.enabled,
+                 "needs_review": row.needsReview, "site_access": row.siteAccess.rawValue,
+                 "pinned": row.pinned, "summary": row.summary]
+            }
+            values["extension_in_field_actions"] = (root ?? self).sidebar?.checkInFieldActionIDs ?? []
+            values["extension_default_profile"] = check.extensionDefaultProfile
+            values["extension_second_profile"] = check.extensionSecondProfile
+            values["extension_fixtures"] = ["default": check.extensionFixtureDefault,
+                                            "second": check.extensionFixtureSecond]
+            values["extension_loaded"] = ["default": check.extensionDefaultLoaded,
+                                          "second": check.extensionSecondLoaded]
         }
         return values
     }
@@ -305,10 +342,15 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .extensions:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
+                return
+            }
+            if mode == .extensions {
+                settingsExtensionsTick(probe, check: check, note: note, trace: trace, step: step,
+                                       end: end, finish: finish, capture: capture)
                 return
             }
             if mode == .appearance {
@@ -573,7 +615,7 @@ extension Runtime {
                 check.report("rows", true)
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow, .websites:
+            case .frame, .search, .appearance, .littleWindow, .websites, .extensions:
                 return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }
@@ -1186,6 +1228,299 @@ extension Runtime {
             trace("reversed wheel landed on \(shown) from \(start)")
             check.report("scroll_wheel_reversed", delta == -1 && check.naturalDelta == 1)
             guard capture("spaces") else { end("capture", false); return }
+            finish()
+        default: break
+        }
+    }
+
+    // MARK: settings-extensions (U27x): the chooser, the rows, the switch, site access, Review…
+    // and Remove…, then a reopen
+
+    /// The fixture directories arrive as arguments the runner forwards, so the VM needs no access
+    /// to the checkout: `--ararat-extension-fixture-default=<windows>` and
+    /// `--ararat-extension-fixture-second=<urlfield-one>`.
+    private static func extensionFixture(_ name: String) -> String {
+        let prefix = "--ararat-extension-fixture-" + name + "="
+        guard let value = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }) else { return "" }
+        return String(value.dropFirst(prefix.count))
+    }
+
+    /// The new visible window a review or uninstall call opened: not one that was on screen
+    /// before the call, and recognisably a Chromium dialog (class name, title or default button).
+    private func extensionDialogWindow(_ check: SettingsScreenCheck) -> NSWindow? {
+        let settingsWindow = (root ?? self).settings?.window
+        let candidates = [settingsWindow?.attachedSheet].compactMap { $0 }
+            + (settingsWindow?.childWindows ?? [])
+            + NSApp.windows
+        for candidate in candidates where candidate.isVisible && candidate !== settingsWindow {
+            guard !check.extensionKnownWindows.contains(candidate.windowNumber) else { continue }
+            let name = String(describing: type(of: candidate)).lowercased()
+            if name.contains("dialog") || name.contains("uninstall") || name.contains("prompt")
+                || candidate.title.localizedCaseInsensitiveContains("extension")
+                || candidate.accessibilityDefaultButton() != nil {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    /// Accepts Chromium's dialog: its accessibility default button first (DownloadCloseCheck's
+    /// path for a views DialogModel), Return on the dialog as the fallback.
+    private func acceptExtensionDialog(_ window: NSWindow) -> Bool {
+        if let button = window.accessibilityDefaultButton() as? NSAccessibilityProtocol,
+           button.accessibilityPerformPress() {
+            return true
+        }
+        window.makeKey()
+        if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: window.windowNumber, context: nil,
+                                        characters: "\r", charactersIgnoringModifiers: "\r",
+                                        isARepeat: false, keyCode: 36) {
+            NSApp.sendEvent(event)
+            return true
+        }
+        return false
+    }
+
+    /// Cancels Chromium's dialog the way the ext-actions check cancels the uninstall sheet.
+    private func cancelExtensionDialog(_ window: NSWindow) {
+        let settingsWindow = (root ?? self).settings?.window
+        if let sheet = settingsWindow?.attachedSheet {
+            settingsWindow?.endSheet(sheet)
+            sheet.performClose(nil)
+        } else {
+            window.performClose(nil)
+        }
+    }
+
+    /// Phases 2 to 17 of `settings-extensions`. Two profiles start with different fixture
+    /// extensions (the check installs unpacked directories into each profile's own service); the
+    /// chooser switches the list; the switch disables an extension whose pinned action leaves the
+    /// URL field and enabling brings it back; "On click" is read back from the engine; Review…
+    /// opens Chromium's prompt and accepting re-enables; Remove… cancelled keeps the row; and a
+    /// reopened window reads the same state.
+    private func settingsExtensionsTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
+                                        note: (String) -> Void, trace: (String) -> Void,
+                                        step: (Int) -> Void, end: (String, Bool) -> Void,
+                                        finish: () -> Void, capture: (String) -> Bool) {
+        let owner = root ?? self
+        let engine = EngineExtensionSettingsHost.shared
+        let sidebar = owner.sidebar
+        func fixtureRow(_ probe: SettingsCheckProbe, _ id: String) -> SettingsExtension? {
+            probe.extensionRow(id: id)
+        }
+        if check.extensionDefaultProfile.isEmpty, let shown = snapshot.shownSpaceId,
+           let space = snapshot.spaces.first(where: { $0.id == shown }) {
+            check.extensionDefaultProfile = space.profileName
+            check.extensionSecondProfile = snapshot.spaces.first { $0.profileName != space.profileName }?.profileName ?? ""
+            check.extensionFixtureDefault = Self.extensionFixture("default")
+            check.extensionFixtureSecond = Self.extensionFixture("second")
+        }
+        if !check.extensionInstalling {
+            guard !check.extensionDefaultProfile.isEmpty, !check.extensionSecondProfile.isEmpty,
+                  !check.extensionFixtureDefault.isEmpty, !check.extensionFixtureSecond.isEmpty else {
+                note("fixture arguments: default=\(check.extensionFixtureDefault) second=\(check.extensionFixtureSecond)")
+                return
+            }
+            check.extensionInstalling = true
+            trace("installing fixtures into \(check.extensionDefaultProfile) and \(check.extensionSecondProfile)")
+            engine.checkLoadUnpacked(profile: check.extensionDefaultProfile, path: check.extensionFixtureDefault) { result in
+                check.extensionDefaultLoaded = result == "loaded"
+                FileHandle.standardError.write(Data("ararat-trace: extensions default fixture \(result)\n".utf8))
+            }
+            engine.checkLoadUnpacked(profile: check.extensionSecondProfile, path: check.extensionFixtureSecond) { result in
+                check.extensionSecondLoaded = result == "loaded"
+                FileHandle.standardError.write(Data("ararat-trace: extensions second fixture \(result)\n".utf8))
+            }
+            return
+        }
+        switch check.phase {
+        case 2:
+            probe.refreshExtensions()
+            guard check.extensionDefaultLoaded, check.extensionSecondLoaded,
+                  probe.extensionProfile == check.extensionDefaultProfile,
+                  let row = probe.extensions.first(where: { $0.name.hasPrefix("Ararat windows check") }),
+                  row.canPin else {
+                note("fixtures loaded=\(check.extensionDefaultLoaded)/\(check.extensionSecondLoaded) profile=\(probe.extensionProfile) rows=\(probe.extensions.map(\.name)) can_pin=\(fixtureRow(probe, check.extensionDefaultID)?.canPin ?? false)")
+                return
+            }
+            check.extensionDefaultID = row.id
+            let profileRow = probe.marker(SettingsModel.rowMarker(SettingsModel.extensionsProfileRowID))
+            let menu = probe.marker(SettingsModel.extensionsProfileMenuMarker)
+            let card = probe.marker(SettingsModel.rowMarker(SettingsModel.extensionsListCardID))
+            let switchMarker = probe.marker(SettingsModel.extensionSwitchMarker(row.id))
+            let titles = probe.extensionMenuTitles(row)
+            let expectedTitles = ["On all sites", "On click", "Pin to Sidebar", "Manage Extension", "Remove…"]
+            let menuOK = expectedTitles.allSatisfy(titles.contains)
+            check.report("rows", profileRow != nil && menu != nil && card != nil && switchMarker != nil
+                && probe.extensions.count == 1 && row.enabled && !row.needsReview
+                && row.summary == row.siteAccess.title && menuOK)
+            check.details["default_row"] = ["name": row.name, "summary": row.summary,
+                                            "site_access": row.siteAccess.rawValue, "menu": titles]
+            trace("rows: \(row.name) \(row.summary) menu=\(titles)")
+            guard capture("extensions") else { end("capture", false); return }
+            probe.selectExtensionProfile(check.extensionSecondProfile)
+            step(3)
+        case 3:
+            probe.refreshExtensions()
+            guard probe.extensionProfile == check.extensionSecondProfile,
+                  let row = probe.extensions.first(where: { $0.name.hasPrefix("Ararat URL field action one") }) else {
+                note("after the chooser: profile=\(probe.extensionProfile) rows=\(probe.extensions.map(\.name))")
+                return
+            }
+            check.extensionSecondID = row.id
+            // The chooser really switched lists: the second profile has its own fixture and no
+            // windows fixture.
+            check.report("profile_switch", probe.extensions.count == 1 && row.id != check.extensionDefaultID
+                && probe.marker(SettingsModel.rowMarker(SettingsModel.extensionRowID(row.id))) != nil)
+            trace("switched to \(probe.extensionProfile): \(row.name)")
+            guard capture("extensions-profile2") else { end("capture", false); return }
+            probe.selectExtensionProfile(check.extensionDefaultProfile)
+            step(4)
+        case 4:
+            probe.refreshExtensions()
+            guard probe.extensionProfile == check.extensionDefaultProfile,
+                  let row = fixtureRow(probe, check.extensionDefaultID), row.canPin else {
+                note("back on \(probe.extensionProfile) row=\(probe.extensions.map(\.name)) pin=\(fixtureRow(probe, check.extensionDefaultID)?.canPin ?? false)")
+                return
+            }
+            // Chrome may load a new action pinned; start from Unpinned so the write is the check's.
+            if row.pinned {
+                trace("unpinning \(row.name) before the pin check")
+                guard probe.toggleExtensionPin(row.id) else { note("unpin write refused"); return }
+                return
+            }
+            trace("pinning \(row.name)")
+            guard probe.toggleExtensionPin(row.id) else { note("pin write refused"); return }
+            step(5)
+        case 5:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.pinned,
+                  sidebar?.checkInFieldActionIDs.contains(row.id) == true else {
+                note("pin: pinned=\(fixtureRow(probe, check.extensionDefaultID)?.pinned ?? false) in_field=\(sidebar?.checkInFieldActionIDs ?? [])")
+                return
+            }
+            check.report("pin_action", true)
+            trace("pinned action in the URL field")
+            guard probe.setExtensionEnabled(row.id, false) else { note("disable refused"); return }
+            step(6)
+        case 6:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), !row.enabled,
+                  row.summary == "Off",
+                  sidebar?.checkInFieldActionIDs.contains(row.id) != true else {
+                note("disabled: row=\(fixtureRow(probe, check.extensionDefaultID).map { "\($0.enabled)/\($0.summary)" } ?? "nil") in_field=\(sidebar?.checkInFieldActionIDs ?? [])")
+                return
+            }
+            check.report("disable_hides_action", true)
+            trace("disabled; the pinned action left the URL field")
+            guard capture("extensions-disabled") else { end("capture", false); return }
+            guard probe.setExtensionEnabled(row.id, true) else { note("enable refused"); return }
+            step(7)
+        case 7:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.enabled,
+                  sidebar?.checkInFieldActionIDs.contains(row.id) == true else {
+                note("enabled: row=\(fixtureRow(probe, check.extensionDefaultID).map { "\($0.enabled)/\($0.summary)" } ?? "nil") in_field=\(sidebar?.checkInFieldActionIDs ?? [])")
+                return
+            }
+            check.report("enable_brings_action", true)
+            trace("re-enabled; the pinned action is back (\(row.siteAccess.rawValue))")
+            guard probe.setExtensionSiteAccess(row.id, .onClick) else { note("site access write refused"); return }
+            step(8)
+        case 8:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.siteAccess == .onClick else {
+                note("site access: \(fixtureRow(probe, check.extensionDefaultID)?.siteAccess.rawValue ?? "nil")")
+                return
+            }
+            check.report("site_access_write", true)
+            check.details["site_access"] = row.siteAccess.rawValue
+            trace("site access read back from the engine: \(row.siteAccess.rawValue)")
+            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
+            engine.checkDisableForReview(profile: check.extensionDefaultProfile, identifier: row.id)
+            step(9)
+        case 9:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.needsReview, !row.enabled,
+                  probe.marker(SettingsModel.extensionReviewMarker(row.id)) != nil else {
+                note("needs review: row=\(fixtureRow(probe, check.extensionDefaultID).map { "\($0.needsReview)/\($0.enabled)" } ?? "nil") marker=\(probe.marker(SettingsModel.extensionReviewMarker(check.extensionDefaultID)) != nil)")
+                return
+            }
+            check.details["review_row"] = ["summary": row.summary, "needs_review": true]
+            trace("Review… shown: \(row.summary)")
+            guard capture("extensions-review") else { end("capture", false); return }
+            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
+            probe.reviewExtension(row.id)
+            step(10)
+        case 10:
+            guard let dialog = extensionDialogWindow(check) else {
+                note("the re-enable prompt has not opened")
+                return
+            }
+            trace("pressing the prompt's default button")
+            check.extensionDialogFound = acceptExtensionDialog(dialog)
+            guard check.extensionDialogFound else { note("the prompt has no default button"); return }
+            step(11)
+        case 11:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.enabled, !row.needsReview else {
+                note("after accepting: enabled=\(fixtureRow(probe, check.extensionDefaultID)?.enabled ?? false) review=\(fixtureRow(probe, check.extensionDefaultID)?.needsReview ?? false)")
+                return
+            }
+            check.report("review_prompt", check.extensionDialogFound)
+            check.report("review_enables", true)
+            trace("accepted; the extension is enabled again")
+            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
+            check.extensionRemoveFinished = false
+            check.extensionRemoveStarted = true
+            probe.removeExtension(row.id) { check.extensionRemoveFinished = true }
+            step(12)
+        case 12:
+            guard let dialog = extensionDialogWindow(check) else {
+                note("the uninstall dialog has not opened")
+                return
+            }
+            trace("cancelling the uninstall dialog")
+            cancelExtensionDialog(dialog)
+            step(13)
+        case 13:
+            guard check.extensionRemoveFinished else { note("the uninstall dialog has not reported"); return }
+            guard let row = fixtureRow(probe, check.extensionDefaultID) else {
+                note("the cancelled extension is gone")
+                return
+            }
+            check.report("remove_cancel_keeps", probe.extensions.contains { $0.id == row.id })
+            trace("Remove… cancelled; the row stays")
+            owner.settings?.window?.performClose(nil)
+            step(14)
+        case 14:
+            guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
+            trace("reopening the settings window")
+            owner.settings?.checkOpen(paneID: "extensions", shownSpaceID: snapshot.shownSpaceId)
+            step(15)
+        case 15:
+            guard probe.isVisible, probe.pageID == "extensions",
+                  probe.extensionProfile == check.extensionDefaultProfile,
+                  let row = fixtureRow(probe, check.extensionDefaultID), row.enabled, !row.needsReview else {
+                note("after reopen: visible=\(probe.isVisible) page=\(probe.pageID) profile=\(probe.extensionProfile) row=\(probe.extensions.map(\.name))")
+                return
+            }
+            trace("reopened on \(probe.extensionProfile); switching to \(check.extensionSecondProfile)")
+            probe.selectExtensionProfile(check.extensionSecondProfile)
+            step(16)
+        case 16:
+            guard probe.extensionProfile == check.extensionSecondProfile,
+                  probe.extensions.contains(where: { $0.id == check.extensionSecondID }) else {
+                note("after reopen on the second profile: profile=\(probe.extensionProfile) rows=\(probe.extensions.map(\.name))")
+                return
+            }
+            probe.selectExtensionProfile(check.extensionDefaultProfile)
+            step(17)
+        case 17:
+            guard let row = fixtureRow(probe, check.extensionDefaultID), row.enabled,
+                  !row.needsReview, row.siteAccess == .onClick, row.pinned else {
+                note("reopen state: row=\(fixtureRow(probe, check.extensionDefaultID).map { "\($0.enabled)/\($0.needsReview)/\($0.siteAccess.rawValue)/\($0.pinned)" } ?? "nil")")
+                return
+            }
+            check.report("reopen_state", true)
+            trace("reopen reads the same state: enabled, On click, pinned")
+            guard capture("extensions-reopen") else { end("capture", false); return }
             finish()
         default: break
         }

@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, space(String), site(String, String) }
+    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, extensions, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -82,6 +82,19 @@ public final class SettingsModel: ObservableObject {
     @Published private(set) var siteProfiles: [String] = []
     var siteHost: SiteSettingsHost?
     var siteDefaultsApplied: (SiteDefaults) -> Void = { _ in }
+    /// U27x: the Extensions pane. The profile chooser lists the regular profiles the workspace
+    /// names (X1) and defaults to the profile of the window that opened Settings; the rows are the
+    /// engine's list for the chosen profile (X2, X3), re-read after every write and whenever the
+    /// engine reports an install, removal, enable or disable elsewhere (X5).
+    @Published var extensionProfiles: [String] = []
+    @Published var extensionProfile = ""
+    @Published private(set) var extensions: [SettingsExtension] = []
+    var extensionHost: ExtensionSettingsHost?
+    /// Opens chrome://extensions/?id= in a tab of the extension's profile, as the action's menu
+    /// does; the app supplies it because it owns the tab.
+    var extensionManage: (String, String) -> Void = { _, _ in }
+    /// The settings window, the parent of Chromium's review and uninstall dialogs.
+    var extensionWindow: () -> NSWindow? = { nil }
 
     public init(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void, resetWidth: @escaping () -> Void, preview: @escaping (String, Look?, Bool) -> Void = { _, _, _ in }, keyBindings: KeyBindingsModel, airTraffic: AirTrafficModel) {
         self.snapshot = snapshot
@@ -102,6 +115,11 @@ public final class SettingsModel: ObservableObject {
         // instead of waiting for the next routing answer the pane triggers.
         if spaceIds != snapshot.spaces.map(\.id) { airTraffic.reloadDeletedSpaces() }
         siteProfiles = Self.profileOrder(snapshot, exceptions: siteExceptions)
+        extensionProfiles = Self.extensionProfileOrder(snapshot)
+        if !extensionProfiles.isEmpty, !extensionProfiles.contains(extensionProfile) {
+            extensionProfile = extensionProfiles[0]
+            refreshExtensions()
+        }
     }
 
     public func retarget(snapshot: WorkspaceSnapshot, adapter: WorkspaceAdapter, publish: @escaping (WorkspaceSnapshot) -> Void,
@@ -211,6 +229,16 @@ public final class SettingsModel: ObservableObject {
     public static func websiteSiteRowID(_ row: SettingsSiteRow) -> String { "website-site-" + row.id }
     public static func sitePermissionRowID(_ kind: SitePermissionKind) -> String { "site-permission-" + kind.rawValue }
     public static func sitePermissionMenuMarker(_ kind: SitePermissionKind) -> String { "site-permission-menu-" + kind.rawValue }
+    /// U27x's Extensions pane (X1–X3): the profile chooser row and its menu, the Installed card and
+    /// its empty state, then one row per extension with its switch, Review… button and … menu.
+    public static let extensionsProfileRowID = "extensions-profile"
+    public static let extensionsListCardID = "extensions-installed"
+    public static let extensionsEmptyMarker = "extensions-empty"
+    public static let extensionsProfileMenuMarker = "extensions-profile-menu"
+    public static func extensionRowID(_ id: String) -> String { "extension-" + id }
+    public static func extensionSwitchMarker(_ id: String) -> String { "extension-switch-" + id }
+    public static func extensionReviewMarker(_ id: String) -> String { "extension-review-" + id }
+    public static func extensionMenuMarker(_ id: String) -> String { "extension-menu-" + id }
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -744,6 +772,144 @@ public final class SettingsModel: ObservableObject {
         } else {
             navigate(.websites)
         }
+    }
+
+    // MARK: U27x, the Extensions pane
+
+    /// The regular profiles the chooser offers, in the snapshot's order (X1). A private profile
+    /// is never among them: the settings window acts on the regular workspace only.
+    static func extensionProfileOrder(_ snapshot: WorkspaceSnapshot) -> [String] {
+        var names: [String] = []
+        for name in snapshot.spaces.map(\.profileName) where !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    /// Reads the pane on every open: the chooser's list, the chosen profile (the one the window
+    /// that opened Settings shows, X1) and its rows. The window calls this from `prepare`.
+    func readExtensions(shownSpaceID: String?) {
+        extensionProfiles = Self.extensionProfileOrder(snapshot)
+        guard !extensionProfiles.isEmpty else {
+            extensionProfile = ""
+            extensions = []
+            return
+        }
+        let shown = shownSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id }?.profileName }
+        extensionProfile = shown.flatMap { extensionProfiles.contains($0) ? $0 : nil } ?? extensionProfiles[0]
+        refreshExtensions()
+    }
+
+    /// The engine is the source of the rows, as it is for the site rows: the list is read again
+    /// after every write and after every registry change (X2, X5).
+    func refreshExtensions() {
+        guard !extensionProfile.isEmpty else { extensions = []; return }
+        extensions = extensionHost?.extensions(profile: extensionProfile) ?? []
+    }
+
+    /// X5: an extension changed somewhere; the pane follows without reopening Settings.
+    func extensionsChanged() {
+        refreshExtensions()
+    }
+
+    /// The profile chooser: the list switches to the chosen profile's extensions (X1).
+    func selectExtensionProfile(_ profile: String) {
+        guard extensionProfiles.contains(profile), profile != extensionProfile else { return }
+        extensionProfile = profile
+        refreshExtensions()
+    }
+
+    func extensionRow(id: String) -> SettingsExtension? {
+        extensions.first { $0.id == id }
+    }
+
+    /// The switch: written through the engine, then read back, so the row never restates a state
+    /// Chromium no longer holds. A "review" answer leaves the row disabled (X3) and names why.
+    @discardableResult
+    func setExtensionEnabled(_ id: String, enabled: Bool) -> Bool {
+        guard let host = extensionHost, !extensionProfile.isEmpty else { return false }
+        let result = host.setEnabled(profile: extensionProfile, identifier: id, enabled: enabled)
+        refreshExtensions()
+        switch result {
+        case "done", "unchanged": return true
+        case "review": error = "Chromium disabled this extension for new permissions. Use Review…"
+        case "policy": error = "Chromium does not allow changing this extension."
+        default: error = "The extension could not be found."
+        }
+        return false
+    }
+
+    /// One of the menu's writable site-access choices (X2). "specific" is Chromium's own state and
+    /// never sent; choosing it would need the site picker that Manage Extension opens.
+    @discardableResult
+    func setExtensionSiteAccess(_ id: String, access: ExtensionSiteAccess) -> Bool {
+        guard let host = extensionHost, !extensionProfile.isEmpty, access != .onSpecificSites else { return false }
+        let result = host.setSiteAccess(profile: extensionProfile, identifier: id, access: access)
+        refreshExtensions()
+        guard result == "done" else {
+            error = result == "unsupported"
+                ? "This extension has no site access to change." : "The extension could not be found."
+            return false
+        }
+        return true
+    }
+
+    /// Pin/Unpin (X2): the profile's toolbar pin prefs, the same path the action's menu uses.
+    @discardableResult
+    func toggleExtensionPin(_ id: String) -> Bool {
+        guard let host = extensionHost, let row = extensionRow(id: id), row.canPin else { return false }
+        let result = host.setPinned(profile: extensionProfile, identifier: id, pinned: !row.pinned)
+        refreshExtensions()
+        guard result == "done" || result == "unchanged" else {
+            error = result == "forced" ? "Chromium pins this extension." : "The extension could not be found."
+            return false
+        }
+        return true
+    }
+
+    /// Review… (X3): Chromium's re-enable prompt; accepting grants the permissions and enables
+    /// the extension, so the row is read again when the prompt reports.
+    func reviewExtension(_ id: String) {
+        guard let host = extensionHost, !extensionProfile.isEmpty else { return }
+        host.review(profile: extensionProfile, identifier: id, window: extensionWindow()) { [weak self] allowed in
+            guard let self else { return }
+            self.refreshExtensions()
+            if !allowed { self.error = nil }
+        }
+    }
+
+    /// Remove… (X2): Chromium's uninstall dialog; a cancelled dialog keeps the extension.
+    func removeExtension(_ id: String, completion: (() -> Void)? = nil) {
+        guard let host = extensionHost, !extensionProfile.isEmpty else { completion?(); return }
+        host.remove(profile: extensionProfile, identifier: id, window: extensionWindow()) { [weak self] result, _ in
+            guard let self else { completion?(); return }
+            self.refreshExtensions()
+            if result == "forced" { self.error = "Chromium does not allow removing this extension." }
+            completion?()
+        }
+    }
+
+    /// Manage Extension (X2): chrome://extensions/?id= in a tab of the extension's profile.
+    func manageExtension(_ id: String) {
+        guard !extensionProfile.isEmpty else { return }
+        extensionManage(extensionProfile, id)
+    }
+
+    /// The entries a row's … menu draws, in the board's order: the site access, a divider, the
+    /// pin when the extension has an action, Manage Extension, and Remove… when Chromium allows it.
+    static func extensionMenu(_ row: SettingsExtension) -> [ExtensionMenuEntry] {
+        var entries = ExtensionSiteAccess.writable.map { ExtensionMenuEntry.siteAccess($0) }
+        // "On specific sites" is shown only while Chromium reports it, as a state the menu cannot
+        // write without its site picker.
+        if row.siteAccess == .onSpecificSites { entries.append(.siteAccess(.onSpecificSites)) }
+        entries.append(.separator)
+        if row.canPin { entries.append(row.pinned ? .unpin : .pin) }
+        entries.append(.manage)
+        if row.removable {
+            entries.append(.separator)
+            entries.append(.remove)
+        }
+        return entries
     }
 
     func rename(_ id: String, name: String) {
