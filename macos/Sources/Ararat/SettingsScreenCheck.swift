@@ -22,13 +22,14 @@ final class SettingsScreenCheck {
         case spaces = "settings-spaces"
         case littleWindow = "settings-little-window"
         case websites = "settings-websites"
+        case privacy = "settings-privacy"
         case extensions = "settings-extensions"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs: "tabs"
-            case .shortcuts, .airTraffic, .appearance, .spaces, .websites: String(rawValue.dropFirst("settings-".count))
+            case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .privacy: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
             case .extensions: "extensions"
             }
@@ -61,6 +62,10 @@ final class SettingsScreenCheck {
             case .websites: ["rows", "defaults_write", "defaults_reopen", "notification_denied", "camera_prompt",
                              "popover_exception", "pane_site_row", "all_site_settings", "site_page_rows",
                              "clear_site_data", "other_origin_kept", "reset_removes"]
+            case .privacy: ["rows", "cookies_allowed", "cookies_blocked", "gpc_on", "gpc_off",
+                            "retention_write", "retention_removes", "retention_keeps",
+                            "sheet_rows", "sheet_range", "sheet_clears_history",
+                            "sheet_keeps_older_history", "sheet_clears_cookie", "reopen_reads_record"]
             case .extensions: ["rows", "profile_switch", "site_access_write", "pin_action",
                                "disable_hides_action", "enable_brings_action", "review_prompt",
                                "review_enables", "remove_cancel_keeps", "reopen_state"]
@@ -154,6 +159,21 @@ final class SettingsScreenCheck {
     /// The Views dialog class the seam answered for Review… and Remove… (X3, Major 2).
     var extensionReviewDialog = ""
     var extensionRemoveSheetTitle = ""
+    // U27p: the Privacy check's fixture URLs, the visits it seeds, the cookie and GPC titles it
+    // reads, and the phases' carried results.
+    var privacyRecentVisitURL = "https://history.example/recent"
+    var privacyOlderVisitURL = "https://history.example/older"
+    var privacyTenDayVisitURL = "https://history.example/ten-days"
+    var privacyTwoDayVisitURL = "https://history.example/two-days"
+    var privacySeeded = false
+    var privacyRetentionSeeded = false
+    var privacyRetentionStart = -1
+    var privacyRecentGone = false
+    var privacyOlderKept = false
+    var privacySheetTitle = ""
+    var privacyCookieTitle = ""
+    var privacyGPCTitle = ""
+    var privacyClearCookieTitle = ""
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -240,6 +260,24 @@ extension Runtime {
             values["extension_loading"] = probe.extensionsLoading
             values["extension_review_dialog"] = check.extensionReviewDialog
             values["extension_remove_sheet"] = check.extensionRemoveSheetTitle
+        }
+        if mode == .privacy, let probe {
+            values["privacy"] = ["cookies": probe.privacy.thirdPartyCookies.label,
+                                 "gpc": probe.privacy.globalPrivacyControl,
+                                 "retention": probe.privacy.historyRetention.label,
+                                 "profile": probe.privacyProfile,
+                                 "sheet_shown": probe.clearSheetShown,
+                                 "sheet_visible": probe.clearSheetVisible,
+                                 "range": probe.clearRange.title,
+                                 "types": probe.clearTypes.rawValue,
+                                 "clearing": probe.clearing]
+            values["privacy_titles"] = ["cookie": check.privacyCookieTitle,
+                                        "gpc": check.privacyGPCTitle,
+                                        "clear": check.privacyClearCookieTitle]
+            values["privacy_visits"] = ["seeded": check.privacySeeded,
+                                        "retention_seeded": check.privacyRetentionSeeded,
+                                        "recent_gone": check.privacyRecentGone,
+                                        "older_kept": check.privacyOlderKept]
         }
         return values
     }
@@ -343,7 +381,7 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .extensions:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .privacy, .extensions:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
@@ -367,6 +405,11 @@ extension Runtime {
             if mode == .websites {
                 settingsWebsitesTick(probe, check: check, note: note, trace: trace, step: step,
                                      end: end, finish: finish, capture: capture)
+                return
+            }
+            if mode == .privacy {
+                settingsPrivacyTick(probe, check: check, note: note, trace: trace, step: step,
+                                    end: end, finish: finish, capture: capture)
                 return
             }
             settingsPaneTick(mode, probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, pushSpace: settings.checkPushSpace)
@@ -616,7 +659,7 @@ extension Runtime {
                 check.report("rows", true)
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow, .websites, .extensions:
+            case .frame, .search, .appearance, .littleWindow, .websites, .privacy, .extensions:
                 return
             }
             guard capture(mode.rawValue) else { end("capture", false); return }

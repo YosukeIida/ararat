@@ -64,7 +64,8 @@ enum SettingsRegistry {
         SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled",
                      subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
         SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "", page: nil, rows: { _ in [] }),
-        SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised",
+                     subtitle: "What Ararat keeps and what sites can see.", page: .privacy, rows: privacyRows),
         SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension",
                      subtitle: "Added and managed per profile.", page: .extensions, rows: extensionsRows),
         SettingsPane(id: .sync, title: "Sync", icon: "arrow.triangle.2.circlepath", subtitle: "", page: nil, rows: { _ in [] }),
@@ -140,6 +141,23 @@ enum SettingsRegistry {
         return rows
     }
 
+    /// U27p: the Privacy pane's four rows, in the board's order — Clear browsing data, the two
+    /// cookie controls, and Keep history for. The board's Protection card (ads and dangerous
+    /// sites) has no row: those two wait for the owner (§14).
+    static func privacyRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        [SettingsModel.Row(id: SettingsModel.privacyClearRowID, pane: .privacy,
+                           title: "Clear browsing data", subtitle: "History, cookies, cache"),
+         SettingsModel.Row(id: SettingsModel.privacyCookiesRowID, pane: .privacy,
+                           title: "Third-party cookies",
+                           subtitle: "For every site · " + model.privacy.thirdPartyCookies.label),
+         SettingsModel.Row(id: SettingsModel.privacyGPCRowID, pane: .privacy,
+                           title: "Ask sites not to sell or share my data",
+                           subtitle: "Sends Global Privacy Control · " + (model.privacy.globalPrivacyControl ? "On" : "Off")),
+         SettingsModel.Row(id: SettingsModel.privacyHistoryRowID, pane: .privacy,
+                           title: "Keep history for",
+                           subtitle: model.privacy.historyRetention.label)]
+    }
+
     /// U27i: the Little Window pane's five rows — the ATC link, the global shortcut and the
     /// three destinations/switches the board groups in one card.
     static func littleWindowRows(_ model: SettingsModel) -> [SettingsModel.Row] {
@@ -199,6 +217,7 @@ extension SettingsModel.Page {
         case .airTraffic: .airTraffic
         case .appearance: .appearance
         case .littleWindow: .littleWindow
+        case .privacy: .privacy
         case .extensions: .extensions
         case .spaces, .space: .spaces
         }

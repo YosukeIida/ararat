@@ -372,6 +372,17 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setSiteDefaults(windowId: self.windowID, defaults: value) }, completion: completion)
     }
 
+    // U27p P2/P3: the Privacy pane's cookie choice, GPC signal and history retention, the same
+    // synced settings record, read on every open so a reopened settings window shows the stored
+    // values and written once for every window and device.
+    public func privacySettings(completion: @escaping Completion<PrivacySettings>) {
+        enqueue({ try self.opened().settings().privacy }, completion: completion)
+    }
+
+    public func setPrivacySettings(_ value: PrivacySettings, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setPrivacy(windowId: self.windowID, privacy: value) }, completion: completion)
+    }
+
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

@@ -173,6 +173,45 @@ public final class SettingsCheckProbe {
     }
     public func extensionRow(id: String) -> SettingsExtension? { model.extensionRow(id: id) }
 
+    // MARK: U27p, the Privacy pane
+
+    /// The record the pane draws, read from the core, and the same setters its menu and switch call.
+    public var privacy: PrivacySettings { model.privacy }
+    public var privacyProfile: String { model.privacyProfile }
+    public func readPrivacy(shownSpaceID: String?) { model.readPrivacy(shownSpaceID: shownSpaceID) }
+    public func setThirdPartyCookies(_ value: ThirdPartyCookies) { model.setThirdPartyCookies(value) }
+    public func setGlobalPrivacyControl(_ value: Bool) { model.setGlobalPrivacyControl(value) }
+    public func setHistoryRetention(_ value: HistoryRetention) { model.setHistoryRetention(value) }
+    public func openPrivacyPane() { model.navigate(.privacy) }
+    /// P4's sheet: the same open, choose, cancel and Clear the pane and the sheet call.
+    public var clearSheetShown: Bool { model.clearSheetShown }
+    public var clearSheetVisible: Bool { window.attachedSheet != nil }
+    public var clearRange: ClearBrowsingRange { model.clearRange }
+    public var clearTypes: ClearBrowsingTypes { model.clearTypes }
+    public var clearing: Bool { model.clearing }
+    public func openClearSheet() { model.openClearSheet() }
+    public func cancelClearSheet() { model.cancelClearSheet() }
+    public func confirmClearSheet() { model.confirmClearSheet() }
+    public func setClearRange(_ value: ClearBrowsingRange) { model.clearRange = value }
+    public func setClearTypes(_ value: ClearBrowsingTypes) { model.clearTypes = value }
+    /// A marker inside the sheet the window presents, top-down in the sheet's own content.
+    public func sheetMarker(_ id: String) -> NSRect? {
+        guard let content = window.attachedSheet?.contentView else { return nil }
+        guard let view = views(content).first(where: { $0.identifier?.rawValue == id }) else { return nil }
+        return topDown(view.convert(view.bounds, to: content), in: content)
+    }
+    public func sheetMarkers(prefix: String) -> [(id: String, frame: NSRect)] {
+        guard let content = window.attachedSheet?.contentView else { return [] }
+        return views(content).compactMap { view in
+            guard let id = view.identifier?.rawValue, id.hasPrefix(prefix) else { return nil }
+            return (id, topDown(view.convert(view.bounds, to: content), in: content))
+        }.sorted { $0.frame.minY < $1.frame.minY }
+    }
+    public var clearSheetTitle: String? {
+        guard let content = window.attachedSheet?.contentView else { return nil }
+        return views(content).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Clear browsing data" }?.stringValue
+    }
+
     // MARK: frames
 
     private var content: NSView? { window.contentView }

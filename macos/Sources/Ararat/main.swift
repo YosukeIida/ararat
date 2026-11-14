@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-extensions", "--ararat-screen=onboarding", "--ararat-check=onboarding"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=onboarding", "--ararat-check=onboarding"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -976,7 +976,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
           }
         }
       }
-      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" || screenName == "settings-websites" {
+      if checkName == "site-controls" || checkName == "ext-actions" || screenName == "site-controls" || screenName == "ext-actions" || screenName == "settings-websites" || screenName == "settings-privacy" {
         do {
           let fixture = try SiteFixtureServer()
           siteFixture = fixture
@@ -1100,6 +1100,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // before the first page of this window can ask for one.
     if let defaults = themeSession.queue.sync(execute: { themeSession.store?.settings().siteDefaults }) {
       EngineSiteSettingsHost.apply(defaults)
+    }
+    // U27p P2/P3: the Privacy record is applied before the first page of this window can load, so
+    // the cookie mode, the GPC signal and the history retention are already in Chromium's profiles.
+    if let privacy = themeSession.queue.sync(execute: { themeSession.store?.settings().privacy }) {
+      EnginePrivacySettingsHost.apply(privacy)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.privateWindow = isPrivateWindow
@@ -1948,6 +1953,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     owner.settings?.setSiteSettings(host: EngineSiteSettingsHost.shared) { defaults in
       EngineSiteSettingsHost.apply(defaults)
     }
+    // U27p: the Privacy pane writes the record through the core and pushes it into every regular
+    // profile; Clear browsing data runs for the profile the sheet names.
+    owner.settings?.setPrivacySettings(host: EnginePrivacySettingsHost.shared)
     // U27x: the Extensions pane reads and writes one profile's extensions through the same engine
     // bridge. Manage Extension opens the profile's own chrome://extensions page, showing that
     // profile's space first when Settings is on another one (the engine opens a tab in the shown

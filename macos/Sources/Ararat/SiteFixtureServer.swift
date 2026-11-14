@@ -131,12 +131,19 @@ final class SiteFixtureServer {
                 let line = String(decoding: request, as: UTF8.self).components(separatedBy: "\r\n").first ?? ""
                 let target = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
                 let path = String(target.split(separator: "?", maxSplits: 1).first ?? "")
+                let head = String(decoding: request, as: UTF8.self)
+                let secGPC = head.components(separatedBy: "\r\n")
+                    .first { $0.lowercased().hasPrefix("sec-gpc:") }
+                    .map { $0.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? "" }
+                    ?? "none"
                 let (status, body): (String, String)
                 switch path {
                 case "/site": status = "200 OK"; body = Self.sitePage
                 case "/clean": status = "200 OK"; body = Self.cleanPage
                 case "/capture": status = "200 OK"; body = Self.capturePage
                 case "/websites": status = "200 OK"; body = Self.websitesPage
+                case "/privacy": status = "200 OK"; body = Self.privacyPage
+                case "/echo": status = "200 OK"; body = secGPC
                 default: status = "404 Not Found"; body = "Not found"
                 }
                 let bodyData = Data(body.utf8)
@@ -194,6 +201,46 @@ final class SiteFixtureServer {
     } else if (action === 'read') {
       const cookie = document.cookie.split('; ').includes('ws=value');
       set('storage:' + (localStorage.getItem('ws') ?? 'none') + ':' + (cookie ? 'cookie' : 'nocookie'));
+    }
+    </script>
+    """
+
+    /// U27p's Privacy fixtures. The check reads the tab's title:
+    ///
+    /// - `?do=cookie&n=...` loads a cross-site iframe (`?do=framecookie` on the other origin),
+    ///   which writes its own cookie and reports whether the write stuck: `cookie:set:present`
+    ///   under Allow and `cookie:blocked:absent` under Block.
+    /// - `?do=gpc&n=...` fetches `/echo` (which answers the request's `Sec-GPC` header) and reads
+    ///   `navigator.globalPrivacyControl`: `gpc:1:api` with the signal on, `gpc:none:noapi` off.
+    /// - `?do=firstcookie` writes a first-party cookie and reports `clear:cookie`; `?do=clear`
+    ///   reports whether it is still there after the sheet cleared cookies.
+    private static let privacyPage = """
+    <!doctype html><title>privacy:idle</title>
+    <script>
+    const params = new URLSearchParams(location.search);
+    const action = params.get('do');
+    const set = value => { document.title = value; };
+    if (action === 'cookie') {
+      const frame = document.createElement('iframe');
+      frame.src = params.get('frame') + '/privacy?do=framecookie';
+      window.addEventListener('message', event => {
+        const data = event.data || {};
+        set('cookie:' + (data.set ? 'set' : 'blocked') + ':' + (data.cookie ? 'present' : 'absent'));
+      });
+      document.body.appendChild(frame);
+    } else if (action === 'framecookie') {
+      document.cookie = 'pf=1; path=/; SameSite=Lax';
+      const present = document.cookie.split('; ').includes('pf=1');
+      parent.postMessage({ set: present, cookie: present }, '*');
+    } else if (action === 'gpc') {
+      fetch('/echo').then(response => response.text()).then(header => {
+        set('gpc:' + header + ':' + (navigator.globalPrivacyControl === true ? 'api' : 'noapi'));
+      }, () => set('gpc:error:noapi'));
+    } else if (action === 'firstcookie') {
+      document.cookie = 'pf=1; path=/; SameSite=Lax';
+      set('clear:' + (document.cookie.split('; ').includes('pf=1') ? 'cookie' : 'nocookie'));
+    } else if (action === 'clear') {
+      set('clear:' + (document.cookie.split('; ').includes('pf=1') ? 'cookie' : 'nocookie'));
     }
     </script>
     """

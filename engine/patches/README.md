@@ -67,6 +67,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/hidden-dialog-containment.patch` | ours |
 | `ararat/history-deletion-hook.patch` | ours |
 | `ararat/crash-lock-abandon.patch` | ours |
+| `ararat/history-retention.patch` | ours |
 
 ## Why these upstream patches
 
@@ -79,6 +80,8 @@ is in `docs/research/ungoogled-inventory.md` §8.
 
 `ararat/history-deletion-hook.patch` calls an optional hook before HistoryService schedules a deletion, allowing Ararat to invalidate tab history on the file sequence.
 The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. It confirms that the request hook queued invalidation; it does not wait for the history backend or its later deletion notification.
+
+`ararat/history-retention.patch` adds an atomic retention in days to `ExpireHistoryBackend::GetCurrentExpirationTime()`, so the app's Privacy pane replaces Chromium's fixed 90-day threshold on every expiry pass (`-1` keeps Chromium's value, `0` never expires).
 
 `ararat/crash-lock-abandon.patch` lets the host release a crash lock without acknowledging the crash when its profile is destroyed before workspace recovery completes.
 

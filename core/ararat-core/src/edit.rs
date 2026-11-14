@@ -1411,6 +1411,16 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // U27p P2/P3: the Privacy pane's cookie choice, GPC signal and history retention, one write
+    // of the whole record. The app pushes the record into Chromium on every change and at every
+    // window start, so the engine never keeps a different value from the one the pane shows.
+    pub fn set_privacy(&mut self, privacy: crate::model::PrivacySettings) -> Vec<Op> {
+        if self.settings.privacy == privacy { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.privacy = privacy;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())

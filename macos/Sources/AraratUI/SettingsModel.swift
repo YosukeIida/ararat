@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, extensions, space(String), site(String, String) }
+    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -82,6 +82,19 @@ public final class SettingsModel: ObservableObject {
     @Published private(set) var siteProfiles: [String] = []
     var siteHost: SiteSettingsHost?
     var siteDefaultsApplied: (SiteDefaults) -> Void = { _ in }
+    /// U27p P2/P3: the Privacy pane. The cookie choice, GPC signal and history retention are the
+    /// synced core record, read on every open; a write goes to the core and then to every regular
+    /// profile through the engine. `privacyProfile` is the profile of the window that opened
+    /// Settings, which the clear sheet names and clears.
+    @Published var privacy: PrivacySettings = .board
+    @Published private(set) var privacyProfile = "Default"
+    var privacyHost: PrivacySettingsHost?
+    /// P4: the Clear browsing data sheet's state. The window presents it; its range and types are
+    /// the model's, so the pane, the sheet and the check agree about what Clear sends.
+    @Published var clearSheetShown = false
+    @Published var clearRange: ClearBrowsingRange = .lastHour
+    @Published var clearTypes: ClearBrowsingTypes = .all
+    @Published private(set) var clearing = false
     /// U27x: the Extensions pane. The profile chooser lists the regular profiles the workspace
     /// names (X1) and defaults to the profile of the window that opened Settings; the rows are the
     /// engine's list for the chosen profile (X2, X3), re-read after every write and whenever the
@@ -249,6 +262,23 @@ public final class SettingsModel: ObservableObject {
     public static func extensionSwitchMarker(_ id: String) -> String { "extension-switch-" + id }
     public static func extensionReviewMarker(_ id: String) -> String { "extension-review-" + id }
     public static func extensionMenuMarker(_ id: String) -> String { "extension-menu-" + id }
+    /// U27p's Privacy pane: the Clear row and its button, the cookie menu, the GPC switch and the
+    /// history menu, then the clear sheet's title, range, profile, type rows and two buttons.
+    public static let privacyClearRowID = "privacy-clear"
+    public static let privacyCookiesRowID = "privacy-cookies"
+    public static let privacyGPCRowID = "privacy-gpc"
+    public static let privacyHistoryRowID = "privacy-history"
+    public static let privacyClearButtonMarker = "privacy-clear-button"
+    public static let privacyCookiesMenuMarker = "privacy-cookies-menu"
+    public static let privacyGPCSwitchMarker = "privacy-gpc-switch"
+    public static let privacyHistoryMenuMarker = "privacy-history-menu"
+    public static let privacySheetTitleMarker = "privacy-sheet-title"
+    public static let privacySheetRangeMenuMarker = "privacy-sheet-range"
+    public static let privacySheetProfileMarker = "privacy-sheet-profile"
+    public static let privacySheetClearMarker = "privacy-sheet-clear"
+    public static let privacySheetCancelMarker = "privacy-sheet-cancel"
+    public static let privacySheetNoteMarker = "privacy-sheet-note"
+    public static func privacySheetTypeMarker(_ index: Int) -> String { "privacy-sheet-type-\(index)" }
     var rows: [Row] { SettingsRegistry.rows(self) }
     var results: [Row] { rows.filter { ($0.title + " " + $0.subtitle).localizedCaseInsensitiveContains(query) } }
     /// The results grouped under their pane, in the rail's order: only panes with a hit get a
@@ -946,6 +976,93 @@ public final class SettingsModel: ObservableObject {
         guard !extensionProfile.isEmpty else { return }
         extensionManage(extensionProfile, id)
     }
+
+    // MARK: U27p, the Privacy pane
+
+    /// Reads the record on every open and names the profile of the window that opened Settings,
+    /// which the clear sheet clears and shows. The pane never shows another session's values.
+    func readPrivacy(shownSpaceID: String?) {
+        if let shownSpaceID, let space = snapshot.spaces.first(where: { $0.id == shownSpaceID }) {
+            privacyProfile = space.profileName
+        } else if let space = snapshot.spaces.first {
+            privacyProfile = space.profileName
+        }
+        let generation = contextGeneration
+        adapter.privacySettings { [weak self] result in
+            guard let self, self.contextGeneration == generation, case .success(let settings) = result else { return }
+            self.privacy = settings
+        }
+    }
+
+    /// P2/P3: writes the whole synced record, then hands it to every regular profile. A refused
+    /// write leaves the pane where it was and shows the reason.
+    func setPrivacy(_ settings: PrivacySettings) {
+        guard privacy != settings else { return }
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setPrivacySettings(settings) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.privacy = settings
+            self.privacyHost?.applyPrivacy(settings)
+        }
+    }
+
+    func setThirdPartyCookies(_ value: ThirdPartyCookies) {
+        var settings = privacy
+        settings.thirdPartyCookies = value
+        setPrivacy(settings)
+    }
+
+    func setGlobalPrivacyControl(_ value: Bool) {
+        var settings = privacy
+        settings.globalPrivacyControl = value
+        setPrivacy(settings)
+    }
+
+    func setHistoryRetention(_ value: HistoryRetention) {
+        var settings = privacy
+        settings.historyRetention = value
+        setPrivacy(settings)
+    }
+
+    /// P4: Clear… opens the sheet over the settings window. A sheet already clearing ignores a
+    /// second open, so Clear cannot run twice.
+    func openClearSheet() {
+        guard !clearing else { return }
+        clearSheetShown = true
+    }
+
+    func cancelClearSheet() {
+        guard !clearing else { return }
+        clearSheetShown = false
+    }
+
+    /// P4: Clear sends the range and types for the profile the sheet names. A failed type bitmask
+    /// is shown as the pane's error after the sheet closes; clearing history keeps the U26d
+    /// banner path (the deletion reaches the same history observer), with no new surface.
+    func confirmClearSheet() {
+        guard !clearing, !clearTypes.isEmpty else { return }
+        guard let host = privacyHost else {
+            error = "Clearing browsing data is unavailable."
+            return
+        }
+        let profile = privacyProfile
+        let range = clearRange
+        let types = clearTypes
+        clearing = true
+        clearSheetShown = false
+        host.clearBrowsingData(profile: profile, range: range, types: types) { [weak self] failed in
+            guard let self else { return }
+            self.clearing = false
+            if failed != 0 {
+                self.error = "Some data could not be cleared."
+            }
+        }
+    }
+
+    /// The sheet's description of what stays, in the board's words.
+    static let clearSheetNote = "The Archive and your tabs stay."
 
     /// The entries a row's … menu draws, in the board's order: the site access (only when the
     /// extension has any to change), a divider, the pin when the extension has an action, Manage

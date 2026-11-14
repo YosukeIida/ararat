@@ -756,6 +756,48 @@ impl<'de> Deserialize<'de> for SiteDefaults {
     }
 }
 
+// U27p P2: the Privacy pane's third-party cookie choice. Block writes Chromium's cookie-controls
+// pref (CookieControlsMode::kBlockThirdParty); Allow writes kOff, which behaves as
+// kIncognitoOnly since June 2025 (third-party cookies only in private windows).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThirdPartyCookies { #[default] Block, Allow }
+
+// U27p P3: how long browsing history is kept. The engine's history expiry reads the workspace
+// record instead of Chromium's fixed 90 days; Forever keeps every visit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryRetention { Week, Month, ThreeMonths, #[default] Year, Forever }
+
+impl HistoryRetention {
+    /// The days the engine's expiry thresholds to; None means every visit stays.
+    pub fn days(&self) -> Option<i32> {
+        match self {
+            Self::Week => Some(7),
+            Self::Month => Some(30),
+            Self::ThreeMonths => Some(90),
+            Self::Year => Some(365),
+            Self::Forever => None,
+        }
+    }
+}
+
+// U27p P2/P3: the Privacy pane's one synced record — the third-party cookie choice, the Global
+// Privacy Control signal and the history retention. The board's built-in values are Block, on and
+// One year. One record, so a second Mac blocks, asks and keeps history the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrivacySettings {
+    pub third_party_cookies: ThirdPartyCookies,
+    pub global_privacy_control: bool,
+    pub history_retention: HistoryRetention,
+}
+
+impl Default for PrivacySettings {
+    fn default() -> Self {
+        Self { third_party_cookies: ThirdPartyCookies::Block, global_privacy_control: true,
+            history_retention: HistoryRetention::Year }
+    }
+}
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
@@ -764,7 +806,9 @@ impl<'de> Deserialize<'de> for SiteDefaults {
 // destination and close-after are workspace preferences, while the frame and the global
 // shortcut stay on the device (LittleWindowDevice). U27k's Theme is synced on purpose, so a
 // second Mac shows the same theme. U27w's seven site defaults (W1) ride here too: one record,
-// so a second Mac asks, allows and blocks the same seven kinds.
+// so a second Mac asks, allows and blocks the same seven kinds. U27p's privacy record (P2, P3)
+// rides here as well: the cookie choice, the GPC signal and the history retention travel with
+// the workspace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -775,13 +819,15 @@ pub struct Settings {
     pub little_window_close_after: bool,
     pub theme: Theme,
     pub site_defaults: SiteDefaults,
+    /// U27p: the Privacy pane's cookies, GPC and history retention.
+    pub privacy: PrivacySettings,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
             little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System,
-            site_defaults: SiteDefaults::default() }
+            site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default() }
     }
 }
 

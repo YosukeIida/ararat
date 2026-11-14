@@ -304,3 +304,63 @@ fn the_device_record_has_no_serde_defaults_and_a_future_destination_is_refused()
     assert!(matches!(parsed, Ok(Record::Settings(Settings {
         little_window_open_in: LittleWindowOpenIn::Space(ref id), little_window_close_after: false, .. })) if id == "work"));
 }
+
+// U27p P2/P3: the Privacy pane's cookie choice, GPC signal and history retention are one synced
+// record with the board's built-in values (Block, on, One year), and a change writes that record
+// while a reset is a tombstone.
+#[test]
+fn the_privacy_record_starts_at_the_boards_values_and_writes_one_synced_record() {
+    use ararat_core::model::{HistoryRetention, PrivacySettings, ThirdPartyCookies};
+    assert_eq!(PrivacySettings::default(), PrivacySettings {
+        third_party_cookies: ThirdPartyCookies::Block,
+        global_privacy_control: true,
+        history_retention: HistoryRetention::Year,
+    });
+    assert_eq!(HistoryRetention::Week.days(), Some(7));
+    assert_eq!(HistoryRetention::Month.days(), Some(30));
+    assert_eq!(HistoryRetention::ThreeMonths.days(), Some(90));
+    assert_eq!(HistoryRetention::Year.days(), Some(365));
+    assert_eq!(HistoryRetention::Forever.days(), None);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let changed = PrivacySettings { third_party_cookies: ThirdPartyCookies::Allow,
+        global_privacy_control: false, history_retention: HistoryRetention::Week };
+    let ops = ws.set_privacy(changed);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.privacy == changed));
+    assert_eq!(ws.settings.privacy, changed);
+    // The other fields of the shared record keep their values, and a peer reads the change.
+    assert!(ws.settings.new_tab_row_shown && ws.settings.theme == Theme::System);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The same record again writes nothing.
+    let before = ws.clone();
+    assert!(ws.set_privacy(changed).is_empty());
+    assert_eq!(ws, before);
+    // Back to the built-in values: one tombstone, not a row restating them.
+    let reset = ws.set_privacy(PrivacySettings::default());
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+}
+
+// A privacy value this build does not know is refused when the record is parsed; a missing field
+// takes the built-in value, so a record written before the pane existed still reads.
+#[test]
+fn an_unknown_privacy_value_is_refused_and_missing_fields_take_the_built_in() {
+    use ararat_core::model::{HistoryRetention, PrivacySettings, ThirdPartyCookies};
+    assert!(Record::parse(Kind::Settings, "workspace",
+        r#"{"privacy":{"third_party_cookies":"Sometimes"}}"#).is_err());
+    assert!(Record::parse(Kind::Settings, "workspace",
+        r#"{"privacy":{"history_retention":"TwoWeeks"}}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace",
+        r#"{"privacy":{"history_retention":"Forever"}}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { privacy: PrivacySettings {
+        history_retention: HistoryRetention::Forever, third_party_cookies: ThirdPartyCookies::Block,
+        global_privacy_control: true }, .. }))));
+    // A record with no privacy field at all keeps the built-in record.
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { privacy: PrivacySettings {
+        history_retention: HistoryRetention::Year, .. }, .. }))));
+}

@@ -1,0 +1,51 @@
+--- a/components/history/core/browser/expire_history_backend.h
++++ b/components/history/core/browser/expire_history_backend.h
+@@ -5,6 +5,7 @@
+ #ifndef COMPONENTS_HISTORY_CORE_BROWSER_EXPIRE_HISTORY_BACKEND_H_
+ #define COMPONENTS_HISTORY_CORE_BROWSER_EXPIRE_HISTORY_BACKEND_H_
+ 
++#include <atomic>
+ #include <map>
+ #include <memory>
+ #include <optional>
+@@ -32,6 +33,13 @@
+ 
+ namespace history {
+ 
++// ararat (U27p): the app's Privacy pane sets the browsing-history retention. The value is in
++// days; -1 keeps Chromium's own threshold (HistoryBackend::kExpireDaysThreshold), 0 never
++// expires anything (the pane's Forever), and a positive value replaces the threshold. The
++// expiry loop reads it on every pass, so a shortened retention deletes older visits without a
++// relaunch.
++extern std::atomic<int> g_ararat_history_retention_days;
++
+ class HistoryBackendClient;
+ class HistoryBackendNotifier;
+ class HistoryDatabase;
+@@ -119,6 +127,14 @@
+   // Note that this as an absolute time rather than a delta, so the caller
+   // should not save it.
+   base::Time GetCurrentExpirationTime() const {
++    const int ararat_days =
++        g_ararat_history_retention_days.load(std::memory_order_relaxed);
++    if (ararat_days == 0) {
++      return base::Time();
++    }
++    if (ararat_days > 0) {
++      return base::Time::Now() - base::Days(ararat_days);
++    }
+     return base::Time::Now() - expiration_threshold_;
+   }
+ 
+--- a/components/history/core/browser/expire_history_backend.cc
++++ b/components/history/core/browser/expire_history_backend.cc
+@@ -32,6 +32,9 @@
+ 
+ namespace history {
+ 
++// ararat (U27p): the app's Privacy pane sets this. See the declaration's comment.
++std::atomic<int> g_ararat_history_retention_days{-1};
++
+ // Helpers --------------------------------------------------------------------
+ 
+ namespace {

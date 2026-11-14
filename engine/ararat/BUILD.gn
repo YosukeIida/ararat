@@ -53,7 +53,7 @@ test("history_files_unittests") {
 }
 
 source_set("entry") {
-  sources = [ "ararat_capture.h", "ararat_capture.mm", "ararat_site_state.h", "ararat_site_state.mm", "ararat_site_settings.mm", "ararat_extensions.mm" ]
+  sources = [ "ararat_capture.h", "ararat_capture.mm", "ararat_site_state.h", "ararat_site_state.mm", "ararat_site_settings.mm", "ararat_privacy.mm", "ararat_extensions.mm" ]
   sources += [ "ararat_downloads.h", "ararat_downloads.mm", "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
   public = [ "public/AraratEngine.h", "public/AraratHostAPI.h", "public/ARWindowHost.h", "public/ARTab.h" ]
   deps = [
@@ -181,6 +181,7 @@ source_set("entry") {
     "//components/permissions",
     "//components/javascript_dialogs",
     "//components/prefs",
+    "//components/universal_optout",
     "//components/tabs:public",
     "//components/url_formatter",
     "//components/web_modal",

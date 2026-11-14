@@ -72,6 +72,7 @@ public final class SettingsWindowController: NSWindowController {
         model.readAppearance()
         model.readLittleWindow()
         model.readWebsites()
+        model.readPrivacy(shownSpaceID: shownSpaceID)
         model.readExtensions(shownSpaceID: shownSpaceID)
         model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
     }
@@ -117,6 +118,12 @@ public final class SettingsWindowController: NSWindowController {
     public func setSiteSettings(host: SiteSettingsHost, defaultsApplied: @escaping (SiteDefaults) -> Void) {
         model.siteHost = host
         model.siteDefaultsApplied = defaultsApplied
+    }
+
+    /// U27p: the engine side of the Privacy pane. A written record reaches every regular profile
+    /// through the host, and Clear browsing data runs for the profile the sheet names.
+    public func setPrivacySettings(host: PrivacySettingsHost) {
+        model.privacyHost = host
     }
 
     /// U27x: the engine side of the Extensions pane. The app hands in the AraratHostAPI bridge,
@@ -360,6 +367,8 @@ private struct SettingsDetail: View {
                         SettingsSitePage(model: model, origin: origin, profile: profile)
                     case .extensions:
                         SettingsExtensionsSection(model: model)
+                    case .privacy:
+                        SettingsPrivacySection(model: model)
                     case .littleWindow:
                         SettingsLittleWindowSection(model: model)
                     case .spaces:
@@ -422,6 +431,9 @@ private struct SettingsDetail: View {
                 Button("Cancel", role: .cancel) { model.pendingDelete = nil }
                 Button("Delete Space", role: .destructive) { model.confirmDelete() }
             } message: { Text("Its pinned and Today tabs will move to the Archive. Favorites will remain available in their profile. This cannot be undone.") }
+            .sheet(isPresented: $model.clearSheetShown) {
+                SettingsPrivacyClearSheet(model: model)
+            }
     }
     var header: some View {
         VStack(spacing: 8) {
@@ -687,7 +699,7 @@ private struct SettingsLittleWindowSection: View {
 }
 
 /// A grouped card row's title and its one-line caption (the boards' `.tx`).
-private struct SettingsRowLabel: View {
+struct SettingsRowLabel: View {
     let title: String
     let subtitle: String
     var body: some View {

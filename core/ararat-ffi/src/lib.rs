@@ -732,6 +732,18 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // U27p P2/P3: the Privacy pane's cookies, GPC and history retention, the same synced
+    // settings record as the switches above. The app pushes the record into Chromium on every
+    // change and at every window start.
+    pub fn set_privacy(&self, window_id: String, privacy: PrivacySettings) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_privacy(privacy.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn little_window_device(&self) -> LittleWindowDevice {
         self.workspace.lock().unwrap().little_window_device.clone().into()
     }
@@ -1027,6 +1039,8 @@ pub struct WorkspaceSettings {
     pub little_window_close_after: bool,
     pub theme: Theme,
     pub site_defaults: SiteDefaults,
+    /// U27p: the Privacy pane's cookies, GPC and history retention.
+    pub privacy: PrivacySettings,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1036,7 +1050,8 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             little_window_open_in: settings.little_window_open_in.into(),
             little_window_close_after: settings.little_window_close_after,
             theme: settings.theme.into(),
-            site_defaults: settings.site_defaults.into() }
+            site_defaults: settings.site_defaults.into(),
+            privacy: settings.privacy.into() }
     }
 }
 
@@ -1080,6 +1095,70 @@ impl From<SiteDefaults> for ararat_core::model::SiteDefaults {
         Self { camera: value.camera.into(), microphone: value.microphone.into(), location: value.location.into(),
             notifications: value.notifications.into(), popups: value.popups.into(),
             automatic_downloads: value.automatic_downloads.into(), sound: value.sound.into() }
+    }
+}
+
+/// U27p P2: the Privacy pane's third-party cookie choice. Block writes Chromium's cookie-controls
+/// pref; Allow writes its off mode, which allows third-party cookies outside private windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ThirdPartyCookies { Block, Allow }
+impl From<ararat_core::model::ThirdPartyCookies> for ThirdPartyCookies {
+    fn from(value: ararat_core::model::ThirdPartyCookies) -> Self {
+        use ararat_core::model::ThirdPartyCookies as Core;
+        match value { Core::Block => Self::Block, Core::Allow => Self::Allow }
+    }
+}
+impl From<ThirdPartyCookies> for ararat_core::model::ThirdPartyCookies {
+    fn from(value: ThirdPartyCookies) -> Self {
+        use ararat_core::model::ThirdPartyCookies as Core;
+        match value { ThirdPartyCookies::Block => Core::Block, ThirdPartyCookies::Allow => Core::Allow }
+    }
+}
+
+/// U27p P3: how long browsing history is kept, the board's five choices. `Forever` keeps every
+/// visit; the engine's expiry reads the rest as days.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum HistoryRetention { Week, Month, ThreeMonths, Year, Forever }
+impl From<ararat_core::model::HistoryRetention> for HistoryRetention {
+    fn from(value: ararat_core::model::HistoryRetention) -> Self {
+        use ararat_core::model::HistoryRetention as Core;
+        match value {
+            Core::Week => Self::Week, Core::Month => Self::Month, Core::ThreeMonths => Self::ThreeMonths,
+            Core::Year => Self::Year, Core::Forever => Self::Forever,
+        }
+    }
+}
+impl From<HistoryRetention> for ararat_core::model::HistoryRetention {
+    fn from(value: HistoryRetention) -> Self {
+        use ararat_core::model::HistoryRetention as Core;
+        match value {
+            HistoryRetention::Week => Core::Week, HistoryRetention::Month => Core::Month,
+            HistoryRetention::ThreeMonths => Core::ThreeMonths, HistoryRetention::Year => Core::Year,
+            HistoryRetention::Forever => Core::Forever,
+        }
+    }
+}
+
+/// U27p P2/P3: the Privacy pane's one synced record: the cookie choice, the Global Privacy
+/// Control signal and the history retention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct PrivacySettings {
+    pub third_party_cookies: ThirdPartyCookies,
+    pub global_privacy_control: bool,
+    pub history_retention: HistoryRetention,
+}
+impl From<ararat_core::model::PrivacySettings> for PrivacySettings {
+    fn from(value: ararat_core::model::PrivacySettings) -> Self {
+        Self { third_party_cookies: value.third_party_cookies.into(),
+            global_privacy_control: value.global_privacy_control,
+            history_retention: value.history_retention.into() }
+    }
+}
+impl From<PrivacySettings> for ararat_core::model::PrivacySettings {
+    fn from(value: PrivacySettings) -> Self {
+        Self { third_party_cookies: value.third_party_cookies.into(),
+            global_privacy_control: value.global_privacy_control,
+            history_retention: value.history_retention.into() }
     }
 }
 

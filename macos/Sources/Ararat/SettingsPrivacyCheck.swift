@@ -1,0 +1,237 @@
+// The settings-privacy tick (U27p P2–P4), appended to SettingsScreenCheck's extension.
+import AppKit
+import AraratEngineAPI
+import AraratKit
+import AraratUI
+
+extension Runtime {
+    /// Phases 2 to 16 of `settings-privacy`: the pane's four rows; the cross-site cookie fixture
+    /// allowed then blocked; the GPC switch on (the fixture reads `Sec-GPC: 1` and
+    /// `navigator.globalPrivacyControl`) and off (reads neither); One week removing a seeded
+    /// 10-day-old visit while a 2-day-old one stays; the clear sheet over the Settings window
+    /// clearing the last hour's history and a fixture cookie while an older visit stays; and a
+    /// reopen reading the record from the core.
+    func settingsPrivacyTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
+                             note: @escaping (String) -> Void, trace: @escaping (String) -> Void,
+                             step: @escaping (Int) -> Void, end: (String, Bool) -> Void,
+                             finish: @escaping () -> Void, capture: (String) -> Bool) {
+        let owner = root ?? self
+        if let ports = siteFixturePorts, check.websiteSecureBase.isEmpty {
+            check.websiteSecureBase = "https://127.0.0.1:\(ports.secure)"
+            check.websitePlainBase = "http://ararat.test:\(ports.plain)"
+        }
+        if let shown = snapshot.shownSpaceId, check.websiteShownSpace.isEmpty,
+           let space = snapshot.spaces.first(where: { $0.id == shown }) {
+            check.websiteShownSpace = shown
+            check.websiteProfile = space.profileName
+        }
+        func openTab(_ path: String) {
+            guard let adapter, !check.websiteShownSpace.isEmpty else { return }
+            adapter.openCommandURL(check.websiteSecureBase + path, expectedSpace: check.websiteShownSpace,
+                                   profile: check.websiteProfile)
+        }
+        // The cookie fixture's parent is the plain origin and the iframe the TLS origin: an https
+        // page embedding an http iframe would be blocked as mixed content before the frame's
+        // cookie is touched, so the direction is the other way round.
+        func openPlainTab(_ path: String) {
+            guard let adapter, !check.websiteShownSpace.isEmpty else { return }
+            adapter.openCommandURL(check.websitePlainBase + path, expectedSpace: check.websiteShownSpace,
+                                   profile: check.websiteProfile)
+        }
+        func tab(_ prefix: String) -> (any ARTabAPI)? {
+            guard let host else { return nil }
+            return (host.tabs() as? [any ARTabAPI])?.last { $0.url.hasPrefix(prefix) }
+        }
+        func plainTab(_ path: String) -> (any ARTabAPI)? { tab(check.websitePlainBase + path) }
+        func fixtureTab(_ path: String) -> (any ARTabAPI)? { tab(check.websiteSecureBase + path) }
+
+        switch check.phase {
+        case 2:
+            let rows = [SettingsModel.privacyClearRowID, SettingsModel.privacyCookiesRowID,
+                        SettingsModel.privacyGPCRowID, SettingsModel.privacyHistoryRowID]
+                .map { probe.marker(SettingsModel.rowMarker($0)) }
+            let controls = [SettingsModel.privacyClearButtonMarker, SettingsModel.privacyCookiesMenuMarker,
+                            SettingsModel.privacyGPCSwitchMarker, SettingsModel.privacyHistoryMenuMarker]
+                .map { probe.marker($0) }
+            guard siteFixturePorts != nil, !check.websiteSecureBase.isEmpty,
+                  rows.allSatisfy({ $0 != nil }), controls.allSatisfy({ $0 != nil }) else {
+                note("privacy rows \(rows.map { $0 != nil }) controls \(controls.map { $0 != nil }) fixture \(siteFixturePorts != nil)")
+                return
+            }
+            let ordered = zip(rows, rows.dropFirst()).allSatisfy { first, second in
+                guard let first, let second else { return false }
+                return first.maxY <= second.minY + 1
+            }
+            // The board's built-in record: Block, GPC on, One year; the Protection card is absent
+            // (P1), so no ads or dangerous-sites marker is drawn either.
+            let stored = probe.privacy
+            let noProtection = probe.marker(SettingsModel.rowMarker("privacy-protection")) == nil
+            check.report("rows", ordered && noProtection
+                         && stored.thirdPartyCookies == .block && stored.globalPrivacyControl
+                         && stored.historyRetention == .year)
+            guard capture("privacy") else { end("capture", false); return }
+            trace("allowing third-party cookies")
+            probe.setThirdPartyCookies(.allow)
+            step(3)
+        case 3:
+            guard probe.privacy.thirdPartyCookies == .allow else {
+                note("cookies after Allow: \(probe.privacy.thirdPartyCookies.label)"); return
+            }
+            trace("opening the cross-site cookie fixture under Allow")
+            openPlainTab("/privacy?do=cookie&n=allow&frame=\(check.websiteSecureBase)")
+            step(4)
+        case 4:
+            guard let tab = plainTab("/privacy?do=cookie&n=allow"), !tab.isLoading,
+                  tab.title.hasPrefix("cookie:") else { note("cookie fixture under Allow"); return }
+            check.privacyCookieTitle = tab.title
+            check.report("cookies_allowed", tab.title == "cookie:set:present")
+            trace("blocking third-party cookies")
+            probe.setThirdPartyCookies(.block)
+            step(5)
+        case 5:
+            guard probe.privacy.thirdPartyCookies == .block else {
+                note("cookies after Block: \(probe.privacy.thirdPartyCookies.label)"); return
+            }
+            openPlainTab("/privacy?do=cookie&n=block&frame=\(check.websiteSecureBase)")
+            step(6)
+        case 6:
+            guard let tab = plainTab("/privacy?do=cookie&n=block"), !tab.isLoading,
+                  tab.title.hasPrefix("cookie:") else { note("cookie fixture under Block"); return }
+            check.privacyCookieTitle += " / " + tab.title
+            check.report("cookies_blocked", tab.title == "cookie:blocked:absent")
+            // GPC is on in the built-in record; read the header and the API from the fixture.
+            trace("reading the GPC signal on")
+            openTab("/privacy?do=gpc&n=on")
+            step(7)
+        case 7:
+            guard let tab = fixtureTab("/privacy?do=gpc&n=on"), !tab.isLoading,
+                  tab.title.hasPrefix("gpc:") else { note("GPC fixture on"); return }
+            check.privacyGPCTitle = tab.title
+            check.report("gpc_on", tab.title == "gpc:1:api")
+            trace("turning GPC off")
+            probe.setGlobalPrivacyControl(false)
+            step(8)
+        case 8:
+            guard probe.privacy.globalPrivacyControl == false else { note("GPC still on"); return }
+            openTab("/privacy?do=gpc&n=off")
+            step(9)
+        case 9:
+            guard let tab = fixtureTab("/privacy?do=gpc&n=off"), !tab.isLoading,
+                  tab.title.hasPrefix("gpc:") else { note("GPC fixture off"); return }
+            check.privacyGPCTitle += " / " + tab.title
+            check.report("gpc_off", tab.title == "gpc:none:noapi")
+            trace("seeding history visits and writing One week")
+            guard !check.privacyRetentionSeeded else { return }
+            check.privacyRetentionSeeded = true
+            check.privacyRetentionStart = browserCheckAttempts
+            PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyTenDayVisitURL, daysAgo: 10) { _ in }
+            PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyTwoDayVisitURL, daysAgo: 2) { _ in }
+            probe.setHistoryRetention(.week)
+            step(10)
+        case 10:
+            guard probe.privacy.historyRetention == .week else {
+                note("retention after One week: \(probe.privacy.historyRetention.label)"); return
+            }
+            check.report("retention_write", true)
+            step(11)
+        case 11:
+            // The engine's expiry loop runs every 30 s; a shortened retention deletes the older
+            // visits on its next pass.
+            PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyTenDayVisitURL) { ten in
+                PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyTwoDayVisitURL) { two in
+                    guard ten.isEmpty, !two.isEmpty else {
+                        note("expiry pass: ten=\(ten.count) two=\(two.count) attempts=\(self.browserCheckAttempts - check.privacyRetentionStart)")
+                        return
+                    }
+                    check.report("retention_removes", true)
+                    check.report("retention_keeps", true)
+                    trace("seeding the clear sheet's visits and cookie")
+                    PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyRecentVisitURL, daysAgo: 0.014) { _ in }
+                    PrivacyCheckEngine.seedVisit(profile: check.websiteProfile, url: check.privacyOlderVisitURL, daysAgo: 3) { _ in }
+                    openTab("/privacy?do=firstcookie")
+                    step(12)
+                }
+            }
+        case 12:
+            guard let tab = fixtureTab("/privacy?do=firstcookie"), !tab.isLoading,
+                  tab.title == "clear:cookie" else { note("first-party cookie fixture"); return }
+            trace("opening the clear sheet")
+            probe.openClearSheet()
+            step(13)
+        case 13:
+            let types = (0..<3).map { probe.sheetMarker(SettingsModel.privacySheetTypeMarker($0)) }
+            let range = probe.sheetMarker(SettingsModel.privacySheetRangeMenuMarker)
+            let profile = probe.sheetMarker(SettingsModel.privacySheetProfileMarker)
+            let cancel = probe.sheetMarker(SettingsModel.privacySheetCancelMarker)
+            let clear = probe.sheetMarker(SettingsModel.privacySheetClearMarker)
+            guard probe.clearSheetVisible, probe.clearSheetShown,
+                  types.allSatisfy({ $0 != nil }), range != nil, profile != nil,
+                  cancel != nil, clear != nil else {
+                note("sheet visible=\(probe.clearSheetVisible) shown=\(probe.clearSheetShown) types=\(types.map { $0 != nil })")
+                return
+            }
+            check.privacySheetTitle = probe.clearSheetTitle ?? ""
+            let titleFrame = probe.sheetMarker(SettingsModel.privacySheetTitleMarker)
+            check.report("sheet_rows", titleFrame != nil && (titleFrame?.height ?? 0) > 0
+                         && probe.privacyProfile == check.websiteProfile)
+            check.report("sheet_range", probe.clearRange == .lastHour
+                         && probe.clearTypes.contains(.history) && probe.clearTypes.contains(.cookies)
+                         && probe.clearTypes.contains(.cache))
+            // The sheet is its own window, so the capture names it rather than the Settings window.
+            check.capturing = true
+            let sheetImage = (owner.settings?.window?.attachedSheet).flatMap { sheet in
+                promptScreenScreenshot(sheet, name: "\(check.mode.rawValue)-privacy-sheet", withoutShadow: true)
+            }
+            check.capturing = false
+            if let sheetImage { check.images["privacy-sheet"] = sheetImage }
+            check.conditions["capture"] = (check.conditions["capture"] ?? true) && sheetImage != nil
+            guard sheetImage != nil else { end("capture", false); return }
+            trace("clearing the last hour's history, cookies and cache")
+            probe.setClearRange(.lastHour)
+            probe.setClearTypes(.all)
+            probe.confirmClearSheet()
+            step(14)
+        case 14:
+            guard !probe.clearing, !probe.clearSheetShown, !probe.clearSheetVisible else {
+                note("clear sheet still running shown=\(probe.clearSheetShown) clearing=\(probe.clearing)")
+                return
+            }
+            PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyRecentVisitURL) { recent in
+                PrivacyCheckEngine.visitTimes(profile: check.websiteProfile, url: check.privacyOlderVisitURL) { older in
+                    check.privacyRecentGone = recent.isEmpty
+                    check.privacyOlderKept = !older.isEmpty
+                    check.report("sheet_clears_history", recent.isEmpty)
+                    check.report("sheet_keeps_older_history", !older.isEmpty)
+                    openTab("/privacy?do=clear&n=after")
+                    step(15)
+                }
+            }
+        case 15:
+            guard let tab = fixtureTab("/privacy?do=clear&n=after"), !tab.isLoading,
+                  tab.title.hasPrefix("clear:") else { note("cookie read-back after Clear"); return }
+            check.privacyClearCookieTitle = tab.title
+            check.report("sheet_clears_cookie", tab.title == "clear:nocookie")
+            trace("closing and reopening the settings window")
+            owner.settings?.window?.performClose(nil)
+            step(16)
+        case 16:
+            guard owner.settings?.window?.isVisible != true else { note("settings window still visible"); return }
+            owner.settings?.checkOpen(paneID: "privacy", shownSpaceID: snapshot.shownSpaceId)
+            step(17)
+        case 17:
+            guard probe.isVisible, probe.pageID == "privacy" else {
+                note("reopened on \(probe.pageID) visible=\(probe.isVisible)"); return
+            }
+            let stored = probe.privacy
+            guard stored.thirdPartyCookies == .block, stored.globalPrivacyControl == false,
+                  stored.historyRetention == .week else {
+                note("reopened record: \(stored.thirdPartyCookies.label) gpc=\(stored.globalPrivacyControl) \(stored.historyRetention.label)")
+                return
+            }
+            check.report("reopen_reads_record", true)
+            trace("Privacy record read back")
+            finish()
+        default: break
+        }
+    }
+}

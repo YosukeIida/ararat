@@ -259,6 +259,7 @@ void CheckGuards(int argc, const char** argv) {
           std::string_view(arg + 16) == "settings-spaces" ||
           std::string_view(arg + 16) == "settings-little-window" ||
           std::string_view(arg + 16) == "settings-websites" ||
+          std::string_view(arg + 16) == "settings-privacy" ||
           std::string_view(arg + 16) == "settings-extensions") {
         valid_screen = true;
         g_check_slice = true;
@@ -446,7 +447,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && (strcmp(argv[i], "--ararat-check=site-controls") == 0 ||
                     strcmp(argv[i], "--ararat-screen=site-controls") == 0 ||
-                    strcmp(argv[i], "--ararat-screen=settings-websites") == 0)) {
+                    strcmp(argv[i], "--ararat-screen=settings-websites") == 0 ||
+                    strcmp(argv[i], "--ararat-screen=settings-privacy") == 0)) {
       browser_args.push_back(
           "--ignore-certificate-errors-spki-list=41bhvYwNSFKJywXg6t2xbgeAoiBIlI83FdLJO/ILKZg=");
       // Why not 127.0.0.1 for the plain page: loopback is potentially trustworthy, so Chromium
@@ -458,6 +460,14 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
       break;
     }
   }
+  // U27p P2: the Privacy pane's "Ask sites not to sell or share my data". Chromium 157 ships the
+  // Sec-GPC header and navigator.globalPrivacyControl behind these three existing features and
+  // one existing profile pref (universal_optout.enabled); no Chromium code is patched for it.
+  // Enabling them here, before ChromeMain reads the feature list, is the whole switch: the pref
+  // the pane writes decides the signal on every page. Inserted before any `--` terminator, which
+  // would otherwise make Chrome read the switch as a positional argument.
+  browser_args.insert(browser_args.begin() + 1,
+                      "--enable-features=UniversalOptOut,UniversalOptOutSettings,GlobalPrivacyControlApi");
   bool has_no_startup_window = false;
   for (const char* arg : browser_args) {
     if (arg && strcmp(arg, "--") == 0) break;
