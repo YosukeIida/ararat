@@ -223,14 +223,20 @@ extension Runtime {
             mark("setter_called", model.defaultBrowserCalls == calls + 1
                  && owner.onboardingDefaultBrowser?.calls == 1)
             mark("real_default_unchanged", onboardingDefaultHandler() == check.realDefaultBefore)
-            // The click moved the window to screen 5, whose import the check holds (N1). Phase 6
+            // The click moved the window to screen 5, whose import the check holds. Phase 6
             // reads and captures the held progress screen; a retry there cannot re-enter this
             // phase's screen-4 guard.
             browserCheckPhase = 6
         case 6:
             guard let probe = probe(), probe.stage == .progress else { wait("progress after set as default"); return }
             let steps = probe.progressRows.map(\.text)
-            mark("progress_steps", steps == OnboardingModel.progressSteps && steps.count == 4)
+            let expectedSteps = OnboardingModel.progressSteps
+            if steps != expectedSteps {
+                check.details["progress_rows"] = steps
+                check.details["progress_expected"] = expectedSteps
+                FileHandle.standardError.write(Data("ararat-trace: onboarding progress_steps read=\(steps) expected=\(expectedSteps)\n".utf8))
+            }
+            mark("progress_steps", steps == expectedSteps)
             guard capture("progress") else { wait("capture progress"); return }
             // The screenshot spins the run loop; the import was held, so the window still shows
             // screen 5 here, and it runs only now, after the capture.

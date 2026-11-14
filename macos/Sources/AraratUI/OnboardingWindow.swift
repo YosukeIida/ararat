@@ -402,9 +402,11 @@ final class OnboardingContentView: NSView {
         }
     }
 
+    /// One row per step, the step's name only: the board's rows carry counts the call cannot
+    /// know before it runs, and a status word ('Waiting') would be copy with no producer.
     private func progressRows() -> [OnboardingRowView] {
         OnboardingModel.progressSteps.enumerated().map { index, title in
-            OnboardingRowView(id: "onboarding-progress-\(index)", title: title, subtitle: "Waiting", dimmed: index > 0)
+            OnboardingRowView(id: "onboarding-progress-\(index)", title: title, subtitle: "", dimmed: false)
         }
     }
 

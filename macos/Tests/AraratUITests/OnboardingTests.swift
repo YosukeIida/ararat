@@ -74,7 +74,7 @@ func theDoneLineCountsOnlyWhatTheImportBrought() throws {
     #expect(titles == Set(["Before the import", "Work", "Personal", "Reading"]))
 }
 
-/// N1's seam: the progress screen hands the import to the injected scheduler, so a caller can
+/// The progress screen hands the import to the injected scheduler, so a caller can
 /// draw (and screenshot) the progress screen before the import runs. The default scheduler is the
 /// next main run-loop turn.
 @Test @MainActor
@@ -95,6 +95,26 @@ func theProgressImportWaitsForTheScheduler() throws {
     block()
     #expect(model.stage == .done)
     #expect(model.summary?.spaces == 3)
+}
+
+/// The progress screen draws one row per step, named exactly as the model's step list, in order;
+/// the probe's read is the text the VM check compares.
+@Test @MainActor
+func theProgressScreenDrawsTheFourStepsAsTheirNames() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = OnboardingModel(storePath: directory.appendingPathComponent("rows.sqlite").path,
+                                data: OnboardingFixtures.showcase,
+                                detector: OnboardingFixtures.FixtureSourceDetector(),
+                                defaultBrowser: FakeSetter(), schedule: { _ in })
+    let controller = OnboardingWindowController(model: model)
+    controller.checkRender()
+    model.advance(); model.advance(); model.advance()
+    model.notNow()
+    controller.checkRender()
+    let probe = try #require(controller.checkProbe())
+    probe.layout()
+    #expect(probe.progressRows.map(\.text) == OnboardingModel.progressSteps)
 }
 
 /// The store the flow wrote is the one it was given: a fresh open at the same path reads the three
