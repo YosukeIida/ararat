@@ -29,12 +29,48 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
         let mut expected = command(key); expected.option = true;
         assert_eq!(ws.key_binding(id).unwrap(), Some(expected));
     }
-    assert_eq!(commands().len(), 37);
-    for id in ["copy_link", "duplicate", "new_folder", "rename", "delete_folder"].into_iter().map(String::from)
+    assert_eq!(commands().len(), 39);
+    for id in ["copy_link", "duplicate", "new_folder", "rename", "delete_folder", "clear_cache_site", "clear_cookies_site"].into_iter().map(String::from)
         .chain((1..=9).map(|n| format!("move_to_space_{n}"))) {
         assert_eq!(ws.key_binding(&id).unwrap(), None);
     }
     assert!(ws.to_ops().is_empty());
+}
+
+#[test]
+fn clear_site_commands_are_named_unbound_and_survive_the_snapshot() {
+    let mut ws = Workspace::default();
+    for (id, title) in [("clear_cache_site", "Clear Cache"), ("clear_cookies_site", "Clear Cookies")] {
+        let row = commands().into_iter().find(|command| command.id == id).unwrap();
+        assert_eq!(row.title, title);
+        assert_eq!(row.default_key, None);
+        assert_eq!(ws.key_binding(id).unwrap(), None);
+    }
+
+    // Recording takes nothing from another row and leaves no conflict.
+    let before: Vec<_> = ws.key_bindings().into_iter().filter(|binding| binding.key.is_some()).map(|binding| binding.command.id).collect();
+    ws.set_key_binding("clear_cache_site", Some(command("k"))).unwrap();
+    let table = ws.key_bindings();
+    let cache = table.iter().find(|binding| binding.command.id == "clear_cache_site").unwrap();
+    assert_eq!(cache.key, Some(command("k")));
+    assert!(!cache.conflicting);
+    assert_eq!(table.iter().filter(|binding| binding.conflicting).count(), 0);
+    let after: Vec<_> = table.into_iter().filter(|binding| binding.key.is_some() && binding.command.id != "clear_cache_site").map(|binding| binding.command.id).collect();
+    assert_eq!(after, before);
+
+    // Recorded keys ride the snapshot like any other override.
+    ws.set_key_binding("clear_cookies_site", Some(command("j"))).unwrap();
+    let mut replayed = Workspace::default();
+    for op in ws.to_ops() {
+        if let Op::Put(record) = op {
+            replayed.apply(&Op::Put(Record::parse(record.kind(), &record.id(), &record.body()).unwrap()));
+        }
+    }
+    assert_eq!(replayed.key_binding("clear_cache_site").unwrap(), Some(command("k")));
+    assert_eq!(replayed.key_binding("clear_cookies_site").unwrap(), Some(command("j")));
+    // Reset returns both to no key without touching the table.
+    replayed.reset_all_key_bindings();
+    assert_eq!(replayed, Workspace::default());
 }
 
 #[test]

@@ -65,6 +65,11 @@ pub fn commands() -> Vec<Command> {
         // Chrome already performs the cache-bypassing reload at this key (IDC_RELOAD_BYPASSING_CACHE,
         // accelerators_cocoa.mm:95-97); the entry exists so the pane lists and rebinds it (U23 D6).
         ("force_reload", "Force Reload", "View", "Reload the page, ignoring the cache.", key("r", true, false, false, true)),
+        // The header's … menu has run these since U25a; U27b gives them table rows so the
+        // Shortcuts pane lists, records and rebinds them, and the Ararat Commands menu and the
+        // command bar reach the same ids. They ship with no key (design D2).
+        ("clear_cache_site", "Clear Cache", "View", "Clear the cache for the current site.", None),
+        ("clear_cookies_site", "Clear Cookies", "View", "Clear cookies for the current site.", None),
         ("reset_sidebar_width", "Reset Sidebar Width", "View", "Reset the sidebar width.", None),
     ].into_iter().map(|(id, title, menu, description, default_key)| Command {
         id: id.into(), title: title.into(), menu: menu.into(), description: description.into(), default_key,
