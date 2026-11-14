@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -651,6 +653,84 @@ void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* wi
   ReviewRequest::Start(target, extension.get(), gfx::NativeWindow(window), report);
 }
 
+// Chromium hosts a Views dialog inside a Views widget tree: CreateBrowserModalDialogViews asks
+// CurrentBrowserModalClient()->GetDialogHostView(parent) for the parent window's content view and
+// then NativeWidgetMacNSWindowHost::GetFromNativeView looks the hosting Widget up by that window
+// (ui/views/cocoa/native_widget_mac_ns_window_host.mm:292-296). The Settings window is an AppKit
+// window, not a Views widget, so that lookup is null, SetParent(nullptr) makes the dialog a free
+// window (native_widget_mac.mm:291-330; native_widget_mac.mm:590-604 records that a
+// ModalType::kWindow dialog without a parent host is shown non-modally), and neither
+// parent.attachedSheet nor parent.childWindows sees it. The dialog also opens a tick or two after
+// the call, when its icon has loaded. Attach the new free window to the Settings window as a child
+// so the window relation exists for the pane, the check and the user; a child moves with the
+// Settings window and closes with it.
+namespace {
+
+class ChildWindowAttacher {
+ public:
+  static void Start(NSWindow* parent) {
+    if (!parent) return;
+    (new ChildWindowAttacher(parent))->Poll(0);
+  }
+
+ private:
+  explicit ChildWindowAttacher(NSWindow* parent) : parent_(parent) {
+    for (NSWindow* window in NSApp.windows) known_.insert(window.windowNumber);
+  }
+
+  void Poll(int attempt) {
+    if (!parent_ || attempt > 40) {
+      if (attempt > 40 && IsCheckRun()) {
+        // Nothing new appeared: name every window so the next run says where Chromium put it.
+        for (NSWindow* window in NSApp.windows) {
+          views::Widget* widget =
+              views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
+          views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
+          views::View* contents = delegate ? delegate->GetContentsView() : nullptr;
+          std::fprintf(stderr,
+                       "ararat-trace: uninstall-dialog window=%s visible=%d parent=%s sheet=%s "
+                       "views=%d contents=%s\n",
+                       NSStringFromClass(window.class).UTF8String, window.isVisible,
+                       window.parentWindow ? NSStringFromClass(window.parentWindow.class).UTF8String
+                                           : "",
+                       window.attachedSheet
+                           ? NSStringFromClass(window.attachedSheet.class).UTF8String
+                           : "",
+                       widget != nullptr,
+                       contents ? std::string(contents->GetClassName()).c_str() : "");
+        }
+      }
+      delete this;
+      return;
+    }
+    for (NSWindow* window in NSApp.windows) {
+      if (!window.isVisible || window == parent_ || window.parentWindow || window.sheetParent)
+        continue;
+      if (known_.contains(window.windowNumber)) continue;
+      views::Widget* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
+      views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
+      views::DialogDelegate* dialog = delegate ? delegate->AsDialogDelegate() : nullptr;
+      if (!dialog) continue;
+      [parent_ addChildWindow:window ordered:NSWindowAbove];
+      if (IsCheckRun()) {
+        views::View* contents = delegate->GetContentsView();
+        std::fprintf(stderr, "ararat-trace: uninstall-dialog attached attempt=%d window=%s contents=%s\n",
+                     attempt, NSStringFromClass(window.class).UTF8String,
+                     contents ? std::string(contents->GetClassName()).c_str() : "");
+      }
+      delete this;
+      return;
+    }
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, base::BindOnce(^{ Poll(attempt + 1); }), base::Milliseconds(50));
+  }
+
+  std::set<int> known_;
+  NSWindow* parent_;
+};
+
+}  // namespace
+
 void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* window,
                            void (^completion)(NSString* result, NSString* detail)) {
   void (^report)(NSString*, NSString*) = [completion copy];
@@ -668,6 +748,9 @@ void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* wi
     PostRemoveResult(report, @"forced", @"");
     return;
   }
+  // The attacher takes its window baseline before the dialog exists; the dialog itself opens after
+  // its icon load.
+  ChildWindowAttacher::Start(window);
   UninstallRequest::Start(target, gfx::NativeWindow(window), extension, report);
 }
 
