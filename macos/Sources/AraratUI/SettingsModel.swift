@@ -89,6 +89,9 @@ public final class SettingsModel: ObservableObject {
     @Published var extensionProfiles: [String] = []
     @Published var extensionProfile = ""
     @Published private(set) var extensions: [SettingsExtension] = []
+    /// X1: a profile that exists but whose space has not been shown is loaded on demand; while the
+    /// engine answers "loading", the pane keeps its rows and does not draw the empty state.
+    @Published private(set) var extensionsLoading = false
     var extensionHost: ExtensionSettingsHost?
     /// Opens chrome://extensions/?id= in a tab of the extension's profile, as the action's menu
     /// does; the app supplies it because it owns the tab.
@@ -234,6 +237,7 @@ public final class SettingsModel: ObservableObject {
     public static let extensionsProfileRowID = "extensions-profile"
     public static let extensionsListCardID = "extensions-installed"
     public static let extensionsEmptyMarker = "extensions-empty"
+    public static let extensionsLoadingMarker = "extensions-loading"
     public static let extensionsProfileMenuMarker = "extensions-profile-menu"
     public static func extensionRowID(_ id: String) -> String { "extension-" + id }
     public static func extensionSwitchMarker(_ id: String) -> String { "extension-switch-" + id }
@@ -793,18 +797,31 @@ public final class SettingsModel: ObservableObject {
         guard !extensionProfiles.isEmpty else {
             extensionProfile = ""
             extensions = []
+            extensionsLoading = false
             return
         }
         let shown = shownSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id }?.profileName }
-        extensionProfile = shown.flatMap { extensionProfiles.contains($0) ? $0 : nil } ?? extensionProfiles[0]
+        let chosen = shown.flatMap { extensionProfiles.contains($0) ? $0 : nil } ?? extensionProfiles[0]
+        if chosen != extensionProfile {
+            extensionProfile = chosen
+            extensions = []
+        }
         refreshExtensions()
     }
 
     /// The engine is the source of the rows, as it is for the site rows: the list is read again
-    /// after every write and after every registry change (X2, X5).
+    /// after every write and after every registry change (X2, X5). A loading answer (X1) keeps the
+    /// rows the pane has and marks the list as loading, so it never draws "no extensions" for a
+    /// profile that is still loading.
     func refreshExtensions() {
-        guard !extensionProfile.isEmpty else { extensions = []; return }
-        extensions = extensionHost?.extensions(profile: extensionProfile) ?? []
+        guard !extensionProfile.isEmpty else {
+            extensions = []
+            extensionsLoading = false
+            return
+        }
+        let list = extensionHost?.extensions(profile: extensionProfile) ?? .empty
+        extensionsLoading = list.loading
+        if !list.loading { extensions = list.rows }
     }
 
     /// X5: an extension changed somewhere; the pane follows without reopening Settings.
@@ -812,10 +829,12 @@ public final class SettingsModel: ObservableObject {
         refreshExtensions()
     }
 
-    /// The profile chooser: the list switches to the chosen profile's extensions (X1).
+    /// The profile chooser: the list switches to the chosen profile's extensions (X1). The rows of
+    /// the previous profile are dropped at once, so a loading answer cannot show the wrong list.
     func selectExtensionProfile(_ profile: String) {
         guard extensionProfiles.contains(profile), profile != extensionProfile else { return }
         extensionProfile = profile
+        extensions = []
         refreshExtensions()
     }
 
@@ -824,10 +843,12 @@ public final class SettingsModel: ObservableObject {
     }
 
     /// The switch: written through the engine, then read back, so the row never restates a state
-    /// Chromium no longer holds. A "review" answer leaves the row disabled (X3) and names why.
+    /// Chromium no longer holds. A "review" answer leaves the row disabled (X3) and names why; an
+    /// extension Chromium does not let the user switch offers no switch (X2, design).
     @discardableResult
     func setExtensionEnabled(_ id: String, enabled: Bool) -> Bool {
-        guard let host = extensionHost, !extensionProfile.isEmpty else { return false }
+        guard let host = extensionHost, !extensionProfile.isEmpty,
+              extensionRow(id: id)?.canDisable == true else { return false }
         let result = host.setEnabled(profile: extensionProfile, identifier: id, enabled: enabled)
         refreshExtensions()
         switch result {
@@ -840,10 +861,13 @@ public final class SettingsModel: ObservableObject {
     }
 
     /// One of the menu's writable site-access choices (X2). "specific" is Chromium's own state and
-    /// never sent; choosing it would need the site picker that Manage Extension opens.
+    /// never sent; choosing it would need the site picker that Manage Extension opens, and an
+    /// extension with no site access offers no choice at all.
     @discardableResult
     func setExtensionSiteAccess(_ id: String, access: ExtensionSiteAccess) -> Bool {
-        guard let host = extensionHost, !extensionProfile.isEmpty, access != .onSpecificSites else { return false }
+        guard let host = extensionHost, !extensionProfile.isEmpty,
+              access == .onAllSites || access == .onClick,
+              let row = extensionRow(id: id), row.siteAccess != .noSiteAccess else { return false }
         let result = host.setSiteAccess(profile: extensionProfile, identifier: id, access: access)
         refreshExtensions()
         guard result == "done" else {
@@ -871,10 +895,8 @@ public final class SettingsModel: ObservableObject {
     /// the extension, so the row is read again when the prompt reports.
     func reviewExtension(_ id: String) {
         guard let host = extensionHost, !extensionProfile.isEmpty else { return }
-        host.review(profile: extensionProfile, identifier: id, window: extensionWindow()) { [weak self] allowed in
-            guard let self else { return }
-            self.refreshExtensions()
-            if !allowed { self.error = nil }
+        host.review(profile: extensionProfile, identifier: id, window: extensionWindow()) { [weak self] _ in
+            self?.refreshExtensions()
         }
     }
 
@@ -895,14 +917,18 @@ public final class SettingsModel: ObservableObject {
         extensionManage(extensionProfile, id)
     }
 
-    /// The entries a row's … menu draws, in the board's order: the site access, a divider, the
-    /// pin when the extension has an action, Manage Extension, and Remove… when Chromium allows it.
+    /// The entries a row's … menu draws, in the board's order: the site access (only when the
+    /// extension has any to change), a divider, the pin when the extension has an action, Manage
+    /// Extension, and Remove… when Chromium allows it.
     static func extensionMenu(_ row: SettingsExtension) -> [ExtensionMenuEntry] {
-        var entries = ExtensionSiteAccess.writable.map { ExtensionMenuEntry.siteAccess($0) }
-        // "On specific sites" is shown only while Chromium reports it, as a state the menu cannot
-        // write without its site picker.
-        if row.siteAccess == .onSpecificSites { entries.append(.siteAccess(.onSpecificSites)) }
-        entries.append(.separator)
+        var entries: [ExtensionMenuEntry] = []
+        if row.siteAccess != .noSiteAccess {
+            entries += ExtensionSiteAccess.writable.map { ExtensionMenuEntry.siteAccess($0) }
+            // "On specific sites" is shown only while Chromium reports it, as a state the menu
+            // cannot write without its site picker.
+            if row.siteAccess == .onSpecificSites { entries.append(.siteAccess(.onSpecificSites)) }
+            entries.append(.separator)
+        }
         if row.canPin { entries.append(row.pinned ? .unpin : .pin) }
         entries.append(.manage)
         if row.removable {

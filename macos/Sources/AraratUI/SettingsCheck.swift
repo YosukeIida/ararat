@@ -149,7 +149,7 @@ public final class SettingsCheckProbe {
     public var extensionProfiles: [String] { model.extensionProfiles }
     public var extensionProfile: String { model.extensionProfile }
     public var extensions: [SettingsExtension] { model.extensions }
-    public var extensionEmpty: Bool { model.extensions.isEmpty }
+    public var extensionsLoading: Bool { model.extensionsLoading }
     public func readExtensions(shownSpaceID: String?) { model.readExtensions(shownSpaceID: shownSpaceID) }
     public func refreshExtensions() { model.refreshExtensions() }
     public func selectExtensionProfile(_ profile: String) { model.selectExtensionProfile(profile) }

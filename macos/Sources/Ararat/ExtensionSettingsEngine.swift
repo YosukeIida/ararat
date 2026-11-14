@@ -4,23 +4,25 @@ import AraratKit
 /// U27x: the engine side of Settings › Extensions. The entry points live in AraratHostAPI.h (a
 /// pane acts on a profile, not on one window's Browser), so the app resolves them from the loaded
 /// framework the way the history, measure and site-settings calls are resolved. The model takes
-/// this object as its `ExtensionSettingsHost`; the model tests take a fake.
+/// this object as its `ExtensionSettingsHost`; the model tests take a fake. Every NSString
+/// parameter is declared as NSString in the C signature so Swift keeps it alive across the call.
 @MainActor
 final class EngineExtensionSettingsHost: ExtensionSettingsHost {
     static let shared = EngineExtensionSettingsHost()
 
-    private typealias List = @convention(c) (UnsafeRawPointer) -> NSArray
-    private typealias SetEnabled = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, ObjCBool) -> Unmanaged<NSString>?
-    private typealias SetSiteAccess = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, UnsafeRawPointer) -> Unmanaged<NSString>?
-    private typealias SetPinned = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, ObjCBool) -> Unmanaged<NSString>?
-    private typealias Review = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, UnsafeRawPointer?,
+    private typealias List = @convention(c) (NSString) -> NSArray
+    private typealias SetEnabled = @convention(c) (NSString, NSString, ObjCBool) -> Unmanaged<NSString>?
+    private typealias SetSiteAccess = @convention(c) (NSString, NSString, NSString) -> Unmanaged<NSString>?
+    private typealias SetPinned = @convention(c) (NSString, NSString, ObjCBool) -> Unmanaged<NSString>?
+    private typealias Review = @convention(c) (NSString, NSString, NSWindow?,
                                               @escaping @convention(block) (ObjCBool) -> Void) -> Void
-    private typealias Remove = @convention(c) (UnsafeRawPointer, UnsafeRawPointer, UnsafeRawPointer?,
+    private typealias Remove = @convention(c) (NSString, NSString, NSWindow?,
                                                @escaping @convention(block) (NSString, NSString) -> Void) -> Void
     private typealias SetChangeHandler = @convention(c) (@escaping @convention(block) () -> Void) -> Void
-    private typealias CheckLoad = @convention(c) (UnsafeRawPointer, UnsafeRawPointer,
+    private typealias CheckLoad = @convention(c) (NSString, NSString,
                                                   @escaping @convention(block) (NSString) -> Void) -> Void
-    private typealias CheckDisableForReview = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void
+    private typealias CheckDisableForReview = @convention(c) (NSString, NSString) -> Void
+    private typealias CheckDialog = @convention(c) (NSWindow?, NSString) -> Unmanaged<NSString>?
 
     private lazy var list: List? = Self.symbol("AraratExtensions")
     private lazy var setEnabledSymbol: SetEnabled? = Self.symbol("AraratSetExtensionEnabled")
@@ -31,6 +33,7 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
     private lazy var changeHandlerSymbol: SetChangeHandler? = Self.symbol("AraratSetExtensionsChangedHandler")
     private lazy var checkLoadSymbol: CheckLoad? = Self.symbol("AraratCheckLoadUnpackedExtension")
     private lazy var checkDisableForReviewSymbol: CheckDisableForReview? = Self.symbol("AraratCheckDisableExtensionForReview")
+    private lazy var checkDialogSymbol: CheckDialog? = Self.symbol("AraratCheckExtensionDialog")
 
     private var changeHandler: (() -> Void)?
 
@@ -46,14 +49,12 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
         value?.takeUnretainedValue() as String? ?? ""
     }
 
-    private static func opaque(_ value: NSString) -> UnsafeRawPointer {
-        UnsafeRawPointer(Unmanaged.passUnretained(value).toOpaque())
-    }
-
-    func extensions(profile: String) -> [SettingsExtension] {
-        guard let list else { return [] }
-        guard let entries = list(Self.opaque(profile as NSString)) as? [[String: Any]] else { return [] }
-        return entries.compactMap { entry in
+    func extensions(profile: String) -> ExtensionProfileList {
+        guard let list else { return .empty }
+        guard let entries = list(profile as NSString) as? [[String: Any]] else { return .empty }
+        // X1: one sentinel entry while an existing profile is loaded on demand.
+        if entries.count == 1, entries[0]["loading"] as? Bool == true { return .loading }
+        let rows = entries.compactMap { entry -> SettingsExtension? in
             guard let id = entry["id"] as? String, !id.isEmpty,
                   let name = entry["name"] as? String else { return nil }
             let access = ExtensionSiteAccess(rawValue: entry["siteAccess"] as? String ?? "") ?? .onAllSites
@@ -65,35 +66,31 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
                 siteAccess: access,
                 pinned: entry["pinned"] as? Bool ?? false,
                 canPin: entry["canPin"] as? Bool ?? false,
-                removable: entry["removable"] as? Bool ?? false,
-                unpacked: entry["unpacked"] as? Bool ?? false)
+                canDisable: entry["canDisable"] as? Bool ?? true,
+                removable: entry["removable"] as? Bool ?? false)
         }
+        return ExtensionProfileList(loading: false, rows: rows)
     }
 
     func setEnabled(profile: String, identifier: String, enabled: Bool) -> String {
         guard let setEnabledSymbol else { return "unknown" }
-        return Self.text(setEnabledSymbol(Self.opaque(profile as NSString), Self.opaque(identifier as NSString),
-                                          ObjCBool(enabled)))
+        return Self.text(setEnabledSymbol(profile as NSString, identifier as NSString, ObjCBool(enabled)))
     }
 
     func setSiteAccess(profile: String, identifier: String, access: ExtensionSiteAccess) -> String {
-        guard let setSiteAccessSymbol, access != .onSpecificSites else { return "unsupported" }
-        return Self.text(setSiteAccessSymbol(Self.opaque(profile as NSString),
-                                             Self.opaque(identifier as NSString),
-                                             Self.opaque(access.rawValue as NSString)))
+        guard let setSiteAccessSymbol, access == .onAllSites || access == .onClick else { return "unsupported" }
+        return Self.text(setSiteAccessSymbol(profile as NSString, identifier as NSString, access.rawValue as NSString))
     }
 
     func setPinned(profile: String, identifier: String, pinned: Bool) -> String {
         guard let setPinnedSymbol else { return "unknown" }
-        return Self.text(setPinnedSymbol(Self.opaque(profile as NSString), Self.opaque(identifier as NSString),
-                                         ObjCBool(pinned)))
+        return Self.text(setPinnedSymbol(profile as NSString, identifier as NSString, ObjCBool(pinned)))
     }
 
     func review(profile: String, identifier: String, window: NSWindow?,
                 completion: @escaping (Bool) -> Void) {
         guard let reviewSymbol else { completion(false); return }
-        reviewSymbol(Self.opaque(profile as NSString), Self.opaque(identifier as NSString),
-                     window.map { Unmanaged.passUnretained($0).toOpaque() }) { allowed in
+        reviewSymbol(profile as NSString, identifier as NSString, window) { allowed in
             MainActor.assumeIsolated { completion(allowed.boolValue) }
         }
     }
@@ -101,8 +98,7 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
     func remove(profile: String, identifier: String, window: NSWindow?,
                 completion: @escaping (String, String) -> Void) {
         guard let removeSymbol else { completion("unknown", ""); return }
-        removeSymbol(Self.opaque(profile as NSString), Self.opaque(identifier as NSString),
-                     window.map { Unmanaged.passUnretained($0).toOpaque() }) { result, detail in
+        removeSymbol(profile as NSString, identifier as NSString, window) { result, detail in
             MainActor.assumeIsolated { completion(result as String, detail as String) }
         }
     }
@@ -120,13 +116,22 @@ final class EngineExtensionSettingsHost: ExtensionSettingsHost {
     /// Check-only: installs an unpacked fixture into one profile (X2's two-profile check).
     func checkLoadUnpacked(profile: String, path: String, completion: @escaping (String) -> Void) {
         guard let checkLoadSymbol else { completion("unavailable"); return }
-        checkLoadSymbol(Self.opaque(profile as NSString), Self.opaque(path as NSString)) { result in
+        checkLoadSymbol(profile as NSString, path as NSString) { result in
             MainActor.assumeIsolated { completion(result as String) }
         }
     }
 
     /// Check-only: the state Chromium sets when an update asks for more permissions.
     func checkDisableForReview(profile: String, identifier: String) {
-        checkDisableForReviewSymbol?(Self.opaque(profile as NSString), Self.opaque(identifier as NSString))
+        checkDisableForReviewSymbol?(profile as NSString, identifier as NSString)
+    }
+
+    /// Check-only: accepts or cancels the Views dialog a Settings action opened, and returns its
+    /// class name ("" when no dialog is up). It replaces the accessibility press: the VM's
+    /// in-process accessibility tree is empty.
+    @discardableResult
+    func checkExtensionDialog(parent: NSWindow?, action: String) -> String {
+        guard let checkDialogSymbol else { return "" }
+        return Self.text(checkDialogSymbol(parent, action as NSString))
     }
 }

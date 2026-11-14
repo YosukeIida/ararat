@@ -22,6 +22,7 @@ private final class FakeExtensionSettingsHost: ExtensionSettingsHost {
     var removals: [String] = []
     var handler: (() -> Void)?
     var refuses = false
+    var loadingProfiles: Set<String> = []
     var reviewResult = true
     var removeResult = "notRemoved"
 
@@ -29,7 +30,10 @@ private final class FakeExtensionSettingsHost: ExtensionSettingsHost {
         self.rowsByProfile = rowsByProfile
     }
 
-    func extensions(profile: String) -> [SettingsExtension] { rowsByProfile[profile] ?? [] }
+    func extensions(profile: String) -> ExtensionProfileList {
+        if loadingProfiles.contains(profile) { return .loading }
+        return ExtensionProfileList(loading: false, rows: rowsByProfile[profile] ?? [])
+    }
 
     private func update(_ profile: String, _ identifier: String, _ change: (inout SettingsExtension) -> Void) -> String {
         if refuses { return "unknown" }
@@ -43,6 +47,10 @@ private final class FakeExtensionSettingsHost: ExtensionSettingsHost {
 
     func setEnabled(profile: String, identifier: String, enabled: Bool) -> String {
         writes.append(Write(profile: profile, identifier: identifier, value: "enabled=\(enabled)"))
+        // X2 (design): an extension Chromium does not let the user switch offers no switch.
+        guard rowsByProfile[profile]?.first(where: { $0.id == identifier })?.canDisable == true else {
+            return refuses ? "unknown" : "policy"
+        }
         // X3: Chromium disables an extension for a permissions increase; only the prompt may
         // enable it again, so the plain switch answers "review".
         if enabled, rowsByProfile[profile]?.first(where: { $0.id == identifier })?.needsReview == true {
@@ -113,9 +121,11 @@ private func extensionModel(_ snapshot: WorkspaceSnapshot) -> SettingsModel {
 
 private func aRow(_ id: String, name: String = "Ararat windows check", enabled: Bool = true,
                   needsReview: Bool = false, siteAccess: ExtensionSiteAccess = .onAllSites,
-                  pinned: Bool = false, canPin: Bool = true, removable: Bool = true) -> SettingsExtension {
+                  pinned: Bool = false, canPin: Bool = true, canDisable: Bool = true,
+                  removable: Bool = true) -> SettingsExtension {
     SettingsExtension(id: id, name: name, enabled: enabled, needsReview: needsReview,
-                      siteAccess: siteAccess, pinned: pinned, canPin: canPin, removable: removable)
+                      siteAccess: siteAccess, pinned: pinned, canPin: canPin,
+                      canDisable: canDisable, removable: removable)
 }
 
 // X2/X3: the row's second line is "Needs new permissions" for a permissions increase, "Off" for a
@@ -129,9 +139,12 @@ func theExtensionRowSummaryFollowsChromiumsStates() {
     #expect(aRow("a", enabled: false, needsReview: true, siteAccess: .onClick).summary == "Needs new permissions")
     #expect(aRow("a", name: "uBlock Origin Lite").letter == "U")
     #expect(aRow("a", name: "").letter == "?")
+    // An extension that requests no site access has no second line and no site menu.
+    #expect(aRow("a", siteAccess: .noSiteAccess).summary.isEmpty)
+    #expect(aRow("a", enabled: false, siteAccess: .noSiteAccess).summary == "Off")
     #expect(ExtensionSiteAccess.writable.map(\.title) == ["On all sites", "On click"])
     // The raw values are the engine's words.
-    #expect(ExtensionSiteAccess.allCases.map(\.rawValue) == ["all", "specific", "click"])
+    #expect(ExtensionSiteAccess.allCases.map(\.rawValue) == ["none", "all", "specific", "click"])
 }
 
 // X2: the … menu offers the writable site access, the pin the action allows, Manage Extension and
@@ -147,6 +160,9 @@ func theExtensionMenuFollowsTheRowsCapabilities() {
     #expect(unpinned == [.siteAccess(.onAllSites), .siteAccess(.onClick), .separator, .manage])
     let specific = SettingsModel.extensionMenu(aRow("a", siteAccess: .onSpecificSites))
     #expect(specific.prefix(3) == [.siteAccess(.onAllSites), .siteAccess(.onClick), .siteAccess(.onSpecificSites)])
+    // An extension with no site access offers none: the menu starts at the pin.
+    let none = SettingsModel.extensionMenu(aRow("a", siteAccess: .noSiteAccess))
+    #expect(none == [.pin, .manage, .separator, .remove])
 }
 
 // X1: the chooser lists the regular profiles the workspace names, starts on the profile of the
@@ -178,6 +194,29 @@ func theChooserStartsOnTheWindowProfileAndSwitchesLists() {
     #expect(model.extensions.isEmpty)
 }
 
+// X1: a profile that exists but is not loaded yet answers "loading"; the pane keeps the rows it
+// has and never draws the empty state for it.
+@Test @MainActor
+func theLoadingProfileKeepsItsRowsAndDoesNotReadAsEmpty() {
+    let model = extensionModel(extensionSnapshot())
+    let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
+    model.extensionHost = host
+    model.readExtensions(shownSpaceID: "default")
+    #expect(model.extensions.count == 1)
+    // A refresh while the engine loads the profile keeps the row and marks loading.
+    host.loadingProfiles = ["Default"]
+    model.extensionsChanged()
+    #expect(model.extensionsLoading && model.extensions.map(\.id) == ["windows"])
+    // Choosing another profile clears the old rows; while it loads the list is loading and empty.
+    host.loadingProfiles = ["Profile 1"]
+    model.selectExtensionProfile("Profile 1")
+    #expect(model.extensionsLoading && model.extensions.isEmpty)
+    host.loadingProfiles = []
+    host.rowsByProfile["Profile 1"] = [aRow("one")]
+    model.extensionsChanged()
+    #expect(!model.extensionsLoading && model.extensions.map(\.id) == ["one"])
+}
+
 // X2: the switch, the site access and the pin write through the host and the row is read back.
 @Test @MainActor
 func theSwitchSiteAccessAndPinGoThroughTheEngine() throws {
@@ -203,11 +242,22 @@ func theSwitchSiteAccessAndPinGoThroughTheEngine() throws {
     #expect(host.writes.last?.value == "pinned=true")
     #expect(model.extensionRow(id: "windows")?.pinned == true)
 
+    // An extension with no site access takes no site write at all.
+    host.rowsByProfile["Default"] = (host.rowsByProfile["Default"] ?? []) + [aRow("plain", name: "Ararat URL field action one", siteAccess: .noSiteAccess)]
+    model.refreshExtensions()
+    #expect(!model.setExtensionSiteAccess("plain", access: .onClick))
+
     // A refused engine write leaves the row as the engine still reports it and names why.
     host.refuses = true
     #expect(!model.setExtensionEnabled(row.id, enabled: true))
     #expect(model.extensionRow(id: "windows")?.enabled == false)
     #expect(model.error != nil)
+
+    // An extension Chromium does not let the user switch offers no write either.
+    host.refuses = false
+    host.rowsByProfile["Default"] = [aRow("locked", canDisable: false)]
+    model.refreshExtensions()
+    #expect(!model.setExtensionEnabled("locked", enabled: false))
 }
 
 // X3: a row Chromium disabled for new permissions offers Review… instead of the switch; accepting
@@ -277,7 +327,8 @@ func theExtensionsPaneDrawsItsRowsAndMarkers() async throws {
     let model = extensionModel(extensionSnapshot())
     let host = FakeExtensionSettingsHost(rowsByProfile: [
         "Default": [aRow("windows"), aRow("review", name: "Ararat review fixture",
-                                         enabled: false, needsReview: true, canPin: false)],
+                                         enabled: false, needsReview: true, canPin: false),
+                    aRow("locked", name: "Ararat policy fixture", canDisable: false)],
     ])
     model.extensionHost = host
     model.readExtensions(shownSpaceID: "default")
@@ -296,6 +347,8 @@ func theExtensionsPaneDrawsItsRowsAndMarkers() async throws {
             && probe.marker(SettingsModel.extensionMenuMarker("windows")) != nil
     }
     #expect(probe.marker(SettingsModel.extensionSwitchMarker("review")) == nil)
+    // X2 (design): an extension Chromium does not let the user switch draws no switch.
+    #expect(probe.marker(SettingsModel.extensionSwitchMarker("locked")) == nil)
     #expect(probe.title == "Extensions")
     #expect(probe.subtitle == "Added and managed per profile.")
 
@@ -305,8 +358,19 @@ func theExtensionsPaneDrawsItsRowsAndMarkers() async throws {
     #expect(rows.contains { $0.id == SettingsModel.extensionRowID("windows") })
     #expect(rows.contains { $0.id == SettingsModel.extensionRowID("review") })
 
-    // With nothing installed the card says so.
-    host.rowsByProfile["Default"] = []
+    // While an existing profile loads, the card says it is loading, not that it is empty. (A
+    // reload with rows already shown keeps them; a first load has nothing to keep.)
+    host.rowsByProfile["Profile 1"] = []
+    host.loadingProfiles = ["Profile 1"]
+    model.selectExtensionProfile("Profile 1")
+    try await waitUntil {
+        probe.layout()
+        return probe.marker(SettingsModel.extensionsLoadingMarker) != nil
+            && probe.marker(SettingsModel.extensionsEmptyMarker) == nil
+    }
+
+    // With nothing installed, and no load running, the card says so.
+    host.loadingProfiles = []
     model.refreshExtensions()
     try await waitUntil {
         probe.layout()

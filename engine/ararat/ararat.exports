@@ -6,6 +6,7 @@ _AraratCheckCommitProfilePrefs
 _AraratCheckCrashState
 _AraratCheckDeleteHistory
 _AraratCheckDisableExtensionForReview
+_AraratCheckExtensionDialog
 _AraratCheckLoadUnpackedExtension
 _AraratCheckTabHistoryFile
 _AraratClearSiteData

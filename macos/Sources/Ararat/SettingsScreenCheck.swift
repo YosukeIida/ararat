@@ -151,11 +151,10 @@ final class SettingsScreenCheck {
     var extensionInstalling = false
     var extensionDefaultLoaded = false
     var extensionSecondLoaded = false
-    var extensionKnownWindows: Set<Int> = []
-    var extensionDialogFound = false
-    var extensionRemoveStarted = false
+    /// The Views dialog class the seam answered for Review… and Remove… (X3, Major 2).
+    var extensionReviewDialog = ""
+    var extensionRemoveDialog = ""
     var extensionRemoveFinished = false
-    var extensionReviewStarted = false
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -239,6 +238,9 @@ extension Runtime {
                                             "second": check.extensionFixtureSecond]
             values["extension_loaded"] = ["default": check.extensionDefaultLoaded,
                                           "second": check.extensionSecondLoaded]
+            values["extension_loading"] = probe.extensionsLoading
+            values["extension_review_dialog"] = check.extensionReviewDialog
+            values["extension_remove_dialog"] = check.extensionRemoveDialog
         }
         return values
     }
@@ -1245,53 +1247,16 @@ extension Runtime {
         return String(value.dropFirst(prefix.count))
     }
 
-    /// The new visible window a review or uninstall call opened: not one that was on screen
-    /// before the call, and recognisably a Chromium dialog (class name, title or default button).
-    private func extensionDialogWindow(_ check: SettingsScreenCheck) -> NSWindow? {
+    /// The Views dialog seam (Major 2): the engine resolves the dialog the Settings window owns
+    /// and accepts or cancels it through `DialogDelegate`, returning the dialog's contents class.
+    /// No accessibility: the VM's in-process tree is empty.
+    private func extensionDialog(action: String) -> String {
         let settingsWindow = (root ?? self).settings?.window
-        let candidates = [settingsWindow?.attachedSheet].compactMap { $0 }
-            + (settingsWindow?.childWindows ?? [])
-            + NSApp.windows
-        for candidate in candidates where candidate.isVisible && candidate !== settingsWindow {
-            guard !check.extensionKnownWindows.contains(candidate.windowNumber) else { continue }
-            let name = String(describing: type(of: candidate)).lowercased()
-            if name.contains("dialog") || name.contains("uninstall") || name.contains("prompt")
-                || candidate.title.localizedCaseInsensitiveContains("extension")
-                || candidate.accessibilityDefaultButton() != nil {
-                return candidate
-            }
-        }
-        return nil
-    }
-
-    /// Accepts Chromium's dialog: its accessibility default button first (DownloadCloseCheck's
-    /// path for a views DialogModel), Return on the dialog as the fallback.
-    private func acceptExtensionDialog(_ window: NSWindow) -> Bool {
-        if let button = window.accessibilityDefaultButton() as? NSAccessibilityProtocol,
-           button.accessibilityPerformPress() {
-            return true
-        }
-        window.makeKey()
-        if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                                        timestamp: ProcessInfo.processInfo.systemUptime,
-                                        windowNumber: window.windowNumber, context: nil,
-                                        characters: "\r", charactersIgnoringModifiers: "\r",
-                                        isARepeat: false, keyCode: 36) {
-            NSApp.sendEvent(event)
-            return true
-        }
-        return false
-    }
-
-    /// Cancels Chromium's dialog the way the ext-actions check cancels the uninstall sheet.
-    private func cancelExtensionDialog(_ window: NSWindow) {
-        let settingsWindow = (root ?? self).settings?.window
-        if let sheet = settingsWindow?.attachedSheet {
-            settingsWindow?.endSheet(sheet)
-            sheet.performClose(nil)
-        } else {
-            window.performClose(nil)
-        }
+        let name = EngineExtensionSettingsHost.shared.checkExtensionDialog(parent: settingsWindow,
+                                                                           action: action)
+        let label = action == "accept" ? "review" : "remove"
+        FileHandle.standardError.write(Data("ararat-trace: extensions \(label) dialog \(name)\n".utf8))
+        return name
     }
 
     /// Phases 2 to 17 of `settings-extensions`. Two profiles start with different fixture
@@ -1434,7 +1399,6 @@ extension Runtime {
             check.report("site_access_write", true)
             check.details["site_access"] = row.siteAccess.rawValue
             trace("site access read back from the engine: \(row.siteAccess.rawValue)")
-            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
             engine.checkDisableForReview(profile: check.extensionDefaultProfile, identifier: row.id)
             step(9)
         case 9:
@@ -1446,38 +1410,32 @@ extension Runtime {
             check.details["review_row"] = ["summary": row.summary, "needs_review": true]
             trace("Review… shown: \(row.summary)")
             guard capture("extensions-review") else { end("capture", false); return }
-            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
             probe.reviewExtension(row.id)
             step(10)
         case 10:
-            guard let dialog = extensionDialogWindow(check) else {
-                note("the re-enable prompt has not opened")
-                return
-            }
-            trace("pressing the prompt's default button")
-            check.extensionDialogFound = acceptExtensionDialog(dialog)
-            guard check.extensionDialogFound else { note("the prompt has no default button"); return }
+            // Major 2: the engine's Views seam accepts the real re-enable prompt and names its
+            // class; an empty answer means the prompt has not opened yet.
+            let dialog = extensionDialog(action: "accept")
+            guard !dialog.isEmpty else { note("the re-enable prompt has not opened"); return }
+            check.extensionReviewDialog = dialog
             step(11)
         case 11:
             guard let row = fixtureRow(probe, check.extensionDefaultID), row.enabled, !row.needsReview else {
-                note("after accepting: enabled=\(fixtureRow(probe, check.extensionDefaultID)?.enabled ?? false) review=\(fixtureRow(probe, check.extensionDefaultID)?.needsReview ?? false)")
+                note("after accepting: enabled=\(fixtureRow(probe, check.extensionDefaultID)?.enabled ?? false) review=\(fixtureRow(probe, check.extensionDefaultID)?.needsReview ?? false) dialog=\(check.extensionReviewDialog)")
                 return
             }
-            check.report("review_prompt", check.extensionDialogFound)
+            // Non-vacuous: the prompt itself was up, not just any new window.
+            check.report("review_prompt", check.extensionReviewDialog.contains("ExtensionInstallDialogView"))
             check.report("review_enables", true)
-            trace("accepted; the extension is enabled again")
-            check.extensionKnownWindows = Set(NSApp.windows.map(\.windowNumber))
+            check.details["review_dialog"] = check.extensionReviewDialog
+            trace("accepted \(check.extensionReviewDialog); the extension is enabled again")
             check.extensionRemoveFinished = false
-            check.extensionRemoveStarted = true
             probe.removeExtension(row.id) { check.extensionRemoveFinished = true }
             step(12)
         case 12:
-            guard let dialog = extensionDialogWindow(check) else {
-                note("the uninstall dialog has not opened")
-                return
-            }
-            trace("cancelling the uninstall dialog")
-            cancelExtensionDialog(dialog)
+            let dialog = extensionDialog(action: "cancel")
+            guard !dialog.isEmpty else { note("the uninstall dialog has not opened"); return }
+            check.extensionRemoveDialog = dialog
             step(13)
         case 13:
             guard check.extensionRemoveFinished else { note("the uninstall dialog has not reported"); return }
@@ -1486,9 +1444,11 @@ extension Runtime {
                 return
             }
             check.report("remove_cancel_keeps", probe.extensions.contains { $0.id == row.id })
-            trace("Remove… cancelled; the row stays")
+            check.details["remove_dialog"] = check.extensionRemoveDialog
+            trace("cancelled \(check.extensionRemoveDialog); the row stays")
             owner.settings?.window?.performClose(nil)
             step(14)
+
         case 14:
             guard owner.settings?.window?.isVisible != true else { note("the settings window is still visible"); return }
             trace("reopening the settings window")

@@ -1,15 +1,15 @@
-// U27x: Settings › Extensions' engine side. The pane lists one regular profile's user-installed
-// and unpacked extensions from Chromium's ExtensionRegistry, enables and disables them through the
-// ExtensionRegistrar, writes the profile's user site access through ScriptingPermissionsModifier,
-// pins an action in the profile's ToolbarActionsModel, shows Chromium's re-enable prompt for an
-// extension disabled by a permissions increase, removes one through Chromium's uninstall dialog,
-// and calls back when any profile's registry changes so the pane follows installs, removals and
-// enable switches made elsewhere.
+// U27x: Settings › Extensions' engine side. The pane lists one regular profile's extensions from
+// Chromium's ExtensionRegistry (what chrome://extensions shows there), enables and disables them
+// through the ExtensionRegistrar, writes the profile's user site access through
+// ScriptingPermissionsModifier, pins an action in the profile's ToolbarActionsModel, shows
+// Chromium's re-enable prompt for an extension disabled by a permissions increase, removes one
+// through Chromium's uninstall dialog, and calls back when any profile's registry changes so the
+// pane follows installs, removals and enable switches made elsewhere.
 //
 // The functions are exported C entry points (AraratHostAPI.h) rather than ARWindowHostAPI methods
 // because the pane acts on a profile, not on one window's Browser (X1, X2, X5).
 
-#import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
 
 #include <algorithm>
 #include <memory>
@@ -19,6 +19,7 @@
 #include "ararat/core/public/AraratHostAPI.h"
 
 #include "base/command_line.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -52,6 +53,9 @@
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "ui/gfx/native_ui_types.h"
+#include "ui/views/view.h"
+#include "ui/views/widget/widget.h"
+#include "ui/views/window/dialog_delegate.h"
 
 namespace {
 
@@ -74,13 +78,30 @@ std::vector<Profile*> RegularProfiles() {
   return profiles;
 }
 
-Profile* ProfileForDirectory(NSString* directory) {
-  auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
-  if (!manager || ![directory isKindOfClass:NSString.class] || directory.length == 0) return nullptr;
+// The profile directory as a child of the user-data dir, or an empty path when the value is not a
+// plain directory name.
+base::FilePath PathForDirectory(NSString* directory, ProfileManager* manager) {
+  if (!manager || ![directory isKindOfClass:NSString.class] || directory.length == 0)
+    return base::FilePath();
   base::FilePath name(base::SysNSStringToUTF8(directory));
-  if (name.empty() || name.IsAbsolute() || name.ReferencesParent() || name.BaseName() != name) return nullptr;
-  Profile* profile = manager->GetProfileByPath(manager->user_data_dir().Append(name));
+  if (name.empty() || name.IsAbsolute() || name.ReferencesParent() || name.BaseName() != name)
+    return base::FilePath();
+  return manager->user_data_dir().Append(name);
+}
+
+// Writes act on a loaded profile only: an unloaded one answers "unknown", and the list's loading
+// reply keeps the pane from offering a write before the profile is there.
+Profile* LoadedProfileForDirectory(NSString* directory) {
+  auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
+  base::FilePath path = PathForDirectory(directory, manager);
+  if (path.empty()) return nullptr;
+  Profile* profile = manager->GetProfileByPath(path);
   return IsRegularProfile(profile) ? profile : nullptr;
+}
+
+base::flat_set<std::string>& LoadingProfiles() {
+  static base::NoDestructor<base::flat_set<std::string>> loading;
+  return *loading;
 }
 
 // The icon Chromium's settings page shows. Small and read once per row on the UI thread, so the
@@ -88,19 +109,21 @@ Profile* ProfileForDirectory(NSString* directory) {
 // its icon and then replace it).
 NSImage* IconFor(const extensions::Extension& extension) {
   extensions::ExtensionResource resource = extensions::IconsInfo::GetIconResource(
-      &extension, 32, extensions::ExtensionIconSet::Match::kBigger);
+      &extension, 32, ExtensionIconSet::Match::kBigger);
   if (resource.empty()) return nil;
   base::FilePath path = resource.GetFilePath();
   if (path.empty()) return nil;
   return [[NSImage alloc] initWithContentsOfFile:base::SysUTF8ToNSString(path.value())];
 }
 
-// X2's summary, in the developer_private vocabulary: "all", "specific" or "click". Disabled
+// X2's summary, in the developer_private vocabulary: "all", "specific", "click", or "none" for an
+// extension that requests no host permission at all (it has no site access to change). Disabled
 // extensions read "Off" in the app, not here.
 NSString* SiteAccessFor(Profile* profile, const extensions::Extension& extension) {
   auto* permissions = extensions::PermissionsManager::Get(profile);
   auto* prefs = extensions::ExtensionPrefs::Get(profile);
   if (!permissions || !prefs) return @"all";
+  if (!permissions->CanAffectExtension(extension)) return @"none";
   if (!permissions->HasWithheldHostPermissions(extension)) return @"all";
   std::unique_ptr<const extensions::PermissionSet> granted =
       prefs->GetRuntimeGrantedPermissions(extension.id());
@@ -121,17 +144,34 @@ bool CanRemove(Profile* profile, const extensions::Extension* extension) {
          !policy->MustRemainInstalled(extension, nullptr);
 }
 
-// "User-installed and unpacked" (X2): the Web Store's INTERNAL installs and the unpacked ones
-// the owner loads. Component, policy and external installs are not the pane's business.
-bool IsListed(const extensions::Extension& extension) {
-  if (!extensions::ui_util::ShouldDisplayInExtensionSettings(extension)) return false;
-  return extensions::Manifest::IsUnpackedLocation(extension.location()) ||
-         extension.location() == extensions::mojom::ManifestLocation::kInternal;
+// Chrome's own page's rule for whether the enable toggle is offered (item_util.ts:61-87): the user
+// may modify the extension, it is not blocklisted, and none of the reasons that pin the state is
+// present. A policy-installed or blocked extension therefore shows no switch, as in Chrome.
+bool CanDisable(Profile* profile, const extensions::Extension& extension) {
+  auto* registry = extensions::ExtensionRegistry::Get(profile);
+  auto* system = extensions::ExtensionSystem::Get(profile);
+  auto* policy = system ? system->management_policy() : nullptr;
+  auto* prefs = extensions::ExtensionPrefs::Get(profile);
+  if (!registry || !policy || !prefs) return false;
+  if (registry->blocklisted_extensions().Contains(extension.id())) return false;
+  if (!policy->UserMayModifySettings(&extension, nullptr)) return false;
+  for (const auto reason :
+       {extensions::disable_reason::DISABLE_CORRUPTED,
+        extensions::disable_reason::DISABLE_GREYLIST,
+        extensions::disable_reason::DISABLE_UPDATE_REQUIRED_BY_POLICY,
+        extensions::disable_reason::DISABLE_PUBLISHED_IN_STORE_REQUIRED_BY_POLICY,
+        extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY,
+        extensions::disable_reason::DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION,
+        extensions::disable_reason::DISABLE_UNSUPPORTED_MANIFEST_VERSION}) {
+    if (prefs->HasDisableReason(extension.id(), reason)) return false;
+  }
+  return true;
 }
 
 // X5: one observer for every regular profile's registry. The pane re-reads its list when an
 // extension is installed, removed, enabled or disabled anywhere; site access writes notify
-// directly because they fire no registry event.
+// directly because they fire no registry event. A profile loaded on demand reaches the pane
+// through OnProfileAdded.
 class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
                          public ProfileManagerObserver {
  public:
@@ -194,22 +234,55 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
   void (^handler_)(void) = nil;
 };
 
-// Sorts the two registry sets into the pane's row order: name, then id for a stable tie-break.
+// Lists an existing but not yet loaded profile on demand: LoadProfileByPath never creates one, and
+// a profile that Chromium has never created has no extensions, so its empty list is true. While the
+// load runs the list answers "loading" and the pane keeps its rows instead of drawing the empty
+// state; the load's OnProfileAdded notifies the pane.
+Profile* ListProfileForDirectory(NSString* directory, bool* loading) {
+  auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
+  base::FilePath path = PathForDirectory(directory, manager);
+  if (path.empty()) return nullptr;
+  Profile* profile = manager->GetProfileByPath(path);
+  if (profile) return IsRegularProfile(profile) ? profile : nullptr;
+  const std::string key = path.value();
+  auto& pending = LoadingProfiles();
+  if (pending.contains(key)) {
+    if (loading) *loading = true;
+    return nullptr;
+  }
+  pending.insert(key);
+  const bool started = manager->LoadProfileByPath(
+      path, /*incognito=*/false, base::BindOnce(^(Profile* loaded) {
+        LoadingProfiles().erase(key);
+        ExtensionWatcher::Get().NotifyChanged();
+      }));
+  if (!started) {
+    pending.erase(key);
+    return nullptr;
+  }
+  if (loading) *loading = true;
+  return nullptr;
+}
+
+// The two registry sets the pane lists, plus terminated (a crashed extension stays listed in
+// chrome://extensions and reads enabled). Sorted by name, then id for a stable tie-break.
 std::vector<scoped_refptr<const extensions::Extension>> ListedExtensions(Profile* profile) {
   auto* registry = extensions::ExtensionRegistry::Get(profile);
   std::vector<scoped_refptr<const extensions::Extension>> extensions;
   if (!registry) return extensions;
-  for (const auto& extension : registry->enabled_extensions()) {
-    if (IsListed(*extension)) extensions.push_back(extension);
-  }
-  for (const auto& extension : registry->disabled_extensions()) {
-    if (IsListed(*extension)) extensions.push_back(extension);
+  for (const auto* set : {&registry->enabled_extensions(), &registry->terminated_extensions(),
+                          &registry->disabled_extensions()}) {
+    for (const auto& extension : *set) {
+      // X2 (design): what Chromium's own extensions page shows, external-pref installs included;
+      // component extensions stay out through this helper.
+      if (extensions::ui_util::ShouldDisplayInExtensionSettings(*extension))
+        extensions.push_back(extension);
+    }
   }
   std::sort(extensions.begin(), extensions.end(),
             [](const scoped_refptr<const extensions::Extension>& a,
                const scoped_refptr<const extensions::Extension>& b) {
-              int name = base::CompareCaseInsensitiveASCII(base::SysUTF16ToUTF8(a->name()),
-                                                           base::SysUTF16ToUTF8(b->name()));
+              const int name = base::CompareCaseInsensitiveASCII(a->name(), b->name());
               return name != 0 ? name < 0 : a->id() < b->id();
             });
   return extensions;
@@ -249,9 +322,8 @@ class UninstallRequest : public extensions::ExtensionUninstallDialog::Delegate {
 };
 
 // Chromium's re-enable prompt (X3), the dialog Chrome shows for an extension it disabled for a
-// permissions increase. The prompt owns the permission list; this object outlives it until the
-// dialog reports, then grants and enables through the same registrar call the management API's
-// enable path uses.
+// permissions increase. This object owns the prompt until the dialog reports, then grants and
+// enables through the same registrar call the management API's enable path uses.
 class ReviewRequest {
  public:
   static void Start(Profile* profile, const extensions::Extension* extension,
@@ -260,8 +332,8 @@ class ReviewRequest {
     auto prompt_type = ExtensionInstallPrompt::GetReEnablePromptTypeForExtension(profile, extension);
     request->prompt_ = std::make_unique<ExtensionInstallPrompt>(
         profile, parent, std::make_unique<extensions::InstallPromptData>(prompt_type));
-    // `ShowDialog` keeps the prompt alive until the dialog closes; the callback may be
-    // synchronous when no dialog can be shown.
+    // The request owns `prompt_`; the dialog takes the prompt data, and may report synchronously
+    // when no dialog can be shown.
     ExtensionInstallPrompt* prompt = request->prompt_.get();
     prompt->ShowDialog(
         base::BindOnce(^(ExtensionInstallPrompt::DoneCallbackPayload payload) {
@@ -281,7 +353,7 @@ class ReviewRequest {
         registrar->GrantPermissionsAndEnableExtension(*extension_);
     }
     void (^completion)(BOOL) = completion_;
-    // The prompt is inside its own callback; delete it after the stack unwinds.
+    // The prompt only lives through its callback; delete the request after the stack unwinds.
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(^{
           if (completion) completion(accepted);
@@ -295,25 +367,43 @@ class ReviewRequest {
   std::unique_ptr<ExtensionInstallPrompt> prompt_;
 };
 
+// Check-only: installs a fixture directory into one loaded profile.
+void InstallUnpacked(Profile* profile, const base::FilePath& directory, void (^report)(NSString*)) {
+  auto installer = extensions::UnpackedInstaller::Create(profile);
+  installer->set_be_noisy_on_failure(false);
+  installer->set_completion_callback(
+      base::BindOnce(^(const extensions::Extension* extension, const base::FilePath&,
+                       const std::u16string& error) {
+        if (!report) return;
+        report(extension ? @"loaded" : base::SysUTF16ToNSString(error));
+      }));
+  installer->Load(directory);
+}
+
 }  // namespace
 
 NSArray<NSDictionary<NSString*, id>*>* AraratExtensions(NSString* profile) {
+  bool loading = false;
+  Profile* target = ListProfileForDirectory(profile, &loading);
+  if (loading) return @[ @{@"loading": @YES} ];
   NSMutableArray<NSDictionary<NSString*, id>*>* result = [NSMutableArray array];
-  Profile* target = ProfileForDirectory(profile);
   if (!target) return result;
+  auto* registry = extensions::ExtensionRegistry::Get(target);
   auto* prefs = extensions::ExtensionPrefs::Get(target);
   auto* toolbar = ToolbarActionsModel::Get(target);
-  if (!prefs) return result;
+  if (!registry || !prefs) return result;
   for (const auto& extension : ListedExtensions(target)) {
     const extensions::DisableReasonSet reasons = prefs->GetDisableReasons(extension->id());
-    const bool enabled = extensions::ExtensionRegistry::Get(target)->enabled_extensions().Contains(extension->id());
+    const bool enabled = registry->enabled_extensions().Contains(extension->id()) ||
+                         registry->terminated_extensions().Contains(extension->id());
     NSMutableArray<NSNumber*>* encoded_reasons = [NSMutableArray array];
     for (int reason : reasons) [encoded_reasons addObject:@(reason)];
     const bool needs_review = reasons.contains(extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE);
     const bool can_pin = toolbar && toolbar->HasAction(extension->id());
     [result addObject:@{
       @"id": base::SysUTF8ToNSString(extension->id()),
-      @"name": base::SysUTF16ToNSString(extensions::ui_util::GetFixupExtensionNameForUIDisplay(*extension)),
+      @"name": base::SysUTF16ToNSString(
+          extensions::ui_util::GetFixupExtensionNameForUIDisplay(extension->name())),
       @"icon": IconFor(*extension) ?: NSNull.null,
       @"enabled": @(enabled),
       @"needsReview": @(needs_review),
@@ -321,15 +411,15 @@ NSArray<NSDictionary<NSString*, id>*>* AraratExtensions(NSString* profile) {
       @"siteAccess": SiteAccessFor(target, *extension),
       @"pinned": @(can_pin && toolbar->IsActionPinned(extension->id())),
       @"canPin": @(can_pin && !toolbar->IsActionForcePinned(extension->id())),
+      @"canDisable": @(CanDisable(target, *extension)),
       @"removable": @(CanRemove(target, extension.get())),
-      @"unpacked": @(extensions::Manifest::IsUnpackedLocation(extension->location())),
     }];
   }
   return result;
 }
 
 NSString* AraratSetExtensionEnabled(NSString* profile, NSString* identifier, BOOL enabled) {
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   if (!target || ![identifier isKindOfClass:NSString.class] || identifier.length == 0) return @"unknown";
   const std::string id = base::SysNSStringToUTF8(identifier);
   auto* registry = extensions::ExtensionRegistry::Get(target);
@@ -339,10 +429,11 @@ NSString* AraratSetExtensionEnabled(NSString* profile, NSString* identifier, BOO
   if (!extension || !prefs || !registrar) return @"unknown";
   auto* system = extensions::ExtensionSystem::Get(target);
   auto* policy = system ? system->management_policy() : nullptr;
-  const bool currently_enabled = registry->enabled_extensions().Contains(id);
+  const bool currently_enabled = registry->enabled_extensions().Contains(id) ||
+                                 registry->terminated_extensions().Contains(id);
   if (!enabled) {
     if (!currently_enabled) return @"unchanged";
-    if (policy && !policy->UserMayModifySettings(extension, nullptr)) return @"policy";
+    if (!CanDisable(target, *extension)) return @"policy";
     registrar->DisableExtension(id, {extensions::disable_reason::DISABLE_USER_ACTION});
     ExtensionWatcher::Get().NotifyChanged();
     return @"done";
@@ -354,13 +445,14 @@ NSString* AraratSetExtensionEnabled(NSString* profile, NSString* identifier, BOO
     return @"review";
   }
   if (policy && policy->MustRemainDisabled(extension, nullptr)) return @"policy";
+  if (!policy || !policy->UserMayModifySettings(extension, nullptr)) return @"policy";
   registrar->EnableExtension(id);
   ExtensionWatcher::Get().NotifyChanged();
   return @"done";
 }
 
 NSString* AraratSetExtensionSiteAccess(NSString* profile, NSString* identifier, NSString* access) {
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   if (!target || ![identifier isKindOfClass:NSString.class] || identifier.length == 0 ||
       ![access isKindOfClass:NSString.class]) {
     return @"unknown";
@@ -391,7 +483,7 @@ NSString* AraratSetExtensionSiteAccess(NSString* profile, NSString* identifier, 
 }
 
 NSString* AraratSetExtensionPinned(NSString* profile, NSString* identifier, BOOL pinned) {
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   if (!target || ![identifier isKindOfClass:NSString.class] || identifier.length == 0) return @"unknown";
   if (target->IsOffTheRecord()) return @"incognito";
   auto* model = ToolbarActionsModel::Get(target);
@@ -406,7 +498,7 @@ NSString* AraratSetExtensionPinned(NSString* profile, NSString* identifier, BOOL
 void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* window,
                            void (^completion)(BOOL allowed)) {
   void (^report)(BOOL) = [completion copy];
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   auto* registry = target ? extensions::ExtensionRegistry::Get(target) : nullptr;
   auto* prefs = target ? extensions::ExtensionPrefs::Get(target) : nullptr;
   scoped_refptr<const extensions::Extension> extension =
@@ -421,10 +513,10 @@ void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* wi
       prefs->HasDisableReason(extension->id(), extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE) ||
       prefs->HasDisableReason(extension->id(), extensions::disable_reason::DISABLE_REMOTE_INSTALL);
   if (!escalated) {
-    // Nothing to review (the state changed since the row was drawn): the ordinary enable is
-    // what Chrome would do, so the click still has its effect.
-    extensions::ExtensionRegistrar::Get(target)->EnableExtension(extension->id());
-    if (report) report(YES);
+    // Nothing to review (the state changed since the row was drawn): run the same enable the
+    // switch would, with its policy check.
+    NSString* result = AraratSetExtensionEnabled(profile, identifier, YES);
+    if (report) report([result isEqual:@"done"] || [result isEqual:@"unchanged"]);
     return;
   }
   ReviewRequest::Start(target, extension.get(), gfx::NativeWindow(window), report);
@@ -433,7 +525,7 @@ void AraratReviewExtension(NSString* profile, NSString* identifier, NSWindow* wi
 void AraratRemoveExtension(NSString* profile, NSString* identifier, NSWindow* window,
                            void (^completion)(NSString* result, NSString* detail)) {
   void (^report)(NSString*, NSString*) = [completion copy];
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   auto* registry = target ? extensions::ExtensionRegistry::Get(target) : nullptr;
   const extensions::Extension* extension =
       registry && [identifier isKindOfClass:NSString.class]
@@ -457,9 +549,11 @@ void AraratSetExtensionsChangedHandler(void (^handler)(void)) {
 }
 
 // Check-only: installs an unpacked fixture into one profile, so `settings-extensions` can show
-// two profiles with different extensions. Unpacked installs are trusted locations, so a newer
-// version of the same fixture does not disable the extension for a permissions increase; the
-// check marks that state through AraratCheckDisableExtensionForReview below.
+// two profiles with different extensions. The profile is loaded when it exists and created when it
+// does not (the check seeds the workspace's second profile, whose space was never shown). Unpacked
+// installs are trusted locations, so a newer version of the same fixture does not disable the
+// extension for a permissions increase; the check marks that state through
+// AraratCheckDisableExtensionForReview below.
 void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
                                       void (^completion)(NSString* result)) {
   void (^report)(NSString*) = [completion copy];
@@ -467,31 +561,94 @@ void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
     if (report) report(@"refused");
     return;
   }
-  Profile* target = ProfileForDirectory(profile);
+  auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
+  base::FilePath profile_path = PathForDirectory(profile, manager);
   base::FilePath directory([path isKindOfClass:NSString.class] ? base::SysNSStringToUTF8(path) : std::string());
-  if (!target || directory.empty() || !directory.IsAbsolute()) {
+  if (profile_path.empty() || directory.empty() || !directory.IsAbsolute()) {
     if (report) report(@"unknown");
     return;
   }
-  auto installer = extensions::UnpackedInstaller::Create(target);
-  installer->set_be_noisy_on_failure(false);
-  installer->set_completion_callback(
-      base::BindOnce(^(const extensions::Extension* extension, const base::FilePath&,
-                       const std::u16string& error) {
-        if (report) report(extension ? @"loaded" : base::SysUTF16ToNSString(error));
+  Profile* loaded = manager->GetProfileByPath(profile_path);
+  if (loaded) {
+    InstallUnpacked(loaded, directory, report);
+    return;
+  }
+  // A load that fails for a path that does not exist yet is answered with a profile creation; the
+  // workspace can name a profile Chrome has not made yet.
+  const bool started = manager->LoadProfileByPath(
+      profile_path, /*incognito=*/false, base::BindOnce(^(Profile* profile_loaded) {
+        if (profile_loaded) {
+          InstallUnpacked(profile_loaded, directory, report);
+          return;
+        }
+        manager->CreateProfileAsync(profile_path, base::BindOnce(^(Profile* created) {
+          if (created) {
+            InstallUnpacked(created, directory, report);
+          } else if (report) {
+            report(@"unknown");
+          }
+        }));
       }));
-  installer->Load(directory);
+  if (!started) {
+    manager->CreateProfileAsync(profile_path, base::BindOnce(^(Profile* created) {
+      if (created) {
+        InstallUnpacked(created, directory, report);
+      } else if (report) {
+        report(@"unknown");
+      }
+    }));
+  }
 }
 
 // Check-only: the state Chromium sets when an update asks for more permissions, without needing
 // a store-installed CRX (an unpacked update is a trusted location and is never disabled).
 void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifier) {
   if (!IsCheckRun()) return;
-  Profile* target = ProfileForDirectory(profile);
+  Profile* target = LoadedProfileForDirectory(profile);
   auto* registry = target ? extensions::ExtensionRegistry::Get(target) : nullptr;
   auto* registrar = target ? extensions::ExtensionRegistrar::Get(target) : nullptr;
   if (!registry || !registrar || ![identifier isKindOfClass:NSString.class]) return;
   const std::string id = base::SysNSStringToUTF8(identifier);
   if (!registry->GetInstalledExtension(id)) return;
   registrar->DisableExtension(id, {extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE});
+}
+
+// Check-only: accepts or cancels the Views dialog a Settings action opened, and returns the
+// dialog's contents class ("ExtensionInstallDialogView" for the re-enable prompt; the uninstall
+// dialog's own class otherwise), or an empty string when no such dialog is up. It is the seam
+// accept-download-close uses (views::Widget::GetWidgetForNativeWindow, then the dialog delegate),
+// because the VM's in-process accessibility tree is empty.
+NSString* AraratCheckExtensionDialog(NSWindow* parent, NSString* action) {
+  if (!IsCheckRun() || !parent) return @"";
+  NSMutableArray<NSWindow*>* candidates = [NSMutableArray array];
+  if (parent.attachedSheet) [candidates addObject:parent.attachedSheet];
+  for (NSWindow* sheet in parent.sheets) {
+    if (sheet != parent.attachedSheet) [candidates addObject:sheet];
+  }
+  for (NSWindow* child in parent.childWindows) [candidates addObject:child];
+  for (NSWindow* window in NSApp.windows) {
+    if (window != parent && window.parentWindow == parent) [candidates addObject:window];
+  }
+  // A views dialog parented to a non-Browser window can also be a window of its own.
+  for (NSWindow* window in NSApp.windows) {
+    if (window != parent && window.isVisible) [candidates addObject:window];
+  }
+  for (NSWindow* window in candidates) {
+    if (!window.isVisible) continue;
+    views::Widget* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
+    views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
+    views::DialogDelegate* dialog = delegate ? delegate->AsDialogDelegate() : nullptr;
+    if (!dialog) continue;
+    views::View* contents = delegate->GetContentsView();
+    NSString* name = contents
+        ? base::SysUTF8ToNSString(std::string(contents->GetClassName()))
+        : NSStringFromClass(window.class);
+    if ([action isEqual:@"accept"]) {
+      dialog->AcceptDialog();
+    } else if ([action isEqual:@"cancel"]) {
+      dialog->CancelDialog();
+    }
+    return name;
+  }
+  return @"";
 }

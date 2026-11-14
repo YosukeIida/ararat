@@ -1,16 +1,19 @@
 import AppKit
 import Foundation
 
-/// U27x: the four states Settings › Extensions summarises in a row (X2). The raw values are the
+/// U27x: the states Settings › Extensions summarises in a row (X2). The raw values are the
 /// engine's words; "On specific sites" is Chromium's state when sites were granted one by one and
-/// is not one the pane writes, because choosing sites stays Chromium's own page.
+/// is not one the pane writes (choosing sites stays Chromium's own page), and "none" is an
+/// extension that requests no site access at all, whose rows offer no site-access menu.
 public enum ExtensionSiteAccess: String, CaseIterable, Sendable {
+    case noSiteAccess = "none"
     case onAllSites = "all"
     case onSpecificSites = "specific"
     case onClick = "click"
 
     public var title: String {
         switch self {
+        case .noSiteAccess: ""
         case .onAllSites: "On all sites"
         case .onSpecificSites: "On specific sites"
         case .onClick: "On click"
@@ -24,7 +27,8 @@ public enum ExtensionSiteAccess: String, CaseIterable, Sendable {
 
 /// One installed extension as the engine lists it (X2): the id, the name, the icon (nil draws the
 /// board's letter), whether it is enabled, whether Chromium disabled it for a permissions increase
-/// (Review… replaces the switch), the user site access, and the toolbar action's pin state.
+/// (Review… replaces the switch), the user site access, the toolbar action's pin state, and whether
+/// Chromium offers the enable switch and Remove… at all.
 public struct SettingsExtension: Identifiable {
     public var id: String
     public var name: String
@@ -34,13 +38,13 @@ public struct SettingsExtension: Identifiable {
     public var siteAccess: ExtensionSiteAccess
     public var pinned: Bool
     public var canPin: Bool
+    public var canDisable: Bool
     public var removable: Bool
-    public var unpacked: Bool
 
     public init(id: String, name: String, icon: NSImage? = nil, enabled: Bool = true,
                 needsReview: Bool = false, siteAccess: ExtensionSiteAccess = .onAllSites,
-                pinned: Bool = false, canPin: Bool = false, removable: Bool = true,
-                unpacked: Bool = false) {
+                pinned: Bool = false, canPin: Bool = false, canDisable: Bool = true,
+                removable: Bool = true) {
         self.id = id
         self.name = name
         self.icon = icon
@@ -49,12 +53,13 @@ public struct SettingsExtension: Identifiable {
         self.siteAccess = siteAccess
         self.pinned = pinned
         self.canPin = canPin
+        self.canDisable = canDisable
         self.removable = removable
-        self.unpacked = unpacked
     }
 
     /// The row's second line, in the board's words: the permissions state goes first ("Needs new
-    /// permissions"), a disabled extension reads "Off", otherwise the site access does.
+    /// permissions"), a disabled extension reads "Off", otherwise the site access does (an
+    /// extension with no site access has no second line).
     public var summary: String {
         if needsReview { return "Needs new permissions" }
         if !enabled { return "Off" }
@@ -67,13 +72,28 @@ public struct SettingsExtension: Identifiable {
     }
 }
 
+/// One profile's list as the engine answered: the rows, or `loading` while a profile that exists
+/// but is not loaded yet is being loaded (X1). The model keeps its rows across a loading answer.
+public struct ExtensionProfileList {
+    public var loading: Bool
+    public var rows: [SettingsExtension]
+
+    public init(loading: Bool, rows: [SettingsExtension]) {
+        self.loading = loading
+        self.rows = rows
+    }
+
+    public static let empty = ExtensionProfileList(loading: false, rows: [])
+    public static let loading = ExtensionProfileList(loading: true, rows: [])
+}
+
 /// The engine calls the pane makes, behind a protocol so the Swift model tests drive a fake host
-/// and the app supplies the AraratHostAPI implementation (X2, X3, X5). All calls are main-thread,
+/// and the app supplies the AraratHostAPI implementation (X1–X3, X5). All calls are main-thread,
 /// like the rest of the host API. The reply words are the engine's named results.
 @MainActor
 public protocol ExtensionSettingsHost: AnyObject {
-    /// One profile's installed extensions, in the engine's order.
-    func extensions(profile: String) -> [SettingsExtension]
+    /// One profile's installed extensions, in the engine's order, or a loading answer.
+    func extensions(profile: String) -> ExtensionProfileList
     /// "done", "unchanged", "review" (only the prompt may enable it), "policy" or "unknown".
     func setEnabled(profile: String, identifier: String, enabled: Bool) -> String
     /// "done", "unsupported" or "unknown".

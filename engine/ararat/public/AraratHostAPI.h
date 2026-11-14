@@ -283,11 +283,14 @@ BOOL AraratSetSiteException(NSString* profile, NSString* origin, NSString* kind,
 // not a count, and is always called.
 __attribute__((visibility("default")))
 void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)(uint64_t failedDataTypes));
-// U27x: Settings › Extensions. One profile's user-installed (Web Store) and unpacked extensions,
-// as Chromium's own extensions page lists them: id, name, icon (NSImage or NSNull), enabled,
-// needsReview (disabled for a permissions increase), disableReasons (raw values), siteAccess
-// ("all", "specific" or "click"), pinned and canPin (the toolbar action and its pin prefs),
-// removable and unpacked. The list is empty when the profile is not loaded.
+// U27x: Settings › Extensions. One profile's extensions, as Chromium's own extensions page lists
+// them: id, name, icon (NSImage or NSNull), enabled, needsReview (disabled for a permissions
+// increase), disableReasons (raw values), siteAccess ("all", "specific", "click" or "none" when the
+// extension requests no site access), pinned and canPin (the toolbar action and its pin prefs),
+// canDisable (Chromium's rule for offering the switch), removable. The list is empty when the
+// profile does not exist or is not regular; while a profile that exists but is not loaded yet is
+// being loaded it is one entry {"loading": true}, so the pane keeps its rows instead of drawing
+// the empty state.
 __attribute__((visibility("default")))
 NSArray<NSDictionary<NSString*, id>*>* AraratExtensions(NSString* profile);
 // Enables or disables one extension: "done", "unchanged", "unknown", "policy", or "review" when
@@ -326,6 +329,13 @@ void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
 // Check-only: marks an installed extension as disabled for a permissions increase.
 __attribute__((visibility("default")))
 void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifier);
+// Check-only: accepts ("accept") or cancels ("cancel") the Views dialog a Settings action opened,
+// and returns the dialog's contents class — "ExtensionInstallDialogView" for the re-enable prompt,
+// the uninstall dialog's own class otherwise — or an empty string when no dialog is up. The seam
+// is accept-download-close's (views::Widget::GetWidgetForNativeWindow, then the dialog delegate),
+// because the VM's in-process accessibility tree is empty.
+__attribute__((visibility("default")))
+NSString* AraratCheckExtensionDialog(NSWindow* _Nullable parent, NSString* action);
 __attribute__((visibility("default")))
 void AraratCheckCommitProfilePrefs(NSString* profile, void (^completion)(BOOL done));
 __attribute__((visibility("default")))

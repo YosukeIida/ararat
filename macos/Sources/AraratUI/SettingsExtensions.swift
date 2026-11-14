@@ -31,7 +31,13 @@ struct SettingsExtensionsSection: View {
                 }.id(SettingsModel.extensionsProfileRowID)
             }
             SettingsGroupCard(heading: "Installed", marker: SettingsModel.rowMarker(SettingsModel.extensionsListCardID)) {
-                if model.extensions.isEmpty {
+                if model.extensionsLoading && model.extensions.isEmpty {
+                    Text("Loading extensions…")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 22)
+                        .background(SettingsMarker(id: SettingsModel.extensionsLoadingMarker))
+                } else if model.extensions.isEmpty {
                     Text("No extensions in this profile yet.")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
@@ -45,13 +51,17 @@ struct SettingsExtensionsSection: View {
                             ExtensionIconView(row: row)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(row.name).lineLimit(1)
-                                Text(row.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                if !row.summary.isEmpty {
+                                    Text(row.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             if row.needsReview {
                                 Button("Review…") { model.reviewExtension(row.id) }
                                     .background(SettingsMarker(id: SettingsModel.extensionReviewMarker(row.id)))
                                     .accessibilityLabel("Review new permissions for \(row.name)")
-                            } else {
+                            } else if row.canDisable {
+                                // X2 (design): an extension Chromium does not let the user switch
+                                // shows no switch, as chrome://extensions draws it.
                                 Toggle("Enable \(row.name)", isOn: Binding(
                                     get: { row.enabled },
                                     set: { model.setExtensionEnabled(row.id, enabled: $0) }))
