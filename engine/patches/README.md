@@ -81,7 +81,7 @@ is in `docs/research/ungoogled-inventory.md` §8.
 `ararat/history-deletion-hook.patch` calls an optional hook before HistoryService schedules a deletion, allowing Ararat to invalidate tab history on the file sequence.
 The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. It confirms that the request hook queued invalidation; it does not wait for the history backend or its later deletion notification.
 
-`ararat/history-retention.patch` adds an atomic retention in days to `ExpireHistoryBackend::GetCurrentExpirationTime()`, so the app's Privacy pane replaces Chromium's fixed 90-day threshold on every expiry pass; a value of 0 (the pane's Forever and the state before the first apply) makes `DoExpireIteration()` return before any reader or the segment cleanup, so nothing expires and no deletion runs on a null `Time`'s `LocalMidnight`.
+`ararat/history-retention.patch` adds an atomic retention in days to `ExpireHistoryBackend::GetCurrentExpirationTime()`, so the app's Privacy pane replaces Chromium's fixed 90-day threshold on every expiry pass; a value of 0 (the pane's Forever and the state before the first apply) makes `DoExpireIteration()` return before any reader or the segment cleanup and restarts the queue at the five-minute cadence, so nothing expires, no deletion runs on a null `Time`'s `LocalMidnight`, and a retention set later takes effect within about five minutes.
 
 `ararat/crash-lock-abandon.patch` lets the host release a crash lock without acknowledging the crash when its profile is destroyed before workspace recovery completes.
 

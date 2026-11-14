@@ -12,11 +12,11 @@
  
  namespace history {
  
-+// ararat (U27p): the app's Privacy pane sets the browsing-history retention, in days. 0 makes
-+// every expiry pass a no-op (the pane's Forever, and the state before the first window applies the
-+// record); a positive value replaces Chromium's own threshold. The expiry loop reads it on every
-+// pass, so a shortened retention deletes the older visits at a later pass (30 s in the first
-+// minute, then five minutes) without a relaunch.
++// ararat (U27p): the app's Privacy pane sets the browsing-history retention, in days. 0 keeps
++// everything (the pane's Forever, and the state before the first window applies the record): the
++// loop waits at the five-minute cadence then, so a retention set later takes effect within about
++// five minutes at the next pass. A positive value replaces Chromium's own threshold on every
++// pass.
 +extern std::atomic<int> g_ararat_history_retention_days;
 +
  class HistoryBackendClient;
@@ -48,20 +48,35 @@
  // Helpers --------------------------------------------------------------------
  
  namespace {
-@@ -655,6 +658,16 @@
+@@ -655,9 +658,20 @@
      return;
    }
  
-+  // ararat (U27p): no expiry (the app's Forever, or before its first record) makes this pass a
-+  // no-op: no reader runs and the segment cleanup never sees a null Time's LocalMidnight
-+  // (visitsegment_database.cc:371-376 calls base::Time().LocalMidnight(), whose DST fallback
-+  // DCHECK is not known to hold for year 1601). The queue and the schedule continue, so a
-+  // retention set later takes effect at a later pass.
-+  if (g_ararat_history_retention_days.load(std::memory_order_relaxed) <= 0) {
++  // ararat (U27p): a retention of 0 (the app's Forever, or before its first record) keeps
++  // everything. No reader runs, so the segment cleanup never sees a null Time's LocalMidnight
++  // (visitsegment_database.cc:371-376). The queue restarts at the 5-minute cadence, so the
++  // loop does not wake every 30 s for nothing and a retention set later takes effect at the
++  // next pass, all-visits reader first.
++  const base::Time threshold = GetCurrentExpirationTime();
++  if (threshold.is_null()) {
++    work_queue_ = {};
 +    ScheduleExpire();
 +    return;
 +  }
 +
    const ExpiringVisitsReader* reader = work_queue_.front();
-   bool more_to_expire = ExpireSomeOldHistory(
-       GetCurrentExpirationTime(), reader, kNumExpirePerIteration);
+-  bool more_to_expire = ExpireSomeOldHistory(
+-      GetCurrentExpirationTime(), reader, kNumExpirePerIteration);
++  bool more_to_expire = ExpireSomeOldHistory(threshold, reader, kNumExpirePerIteration);
+ 
+   work_queue_.pop();
+   if (more_to_expire) {
+@@ -671,7 +685,7 @@
+         base::Days(internal::kOnDemandFaviconIsOldAfterDays));
+   }
+ 
+-  ExpireOldSegmentData(GetCurrentExpirationTime());
++  ExpireOldSegmentData(threshold);
+ 
+   ScheduleExpire();
+ }
