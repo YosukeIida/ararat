@@ -12,7 +12,7 @@ final class LittleWindowCheckState {
     static let names = ["seed", "window_created", "bar_geometry", "dark_bar", "profile_chip",
                         "open_disabled", "profile_menu", "space_menu", "space_search",
                         "default_destination", "command_bar_key", "command_bar_width",
-                        "command_bar_navigates", "open_enabled", "copy_link", "extensions_button",
+                        "command_bar_navigates", "origin_unchanged", "open_enabled", "copy_link", "extensions_button",
                         "frame_saved", "frame_remembered", "open_key", "open_in", "handoff_live",
                         "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
                         "profile_switch"]
@@ -26,7 +26,10 @@ final class LittleWindowCheckState {
     var phaseStart = 0
     var lastPhase = -1
     var seedItem = ""
-    var pageURL = "data:text/html,<title>Little Window page</title>"
+    var originURL = ""
+    var originNavigation: UInt = 0
+    var pageURL = ""
+    static func fixtureURL(port: UInt16) -> String { "http://127.0.0.1:\(port)/search?little-window" }
     var handoffLive = ""
     var handoffNavigation: UInt = 0
     var targetFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
@@ -117,6 +120,8 @@ extension Runtime {
 
         switch browserCheckPhase {
         case 0:
+            guard let port = promptFixturePort else { wait("fixture server"); return }
+            check.pageURL = LittleWindowCheckState.fixtureURL(port: port)
             guard let row = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first,
                   let url = row.url, url.hasPrefix("data:") else {
                 if phaseTicks() > 200 { check.mark("seed", false); finish(); return }
@@ -135,16 +140,26 @@ extension Runtime {
                 wait("seed page"); return
             }
             check.seedItem = row.id
+            check.originURL = tab.url
+            check.originNavigation = tab.navigationCount
             check.mark("seed")
             // The menu command, the same path the File > New Little Window item runs.
             openLittleWindow()
             browserCheckPhase = 1
         case 1:
+            if !screen, let controller = controller(), controller.popup.host?.hasBrowser() == true,
+               let popup = popupWindow(), !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
+            }
             guard let controller = controller(), let popup = popupWindow(),
                   controller.popup.host?.hasBrowser() == true, popup.isVisible, popup.isKeyWindow,
                   controller.model.destination != nil,
                   let tab = popupTab(), tab.url == "about:blank", !tab.isLoading else {
                 if phaseTicks() > 300 { check.mark("window_created", false); finish(); return }
+                check.details["window_wait"] = ["browser": controller()?.popup.host?.hasBrowser() == true,
+                    "visible": popupWindow()?.isVisible == true, "key": popupWindow()?.isKeyWindow == true,
+                    "destination": controller()?.model.destination?.id ?? "nil",
+                    "url": popupTab()?.url ?? "nil", "loading": popupTab()?.isLoading ?? false]
                 wait("little window"); return
             }
             let bar = controller.bar
@@ -243,6 +258,8 @@ extension Runtime {
                 wait("command bar navigation"); return
             }
             check.mark("command_bar_navigates")
+            let originTab = (host.tabs() as? [any ARTabAPI])?.first { $0.itemId == check.seedItem }
+            check.mark("origin_unchanged", originTab?.url == check.originURL && originTab?.navigationCount == check.originNavigation)
             guard let controller = controller() else { wait("little window"); return }
             controller.update()
             check.mark("open_enabled", controller.bar.checkOpenEnabled)
@@ -262,6 +279,8 @@ extension Runtime {
             // The frame survives a reopen: set one, close, reopen from the menu command.
             if let window = popupWindow() {
                 window.setFrame(check.targetFrame, display: true)
+                let frame = window.frame
+                check.details["set_frame"] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
                 controller.saveFrame()
             }
             browserCheckPhase = 10
@@ -339,6 +358,7 @@ extension Runtime {
             details["item"] = openedIn?.item ?? ""
             details["row"] = todayRow?.url ?? ""
             details["same_live"] = tab != nil
+            details["handoff_live"] = check.handoffLive
             details["tabs_with_live"] = tabsWithLive.count
             details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
@@ -366,6 +386,9 @@ extension Runtime {
             guard let controller = controller(), let tab = popupTab(), !tab.isLoading, tab.url == check.pageURL else {
                 if phaseTicks() > 300 { check.mark("menu_handoff", false); finish(); return }
                 wait("third little window"); return
+            }
+            if !screen, let popup = controller.window, !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
             }
             controller.bar.checkClickChevron()
             browserCheckPhase = 17
@@ -401,6 +424,7 @@ extension Runtime {
             details["reading"] = reading?.id ?? ""
             details["row"] = row(opened.item)?.url ?? ""
             details["live"] = tab != nil
+            details["handoff_live"] = check.handoffLive
             details["tabs_with_live"] = tabsWithLive.count
             details["mapped_live"] = mapped ?? "nil"
             details["navigation"] = tab.map { Int($0.navigationCount) } ?? -1
@@ -417,6 +441,9 @@ extension Runtime {
                   tab.url == check.pageURL else {
                 if phaseTicks() > 300 { check.mark("profile_switch", false); finish(); return }
                 wait("fourth little window"); return
+            }
+            if !screen, let popup = controller.window, !popup.isVisible {
+                popup.makeKeyAndOrderFront(nil)
             }
             controller.bar.checkClickProfile()
             browserCheckPhase = 21

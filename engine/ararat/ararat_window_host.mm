@@ -3479,6 +3479,21 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
 }
 
+- (BOOL)navigateLittleWindow:(NSString*)url {
+  if (!url || !g_epoch || !core_->popup() || core_->devtools() || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_ || !browser_ || browser_->IsDeleteScheduled() ||
+      ![self.delegate respondsToSelector:@selector(isLittleWindowForWindowHost:)] ||
+      ![self.delegate isLittleWindowForWindowHost:self]) return NO;
+  GURL parsed_url(url.UTF8String);
+  auto* contents = browser_->GetTabStripModel()->GetActiveWebContents();
+  if (!parsed_url.is_valid() || !contents) return NO;
+  ARTab* tab = tabs_[[NSValue valueWithPointer:contents]];
+  if (!tab || tab.itemId) return NO;
+  content::NavigationController::LoadURLParams params(parsed_url);
+  params.transition_type = ui::PAGE_TRANSITION_TYPED;
+  return contents->GetController().LoadURLWithParamsForResult(params).has_value();
+}
+
 - (BOOL)navigateURL:(NSString*)url target:(NSDictionary<NSString*, id>*)target {
   if (!url || !g_epoch || core_->popup() || core_->closing() || core_->closed() || closing_all_ || closing_window_ ||
       ![target[@"epoch"] isKindOfClass:NSNumber.class] || [target[@"epoch"] unsignedLongLongValue] != g_epoch ||

@@ -32,6 +32,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private var closeObserver: NSObjectProtocol?
     private var moveObservers: [NSObjectProtocol] = []
     private var frameSaveGeneration = 0
+    private var lastValidFrame: NSRect?
     private var lastShownSpace: String?
     private let toast = LittleWindowToastView()
     private var toastGeneration = 0
@@ -359,8 +360,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func menuManageExtension(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let url = popup.host?.extensionManagementURL(id) else { return }
-        navigate(to: url)
+        guard let id = sender.representedObject as? String else { return }
+        origin?.manageExtension(id)
     }
 
     @objc private func menuRemoveExtension(_ sender: NSMenuItem) {
@@ -389,28 +390,42 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             FileHandle.standardError.write(Data("ararat-trace: little-window open-in failed space=\(space.id)\n".utf8))
         }
         origin.switchWorkspaceSpace(space.id) { [weak self, weak origin] in
-            guard let self, let origin, origin.hasUsableHost, let adapter = origin.workspace else { fail(); return }
+            guard let self, let origin, origin.hasUsableHost, let adapter = origin.workspace,
+                  let engine = origin.adapter else { fail(); return }
+            engine.beginLittleWindowHandoff()
             adapter.createTab(url: url) { [weak self] result in
-                guard let self, case .success(let snapshot) = result, let row = snapshot.selectedId else { fail(); return }
+                guard let self, case .success(let snapshot) = result, let row = snapshot.selectedId else {
+                    engine.endLittleWindowHandoff()
+                    fail()
+                    return
+                }
+                FileHandle.standardError.write(Data("ararat-trace: little-window row-created item=\(row) live=\(tab.liveId)\n".utf8))
                 // The row exists; the tab takes it before the move so the destination's strip
                 // reports the row instead of the core adopting the page elsewhere.
                 tab.itemId = row
                 self.handoff(tab: tab, row: row, space: space.id, previousItem: previousItem,
-                             deadline: deadline, attempt: 0)
+                             deadline: deadline, attempt: 0, engine: engine)
             }
         }
     }
 
     private func handoff(tab: any ARTabAPI, row: String, space: String, previousItem: String?,
-                         deadline: DispatchTime, attempt: Int) {
+                         deadline: DispatchTime, attempt: Int, engine: EngineAdapter) {
         guard let origin, origin.hasUsableHost, let host = origin.host else {
             tab.itemId = previousItem
             closeRow(row)
+            engine.endLittleWindowHandoff()
             return
         }
         // The item is set on the tab before the move (see performOpenIn), so the destination's
         // strip reports the row and the core maps the live tab to it.
+        if attempt == 0, let adapter = origin.adapter {
+            let mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: row) }
+            FileHandle.standardError.write(Data("ararat-trace: little-window handoff-before live=\(tab.liveId) mapped=\(mapped ?? "nil")\n".utf8))
+        }
+        let live = tab.liveId
         if host.handoffTab(tab, activate: true) {
+            engine.awaitLittleWindowHandoff(item: row, live: live)
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
             // D8: close-after decides the window's fate, not the handoff's. Chrome closes a popup
@@ -429,12 +444,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         guard DispatchTime.now() < deadline else {
             tab.itemId = previousItem
             closeRow(row)
+            engine.endLittleWindowHandoff()
             opening = false
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-            self?.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
-                          deadline: deadline, attempt: attempt + 1)
+            guard let self else { engine.endLittleWindowHandoff(); return }
+            self.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
+                         deadline: deadline, attempt: attempt + 1, engine: engine)
         }
     }
 
@@ -452,7 +469,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         let presenter = CommandBarPresenter(parent: window, visible: true, bindings: defaultKeyBindings(),
                                             highlight: .selectedContentBackgroundColor,
                                             width: LittleWindowMetrics.commandBarWidth)
-        presenter.controller.onCommit = { [weak self] suggestion, mode, _ in
+        presenter.onCommit = { [weak self, weak presenter] suggestion, mode, _ in
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit store_ready_at_submission=\(presenter?.controller.storeReadyAtSubmission == true)\n".utf8))
             self?.commit(suggestion, mode: mode)
         }
         self.presenter = presenter
@@ -466,16 +484,27 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     private func commit(_ suggestion: Suggestion?, mode: CommandBarMode) {
-        guard let suggestion else { return }
+        guard let suggestion else {
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=none\n".utf8))
+            return
+        }
         switch suggestion.target {
-        case .openUrl(let url), .search(let url): navigate(to: url)
-        default: break
+        case .openUrl(let url):
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=open-url\n".utf8))
+            navigate(to: url)
+        case .search(let url):
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=search\n".utf8))
+            navigate(to: url)
+        default:
+            FileHandle.standardError.write(Data("ararat-trace: little-window submit target=unsupported\n".utf8))
         }
     }
 
-    private func navigate(to url: String) {
-        guard let host = popup.host, let target = host.navigationTarget() else { return }
-        _ = host.navigateURL(url, target: target)
+    func navigate(to url: String) {
+        let host = popup.host
+        let accepted = host?.navigateLittleWindow(url) == true
+        FileHandle.standardError.write(Data("ararat-trace: little-window navigate popup_host=\(host != nil) accepted=\(accepted)\n".utf8))
+        guard accepted else { return }
         checkActions["navigate", default: 0] += 1
     }
 
@@ -534,11 +563,17 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
 
     func saveFrame(debounced: Bool = false) {
         // D8: with remembering off this device keeps no frame, so nothing is written (the pane
-        // also forgets the stored one when the switch goes off).
+        // also forgets the stored one when the switch goes off). Main's last-valid-frame guard
+        // keeps a closing window whose frame reads invalid from overwriting a good record.
         guard rememberFrame, let window, let adapter = origin?.workspace else { return }
+        let current = window.frame
+        if current.origin.x.isFinite, current.origin.y.isFinite,
+           current.width.isFinite, current.height.isFinite, current.width > 0, current.height > 0 {
+            lastValidFrame = current
+        }
+        guard let frame = lastValidFrame else { return }
         frameSaveGeneration += 1
         let generation = frameSaveGeneration
-        let frame = window.frame
         let write: () -> Void = { [weak self] in
             guard let self, self.frameSaveGeneration == generation else { return }
             adapter.setLittleWindowFrame(LittleWindowFrame(x: frame.minX, y: frame.minY,

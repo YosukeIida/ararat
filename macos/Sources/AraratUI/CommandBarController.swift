@@ -113,6 +113,7 @@ public final class CommandBarController {
     /// commit runs when `applyStore` lands, so the typed text is not dropped in the adapter
     /// round trip. nil when nothing is pending; the last key wins.
     private var pendingCommitForceNewTab: Bool?
+    public private(set) var storeReadyAtSubmission = false
 
     public init() {}
 
@@ -136,6 +137,7 @@ public final class CommandBarController {
     /// and field key at once and `applyStore` replays the typed text when it arrives.
     public func open(mode: CommandBarMode, prefill: String?, store: CommandBarStore?) {
         self.store = store
+        storeReadyAtSubmission = false
         history = []
         self.mode = mode
         query = prefill ?? ""
@@ -160,7 +162,6 @@ public final class CommandBarController {
         selectedIndex = 0
         relist()
         if let forceNewTab = pendingCommitForceNewTab {
-            pendingCommitForceNewTab = nil
             commit(forceNewTab: forceNewTab)
         }
     }
@@ -236,6 +237,7 @@ public final class CommandBarController {
             pendingCommitForceNewTab = forceNewTab
             return
         }
+        storeReadyAtSubmission = pendingCommitForceNewTab == nil
         let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex] : nil
         close()
         onCommit(selected, mode, forceNewTab)
@@ -243,6 +245,7 @@ public final class CommandBarController {
 
     /// A click on a row commits it (Cra's commit(_ suggestion:)).
     public func commit(_ suggestion: Suggestion) {
+        storeReadyAtSubmission = store != nil
         close()
         onCommit(suggestion, mode, false)
     }

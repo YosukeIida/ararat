@@ -318,6 +318,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   var createdSize = NSSize.zero
   /// U27h: set for a Little Window; nil for every other page-only popup.
   var littleWindow: LittleWindowController?
+  func isLittleWindow(forWindowHost host: any ARWindowHostAPI) -> Bool { littleWindow != nil }
   var closeObserver: NSObjectProtocol?
   private var windowID: String?
   private var failureView: PageFailureView?
@@ -942,11 +943,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "urlfield" { browserCheckMode = "screen-urlfield" }
       if screenName == "site-controls" { browserCheckMode = "screen-site-controls" }
       if screenName == "ext-actions" { browserCheckMode = "screen-ext-actions" }
+      if screenName == "little-window" { browserCheckMode = "screen-little-window" }
       // U27a: one launch per settings pane, plus the frame and the search. The argument
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
-      if screenName == "little-window" { browserCheckMode = "screen-little-window" }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1051,7 +1052,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedSettings: check && settingsCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
