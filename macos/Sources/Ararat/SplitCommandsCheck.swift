@@ -107,6 +107,20 @@ extension Runtime {
     func childAdapterLayout(_ check: SplitCommandsCheck) -> Int {
       check.child?.adapter?.checkSplitLayout().panes ?? -1
     }
+    func traceWholeSplit(_ stage: String, child: Runtime, childAdapter: EngineAdapter) {
+      let rows = child.snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+      let row = rows.first { $0.id == check.loneMember }
+      let layout = childAdapter.checkSplitLayout()
+      let childTabs = (child.host?.tabs() as? [any ARTabAPI]) ?? []
+      let message = "ararat-trace: split-commands whole-split=\(stage) "
+        + "a_window=\(adapter.checkWindowID) a_selected=\(snapshot.selectedId ?? "nil") a_active=\(host.activeItemId() ?? "nil") "
+        + "b_window=\(childAdapter.checkWindowID) b_selected=\(child.snapshot.selectedId ?? "nil") b_active=\(child.host?.activeItemId() ?? "nil") "
+        + "member=\(check.loneMember) split=\(check.split) owner=\(splitOwner(check.loneMember, rows: rows)) "
+        + "member_live_in=\(childAdapter.checkLiveWindow(check.loneMember) ?? "nil") b_tabs=\(childTabs.map { "\($0.itemId):\($0.liveId)" }) "
+        + "row_present=\(row != nil) row_parent=\(row?.parentId ?? "nil") row_kind=\(String(describing: row?.kind)) row_unloaded=\(String(describing: row?.unloaded)) row_has_url=\(rowURL(check.loneMember) != nil) "
+        + "b_panes=\(layout.panes) b_split=\(layout.split) expected_panes=\(check.parentPanes)\n"
+      FileHandle.standardError.write(Data(message.utf8))
+    }
     func pageHalfPoint(_ rightHalf: Bool) -> NSPoint? {
       guard let frame = container.pageFrameInWindowForCheck, frame.width > 0 else { return nil }
       return NSPoint(x: frame.minX + frame.width * (rightHalf ? 0.75 : 0.25), y: frame.midY)
@@ -445,12 +459,14 @@ extension Runtime {
                   && adapter.checkSplitMembers(check.split).contains(check.loneMember)) else { return }
       check.mark("lone_stays")
       // The split row's own selection in B takes the whole split, as before.
+      traceWholeSplit("press", child: child, childAdapter: childAdapter)
       if child.snapshot.selectedId == check.loneMember, let url = rowURL(check.loneMember) {
         childAdapter.select(id: check.loneMember, url: url, wholeSplit: true)
       }
       browserCheckPhase = 26
     case 26:
       guard let child = check.child, let childAdapter = child.adapter else { return }
+      traceWholeSplit("wait", child: child, childAdapter: childAdapter)
       guard ready("whole split in the second window", childAdapter.checkSplitLayout().panes == check.parentPanes
                   && childAdapter.checkSplitLayout().split) else { return }
       check.mark("lone_row_select")
