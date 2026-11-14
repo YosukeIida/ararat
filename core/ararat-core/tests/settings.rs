@@ -183,9 +183,13 @@ fn the_little_window_device_record_starts_at_remember_and_command_option_n_and_s
 // A record from a device that stored only the remember switch still reads the default shortcut
 // through serde's defaults, and an unknown destination value is refused like the direction.
 #[test]
-fn older_device_records_and_future_destinations_parse_by_the_field_rules() {
+fn the_device_record_has_no_serde_defaults_and_a_future_destination_is_refused() {
+    // L5: the device record is new in this unit and always written whole. A partial body — which
+    // no producer writes — must not gain the built-in shortcut: without serde defaults a missing
+    // hot key reads as None (the user's "off"), and a missing non-optional field is refused.
     let parsed = Record::parse(Kind::LittleWindowDevice, "workspace", r#"{"remember_frame":false}"#);
-    assert!(matches!(parsed, Ok(Record::LittleWindowDevice(LittleWindowDevice { remember_frame: false, hot_key: Some(_) }))));
+    assert!(matches!(parsed, Ok(Record::LittleWindowDevice(LittleWindowDevice { remember_frame: false, hot_key: None }))));
+    assert!(Record::parse(Kind::LittleWindowDevice, "workspace", r#"{"hot_key":null}"#).is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"little_window_open_in":"Elsewhere"}"#);
     assert!(parsed.is_err());
     let parsed = Record::parse(Kind::Settings, "workspace", r#"{"little_window_open_in":{"Space":"work"},"little_window_close_after":false}"#);

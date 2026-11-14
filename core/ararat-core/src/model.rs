@@ -162,9 +162,9 @@ impl LittleWindowHotKey {
 
 /// U27i D8: the Little Window's per-device switches, stored beside its frame and kept out of
 /// the sync journal. `None` for the shortcut is the user's own "no global shortcut"; no record
-/// at all is the built-in state (remember on, ⌥⌘N).
+/// at all is the built-in state (remember on, ⌥⌘N). Unlike the pre-existing `Settings` record,
+/// this kind is new in this unit and always written whole, so it carries no serde defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct LittleWindowDevice {
     pub remember_frame: bool,
     pub hot_key: Option<LittleWindowHotKey>,
