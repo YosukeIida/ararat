@@ -5,7 +5,7 @@ import AraratKit
 import AraratUI
 
 extension Runtime {
-    /// Phases 2 to 14 of `settings-little-window` (U27i): the pane's five rows and its recorder;
+    /// Phases 2 to 15 of `settings-little-window` (U27i): the pane's five rows and its recorder;
     /// the Air Traffic Control link; a destination written and read back after the window
     /// reopens, then used by a Little Window's bar; close-after off leaving the window open on the
     /// page it sent; and remembering off opening at the default frame. The shortcut's
@@ -106,6 +106,11 @@ extension Runtime {
                                         "message": probe.littleWindowHotKeyMessage ?? ""]
             check.report("shortcut_recorder", probe.littleWindowHotKeyCaps == ["⌃", "⌥", "⌘", "K"])
             check.report("hot_key_registration", registered)
+            // H1: with the exclusive option a second registration of the same combination in the
+            // same app answers taken (a distinct hot key id, so the answer is about the key).
+            let second = CarbonGlobalHotKey(id: 2)
+            check.report("hot_key_exclusive", second.register(recorded) {} == .taken)
+            second.unregister()
             trace("opening a Little Window for the bar")
             owner.openLittleWindow(url: check.littlePageURL)
             step(10)
@@ -122,7 +127,6 @@ extension Runtime {
             }
             check.report("open_in_bar", true)
             check.littlePageLive = tab.liveId
-            check.littlePageNavigation = tab.navigationCount
             check.littleOpening = controller
             // A frame that differs from the default, so "remembering off opens at the default
             // frame" can be seen: 720 × 480 against the 640 × 400 default.
@@ -146,15 +150,19 @@ extension Runtime {
                 note("open in has not landed"); return
             }
             guard owner.littleWindows.count == 1, let surviving = owner.littleWindows.first,
-                  let tab = popupTab(surviving), !tab.isLoading, tab.url == check.littlePageURL else {
+                  let tab = popupTab(surviving), !tab.isLoading else {
                 note("windows=\(owner.littleWindows.count) pages=\(owner.littleWindows.compactMap { popupTab($0)?.url })")
                 return
             }
             let destinationTab = (host?.tabs() as? [any ARTabAPI])?.first { $0.liveId == check.littlePageLive }
             let row = snapshot.spaces.flatMap { $0.today }.first { $0.id == opened.item }
+            // M3: the window that stays is the empty start, not a second request for the page.
+            let emptyStart = tab.url == "about:blank" && !surviving.bar.checkOpenEnabled
+                && surviving.bar.checkAddressText == URLFieldContent.placeholderText
             var details: [String: Any] = ["space": opened.space, "row": row?.url ?? "",
                                           "windows": owner.littleWindows.count,
                                           "surviving_page": tab.url ?? "",
+                                          "surviving_open_enabled": surviving.bar.checkOpenEnabled,
                                           "destination_live": destinationTab != nil,
                                           "destination_navigation": destinationTab.map { Int($0.navigationCount) } ?? -1,
                                           "shown": snapshot.shownSpaceId ?? ""]
@@ -163,7 +171,7 @@ extension Runtime {
             check.report("close_after_keeps", opened.space == check.littleSpaceID
                          && row?.url == check.littlePageURL && destinationTab != nil
                          && destinationTab?.navigationCount == 0 && snapshot.shownSpaceId == check.littleSpaceID
-                         && surviving !== opening && tab.liveId != check.littlePageLive)
+                         && surviving !== opening && emptyStart)
             trace("remember off")
             probe.setLittleWindowRememberFrame(false)
             step(13)

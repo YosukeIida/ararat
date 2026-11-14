@@ -51,7 +51,7 @@ final class SettingsScreenCheck {
             case .tabs, .shortcuts, .airTraffic: ["rows"]
             case .appearance: ["rows", "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
-            case .littleWindow: ["rows", "atc_link", "shortcut_recorder", "hot_key_registration",
+            case .littleWindow: ["rows", "atc_link", "shortcut_recorder", "hot_key_registration", "hot_key_exclusive",
                                  "open_in_write_reopen", "open_in_bar", "close_after_keeps", "remember_off_frame"]
             }
         }
@@ -106,7 +106,6 @@ final class SettingsScreenCheck {
     var littleSpaceID = ""
     var littleSpaceTitle = ""
     var littlePageLive = ""
-    var littlePageNavigation: UInt = 0
     var littleOpening: LittleWindowController?
 
     func report(_ name: String, _ ok: Bool) {

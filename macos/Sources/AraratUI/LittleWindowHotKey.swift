@@ -35,12 +35,17 @@ public final class CarbonGlobalHotKey: GlobalHotKeyRegistrar {
     private var reference: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var action: (() -> Void)?
+    /// The app's own registration uses 1; the check registers with another id in the same app so
+    /// a taken answer is about the combination and not about a duplicate hot key id.
+    private let hotKeyID: UInt32
     private(set) public var status: GlobalHotKeyStatus?
 
-    public init() {}
+    public init(id: UInt32 = 1) { hotKeyID = id }
 
     isolated deinit {
-        // The handler is owned by the application event target, which outlives this object.
+        // The handler is owned by the application event target, which outlives this object; the
+        // hot key itself must go back, or the combination stays taken with no handler.
+        if let reference { UnregisterEventHotKey(reference) }
         if let handlerRef { RemoveEventHandler(handlerRef) }
     }
 
@@ -48,10 +53,13 @@ public final class CarbonGlobalHotKey: GlobalHotKeyRegistrar {
         unregister()
         action = handler
         installHandlerIfNeeded()
-        let id = EventHotKeyID(signature: hotKeySignature, id: 1)
+        let id = EventHotKeyID(signature: hotKeySignature, id: hotKeyID)
         var reference: EventHotKeyRef?
+        // Why exclusive: a non-exclusive hot key is shared, so a key another app already holds is
+        // accepted with noErr and one press fires both apps. The exclusive option makes that
+        // registration answer eventHotKeyExistsErr, which is the row's "taken".
         let osStatus = RegisterEventHotKey(UInt32(hotKey.keyCode), Self.carbonModifiers(hotKey), id,
-                                           GetApplicationEventTarget(), 0, &reference)
+                                           GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &reference)
         self.reference = reference
         let status: GlobalHotKeyStatus
         switch osStatus {

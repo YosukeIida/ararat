@@ -187,6 +187,12 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             lastShownSpace = shown.id
             if shown.profileName == profileName { defaultSpaceID = shown.id }
         }
+        // L4: a named destination whose space was deleted while the window is open falls back the
+        // way the setting's other misses do (the profile's most recent space), not to its first.
+        if case .space = openIn, let id = defaultSpaceID,
+           !snapshot.spaces.contains(where: { $0.id == id && $0.profileName == profileName }) {
+            refreshDefaultDestination()
+        }
         refreshModel()
     }
 
@@ -429,15 +435,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
             // D8: close-after decides the window's fate, not the handoff's. Chrome closes a popup
-            // when its last tab leaves, so keeping it open means opening it again on the page it
-            // just sent — the space keeps the live contents either way.
+            // when its last tab leaves; with close-after off the window comes back as the empty
+            // start (M3: the page moved, so nothing is requested twice).
             let closeAfter = self.closeAfter
-            let pageURL = tab.url
             let frame = window?.frame
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if closeAfter { self.close() }
-                else { self.reopenAfterOpenIn(url: pageURL, frame: frame) }
+                else { self.reopenAfterOpenIn(frame: frame) }
             }
             return
         }
@@ -575,20 +580,23 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         frameSaveGeneration += 1
         let generation = frameSaveGeneration
         let write: () -> Void = { [weak self] in
-            guard let self, self.frameSaveGeneration == generation else { return }
+            // L2: a switch turned off while the 0.5 s debounce runs must not store the frame the
+            // pane just forgot.
+            guard let self, self.frameSaveGeneration == generation, self.rememberFrame else { return }
             adapter.setLittleWindowFrame(LittleWindowFrame(x: frame.minX, y: frame.minY,
                                                            width: frame.width, height: frame.height))
         }
         if debounced { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: write) } else { write() }
     }
 
-    /// D8, close-after off: the window stays on the page it just sent to the space, at the same
-    /// frame. Its popup loses its last tab to the handoff and closes, so this is a new popup on
-    /// the same address rather than a second page in the old one.
-    private func reopenAfterOpenIn(url: String, frame: NSRect?) {
+    /// D8 with close-after off, design's M3 decision: the page moves into the space and the Little
+    /// Window comes back as a fresh empty one — the same about:blank start the menu command makes,
+    /// placeholder address and Open disabled — so the page is not requested a second time. Its
+    /// popup lost its last tab to the handoff and closed, so this is a new popup at the same frame.
+    private func reopenAfterOpenIn(frame: NSRect?) {
         guard let origin, origin.hasUsableHost else { return }
         checkActions["reopen", default: 0] += 1
-        origin.openLittleWindow(url: url, profile: profileName, frame: frame)
+        origin.openLittleWindow(profile: profileName, frame: frame)
     }
 
     // MARK: - Closing

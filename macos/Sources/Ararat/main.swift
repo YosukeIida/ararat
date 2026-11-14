@@ -108,7 +108,6 @@ enum LittleWindowGlobalShortcut {
     let center = LittleWindowHotKeyCenter(registrar: CarbonGlobalHotKey())
     center.onTrigger = { [weak runtime] in runtime?.newLittleWindow(nil) }
     self.center = center
-    runtime.hotKeyCenter = center
     runtime.workspace?.littleWindowDevice { result in
       if case .success(let device) = result { center.apply(device.hotKey) }
     }
@@ -576,8 +575,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var organizeCancelStarted = false
   var organizeImage: String?
   weak var settingsOwner: Runtime?
-  /// U27i: the app-wide global shortcut registration the settings pane writes through.
-  var hotKeyCenter: LittleWindowHotKeyCenter?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
   var keyboardSidebarBefore = ""
@@ -1858,12 +1855,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   @objc func newLittleWindow(_ sender: Any?) {
     // The menu's target is the first window; the Little Window belongs to the key window, as
-    // the other workspace commands do.
+    // the other workspace commands do. With Ararat in the background — the global shortcut's
+    // usual case — no window is key, and the root's own window may have closed: fall back to a
+    // window that is still usable rather than the root, whose open would do nothing (M1).
     let owner = root ?? self
-    let target = ([owner] + owner.children).first {
-      $0.host?.window().isKeyWindow == true && !$0.isPrivateWindow
-    } ?? owner
-    target.openLittleWindow()
+    let windows = [owner] + owner.children
+    let key = windows.first { $0.host?.window().isKeyWindow == true && !$0.isPrivateWindow }
+    Runtime.commandWindow(key: key, regular: windows.filter { $0.hasUsableHost && !$0.isPrivateWindow }, root: owner)
+      .openLittleWindow()
+  }
+
+  /// U27i M1: the window a menu command or the global shortcut acts on. The key window answers
+  /// when there is one; otherwise the first still-usable regular window; the root is the last
+  /// resort. With no browser window at all nothing can be opened (U27h's limit).
+  static func commandWindow(key: Runtime?, regular: [Runtime], root: Runtime) -> Runtime {
+    key ?? regular.first ?? root
   }
 
   func openSettings(spaceID: String? = nil) {

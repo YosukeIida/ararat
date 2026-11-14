@@ -106,6 +106,8 @@ public final class SettingsModel: ObservableObject {
     }
 
     func navigate(_ target: Page, highlight: String? = nil) {
+        // A recording does not survive leaving the pane (L8); with L1 it also re-registers the key.
+        cancelLittleWindowHotKeyRecording()
         error = nil
         highlighted = highlight
         headerProgress = 0
@@ -468,23 +470,68 @@ public final class SettingsModel: ObservableObject {
         }
     }
 
+    /// Starts or stops the recorder. While it records, the registration is paused, so pressing the
+    /// current shortcut is recorded rather than opening a Little Window (L1).
     func toggleLittleWindowHotKeyRecording() {
         hotKeyMessage = nil
-        hotKeyRecording.toggle()
+        if hotKeyRecording {
+            hotKeyRecording = false
+            resumeHotKeyRegistration()
+        } else {
+            hotKeyRecording = true
+            hotKeyCenter?.registrar.unregister()
+        }
     }
 
-    func cancelLittleWindowHotKeyRecording() { hotKeyRecording = false }
+    /// Esc, leaving the pane or closing the window: stop and give the stored shortcut back (L1,
+    /// L8). A recording left open would otherwise keep the key unregistered.
+    func cancelLittleWindowHotKeyRecording() {
+        guard hotKeyRecording else { return }
+        hotKeyRecording = false
+        resumeHotKeyRegistration()
+    }
+
+    /// Re-registers the stored key after a pause; `apply` records the answer the row shows.
+    private func resumeHotKeyRegistration() {
+        guard let hotKeyCenter else { return }
+        applyHotKeyStatus(hotKeyCenter.apply(littleWindowHotKey))
+    }
 
     /// One key event from the recorder: Esc cancels, ⌫ turns the shortcut off, a combination is
-    /// stored on this device and registered at once.
+    /// stored on this device and registered at once. A combination Ararat's own key-binding table
+    /// uses is refused, because a Carbon hot key is seen before any app's menus and would run
+    /// both (M2).
     func handleLittleWindowHotKeyEvent(_ event: NSEvent) {
         switch LittleWindowHotKeyRecorder.entry(for: event) {
-        case .cancelled: hotKeyRecording = false
+        case .cancelled: cancelLittleWindowHotKeyRecording()
         case .cleared: hotKeyRecording = false; setLittleWindowHotKey(nil)
-        case .refused(let message): hotKeyRecording = false; hotKeyMessage = message
+        case .refused(let message):
+            hotKeyRecording = false
+            hotKeyMessage = message
+            resumeHotKeyRegistration()
         case .ignored: break
-        case .key(let hotKey): hotKeyRecording = false; setLittleWindowHotKey(hotKey)
+        case .key(let hotKey):
+            hotKeyRecording = false
+            if let holder = keyBindingHolder(hotKey) {
+                hotKeyMessage = SettingsModel.keyBindingConflictMessage(hotKey, holder: holder)
+                resumeHotKeyRegistration()
+            } else {
+                setLittleWindowHotKey(hotKey)
+            }
         }
+    }
+
+    /// The command whose effective key is the combination, if any. A conflicting row's lost key is
+    /// not in `key`, so only a working binding answers.
+    private func keyBindingHolder(_ hotKey: LittleWindowHotKey) -> KeyBinding? {
+        let candidate = KeyCombination(key: hotKey.key, command: hotKey.command, control: hotKey.control,
+                                       option: hotKey.option, shift: hotKey.shift)
+        return keyBindings.bindings.first { $0.key == candidate }
+    }
+
+    /// "⌘T is New Tab in Ararat": the sentence the row shows for a combination the table holds.
+    static func keyBindingConflictMessage(_ hotKey: LittleWindowHotKey, holder: KeyBinding) -> String {
+        "\(LittleWindowHotKeyRecorder.caps(hotKey).joined()) is \(holder.title) in Ararat"
     }
 
     func setLittleWindowHotKey(_ value: LittleWindowHotKey?) {
@@ -499,6 +546,8 @@ public final class SettingsModel: ObservableObject {
             case .failure(let error):
                 self.littleWindowHotKey = previous
                 self.report(error)
+                // The recording paused the old key; a failed write must give it back.
+                self.resumeHotKeyRegistration()
             }
         }
     }

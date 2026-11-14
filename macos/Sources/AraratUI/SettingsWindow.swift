@@ -48,6 +48,8 @@ public final class SettingsWindowController: NSWindowController {
                        preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     public func prepare(shownSpaceID: String?) {
+        // A recording never survives a close and reopen (L8).
+        model.cancelLittleWindowHotKeyRecording()
         model.readShortcuts()
         model.airTraffic.load()
         model.readSpaceScrollDirection()
@@ -492,11 +494,12 @@ private struct SettingsLittleWindowSection: View {
                            selection: Binding(get: { model.littleWindowOpenIn },
                                               set: model.setLittleWindowOpenIn)) {
                         // A space deleted on another device keeps its value until the user picks
-                        // again; the item says why the Little Window ignores it (the ATC pane's
-                        // "Deleted space" pattern).
+                        // again. The item takes the row's own label, so a space of another profile
+                        // shows its title and only a missing one reads "Deleted space" (L3); the
+                        // Little Window falls back to the most recent space meanwhile.
                         if case .space(let id) = model.littleWindowOpenIn,
                            !model.littleWindowSpaces.contains(where: { $0.id == id }) {
-                            Text("Deleted space").tag(LittleWindowOpenIn.space(id)).disabled(true)
+                            Text(model.littleWindowOpenInLabel).tag(LittleWindowOpenIn.space(id)).disabled(true)
                         }
                         Text("Most Recent Space").tag(LittleWindowOpenIn.mostRecent)
                         ForEach(model.littleWindowSpaces, id: \.id) { space in
