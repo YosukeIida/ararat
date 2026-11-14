@@ -13,7 +13,6 @@ final class FakeHotKeyRegistrar: GlobalHotKeyRegistrar {
     var answer: GlobalHotKeyStatus = .registered
     private(set) var registered: [LittleWindowHotKey] = []
     private(set) var unregisterCount = 0
-    private(set) var triggers = 0
 
     func register(_ hotKey: LittleWindowHotKey, handler: @escaping () -> Void) -> GlobalHotKeyStatus {
         registered.append(hotKey)
@@ -54,8 +53,9 @@ private func keyEvent(_ keyCode: UInt16, _ characters: String, _ flags: NSEvent.
                      isARepeat: false, keyCode: keyCode)!
 }
 
-/// The board's five rows, and the values they read: the Open-in label names the named space, and
-/// the two switches say On/Off.
+/// The board's five rows and the values they read: the Open-in label names the named space, the
+/// two switch rows carry no caption (as the board draws them), and a space of another profile
+/// keeps its title instead of reading as a deleted one (L3).
 @Test @MainActor
 func theLittleWindowPaneListsTheBoardsRowsAndTheStoredValues() {
     let model = littleWindowTestModel(spaces: [littleWindowTestSpace("work", title: "Work"),
@@ -75,21 +75,21 @@ func theLittleWindowPaneListsTheBoardsRowsAndTheStoredValues() {
     #expect(model.littleWindowOpenInLabel == "Most Recent Space")
     #expect(rows[2].subtitle.hasSuffix("Most Recent Space"))
     #expect(rows[3].subtitle.isEmpty && rows[4].subtitle.isEmpty)
-    // A named destination reads by name, and a lost space reads as the fallback the window uses.
+    // A named destination reads by name; a lost space is the only one that reads as deleted.
     model.littleWindowOpenIn = .space("personal")
     #expect(model.littleWindowOpenInLabel == "Personal")
     model.littleWindowOpenIn = .space("gone")
     #expect(model.littleWindowOpenInLabel == "Deleted space")
-    model.littleWindowCloseAfter = false
-    model.littleWindowRememberFrame = false
-    let updated = model.rows.filter { $0.pane == .littleWindow }
-    #expect(updated.map(\.title) == rows.map(\.title))
     // The menu offers the shown space's profile only.
     #expect(model.littleWindowSpaces.map(\.id) == ["work", "personal"])
     model.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "other", selectedId: nil,
-                                             spaces: [littleWindowTestSpace("other", title: "Other", profile: .named("Profile 1"),
+                                             spaces: [littleWindowTestSpace("work", title: "Work"),
+                                                      littleWindowTestSpace("other", title: "Other", profile: .named("Profile 1"),
                                                                             profileName: "Profile 1")]))
     #expect(model.littleWindowSpaces.map(\.id) == ["other"])
+    // L3: a destination in another profile is not deleted; the disabled menu item shows its title.
+    model.littleWindowOpenIn = .space("work")
+    #expect(model.littleWindowOpenInLabel == "Work")
 }
 
 /// The recorder's rules: a combination needs Command, Control or Option; Esc cancels; ⌫ turns it
@@ -160,4 +160,47 @@ func aStoredOpenInDestinationResolvesOnlyInsideTheWindowsProfile() {
     #expect(LittleWindowBarModel.namedDestination(.space("gone"), spaces: spaces) == nil)
     #expect(LittleWindowBarModel.namedDestination(.mostRecent, spaces: spaces) == nil)
     #expect(LittleWindowBarModel.namedDestination(.space("reading"), spaces: []) == nil)
+}
+
+/// U27i M2: a Carbon hot key is seen before any app's menus, so a combination Ararat's own table
+/// uses is refused with the command named, and the stored shortcut stays as it was.
+@Test @MainActor
+func theRecorderRefusesACombinationAraratsOwnKeyBindingsUse() {
+    let model = littleWindowTestModel()
+    model.toggleLittleWindowHotKeyRecording()
+    #expect(model.hotKeyRecording)
+    model.handleLittleWindowHotKeyEvent(keyEvent(17, "t", [.command]))
+    #expect(!model.hotKeyRecording)
+    #expect(model.hotKeyMessage == "⌘T is New Tab in Ararat")
+    #expect(model.littleWindowHotKey == LittleWindowHotKeyRecorder.defaultHotKey)
+    // A combination the table does not hold is not refused as a conflict.
+    model.toggleLittleWindowHotKeyRecording()
+    model.handleLittleWindowHotKeyEvent(keyEvent(40, "k", [.control, .option, .command]))
+    #expect(model.hotKeyMessage != "⌘T is New Tab in Ararat")
+}
+
+/// U27i L1/L8: starting the recorder pauses the app-wide registration, so the current shortcut can
+/// be recorded again; cancelling, leaving the pane or a second toggle gives it back.
+@Test @MainActor
+func theRecorderPausesTheRegistrationAndGivesItBack() {
+    let registrar = FakeHotKeyRegistrar()
+    let center = LittleWindowHotKeyCenter(registrar: registrar)
+    let model = littleWindowTestModel()
+    model.hotKeyCenter = center
+    center.apply(model.littleWindowHotKey)
+    let unregisters = registrar.unregisterCount
+    model.toggleLittleWindowHotKeyRecording()
+    #expect(model.hotKeyRecording)
+    #expect(registrar.unregisterCount == unregisters + 1)
+    model.cancelLittleWindowHotKeyRecording()
+    #expect(!model.hotKeyRecording)
+    #expect(center.status == .registered)
+    #expect(registrar.registered.last == model.littleWindowHotKey)
+    // Leaving the pane ends it too (L8), and so does toggling the row off.
+    model.toggleLittleWindowHotKeyRecording()
+    model.navigate(.tabs)
+    #expect(!model.hotKeyRecording && center.status == .registered)
+    model.toggleLittleWindowHotKeyRecording()
+    model.toggleLittleWindowHotKeyRecording()
+    #expect(!model.hotKeyRecording && center.status == .registered)
 }
