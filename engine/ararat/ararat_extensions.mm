@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +41,7 @@
 #include "chrome/browser/profiles/profile_manager_observer.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
@@ -180,10 +182,31 @@ bool CanDisable(Profile* profile, const extensions::Extension& extension) {
   return true;
 }
 
-// X5: one observer for every regular profile's registry. The pane re-reads its list when an
-// extension is installed, removed, enabled or disabled anywhere; site access writes notify
-// directly because they fire no registry event. A profile loaded on demand reaches the pane
-// through OnProfileAdded.
+// The pane's own change signal: one observer for every regular profile's registry, and one for its
+// ToolbarActionsModel. The toolbar side matters because the model is created lazily and initializes
+// after the profile's extensions load; a list read before that would show canPin=false with nothing
+// to correct it (design's phase-2 stall). Site access writes notify directly because they fire no
+// registry event. A profile loaded on demand reaches the pane through OnProfileAdded.
+class ExtensionWatcher;
+
+class ToolbarWatcher : public extensions::ToolbarActionsModel::Observer {
+ public:
+  ToolbarWatcher(extensions::ToolbarActionsModel* model, ExtensionWatcher* owner);
+  ~ToolbarWatcher() override;
+
+  // ToolbarActionsModel::Observer:
+  void OnToolbarActionAdded(const extensions::ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarActionRemoved(const extensions::ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarActionUpdated(const extensions::ToolbarActionsModel::ActionId& action_id) override;
+  void OnToolbarModelInitialized() override;
+  void OnToolbarPinnedActionsChanged() override;
+  void OnToolbarActionsModelShutdown() override;
+
+ private:
+  raw_ptr<extensions::ToolbarActionsModel> model_;
+  raw_ptr<ExtensionWatcher> owner_;
+};
+
 class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
                          public ProfileManagerObserver {
  public:
@@ -207,6 +230,17 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
     void (^handler)(void) = handler_;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(^{ handler(); }));
+  }
+
+  // A ToolbarWatcher that saw its model shut down hands itself over here: the model is gone, so the
+  // watcher must not remove itself from it, and erasing the entry deletes the watcher.
+  void ForgetToolbar(ToolbarWatcher* watcher) {
+    for (auto it = toolbars_.begin(); it != toolbars_.end(); ++it) {
+      if (it->second.get() == watcher) {
+        toolbars_.erase(it);
+        return;
+      }
+    }
   }
 
   // ExtensionRegistryObserver:
@@ -236,6 +270,10 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
   void Watch(Profile* profile) {
     if (auto* registry = extensions::ExtensionRegistry::Get(profile))
       registries_.AddObservation(registry);
+    if (toolbars_.contains(profile)) return;
+    if (auto* model = extensions::ToolbarActionsModel::Get(profile)) {
+      toolbars_.emplace(profile, std::make_unique<ToolbarWatcher>(model, this));
+    }
   }
 
   bool started_ = false;
@@ -243,8 +281,46 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
   base::ScopedMultiSourceObservation<extensions::ExtensionRegistry,
                                      extensions::ExtensionRegistryObserver>
       registries_{this};
+  std::map<Profile*, std::unique_ptr<ToolbarWatcher>> toolbars_;
   void (^handler_)(void) = nil;
 };
+
+ToolbarWatcher::ToolbarWatcher(extensions::ToolbarActionsModel* model, ExtensionWatcher* owner)
+    : model_(model), owner_(owner) {
+  model_->AddObserver(this);
+}
+
+ToolbarWatcher::~ToolbarWatcher() {
+  if (model_) model_->RemoveObserver(this);
+}
+
+void ToolbarWatcher::OnToolbarActionAdded(const extensions::ToolbarActionsModel::ActionId&) {
+  owner_->NotifyChanged();
+}
+
+void ToolbarWatcher::OnToolbarActionRemoved(const extensions::ToolbarActionsModel::ActionId&) {
+  owner_->NotifyChanged();
+}
+
+// The action's badge or state changed; the pin state did not, and a re-list on every badge would
+// churn the pane for nothing.
+void ToolbarWatcher::OnToolbarActionUpdated(const extensions::ToolbarActionsModel::ActionId&) {}
+
+void ToolbarWatcher::OnToolbarModelInitialized() {
+  owner_->NotifyChanged();
+}
+
+void ToolbarWatcher::OnToolbarPinnedActionsChanged() {
+  owner_->NotifyChanged();
+}
+
+void ToolbarWatcher::OnToolbarActionsModelShutdown() {
+  auto* model = model_.get();
+  model_ = nullptr;
+  if (model) model->RemoveObserver(this);
+  // Erasing the entry deletes this watcher; nothing below may touch a member.
+  owner_->ForgetToolbar(this);
+}
 
 // Lists an existing but not yet loaded profile on demand: LoadProfileByPath never creates one, and
 // a profile that Chromium has never created has no extensions, so its empty list is true. A path
@@ -410,6 +486,20 @@ NSArray<NSDictionary<NSString*, id>*>* AraratExtensions(NSString* profile) {
     for (int reason : reasons) [encoded_reasons addObject:@(reason)];
     const bool needs_review = reasons.contains(extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE);
     const bool can_pin = toolbar && toolbar->HasAction(extension->id());
+    if (IsCheckRun() &&
+        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") ==
+            "settings-extensions") {
+      // The toolbar model is created lazily and initializes after the profile's extensions load;
+      // the check needs to see where it stands when a row's pin is read.
+      auto* actions = extensions::ExtensionActionManager::Get(target);
+      std::fprintf(stderr,
+                   "ararat-trace: extension-row id=%s toolbar=%d initialized=%d has_action=%d "
+                   "action_manager_has=%d action_ids=%zu\n",
+                   extension->id().c_str(), toolbar != nullptr,
+                   toolbar ? toolbar->actions_initialized() : false, can_pin,
+                   actions && actions->GetExtensionAction(*extension) != nullptr,
+                   toolbar ? static_cast<size_t>(toolbar->action_ids().size()) : 0u);
+    }
     [result addObject:@{
       @"id": base::SysUTF8ToNSString(extension->id()),
       @"name": base::SysUTF16ToNSString(
