@@ -538,7 +538,14 @@ public final class SettingsModel: ObservableObject {
         let generation = contextGeneration
         let previous = littleWindowHotKey
         adapter.setLittleWindowHotKey(value) { [weak self] result in
-            guard let self, self.contextGeneration == generation else { return }
+            guard let self else { return }
+            // A retarget replaced this model's context while the write was in flight; the pause
+            // from the recording still belongs to this model, so give the stored key back (the
+            // next open reads the stored value again).
+            guard self.contextGeneration == generation else {
+                self.resumeHotKeyRegistration()
+                return
+            }
             switch result {
             case .success:
                 self.littleWindowHotKey = value

@@ -204,3 +204,27 @@ func theRecorderPausesTheRegistrationAndGivesItBack() {
     model.toggleLittleWindowHotKeyRecording()
     #expect(!model.hotKeyRecording && center.status == .registered)
 }
+
+/// U27i N1: the close button does not take first responder, so the recorder never resigns on a
+/// close; the window's close must end the recording and register the stored key again, or the
+/// shortcut stays dead until Settings reopens.
+@Test @MainActor
+func closingTheSettingsWindowEndsARecordingAndRestoresTheShortcut() throws {
+    _ = NSApplication.shared
+    let registrar = FakeHotKeyRegistrar()
+    let center = LittleWindowHotKeyCenter(registrar: registrar)
+    let model = littleWindowTestModel()
+    model.hotKeyCenter = center
+    center.apply(model.littleWindowHotKey)
+    let controller = SettingsWindowController(model: model)
+    let window = try #require(controller.window)
+    defer { window.contentViewController = nil }
+    let unregisters = registrar.unregisterCount
+    model.toggleLittleWindowHotKeyRecording()
+    #expect(model.hotKeyRecording)
+    #expect(registrar.unregisterCount == unregisters + 1)
+    window.close()
+    #expect(!model.hotKeyRecording)
+    #expect(center.status == .registered)
+    #expect(registrar.registered.last == model.littleWindowHotKey)
+}

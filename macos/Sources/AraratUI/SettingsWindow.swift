@@ -6,6 +6,9 @@ import SwiftUI
 public final class SettingsWindowController: NSWindowController {
     let model: SettingsModel
     private var hasOpened = false
+    /// U27i N1: a recording left open when the window closes would keep the Carbon hot key
+    /// unregistered until Settings reopens, so the close ends it.
+    private var littleWindowRecordingCloseObserver: NSObjectProtocol?
     public init(model: SettingsModel) {
         self.model = model
         let split = NSSplitViewController()
@@ -28,6 +31,12 @@ public final class SettingsWindowController: NSWindowController {
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
         window.setFrame(NSRect(x: 0, y: 0, width: 760, height: 540), display: false)
+        // The close button does not take first responder, so the recorder never resigns; the
+        // close itself ends the recording and gives the shortcut back (N1).
+        littleWindowRecordingCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.cancelLittleWindowHotKeyRecording() }
+        }
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
