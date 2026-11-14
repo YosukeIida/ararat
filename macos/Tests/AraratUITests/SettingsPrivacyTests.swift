@@ -98,8 +98,14 @@ func thePrivacyRowsWriteTheCoreRecordAndTheHostAppliesIt() async throws {
     let host = FakePrivacyHost()
     model.privacyHost = host
     model.readPrivacy(shownSpaceID: snapshot.shownSpaceId)
-    try await waitUntil { model.privacy == .board }
+    try await waitUntil { model.privacyLoaded }
+    #expect(model.privacy == .board)
     #expect(model.privacyProfile == "Default")
+    // R2-3: a reread clears the flag while it is in flight and sets it again on the answer, so a
+    // caller can never compare the model's initial value with a core value.
+    model.readPrivacy(shownSpaceID: snapshot.shownSpaceId)
+    #expect(!model.privacyLoaded)
+    try await waitUntil { model.privacyLoaded }
 
     model.setThirdPartyCookies(.allow)
     try await waitUntil { host.applied.count == 1 }

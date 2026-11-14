@@ -165,10 +165,10 @@ final class SettingsScreenCheck {
     var privacyOlderVisitURL = "https://history.example/older"
     var privacyTenDayVisitURL = "https://history.example/ten-days"
     var privacyTwoDayVisitURL = "https://history.example/two-days"
-    var privacyRetentionSeeded = false
-    /// M1: the retention wait is bounded by wall clock (the expiry pass can be 5 minutes once the
-    /// queue is empty), and an in-flight query keeps each tick from queueing more (L10).
-    var privacyRetentionStartedAt: Date?
+    /// R2-1: the seed time of the retention visits, written in phase 2 before the first expiry
+    /// pass, and its offset from launch for the trace and the timeout details.
+    var privacySeedTime: Date?
+    var privacySeedUptime: TimeInterval?
     var privacyRetentionTimedOut = false
     var privacyPolling = false
     var privacyClearPolling = false
@@ -281,7 +281,7 @@ extension Runtime {
             values["privacy_titles"] = ["cookie": check.privacyCookieTitle,
                                         "gpc": check.privacyGPCTitle,
                                         "clear": check.privacyClearCookieTitle]
-            values["privacy_visits"] = ["retention_seeded": check.privacyRetentionSeeded,
+            values["privacy_visits"] = ["seed_offset": Int(check.privacySeedUptime ?? 0),
                                         "ten": check.privacyLastTen,
                                         "two": check.privacyLastTwo,
                                         "recent_gone": check.privacyRecentGone,
