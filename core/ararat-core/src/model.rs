@@ -660,16 +660,26 @@ pub enum SpaceScrollDirection { #[default] Natural, Reversed }
 pub enum Theme { #[default] System, Light, Dark }
 
 // U27w W1: the seven per-permission defaults, one value each. Ask, Allow and Block are
-// Chromium's three uniform values; a kind Chromium only lets Allow or Block (pop-ups, sound)
-// never stores Ask.
+// Chromium's three uniform values. Which of them a kind takes as a *default* differs, so
+// `SiteDefaults::invalid` enforces the per-kind set at parse and at the FFI write: pop-ups and
+// sound take no Ask (`content_settings_registry.cc:138,265` in Chromium 157) and the camera and
+// microphone take no Allow as a default (`content_settings_info.cc:50-55`), while their site
+// exceptions still do.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SitePermissionValue { #[default] Ask, Allow, Block }
+
+impl std::fmt::Display for SitePermissionValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self { Self::Ask => "Ask", Self::Allow => "Allow", Self::Block => "Block" })
+    }
+}
 
 // U27w W1: the Websites pane's defaults, one synced record. The names follow the pane's board
 // order; the built-in values are the board's (Ask everywhere, pop-ups Block, sound Allow).
 // Chromium's own default prefs are written from this record, never read back as a second source.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+// A value a kind cannot take as a default is refused when the record is parsed and when the FFI
+// writes it, so the pane and Chromium never disagree (no compatibility path).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SiteDefaults {
     pub camera: SitePermissionValue,
     pub microphone: SitePermissionValue,
@@ -680,12 +690,69 @@ pub struct SiteDefaults {
     pub sound: SitePermissionValue,
 }
 
+impl SiteDefaults {
+    /// The seven kinds with the values Chromium accepts as a *default* for each: Camera and
+    /// Microphone Ask/Block (Allow is refused for a media default), Pop-up windows and Sound
+    /// Allow/Block (no Ask), and the other three all three.
+    pub fn entries(&self) -> [(&'static str, SitePermissionValue); 7] {
+        [("camera", self.camera), ("microphone", self.microphone), ("location", self.location),
+            ("notifications", self.notifications), ("popups", self.popups),
+            ("automatic_downloads", self.automatic_downloads), ("sound", self.sound)]
+    }
+
+    /// The first kind whose stored value Chromium would refuse as a default, with the value.
+    pub fn invalid(&self) -> Option<(&'static str, SitePermissionValue)> {
+        for (kind, value) in self.entries() {
+            let accepted = match kind {
+                "camera" | "microphone" => matches!(value, SitePermissionValue::Ask | SitePermissionValue::Block),
+                "popups" | "sound" => matches!(value, SitePermissionValue::Allow | SitePermissionValue::Block),
+                _ => true,
+            };
+            if !accepted { return Some((kind, value)); }
+        }
+        None
+    }
+}
+
 impl Default for SiteDefaults {
     fn default() -> Self {
         Self { camera: SitePermissionValue::Ask, microphone: SitePermissionValue::Ask,
             location: SitePermissionValue::Ask, notifications: SitePermissionValue::Ask,
             popups: SitePermissionValue::Block, automatic_downloads: SitePermissionValue::Ask,
             sound: SitePermissionValue::Allow }
+    }
+}
+
+impl<'de> Deserialize<'de> for SiteDefaults {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(default)]
+        struct Fields {
+            camera: SitePermissionValue,
+            microphone: SitePermissionValue,
+            location: SitePermissionValue,
+            notifications: SitePermissionValue,
+            popups: SitePermissionValue,
+            automatic_downloads: SitePermissionValue,
+            sound: SitePermissionValue,
+        }
+        impl Default for Fields {
+            fn default() -> Self {
+                let value = SiteDefaults::default();
+                Self { camera: value.camera, microphone: value.microphone, location: value.location,
+                    notifications: value.notifications, popups: value.popups,
+                    automatic_downloads: value.automatic_downloads, sound: value.sound }
+            }
+        }
+        let fields = Fields::deserialize(deserializer)?;
+        let settings = SiteDefaults { camera: fields.camera, microphone: fields.microphone,
+            location: fields.location, notifications: fields.notifications, popups: fields.popups,
+            automatic_downloads: fields.automatic_downloads, sound: fields.sound };
+        if let Some((kind, value)) = settings.invalid() {
+            return Err(serde::de::Error::custom(format!("{kind} cannot take {value} as a default")));
+        }
+        Ok(settings)
     }
 }
 

@@ -2187,10 +2187,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     return changed
   }
 
-  /// U27w W4: "All Site Settings…" closes the popover and opens Settings › Websites on this
-  /// site's page in the page's own profile; a site with no exception opens the list.
+  /// U27w W4: "All Site Settings…" opens Settings › Websites on this site's page in the page's
+  /// own profile; a site with no exception opens the list. The popover's own callback closes the
+  /// popover before this runs.
   func openAllSiteSettings(_ model: SiteState) {
-    siteControls?.close()
     openSettings()
     let owner = root ?? self
     let shown = owner.snapshot.shownSpaceId

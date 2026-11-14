@@ -439,6 +439,9 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   std::vector<const char*> browser_args(argv, argv + argc);
   // The site-controls check serves a throwaway self-signed loopback certificate and allows
   // exactly that key, so Chromium reports a secure connection without touching trust stores.
+  // U27w's Websites check also asks for the camera: a VM usually has none, and getUserMedia is
+  // denied with NO_HARDWARE before any prompt then, so it gets a fake capture device. Why not
+  // --use-fake-ui-for-media-stream: that auto-accepts and would hide the prompt the check reads.
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && (strcmp(argv[i], "--ararat-check=site-controls") == 0 ||
                     strcmp(argv[i], "--ararat-screen=site-controls") == 0 ||
@@ -449,6 +452,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
       // reports a neutral connection, never "not_secure". A named host mapped to loopback is
       // not trustworthy, which is what the check must exercise.
       browser_args.push_back("--host-resolver-rules=MAP ararat.test 127.0.0.1");
+      if (strcmp(argv[i], "--ararat-screen=settings-websites") == 0)
+        browser_args.push_back("--use-fake-device-for-media-stream");
       break;
     }
   }

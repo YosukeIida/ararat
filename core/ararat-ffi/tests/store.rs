@@ -1224,10 +1224,20 @@ fn the_site_defaults_read_through_the_ffi_and_survive_reopen() {
     assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
     let mut changed = initial.clone();
     changed.notifications = SitePermissionValue::Block;
-    changed.camera = SitePermissionValue::Allow;
+    // Location accepts Allow as a default; Camera and Microphone do not (checked below).
+    changed.location = SitePermissionValue::Allow;
     store.set_site_defaults("one".into(), changed.clone()).unwrap();
     assert_eq!(store.settings().site_defaults, changed);
     assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    // A default Chromium refuses for its kind is refused here and writes nothing, so the pane
+    // and Chromium cannot disagree.
+    let mut refused = changed.clone();
+    refused.camera = SitePermissionValue::Allow;
+    assert!(matches!(store.set_site_defaults("one".into(), refused), Err(CoreError::Edit { .. })));
+    let mut refused = changed.clone();
+    refused.sound = SitePermissionValue::Ask;
+    assert!(matches!(store.set_site_defaults("one".into(), refused), Err(CoreError::Edit { .. })));
+    assert_eq!(store.settings().site_defaults, changed);
     drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     assert_eq!(store.settings().site_defaults, changed);

@@ -38,7 +38,8 @@ struct SettingsWebsitesSection: View {
                             .frame(width: 20)
                         Text(kind.title)
                         Spacer(minLength: 12)
-                        SitePermissionMenu(model: model, kind: kind, current: SitePermissionKind.setting(for: model.siteDefaults.value(for: kind)))
+                        SitePermissionMenu(model: model, kind: kind, forDefaults: true,
+                                           current: SitePermissionKind.setting(for: model.siteDefaults.value(for: kind)))
                     }.id(SettingsModel.websiteRowID(kind))
                 }
             }
@@ -74,23 +75,22 @@ struct SettingsWebsitesSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
-
-    /// The rows above are the whole section: a defaults row on the left and its menu on the
-    /// right, then the grouped card of sites.
 }
 
 /// The permission menu a defaults row and a site page row share: the value it holds and the
-/// kind's own choices (Ask is not offered for pop-ups or sound, W1).
+/// choices for the row's kind. A defaults row offers only the values Chromium accepts as a
+/// default (`defaultChoices`); a site page offers the exception values (`choices`).
 struct SitePermissionMenu: View {
     @ObservedObject var model: SettingsModel
     let kind: SitePermissionKind
     var origin: String? = nil
     var profile: String? = nil
+    var forDefaults = false
     let current: SiteState.PermissionSetting?
 
     var body: some View {
         Menu {
-            ForEach(Array(kind.choices.enumerated()), id: \.offset) { _, choice in
+            ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
                 Button(choice.title) {
                     if let origin, let profile {
                         model.setSitePermission(origin: origin, profile: profile, kind: kind, setting: choice)
@@ -111,6 +111,8 @@ struct SitePermissionMenu: View {
             ? SettingsModel.websiteMenuMarker(kind)
             : SettingsModel.sitePermissionMenuMarker(kind)))
     }
+
+    private var choices: [SiteState.PermissionSetting] { forDefaults ? kind.defaultChoices : kind.choices }
 }
 
 /// A site's letter in the board's rounded square, drawn by a row and by the site page's header.

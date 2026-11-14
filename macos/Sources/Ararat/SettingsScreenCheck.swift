@@ -1016,6 +1016,7 @@ extension Runtime {
             check.report("site_page_rows", probe.marker(SettingsModel.sitePermissionMenuMarker(.camera)) != nil
                 && probe.marker(SettingsModel.rowMarker(SettingsModel.siteResetRowID)) != nil
                 && probe.marker(SettingsModel.rowMarker(SettingsModel.siteClearRowID)) != nil)
+            guard capture("site-page") else { end("capture", false); return }
             trace("writing storage on both origins")
             openTab("/websites?do=storage")
             openPlainTab("/websites?do=storage")

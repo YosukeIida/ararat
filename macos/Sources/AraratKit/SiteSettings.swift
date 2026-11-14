@@ -47,6 +47,23 @@ public enum SitePermissionKind: String, CaseIterable, Sendable {
         }
     }
 
+    /// The values the *defaults* menu offers: Chromium's `IsDefaultSettingValid` for each kind
+    /// (`content_settings_info.cc:50-55` refuses Allow for the media kinds; the registrations
+    /// refuse Ask for pop-ups and sound). The site page keeps `choices`, because an exception
+    /// does accept Allow for the camera and the microphone.
+    public var defaultChoices: [SiteState.PermissionSetting] {
+        switch self {
+        case .camera, .microphone: return [.content("ask"), .content("block")]
+        case .popups, .sound: return [.content("allow"), .content("block")]
+        default: return [.content("ask"), .content("allow"), .content("block")]
+        }
+    }
+
+    /// Whether Chromium accepts this value as this kind's *default* (the core refuses the others).
+    public func acceptsDefault(_ value: SitePermissionValue) -> Bool {
+        defaultChoices.contains { SitePermissionKind.value(for: $0) == value }
+    }
+
     /// The built-in default the core record holds for this kind (W1): Ask for five, Block for
     /// pop-ups and Allow for sound.
     public var builtInDefault: SitePermissionValue {
@@ -105,8 +122,8 @@ public protocol SiteSettingsHost: AnyObject {
     /// Writes one origin's exception of one kind in one profile; nil resets that kind there.
     /// Returns false when the profile is not loaded or the write is refused.
     func setSiteException(profile: String, origin: String, kind: String, setting: SiteState.PermissionSetting?) -> Bool
-    /// Clears the site's cookies (its registrable domain) and its storage and cache (its origin)
-    /// in one profile. The reply is the number of failed removals.
+    /// Clears the site's cookies, storage and cache for its registrable domain in one profile
+    /// (W3). The reply is the failed data types bitmask, not a count.
     func clearSiteData(profile: String, origin: String, completion: @escaping (UInt64) -> Void)
 }
 

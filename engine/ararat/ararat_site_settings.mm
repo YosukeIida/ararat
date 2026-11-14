@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <optional>
@@ -145,7 +146,13 @@ void ApplyToProfile(Profile* profile, const std::map<std::string, std::string>& 
     else if (word == "block") setting = CONTENT_SETTING_BLOCK;
     else if (word != "ask") continue;
     PermissionSetting value = info->delegate().ToPermissionSetting(setting);
-    if (!info->delegate().IsDefaultSettingValid(value)) continue;
+    if (!info->delegate().IsDefaultSettingValid(value)) {
+      // Unreachable through the app: the core's record refuses a value its kind cannot take
+      // (SiteDefaults::invalid), so the pane and Chromium cannot disagree. A trace, not a silent
+      // skip, in case a stored record reached here another way.
+      std::fprintf(stderr, "ararat-trace: site-default-refused kind=%s value=%s\n", name.c_str(), word.c_str());
+      continue;
+    }
     map->SetDefaultPermissionSetting(type, value);
   }
 }
@@ -172,17 +179,18 @@ class SiteDefaultsWatcher : public ProfileManagerObserver {
   base::ScopedObservation<ProfileManager, ProfileManagerObserver> profiles_{this};
 };
 
-// One BrowsingDataRemover task's reply. Clear cookies and site data is two tasks (cookies are
-// scoped by registrable domain, storage and cache by origin), so a shared block counts both.
+// One BrowsingDataRemover task's reply. `failed` is a bitmask of the data types that failed, not
+// a count (browsing_data_remover.h's Observer::OnBrowsingDataRemoverDone); the remover reports
+// failures only at shutdown. The app shows nothing, so the value is only carried.
 class SiteDataClearObserver : public content::BrowsingDataRemover::Observer {
  public:
   SiteDataClearObserver(content::BrowsingDataRemover* remover, void (^completion)(uint64_t))
       : completion_([completion copy]) {
     observation_.Observe(remover);
   }
-  void OnBrowsingDataRemoverDone(uint64_t failed) override {
+  void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
     observation_.Reset();
-    completion_(failed);
+    completion_(failed_data_types);
     delete this;
   }
 
@@ -285,28 +293,21 @@ void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)
     if (report) report(0);
     return;
   }
-  // Two tasks: the cookie filter must name the registrable domain (a subdomain would trip its
-  // DCHECK), while storage and cache are origin-scoped. Both count into one reply.
-  __block uint64_t remaining = 2;
-  __block uint64_t failed_total = 0;
-  auto done = ^(uint64_t failed) {
-    failed_total += failed;
-    if (--remaining > 0) return;
-    if (report) report(failed_total);
-  };
-  auto cookie_filter = content::BrowsingDataFilterBuilder::Create(content::BrowsingDataFilterBuilder::Mode::kDelete);
-  cookie_filter->AddRegisterableDomain(domain);
-  auto* cookie_observer = new SiteDataClearObserver(remover, done);
-  remover->RemoveWithFilterAndReply(
-      base::Time(), base::Time::Max(), content::BrowsingDataRemover::DATA_TYPE_COOKIES,
-      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, std::move(cookie_filter),
-      cookie_observer);
-  auto site_filter = content::BrowsingDataFilterBuilder::Create(content::BrowsingDataFilterBuilder::Mode::kDelete);
-  site_filter->AddOrigin(url::Origin::Create(url));
-  auto* site_observer = new SiteDataClearObserver(remover, done);
+  // One task for all three kinds: W3 clears "that site's registrable domain … cookies, storage,
+  // cache for that domain". A domain filter reaches all three — storage compares the key's
+  // top-level site registrable domain (browsing_data_filter_builder_impl.cc:74-81 with
+  // storage_key.cc:846-851), the network-service cache filter carries the domains
+  // (browsing_data_filter_builder_impl.cc:301-303), and cookies take domains only (:310) — so a
+  // subdomain's localStorage and a subdomain's cookies go together. The knowledge note's advice
+  // to split the filters applies when cache must stay origin-scoped, as in the header's Clear
+  // Cache; W3 asks for the domain.
+  auto filter = content::BrowsingDataFilterBuilder::Create(content::BrowsingDataFilterBuilder::Mode::kDelete);
+  filter->AddRegisterableDomain(domain);
+  auto* observer = new SiteDataClearObserver(remover, report);
   remover->RemoveWithFilterAndReply(
       base::Time(), base::Time::Max(),
-      content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE | content::BrowsingDataRemover::DATA_TYPE_CACHE,
-      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, std::move(site_filter),
-      site_observer);
+      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
+          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE |
+          content::BrowsingDataRemover::DATA_TYPE_CACHE,
+      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, std::move(filter), observer);
 }

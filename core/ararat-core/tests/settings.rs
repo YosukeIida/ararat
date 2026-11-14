@@ -195,9 +195,10 @@ fn the_site_defaults_start_at_the_boards_values_and_write_one_synced_record() {
     assert!(ws.set_site_defaults(changed).is_empty());
     assert_eq!(ws, before);
     assert!(ws.settings.new_tab_row_shown && ws.settings.theme == Theme::System);
-    // A second kind changes the same one record, not a second one.
+    // A second kind changes the same one record, not a second one. Location accepts Allow as a
+    // default (camera and microphone do not; see `invalid`).
     let mut second = ws.settings.site_defaults.clone();
-    second.camera = SitePermissionValue::Allow;
+    second.location = SitePermissionValue::Allow;
     let ops = ws.set_site_defaults(second.clone());
     assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
         if settings.site_defaults == second));
@@ -209,13 +210,24 @@ fn the_site_defaults_start_at_the_boards_values_and_write_one_synced_record() {
     assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
 }
 
-// A value this build does not know is refused when the record is parsed, so a future device's
-// third state never reads as one of today's.
+// A value this build does not know, and a value its kind cannot take as a default, are refused
+// when the record is parsed: a future device's third state never reads as one of today's, and a
+// default Chromium refuses (Allow for the camera or microphone, Ask for pop-ups or sound) never
+// reaches the engine. A missing kind takes the built-in value.
 #[test]
-fn an_unknown_site_default_value_is_refused() {
+fn an_unknown_or_unacceptable_site_default_value_is_refused() {
     assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Sometimes"}}"#).is_err());
-    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Allow"}}"#);
-    assert!(matches!(parsed, Ok(Record::Settings(Settings { site_defaults: SiteDefaults { camera: SitePermissionValue::Allow, .. }, .. }))));
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Allow"}}"#).is_err());
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"microphone":"Allow"}}"#).is_err());
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"popups":"Ask"}}"#).is_err());
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"sound":"Ask"}}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"site_defaults":{"camera":"Block","location":"Allow","popups":"Allow"}}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { site_defaults: SiteDefaults {
+        camera: SitePermissionValue::Block, location: SitePermissionValue::Allow,
+        popups: SitePermissionValue::Allow, microphone: SitePermissionValue::Ask,
+        sound: SitePermissionValue::Allow, .. }, .. }))));
+    // The record's own values pass.
+    assert!(SiteDefaults::default().invalid().is_none());
 }
 
 // U27i D8/D9: the Little Window's Open-in destination and close-after are the same synced

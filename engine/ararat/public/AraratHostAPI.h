@@ -264,7 +264,9 @@ __attribute__((visibility("default")))
 NSDictionary* AraratCheckCrashState(NSString* profile);
 // U27w: Settings › Websites. The app's synced core record is the source of the seven
 // per-permission defaults; applying it writes every regular profile's HostContentSettingsMap
-// default now and for a profile added later. A private profile inherits through Chromium.
+// default now and for a profile added later. A private profile inherits through Chromium. The
+// core record refuses a value its kind cannot take as a default (camera and microphone take no
+// Allow; pop-ups and sound take no Ask), so this call receives only accepted defaults.
 __attribute__((visibility("default")))
 void AraratApplySiteDefaults(NSDictionary<NSString*, NSString*>* defaults);
 // One entry per stored user exception of the seven kinds: profile directory, origin, kind and
@@ -276,10 +278,11 @@ NSArray<NSDictionary<NSString*, id>*>* AraratSiteExceptions(void);
 __attribute__((visibility("default")))
 BOOL AraratSetSiteException(NSString* profile, NSString* origin, NSString* kind,
                             NSDictionary<NSString*, id>* _Nullable setting);
-// Clears the site's cookies (its registrable domain) and its storage and cache (its origin) in
-// one profile. The reply is the number of failed removals; the completion is always called.
+// Clears the site's cookies, storage and cache for its registrable domain in one profile (W3):
+// one BrowsingDataRemover task with a domain filter. The reply is the failed data types bitmask,
+// not a count, and is always called.
 __attribute__((visibility("default")))
-void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)(uint64_t failed));
+void AraratClearSiteData(NSString* profile, NSString* origin, void (^completion)(uint64_t failedDataTypes));
 __attribute__((visibility("default")))
 void AraratCheckCommitProfilePrefs(NSString* profile, void (^completion)(BOOL done));
 __attribute__((visibility("default")))

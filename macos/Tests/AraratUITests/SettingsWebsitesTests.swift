@@ -125,7 +125,21 @@ func theSevenDefaultsCarryTheBoardsValuesAndTheirOwnChoices() {
         ["Camera", "Microphone", "Location", "Notifications", "Pop-up windows", "Automatic downloads", "Sound"])
     #expect(SitePermissionKind.allCases.map { defaults.value(for: $0) } ==
         [.ask, .ask, .ask, .ask, .block, .ask, .allow])
+    // W1 + review fix 2: a defaults menu offers only the values Chromium accepts as a default for
+    // that kind (Allow is refused for the camera and the microphone; pop-ups and sound take no
+    // Ask), while a site page's exceptions keep Ask/Allow/Block.
     #expect(SitePermissionKind.camera.choices.map(\.title) == ["Ask", "Allow", "Block"])
+    #expect(SitePermissionKind.camera.defaultChoices.map(\.title) == ["Ask", "Block"])
+    #expect(SitePermissionKind.microphone.defaultChoices.map(\.title) == ["Ask", "Block"])
+    #expect(SitePermissionKind.location.defaultChoices.map(\.title) == ["Ask", "Allow", "Block"])
+    #expect(SitePermissionKind.notifications.defaultChoices.map(\.title) == ["Ask", "Allow", "Block"])
+    #expect(SitePermissionKind.popups.defaultChoices.map(\.title) == ["Allow", "Block"])
+    #expect(SitePermissionKind.automaticDownloads.defaultChoices.map(\.title) == ["Ask", "Allow", "Block"])
+    #expect(SitePermissionKind.sound.defaultChoices.map(\.title) == ["Allow", "Block"])
+    #expect(!SitePermissionKind.camera.acceptsDefault(.allow) && SitePermissionKind.camera.acceptsDefault(.block))
+    #expect(!SitePermissionKind.microphone.acceptsDefault(.allow))
+    #expect(!SitePermissionKind.popups.acceptsDefault(.ask) && !SitePermissionKind.sound.acceptsDefault(.ask))
+    #expect(SitePermissionKind.location.acceptsDefault(.allow) && SitePermissionKind.notifications.acceptsDefault(.allow))
     #expect(SitePermissionKind.popups.choices.map(\.title) == ["Allow", "Block"])
     #expect(SitePermissionKind.sound.choices.map(\.title) == ["Allow", "Block"])
     #expect(SitePermissionKind.notifications.builtInDefault == .ask)
@@ -222,6 +236,11 @@ func theDefaultsWriteTheCoreRecordAndThePaneDrawsTheSevenRows() async throws {
     let reopened = websitesModel(snapshot, adapter)
     reopened.readWebsites()
     try await waitUntil { reopened.siteDefaults.notifications == .block }
+    // The model refuses a default its kind cannot take before it reaches the core (which refuses
+    // it too), so the menu and Chromium cannot disagree.
+    let beforeRefusal = reopened.siteDefaults
+    reopened.setSiteDefault(.camera, .allow)
+    #expect(reopened.siteDefaults == beforeRefusal)
 
     // The pane draws the seven defaults with their menus, both group cards, and the empty state.
     reopened.siteHost = FakeSiteSettingsHost()

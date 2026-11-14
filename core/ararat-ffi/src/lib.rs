@@ -716,11 +716,17 @@ impl WorkspaceStore {
     }
 
     // U27w W1: the Websites pane's seven defaults, the same synced settings record. The pane
-    // writes one kind at a time as the whole record; the app pushes the record into Chromium.
+    // writes one kind at a time as the whole record; the app pushes the record into Chromium. A
+    // value the kind cannot take as a default is refused here (the record's parse refuses it too),
+    // so Chromium never keeps a different default from the one the pane shows.
     pub fn set_site_defaults(&self, window_id: String, defaults: SiteDefaults) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(true)?;
+        let defaults: ararat_core::model::SiteDefaults = defaults.into();
+        if let Some((kind, value)) = defaults.invalid() {
+            return Err(CoreError::Edit { message: format!("{kind} cannot take {value} as a default") });
+        }
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.set_site_defaults(defaults.into());
+        let ops = workspace.set_site_defaults(defaults);
         self.store.write(ops);
         self.store.flush()?;
         Ok(snapshot(workspace.clone(), &window_id))

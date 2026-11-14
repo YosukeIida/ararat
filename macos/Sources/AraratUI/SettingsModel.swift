@@ -686,9 +686,11 @@ public final class SettingsModel: ObservableObject {
         return text
     }
 
-    /// Writes one of the seven defaults as the whole synced record and hands it to Chromium. A
-    /// refused write leaves the menu where it was and shows the reason.
+    /// Writes one of the seven defaults as the whole synced record and hands it to Chromium. The
+    /// value must be one Chromium accepts as a default for that kind (the core refuses the rest
+    /// too); a refused write leaves the menu where it was and shows the reason.
     func setSiteDefault(_ kind: SitePermissionKind, _ value: SitePermissionValue) {
+        guard kind.acceptsDefault(value) else { return }
         guard siteDefaults.value(for: kind) != value else { return }
         let generation = contextGeneration
         let completion = editCompletion()
@@ -724,7 +726,8 @@ public final class SettingsModel: ObservableObject {
     }
 
     /// W3's Clear cookies and site data: the engine clears the site's registrable domain's
-    /// cookies and its origin's storage and cache, so another origin's stay.
+    /// cookies, storage and cache in one removal, so a subdomain's data goes too and another
+    /// domain's stays.
     func clearSiteData(origin: String, profile: String, completion: (() -> Void)? = nil) {
         guard let host = siteHost else { completion?(); return }
         host.clearSiteData(profile: profile, origin: origin) { [weak self] _ in

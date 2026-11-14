@@ -1400,8 +1400,11 @@ impl Workspace {
     }
 
     // U27w W1: the seven site defaults, one write of the whole record. The pane edits one kind at
-    // a time and the app pushes the whole record into Chromium's profiles.
+    // a time and the app pushes the whole record into Chromium's profiles. A value a kind cannot
+    // take as a default is refused by the record's parse and by the FFI write; this assertion only
+    // catches a caller inside the core that skips both.
     pub fn set_site_defaults(&mut self, defaults: crate::model::SiteDefaults) -> Vec<Op> {
+        debug_assert!(defaults.invalid().is_none(), "site default refused by Chromium for its kind");
         if self.settings.site_defaults == defaults { return Vec::new(); }
         let mut settings = self.settings.clone();
         settings.site_defaults = defaults;
