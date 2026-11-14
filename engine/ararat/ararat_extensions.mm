@@ -12,6 +12,7 @@
 #import <AppKit/AppKit.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,7 +33,9 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
+#include "chrome/browser/extensions/shared_module_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_manager_observer.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
@@ -45,6 +48,7 @@
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/permissions/scripting_permissions_modifier.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/browser/shared_module_service.h"
 #include "extensions/browser/ui_util.h"
 #include "extensions/browser/unpacked_installer.h"
 #include "extensions/common/extension.h"
@@ -145,8 +149,9 @@ bool CanRemove(Profile* profile, const extensions::Extension* extension) {
 }
 
 // Chrome's own page's rule for whether the enable toggle is offered (item_util.ts:61-87): the user
-// may modify the extension, it is not blocklisted, and none of the reasons that pin the state is
-// present. A policy-installed or blocked extension therefore shows no switch, as in Chrome.
+// may modify the extension, it is not blocklisted, it has no dependents, and none of the reasons
+// that pin the state is present. A policy-installed or blocked extension therefore shows no
+// switch, as in Chrome.
 bool CanDisable(Profile* profile, const extensions::Extension& extension) {
   auto* registry = extensions::ExtensionRegistry::Get(profile);
   auto* system = extensions::ExtensionSystem::Get(profile);
@@ -155,9 +160,16 @@ bool CanDisable(Profile* profile, const extensions::Extension& extension) {
   if (!registry || !policy || !prefs) return false;
   if (registry->blocklisted_extensions().Contains(extension.id())) return false;
   if (!policy->UserMayModifySettings(&extension, nullptr)) return false;
+  // A shared module another extension imports cannot be switched (Chrome's dependentExtensions).
+  if (extension.is_shared_module()) {
+    auto* modules = extensions::SharedModuleServiceFactory::GetForBrowserContext(profile);
+    if (auto dependents = modules ? modules->GetDependentExtensions(&extension) : nullptr) {
+      if (!dependents->empty()) return false;
+    }
+  }
   for (const auto reason :
        {extensions::disable_reason::DISABLE_CORRUPTED,
-        extensions::disable_reason::DISABLE_GREYLIST,
+        extensions::disable_reason::DISABLE_NOT_VERIFIED,
         extensions::disable_reason::DISABLE_UPDATE_REQUIRED_BY_POLICY,
         extensions::disable_reason::DISABLE_PUBLISHED_IN_STORE_REQUIRED_BY_POLICY,
         extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY,
@@ -235,15 +247,18 @@ class ExtensionWatcher : public extensions::ExtensionRegistryObserver,
 };
 
 // Lists an existing but not yet loaded profile on demand: LoadProfileByPath never creates one, and
-// a profile that Chromium has never created has no extensions, so its empty list is true. While the
-// load runs the list answers "loading" and the pane keeps its rows instead of drawing the empty
-// state; the load's OnProfileAdded notifies the pane.
+// a profile that Chromium has never created has no extensions, so its empty list is true. A path
+// with no profile-attributes entry is therefore answered empty without a load: LoadProfileByPath
+// would run its callback synchronously with nullptr, and notifying from that callback would make
+// the pane re-list and load forever. While a real load runs the list answers "loading" and the pane
+// keeps its rows; only a load that produced a profile notifies the pane.
 Profile* ListProfileForDirectory(NSString* directory, bool* loading) {
   auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
   base::FilePath path = PathForDirectory(directory, manager);
   if (path.empty()) return nullptr;
   Profile* profile = manager->GetProfileByPath(path);
   if (profile) return IsRegularProfile(profile) ? profile : nullptr;
+  if (!manager->GetProfileAttributesStorage().GetProfileAttributesWithPath(path)) return nullptr;
   const std::string key = path.value();
   auto& pending = LoadingProfiles();
   if (pending.contains(key)) {
@@ -251,15 +266,10 @@ Profile* ListProfileForDirectory(NSString* directory, bool* loading) {
     return nullptr;
   }
   pending.insert(key);
-  const bool started = manager->LoadProfileByPath(
-      path, /*incognito=*/false, base::BindOnce(^(Profile* loaded) {
-        LoadingProfiles().erase(key);
-        ExtensionWatcher::Get().NotifyChanged();
-      }));
-  if (!started) {
-    pending.erase(key);
-    return nullptr;
-  }
+  manager->LoadProfileByPath(path, /*incognito=*/false, base::BindOnce(^(Profile* loaded) {
+    LoadingProfiles().erase(key);
+    if (loaded) ExtensionWatcher::Get().NotifyChanged();
+  }));
   if (loading) *loading = true;
   return nullptr;
 }
@@ -574,8 +584,9 @@ void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
     return;
   }
   // A load that fails for a path that does not exist yet is answered with a profile creation; the
-  // workspace can name a profile Chrome has not made yet.
-  const bool started = manager->LoadProfileByPath(
+  // workspace can name a profile Chrome has not made yet. The callback also runs synchronously
+  // when that is the case, so it is the one place that creates and installs.
+  manager->LoadProfileByPath(
       profile_path, /*incognito=*/false, base::BindOnce(^(Profile* profile_loaded) {
         if (profile_loaded) {
           InstallUnpacked(profile_loaded, directory, report);
@@ -589,15 +600,6 @@ void AraratCheckLoadUnpackedExtension(NSString* profile, NSString* path,
           }
         }));
       }));
-  if (!started) {
-    manager->CreateProfileAsync(profile_path, base::BindOnce(^(Profile* created) {
-      if (created) {
-        InstallUnpacked(created, directory, report);
-      } else if (report) {
-        report(@"unknown");
-      }
-    }));
-  }
 }
 
 // Check-only: the state Chromium sets when an update asks for more permissions, without needing
@@ -618,37 +620,70 @@ void AraratCheckDisableExtensionForReview(NSString* profile, NSString* identifie
 // dialog's own class otherwise), or an empty string when no such dialog is up. It is the seam
 // accept-download-close uses (views::Widget::GetWidgetForNativeWindow, then the dialog delegate),
 // because the VM's in-process accessibility tree is empty.
+//
+// What the seam may touch is restricted: "accept" accepts only the re-enable prompt
+// (ExtensionInstallDialogView), wherever it was parented; "cancel" cancels a Views dialog that is a
+// sheet or child of the settings window, and never an unrelated bubble. Every other Views dialog
+// stays untouched.
+namespace {
+
+// The contents class of a Views dialog window, and the dialog itself; empty class means the window
+// is not a Views dialog.
+std::string DialogClassForWindow(NSWindow* window, views::DialogDelegate** dialog) {
+  *dialog = nullptr;
+  views::Widget* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
+  views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
+  views::DialogDelegate* resolved = delegate ? delegate->AsDialogDelegate() : nullptr;
+  if (!resolved) return std::string();
+  views::View* contents = delegate->GetContentsView();
+  *dialog = resolved;
+  return contents ? std::string(contents->GetClassName()) : std::string();
+}
+
+}  // namespace
+
 NSString* AraratCheckExtensionDialog(NSWindow* parent, NSString* action) {
-  if (!IsCheckRun() || !parent) return @"";
-  NSMutableArray<NSWindow*>* candidates = [NSMutableArray array];
-  if (parent.attachedSheet) [candidates addObject:parent.attachedSheet];
+  if (!IsCheckRun() || !parent || ![action isKindOfClass:NSString.class]) return @"";
+  const bool accept = [action isEqual:@"accept"];
+  constexpr char kInstallDialogClass[] = "ExtensionInstallDialogView";
+  // The parent-linked passes: the settings window's sheet, its sheets, its children, and windows
+  // whose parentWindow is the settings window.
+  NSMutableArray<NSWindow*>* linked = [NSMutableArray array];
+  if (parent.attachedSheet) [linked addObject:parent.attachedSheet];
   for (NSWindow* sheet in parent.sheets) {
-    if (sheet != parent.attachedSheet) [candidates addObject:sheet];
+    if (sheet != parent.attachedSheet) [linked addObject:sheet];
   }
-  for (NSWindow* child in parent.childWindows) [candidates addObject:child];
+  for (NSWindow* child in parent.childWindows) [linked addObject:child];
   for (NSWindow* window in NSApp.windows) {
-    if (window != parent && window.parentWindow == parent) [candidates addObject:window];
+    if (window != parent && window.parentWindow == parent) [linked addObject:window];
   }
-  // A views dialog parented to a non-Browser window can also be a window of its own.
-  for (NSWindow* window in NSApp.windows) {
-    if (window != parent && window.isVisible) [candidates addObject:window];
-  }
-  for (NSWindow* window in candidates) {
-    if (!window.isVisible) continue;
-    views::Widget* widget = views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
-    views::WidgetDelegate* delegate = widget ? widget->widget_delegate() : nullptr;
-    views::DialogDelegate* dialog = delegate ? delegate->AsDialogDelegate() : nullptr;
-    if (!dialog) continue;
-    views::View* contents = delegate->GetContentsView();
-    NSString* name = contents
-        ? base::SysUTF8ToNSString(std::string(contents->GetClassName()))
-        : NSStringFromClass(window.class);
-    if ([action isEqual:@"accept"]) {
+  auto resolve = [&](NSWindow* window, const char* pass) -> NSString* {
+    if (!window.isVisible) return nil;
+    views::DialogDelegate* dialog = nullptr;
+    const std::string name = DialogClassForWindow(window, &dialog);
+    if (!dialog || name.empty()) return nil;
+    // Accepting is the re-enable prompt's alone; a parent-linked cancel may take any Views dialog
+    // the settings window opened (the uninstall dialog's contents class is not ours to name).
+    if (accept && name != kInstallDialogClass) return nil;
+    std::fprintf(stderr, "ararat-trace: extension-dialog pass=%s action=%s class=%s\n", pass,
+                 action.UTF8String, name.c_str());
+    if (accept) {
       dialog->AcceptDialog();
-    } else if ([action isEqual:@"cancel"]) {
+    } else {
       dialog->CancelDialog();
     }
-    return name;
+    return base::SysUTF8ToNSString(name);
+  };
+  for (NSWindow* window in linked) {
+    if (NSString* name = resolve(window, "linked")) return name;
+  }
+  // A views dialog parented to a non-Browser window can be a window of its own; only the re-enable
+  // prompt is accepted from that pass, so no unrelated bubble is touched.
+  if (accept) {
+    for (NSWindow* window in NSApp.windows) {
+      if (window == parent) continue;
+      if (NSString* name = resolve(window, "unrestricted")) return name;
+    }
   }
   return @"";
 }

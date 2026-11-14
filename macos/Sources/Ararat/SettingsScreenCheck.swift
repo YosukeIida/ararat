@@ -1443,7 +1443,10 @@ extension Runtime {
                 note("the cancelled extension is gone")
                 return
             }
-            check.report("remove_cancel_keeps", probe.extensions.contains { $0.id == row.id })
+            // The cancelled dialog was a Views dialog of the settings window and was not the prompt.
+            check.report("remove_cancel_keeps", probe.extensions.contains { $0.id == row.id }
+                && !check.extensionRemoveDialog.isEmpty
+                && check.extensionRemoveDialog != "ExtensionInstallDialogView")
             check.details["remove_dialog"] = check.extensionRemoveDialog
             trace("cancelled \(check.extensionRemoveDialog); the row stays")
             owner.settings?.window?.performClose(nil)
