@@ -75,6 +75,31 @@ private func mountedHarness(_ adapter: WorkspaceAdapter, snapshot: WorkspaceSnap
 }
 
 @Test @MainActor
+func recorderRefusesTheGlobalShortcutAndFreesItsOldKeyAfterAChange() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, snapshot) = try await openedBindings(directory)
+    let (harness, _, _, recorder) = try mountedHarness(adapter, snapshot: snapshot)
+    let original = harness.keyBindings.binding(command: "toggle_library")?.key
+    let event = try recorderKeyEvent(keyCode: 45, characters: "n", charactersIgnoringModifiers: "n", flags: [.option, .command])
+    harness.keyBindings.toggleRecording("toggle_library")
+    recorder.keyDown(with: event)
+    try await waitUntil { harness.keyBindings.error != nil }
+    #expect(harness.keyBindings.error == "Used by New Little Window (global)")
+    #expect(harness.keyBindings.errorCommand == "toggle_library")
+    #expect(harness.keyBindings.binding(command: "toggle_library")?.key == original)
+
+    let changed = LittleWindowHotKey(keyCode: 35, key: "p", command: true, control: false, option: true, shift: false)
+    try await bindingValue { adapter.setLittleWindowHotKey(changed, completion: $0) }
+    harness.keyBindings.toggleRecording("toggle_library")
+    recorder.keyDown(with: event)
+    try await waitUntil { harness.keyBindings.binding(command: "toggle_library")?.key == recorderBinding(key: "n", command: true, option: true) }
+    #expect(harness.keyBindings.error == nil)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func recorderAppliesAKeyThenEscCancelsAndBackspaceClears() async throws {
     _ = NSApplication.shared
     let directory = try testTemporaryDirectory()
