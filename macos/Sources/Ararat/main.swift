@@ -5587,12 +5587,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       keyboardResults["inactive_profile_teardown"] = true
       adapter?.windowHost(host, showProfile: "Profile 1")
-      adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard", expectedSpace: "named", profile: "Profile 1")
+      adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard?profile-reload", expectedSpace: "named", profile: "Profile 1")
       browserCheckPhase = 55
       return
     }
     if browserCheckPhase == 55 {
       guard host.profileDirectory() == "Profile 1", host.hasBrowser(forProfile: "Profile 1"), host.activeItemId() != nil,
+            let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == host.activeItemId() }),
+            tab.url == "http://127.0.0.1:\(port)/keyboard?profile-reload", !tab.isLoading, tab.navigationCount > 0,
             host.extensionActions().contains(where: { $0["id"] as? String == "kmgaadhbnkendcanjninlfmfgehagggl" }) else { return }
       host.checkExtensionAction(5)
       guard host.checkReassignedAction() else { finishBrowserCheck(ok: false, values: ["profile_reload_action": false]); return }
