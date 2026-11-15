@@ -36,6 +36,11 @@ public final class CommandTextField {
     private static func makeField(controller: CommandBarController, coordinator: Coordinator) -> NSTextField {
         let field = NSTextField()
         field.cell = CommandFieldCell(textCell: controller.fieldText)
+        // A fresh NSTextFieldCell is neither editable nor selectable; `NSTextField(string:)`,
+        // which this replaced, set both, and the bar's field must take first responder and type.
+        field.isEditable = true
+        field.isSelectable = true
+        field.alignment = .natural
         field.isBordered = false
         field.isBezeled = false
         field.drawsBackground = false

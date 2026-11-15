@@ -20,6 +20,11 @@ fn url_detection_and_typed_rows() {
     assert!(matches!(&command_bar::rank("localhost:3000", &[])[0].target, Target::OpenUrl { url } if url == "http://localhost:3000"));
     assert!(matches!(&command_bar::rank("hello world", &[])[0].target, Target::Search { url } if url.ends_with("hello+world")));
 }
+// Test inputs only: `nas:`, `nas:70000`, `1.2`, `v1.2.3`, `user@example.com` and `hello world`
+// in address_classification_and_destinations below also appear in Yab's
+// `Tests/FastTests/AddressTests.swift` (Copyright the Yab contributors, Apache-2.0,
+// https://github.com/yetanotherbrowser/yab). No Yab code was copied; the classifier and its
+// expected destinations are ours.
 #[test]
 fn address_classification_and_destinations() {
     for (input, expected) in [
@@ -32,6 +37,7 @@ fn address_classification_and_destinations() {
         ("8.8.8.8", Some("http://8.8.8.8")),
         ("example.com:65535", Some("https://example.com:65535")),
         ("my_host.example", Some("https://my_host.example")),
+        ("example.xn--p1ai", Some("https://example.xn--p1ai")),
         ("/Users/x.html", Some("file:///Users/x.html")),
         ("/Users/a b#c.html", Some("file:///Users/a%20b%23c.html")),
         ("mailto:x@example.com", Some("mailto:x@example.com")),

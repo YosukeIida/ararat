@@ -397,7 +397,10 @@ fn address_url(s: &str) -> Option<String> {
     if !ip {
         if !host.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')) { return None; }
         if host.contains('.') {
-            if !host.rsplit('.').next()?.chars().all(char::is_alphabetic) { return None; }
+            let tld = host.rsplit('.').next()?;
+            // A punycode TLD (`example.xn--p1ai`) is an address: its label carries digits and
+            // hyphens, which the letters-only rule below would otherwise refuse.
+            if !(tld.chars().all(char::is_alphabetic) || tld.starts_with("xn--")) { return None; }
         } else if host != "localhost" && port.is_none() { return None; }
     }
     let scheme = if ip || host == "localhost" || !host.contains('.') { "http" } else { "https" };

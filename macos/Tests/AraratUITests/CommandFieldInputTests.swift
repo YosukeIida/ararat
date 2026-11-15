@@ -10,6 +10,10 @@ struct CommandFieldInputTests {
         let editor = try #require(field.cell?.fieldEditor(for: field) as? CommandFieldEditor)
         #expect(editor.isFieldEditor)
         #expect(field.cell?.fieldEditor(for: field) === editor)
+        // The custom cell starts non-editable and non-selectable, so the field sets both itself.
+        #expect(field.isEditable)
+        #expect(field.isSelectable)
+        #expect(field.alignment == .natural)
     }
 
     @Test func pasteReplacesTheSelectionAndRejoinsAddressesOnly() {
