@@ -4,15 +4,29 @@ import AraratKit
 import AraratUI
 
 /// P4 item 1: the window moves from the sidebar's empty areas and from the frame around the page
-/// card, and not from a row, a dock cell or a control (the owner, 2026-11-15). The check posts a
-/// pressed drag and reads the window's frame; it also captures the row list's scroller after a
-/// scroll (P4 item 5), which needs the same drawn sidebar.
+/// card, and not from a row, a dock cell or a control (the owner, 2026-11-15). Each step posts a
+/// pressed drag at the window server and reads the window's frame. The events go to the HID tap
+/// because `NSWindow.performDrag(with:)` does not start from an event injected into the app's own
+/// queue: measured on the host (2026-11-16), a pre-pressed event returns at once and the frame
+/// stays, while an event the window server delivers starts the drag and follows the later moves.
+/// The check also captures the row list's scroller after a scroll (P4 item 5), which needs the
+/// same drawn sidebar.
 @MainActor
 final class WindowDragCheckState {
-    static let names = ["seed", "regions", "row_keeps_frame", "cell_keeps_frame", "sidebar_drag",
-                        "above_card_drag", "header_point", "scroller_overlay", "scroller_after_scroll",
-                        "scroller_hidden_immediately"]
-    static let screens = ["capture_sidebar", "capture_scroller", "capture_scroller_later", "capture_scroller_horizontal"]
+    /// One posted gesture: where the press lands, how far the pointer travels, and whether the
+    /// window is expected to follow it.
+    struct Step {
+        var name: String
+        var point: String
+        var delta: NSPoint
+        var movesWindow: Bool
+    }
+
+    static let names = ["seed", "regions", "header_point", "sidebar_drag", "header_drag",
+                        "above_card_drag", "cell_keeps_frame", "row_keeps_frame", "scroller_overlay",
+                        "scroller_after_scroll", "scroller_hidden_immediately"]
+    static let screens = ["capture_sidebar", "capture_scroller", "capture_scroller_later",
+                          "capture_scroller_horizontal"]
 
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
@@ -20,10 +34,12 @@ final class WindowDragCheckState {
     var waitName = ""
     var waitTicks = 0
     var frameBefore = NSRect.zero
-    var dragPoint = NSPoint.zero
     var dragDelta = NSPoint.zero
     var points: [String: NSPoint] = [:]
     var targets: [String: String] = [:]
+    var steps: [Step] = []
+    var stepIndex = 0
+    var dragDeadline: TimeInterval = 0
     var laterDeadline: TimeInterval = 0
     var capturing = false
 
@@ -48,7 +64,7 @@ final class WindowDragCheckState {
         let names = Self.conditionNames(screen: screen)
         return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
                 "failed_conditions": names.filter { conditions[$0] != true },
-                "images": images, "details": details, "targets": targets,
+                "images": images, "details": details, "targets": targets, "steps": steps.map(\.name),
                 "points": points.mapValues { ["x": $0.x, "y": $0.y] }, "wait": waitName,
                 "unverified": ["A double-click on the title bar areas (the check posts one press per drag)",
                                "A full-screen window's refusal (pinned as a pure rule)",
@@ -62,7 +78,7 @@ extension Runtime {
         guard let check = windowDragCheck, !check.capturing, let sidebar, let container else { return }
         let window = host.window()
         func wait(_ name: String) {
-            check.wait(name, "phase=\(browserCheckPhase) frame=\(window.frame) key=\(window.isKeyWindow) visible=\(window.isVisible)")
+            check.wait(name, "phase=\(browserCheckPhase) step=\(check.stepIndex) frame=\(window.frame) key=\(window.isKeyWindow) visible=\(window.isVisible)")
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
@@ -73,30 +89,29 @@ extension Runtime {
             check.images[name] = path
             return true
         }
-        func post(_ type: NSEvent.EventType, at point: NSPoint) {
-            // The posted location is read back as `locationInWindow` (NSEvent.mouseEvent stores
-            // it unchanged; the window number only picks the window), so these are window points,
-            // as the split-divider check's are.
-            guard let event = NSEvent.mouseEvent(with: type, location: point,
-                                                 modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                 windowNumber: window.windowNumber, context: nil,
-                                                 eventNumber: 1, clickCount: 1, pressure: 1) else { return }
-            NSApp.postEvent(event, atStart: false)
+        /// A real event at the HID tap. CG's screen origin is the main display's top-left corner,
+        /// so AppKit's bottom-left point is flipped before posting.
+        func post(_ type: CGEventType, at point: NSPoint) {
+            let appKitScreen = window.convertPoint(toScreen: point)
+            guard let main = NSScreen.screens.first,
+                  let source = CGEventSource(stateID: .hidSystemState),
+                  let event = CGEvent(mouseEventSource: source, mouseType: type,
+                                      mouseCursorPosition: CGPoint(x: appKitScreen.x, y: main.frame.height - appKitScreen.y),
+                                      mouseButton: .left) else { return }
+            event.post(tap: .cghidEventTap)
         }
-        /// A press, one move and a release at window points. The end point is computed before
-        /// the window moves, so the pointer's travel is the delta the window follows.
-        func drag(from start: NSPoint, by delta: NSPoint) {
-            let end = NSPoint(x: start.x + delta.x, y: start.y + delta.y)
-            post(.leftMouseDown, at: start)
-            post(.leftMouseDragged, at: end)
-            post(.leftMouseUp, at: end)
+        /// Press, move and release over time: the drag session needs the press delivered before
+        /// the move, and the frame is read after the release.
+        func start(_ step: WindowDragCheckState.Step) {
+            let startPoint = check.points[step.point] ?? .zero
+            let endPoint = NSPoint(x: startPoint.x + step.delta.x, y: startPoint.y + step.delta.y)
             check.frameBefore = window.frame
-            check.dragPoint = start
-            check.dragDelta = delta
-        }
-        func moved() -> Bool {
-            abs(window.frame.origin.x - (check.frameBefore.origin.x + check.dragDelta.x)) <= 2
-                && abs(window.frame.origin.y - (check.frameBefore.origin.y + check.dragDelta.y)) <= 2
+            check.dragDelta = step.delta
+            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame)\n".utf8))
+            post(.leftMouseDown, at: startPoint)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { post(.leftMouseDragged, at: endPoint) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { post(.leftMouseUp, at: endPoint) }
+            check.dragDeadline = ProcessInfo.processInfo.systemUptime + 0.9
         }
         func restore() {
             window.setFrameOrigin(check.frameBefore.origin)
@@ -108,7 +123,9 @@ extension Runtime {
         switch browserCheckPhase {
         case 0:
             guard window.isVisible, window.isKeyWindow, !sidebar.checkCreateSpace.open,
-                  let rowPoint = sidebar.checkRowPoint(), let cellPoint = sidebar.checkDockCellPoint() else { wait("key window, row and dock cell"); return }
+                  let rowPoint = sidebar.checkRowPoint(), let cellPoint = sidebar.checkDockCellPoint() else {
+                wait("key window, row and dock cell"); return
+            }
             check.points = sidebar.checkDragAreaPoints()
             check.points["header_gap"] = container.checkHeaderGapPoint()
             check.points["above_card"] = container.checkAboveCardPoint()
@@ -117,8 +134,8 @@ extension Runtime {
             for (name, point) in check.points {
                 check.targets[name] = container.checkPressTarget(at: point)
             }
-            // The empty sidebar areas reach the sidebar (or its list) and the card's margins the
-            // container; both are the window's title bar.
+            // The empty sidebar areas reach the sidebar (or its list), the header's gap its own
+            // view and the card's margins the container: all of them are the title bar.
             let empty = ["below_rows", "dock_gap", "column_gap"].compactMap { check.targets[$0] }
             check.mark("regions", check.targets["above_card"] == "frame"
                        && check.targets["header_gap"] == "header"
@@ -128,35 +145,42 @@ extension Runtime {
             check.mark("header_point", check.targets["header_gap"] == "header")
             check.mark("seed", !empty.isEmpty)
             if screen { check.mark("capture_sidebar", capture("sidebar")) }
-            drag(from: rowPoint, by: NSPoint(x: 0, y: -20))
+            let sidebarPoint = check.points["below_rows"] != nil ? "below_rows"
+                : (check.points["dock_gap"] != nil ? "dock_gap" : "column_gap")
+            check.steps = [
+                .init(name: "sidebar_drag", point: sidebarPoint,
+                      delta: NSPoint(x: 60, y: -40), movesWindow: true),
+                .init(name: "header_drag", point: "header_gap", delta: NSPoint(x: 40, y: -30), movesWindow: true),
+                .init(name: "above_card_drag", point: "above_card", delta: NSPoint(x: -40, y: 30), movesWindow: true),
+                .init(name: "cell_keeps_frame", point: "dock_cell", delta: NSPoint(x: 0, y: -6), movesWindow: false),
+                .init(name: "row_keeps_frame", point: "row", delta: NSPoint(x: 0, y: -20), movesWindow: false),
+            ]
+            start(check.steps[0])
             browserCheckPhase = 1
         case 1:
-            check.mark("row_keeps_frame", window.frame == check.frameBefore)
+            guard ProcessInfo.processInfo.systemUptime >= check.dragDeadline else { wait("drag \(check.stepIndex)"); return }
+            let step = check.steps[check.stepIndex]
+            let after = window.frame
+            let moved = abs(after.origin.x - (check.frameBefore.origin.x + check.dragDelta.x)) <= 2
+                && abs(after.origin.y - (check.frameBefore.origin.y + check.dragDelta.y)) <= 2
+            check.mark(step.name, step.movesWindow ? moved : after == check.frameBefore)
+            check.details[step.name] = ["from": step.point, "before": ["x": check.frameBefore.origin.x, "y": check.frameBefore.origin.y],
+                                        "after": ["x": after.origin.x, "y": after.origin.y],
+                                        "delta": ["x": check.dragDelta.x, "y": check.dragDelta.y]]
             restore()
-            drag(from: check.points["dock_cell"] ?? .zero, by: NSPoint(x: 0, y: -6))
-            browserCheckPhase = 2
+            check.stepIndex += 1
+            guard check.stepIndex < check.steps.count else {
+                // P4 item 5: the row list is always the overlay knob, and a vertical scroll shows it.
+                check.mark("scroller_overlay", sidebar.checkListScroller.style == .overlay)
+                sidebar.checkScrollList(dx: 0, dy: -24)
+                check.mark("scroller_after_scroll", sidebar.checkListScroller.hasVerticalScroller)
+                if screen { check.mark("capture_scroller", capture("scroller-scroll")) }
+                check.laterDeadline = ProcessInfo.processInfo.systemUptime + 2.0
+                browserCheckPhase = 2
+                return
+            }
+            start(check.steps[check.stepIndex])
         case 2:
-            check.mark("cell_keeps_frame", window.frame == check.frameBefore)
-            restore()
-            drag(from: check.points["below_rows"] ?? check.points["dock_gap"] ?? .zero, by: NSPoint(x: 60, y: -40))
-            browserCheckPhase = 3
-        case 3:
-            check.mark("sidebar_drag", moved())
-            restore()
-            drag(from: check.points["above_card"] ?? .zero, by: NSPoint(x: -40, y: 30))
-            browserCheckPhase = 4
-        case 4:
-            check.mark("above_card_drag", moved())
-            restore()
-            // P4 item 5: the row list is always the overlay knob, and a vertical scroll shows it.
-            let scroller = sidebar.checkListScroller
-            check.mark("scroller_overlay", scroller.style == .overlay)
-            sidebar.checkScrollList(dx: 0, dy: -24)
-            check.mark("scroller_after_scroll", sidebar.checkListScroller.hasVerticalScroller)
-            if screen { check.mark("capture_scroller", capture("scroller-scroll")) }
-            check.laterDeadline = ProcessInfo.processInfo.systemUptime + 2.0
-            browserCheckPhase = 5
-        case 5:
             guard ProcessInfo.processInfo.systemUptime >= check.laterDeadline else { wait("the overlay's fade"); return }
             // Two seconds after the scroll the system's overlay scroller has faded: the capture
             // must show no knob (design reads it).
