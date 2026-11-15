@@ -361,10 +361,7 @@ public final class SidebarContainerView: NSView {
     /// on the card's frame or the private backdrop resolves to this view (see `hitTest`).
     override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// AppKit's own window drag never runs here: `WindowDrag` owns the press, and a full-size
-    /// content view would otherwise let AppKit start a second drag on the same gesture from its
-    /// title strip (design's VM run, 2026-11-16: the strip's press lost x, one lower in the
-    /// window moved both axes).
+    // AppKit's title-strip drag must not run beside WindowDrag's stored-press drag.
     override public var mouseDownCanMoveWindow: Bool { false }
 
     // MARK: P4 item 1 check seams

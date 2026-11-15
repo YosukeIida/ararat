@@ -15,8 +15,7 @@ import AraratUI
 /// The drag views store the press on `mouseDown` and hand it to `performDrag(with:)` on the first
 /// `mouseDragged` past 3 pt (design, 2026-11-16), so this check's posted sequence is the whole
 /// model: without the move nothing moves, and a stationary second press is what runs the
-/// title-bar action. `WindowDrag` traces each of those steps, and the check's own run turns that
-/// trace on, so a VM run shows whether a posted `leftMouseDragged` reaches the drag view at all.
+/// title-bar action.
 /// The check also captures the row list's scroller after a scroll (P4 item 5), which needs the
 /// same drawn sidebar.
 @MainActor
@@ -41,7 +40,6 @@ final class WindowDragCheckState {
     var images: [String: String] = [:]
     var details: [String: Any] = [:]
     var waitName = ""
-    var waitTicks = 0
     /// The frame phase 0 recorded; every step starts from it and the check asserts it.
     var baseFrame = NSRect.zero
     /// A point on the page, away from every drag area: each gesture parks the pointer there, so
@@ -68,15 +66,6 @@ final class WindowDragCheckState {
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
-        FileHandle.standardError.write(Data("ararat-trace: window-drag \(name)=\(value)\n".utf8))
-    }
-
-    func wait(_ name: String, _ value: String) {
-        if waitName != name || waitTicks % 20 == 0 {
-            FileHandle.standardError.write(Data("ararat-trace: window-drag wait=\(name) current=\(value)\n".utf8))
-        }
-        if waitName != name { waitTicks = 0; waitName = name }
-        waitTicks += 1
     }
 
     static func conditionNames(screen: Bool) -> [String] {
@@ -113,7 +102,7 @@ extension Runtime {
         guard let check = windowDragCheck, !check.capturing, let sidebar, let container else { return }
         let window = host.window()
         func wait(_ name: String) {
-            check.wait(name, "phase=\(browserCheckPhase) step=\(check.stepIndex) frame=\(window.frame) key=\(window.isKeyWindow) visible=\(window.isVisible)")
+            check.waitName = name
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
@@ -129,7 +118,6 @@ extension Runtime {
         /// event has already moved (review M1).
         func post(_ type: CGEventType, at point: CGPoint, from previous: CGPoint? = nil) {
             guard let event = WindowDragCheckState.mouseEvent(type, at: point, from: previous) else { return }
-            FileHandle.standardError.write(Data("ararat-trace: window-drag post type=\(type.rawValue) at=\(point) delta=\(event.getIntegerValueField(.mouseEventDeltaX)),\(event.getIntegerValueField(.mouseEventDeltaY)) frame=\(window.frame)\n".utf8))
             event.post(tap: .cghidEventTap)
         }
         /// The window point in AppKit screen coordinates and in CG's top-left screen coordinates.
@@ -186,10 +174,6 @@ extension Runtime {
                 }
                 return clamped
             }
-            // The target this check expects the press to reach, computed before it is posted: a
-            // prediction, not the view AppKit dispatches to (review L3 of review 6).
-            let predictedHit = container.checkPressTarget(at: startPoint)
-            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) predicted_hit=\(predictedHit) key=\(window.isKeyWindow)\n".utf8))
             let startCG = cgScreen(posted(startScreen)), endCG = cgScreen(posted(endScreen)), neutralCG = cgScreen(posted(neutralScreen))
             // A dragged point just past 3 pt comes first: that point is what hands the press to
             // the window server, and the end point is the motion that follows the hand-over, so

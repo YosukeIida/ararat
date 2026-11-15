@@ -122,9 +122,6 @@ enum WindowDrag {
         /// mouse-down event itself.
         let press: NSEvent
         let action: WindowDoubleClickAction
-        /// Weak: a drag the window server swallows the release of must not keep its window alive
-        /// through a view → press → window → content view cycle (review L1 of review 8).
-        private weak var window: NSWindow?
         private let hand: (NSEvent) -> Void
         private let run: (WindowDoubleClickAction) -> Void
         private(set) var state: Press
@@ -143,12 +140,9 @@ enum WindowDrag {
             guard event.type == .leftMouseDown, let window = view.window,
                   allowsDrag(styleMask: window.styleMask),
                   pressTarget(in: window, at: event.locationInWindow) === view else {
-                WindowDrag.trace("press refused view=\(type(of: view)) at=\(WindowDrag.text(event.locationInWindow))"
-                                 + " type=\(event.type.rawValue) window=\(view.window != nil)")
                 return nil
             }
             self.press = event
-            self.window = window
             self.action = action
             self.state = Press(origin: window.convertPoint(toScreen: event.locationInWindow),
                                clickCount: event.clickCount)
@@ -157,63 +151,21 @@ enum WindowDrag {
                 guard let window else { return }
                 WindowDrag.perform(action, in: window)
             }
-            WindowDrag.trace("press click=\(event.clickCount) at=\(WindowDrag.text(state.origin))"
-                             + " frame=\(frameText) key=\(keyText)"
-                             + " visible=\(visibleText) active=\(NSApp.isActive)")
         }
 
         /// The pointer while the button is down. The first point past the threshold hands the
         /// stored press over exactly once; later points, and points within the threshold, ask for
         /// nothing.
         func dragged(to point: NSPoint) {
-            let distance = hypot(point.x - state.origin.x, point.y - state.origin.y)
-            let step = state.moved(to: point)
-            guard step == .drag else {
-                WindowDrag.trace("dragged d=\(String(format: "%.1f", distance))"
-                                 + " handed=\(state.handedOver) step=none at=\(WindowDrag.text(point))")
-                return
-            }
-            WindowDrag.trace("dragged d=\(String(format: "%.1f", distance)) step=drag"
-                             + " click=\(state.clickCount) at=\(WindowDrag.text(point))"
-                             + " frame=\(frameText) key=\(keyText)"
-                             + " visible=\(visibleText) active=\(NSApp.isActive)")
+            guard state.moved(to: point) == .drag else { return }
             hand(press)
-            WindowDrag.trace("performDrag returned frame=\(frameText)")
         }
 
         /// The button came up. A second click that stayed within the threshold runs the action
         /// once; anything else, including a press that moved, asks for nothing.
         func released(at point: NSPoint) {
-            let step = state.released(at: point)
-            WindowDrag.trace("released step=\(step) click=\(state.clickCount)"
-                             + " handed=\(state.handedOver) up=\(WindowDrag.text(point))"
-                             + " frame=\(frameText)")
-            guard step == .act else { return }
+            guard state.released(at: point) == .act else { return }
             run(action)
         }
-
-        private var frameText: String { window.map { WindowDrag.text($0.frame) } ?? "nil" }
-        private var keyText: String { window.map { String($0.isKeyWindow) } ?? "nil" }
-        private var visibleText: String { window.map { String($0.isVisible) } ?? "nil" }
-    }
-
-    /// `--ararat-trace-window-drag`, and on for the window-drag check, which posts its gestures at
-    /// the window server: one line per press, per dragged point and around the hand-over, so a VM
-    /// run shows whether `mouseDragged` arrives for a posted drag at all (design, 2026-11-16).
-    static let tracing = CommandLine.arguments.contains("--ararat-trace-window-drag")
-        || CommandLine.arguments.contains("--ararat-check=window-drag")
-        || CommandLine.arguments.contains("--ararat-screen=window-drag")
-
-    static func trace(_ line: @autoclosure () -> String) {
-        guard tracing else { return }
-        FileHandle.standardError.write(Data(("ararat-trace: window-drag " + line() + "\n").utf8))
-    }
-
-    private static func text(_ point: NSPoint) -> String {
-        String(format: "%.1f,%.1f", point.x, point.y)
-    }
-
-    private static func text(_ rect: NSRect) -> String {
-        String(format: "%.1f,%.1f %.1fx%.1f", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
     }
 }
