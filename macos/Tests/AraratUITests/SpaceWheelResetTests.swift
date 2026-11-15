@@ -114,6 +114,23 @@ struct SpaceWheelRecordingResetTests {
         }
     }
 
+    @Test func directionChangeAndReturnToStartKeepTheWheelPause() {
+        for inverted in [false, true] {
+            let sidebar = SidebarView(snapshot: snapshot(2))
+            sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
+            defer { sidebar.finishScrollPresentation() }
+            let dx = inverted ? 2.0 : -2.0
+            #expect(sidebar.decideSpaceScroll(wheel(dx: dx, time: 100, inverted: inverted)).action == "settle 2->3 switched")
+            sidebar.update(snapshot: snapshot(3))
+            sidebar.showSpace(at: 2)
+            sidebar.spaceScrollDirection = .reversed
+            #expect(sidebar.decideSpaceScroll(wheel(dx: dx, time: 100.249, inverted: inverted)).action == "ignored")
+            #expect(sidebar.spaceShown == 2)
+            #expect(sidebar.decideSpaceScroll(wheel(dx: dx, time: 100.25, inverted: inverted)).action == "settle 2->1 switched")
+            #expect(sidebar.spaceShown == 1)
+        }
+    }
+
     @Test func playingPullPassesVerticalAndSettlesOnClassifiedReverse() {
         for reversed in [false, true] {
             for inverted in [false, true] {

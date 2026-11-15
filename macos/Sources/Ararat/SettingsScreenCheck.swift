@@ -114,6 +114,7 @@ final class SettingsScreenCheck {
     // the reversed wheel must mirror.
     var wheelStart = ""
     var naturalDelta = 0
+    var naturalWheelSentAt = -Double.infinity
     // U27d: the Today row the New Tab row's close-up is measured on, its frame before the switch,
     // and whether the header tooltip showed before the Tooltips switch was turned off.
     var appearanceTodayRow = ""
@@ -1229,6 +1230,7 @@ extension Runtime {
             check.wheelStart = spaces[start].id
             trace("natural wheel from \(start)")
             guard settingsSpacesSendWheel() else { end("scroll_wheel_natural", false); return }
+            check.naturalWheelSentAt = ProcessInfo.processInfo.systemUptime
             step(6)
         case 6:
             guard let start = index(check.wheelStart), snapshot.shownSpaceId != check.wheelStart,
@@ -1266,7 +1268,10 @@ extension Runtime {
                 note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) direction=\(probe.spaceScrollDirectionLabel) shown=\(snapshot.shownSpaceId ?? "-")")
                 return
             }
-            // The reopened window's card shows the value the record kept.
+            // Reopening Settings and changing direction must not bypass the sidebar's wheel pause.
+            guard ProcessInfo.processInfo.systemUptime - check.naturalWheelSentAt >= 0.250 else {
+                note("waiting for the natural wheel's 250 ms pause"); return
+            }
             check.report("scroll_write_reopen", probe.marker(SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) != nil)
             trace("reversed wheel")
             guard settingsSpacesSendWheel() else { end("scroll_wheel_reversed", false); return }
