@@ -18,7 +18,7 @@ final class DownloadsCheck {
   var hoverStart: TimeInterval = 0
   var privatePass = 0
   var privateBefore: Set<String> = []
-  static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
+  static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "popover_cancel_button", "library_back_arrow", "popover_remove_button", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
   static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "popover_rows_layout", "page_actions_fit", "page_rows_layout"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
@@ -148,6 +148,10 @@ extension Runtime {
       guard number(find("fixture.bin"), "received") > check.received else { wait("next progress update"); return }
       let identity = (state["rows"] as? [String: UInt])?[check.slowID]
       check.mark("popover_row_stable", identity != nil && identity == check.rowIdentity)
+      // p4checks: the popover row's own Cancel button, not the engine host call.
+      let pressed = sidebar.checkPressDownloadsRowButton(action: "cancel", id: check.slowID)
+      check.mark("popover_cancel_button", pressed)
+      check.mark("cancel", pressed)
       sidebar.downloadsCheckClosePopover()
       browserCheckPhase = 51
     case 51:
@@ -170,12 +174,24 @@ extension Runtime {
         check.mark("page_rows_layout", state["page_rows_layout"] as? Bool == true)
         check.mark("capture_library", capture("library", window: window))
       }
-      guard host.performDownloadAction("cancel", identifier: check.slowID) else { fail("cancel was not offered"); return }
-      browserCheckPhase = 8
-    case 8:
-      guard let item = items.first(where: { itemID($0) == check.slowID }), number(item, "state") == 2 else { wait("cancelled item"); return }
-      check.mark("cancel", actions(item).contains("remove"))
-      guard host.performDownloadAction("remove", identifier: check.slowID) else { fail("remove cancelled item failed"); return }
+      // p4checks: the page's own back arrow closes the Library.
+      guard sidebar.checkPressLibraryBack() else { check.mark("library_back_arrow", false); browserCheckPhase = 71; return }
+      browserCheckPhase = 71
+    case 71:
+      guard state["library_open"] as? Bool == false else { wait("the back arrow closed the Library"); return }
+      check.mark("library_back_arrow", true)
+      guard clickLibrary() else { fail("cannot post the downloads click again"); return }
+      browserCheckPhase = 72
+    case 72:
+      guard state["list"] as? Bool == true else { wait("popover for the remove button"); return }
+      guard let item = items.first(where: { itemID($0) == check.slowID }), number(item, "state") == 2 else {
+        wait("cancelled item in the popover"); return
+      }
+      check.mark("cancel", check.conditions["cancel"] == true && actions(item).contains("remove"))
+      // p4checks: the popover row's own Remove button.
+      let removed = sidebar.checkPressDownloadsRowButton(action: "remove", id: check.slowID)
+      check.mark("popover_remove_button", removed)
+      sidebar.downloadsCheckClosePopover()
       browserCheckPhase = 9
     case 9:
       guard !items.contains(where: { itemID($0) == check.slowID }) else { wait("removed item"); return }

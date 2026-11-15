@@ -14,7 +14,7 @@ final class ExtensionActionsCheck {
                          "repin", "action_anchor", "action_popup", "menu_autoenable_off", "ext_actions_labels", "remove_cancel",
                          "multi_fixtures", "pin_three", "fit_three_240", "fit_three_232",
                          "fit_two_232", "fit_two_199", "fit_two_164", "icons16", "gaps4",
-                         "favourite_shift", "multi_restores"]
+                         "favourite_shift", "multi_restores", "manage_opens_page"]
     static let screens = ["capture_action", "capture_overflow", "capture_three_actions"]
 
     var conditions: [String: Bool] = [:]
@@ -36,6 +36,8 @@ final class ExtensionActionsCheck {
     var actionAnchor: NSRect?
     var lastPhase = -1
     var phaseStart = 0
+    /// p4checks: readings a phase records (the Manage Extension tab's URL).
+    var details: [String: Any] = [:]
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -59,7 +61,7 @@ final class ExtensionActionsCheck {
         return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
                 "failed_conditions": names.filter { conditions[$0] != true },
                 "wait": waitName, "images": images, "fixture_id": fixtureID,
-                "remove_result": removeResult,
+                "remove_result": removeResult, "details": details,
                 "unverified": ["A force-pinned (policy) refusal: the scratch profile has no policy",
                                "An incognito refusal: extensions are disabled in the private profile here",
                                "The uninstall sheet's cancel path when the browser-modal sheet is not findable"]]
@@ -460,6 +462,28 @@ extension Runtime {
                 wait("the original pin restored"); return
             }
             check.mark("multi_restores")
+            // p4checks: the extension menu's own Manage Extension opens the profile's
+            // chrome://extensions page for this extension, in a tab.
+            guard sidebar.checkPerformMenuCommand(check.fixtureID, title: "Manage Extension") else {
+                check.mark("manage_opens_page", false)
+                let result = check.diagnostics(screen: screen)
+                finishBrowserCheck(ok: false, values: result)
+                return
+            }
+            browserCheckPhase = 20
+        case 20:
+            let page = (host.tabs() as? [any ARTabAPI])?.first { $0.url.hasPrefix("chrome://extensions/?id=") }
+            guard let page else {
+                if phaseTicks() > 120 {
+                    check.mark("manage_opens_page", false)
+                    let result = check.diagnostics(screen: screen)
+                    finishBrowserCheck(ok: false, values: result)
+                    return
+                }
+                wait("chrome://extensions tab"); return
+            }
+            check.details["manage_url"] = page.url
+            check.mark("manage_opens_page", page.url == "chrome://extensions/?id=" + check.fixtureID)
             let result = check.diagnostics(screen: screen)
             finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
         default:

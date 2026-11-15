@@ -115,6 +115,52 @@ public final class SettingsCheckProbe {
     /// The keycaps the row shows, for the check's recorder condition.
     public var littleWindowHotKeyCaps: [String] { LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey) }
 
+    // MARK: p4checks, the Shortcuts pane's recorder
+
+    /// The row's own record button starts the recording (`toggleRecording`), and the pane's
+    /// `ShortcutsRecorderView` hands the typed event to the same model, so the check drives the
+    /// real recorder path rather than writing a binding it made up.
+    public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
+    public func beginShortcutRecording(_ command: String) { model.keyBindings.toggleRecording(command) }
+    public func cancelShortcutRecording() { model.keyBindings.cancelRecording() }
+    public func resetShortcut(_ command: String) { model.resetShortcut(command) }
+    @discardableResult
+    public func recordShortcutKey(_ event: NSEvent) -> Bool {
+        // The pane's own recorder view takes the event while a row records (it is the first
+        // responder); the model's handler is the fallback when the view is not in the tree.
+        guard let recorder = recorderView() else { return model.keyBindings.handle(event) }
+        recorder.keyDown(with: event)
+        return true
+    }
+    public var shortcutRecorderPresent: Bool { recorderView() != nil }
+    public var shortcutRecorderIsFirstResponder: Bool {
+        guard let recorder = recorderView() else { return false }
+        return window.firstResponder === recorder
+    }
+    private func recorderView() -> ShortcutsRecorderView? {
+        func find(_ view: NSView) -> ShortcutsRecorderView? {
+            if let recorder = view as? ShortcutsRecorderView { return recorder }
+            for sub in view.subviews { if let recorder = find(sub) { return recorder } }
+            return nil
+        }
+        return window.contentView.flatMap(find)
+    }
+    public func shortcutKey(_ command: String) -> KeyCombination? { model.keyBindings.binding(command: command)?.key }
+    /// The key the app menu's Ararat Commands item carries for a command, which a recorded key
+    /// changes through `KeyBindingsModel.receive` and its registered menu.
+    public func menuKeyEquivalent(_ command: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+        guard let item = NSApp.mainMenu?.items.compactMap({ $0.submenu }).compactMap({ menu in
+            menu.items.first { $0.identifier?.rawValue == command }
+        }).first else { return nil }
+        return (item.keyEquivalent, item.keyEquivalentModifierMask)
+    }
+
+    // MARK: p4checks, the toolbar
+
+    public var toolbarItems: [String: NSRect] { controller.toolbarCheckItems }
+    public var toolbarOwnCapsule: Bool { controller.toolbarCheckOwnCapsule }
+    public var toolbarTitle: (text: String, alpha: Double) { controller.toolbarCheckTitle }
+
     // MARK: U27w, the Websites pane
 
     /// The seven defaults the pane draws, read from the core, and the same setter its menus call.

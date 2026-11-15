@@ -190,6 +190,8 @@ public final class SidebarContainerView: NSView {
         if let window { NotificationCenter.default.post(name: main ? NSWindow.didBecomeMainNotification : NSWindow.didResignMainNotification, object: window) }
     }
     public var sidebarState: String { state.mode.rawValue }
+    /// p4checks: the state `selectionChanged` keeps, so the create page's own notify can be read.
+    public var sidebarHasSelection: Bool { state.hasSelection }
     public var sidebarAnimating: Bool { moving }
     public var sidebarCloseButton: NSButton? { windowButtons?.subviews.first as? NSButton }
     public var hasSidebarLights: Bool { windowButtons?.subviews.count == 3 }

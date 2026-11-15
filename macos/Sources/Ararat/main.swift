@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -590,6 +590,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var dockCheck: DockScreenCheck?
   var organizeConditions: [String: Bool] = [:]
   var organizeCancelStarted = false
+  /// p4checks: when the hover-hold drag began, so a folder that never opens is a named failure.
+  var organizeHoverStarted: TimeInterval = 0
   var organizeImage: String?
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
@@ -611,6 +613,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var keyboardStaleIndex = 0
   var keyboardFindRequest = 0
   var keyboardRestoreItem = ""
+  // p4checks: the Library phase's second archived row, its presses and their bounded waits.
+  var keyboardLibraryDeleteItem = ""
+  var keyboardLibraryDeleteGone = false
+  var keyboardRowWaited = 0
+  var keyboardRestoreWaited = 0
   var keyboardFindOtherItem = ""
   var keyboardFindOtherLive = ""
   var keyboardFindTeardownText = ""
@@ -786,6 +793,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   // P4 item 6: the create-space check's injected core error (always 0 in a shipping run).
   var createSpaceFailureInjections = 0
   var createSpaceCheck: CreateSpaceCheckState?
+  var folderUploadCheck: FolderUploadCheckState?
   var windowDragCheck: WindowDragCheckState?
   var pinsIsolationChild: Runtime?
   var siteFixture: SiteFixtureServer?
@@ -921,10 +929,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -965,10 +973,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "onboarding" { browserCheckMode = "screen-onboarding" }
       if screenName == "window-drag" { browserCheckMode = "screen-window-drag" }
       if screenName == "create-space" { browserCheckMode = "screen-create-space" }
+      if screenName == "folder-upload" { browserCheckMode = "screen-folder-upload" }
       // U27a: one launch per settings pane, plus the frame and the search. The argument
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -3256,6 +3265,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "site-controls" || mode == "screen-site-controls" { timeoutValues.merge((siteControlsCheck ?? SiteControlsCheck()).diagnostics(screen: mode == "screen-site-controls")) { _, new in new } }
     if mode == "window-drag" || mode == "screen-window-drag" { timeoutValues.merge((windowDragCheck ?? WindowDragCheckState()).diagnostics(screen: mode == "screen-window-drag")) { _, new in new } }
     if mode == "create-space" || mode == "screen-create-space" { timeoutValues.merge((createSpaceCheck ?? CreateSpaceCheckState()).diagnostics(screen: mode == "screen-create-space")) { _, new in new } }
+    if mode == "folder-upload" || mode == "screen-folder-upload" { timeoutValues.merge(folderUploadCheckDiagnostics(screen: mode == "screen-folder-upload")) { _, new in new } }
       if mode == "ext-actions" || mode == "screen-ext-actions" { timeoutValues.merge((extensionActionsCheck ?? ExtensionActionsCheck()).diagnostics(screen: mode == "screen-ext-actions")) { _, new in new } }
       if mode == "little-window" || mode == "screen-little-window" { timeoutValues.merge(littleWindowCheckDiagnostics(screen: mode == "screen-little-window")) { _, new in new } }
       if mode == "onboarding" || mode == "screen-onboarding" {
@@ -3395,6 +3405,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "site-controls" || mode == "screen-site-controls" { siteControlsCheckTick(host, screen: mode == "screen-site-controls"); return }
     if mode == "window-drag" || mode == "screen-window-drag" { windowDragCheckTick(host, screen: mode == "screen-window-drag"); return }
     if mode == "create-space" || mode == "screen-create-space" { createSpaceCheckTick(host, screen: mode == "screen-create-space"); return }
+    if mode == "folder-upload" || mode == "screen-folder-upload" { folderUploadCheckTick(host, screen: mode == "screen-folder-upload"); return }
     if mode == "ext-actions" || mode == "screen-ext-actions" { extensionActionsCheckTick(host, screen: mode == "screen-ext-actions"); return }
     if mode == "little-window" || mode == "screen-little-window" { littleWindowCheckTick(host, screen: mode == "screen-little-window"); return }
     if mode == "onboarding" || mode == "screen-onboarding" { onboardingCheckTick(host, screen: mode == "screen-onboarding"); return }
@@ -4100,7 +4111,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["stock_browsers"] = stock
       let required = ["page_ime", "reload", "new_tab_panel", "location_focus", "location_navigated", "today_committed",
         "pinned_saved", "back", "find_previous", "protocol_requested", "extension_command", "extension_action",
-        "devtools", "forced_search", "default_space_cross_profile", "suggestion_space_cross_profile", "archive_restore", "profile_shortcuts", "inactive_reassignment", "two_window_shortcuts",
+        "devtools", "forced_search", "default_space_cross_profile", "suggestion_space_cross_profile", "archive_restore", "library_restore_press", "library_delete_press", "profile_shortcuts", "inactive_reassignment", "two_window_shortcuts",
         "two_window_teardown", "inactive_profile_teardown", "profile_reload", "stale_profile_rejected", "stale_search_rejected",
         "closed_host_rejected", "invalid_targets", "stale_suggestion_actions", "core_menu_collision", "command_suggestions", "suggestion_panel_commands", "suggestion_space_commands", "suggestion_close_tab", "folder_and_move_suggestions", "tab_suggestion", "duplicate", "close", "fullscreen_new", "fullscreen_location",
         "fullscreen_find_dismissed", "fullscreen_page_escape", "fullscreen_close", "find_pasteboard", "find_zero", "find_visibility", "find_reopen_navigation", "find_devtools_geometry", "find_resized_geometry", "find_tab_guard", "find_background_result", "find_delayed_background", "find_replace_guard", "find_pending_teardown", "find_host_teardown", "find_profile_guard"]
@@ -4993,17 +5004,80 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first(where: { $0.url == baseURL + "?restore" }),
             host.activeItemId() == row.id else { return }
       keyboardRestoreItem = row.id
-      adapter?.close(id: row.id, archive: true)
-      browserCheckPhase = 364
+      keyboardLibraryDeleteItem = ""
+      // p4checks: a second archived row, so the Library's own delete button has one to remove.
+      workspace?.createTab(url: "data:text/html,<title>keyboard delete row</title>") { [weak self] result in
+        guard let self else { return }
+        guard case .success(let created) = result, let id = created.selectedId else { return }
+        self.keyboardLibraryDeleteItem = id
+        self.adapter?.close(id: id, archive: true)
+        self.adapter?.close(id: row.id, archive: true)
+        self.browserCheckPhase = 364
+      }
+      browserCheckPhase = 100
     case 364:
       guard snapshot.archive.contains(where: { $0.id == keyboardRestoreItem }),
-            !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }) else { return }
-      restoreWorkspaceItem(keyboardRestoreItem)
+            !keyboardLibraryDeleteItem.isEmpty,
+            snapshot.archive.contains(where: { $0.id == keyboardLibraryDeleteItem }),
+            !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
+            !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardLibraryDeleteItem }) else { return }
+      // Leaving the item's space first makes the restore prove it selects and shows it.
+      switchWorkspaceSpace("default")
+      browserCheckPhase = 3641
+    case 3641:
+      guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default" else { return }
+      guard let sidebar, !sidebar.libraryOpen else { return }
+      keyboardLibraryDeleteGone = false
+      sidebar.setLibraryOpen(true)
+      browserCheckPhase = 3642
+    case 3642:
+      guard let sidebar, sidebar.libraryOpen, !keyboardLibraryDeleteItem.isEmpty else { return }
+      // The Library row's own delete button: the closure the app wires to deleteArchive.
+      guard sidebar.checkPressArchiveRowButton(id: keyboardLibraryDeleteItem, restore: false) else {
+        keyboardResults["library_delete_press"] = false
+        browserCheckPhase = 3643
+        return
+      }
+      browserCheckPhase = 3643
+    case 3643:
+      guard let sidebar else { return }
+      let archived = snapshot.archive.contains { $0.id == keyboardLibraryDeleteItem }
+      let listed = sidebar.checkLibraryRowPresent(id: keyboardLibraryDeleteItem)
+      if archived || listed {
+        if keyboardRowWaited < 60 { keyboardRowWaited += 1; return }
+        keyboardResults["library_delete_press"] = false
+      } else {
+        keyboardResults["library_delete_press"] = true
+      }
+      keyboardLibraryDeleteGone = (keyboardResults["library_delete_press"] as? Bool) == true
+      keyboardRowWaited = 0
+      // The archive row's own restore control; the app's A3 completion closes the Library and
+      // moves the sidebar to the item's space.
+      guard sidebar.checkPressArchiveRowButton(id: keyboardRestoreItem, restore: true) else {
+        keyboardResults["library_restore_press"] = false
+        browserCheckPhase = 365
+        return
+      }
       browserCheckPhase = 365
     case 365:
-      guard snapshot.selectedId == keyboardRestoreItem, host.activeItemId() == keyboardRestoreItem,
-            (host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem && $0.url == baseURL + "?restore" }) else { return }
+      guard let sidebar else { return }
+      let ready = snapshot.selectedId == keyboardRestoreItem && host.activeItemId() == keyboardRestoreItem
+        && (host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem && $0.url == baseURL + "?restore" }
+      if !ready {
+        if keyboardRestoreWaited < 120 { keyboardRestoreWaited += 1; return }
+        keyboardResults["archive_restore"] = false
+        browserCheckPhase = 366
+        return
+      }
       keyboardResults["archive_restore"] = true
+      // A3: the restore's own completion closes the Library, shows the item's space and selects
+      // the row. The restore alone (above) does not.
+      let libraryClosed = !sidebar.libraryOpen
+      let spaceShown = snapshot.shownSpaceId == "named" && sidebar.spaceShown == snapshot.spaces.firstIndex { $0.id == "named" }
+      let rowSelected = sidebar.selectedRowID == keyboardRestoreItem
+      keyboardResults["library_restore_press"] = libraryClosed && spaceShown && rowSelected
+        && (keyboardResults["library_delete_press"] as? Bool) == true
+      keyboardRestoreWaited = 0
       adapter?.close(id: keyboardRestoreItem, archive: false)
       browserCheckPhase = 366
     case 366:
@@ -6752,6 +6826,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         finishBrowserCheck(ok: unchanged && frontUnchanged && noProcess && stock == 0,
           values: ["scheme": protocolScheme, "handler": protocolHandler?.path ?? "", "dialog_shown": protocolShown,
             "cancelled": protocolCancelled, "prefs_unchanged": unchanged, "front_unchanged": frontUnchanged,
+            "external_scheme_row": protocolShown && protocolCancelled && unchanged && frontUnchanged && noProcess,
             "pref_before": protocolPrefBefore ?? "", "pref_after": pref,
             "front_before": protocolFrontBefore ?? "", "front_after": front, "pids_before": before.sorted(),
             "new_pids": protocolNewPids.sorted(), "app_launch_observed": protocolAppLaunchObserved,
@@ -8001,7 +8076,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel"] + (screen ? ["drop_line_image"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -8066,10 +8141,75 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["escape_cancel"] = organizeCancelStarted && row("cancel")?.parentId == space.pinnedId
+      // p4checks: an empty favourites area takes its first tab through onFirstFavorite, and a
+      // closed folder opens under a held drag through onOpenFolder.
+      if !space.favorites.isEmpty {
+        session.queue.sync {
+          for id in space.favorites.map(\.id) { _ = try? session.store?.archiveItem(windowId: windowID, id: id) }
+        }
+        let fresh = session.queue.sync { session.store?.snapshot(windowId: windowID) }
+        if let core = fresh { sidebar.update(snapshot: core) }
+        browserCheckPhase = 81
+        return
+      }
+      browserCheckPhase = 81
+    case 81:
+      guard space.favorites.isEmpty, sidebar.organizeCheckIdle else { return }
+      guard begin("cancel", "favorites") else { return }
+      let point = sidebar.dragCheckFavoritesPoint
+      let drop = point.flatMap { sidebar.resolveDropForCheck(position: $0, draggedID: row("cancel")?.id ?? "") }
+      organizeConditions["first_favorite_drop"] = drop?.kind == "favorites" && drop?.container == nil
+      if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
+        organizeImage = image
+      }
+      guard sidebar.organizeCheckEnd() else { return }
+      browserCheckPhase = 82
+    case 82:
+      guard sidebar.organizeCheckIdle else { return }
+      organizeConditions["first_favorite_drop"] = organizeConditions["first_favorite_drop"] == true
+        && row("cancel")?.parentId == space.favoritesId
+      // Close the inner folder again for the hover-hold.
+      session.queue.sync { _ = try? session.store?.setFolderCollapsed(windowId: windowID, id: "organize-inner", collapsed: true) }
+      let fresh = session.queue.sync { session.store?.snapshot(windowId: windowID) }
+        if let core = fresh { sidebar.update(snapshot: core) }
+      browserCheckPhase = 83
+    case 83:
+      guard space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == true, sidebar.organizeCheckIdle else { return }
+      organizeHoverStarted = ProcessInfo.processInfo.systemUptime
+      guard begin("favorite", "organize-inner") else { return }
+      browserCheckPhase = 84
+    case 84:
+      // The drag timer's own folderHoverDelay opens the folder while the drag is still held.
+      let innerOpen = space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false
+      let target = sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: row("favorite")?.id ?? "")
+      if innerOpen && target?.kind == "insert" && target?.container == "organize-inner" {
+        organizeConditions["folder_hover_opens"] = true
+        if screen { organizeImage = promptScreenScreenshot(host.window(), name: "organize-hover-open", withoutShadow: true) ?? organizeImage }
+        guard sidebar.organizeCheckEnd() else { return }
+        browserCheckPhase = 85
+        return
+      }
+      // A held drag that never opens is a named failure, not a stall: 3 s is the VM's budget.
+      if ProcessInfo.processInfo.systemUptime - organizeHoverStarted > 3 {
+        organizeConditions["folder_hover_opens"] = false
+        _ = sidebar.organizeCheckEnd()
+        browserCheckPhase = 86
+        return
+      }
+      return
+    case 85:
+      guard sidebar.organizeCheckIdle else { return }
+      organizeConditions["hover_drop"] = row("favorite")?.parentId == "organize-inner"
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
       var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
       if let organizeImage { values["image"] = organizeImage }
       finishBrowserCheck(ok: failed.isEmpty, values: values)
+    case 86:
+      let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
+      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed,
+                                  "hover_wait": ProcessInfo.processInfo.systemUptime - organizeHoverStarted]
+      if let organizeImage { values["image"] = organizeImage }
+      finishBrowserCheck(ok: false, values: values)
     default: break
     }
   }

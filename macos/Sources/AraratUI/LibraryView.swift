@@ -389,6 +389,21 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         if scroll { table.scrollRowToVisible(row); table.layoutSubtreeIfNeeded() }
         return table.view(atColumn: 0, row: row, makeIfNecessary: true) as? ArchiveRowView
     }
+
+    // MARK: p4checks — the page's own controls
+
+    /// Presses an archive row's restore or delete button, the control the pointer and Tab use.
+    func checkPressEntryButton(id: String, restore: Bool) -> Bool {
+        guard let cell = cell(id: id, scroll: true) else { return false }
+        return cell.checkPressButton(restore: restore)
+    }
+    /// Presses the page's back arrow, the control that leaves the Library.
+    func checkPressBack() -> Bool {
+        guard page == .archive else { return downloadsPage.checkPressBack() }
+        guard !back.isHidden else { return false }
+        back.performClick(nil)
+        return true
+    }
     private func focus(id: String, part: Int = 0) {
         focusedID = id; focusedPart = part
         if let cell = cell(id: id, scroll: true) { window?.makeFirstResponder(cell.focusTarget(part)) }

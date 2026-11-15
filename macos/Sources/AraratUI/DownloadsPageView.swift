@@ -195,6 +195,25 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         return true
     }
     @objc private func exitLibrary() { onExit?() }
+    /// p4checks: the page's back arrow, pressed through its button.
+    func checkPressBack() -> Bool {
+        guard !back.isHidden else { return false }
+        back.performClick(nil)
+        return true
+    }
+    /// p4checks: a row's own action button (Open, Show in Finder, …), pressed through it.
+    func checkPressRowButton(id: String, action: String) -> Bool {
+        guard let entry = entries.first(where: { $0.id == id }),
+              entry.actions.contains(action),
+              let row = rowView(id: id) else { return false }
+        return row.checkPress(action: action)
+    }
+    private func rowView(id: String) -> DownloadRowView? {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return nil }
+        table.scrollRowToVisible(index)
+        table.layoutSubtreeIfNeeded()
+        return table.view(atColumn: 0, row: index, makeIfNecessary: true)?.subviews.compactMap { $0 as? DownloadRowView }.first
+    }
 }
 
 @MainActor

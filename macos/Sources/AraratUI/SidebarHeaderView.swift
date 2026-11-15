@@ -91,6 +91,21 @@ public final class SidebarHeaderView: NSView {
         return color.alpha > 0
     }
     public func checkKeys(_ keys: Set<String>, event: NSEvent) { updateKeys(keys, event: event) }
+    /// p4checks: presses one of the header's own buttons, the control the pointer clicks. `menu` is
+    /// not a command here: the … button pops a menu, and a menu item is run by `checkPerformMenu`.
+    public func checkPress(_ command: String) -> Bool {
+        guard let button = buttons.first(where: { $0.identifier?.rawValue == command }),
+              command != "menu", button.isEnabled else { return false }
+        button.performClick(nil)
+        return true
+    }
+    /// p4checks: runs a menu item's own action, what the open menu's click runs.
+    public func checkPerformMenuItem(_ title: String) -> Bool {
+        let menu = makeMenu()
+        menu.update()
+        guard let item = menu.items.first(where: { $0.title == title }), item.isEnabled, let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
     func clearKeys() {
         tooltip.clearPressed()
         pressedCommands.removeAll()

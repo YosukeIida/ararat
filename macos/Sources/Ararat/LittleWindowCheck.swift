@@ -15,7 +15,7 @@ final class LittleWindowCheckState {
                         "command_bar_navigates", "origin_unchanged", "open_enabled", "copy_link", "extensions_button",
                         "frame_saved", "frame_remembered", "open_key", "open_in", "handoff_live",
                         "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
-                        "profile_switch"]
+                        "profile_switch", "extension_fixture", "extension_row", "open_button"]
     static let screens = ["capture_bar", "capture_profile_menu", "capture_space_menu", "capture_command_bar"]
 
     var conditions: [String: Bool] = [:]
@@ -32,6 +32,9 @@ final class LittleWindowCheckState {
     static func fixtureURL(port: UInt16) -> String { "http://127.0.0.1:\(port)/search?little-window" }
     var handoffLive = ""
     var handoffNavigation: UInt = 0
+    // p4checks: the Open button's page, read before the press so the handoff can be told apart.
+    var openButtonLive = ""
+    var openButtonNavigation: UInt = 0
     var targetFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
     var savedFrame: LittleWindowFrame?
     var commandBarViaKey = false
@@ -275,6 +278,19 @@ extension Runtime {
             }
             check.mark("extensions_button")
             check.details["extension_items"] = panel.checkItems
+            // p4checks: an extension row's own click runs the Little Window's onOpen, which
+            // anchors the button and runs the action. The run loads the windows fixture
+            // (`--load-extension`), so an empty popover is a fixture failure, not a pass.
+            let items = panel.checkItems
+            check.mark("extension_fixture", !items.isEmpty)
+            if let first = items.first {
+                let before = controller.checkActions["extension_action"] ?? 0
+                panel.checkClick(first)
+                check.mark("extension_row", (controller.checkActions["extension_action"] ?? 0) == before + 1)
+                FileHandle.standardError.write(Data("ararat-trace: little-window extension row \(first) action ran\n".utf8))
+            } else {
+                check.mark("extension_row", false)
+            }
             controller.closeMenus()
             // The frame survives a reopen: set one, close, reopen from the menu command.
             if let window = popupWindow() {
@@ -480,6 +496,27 @@ extension Runtime {
             check.details["profile_switch"] = details
             check.mark("profile_switch", host.profileDirectory() == "Default"
                        && controller.profileName == "Profile 1" && tab.url == check.pageURL)
+            // p4checks: the bar's own Open button (onOpen → performOpenIn), not ⌘O's monitor.
+            check.openButtonLive = tab.liveId
+            check.openButtonNavigation = tab.navigationCount
+            FileHandle.standardError.write(Data("ararat-trace: little-window press the Open button \(controller.bar.checkOpenTitle)\n".utf8))
+            guard controller.bar.checkOpenEnabled else {
+                check.mark("open_button", false); finish(); return
+            }
+            controller.bar.checkClickOpen()
+            browserCheckPhase = 23
+        case 23:
+            guard littleWindows.isEmpty, let opened = littleWindowCheckController?.checkOpenedIn else {
+                if phaseTicks() > 300 { check.mark("open_button", false); finish(); return }
+                wait("open button handoff"); return
+            }
+            let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.liveId == check.openButtonLive }
+            check.details["open_button"] = ["space": opened.space, "item": opened.item,
+                                            "url": row(opened.item)?.url ?? "",
+                                            "live": tab != nil,
+                                            "navigation": tab.map { Int($0.navigationCount) } ?? -1]
+            check.mark("open_button", row(opened.item)?.url == check.pageURL && tab != nil
+                       && tab?.navigationCount == 0)
             finish()
         default:
             break
