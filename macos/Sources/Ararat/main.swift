@@ -8141,70 +8141,76 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["escape_cancel"] = organizeCancelStarted && row("cancel")?.parentId == space.pinnedId
-      // p4checks: an empty favourites area takes its first tab through onFirstFavorite, and a
-      // closed folder opens under a held drag through onOpenFolder.
-      if !space.favorites.isEmpty {
-        session.queue.sync {
-          for id in space.favorites.map(\.id) { _ = try? session.store?.archiveItem(windowId: windowID, id: id) }
-        }
-        let fresh = session.queue.sync { session.store?.snapshot(windowId: windowID) }
-        if let core = fresh { sidebar.update(snapshot: core) }
+      // p4checks: the Other space was seeded with no favourites container, so a tab dropped into
+      // its empty favourites area runs onFirstFavorite (the board's first-tile path). The drag
+      // has to happen in the shown space, so the check shows Other first.
+      if current.shownSpaceId != "organize-other" {
+        switchWorkspaceSpace("organize-other")
         browserCheckPhase = 81
         return
       }
       browserCheckPhase = 81
     case 81:
-      guard space.favorites.isEmpty, sidebar.organizeCheckIdle else { return }
-      guard begin("cancel", "favorites") else { return }
+      guard current.shownSpaceId == "organize-other", sidebar.organizeCheckIdle,
+            let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
+      guard begin("dock", "favorites") else { return }
       let point = sidebar.dragCheckFavoritesPoint
-      let drop = point.flatMap { sidebar.resolveDropForCheck(position: $0, draggedID: row("cancel")?.id ?? "") }
+      let drop = point.flatMap { sidebar.resolveDropForCheck(position: $0, draggedID: row("dock")?.id ?? "") }
+      // No container yet: the resolver answers `.favorites(nil, index)`, the first-favourite path.
       organizeConditions["first_favorite_drop"] = drop?.kind == "favorites" && drop?.container == nil
+        && other.favoritesId == nil
       if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
         organizeImage = image
       }
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 82
     case 82:
-      guard sidebar.organizeCheckIdle else { return }
+      guard sidebar.organizeCheckIdle,
+            let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
+      let landed = other.favorites.contains { $0.url == "about:blank?organize-dock" }
       organizeConditions["first_favorite_drop"] = organizeConditions["first_favorite_drop"] == true
-        && row("cancel")?.parentId == space.favoritesId
+        && landed && other.favoritesId != nil
+      switchWorkspaceSpace("organize-work")
+      browserCheckPhase = 83
+    case 83:
+      guard current.shownSpaceId == "organize-work", sidebar.organizeCheckIdle else { return }
       // Close the inner folder again for the hover-hold.
       session.queue.sync { _ = try? session.store?.setFolderCollapsed(windowId: windowID, id: "organize-inner", collapsed: true) }
       let fresh = session.queue.sync { session.store?.snapshot(windowId: windowID) }
-        if let core = fresh { sidebar.update(snapshot: core) }
-      browserCheckPhase = 83
-    case 83:
-      guard space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == true, sidebar.organizeCheckIdle else { return }
-      organizeHoverStarted = ProcessInfo.processInfo.systemUptime
-      guard begin("favorite", "organize-inner") else { return }
+      if let core = fresh { sidebar.update(snapshot: core) }
       browserCheckPhase = 84
     case 84:
+      guard space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == true, sidebar.organizeCheckIdle else { return }
+      organizeHoverStarted = ProcessInfo.processInfo.systemUptime
+      guard begin("today", "organize-inner") else { return }
+      browserCheckPhase = 85
+    case 85:
       // The drag timer's own folderHoverDelay opens the folder while the drag is still held.
       let innerOpen = space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false
-      let target = sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: row("favorite")?.id ?? "")
+      let target = sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: row("today")?.id ?? "")
       if innerOpen && target?.kind == "insert" && target?.container == "organize-inner" {
         organizeConditions["folder_hover_opens"] = true
         if screen { organizeImage = promptScreenScreenshot(host.window(), name: "organize-hover-open", withoutShadow: true) ?? organizeImage }
         guard sidebar.organizeCheckEnd() else { return }
-        browserCheckPhase = 85
+        browserCheckPhase = 86
         return
       }
       // A held drag that never opens is a named failure, not a stall: 3 s is the VM's budget.
       if ProcessInfo.processInfo.systemUptime - organizeHoverStarted > 3 {
         organizeConditions["folder_hover_opens"] = false
         _ = sidebar.organizeCheckEnd()
-        browserCheckPhase = 86
+        browserCheckPhase = 87
         return
       }
       return
-    case 85:
+    case 86:
       guard sidebar.organizeCheckIdle else { return }
-      organizeConditions["hover_drop"] = row("favorite")?.parentId == "organize-inner"
+      organizeConditions["hover_drop"] = row("today")?.parentId == "organize-inner"
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
       var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
       if let organizeImage { values["image"] = organizeImage }
       finishBrowserCheck(ok: failed.isEmpty, values: values)
-    case 86:
+    case 87:
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
       var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed,
                                   "hover_wait": ProcessInfo.processInfo.systemUptime - organizeHoverStarted]
