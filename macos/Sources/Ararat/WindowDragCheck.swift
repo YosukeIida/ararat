@@ -15,8 +15,7 @@ import AraratUI
 /// The drag views store the press on `mouseDown` and hand it to `performDrag(with:)` on the first
 /// `mouseDragged` past 3 pt (design, 2026-11-16), so this check's posted sequence is the whole
 /// model: without the move nothing moves, and a stationary second press is what runs the
-/// title-bar action. `WindowDrag` traces each of those steps, and the check's own run turns that
-/// trace on, so a VM run shows whether a posted `leftMouseDragged` reaches the drag view at all.
+/// title-bar action.
 /// The check also captures the row list's scroller after a scroll (P4 item 5), which needs the
 /// same drawn sidebar.
 @MainActor
@@ -83,6 +82,18 @@ final class WindowDragCheckState {
         names + (screen ? screens : [])
     }
 
+    static func mouseEvent(_ type: CGEventType, at point: CGPoint, from previous: CGPoint? = nil) -> CGEvent? {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let event = CGEvent(mouseEventSource: source, mouseType: type,
+                                  mouseCursorPosition: point, mouseButton: .left) else { return nil }
+        let previous = previous ?? point
+        // Do not rely on source state for deltas; each drag follows the previous posted point.
+        event.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - previous.x).rounded()))
+        event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - previous.y).rounded()))
+        if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: 1) }
+        return event
+    }
+
     func diagnostics(screen: Bool) -> [String: Any] {
         let names = Self.conditionNames(screen: screen)
         return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
@@ -115,11 +126,8 @@ extension Runtime {
         /// A real event at the HID tap, at a CG screen point (top-left origin) computed once
         /// before anything is posted: a point converted later would follow a window the first
         /// event has already moved (review M1).
-        func post(_ type: CGEventType, at point: CGPoint) {
-            guard let source = CGEventSource(stateID: .hidSystemState),
-                  let event = CGEvent(mouseEventSource: source, mouseType: type,
-                                      mouseCursorPosition: point, mouseButton: .left) else { return }
-            if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: 1) }
+        func post(_ type: CGEventType, at point: CGPoint, from previous: CGPoint? = nil) {
+            guard let event = WindowDragCheckState.mouseEvent(type, at: point, from: previous) else { return }
             event.post(tap: .cghidEventTap)
         }
         /// The window point in AppKit screen coordinates and in CG's top-left screen coordinates.
@@ -176,10 +184,6 @@ extension Runtime {
                 }
                 return clamped
             }
-            // The target this check expects the press to reach, computed before it is posted: a
-            // prediction, not the view AppKit dispatches to (review L3 of review 6).
-            let predictedHit = container.checkPressTarget(at: startPoint)
-            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) predicted_hit=\(predictedHit) key=\(window.isKeyWindow)\n".utf8))
             let startCG = cgScreen(posted(startScreen)), endCG = cgScreen(posted(endScreen)), neutralCG = cgScreen(posted(neutralScreen))
             // A dragged point just past 3 pt comes first: that point is what hands the press to
             // the window server, and the end point is the motion that follows the hand-over, so
@@ -196,8 +200,8 @@ extension Runtime {
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
             post(.mouseMoved, at: neutralCG)
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startCG) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, at: midwayCG) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, at: endCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, at: midwayCG, from: startCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, at: endCG, from: midwayCG) }
             DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, at: endCG) }
             check.dragDeadline = ProcessInfo.processInfo.systemUptime + gap + 0.9
         }
@@ -242,6 +246,7 @@ extension Runtime {
             check.mark("seed", !empty.isEmpty)
             check.mark("points_inside_screen", true)
             // The frame every step starts from, and the pointer's parking place on the page.
+            window.setFrameOrigin(NSPoint(x: 200, y: window.frame.origin.y))
             check.baseFrame = window.frame
             check.neutralPoint = NSPoint(x: max(60, window.frame.width - 60), y: 60)
             if screen { check.mark("capture_sidebar", capture("sidebar")) }
