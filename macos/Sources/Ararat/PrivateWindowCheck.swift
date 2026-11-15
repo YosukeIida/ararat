@@ -14,7 +14,7 @@ final class PrivateWindowCheckState {
         "private_regular_bar_no_private_tab", "private_arc_import_disabled", "private_menu_disabled",
         "private_import_item_fabricated", "private_last_tab_closes_window", "private_last_close_releases",
         "private_new_starts_empty", "private_open_without_browser_refused", "private_routing_domain",
-        "private_rows_unchanged", "private_history_baseline", "private_history_unchanged", "private_disk_recorded",
+        "private_rows_unchanged", "private_disk_recorded",
     ]
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
@@ -27,7 +27,6 @@ final class PrivateWindowCheckState {
     var db = ""
     var userDataDir = ""
     var diskBefore: [String: Any] = [:]
-    var historyBefore: Int64 = -1
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -48,8 +47,7 @@ final class PrivateWindowCheckState {
          "failed_conditions": Self.names.filter { conditions[$0] != true },
          "wait": waitName, "images": images,
          "private_title": title, "private_db": db, "private_profile": userDataDir,
-         "private_history_path": userDataDir.isEmpty ? "" : (userDataDir as NSString).appendingPathComponent("Default/History"),
-         "private_disk_before": diskBefore, "private_history_before": historyBefore,
+         "private_disk_before": diskBefore,
          "private_disk_command": "AraratHarness --private-disk --db \(db) --profile-dir \(userDataDir) --title \(title)",
          "private_import_item": "fabricated by the check (no Arc import menu item in this build); only the title rule is tested"]
     }
@@ -60,6 +58,11 @@ final class PrivateWindowCheckState {
 /// appears in the other; Close and Clear remove rows without an archive entry, a toast or Undo; a
 /// private window closes with its last tab; the command bar offers no history and no disabled
 /// commands; the last close releases the workspace; nothing reaches the regular store.
+///
+/// There is no History size comparison: SQLite grows in whole pages and Chromium batches history
+/// commits, so a leaked private visit can leave the regular History file the same size. The
+/// coverage for "no private history on disk" is private-durability, which byte-searches every file
+/// under the profile, History included, after a clean quit and after a SIGKILL.
 @MainActor
 extension Runtime {
     func privateWindowCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -81,12 +84,6 @@ extension Runtime {
                 rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
             }
             return stable(before) == stable(rows)
-        }
-        func historySize() -> Int64 {
-            guard !check.userDataDir.isEmpty else { return -1 }
-            let path = (check.userDataDir as NSString).appendingPathComponent("Default/History")
-            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-            return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         }
         func diskSnapshot() -> [String: Any] {
             let manager = FileManager.default
@@ -131,19 +128,7 @@ extension Runtime {
                 .first { $0.hasPrefix("--user-data-dir=") }
                 .map { String($0.dropFirst("--user-data-dir=".count)) } ?? ""
             check.diskBefore = diskSnapshot()
-            check.historyBefore = historySize()
-            // The comparison below is only evidence when there is a History file to grow:
-            // without this, a missing Default/History leaves 0 == 0 and the condition passes
-            // vacuously. The named condition fails the run instead.
-            let baseline = check.historyBefore > 0
-            check.mark("private_history_baseline", baseline)
             check.mark("private_disk_recorded", !check.title.isEmpty && !check.db.isEmpty && !check.userDataDir.isEmpty)
-            guard baseline else {
-                var result = check.diagnostics()
-                result["error"] = "no non-empty Default/History under --user-data-dir; private_history_unchanged would pass vacuously"
-                finishBrowserCheck(ok: false, values: result)
-                return
-            }
             host.checkCreateIncognito()
             browserCheckPhase = 2
         case 2:
@@ -376,7 +361,6 @@ extension Runtime {
                   regularRowsUnchanged() else { wait("last private window released"); return }
             check.mark("private_last_close_releases")
             check.mark("private_rows_unchanged")
-            check.mark("private_history_unchanged", historySize() == check.historyBefore)
             host.checkCreateIncognito()
             browserCheckPhase = 11
         case 11:

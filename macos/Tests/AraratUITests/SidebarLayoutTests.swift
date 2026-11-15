@@ -428,13 +428,35 @@ func urlFieldButtonsTakeKeyboardFocusOnlyWithFullKeyboardAccess() {
     URLFieldButton.fullKeyboardAccess = { true }
     #expect(copy.acceptsFirstResponder && site.acceptsFirstResponder)
     // With Full Keyboard Access on the button can take focus and draws the board's ring there;
-    // leaving it takes the ring away again. The click path is S3's and is checked in urlfield.
+    // leaving it takes the ring away again. The mouse-down and disabled-button rules are
+    // urlFieldButtonsFollowTheKeyboardFocusRule.
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView?.addSubview(copy)
     #expect(window.makeFirstResponder(copy))
     #expect(copy.showsFocusRing)
     _ = window.makeFirstResponder(nil)
     #expect(!copy.showsFocusRing)
+}
+
+@Test @MainActor
+func urlFieldButtonsFollowTheKeyboardFocusRule() {
+    // F1: with Full Keyboard Access on, a mouse down still refuses focus, so a click cannot take
+    // it from the page (AppKit can make the hit view first responder before `mouseDown` runs).
+    #expect(!URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: true, isEnabled: true,
+                                                 refusesFirstResponder: false, currentEvent: .leftMouseDown))
+    // Tab arrives as a key event: the keyboard path keeps the focus and its ring.
+    #expect(URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: true, isEnabled: true,
+                                                refusesFirstResponder: false, currentEvent: .keyDown))
+    #expect(URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: true, isEnabled: true,
+                                                refusesFirstResponder: false, currentEvent: nil))
+    #expect(!URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: false, isEnabled: true,
+                                                 refusesFirstResponder: false, currentEvent: .keyDown))
+    // F3: a disabled Copy Link and the scroll-preview copies (which refuse the responder) are not
+    // key-view stops.
+    #expect(!URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: true, isEnabled: false,
+                                                 refusesFirstResponder: false, currentEvent: .keyDown))
+    #expect(!URLFieldButton.keyboardFocusAllowed(fullKeyboardAccess: true, isEnabled: true,
+                                                 refusesFirstResponder: true, currentEvent: .keyDown))
 }
 
 @Test @MainActor

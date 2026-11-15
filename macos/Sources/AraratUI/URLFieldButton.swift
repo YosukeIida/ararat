@@ -149,12 +149,26 @@ public class URLFieldButton: NSButton {
 
     // S3: a click on Copy Link or the site controls must not take focus from the page. With Full
     // Keyboard Access on, a keyboard user must still reach both, so focus follows that setting;
-    // the board's focus look is drawn from `showsFocusRing`.
+    // the board's focus look is drawn from `showsFocusRing`. A mouse down refuses focus because
+    // AppKit can make the hit view first responder before `mouseDown` runs (the order this rule
+    // pins); Tab arrives as a key event, so the keyboard path is unaffected.
     /// The session's Full Keyboard Access answer. A unit test replaces it: the real one,
     /// `NSApp.isFullKeyboardAccessEnabled`, is read-only and belongs to the machine.
     public static var fullKeyboardAccess: () -> Bool = { NSApp?.isFullKeyboardAccessEnabled ?? false }
 
-    public override var acceptsFirstResponder: Bool { Self.fullKeyboardAccess() }
+    public override var acceptsFirstResponder: Bool {
+        Self.keyboardFocusAllowed(fullKeyboardAccess: Self.fullKeyboardAccess(), isEnabled: isEnabled,
+                                  refusesFirstResponder: refusesFirstResponder,
+                                  currentEvent: NSApp.currentEvent?.type)
+    }
+
+    /// S3's rule. Full Keyboard Access lets the two buttons take the keyboard's focus; a mouse down
+    /// never does, because AppKit can make the hit view first responder before `mouseDown` runs.
+    /// A disabled button, and the scroll-preview copies that refuse the responder, are not stops.
+    static func keyboardFocusAllowed(fullKeyboardAccess: Bool, isEnabled: Bool,
+                                     refusesFirstResponder: Bool, currentEvent: NSEvent.EventType?) -> Bool {
+        fullKeyboardAccess && isEnabled && !refusesFirstResponder && currentEvent != .leftMouseDown
+    }
 
     public override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -181,15 +195,8 @@ public class URLFieldButton: NSButton {
 
     public override func mouseDown(with event: NSEvent) {
         isPressed = true
-        // S3's mouse path: a click must not move focus or leave a ring, even when Full Keyboard
-        // Access makes the button reachable. A focus the action itself took (a popover) stays.
-        let window = self.window
-        let previous = window?.firstResponder
         super.mouseDown(with: event)
         isPressed = false
-        if let window, let previous, previous !== self, window.firstResponder === self {
-            window.makeFirstResponder(previous)
-        }
     }
 
     public override func layout() {

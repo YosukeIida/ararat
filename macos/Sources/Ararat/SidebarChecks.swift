@@ -495,10 +495,12 @@ extension Runtime {
             step(14)
         case 14:
             guard adapter?.rowStates[check.statusId]?.muted == true,
+                  adapter?.rowStates[check.statusId]?.loading == true,
                   sidebar.rowCheckInfo(id: check.statusId)?.audioLabel == "Unmute Tab",
                   let port = promptFixturePort,
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }) else {
-                note("waiting for muted strip and speaker on \(check.statusId)"); return
+                note("waiting for muted strip and speaker on a still-loading /pending on \(check.statusId): loading=\(adapter?.rowStates[check.statusId].map { "\($0.loading)" } ?? "-") muted=\(adapter?.rowStates[check.statusId].map { "\($0.muted)" } ?? "-") label=\(sidebar.rowCheckInfo(id: check.statusId)?.audioLabel ?? "-")")
+                return
             }
             _ = capture("muted")
             check.statusNavigationCount = tab.navigationCount
