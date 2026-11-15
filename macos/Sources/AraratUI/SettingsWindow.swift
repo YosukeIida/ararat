@@ -292,7 +292,8 @@ extension SettingsWindowController: NSToolbarDelegate {
         }
         return frames
     }
-    /// The navigation view's own capsule fill: nil where the pair draws no capsule of its own.
+    /// The navigation view's own capsule fill: false on macOS 26, where the system's glass is
+    /// the pair's one capsule.
     public var toolbarCheckOwnCapsule: Bool { SettingsToolbarNavigation.drawsOwnCapsule }
     /// The label the title item draws, and its opacity from the header fade.
     public var toolbarCheckTitle: (text: String, alpha: Double) {
@@ -335,7 +336,6 @@ private struct SettingsToolbarTitle: View {
             .accessibilityLabel("Settings page")
     }
 }
-
 
 enum SettingsColor {
     static func grey(_ light: Double, _ dark: Double) -> Color {
