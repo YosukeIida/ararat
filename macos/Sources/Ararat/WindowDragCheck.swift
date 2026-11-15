@@ -22,7 +22,7 @@ final class WindowDragCheckState {
         var movesWindow: Bool
     }
 
-    static let names = ["seed", "post_permission", "regions", "frame_stable", "header_point",
+    static let names = ["seed", "post_permission", "regions", "frame_stable", "points_inside_screen", "header_point",
                         "sidebar_drag", "header_drag", "above_card_drag", "cell_keeps_frame",
                         "row_keeps_frame", "scroller_overlay", "scroller_after_scroll",
                         "scroller_hidden_immediately"]
@@ -100,24 +100,29 @@ extension Runtime {
             check.images[name] = path
             return true
         }
-        /// A real event at the HID tap. CG's screen origin is the main display's top-left corner,
-        /// so AppKit's bottom-left point is flipped before posting. Every press and release is
-        /// posted with click state 1: successive gestures are separate presses, and the guest's
-        /// window server must not chain them into a double click.
-        func post(_ type: CGEventType, at point: NSPoint) {
-            let appKitScreen = window.convertPoint(toScreen: point)
-            guard let main = NSScreen.screens.first,
-                  let source = CGEventSource(stateID: .hidSystemState),
+        /// A real event at the HID tap, at a CG screen point (top-left origin) computed once
+        /// before anything is posted: a point converted later would follow a window the first
+        /// event has already moved (review M1).
+        func post(_ type: CGEventType, at point: CGPoint) {
+            guard let source = CGEventSource(stateID: .hidSystemState),
                   let event = CGEvent(mouseEventSource: source, mouseType: type,
-                                      mouseCursorPosition: CGPoint(x: appKitScreen.x, y: main.frame.height - appKitScreen.y),
-                                      mouseButton: .left) else { return }
+                                      mouseCursorPosition: point, mouseButton: .left) else { return }
             if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: 1) }
             event.post(tap: .cghidEventTap)
         }
+        /// The window point in AppKit screen coordinates and in CG's top-left screen coordinates.
+        func appKitScreen(_ point: NSPoint) -> NSPoint { window.convertPoint(toScreen: point) }
+        func cgScreen(_ point: NSPoint) -> CGPoint {
+            let flipped = (NSScreen.screens.first?.frame.height ?? 0) - point.y
+            return CGPoint(x: point.x, y: flipped)
+        }
         /// Press, move and release over time: the drag session needs the press delivered before
-        /// the move, and the frame is read after the release. A gesture starts with the pointer
-        /// parked on the page and waits longer than the double-click interval, so the window
-        /// server sees one lone click rather than the second of a pair.
+        /// the move, and the frame is read after the release. Every point is fixed in screen
+        /// coordinates first. A gesture starts with the pointer parked on the page, inside the
+        /// screen's visible frame, and waits longer than the double-click interval, so the window
+        /// server sees one lone click rather than the second of a pair. A drag that reached the
+        /// menu bar, or left the visible frame, would fill the screen instead of moving the
+        /// window by design's rerun (review H2).
         func start(_ step: WindowDragCheckState.Step) {
             let startPoint = check.points[step.point] ?? .zero
             let endPoint = NSPoint(x: startPoint.x + step.delta.x, y: startPoint.y + step.delta.y)
@@ -133,12 +138,26 @@ extension Runtime {
                                                                  "before": ["x": check.frameBefore.origin.x, "y": check.frameBefore.origin.y,
                                                                             "width": check.frameBefore.width, "height": check.frameBefore.height]]
             }
-            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable)\n".utf8))
+            let startScreen = appKitScreen(startPoint)
+            let endScreen = appKitScreen(endPoint)
+            let neutralScreen = appKitScreen(check.neutralPoint)
+            let visible = (window.screen ?? NSScreen.screens.first)?.visibleFrame ?? .zero
+            let inside = visible.contains(startScreen) && visible.contains(endScreen) && visible.contains(neutralScreen)
+            if !inside {
+                check.mark("points_inside_screen", false)
+                check.details["outside_screen_\(step.name)"] = ["visible": ["x": visible.minX, "y": visible.minY,
+                                                                           "width": visible.width, "height": visible.height],
+                                                                 "start": ["x": startScreen.x, "y": startScreen.y],
+                                                                 "end": ["x": endScreen.x, "y": endScreen.y]]
+            }
+            let hit = container.checkPressTarget(at: startPoint)
+            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) hit=\(hit) key=\(window.isKeyWindow)\n".utf8))
+            let startCG = cgScreen(startScreen), endCG = cgScreen(endScreen), neutralCG = cgScreen(neutralScreen)
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
-            post(.mouseMoved, at: check.neutralPoint)
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startPoint) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.20) { post(.leftMouseDragged, at: endPoint) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, at: endPoint) }
+            post(.mouseMoved, at: neutralCG)
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.20) { post(.leftMouseDragged, at: endCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, at: endCG) }
             check.dragDeadline = ProcessInfo.processInfo.systemUptime + gap + 0.9
         }
         /// Back to the frame phase 0 recorded, origin and size: a leftover zoom from one step must
@@ -180,6 +199,7 @@ extension Runtime {
                        && check.targets["dock_cell"] != "frame" && check.targets["dock_cell"] != "sidebar")
             check.mark("header_point", check.targets["header_gap"] == "header")
             check.mark("seed", !empty.isEmpty)
+            check.mark("points_inside_screen", true)
             // The frame every step starts from, and the pointer's parking place on the page.
             check.baseFrame = window.frame
             check.neutralPoint = NSPoint(x: max(60, window.frame.width - 60), y: 60)
@@ -190,7 +210,9 @@ extension Runtime {
                 .init(name: "sidebar_drag", point: sidebarPoint,
                       delta: NSPoint(x: 60, y: -40), movesWindow: true),
                 .init(name: "header_drag", point: "header_gap", delta: NSPoint(x: 40, y: -30), movesWindow: true),
-                .init(name: "above_card_drag", point: "above_card", delta: NSPoint(x: -40, y: 30), movesWindow: true),
+                // Downward on purpose (review H2): a drag up into the menu bar fills the
+                // screen on this macOS, which is not our window drag at all.
+                .init(name: "above_card_drag", point: "above_card", delta: NSPoint(x: -40, y: -30), movesWindow: true),
                 .init(name: "cell_keeps_frame", point: "dock_cell", delta: NSPoint(x: 0, y: -6), movesWindow: false),
                 .init(name: "row_keeps_frame", point: "row", delta: NSPoint(x: 0, y: -20), movesWindow: false),
             ]

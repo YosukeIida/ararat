@@ -22,6 +22,14 @@ enum WindowDoubleClickAction: Equatable {
     }
 }
 
+/// One follow-up event of a press that is being tracked to its release.
+struct PressFollowUp: Equatable {
+    var type: NSEvent.EventType
+    /// In screen coordinates: a window we move ourselves would otherwise shift the frame the
+    /// next point is measured against.
+    var location: NSPoint
+}
+
 /// The window drag the owner asked for after the first hands-on session (2026-11-15): the
 /// sidebar's empty areas and the frame around the page card move the window as a title bar does,
 /// and a double-click there does what the system's title-bar setting says. The views that own
@@ -47,18 +55,45 @@ enum WindowDrag {
     /// page (an error page, the "Shown in another window" placeholder) would reach the container
     /// and move or zoom the window (review M1).
     ///
-    /// The title-bar action runs only for a second press that did not become a drag, which is
-    /// what the real title bar does: it zooms, minimizes or does nothing on the release of a
-    /// stationary second click, and a drag there moves the window instead. A single press
-    /// (`clickCount` 1) therefore never runs it, however the system's setting reads.
+    /// A single press (`clickCount` 1) hands the drag to the window server and never runs the
+    /// title-bar action. A second press (a double click's second click) is tracked to its
+    /// release: the pointer travelling past `dragThreshold` makes it a drag of ours, and only a
+    /// release that stayed within the threshold runs the action — so a double click whose second
+    /// press drags moves the window and never zooms it (review H1).
     static func press(in view: NSView, with event: NSEvent, action: WindowDoubleClickAction = .fromDefaults()) {
         guard event.type == .leftMouseDown, let window = view.window, allowsDrag(styleMask: window.styleMask),
               pressTarget(in: window, at: event.locationInWindow) === view else { return }
-        let start = window.convertPoint(toScreen: event.locationInWindow)
-        window.performDrag(with: event)
-        let end = NSEvent.mouseLocation
-        guard runsDoubleClickAction(clickCount: event.clickCount,
-                                    travelled: hypot(end.x - start.x, end.y - start.y)) else { return }
+        guard event.clickCount >= 2 else {
+            window.performDrag(with: event)
+            return
+        }
+        // Why we move the window ourselves instead of handing the second press to the window
+        // server: `performDrag(with:)` needs the press, and the press is already spent once the
+        // tracking below has begun. The window still follows the pointer, gesture for gesture.
+        var tracker = SecondPressTracker(press: window.convertPoint(toScreen: event.locationInWindow))
+        var origin = window.frame.origin
+        window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: 5, mode: .eventTracking) { followUp, stop in
+            guard let followUp else { return }
+            // Each point is converted before the window moves for it, so the tracker sees the
+            // pointer's own travel in screen coordinates.
+            let location = window.convertPoint(toScreen: followUp.locationInWindow)
+            switch tracker.handle(PressFollowUp(type: followUp.type, location: location)) {
+            case .ignore:
+                break
+            case .move(let delta):
+                origin.x += delta.x
+                origin.y += delta.y
+                window.setFrameOrigin(origin)
+            case .action:
+                perform(action, in: window)
+                stop.pointee = true
+            case .end:
+                stop.pointee = true
+            }
+        }
+    }
+
+    static func perform(_ action: WindowDoubleClickAction, in window: NSWindow) {
         switch action {
         case .zoom: window.zoom(nil)
         case .minimize: window.performMiniaturize(nil)
@@ -70,9 +105,53 @@ enum WindowDrag {
     /// point or two of hand movement, and this is the same order.
     nonisolated static let dragThreshold: CGFloat = 3
 
-    /// The rule above, as a pure function: a second press (`clickCount` 2 or more) runs the
-    /// action only when the pointer did not travel past `dragThreshold`.
-    nonisolated static func runsDoubleClickAction(clickCount: Int, travelled: CGFloat) -> Bool {
-        clickCount >= 2 && travelled <= dragThreshold
+    /// The rule for a second press, as a state machine so a test can feed it the follow-up events
+    /// without dispatching anything: up to the threshold the press stays a stationary click (the
+    /// action runs on the release); past it the press is a drag, each step moving the window by
+    /// the pointer's own screen step, and the release runs nothing.
+    struct SecondPressTracker {
+        enum Step: Equatable {
+            /// Not decided yet: the pointer is still within the threshold, or the event is not one
+            /// this tracker reads.
+            case ignore
+            /// A drag step: move the window by this window-coordinate delta.
+            case move(NSPoint)
+            /// The release of a stationary second click: run the title-bar action.
+            case action
+            /// The press is over and nothing more is owed.
+            case end
+        }
+
+        private(set) var press: NSPoint
+        private var last: NSPoint
+        private(set) var dragging = false
+
+        init(press: NSPoint) {
+            self.press = press
+            self.last = press
+        }
+
+        var travelled: CGFloat {
+            hypot(last.x - press.x, last.y - press.y)
+        }
+
+        mutating func handle(_ followUp: PressFollowUp) -> Step {
+            switch followUp.type {
+            case .leftMouseDragged:
+                if !dragging && hypot(followUp.location.x - press.x, followUp.location.y - press.y) <= WindowDrag.dragThreshold {
+                    return .ignore
+                }
+                dragging = true
+                let delta = NSPoint(x: followUp.location.x - last.x, y: followUp.location.y - last.y)
+                last = followUp.location
+                return .move(delta)
+            case .leftMouseUp:
+                guard !dragging else { return .end }
+                return hypot(followUp.location.x - press.x, followUp.location.y - press.y) <= WindowDrag.dragThreshold
+                    ? .action : .end
+            default:
+                return .ignore
+            }
+        }
     }
 }

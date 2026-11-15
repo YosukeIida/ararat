@@ -125,14 +125,36 @@ func doubleClickFollowsTheTitleBarSetting() {
     #expect(WindowDoubleClickAction.fromSetting("Fill") == .zoom)
 }
 
-/// A single press or a drag never runs the title-bar action (design's rerun, 2026-11-16): the
-/// action follows the real title bar, which acts on the release of a stationary second click.
-@Test
-func onlyAStationarySecondClickRunsTheTitleBarAction() {
-    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 1, travelled: 0))
-    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 1, travelled: 40))
-    #expect(WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: 0))
-    #expect(WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: 1))
-    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: WindowDrag.dragThreshold + 1))
-    #expect(WindowDrag.runsDoubleClickAction(clickCount: 3, travelled: 0))
+/// A double click's second press that moves drags the window and never runs the title-bar action
+/// (review H1): the tracker only acts on a release that stayed within the threshold, and each
+/// drag step moves the window by the pointer's own step.
+@Test @MainActor
+func aSecondPressThatMovesDragsAndNeverActs() {
+    var tracker = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
+    // A point or two of hand movement is still a stationary click.
+    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 102, y: 100))) == .ignore)
+    // Past the threshold it is a drag, and the first step catches up from the press point.
+    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 140, y: 90)))
+            == .move(NSPoint(x: 40, y: -10)))
+    #expect(tracker.dragging)
+    // Later steps move by their own delta only.
+    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 150, y: 80)))
+            == .move(NSPoint(x: 10, y: -10)))
+    #expect(tracker.handle(.init(type: .leftMouseUp, location: NSPoint(x: 150, y: 80))) == .end)
+}
+
+/// A release that stayed within the threshold runs the action, and a press that jumps before its
+/// release does not (review H1).
+@Test @MainActor
+func aStationarySecondClickActsOnTheRelease() {
+    var tracker = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
+    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 101, y: 101))) == .ignore)
+    #expect(tracker.handle(.init(type: .leftMouseUp, location: NSPoint(x: 101, y: 101))) == .action)
+    #expect(!tracker.dragging)
+    var jumped = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
+    #expect(jumped.handle(.init(type: .leftMouseUp, location: NSPoint(x: 160, y: 100))) == .end)
+    // Anything that is not a drag or a release leaves the decision open.
+    var other = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
+    #expect(other.handle(.init(type: .mouseMoved, location: NSPoint(x: 300, y: 300))) == .ignore)
+    #expect(other.handle(.init(type: .leftMouseUp, location: NSPoint(x: 100, y: 100))) == .action)
 }
