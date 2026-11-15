@@ -841,6 +841,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     // engine's replies match commands; the caller closes the pages it returns (U25b D6).
     public func clearToday(spaceID: String, completion: @escaping @MainActor (LiveClearToday?) -> Void) {
         precondition(Thread.isMainThread)
+        traceToday("clear=request space=\(spaceID)")
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {

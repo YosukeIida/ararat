@@ -1802,6 +1802,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   // D6: one core batch (live_clear_today) with a Close in flight for every mapped live row,
   // so the engine's replies are accepted; the pages it names are closed beside it.
   func clearToday() {
+    if CommandLine.arguments.contains("--ararat-screen=today") {
+      FileHandle.standardError.write(Data("ararat-trace: today clear=action space=\(snapshot.shownSpaceId ?? "nil") adapter=\(adapter != nil)\n".utf8))
+    }
     guard let spaceID = snapshot.shownSpaceId else { return }
     adapter?.clearToday(spaceID: spaceID) { [weak self] result in
       guard let self, let result else { return }
