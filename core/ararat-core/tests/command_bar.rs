@@ -38,7 +38,7 @@ fn address_classification_and_destinations() {
         ("tel:+123456789", Some("tel:+123456789")),
         ("v1.2.3", None), ("1.2.3", None), ("1.2", None), ("999.1.2.3", None),
         ("example.com:70000", None), ("https://example.com:70000", None),
-        ("nas:70000", None), ("nas:", None), ("nas:abc", None),
+        ("nas:70000", None), ("nas:", None), ("nas:abc", None), ("nas:+80", None),
         ("[::1]:70000", None), ("[::invalid]", None), ("[::1]garbage", None),
         ("user@example.com", None), ("hello world", None),
     ] {
@@ -62,6 +62,8 @@ fn pasted_wraps_rejoin_only_for_addresses_after_controls_are_removed() {
         ("example.\u{2028}com", "example.com"),
         ("[::1]:\n8080", "[::1]:8080"),
         ("/Users/\nx.html", "/Users/x.html"),
+        ("/Users/ \nx.html", "/Users/ \nx.html"),
+        ("/Users/\n x.html", "/Users/\n x.html"),
         ("foo\nbar", "foo\nbar"),
         ("hello \nworld", "hello \nworld"),
         ("example.com \nwords", "example.com \nwords"),

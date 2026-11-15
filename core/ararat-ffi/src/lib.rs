@@ -14,7 +14,6 @@ pub fn command_bar_pasted_text(text: String) -> String {
     ararat_core::command_bar::pasted_text(&text)
 }
 
-
 #[derive(Debug, uniffi::Error)]
 pub enum CoreError {
     Import { message: String },

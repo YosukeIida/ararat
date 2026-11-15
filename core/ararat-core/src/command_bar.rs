@@ -389,7 +389,10 @@ fn address_url(s: &str) -> Option<String> {
     } else {
         authority.split_once(':').map_or((authority, None), |(h, p)| (h, Some(p)))
     };
-    if let Some(port) = port { port.parse::<u16>().ok()?; }
+    if let Some(port) = port {
+        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) { return None; }
+        port.parse::<u16>().ok()?;
+    }
     let ip = host.starts_with('[') || host.parse::<std::net::Ipv4Addr>().is_ok();
     if !ip {
         if !host.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')) { return None; }
@@ -405,6 +408,9 @@ fn address_url(s: &str) -> Option<String> {
 
 pub fn pasted_text(input: &str) -> String {
     let cleaned = text_without_other_controls(input);
+    if cleaned.trim().split(is_line_break).any(|line| line.starts_with(char::is_whitespace) || line.ends_with(char::is_whitespace)) {
+        return cleaned;
+    }
     let joined = address_text(&cleaned);
     if looks_like_url(&joined) { joined } else { cleaned }
 }
