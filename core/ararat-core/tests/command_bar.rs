@@ -27,13 +27,35 @@ fn search_url_encodes_url_like_and_unicode_input() {
 #[test]
 fn control_characters_never_reach_the_url() {
     // The owner's VM delivered 0x10 around "google" (2026-11-15): the form encoding wrote it
-    // into the query as %10. Typed text loses every C0 control and DEL before a URL is built.
+    // into the query as %10. Every other C0 control and DEL is dropped before a URL is built.
     assert_eq!(command_bar::search_url("\u{10}\u{10}google\u{10}"), "https://www.google.com/search?q=google");
     assert!(matches!(&command_bar::rank("\u{10}google\u{10}", &[])[0].target,
                      Target::Search { url } if url == "https://www.google.com/search?q=google"));
     assert!(matches!(&command_bar::rank("https://exa\u{10}mple.com/\u{7}path", &[])[0].target,
                      Target::OpenUrl { url } if url == "https://example.com/path"));
-    assert_eq!(command_bar::strip_controls("a\tb\nc\u{0}\u{7f}"), "abc");
+    assert_eq!(command_bar::search_url("google"), "https://www.google.com/search?q=google");
+}
+
+#[test]
+fn line_breaks_are_a_space_in_a_search_and_dropped_in_an_address() {
+    // Design's rule (2026-11-16): each run of tab, CR or LF is one space in the search builder.
+    assert_eq!(command_bar::search_url("foo\nbar"), "https://www.google.com/search?q=foo+bar");
+    assert_eq!(command_bar::search_url("foo\n\nbar"), "https://www.google.com/search?q=foo+bar");
+    assert_eq!(command_bar::search_url("foo\tbar"), "https://www.google.com/search?q=foo+bar");
+    assert_eq!(command_bar::search_url("foo\rbar"), "https://www.google.com/search?q=foo+bar");
+    // A line break between non-space characters keeps the text a search, never an address.
+    let rows = command_bar::rank("a.com\nb.com", &[]);
+    assert!(matches!(&rows[0].target, Target::Search { url } if url == "https://www.google.com/search?q=a.com+b.com"));
+    assert_eq!(rows[0].title, "a.com b.com");
+    assert_eq!(rows[0].subtitle, "Search");
+    // The address builder drops them: a URL with a trailing newline opens the same URL.
+    for typed in ["https://example.com/", "https://example.com/\n", "https://example.com/\t", "\nhttps://example.com/"] {
+        assert!(matches!(&command_bar::rank(typed, &[])[0].target,
+                         Target::OpenUrl { url } if url == "https://example.com/"),
+                "typed: {typed:?}");
+    }
+    // The address branch's title has no line break either.
+    assert_eq!(command_bar::rank("https://example.com/\n", &[])[0].title, "https://example.com/");
 }
 struct Extra;
 impl Source for Extra {

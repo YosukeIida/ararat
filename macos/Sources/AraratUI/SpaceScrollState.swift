@@ -9,9 +9,6 @@ struct SpaceScrollEvent {
     var phase: Phase = .none
     var momentum = false
     var inverted = false
-    /// `NSEvent.hasPreciseScrollingDeltas`: read by the trace only. The classifier's wheel
-    /// branch is decided by the phases (Arc's rule), not by the device's deltas.
-    var precise = false
     var time: TimeInterval
     var kind: Kind { phase == .none && !momentum ? .wheel : .trackpad }
 }

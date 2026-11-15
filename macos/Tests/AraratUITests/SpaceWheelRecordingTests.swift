@@ -18,10 +18,10 @@ func recordingParserReadsTheScrollrecFields() throws {
     let event = try #require(SpaceScrollRecording.parse(line: line))
     #expect(abs(event.time - 3.2762) < 0.0001)
     #expect(event.dx == -0.10 && event.dy == 0)
-    #expect(event.phase == .none && !event.momentum && event.inverted && !event.precise)
+    #expect(event.phase == .none && !event.momentum && event.inverted)
     // The phases are CGScrollPhase's bits: a trackpad recording carries them.
     let began = try #require(SpaceScrollRecording.parse(line: Substring("10.0 cont=1 line=0,0 pt=0,-4 fix=0.00,-4.00 phase=1 mom=0 inv=0")))
-    #expect(began.phase == .began && began.precise)
+    #expect(began.phase == .began)
     let momentum = try #require(SpaceScrollRecording.parse(line: Substring("20.0 cont=1 line=0,0 pt=0,-4 fix=0.00,-4.00 phase=0 mom=2 inv=0")))
     #expect(momentum.momentum)
 }
@@ -44,7 +44,7 @@ func trackballQuickSpinsMoveOneSpaceEachWay() throws {
 }
 
 /// The slow steady turn: Arc moved four spaces left. The fourth step is the 2.02 event at
-/// 5380 ms, 926 ms after the third; the 8.21 event at 4454 ms is 236 ms after the previous switch
+/// 5380 ms, 926 ms after the third; the 8.48 event at 4454.3 ms is 236 ms after the previous switch
 /// and is ignored by the 250 ms pause, which is section 5's measured "230 ms after the switch was
 /// ignored" case. The default direction (Natural) is Arc's, so no direction change is needed.
 @Test @MainActor

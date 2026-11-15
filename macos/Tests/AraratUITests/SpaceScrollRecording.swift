@@ -1,5 +1,6 @@
 import AraratKit
 import Foundation
+@testable import AraratUI
 
 /// One recorded scroll event, reduced to what the space classifier reads. The source format is
 /// `scrollrec` (docs/research/yab/scrollrec.swift): a millisecond stamp and the CGEvent fields.
@@ -12,13 +13,11 @@ struct SpaceScrollRecordedEvent: Equatable {
     var phase: SpaceScrollEvent.Phase
     var momentum: Bool
     var inverted: Bool
-    var precise: Bool
-    var momentumPhase: Int
-    var rawPhase: Int
 }
 
 /// Reads `scrollrec` output, so a recorded gesture can be fed to `SpaceScrollState` without the
-/// event loop (Arc's counts on the owner's trackball, 2026-11-16).
+/// event loop (Arc's counts on the owner's trackball, 2026-11-16). Test-only: the product never
+/// parses a recording.
 enum SpaceScrollRecording {
     static func parse(_ text: String) -> [SpaceScrollRecordedEvent] {
         text.split(separator: "\n").compactMap(parse(line:))
@@ -38,16 +37,13 @@ enum SpaceScrollRecording {
               let momentumPhase = Int(fields["mom"] ?? "") else { return nil }
         // Why the fixed-point pair: scrollplay re-posts every field, and NSEvent turns a
         // line-based event's fixed-point delta into scrollingDelta, which is what the classifier
-        // and Arc both read.
+        // and Arc both read. Axis 1 is vertical and axis 2 horizontal, as scrollrec prints them.
         return SpaceScrollRecordedEvent(
             time: stamp / 1000,
             dx: fix.1, dy: fix.0,
             phase: self.phase(phase),
             momentum: momentumPhase != 0,
-            inverted: (fields["inv"] ?? "0") == "1",
-            precise: (fields["cont"] ?? "0") == "1",
-            momentumPhase: momentumPhase,
-            rawPhase: phase)
+            inverted: (fields["inv"] ?? "0") == "1")
     }
 
     private static func pair(_ value: String?) -> (Double, Double)? {
@@ -56,7 +52,7 @@ enum SpaceScrollRecording {
         return (first, second)
     }
 
-    /// CGScrollPhase and CGMomentumScrollPhase raw values, as `scrollrec` prints them.
+    /// CGScrollPhase's raw values, as `scrollrec` prints them.
     private static func phase(_ raw: Int) -> SpaceScrollEvent.Phase {
         if raw & 1 != 0 { return .began }
         if raw & 2 != 0 { return .changed }
@@ -69,8 +65,7 @@ enum SpaceScrollRecording {
 
 extension SpaceScrollRecordedEvent {
     var event: SpaceScrollEvent {
-        SpaceScrollEvent(dx: dx, dy: dy, phase: phase, momentum: momentum, inverted: inverted,
-                         precise: precise, time: time)
+        SpaceScrollEvent(dx: dx, dy: dy, phase: phase, momentum: momentum, inverted: inverted, time: time)
     }
 }
 
@@ -91,20 +86,19 @@ struct SpaceScrollReplay {
     /// moves the shown page, and the next event is classified against it.
     @MainActor
     static func run(_ events: [SpaceScrollRecordedEvent], from index: Int, count: Int,
-                           pitch: Double = 180,
-                           direction: SpaceScrollDirection = .natural) -> SpaceScrollReplay {
+                    pitch: Double = 180,
+                    direction: SpaceScrollDirection = .natural) -> SpaceScrollReplay {
         var state = SpaceScrollState()
         var current = index
         var steps: [SpaceScrollReplay.Step] = []
         for event in events {
             let action = state.handle(event.event, index: current, count: count, pitch: pitch,
                                       direction: direction)
-            if case .settle(let target, _, let switched) = action, switched {
+            if case .settle(let target, _, let switched) = action, switched,
+               (0..<count).contains(target) {
                 // The pull past either end targets -1 or count; keep the page for the next event.
-                if (0..<count).contains(target) {
-                    steps.append(Step(time: event.time, from: current, to: target))
-                    current = target
-                }
+                steps.append(Step(time: event.time, from: current, to: target))
+                current = target
             }
         }
         return SpaceScrollReplay(index: current, steps: steps)

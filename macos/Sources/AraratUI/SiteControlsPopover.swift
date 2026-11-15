@@ -582,7 +582,8 @@ final class SiteActionRow: NSView {
 
 /// The capture action: an icon tile with its name in the tooltip (P4).
 @MainActor
-final class SiteControlActionButton: NSButton {    private var hovered = false { didSet { updateFill() } }
+final class SiteControlActionButton: NSButton {
+    private var hovered = false { didSet { updateFill() } }
     private var pressed = false { didSet { updateFill() } }
 
     init(title: String, symbol: String) {
@@ -600,10 +601,6 @@ final class SiteControlActionButton: NSButton {    private var hovered = false {
         wantsLayer = true
         layer?.cornerRadius = SiteControlsContent.actionRadius
         layer?.cornerCurve = .continuous
-        // The tile fills the 48 pt row: the stack's alignment centers arranged subviews, so the
-        // tile's own hugging and compression must yield to the row's height.
-        setContentHuggingPriority(.defaultLow, for: .vertical)
-        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         updateFill()
     }
 

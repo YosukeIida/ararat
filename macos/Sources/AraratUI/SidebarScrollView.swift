@@ -125,16 +125,18 @@ class SidebarScrollView: NSScrollView {
             permitsScroller = false
             hasVerticalScroller = false
         }
+        // The horizontal hide lives here, in the pager's early return: every horizontal event
+        // (a trackpad swipe, or the owner's phase-less trackball wheel) is taken by `onScroll`,
+        // and the knob goes at once, with no fade-out wait, even when a vertical scroll showed it
+        // a moment ago. One rule, one place (review M3).
         if onScroll?(event) == true {
             hasVerticalScroller = false
             return
         }
-        switch Self.knobStep(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY) {
-        case .hide:
-            // At once, with no fade-out wait: a horizontal swipe or the owner's trackball hides
-            // the knob even when a vertical scroll showed it a moment ago (P4, 2026-11-15).
-            hasVerticalScroller = false
-            permitsScroller = false
+        // What is left belongs to a gesture that is already vertical (or is not a scroll at all):
+        // a vertical delta shows the knob, and a sideways jitter inside a vertical-locked gesture
+        // never hides it mid-scroll.
+        switch Self.knobStep(dy: event.scrollingDeltaY) {
         case .show:
             hasVerticalScroller = true
             permitsScroller = true
@@ -144,15 +146,12 @@ class SidebarScrollView: NSScrollView {
         scrollNatively(with: event)
     }
 
-    /// The knob's rule (P4): vertical input shows the overlay knob, horizontal input hides it at
-    /// once whatever the event's phase, and neither is a phase-less wheel's deltas of zero. The
-    /// system's overlay scroller fades the knob out on its own after the last scroll.
-    enum KnobStep: Equatable { case show, hide, keep }
+    /// The knob's show rule for the events the pager did not take: a vertical delta shows the
+    /// overlay knob. The system's overlay scroller fades it out on its own after the last scroll.
+    enum KnobStep: Equatable { case show, keep }
 
-    static func knobStep(dx: Double, dy: Double) -> KnobStep {
-        if abs(dx) > abs(dy) { return .hide }
-        if dy != 0 { return .show }
-        return .keep
+    static func knobStep(dy: Double) -> KnobStep {
+        dy != 0 ? .show : .keep
     }
 
     @objc private func preferredScrollerStyleChanged() {

@@ -7,13 +7,18 @@ enum WindowDoubleClickAction: Equatable {
     case minimize
     case nothing
 
-    static func fromDefaults(_ defaults: UserDefaults = .standard) -> WindowDoubleClickAction {
-        switch defaults.string(forKey: "AppleActionOnDoubleClick") {
+    /// The stored value; nil (or an unknown value, such as macOS 15's "Fill") is the system's
+    /// default zoom. Split out so a test can pin every value without the host's setting.
+    static func fromSetting(_ value: String?) -> WindowDoubleClickAction {
+        switch value {
         case "Minimize": return .minimize
         case "None": return .nothing
-        // "Maximize" is the modern value; anything unset behaves as the system's default zoom.
         default: return .zoom
         }
+    }
+
+    static func fromDefaults(_ defaults: UserDefaults = .standard) -> WindowDoubleClickAction {
+        fromSetting(defaults.string(forKey: "AppleActionOnDoubleClick"))
     }
 }
 
@@ -29,8 +34,21 @@ enum WindowDrag {
         !styleMask.contains(.fullScreen)
     }
 
+    /// The view AppKit resolves a window point to, the way `NSWindow` hit-tests its content:
+    /// the content view's `hitTest` takes a point in its superview's coordinates.
+    static func pressTarget(in window: NSWindow, at pointInWindow: NSPoint) -> NSView? {
+        guard let content = window.contentView else { return nil }
+        guard let superview = content.superview else { return content.hitTest(pointInWindow) }
+        return content.hitTest(superview.convert(pointInWindow, from: nil))
+    }
+
+    /// Only a press that landed on the drag area's owner starts the drag. NSView forwards an
+    /// unconsumed press to its superview, so without the check a press on an overlay inside the
+    /// page (an error page, the "Shown in another window" placeholder) would reach the container
+    /// and move or zoom the window (review M1).
     static func press(in view: NSView, with event: NSEvent, action: WindowDoubleClickAction = .fromDefaults()) {
-        guard event.type == .leftMouseDown, let window = view.window, allowsDrag(styleMask: window.styleMask) else { return }
+        guard event.type == .leftMouseDown, let window = view.window, allowsDrag(styleMask: window.styleMask),
+              pressTarget(in: window, at: event.locationInWindow) === view else { return }
         if event.clickCount >= 2 {
             switch action {
             case .zoom: window.zoom(nil)

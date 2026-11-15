@@ -1724,7 +1724,7 @@ public final class SidebarView: NSView {
     /// moves the window as a title bar does. The row list's own empty area belongs to
     /// `SidebarScrollView`, so a wheel below the last row still scrolls the rows.
     func isWindowDragArea(_ hit: NSView) -> Bool {
-        hit === mainColumn || hit === spaceViewport || hit === favorites
+        hit === mainColumn || hit === spaceViewport || hit === spaceColumn || hit === favorites
             || hit === actionsRow || hit === bottomBar || hit === dock
     }
 
@@ -1780,8 +1780,7 @@ public final class SidebarView: NSView {
         else { phase = .changed }
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
-                                     inverted: event.isDirectionInvertedFromDevice,
-                                     precise: event.hasPreciseScrollingDeltas, time: event.timestamp)
+                                     inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
         if input.kind == .wheel && wheelPullPlaying { return (true, "wheel-pull-playing") }
         let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
         if phase == .began {

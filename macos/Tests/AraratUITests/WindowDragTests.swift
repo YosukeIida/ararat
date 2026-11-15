@@ -57,6 +57,33 @@ func sidebarEmptyAreasBelongToTheWindowDragAndRowsDoNot() throws {
     #expect(!sidebar.isWindowDragArea(try #require(hit(NSPoint(x: field.midX, y: field.midY)))))
 }
 
+/// A press on an overlay inside the page keeps its own click (review M1): the container only
+/// starts a drag when the press resolves to the container itself, so a forwarded press from an
+/// error page or the "Shown in another window" placeholder does not move or zoom the window.
+@Test @MainActor
+func aPressOnTheCardsOverlayDoesNotReachTheContainersDrag() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [],
+                          backing: .buffered, defer: false)
+    let sidebar = SidebarView(snapshot: dragSnapshot())
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: sidebar, page: page)
+    window.contentView = container
+    let overlay = PageFailureView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+    overlay.autoresizingMask = [.width, .height]
+    page.addSubview(overlay)
+    container.layoutSubtreeIfNeeded()
+    defer { window.contentView = nil }
+    let overlayPoint = overlay.convert(NSPoint(x: 24, y: 24), to: nil)
+    #expect(WindowDrag.pressTarget(in: window, at: overlayPoint) === overlay)
+    #expect(WindowDrag.pressTarget(in: window, at: overlayPoint) !== container)
+    // The card's own margin still resolves to the container, so its press keeps dragging.
+    #expect(WindowDrag.pressTarget(in: window, at: container.checkAboveCardPoint()) === container)
+    // And the sidebar's empty area resolves to the sidebar, not to something it forwards to.
+    let sidebarPoint = try #require(sidebar.checkDragAreaPoints()["column_gap"])
+    #expect(WindowDrag.pressTarget(in: window, at: sidebarPoint) === sidebar)
+}
+
 /// A window point in the card's margins is the container's own area; its press moves the window.
 @Test @MainActor
 func cardMarginsAreTheContainersDragArea() throws {
@@ -85,18 +112,15 @@ func fullScreenWindowsRefuseTheDrag() {
     #expect(!WindowDrag.allowsDrag(styleMask: [.titled, .fullScreen]))
 }
 
+/// The setting's value is read on each press; the test pins every stored value without touching
+/// the host's defaults (review L4).
 @Test
-func doubleClickFollowsTheTitleBarSetting() throws {
-    let suite = "ararat.window-drag.tests"
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
-    defaults.set("Maximize", forKey: "AppleActionOnDoubleClick")
-    #expect(WindowDoubleClickAction.fromDefaults(defaults) == .zoom)
-    defaults.set("Minimize", forKey: "AppleActionOnDoubleClick")
-    #expect(WindowDoubleClickAction.fromDefaults(defaults) == .minimize)
-    defaults.set("None", forKey: "AppleActionOnDoubleClick")
-    #expect(WindowDoubleClickAction.fromDefaults(defaults) == .nothing)
-    // A Mac that never changed the setting has no key: the system's default is zoom.
-    defaults.removeObject(forKey: "AppleActionOnDoubleClick")
-    #expect(WindowDoubleClickAction.fromDefaults(defaults) == .zoom)
+func doubleClickFollowsTheTitleBarSetting() {
+    #expect(WindowDoubleClickAction.fromSetting("Maximize") == .zoom)
+    #expect(WindowDoubleClickAction.fromSetting("Minimize") == .minimize)
+    #expect(WindowDoubleClickAction.fromSetting("None") == .nothing)
+    // A Mac that never changed the setting has no key, and an unknown value (macOS 15's "Fill")
+    // behaves as the system's default zoom.
+    #expect(WindowDoubleClickAction.fromSetting(nil) == .zoom)
+    #expect(WindowDoubleClickAction.fromSetting("Fill") == .zoom)
 }

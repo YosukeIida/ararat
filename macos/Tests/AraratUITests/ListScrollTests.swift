@@ -201,20 +201,36 @@ func listScrollerWaitsForVerticalIntentAndAlwaysUsesTheOverlayStyle() throws {
 }
 
 /// P4 item 5 addendum: a vertical scroll shows the knob, and the next horizontal scroll hides it
-/// in that same event, with no fade-out wait.
+/// in that same event, with no fade-out wait. Both go through the view's own `scrollWheel`: the
+/// hide is the pager's early return, not a second rule in the knob's step (review M3).
 @Test @MainActor
 func listKnobHidesAtOnceWhenAHorizontalWheelFollowsAVerticalOne() throws {
     let (window, sidebar, scroll) = listWindow()
     defer { window.contentView = nil }
-    #expect(SidebarScrollView.knobStep(dx: 0, dy: -20) == .show)
-    #expect(SidebarScrollView.knobStep(dx: 20, dy: -2) == .hide)
-    #expect(SidebarScrollView.knobStep(dx: 0, dy: 0) == .keep)
+    #expect(SidebarScrollView.knobStep(dy: -20) == .show)
+    #expect(SidebarScrollView.knobStep(dy: 0) == .keep)
     sidebar.checkScrollList(dx: 0, dy: -24)
     #expect(scroll.hasVerticalScroller)
     sidebar.checkScrollList(dx: -1, dy: 0)
     #expect(!scroll.hasVerticalScroller)
     // The next vertical scroll shows it again.
     sidebar.checkScrollList(dx: 0, dy: -24)
+    #expect(scroll.hasVerticalScroller)
+}
+
+/// A sideways jitter inside a gesture that is already vertical must not hide the knob mid-scroll
+/// (review M3): the gesture's horizontal event reaches the view with `onScroll` refusing it, so it
+/// is the knob's step that decides, and that step only shows.
+@Test @MainActor
+func listKnobSurvivesSidewaysJitterInsideAVerticalGesture() throws {
+    let (window, sidebar, scroll) = listWindow()
+    defer { window.contentView = nil }
+    sidebar.checkScrollList(dx: -1, dy: 0)
+    #expect(!scroll.hasVerticalScroller)
+    scroll.scrollWheel(with: listEvent(dx: 0, dy: -20, phase: .began))
+    scroll.scrollWheel(with: listEvent(dx: -2, dy: -20, phase: .changed))
+    #expect(scroll.hasVerticalScroller)
+    scroll.scrollWheel(with: listEvent(dx: -20, dy: 0, phase: .changed))
     #expect(scroll.hasVerticalScroller)
 }
 

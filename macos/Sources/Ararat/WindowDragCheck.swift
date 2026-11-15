@@ -22,7 +22,7 @@ final class WindowDragCheckState {
         var movesWindow: Bool
     }
 
-    static let names = ["seed", "regions", "header_point", "sidebar_drag", "header_drag",
+    static let names = ["seed", "post_permission", "regions", "header_point", "sidebar_drag", "header_drag",
                         "above_card_drag", "cell_keeps_frame", "row_keeps_frame", "scroller_overlay",
                         "scroller_after_scroll", "scroller_hidden_immediately"]
     static let screens = ["capture_sidebar", "capture_scroller", "capture_scroller_later",
@@ -41,6 +41,9 @@ final class WindowDragCheckState {
     var stepIndex = 0
     var dragDeadline: TimeInterval = 0
     var laterDeadline: TimeInterval = 0
+    /// Set once a positive step moved the window, so a "no frame change" step cannot pass when
+    /// nothing was delivered at all.
+    var movedPositive = false
     var capturing = false
 
     func mark(_ name: String, _ value: Bool = true) {
@@ -126,6 +129,12 @@ extension Runtime {
                   let rowPoint = sidebar.checkRowPoint(), let cellPoint = sidebar.checkDockCellPoint() else {
                 wait("key window, row and dock cell"); return
             }
+            // Why first: without permission to post events at the window server every gesture
+            // below is dropped silently, and the "no frame change" steps would pass for the wrong
+            // reason (review M2).
+            let canPost = CGPreflightPostEventAccess()
+            check.mark("post_permission", canPost)
+            guard canPost else { finish(); return }
             check.points = sidebar.checkDragAreaPoints()
             check.points["header_gap"] = container.checkHeaderGapPoint()
             check.points["above_card"] = container.checkAboveCardPoint()
@@ -163,7 +172,14 @@ extension Runtime {
             let after = window.frame
             let moved = abs(after.origin.x - (check.frameBefore.origin.x + check.dragDelta.x)) <= 2
                 && abs(after.origin.y - (check.frameBefore.origin.y + check.dragDelta.y)) <= 2
-            check.mark(step.name, step.movesWindow ? moved : after == check.frameBefore)
+            if step.movesWindow {
+                check.movedPositive = check.movedPositive || moved
+                check.mark(step.name, moved)
+            } else {
+                // A "no frame change" step only means something once a posted gesture has moved
+                // the window in this run; otherwise it passes because nothing was delivered.
+                check.mark(step.name, check.movedPositive && after == check.frameBefore)
+            }
             check.details[step.name] = ["from": step.point, "before": ["x": check.frameBefore.origin.x, "y": check.frameBefore.origin.y],
                                         "after": ["x": after.origin.x, "y": after.origin.y],
                                         "delta": ["x": check.dragDelta.x, "y": check.dragDelta.y]]
