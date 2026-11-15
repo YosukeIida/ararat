@@ -198,11 +198,14 @@ func theManualMoveIsConstrainedToTheScreen() throws {
     _ = NSApplication.shared
     let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 300), styleMask: [.titled],
                           backing: .buffered, defer: false)
-    guard let screen = window.screen ?? NSScreen.screens.first else { return }
+    // Without a screen there is nothing to constrain against: fail by name rather than pass.
+    let screen = try #require(window.screen ?? NSScreen.screens.first, "no screen to constrain against")
     let inward = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: 300), size: NSSize(width: 400, height: 300), in: window)
     #expect(inward.origin == NSPoint(x: 300, y: 300))
     let high = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: screen.visibleFrame.maxY + 4000),
                                            size: NSSize(width: 400, height: 300), in: window)
+    // The claim is that the clamped frame's top stays inside the visible frame, so the title area
+    // stays reachable (review N3 of review 7).
+    #expect(high.maxY <= screen.visibleFrame.maxY)
     #expect(high.origin.y < screen.visibleFrame.maxY + 4000)
-    #expect(high.origin.y <= screen.visibleFrame.maxY)
 }

@@ -115,8 +115,10 @@ enum WindowDrag {
     }
 
     /// The frame a manual drag step moves to, constrained the way the system keeps a window's
-    /// title bar reachable (review L1 of review 6). The caller keeps its unconstrained target, so
-    /// dragging back from the edge moves at once.
+    /// title bar reachable (review L1 of review 6). The caller keeps its unconstrained target: an
+    /// overshoot pins the window at the clamp until the pointer has come back by the overshoot,
+    /// which is what a title-bar drag does (measured on the host, 2026-11-16: a 40 pt overshoot
+    /// kept the window pinned through the next 40 pt of the pointer's return, then it followed).
     static func constrainedFrame(from target: NSPoint, size: NSSize, in window: NSWindow) -> NSRect {
         window.constrainFrameRect(NSRect(origin: target, size: size), to: window.screen)
     }
