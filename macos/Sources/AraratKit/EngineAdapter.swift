@@ -123,6 +123,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
+    public var canPublishSnapshot: (@MainActor () -> Bool)?
+    private var needsSnapshotPublish = false
+    @MainActor public func publishDeferredSnapshot() {
+        guard needsSnapshotPublish else { return }
+        publish()
+    }
     public var onWorkspaceChange: (@MainActor () -> Void)?
     public var onQuitProfileSwitch: (@MainActor () -> Void)?
     public var onCloseStarted: (@MainActor () -> Void)?
@@ -1239,6 +1245,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
         guard current else { return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
+        guard canPublishSnapshot?() != false else { needsSnapshotPublish = true; return }
+        needsSnapshotPublish = false
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
             displayedSplit = snapshot.selectedId.flatMap { id in

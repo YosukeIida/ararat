@@ -302,3 +302,56 @@ func workspaceBatchEditsPublishCommittedSnapshotsWhenLiveTabsAreMissing() async 
     #expect(reports.count == 2)
     #expect(reports.last?.contains(deletedLive.id) == true)
 }
+
+@Test @MainActor
+func engineRefreshesHoldArchivedRowsInEveryWindowAndResumeWithFreshSnapshots() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("held-engine.sqlite").path
+    let session = WorkspaceSession()
+    let first = try EngineAdapter(path: path, windowID: "first", card: NSView(), seedSingleCheck: true, session: session)
+    let second = try EngineAdapter(path: path, windowID: "second", card: NSView(), session: session)
+    let workspace = WorkspaceAdapter(windowID: "first", session: session)
+    let store = try #require(session.store)
+    _ = try store.createTab(windowId: "first", url: "https://protected.example/")
+    let before = store.snapshot(windowId: "first")
+    let row = try #require(before.spaces.flatMap(\.today).first { $0.url?.contains("Ararat One") == true })
+    let space = try #require(before.shownSpaceId)
+    try store.showSpace(windowId: "second", spaceId: space)
+    var ready = false
+    var attempts = 0
+    var received: [String: WorkspaceSnapshot] = [:]
+    for (id, engine) in [("first", first), ("second", second)] {
+        engine.canPublishSnapshot = { attempts += 1; return ready }
+        engine.onSnapshot = { received[id] = $0 }
+    }
+    let clock = try #require(row.lastSelectedAt) + 12 * 3_600_000 + 1
+    let archive = AutoArchive(adapter: workspace, now: { clock }, canPublish: { ready }) { result in
+        if case .success = result { first.refresh(); second.refresh() }
+    }
+    let otherArchive = AutoArchive(adapter: WorkspaceAdapter(windowID: "second", session: session), now: { clock }, canPublish: { ready }) { _ in second.refresh() }
+    archive.onPublishReady = { first.publishDeferredSnapshot() }
+    otherArchive.onPublishReady = { second.publishDeferredSnapshot() }
+    archive.tick()
+    let archived = try await archiveValue { workspace.snapshot(completion: $0) }
+    #expect(archived.archive.contains { $0.id == row.id })
+    otherArchive.tick()
+    first.refresh()
+    second.refresh()
+    try await waitUntil { attempts >= 2 }
+    #expect(received.isEmpty)
+    let newer = try store.createTab(windowId: "first", url: "https://newer.example/")
+    let added = try #require(newer.selectedId)
+    ready = true
+    archive.tick()
+    otherArchive.tick()
+    try await waitUntil { received.count == 2 }
+    for snapshot in received.values {
+        #expect(snapshot.archive.contains { $0.id == row.id })
+        #expect(snapshot.spaces.flatMap(\.today).contains { $0.id == added })
+    }
+    first.onSnapshot = nil
+    second.onSnapshot = nil
+    first.shutdown()
+    second.shutdown()
+}

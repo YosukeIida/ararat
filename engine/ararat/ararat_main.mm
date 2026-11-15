@@ -298,6 +298,7 @@ void CheckGuards(int argc, const char** argv) {
       browser_check = browser_check || name == "split-commands";
       browser_check = browser_check || name == "header";
       browser_check = browser_check || name == "urlfield";
+      browser_check = browser_check || name == "auto-archive" || name == "delete-space-live";
       g_check_tabs = name == "tabs";
       g_check_split = name == "split";
       g_check_transfer = name == "transfer" || name == "transfer-ext";
