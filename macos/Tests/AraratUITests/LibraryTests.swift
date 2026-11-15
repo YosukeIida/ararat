@@ -51,11 +51,12 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
 
 @Test @MainActor
 func libraryIsTheScrollPageBeforeTheFirstSpaceAndStaysOnRelease() {
+    var scrollPause = -Double.infinity
     var scroll = SpaceScrollState()
-    #expect(scroll.handle(.init(dx: 300, phase: .began, time: 0), index: 0, count: 2, pitch: 240) == .follow(150))
-    #expect(scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 0, count: 2, pitch: 240) == .settle(index: -1, offset: 150, switched: true))
-    #expect(scroll.handle(.init(dx: -300, phase: .began, time: 1), index: -1, count: 2, pitch: 240) == .follow(-150))
-    #expect(scroll.handle(.init(dx: 0, phase: .ended, time: 1.2), index: -1, count: 2, pitch: 240) == .settle(index: 0, offset: -150, switched: true))
+    #expect(scroll.handle(.init(dx: 300, phase: .began, time: 0), index: 0, count: 2, pitch: 240, wheelPausedUntil: &scrollPause) == .follow(150))
+    #expect(scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 0, count: 2, pitch: 240, wheelPausedUntil: &scrollPause) == .settle(index: -1, offset: 150, switched: true))
+    #expect(scroll.handle(.init(dx: -300, phase: .began, time: 1), index: -1, count: 2, pitch: 240, wheelPausedUntil: &scrollPause) == .follow(-150))
+    #expect(scroll.handle(.init(dx: 0, phase: .ended, time: 1.2), index: -1, count: 2, pitch: 240, wheelPausedUntil: &scrollPause) == .settle(index: 0, offset: -150, switched: true))
 }
 
 @Test @MainActor

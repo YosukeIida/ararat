@@ -50,7 +50,7 @@ func littleWindowIgnoresAnEmptyFrameAfterClosing() throws {
     let popup = PopupHost()
     popup.rootView.addSubview(popup.card)
     popup.host = host as? any ARWindowHostAPI
-    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil, commandBarVisible: false)
     defer { controller.close(); popup.littleWindow = nil }
     host.value.reportedFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
     controller.saveFrame(debounced: true)
@@ -76,9 +76,11 @@ func littleWindowCommandBarSubmitsToItsPopupHost() async throws {
     let popup = PopupHost()
     popup.rootView.addSubview(popup.card)
     popup.host = host as? any ARWindowHostAPI
-    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil, commandBarVisible: false)
     defer { controller.close(); popup.littleWindow = nil }
     controller.openCommandBar()
+    #expect(controller.checkCommandBar?.panel.isVisible == false)
+    #expect(!host.value.isVisible)
     controller.checkTypeCommandBar("https://example.test/")
     controller.checkCommitCommandBar()
     for _ in 0..<100 where host.navigated.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
@@ -114,6 +116,28 @@ func littleWindowFixtureAndWebAddressAreOpenURLInTheRealStore() throws {
 }
 
 @Test @MainActor
+func littleWindowCommandBarSessionFailureClosesThePendingCommit() async throws {
+    _ = NSApplication.shared
+    class_addProtocol(LittleWindowNavigationHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let origin = Runtime(windowID: "unopened")
+    origin.workspace = WorkspaceAdapter(windowID: "unopened")
+    let host = LittleWindowNavigationHost()
+    let popup = PopupHost()
+    popup.rootView.addSubview(popup.card)
+    popup.host = host as? any ARWindowHostAPI
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil, commandBarVisible: false)
+    defer { controller.close(); popup.littleWindow = nil }
+    controller.openCommandBar()
+    let bar = try #require(controller.checkCommandBar)
+    controller.checkTypeCommandBar("https://example.test/")
+    controller.checkCommitCommandBar()
+    for _ in 0..<100 where bar.controller.isOpen { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!bar.controller.isOpen)
+    #expect(host.navigated.isEmpty)
+    #expect(!host.value.isVisible && !bar.panel.isVisible)
+}
+
+@Test @MainActor
 func managingAnExtensionOpensAnOriginTabAndKeepsTheLittleWindowPage() async throws {
     _ = NSApplication.shared
     class_addProtocol(LittleWindowNavigationHost.self, objc_getProtocol("ARWindowHostAPI")!)
@@ -134,7 +158,7 @@ func managingAnExtensionOpensAnOriginTabAndKeepsTheLittleWindowPage() async thro
     let popup = PopupHost()
     popup.rootView.addSubview(popup.card)
     popup.host = popupHost as? any ARWindowHostAPI
-    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil, commandBarVisible: false)
     defer { controller.close(); popup.littleWindow = nil }
     let item = NSMenuItem()
     item.representedObject = "extension-id"
@@ -153,7 +177,7 @@ func littleWindowNavigatesItsOwnPopupWithoutAWorkspaceTarget() {
     popup.rootView.addSubview(popup.card)
     popup.host = host as? any ARWindowHostAPI
     let origin = Runtime(windowID: "origin")
-    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil)
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: nil, commandBarVisible: false)
     defer { controller.close(); popup.littleWindow = nil }
     controller.navigate(to: "https://example.test/")
     #expect(host.navigated == ["https://example.test/"])

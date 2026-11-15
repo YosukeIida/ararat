@@ -60,6 +60,7 @@ private final class MenuFixture {
             do { if let self { self.sidebar.applySelection(snapshot: try self.store.archiveItem(windowId: "menus", id: id)) } }
             catch { Issue.record("archive failed: \(error)") }
         }
+        sidebar.onRemoveFavorite = sidebar.onArchive
         sidebar.dragReduceMotion = { true }
     }
     var snapshot: WorkspaceSnapshot { store.snapshot(windowId: "menus") }

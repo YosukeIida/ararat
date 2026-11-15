@@ -6,14 +6,19 @@ import SwiftUI
 public final class SettingsWindowController: NSWindowController {
     let model: SettingsModel
     private var hasOpened = false
+    private let orderWindowFront: (NSWindow) -> Void
+    var presentSheet: (NSAlert, NSWindow, @escaping (NSApplication.ModalResponse) -> Void) -> Void = { alert, window, completion in
+        alert.beginSheetModal(for: window, completionHandler: completion)
+    }
     /// U27i N1: a recording left open when the window closes would keep the Carbon hot key
     /// unregistered until Settings reopens, so the close ends it.
     private var littleWindowRecordingCloseObserver: NSObjectProtocol?
     /// U27x (design decision B): the pane's Remove… is our AppKit sheet, and this window owns it.
     private var removeSheet: NSAlert?
     private var removeSheetMonitor: Any?
-    public init(model: SettingsModel) {
+    public init(model: SettingsModel, orderWindowFront: @escaping (NSWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }) {
         self.model = model
+        self.orderWindowFront = orderWindowFront
         let split = NSSplitViewController()
         let rail = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: SettingsRail(model: model)))
         rail.minimumThickness = 180
@@ -79,8 +84,7 @@ public final class SettingsWindowController: NSWindowController {
     public func open(shownSpaceID: String?) {
         if !hasOpened { window?.center(); hasOpened = true }
         prepare(shownSpaceID: shownSpaceID)
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        if let window { orderWindowFront(window) }
     }
 
     /// The visible window and the pane the screen check reads it through (`--ararat-screen=
@@ -158,9 +162,9 @@ public final class SettingsWindowController: NSWindowController {
         alert.window.title = alert.messageText
         removeSheet = alert
         removeSheetMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleRemoveSheetKey(event) ?? event
+            self?.handleRemoveSheetKey(event, targetWindow: event.window) ?? event
         }
-        alert.beginSheetModal(for: window) { [weak self] response in
+        presentSheet(alert, window) { [weak self] response in
             guard let self else { return }
             self.endRemoveSheet()
             if response == .alertSecondButtonReturn {
@@ -174,8 +178,8 @@ public final class SettingsWindowController: NSWindowController {
     /// One key event for the Remove sheet: Esc aimed at the sheet cancels it, and every other event
     /// (another window's Esc, a page load's Stop, the find bar, leaving full screen) passes through.
     /// Internal so the tests drive the same decision the monitor makes.
-    func handleRemoveSheetKey(_ event: NSEvent) -> NSEvent? {
-        guard event.keyCode == 53, event.window === removeSheet?.window else { return event }
+    func handleRemoveSheetKey(_ event: NSEvent, targetWindow: NSWindow?) -> NSEvent? {
+        guard event.keyCode == 53, targetWindow === removeSheet?.window else { return event }
         dismissRemoveSheet()
         return nil
     }
@@ -205,8 +209,7 @@ public final class SettingsWindowController: NSWindowController {
         prepare(shownSpaceID: shownSpaceID)
         model.navigate(.websites)
         model.openSite(origin: origin, profile: profile)
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        if let window { orderWindowFront(window) }
     }
 
     /// Hands a written switch to the Little Windows already open, so the pane's change applies
@@ -501,10 +504,11 @@ private struct SettingsDetail: View {
         }
     }
     @State private var scroll = SpaceScrollState()
+    @State private var wheelPausedUntil = -Double.infinity
     func handleScroll(_ event: NSEvent) -> Bool {
         guard let space = model.space, let index = model.snapshot.spaces.firstIndex(where: { $0.id == space.id }) else { return false }
         let phase: SpaceScrollEvent.Phase = event.phase.contains(.began) ? .began : event.phase.contains(.ended) ? .ended : event.phase.contains(.cancelled) ? .cancelled : event.phase.isEmpty ? .none : .changed
-        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection)
+        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection, wheelPausedUntil: &wheelPausedUntil)
         switch action {
         case .vertical: return false
         case .follow(let value): followedOffset = SettingsModel.settingsOffset(value, index: index)

@@ -255,6 +255,14 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
+        actions.onRemoveFavorite = { [weak self] id in
+            guard let self, !self.terminating else { return }
+            self.adapter.archive(id: id) { [weak self] result in
+                if let error = self?.publish(result.map(\.snapshot)) {
+                    FileHandle.standardError.write(Data("cannot remove favorite: \(error)\n".utf8))
+                }
+            }
+        }
         actions.onShowSpace = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.showSpace(id: id) { result in
@@ -596,8 +604,13 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         presenter.open(mode: spec.mode, prefill: spec.prefill)
         adapter.commandBarSession { [weak self, weak presenter] result in
-            guard let self, let presenter, !self.terminating, let session = try? result.get(), self.commandPresenter === presenter else { return }
-            presenter.applyStore(CommandBarSessionStore(session: session))
+            guard let self, let presenter, !self.terminating, self.commandPresenter === presenter else { return }
+            switch result {
+            case .success(let session): presenter.applyStore(CommandBarSessionStore(session: session))
+            case .failure(let error):
+                FileHandle.standardError.write(Data("cannot load command bar: \(error)\n".utf8))
+                presenter.close()
+            }
         }
     }
 
@@ -892,5 +905,11 @@ let terminationSignals = [SIGTERM, SIGINT].map { number in
     source.resume()
     return source
 }
-withExtendedLifetime(terminationSignals) { app.run() }
+let parentExit: DispatchSourceProcess? = headless ? DispatchSource.makeProcessSource(identifier: getppid(), eventMask: .exit, queue: .main) : nil
+parentExit?.setEventHandler { MainActor.assumeIsolated { NSApp.terminate(nil) } }
+parentExit?.resume()
+if headless && getppid() == 1 {
+    DispatchQueue.main.async { NSApp.terminate(nil) }
+}
+withExtendedLifetime((terminationSignals, parentExit)) { app.run() }
 exit(delegate.exitStatus)

@@ -730,7 +730,7 @@ bool AraratCheckDialogIntegrity() { return !g_check_dialog_failed && g_check_req
 bool AraratCheckRejectJavaScriptDialog() {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
-  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return false;
+  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return false;
   g_check_dialog_failed = true;
   static unsigned count = 0;
   if (count++ < 32) std::fprintf(stderr, "ararat-check-dialog: unexpected javascript pid=%d\n", getpid());
@@ -1434,7 +1434,6 @@ NSDictionary* OrphanMoveSnapshot(NSString* window) {
 - (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost;
 - (void)syncTabs;
 - (void)queueExtensionActionsChanged;
-- (void)closeCancelled:(const tabs::TabInterface*)tab;
 - (void)drainPendingOpens;
 - (void)discardPendingOpens;
 - (TabStripModel*)stripForTab:(ARTab*)tab;
@@ -1519,7 +1518,7 @@ bool AraratCheckRecoveryBarrier() {
 uint64_t AraratCheckBeginBeforeUnload(content::WebContents* contents, content::RenderFrameHost* frame, bool guest) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
-  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return 0;
+  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return 0;
   ARWindowHost* host = g_check_dialog_host;
   NSDictionary* page = host && contents ? [host checkDialogPage:contents] : nil;
   NSString* value = page[@"live"];
@@ -1536,7 +1535,7 @@ uint64_t AraratCheckBeginBeforeUnload(content::WebContents* contents, content::R
   g_check_dialog_seen.insert(live);
   uint64_t token = ++g_check_request_serial;
   g_check_requests.emplace(token, CheckRequest{live, it->second.generation, g_check_attempt_generation,
-                                                g_check_admitted_count == g_check_cancel_dialog, false});
+                                                g_check_admitted_count == g_check_cancel_dialog || (check == "today" && g_check_admitted_count == 2), false});
   return token;
 }
 
@@ -1641,7 +1640,7 @@ void StripObserver::OnTabStripModelChanged(TabStripModel*,
 }
 
 void StripObserver::OnTabCloseCancelled(const tabs::TabInterface* tab) {
-  [host_ closeCancelled:tab];
+  [host_ tabCloseCancelled:tab->GetContents()];
 }
 
 void StripObserver::OnSplitTabChanged(const SplitTabChange& change) {
@@ -2143,7 +2142,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
   if (args->HasSwitch("ararat-screen") ||
-      (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return;
+      (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return;
   g_check_dialog_count = 0;
   g_check_cancel_dialog = 1;
   g_check_dialog_limit = 0;
@@ -3855,8 +3854,15 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return NO;
 }
 
-- (void)closeCancelled:(const tabs::TabInterface*)tab {
-  [pending_closes_ removeObjectForKey:[NSValue valueWithPointer:tab->GetContents()]];
+- (void)tabCloseCancelled:(content::WebContents*)contents {
+  if (!contents) return;
+  NSValue* key = [NSValue valueWithPointer:contents];
+  NSString* command = pending_closes_[key];
+  [pending_closes_ removeObjectForKey:key];
+  auto* identity = static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey));
+  NSString* item = identity ? identity->item_id : nil;
+  if (command && item.length && [self.delegate respondsToSelector:@selector(tabCloseCancelled:commandId:)])
+    [self.delegate tabCloseCancelled:item commandId:command];
 }
 
 - (void)normalizeChromeSplit:(split_tabs::SplitTabId)splitId {

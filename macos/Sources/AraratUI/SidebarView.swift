@@ -51,6 +51,10 @@ public final class SidebarView: NSView {
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
+    public var onRemoveFavorite: ((String) -> Void)?
+    private var requestedCloses: Set<String> = []
+
+    public func expectRowClose(id: String) { requestedCloses.insert(id) }
     let tooltip = SidebarTooltip()
     public func checkClosePressed(id: String) -> Bool {
         guard let row = rowViews[id] else { return false }
@@ -214,6 +218,8 @@ public final class SidebarView: NSView {
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
     private var spaceScroll = SpaceScrollState()
+    // Store replies reset gesture state; the wheel pause must survive those resets.
+    private var wheelPausedUntil = -Double.infinity
     private let pullIndicator = SpacePullIndicator(frame: .zero)
     private var pullTimer: Timer?
     var pullClock: () -> CFTimeInterval = CACurrentMediaTime
@@ -638,6 +644,18 @@ public final class SidebarView: NSView {
     }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        defer { requestedCloses.removeAll() }
+        if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
+           let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
+            let remaining = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
+            let removed = (current.today + current.pinned + current.favorites).filter { !remaining.contains($0.id) }
+            let removedIDs = Set(removed.map(\.id))
+            let roots = removed.filter { !removedIDs.contains($0.parentId) }
+            if roots.count == 1, !requestedCloses.isDisjoint(with: removedIDs) {
+                applyClose(id: roots[0].id, snapshot: snapshot)
+                return
+            }
+        }
         finishRowMotion()
         replaceSnapshot(snapshot)
         library.update(archive: snapshot.archive)
@@ -1764,7 +1782,7 @@ public final class SidebarView: NSView {
     /// The scroll classifier's answer for one event and the name the trace prints for it. Split
     /// out of `handleSpaceScroll` so the trace sees every decision, including the ones that hand
     /// the event back to AppKit.
-    private func decideSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> (handled: Bool, action: String) {
+    func decideSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> (handled: Bool, action: String) {
         guard !isScrollPreview else { return (false, "preview") }
         defer {
             if !event.momentumPhase.isEmpty {
@@ -1800,7 +1818,10 @@ public final class SidebarView: NSView {
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
                                      inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
-        if input.kind == .wheel && wheelPullPlaying { return (true, "wheel-pull-playing") }
+        if input.kind == .wheel && wheelPullPlaying && abs(input.dx) > abs(input.dy) {
+            let delta = input.dx * (input.inverted ? -1 : 1) * (spaceScrollDirection == .reversed ? -1 : 1)
+            if delta < 0 { return (true, "wheel-pull-playing") }
+        }
         let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
         if phase == .began {
             scrollOrigin = origin
@@ -1832,7 +1853,7 @@ public final class SidebarView: NSView {
         let logicalIndex = scrollPageIndex
         let action = spaceScroll.handle(input, index: logicalIndex, count: snapshot.spaces.count,
                                         pitch: spacePagePitch, presentationOffset: Double(offset ?? 0),
-                                        direction: spaceScrollDirection)
+                                        direction: spaceScrollDirection, wheelPausedUntil: &wheelPausedUntil)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -1856,6 +1877,7 @@ public final class SidebarView: NSView {
             pullIndicator.update(excess: spaceScroll.followedExcess)
             return (true, String(format: "follow %.1f", followed))
         case .settle(let index, let offset, let switched):
+            stopPullAnimation()
             if index == snapshot.spaces.count && switched {
                 openCreationAfterPull()
                 return (true, "pull-create")
@@ -2581,7 +2603,7 @@ extension SidebarView: NSMenuDelegate {
         }
         close.identifier = NSUserInterfaceItemIdentifier("close_tab")
         return itemMenu([copyItem(row), renameItem(row), moveItem(row), close,
-                  SidebarMenuItem("Remove Favorite") { [weak self] in self?.onArchive?(row.id) }])
+                  SidebarMenuItem("Remove Favorite") { [weak self] in self?.onRemoveFavorite?(row.id) }])
     }
 
     func folderMenu(row: Row) -> NSMenu {
@@ -2960,10 +2982,18 @@ extension SidebarView {
         return dragRect(view)
     }
 
-    public func pressClearToday() -> Bool {
+    public func pressClearToday(trace: (String) -> Void) -> Bool {
         guard todayDivider.superview != nil,
-              let button = SidebarNoTabsRowSelf.find(todayDivider, SidebarClearButton.self) else { return false }
+              let button = SidebarNoTabsRowSelf.find(todayDivider, SidebarClearButton.self) else {
+            trace("clear-press target=missing dividerAttached=\(todayDivider.superview != nil)")
+            return false
+        }
+        func state(_ stage: String) {
+            trace("clear-press stage=\(stage) target=\(ObjectIdentifier(button)) enabled=\(button.isEnabled) hidden=\(button.isHiddenOrHasHiddenAncestor) frame=\(button.convert(button.bounds, to: nil)) visible=\(button.visibleRect) window=\(button.window?.windowNumber ?? -1) key=\(NSApp.keyWindow?.windowNumber ?? -1) sheet=\(button.window?.attachedSheet?.windowNumber ?? -1) modal=\(NSApp.modalWindow?.windowNumber ?? -1) action=\(button.action.map(NSStringFromSelector) ?? "nil") callback=\(button.onPress != nil) handler=\(onClearToday != nil) presses=\(button.checkPressCount)")
+        }
+        state("before")
         button.performClick(nil)
+        state("after")
         return true
     }
 

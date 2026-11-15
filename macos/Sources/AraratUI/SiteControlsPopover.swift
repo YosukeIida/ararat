@@ -522,7 +522,9 @@ final class SiteControlsContent: NSView {
                        "requestingOrigin": permission.requestingOrigin,
                        "setting": permission.allowed[item].request]
         }
-        return onPermission?(request) ?? false
+        let accepted = onPermission?(request) ?? false
+        if !accepted { rebuild(model: model) }
+        return accepted
     }
 
     func checkClickFooter() -> Bool {

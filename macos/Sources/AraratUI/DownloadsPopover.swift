@@ -121,7 +121,7 @@ final class DownloadsPopover: NSObject {
     }
     func close() { popover.performClose(nil) }
     static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
-    func show(focus: Bool = false) {
+    func show(focus: Bool = false, present: Bool = true) {
         guard model.hasSessionDownloads, let window = anchor.window else { return }
         let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let available = max(0, window.frame.maxY - anchorRect.maxY - 16)
@@ -130,6 +130,7 @@ final class DownloadsPopover: NSObject {
         let size = NSSize(width: SidebarMetrics.defaultWidth, height: Self.headerHeight + CGFloat(count) * Self.rowHeight)
         popover.contentViewController?.view.setFrameSize(size)
         popover.contentSize = size
+        if !present { return }
         if !popover.isShown { popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: Self.edge(flipped: anchor.isFlipped)) }
         if let panel = popover.contentViewController?.view.window {
             let frame = panel.frame

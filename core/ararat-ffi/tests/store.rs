@@ -26,6 +26,42 @@ fn fresh_db(name: &str) -> PathBuf {
     path
 }
 
+#[test]
+fn cancelled_close_is_flushed_and_does_not_release_a_history_purge() {
+    let path = fresh_db("cancel-close");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
+    let item = store.create_tab("one".into(), "https://stay.example/".into()).unwrap().selected_id.unwrap();
+    let open = store.live_open(item.clone(), "https://stay.example/".into()).unwrap();
+    store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine,
+        strips: vec![LiveStrip { window: "one".into(), tabs: vec![LiveTab {
+            off_the_record: false, profile: Profile::Default, live_id: open.id.clone(), item: Some(item.clone()),
+            opener: None, navigated: false, url: None, title: None,
+        }], active: Some(open.id.clone()) }] }).unwrap();
+    let before = store.snapshot("one".into());
+    let close = store.live_archive(item.clone()).unwrap();
+    assert!(store.pending_history_purges().unwrap().is_empty());
+    assert!(store.history_admission(item.clone()).purges.is_empty());
+    assert!(store.live_cancel_close(close.id.clone()).unwrap());
+    assert_eq!(store.snapshot("one".into()), before);
+    assert_eq!(store.live_tab(item.clone()), Some(open.id));
+    assert!(store.pending_history_purges().unwrap().is_empty());
+    assert!(!store.live_cancel_close(close.id).unwrap());
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()).archive, before.archive);
+    let close = store.live_archive(item.clone()).unwrap();
+    assert!(store.pending_history_purges().unwrap().is_empty());
+    assert!(store.live_settle_close(close.id));
+    assert_eq!(store.pending_history_purges().unwrap().len(), 1);
+    let prior_purge = store.pending_history_purges().unwrap()[0].id.clone();
+    store.restore_item("one".into(), item.clone()).unwrap();
+    store.live_open(item.clone(), "https://stay.example/".into()).unwrap();
+    let close = store.live_archive(item.clone()).unwrap();
+    assert_eq!(store.pending_history_purges().unwrap().iter().map(|purge| &purge.id).collect::<Vec<_>>(), vec![&prior_purge]);
+    assert_eq!(store.history_admission(item).purges.len(), 1);
+    assert!(store.live_cancel_close(close.id).unwrap());
+    assert_eq!(store.pending_history_purges().unwrap().len(), 1);
+}
+
 fn records(path: &Path) -> Vec<(String, String, String)> {
     let conn = Connection::open(path).unwrap();
     let mut stmt = conn.prepare("SELECT kind, id, body FROM records ORDER BY kind, id").unwrap();

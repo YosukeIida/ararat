@@ -6,6 +6,21 @@ import Testing
 @testable import AraratHarness
 
 @Test @MainActor
+func settingsOpeningUsesTheWindowOrderingSeam() {
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+    let adapter = WorkspaceAdapter(windowID: "settings-ordering")
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+                              keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+    var ordered: [NSWindow] = []
+    let controller = SettingsWindowController(model: model, orderWindowFront: { ordered.append($0) })
+    controller.open(shownSpaceID: nil)
+    controller.openSite(origin: "https://example.org", profile: "Default", shownSpaceID: nil)
+    #expect(ordered.count == 2)
+    #expect(ordered.allSatisfy { $0 === controller.window && !$0.isVisible })
+    controller.window?.contentViewController = nil
+}
+
+@Test @MainActor
 func settingsRetargetsOneWindowToTheNewWorkspace() {
     let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
     let first = WorkspaceAdapter(windowID: "settings-first")
