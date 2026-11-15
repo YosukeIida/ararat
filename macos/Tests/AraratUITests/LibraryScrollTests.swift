@@ -130,13 +130,15 @@ func overlayWheelTargetsAreInwardOnlyAndRespectInversionAndPause() {
     for inverted in [false, true] {
         let sign = inverted ? -1.0 : 1.0
         for (index, dx, target) in [(-1, -2.0, 0), (2, 2.0, 1)] {
+            var statePause = -Double.infinity
             var state = SpaceScrollState()
-            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240) == .settle(index: target, offset: 0, switched: true))
-            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100.249), index: target, count: 2, pitch: 240) == .ignored)
+            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .settle(index: target, offset: 0, switched: true))
+            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100.249), index: target, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .ignored)
         }
         for (index, dx) in [(-1, 2.0), (2, -2.0)] {
+            var statePause = -Double.infinity
             var state = SpaceScrollState()
-            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240) == .ignored)
+            #expect(state.handle(.init(dx: dx * sign, inverted: inverted, time: 100), index: index, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .ignored)
         }
     }
 }
@@ -160,13 +162,14 @@ func libraryRailWheelReturnsToSpaceZeroThroughTheHitTarget() throws {
 
 @Test @MainActor
 func libraryRailHasNoOutwardFollowAndUsesTheSpaceReleaseRule() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    #expect(state.handle(.init(dx: 20, phase: .began, time: 100), index: -1, count: 2, pitch: 240) == .follow(0))
-    #expect(state.handle(.init(dx: 0, phase: .ended, time: 100.02), index: -1, count: 2, pitch: 240) == .settle(index: -1, offset: 0, switched: false))
-    #expect(state.handle(.init(dx: -20, phase: .began, time: 101), index: -1, count: 2, pitch: 240) == .follow(-10))
-    #expect(state.handle(.init(dx: 0, phase: .ended, time: 101.02), index: -1, count: 2, pitch: 240) == .settle(index: 0, offset: -10, switched: true))
-    _ = state.handle(.init(dx: -5000, phase: .began, time: 102), index: -1, count: 2, pitch: 240)
-    guard case .settle(let index, _, _) = state.handle(.init(dx: 0, phase: .ended, time: 102.02), index: -1, count: 2, pitch: 240) else { Issue.record("Expected settle"); return }
+    #expect(state.handle(.init(dx: 20, phase: .began, time: 100), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .follow(0))
+    #expect(state.handle(.init(dx: 0, phase: .ended, time: 100.02), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .settle(index: -1, offset: 0, switched: false))
+    #expect(state.handle(.init(dx: -20, phase: .began, time: 101), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .follow(-10))
+    #expect(state.handle(.init(dx: 0, phase: .ended, time: 101.02), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause) == .settle(index: 0, offset: -10, switched: true))
+    _ = state.handle(.init(dx: -5000, phase: .began, time: 102), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause)
+    guard case .settle(let index, _, _) = state.handle(.init(dx: 0, phase: .ended, time: 102.02), index: -1, count: 2, pitch: 240, wheelPausedUntil: &statePause) else { Issue.record("Expected settle"); return }
     #expect(index == 0)
 }
 
@@ -257,10 +260,11 @@ func wheelFromSpaceOneCannotCarryIntoLibraryDuringPause() throws {
 func wheelLibraryBoundaryUsesTheSameAccumulationAndInversion() {
     for inverted in [false, true] {
         for delay in [0.040, 0.049, 0.050] {
+            var statePause = -Double.infinity
             var state = SpaceScrollState()
             let sign = inverted ? -1.0 : 1.0
-            #expect(state.handle(.init(dx: sign * 0.6, inverted: inverted, time: 0), index: 0, count: 2, pitch: 332) == .ignored)
-            #expect(state.handle(.init(dx: sign * 0.6, inverted: inverted, time: delay), index: 0, count: 2, pitch: 332) ==
+            #expect(state.handle(.init(dx: sign * 0.6, inverted: inverted, time: 0), index: 0, count: 2, pitch: 332, wheelPausedUntil: &statePause) == .ignored)
+            #expect(state.handle(.init(dx: sign * 0.6, inverted: inverted, time: delay), index: 0, count: 2, pitch: 332, wheelPausedUntil: &statePause) ==
                     (delay <= 0.049 ? .settle(index: -1, offset: 0, switched: true) : .ignored))
         }
     }

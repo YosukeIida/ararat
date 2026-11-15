@@ -15,9 +15,10 @@ func scrollClassificationUsesEitherPhase() {
 @Test @MainActor
 func wheelAccumulatesOnlyWithinFortyNineMilliseconds() {
     for delay in [0.040, 0.049, 0.050] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        let first = state.handle(.init(dx: -0.6, time: 0), index: 0, count: 3, pitch: 180)
-        let second = state.handle(.init(dx: -0.6, time: delay), index: 0, count: 3, pitch: 180)
+        let first = state.handle(.init(dx: -0.6, time: 0), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+        let second = state.handle(.init(dx: -0.6, time: delay), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(first == .ignored)
         #expect(second == (delay <= 0.049 ? .settle(index: 1, offset: 0, switched: true) : .ignored))
     }
@@ -25,48 +26,53 @@ func wheelAccumulatesOnlyWithinFortyNineMilliseconds() {
 
 @Test @MainActor
 func wheelThresholdIsStrictAndItsWindowSlides() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    let one = state.handle(.init(dx: -1, time: 0), index: 0, count: 3, pitch: 180)
-    let above = state.handle(.init(dx: -0.01, time: 0.01), index: 0, count: 3, pitch: 180)
+    let one = state.handle(.init(dx: -1, time: 0), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let above = state.handle(.init(dx: -0.01, time: 0.01), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(one == .ignored)
     #expect(above == .settle(index: 1, offset: 0, switched: true))
+    statePause = -Double.infinity
     state = SpaceScrollState()
     for time in [0.0, 0.030, 0.060] {
-        let action = state.handle(.init(dx: -0.4, time: time), index: 0, count: 3, pitch: 180)
+        let action = state.handle(.init(dx: -0.4, time: time), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(action == .ignored)
     }
-    let accumulated = state.handle(.init(dx: -0.4, time: 0.070), index: 0, count: 3, pitch: 180)
+    let accumulated = state.handle(.init(dx: -0.4, time: 0.070), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(accumulated == .settle(index: 1, offset: 0, switched: true))
 }
 
 @Test @MainActor
 func wheelInversionAndDirectionMatchArc() {
     for inverted in [false, true] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        let action = state.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3, pitch: 180)
+        let action = state.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(action == .settle(index: inverted ? 0 : 2, offset: 0, switched: true))
     }
 }
 
 @Test @MainActor
 func wheelPauseIsMeasuredFromTheSwitchAndDoesNotExtend() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    let first = state.handle(.init(dx: -2, time: 0), index: 0, count: 4, pitch: 180)
+    let first = state.handle(.init(dx: -2, time: 0), index: 0, count: 4, pitch: 180, wheelPausedUntil: &statePause)
     #expect(first == .settle(index: 1, offset: 0, switched: true))
     for time in [0.030, 0.100, 0.249] {
-        let action = state.handle(.init(dx: -20, time: time), index: 1, count: 4, pitch: 180)
+        let action = state.handle(.init(dx: -20, time: time), index: 1, count: 4, pitch: 180, wheelPausedUntil: &statePause)
         #expect(action == .ignored)
     }
-    let afterPause = state.handle(.init(dx: -2, time: 0.250), index: 1, count: 4, pitch: 180)
+    let afterPause = state.handle(.init(dx: -2, time: 0.250), index: 1, count: 4, pitch: 180, wheelPausedUntil: &statePause)
     #expect(afterPause == .settle(index: 2, offset: 0, switched: true))
 }
 
 @Test @MainActor
 func wheelVerticalInputPassesThroughEvenDuringPause() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    _ = state.handle(.init(dx: -2, time: 0), index: 0, count: 3, pitch: 180)
-    let vertical = state.handle(.init(dx: -2, dy: -3, time: 0.010), index: 1, count: 3, pitch: 180)
-    let tie = state.handle(.init(dx: 2, dy: 2, time: 0.020), index: 1, count: 3, pitch: 180)
+    _ = state.handle(.init(dx: -2, time: 0), index: 0, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let vertical = state.handle(.init(dx: -2, dy: -3, time: 0.010), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let tie = state.handle(.init(dx: 2, dy: 2, time: 0.020), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(vertical == .vertical)
     #expect(tie == .vertical)
 }
@@ -74,9 +80,10 @@ func wheelVerticalInputPassesThroughEvenDuringPause() {
 @Test @MainActor
 func trackpadFollowsHalfItsDeltaWithoutInverting() {
     for inverted in [false, true] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        let first = state.handle(.init(dx: -4, phase: .began, inverted: inverted, time: 0), index: 1, count: 3, pitch: 180)
-        let next = state.handle(.init(dx: -8, phase: .changed, inverted: inverted, time: 0.010), index: 1, count: 3, pitch: 180)
+        let first = state.handle(.init(dx: -4, phase: .began, inverted: inverted, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+        let next = state.handle(.init(dx: -8, phase: .changed, inverted: inverted, time: 0.010), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(first == .follow(-2))
         #expect(next == .follow(-6))
     }
@@ -84,17 +91,19 @@ func trackpadFollowsHalfItsDeltaWithoutInverting() {
 
 @Test @MainActor
 func trackpadLocksToItsFirstNonzeroAxis() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    _ = state.handle(.init(dx: 0, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    let horizontal = state.handle(.init(dx: -4, dy: 1, phase: .changed, time: 0.010), index: 1, count: 3, pitch: 180)
-    let staysHorizontal = state.handle(.init(dx: -2, dy: 100, phase: .changed, time: 0.020), index: 1, count: 3, pitch: 180)
+    _ = state.handle(.init(dx: 0, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let horizontal = state.handle(.init(dx: -4, dy: 1, phase: .changed, time: 0.010), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let staysHorizontal = state.handle(.init(dx: -2, dy: 100, phase: .changed, time: 0.020), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(horizontal == .follow(-2))
     #expect(staysHorizontal == .follow(-3))
+    statePause = -Double.infinity
     state = SpaceScrollState()
-    let vertical = state.handle(.init(dx: 1, dy: 4, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    let staysVertical = state.handle(.init(dx: 100, dy: 1, phase: .changed, time: 0.010), index: 1, count: 3, pitch: 180)
-    _ = state.handle(.init(dx: 0, phase: .ended, time: 0.020), index: 1, count: 3, pitch: 180)
-    let momentum = state.handle(.init(dx: 0, dy: 20, momentum: true, time: 0.030), index: 1, count: 3, pitch: 180)
+    let vertical = state.handle(.init(dx: 1, dy: 4, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let staysVertical = state.handle(.init(dx: 100, dy: 1, phase: .changed, time: 0.010), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    _ = state.handle(.init(dx: 0, phase: .ended, time: 0.020), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let momentum = state.handle(.init(dx: 0, dy: 20, momentum: true, time: 0.030), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(vertical == .vertical)
     #expect(staysVertical == .vertical)
     #expect(momentum == .vertical)
@@ -103,24 +112,27 @@ func trackpadLocksToItsFirstNonzeroAxis() {
 @Test @MainActor
 func trackpadRecentVelocityPicksTheDirectionalBoundary() {
     for delta in [-2.0, 2] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.060), index: 1, count: 3, pitch: 180)
+        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.060), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(release == .settle(index: delta < 0 ? 2 : 0, offset: delta / 2, switched: true))
     }
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    _ = state.handle(.init(dx: -100, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    _ = state.handle(.init(dx: 1, phase: .changed, time: 0.200), index: 1, count: 3, pitch: 180)
-    let reversed = state.handle(.init(dx: 0, phase: .ended, time: 0.250), index: 1, count: 3, pitch: 180)
+    _ = state.handle(.init(dx: -100, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    _ = state.handle(.init(dx: 1, phase: .changed, time: 0.200), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let reversed = state.handle(.init(dx: 0, phase: .ended, time: 0.250), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(reversed == .settle(index: 1, offset: -49.5, switched: false))
 }
 
 @Test @MainActor
 func trackpadWithoutRecentVelocityUsesTheStrictHalfPageThreshold() {
     for delta in [-184.0, -180, -20, 20, 180, 184] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.120), index: 1, count: 3, pitch: 180)
+        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.120), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         let switches = abs(delta) > 180
         let target = switches ? (delta < 0 ? 2 : 0) : 1
         #expect(release == .settle(index: target, offset: delta / 2, switched: switches))
@@ -129,10 +141,11 @@ func trackpadWithoutRecentVelocityUsesTheStrictHalfPageThreshold() {
 
 @Test @MainActor
 func horizontalGestureMomentumCannotSwitchAgain() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    _ = state.handle(.init(dx: -2, phase: .began, time: 0), index: 0, count: 4, pitch: 180)
-    _ = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 0, count: 4, pitch: 180)
-    let momentum = state.handle(.init(dx: -200, momentum: true, time: 0.060), index: 1, count: 4, pitch: 180)
+    _ = state.handle(.init(dx: -2, phase: .began, time: 0), index: 0, count: 4, pitch: 180, wheelPausedUntil: &statePause)
+    _ = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 0, count: 4, pitch: 180, wheelPausedUntil: &statePause)
+    let momentum = state.handle(.init(dx: -200, momentum: true, time: 0.060), index: 1, count: 4, pitch: 180, wheelPausedUntil: &statePause)
     #expect(momentum == .ignored)
 }
 
@@ -140,11 +153,12 @@ func horizontalGestureMomentumCannotSwitchAgain() {
 func trackpadRubberBandsCreationAndKeepsLibraryOutwardMotionInert() {
     let expected = 255 * (1 - 1 / (0.15 * 200 / 255 + 1))
     for (index, delta) in [(-1, 400.0), (3, -400.0)] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
         let sign = delta < 0 ? -1.0 : 1.0
         let offset = index == -1 ? 0 : sign * expected
-        let follow = state.handle(.init(dx: delta, phase: .began, time: 0), index: index, count: 3, pitch: 180)
-        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: index, count: 3, pitch: 180)
+        let follow = state.handle(.init(dx: delta, phase: .began, time: 0), index: index, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: index, count: 3, pitch: 180, wheelPausedUntil: &statePause)
         #expect(follow == .follow(offset))
         #expect(release == .settle(index: index, offset: offset, switched: false))
     }
@@ -152,9 +166,10 @@ func trackpadRubberBandsCreationAndKeepsLibraryOutwardMotionInert() {
 
 @Test @MainActor
 func cancelledTrackpadGestureReturnsWithoutSwitching() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    _ = state.handle(.init(dx: -20, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
-    let release = state.handle(.init(dx: 0, phase: .cancelled, time: 0.010), index: 1, count: 3, pitch: 180)
+    _ = state.handle(.init(dx: -20, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
+    let release = state.handle(.init(dx: 0, phase: .cancelled, time: 0.010), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(release == .settle(index: 1, offset: -10, switched: false))
 }
 
@@ -170,7 +185,7 @@ func wheelSwitchUsesTheExistingSpacePathAndPreservesItsPause() {
     #expect(sidebar.spaceShown == 1)
     sidebar.showSpace(at: 0)
     sidebar.scrollWheel(with: event)
-    #expect(sidebar.spaceShown == 1)
+    #expect(sidebar.spaceShown == 0)
 }
 
 @MainActor
@@ -219,15 +234,17 @@ func trackpadRoutesThroughTheRowScrollViewAndAnimatesNeighborPages() throws {
 @Test @MainActor
 func longTrackpadDragsChooseTheNearestPageAndBandBeyondTheList() {
     for delta in [-541.0, 541] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
-        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 3, count: 7, pitch: 180)
-        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.200), index: 3, count: 7, pitch: 180)
+        _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 3, count: 7, pitch: 180, wheelPausedUntil: &statePause)
+        let release = state.handle(.init(dx: 0, phase: .ended, time: 0.200), index: 3, count: 7, pitch: 180, wheelPausedUntil: &statePause)
         #expect(release == .settle(index: delta < 0 ? 5 : 1, offset: delta / 2, switched: true))
     }
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    let follow = state.handle(.init(dx: -1160, phase: .began, time: 0), index: 1, count: 3, pitch: 180)
+    let follow = state.handle(.init(dx: -1160, phase: .began, time: 0), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     let offset = -180 + SpaceScrollState.rubberBand(-400)
-    let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 1, count: 3, pitch: 180)
+    let release = state.handle(.init(dx: 0, phase: .ended, time: 0.050), index: 1, count: 3, pitch: 180, wheelPausedUntil: &statePause)
     #expect(follow == .follow(offset))
     #expect(release == .settle(index: 3, offset: offset, switched: true))
 }
@@ -238,19 +255,21 @@ func halfPageThresholdAndDirectionalReleaseScaleWithPitch() {
         let pitch = width
         for sign in [-1.0, 1] {
             for factor in [0.99, 1.0, 1.01] {
+                var statePause = -Double.infinity
                 var state = SpaceScrollState()
                 let delta = sign * pitch * factor
-                _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: pitch)
-                let release = state.handle(.init(dx: 0, phase: .ended, time: 0.200), index: 1, count: 3, pitch: pitch)
+                _ = state.handle(.init(dx: delta, phase: .began, time: 0), index: 1, count: 3, pitch: pitch, wheelPausedUntil: &statePause)
+                let release = state.handle(.init(dx: 0, phase: .ended, time: 0.200), index: 1, count: 3, pitch: pitch, wheelPausedUntil: &statePause)
                 let target = factor > 1 ? (sign < 0 ? 2 : 0) : 1
                 #expect(release == .settle(index: target, offset: delta / 2, switched: factor > 1))
             }
         }
         for (first, last, target) in [(-0.56, 0.01, 1), (-0.54, -0.01, 2)] {
+            var statePause = -Double.infinity
             var state = SpaceScrollState()
-            _ = state.handle(.init(dx: first * pitch, phase: .began, time: 0), index: 1, count: 3, pitch: pitch)
-            _ = state.handle(.init(dx: last * pitch, phase: .changed, time: 0.200), index: 1, count: 3, pitch: pitch)
-            let release = state.handle(.init(dx: 0, phase: .ended, time: 0.250), index: 1, count: 3, pitch: pitch)
+            _ = state.handle(.init(dx: first * pitch, phase: .began, time: 0), index: 1, count: 3, pitch: pitch, wheelPausedUntil: &statePause)
+            _ = state.handle(.init(dx: last * pitch, phase: .changed, time: 0.200), index: 1, count: 3, pitch: pitch, wheelPausedUntil: &statePause)
+            let release = state.handle(.init(dx: 0, phase: .ended, time: 0.250), index: 1, count: 3, pitch: pitch, wheelPausedUntil: &statePause)
             guard case let .settle(index, offset, switched) = release else { Issue.record("Expected a release decision"); return }
             #expect(index == target)
             #expect(abs(offset + pitch * 0.275) < 0.000001)
@@ -501,33 +520,36 @@ func followPositionsSurviveWindowLayerTreeUpdates() async throws {
 
 @Test @MainActor
 func wheelSlidesChainAndTrackpadTakesOverThePresentedOffset() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    let first = state.handle(.init(dx: -2, time: 100), index: 0, count: 3, pitch: 240)
+    let first = state.handle(.init(dx: -2, time: 100), index: 0, count: 3, pitch: 240, wheelPausedUntil: &statePause)
     #expect(first == .settle(index: 1, offset: 0, switched: true))
-    let paused = state.handle(.init(dx: -2, time: 100.249), index: 1, count: 3, pitch: 240, presentationOffset: 70)
+    let paused = state.handle(.init(dx: -2, time: 100.249), index: 1, count: 3, pitch: 240, presentationOffset: 70, wheelPausedUntil: &statePause)
     #expect(paused == .ignored)
-    let chained = state.handle(.init(dx: -2, time: 100.250), index: 1, count: 3, pitch: 240, presentationOffset: 64)
+    let chained = state.handle(.init(dx: -2, time: 100.250), index: 1, count: 3, pitch: 240, presentationOffset: 64, wheelPausedUntil: &statePause)
     #expect(chained == .settle(index: 2, offset: 64, switched: true))
-    let takeover = state.handle(.init(dx: -20, phase: .began, time: 100.260), index: 2, count: 3, pitch: 240, presentationOffset: 304)
+    let takeover = state.handle(.init(dx: -20, phase: .began, time: 100.260), index: 2, count: 3, pitch: 240, presentationOffset: 304, wheelPausedUntil: &statePause)
     #expect(takeover == .follow(294))
-    let continued = state.handle(.init(dx: -20, phase: .changed, time: 100.280), index: 2, count: 3, pitch: 240, presentationOffset: 0)
+    let continued = state.handle(.init(dx: -20, phase: .changed, time: 100.280), index: 2, count: 3, pitch: 240, presentationOffset: 0, wheelPausedUntil: &statePause)
     #expect(continued == .follow(284))
 }
 
 @Test @MainActor
 func wheelDoesNotLeaveLibraryOutwardAndPullsAtTheLastSpace() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
-    #expect(state.handle(.init(dx: 2, time: 100), index: -1, count: 3, pitch: 240) == .ignored)
-    #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .pull)
-    #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20) == .ignored)
+    #expect(state.handle(.init(dx: 2, time: 100), index: -1, count: 3, pitch: 240, wheelPausedUntil: &statePause) == .ignored)
+    #expect(state.handle(.init(dx: -2, time: 100.100), index: 2, count: 3, pitch: 240, presentationOffset: 20, wheelPausedUntil: &statePause) == .pull)
+    #expect(state.handle(.init(dx: 2, time: 100.200), index: 2, count: 3, pitch: 240, presentationOffset: 20, wheelPausedUntil: &statePause) == .ignored)
 }
 
 @Test @MainActor
 func trackpadPastLastSpaceOpensCreationAtTheFollowedThreshold() {
     for distance in [328.0, 330, 332] {
+        var scrollPause = -Double.infinity
         var scroll = SpaceScrollState()
-        _ = scroll.handle(.init(dx: -distance, phase: .began, time: 0), index: 2, count: 3, pitch: 240)
-        let result = scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 2, count: 3, pitch: 240)
+        _ = scroll.handle(.init(dx: -distance, phase: .began, time: 0), index: 2, count: 3, pitch: 240, wheelPausedUntil: &scrollPause)
+        let result = scroll.handle(.init(dx: 0, phase: .ended, time: 0.2), index: 2, count: 3, pitch: 240, wheelPausedUntil: &scrollPause)
         #expect(result == .settle(index: distance >= 330 ? 3 : 2, offset: SpaceScrollState.rubberBand(-distance / 2), switched: distance >= 330))
     }
 }
@@ -591,19 +613,21 @@ func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
 
 @Test @MainActor
 func zeroDeltaGestureBeginsTakeOverAtTheFirstHorizontalMotion() {
+    var statePause = -Double.infinity
     var state = SpaceScrollState()
     #expect(state.handle(.init(dx: 0, phase: .began, time: 100), index: 1, count: 3,
-                         pitch: 240, presentationOffset: 100) == .vertical)
+                         pitch: 240, presentationOffset: 100, wheelPausedUntil: &statePause) == .vertical)
     #expect(state.handle(.init(dx: -20, phase: .changed, time: 100.020), index: 1, count: 3,
-                         pitch: 240, presentationOffset: 64) == .follow(54))
+                         pitch: 240, presentationOffset: 64, wheelPausedUntil: &statePause) == .follow(54))
 }
 
 @Test @MainActor
 func trackpadTakeoverDoesNotRubberBandThePresentedOffsetTwice() {
     for (index, offset) in [(0, 30.0), (2, -30.0)] {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
         let action = state.handle(.init(dx: 0.000001, phase: .began, time: 100), index: index, count: 3,
-                                  pitch: 240, presentationOffset: offset)
+                                  pitch: 240, presentationOffset: offset, wheelPausedUntil: &statePause)
         guard case .follow(let position) = action else { Issue.record("Expected a follow"); continue }
         #expect(abs(position - offset) < 0.000001)
     }
@@ -617,12 +641,14 @@ func trackpadTakeoverDoesNotRubberBandThePresentedOffsetTwice() {
 @Test @MainActor
 func theDirectionSettingSwapsTheWheelForBothInversionStates() {
     for inverted in [false, true] {
+        var naturalPause = -Double.infinity
         var natural = SpaceScrollState()
+        var reversedPause = -Double.infinity
         var reversed = SpaceScrollState()
         let n = natural.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3,
-                               pitch: 180, direction: .natural)
+                               pitch: 180, direction: .natural, wheelPausedUntil: &naturalPause)
         let r = reversed.handle(.init(dx: -2, inverted: inverted, time: 0), index: 1, count: 3,
-                                pitch: 180, direction: .reversed)
+                                pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause)
         // Natural keeps the existing rule: a wheel that arrived inverted was cancelled in the
         // pixel the event carries, so the same physical turn pages either way.
         #expect(n == .settle(index: inverted ? 0 : 2, offset: 0, switched: true))
@@ -635,13 +661,16 @@ func theDirectionSettingTurnsTheWheelTheOtherWayAtEitherEnd() {
     // Reversed at the first space still goes to the Library, and at the last to creation, because
     // the whole pipeline is turned around rather than the neighbours being relabelled: a wheel
     // that reads leftward under Natural reads rightward here.
+    var reversedPause = -Double.infinity
     var reversed = SpaceScrollState()
-    #expect(reversed.handle(.init(dx: -2, time: 0), index: 0, count: 3, pitch: 180, direction: .reversed)
+    #expect(reversed.handle(.init(dx: -2, time: 0), index: 0, count: 3, pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause)
         == .settle(index: -1, offset: 0, switched: true))
+    reversedPause = -Double.infinity
     reversed = SpaceScrollState()
-    #expect(reversed.handle(.init(dx: 2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed) == .pull)
+    #expect(reversed.handle(.init(dx: 2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause) == .pull)
+    reversedPause = -Double.infinity
     reversed = SpaceScrollState()
-    #expect(reversed.handle(.init(dx: -2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed)
+    #expect(reversed.handle(.init(dx: -2, time: 0), index: 2, count: 3, pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause)
         == .settle(index: 1, offset: 0, switched: true))
 }
 
@@ -650,15 +679,16 @@ func theDirectionSettingSwapsTheTrackpadFollowAndRelease() {
     for direction in [SpaceScrollDirection.natural, .reversed] {
         let sign = direction == .natural ? 1.0 : -1.0
         // The same events for both: Reversed turns this one motion the other way.
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
         let first = state.handle(.init(dx: -4, phase: .began, time: 0), index: 1, count: 3,
-                                 pitch: 180, direction: direction)
+                                 pitch: 180, direction: direction, wheelPausedUntil: &statePause)
         let next = state.handle(.init(dx: -8, phase: .changed, time: 0.010), index: 1, count: 3,
-                                pitch: 180, direction: direction)
+                                pitch: 180, direction: direction, wheelPausedUntil: &statePause)
         #expect(first == .follow(-2 * sign))
         #expect(next == .follow(-6 * sign))
         let release = state.handle(.init(dx: -40, phase: .ended, time: 0.020), index: 1, count: 3,
-                                   pitch: 180, direction: direction)
+                                   pitch: 180, direction: direction, wheelPausedUntil: &statePause)
         // Natural: the gesture releases to the next space. Reversed: to the previous one.
         #expect(release == .settle(index: direction == .natural ? 2 : 0, offset: -26 * sign, switched: true))
     }
@@ -666,9 +696,10 @@ func theDirectionSettingSwapsTheTrackpadFollowAndRelease() {
 
 @Test @MainActor
 func theDirectionSettingLeavesVerticalScrollingAlone() {
+    var reversedPause = -Double.infinity
     var reversed = SpaceScrollState()
     #expect(reversed.handle(.init(dx: 1, dy: 4, phase: .changed, time: 0), index: 1, count: 3,
-                            pitch: 180, direction: .reversed) == .vertical)
+                            pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause) == .vertical)
     #expect(reversed.handle(.init(dx: 1, dy: 4, time: 0.010), index: 1, count: 3,
-                            pitch: 180, direction: .reversed) == .vertical)
+                            pitch: 180, direction: .reversed, wheelPausedUntil: &reversedPause) == .vertical)
 }

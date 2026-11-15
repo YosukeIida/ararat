@@ -70,3 +70,15 @@ func reversedDirectionTurnsTheRecordedTrackballGesturesAround() throws {
     #expect(replay.steps.map(\.direction) == ["right", "right", "right", "right"])
     #expect(replay.index == 5)
 }
+
+@Test @MainActor
+func storeRepliesKeepTheRecordedWheelPauseAcrossStateResets() throws {
+    let quick = try recording("quick")
+    let left = SpaceScrollReplay.run(quick.filter { $0.time < 5 }, from: 2, count: 4, resetAfterSwitch: true)
+    let right = SpaceScrollReplay.run(quick.filter { $0.time >= 5 }, from: 1, count: 4, resetAfterSwitch: true)
+    let slow = SpaceScrollReplay.run(try recording("slow"), from: 4, count: 6, resetAfterSwitch: true)
+    #expect(left.steps.map(\.direction) == ["left"])
+    #expect(right.steps.map(\.direction) == ["right"])
+    #expect(slow.steps.map(\.direction) == ["left", "left", "left", "left"])
+    #expect(slow.steps.map(\.time) == SpaceScrollReplay.run(try recording("slow"), from: 4, count: 6).steps.map(\.time))
+}

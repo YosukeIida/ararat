@@ -7,9 +7,10 @@ import Testing
 func pullReleaseRequiresFollowedThresholdRegardlessOfVelocity() {
     for excess in [1.0, 164, 165, 180] {
         for delay in [0.01, 0.2] {
+            var statePause = -Double.infinity
             var state = SpaceScrollState()
-            _ = state.handle(.init(dx: -2 * excess, phase: .began, time: 0), index: 2, count: 3, pitch: 240)
-            let release = state.handle(.init(dx: 0, phase: .ended, time: delay), index: 2, count: 3, pitch: 240)
+            _ = state.handle(.init(dx: -2 * excess, phase: .began, time: 0), index: 2, count: 3, pitch: 240, wheelPausedUntil: &statePause)
+            let release = state.handle(.init(dx: 0, phase: .ended, time: delay), index: 2, count: 3, pitch: 240, wheelPausedUntil: &statePause)
             #expect(release == .settle(index: excess >= 165 ? 3 : 2, offset: SpaceScrollState.rubberBand(-excess), switched: excess >= 165))
         }
     }
@@ -107,7 +108,7 @@ func pullIndicatorGeometryColorsAndAccessibility() throws {
 }
 
 @Test @MainActor
-func wheelPullOpensCreationIgnoresWheelAndPreservesPause() throws {
+func wheelPullOpensCreationIgnoresForwardWheelAndPreservesPause() throws {
     let (window, sidebar) = pullWindow()
     defer { window.contentView = nil }
     var now = 0.0
@@ -125,7 +126,7 @@ func wheelPullOpensCreationIgnoresWheelAndPreservesPause() throws {
     let sample = switchPullSample(at: now)
     #expect(abs(indicator.excess - sample.excess) < 0.000001)
     #expect(!sidebar.createSpaceOpen)
-    sidebar.scrollWheel(with: pullEvent(20, nil, 101))
+    sidebar.scrollWheel(with: pullEvent(-20, nil, 100.1))
     #expect(abs(indicator.excess - sample.excess) < 0.000001 && !sidebar.createSpaceOpen)
     now = sample.duration
     sidebar.stepPull()
