@@ -642,12 +642,21 @@ extension Runtime {
                 if check.conditions["rows"] != true {
                     check.report("rows", rows.allSatisfy { $0.frame.height >= 54 })
                 }
-                // p4checks: record a key in Settings, then press it in the browser window.
+                // p4checks: record a key in Settings, then press it in the browser window. The
+                // record button is pressed through the UI: the window's AX tree first, else a
+                // real click on the row's record face; the direct model call is the last resort.
                 check.shortcutKeyBefore = probe.shortcutKey("toggle_sidebar")
                 check.shortcutSidebarBefore = (root ?? self).container?.sidebarState ?? ""
                 check.panePhaseStart = browserCheckAttempts
-                trace("record ⌃⌥K for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
-                probe.beginShortcutRecording("toggle_sidebar")
+                let press = probe.pressShortcutRecordButton("toggle_sidebar")
+                check.details["shortcut_press"] = ["pressed": press.pressed, "way": press.way]
+                if !press.tree.isEmpty { check.details["shortcut_ax_tree"] = press.tree }
+                if press.pressed {
+                    trace("record button pressed through \(press.way) for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
+                } else {
+                    trace("neither the AX tree nor a click reached the record button; calling the model")
+                    probe.beginShortcutRecording("toggle_sidebar")
+                }
                 step(20)
                 return
             case .spaces:
@@ -746,6 +755,15 @@ extension Runtime {
             let ready = probe.shortcutRecordingCommand == "toggle_sidebar"
                 && probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
             guard ready else {
+                // A press that reported success but started no recording gets one direct call, so
+                // the run still proves the rest of the path; the detail says it was needed.
+                if probe.shortcutRecordingCommand == nil,
+                   browserCheckAttempts - check.panePhaseStart > 20,
+                   check.details["shortcut_press_fallback"] == nil {
+                    check.details["shortcut_press_fallback"] = true
+                    FileHandle.standardError.write(Data("ararat-trace: shortcuts the UI press did not start the recording; calling the model\n".utf8))
+                    probe.beginShortcutRecording("toggle_sidebar")
+                }
                 if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("recorder_opened", false); finish()
                     return

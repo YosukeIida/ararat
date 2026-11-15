@@ -117,12 +117,42 @@ public final class SettingsCheckProbe {
 
     // MARK: p4checks, the Shortcuts pane's recorder
 
-    /// The row's record control is a SwiftUI Button, which the VM cannot press (no AX tree), so
-    /// the check calls `model.toggleRecording` — the exact action that button runs. From there the
-    /// pane's `ShortcutsRecorderView` takes the typed event, so the recorder path itself is real.
-    public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
+    /// Presses a Shortcut row's record button through the UI, the way a person does: the Settings
+    /// window's own in-process accessibility tree first (an in-process AX client needs no TCC
+    /// grant), then a synthesized mouse click on the row's record face. Answers how it went, and
+    /// the AX tree it walked when the accessibility pass found no button, so a report can say why.
+    public func pressShortcutRecordButton(_ command: String) -> (pressed: Bool, way: String, tree: [String]) {
+        let title = model.shortcuts.first { $0.command == command }?.title ?? command
+        let label = "Record shortcut for \(title)"
+        var tree: [String] = []
+        if let root = window.contentView {
+            if let button = accessibilityButton(label: label, under: root), button.accessibilityPerformPress() {
+                return (true, "accessibility", [])
+            }
+            tree = accessibilityDump()
+        }
+        // The row's record face is a SwiftUI view with a layout marker; scroll it into the pane
+        // and send it a real click, the way LookScreenCheck drives SwiftUI controls.
+        let markerID = "column-shortcut-\(command)"
+        if let scroll = detailScrollView, let content, let rect = marker(markerID) {
+            let visible = topDown(scroll.convert(scroll.bounds, to: content), in: content)
+            if rect.midY < visible.minY + 8 || rect.midY > visible.maxY - 8 {
+                let target = scroll.contentView.bounds.minY + (rect.midY - visible.minY) - 100
+                _ = scrollDetail(to: max(0, target))
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+        }
+        guard let rect = marker(markerID), let point = windowPoint(topDown: rect), clickWindowPoint(point) else {
+            return (false, "none", tree)
+        }
+        return (true, "click", tree)
+    }
+
+    /// The fallback only: `model.toggleRecording`, the action the row's button runs, for the case
+    /// where neither the accessibility pass nor the synthesized click reached the button.
     public func beginShortcutRecording(_ command: String) { model.keyBindings.toggleRecording(command) }
     public func resetShortcut(_ command: String) { model.resetShortcut(command) }
+    public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
     @discardableResult
     public func recordShortcutKey(_ event: NSEvent) -> Bool {
         // The pane's own recorder view takes the event while a row records (it is the first
@@ -143,6 +173,62 @@ public final class SettingsCheckProbe {
             return nil
         }
         return window.contentView.flatMap(find)
+    }
+
+    // MARK: p4checks, the UI paths behind the recorder button
+
+    /// The first accessibility button with this label under `element`, walking the window's own
+    /// tree the way DownloadCloseCheck walks a sheet's.
+    private func accessibilityButton(label: String, under element: any NSAccessibilityProtocol) -> (any NSAccessibilityProtocol)? {
+        let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? [])
+            .compactMap { $0 as? any NSAccessibilityProtocol }
+        if let button = children.first(where: { $0.accessibilityRole() == .button && $0.accessibilityLabel() == label }) {
+            return button
+        }
+        for child in children {
+            if let found = accessibilityButton(label: label, under: child) { return found }
+        }
+        return nil
+    }
+
+    /// Roles and labels, four levels deep, for the report when the AX pass finds no button.
+    private func accessibilityDump() -> [String] {
+        guard let root = window.contentView else { return [] }
+        var rows: [String] = []
+        func walk(_ element: any NSAccessibilityProtocol, depth: Int) {
+            guard rows.count < 80 else { return }
+            let role = element.accessibilityRole()?.rawValue ?? "?"
+            let label = element.accessibilityLabel() ?? ""
+            rows.append(String(repeating: "  ", count: depth) + role + (label.isEmpty ? "" : " \"\(label)\""))
+            guard depth < 4 else { return }
+            let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? [])
+                .compactMap { $0 as? any NSAccessibilityProtocol }
+            for child in children { walk(child, depth: depth + 1) }
+        }
+        walk(root, depth: 0)
+        return rows
+    }
+
+    /// A frame reported top-down in the content view as a window point.
+    private func windowPoint(topDown rect: NSRect) -> NSPoint? {
+        guard let content else { return nil }
+        let y = content.isFlipped ? rect.midY : content.bounds.height - rect.midY
+        return content.convert(NSPoint(x: rect.midX, y: y), to: nil)
+    }
+
+    /// A real mouse down and up through the window, the SwiftUI click LookScreenCheck sends.
+    private func clickWindowPoint(_ point: NSPoint) -> Bool {
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: window.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: window.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 0) else { return false }
+        window.sendEvent(down)
+        window.sendEvent(up)
+        return true
     }
     public func shortcutKey(_ command: String) -> KeyCombination? { model.keyBindings.binding(command: command)?.key }
     /// The key the app menu's Ararat Commands item carries for a command, which a recorded key
