@@ -1463,8 +1463,6 @@ public final class SidebarView: NSView {
     public func checkLibraryRowPresent(id: String) -> Bool {
         library.filteredEntries.contains { $0.id == id }
     }
-    public var checkCreateSpaceOpen: Bool { createSpaceOpen }
-
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateDockSelection()
