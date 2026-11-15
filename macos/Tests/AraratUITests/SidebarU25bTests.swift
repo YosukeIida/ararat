@@ -104,6 +104,29 @@ func anOpenEmptyFoldersLineSitsAtTheChildIndent() throws {
 }
 
 @Test @MainActor
+func clearTodayPressDiagnosticsDistinguishDisabledButtonsFromDispatchedActions() throws {
+    _ = NSApplication.shared
+    let space = u25Space(today: [u25Row("a")])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
+    let button = try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarClearButton }.first)
+    var cleared = 0
+    var traces: [String] = []
+    sidebar.onClearToday = { cleared += 1 }
+    for _ in 0..<2 { #expect(sidebar.pressClearToday { traces.append($0) }) }
+    #expect(cleared == 2)
+    #expect(traces.count == 4)
+    #expect(traces[0].contains("stage=before"))
+    #expect(traces[0].contains("presses=0"))
+    #expect(traces[3].contains("stage=after"))
+    #expect(traces[3].contains("presses=2"))
+    button.isEnabled = false
+    #expect(sidebar.pressClearToday { traces.append($0) })
+    #expect(cleared == 2)
+    #expect(traces.last?.contains("enabled=false") == true)
+    #expect(traces.last?.contains("presses=2") == true)
+}
+
+@Test @MainActor
 func todayDividerClearAndNewTabFollowTodayAndTheSetting() throws {
     let space = u25Space(today: [u25Row("a")])
     let (window, sidebar) = u25Sidebar(space)

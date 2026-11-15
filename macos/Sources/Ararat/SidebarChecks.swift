@@ -726,7 +726,7 @@ extension Runtime {
             check.cancelDialogCount = host.checkDialogCount()
             if !screen { host.expectCheckDialogs(2) }
             trace("press Clear")
-            guard sidebar.pressClearToday() else { check.report("clear_archives", false); step(5); return }
+            guard sidebar.pressClearToday(trace: trace) else { check.report("clear_archives", false); step(5); return }
             step(43)
         case 43:
             if screen && check.conditions["clear_today_stay_keeps_only_refused_row"] == nil {
@@ -742,7 +742,7 @@ extension Runtime {
             check.report("clear_today_stay_keeps_only_refused_row", !others.isEmpty && others.allSatisfy { id in core.archive.contains { $0.id == id } })
             if !screen { host.expectCheckDialogs(3) }
             trace("action=clear-after-stay today=\(space.today.map(\.id)) live=\(host.tabs().count)")
-            guard sidebar.pressClearToday() else { check.report("clear_archives", false); step(5); return }
+            guard sidebar.pressClearToday(trace: trace) else { check.report("clear_archives", false); step(5); return }
             step(5)
         case 5:
             // Do not gate Leave on a snapshot that a modal close may still be withholding.
