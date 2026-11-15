@@ -880,18 +880,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
-                    for target in targets {
-                        if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
-                        else if self.session.cancelPendingOpen(target.liveId) {
-                            self.queue.async {
-                                _ = self.store?.liveCancel(commandId: target.liveId)
-                                _ = self.store?.liveSettleClose(commandId: target.command.id)
-                                self.session.drainHistoryPurges()
-                            }
-                        } else {
-                            self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))
-                        }
-                    }
+                    self.session.closeLiveTargets(targets, report: self.report)
                     self.deliverIfCurrent(snapshot)
                     self.onWorkspaceChange?()
                 }

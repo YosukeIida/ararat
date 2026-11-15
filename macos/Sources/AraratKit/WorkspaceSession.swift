@@ -36,12 +36,16 @@ public final class WorkspaceSession: @unchecked Sendable {
                 self.queue.async {
                     _ = self.store?.liveCancel(commandId: target.liveId)
                     _ = self.store?.liveSettleClose(commandId: target.command.id)
+                    self.drainHistoryPurges()
                 }
             }
             else {
                 // A target the engine no longer has: settle its Close so the row is not
                 // left pending for a later restore.
-                self.queue.async { _ = self.store?.liveSettleClose(commandId: target.command.id) }
+                self.queue.async {
+                    _ = self.store?.liveSettleClose(commandId: target.command.id)
+                    self.drainHistoryPurges()
+                }
                 report(CoreError.Live(message: "Cannot find live tab \(target.liveId) to close"))
             }
         }

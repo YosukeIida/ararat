@@ -39,3 +39,38 @@ func splitCloseCheckFixtureSelectsTheNamedSpaceSplitMember() throws {
         #expect(selected.shownSpaceId == "named" && selected.selectedId == "close-split-a")
     }
 }
+
+@Test(arguments: [false, true]) @MainActor
+func missingBulkAndSplitTabsSettleTheirClosesAndDrainHeldPurges(split: Bool) async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("missing.sqlite").path,
+                                   windowID: "one", card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: "one", name: "Work", spaceId: "work")
+    let first = try #require(store.createTab(windowId: "one", url: "https://a.example/").selectedId)
+    let second = try #require(store.createTab(windowId: "one", url: "https://b.example/").selectedId)
+    let change = try store.makeSplit(windowId: "one", draggedId: second, targetId: first, side: .right)
+    let ids = [first, second]
+    let tabs = try ids.map { id -> LiveTab in
+        let command = try store.liveOpen(item: id, url: "https://example.test/")
+        return LiveTab(offTheRecord: false, profile: .default, liveId: command.id, item: id,
+                       opener: nil, navigated: true, url: "https://example.test/", title: nil)
+    }
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: "one", tabs: tabs, active: tabs.first?.liveId)]))
+    var submitted = Set<String>()
+    session.purgeHistory = { _, item, _, completion in submitted.insert(item); completion(true) }
+    if split {
+        engine.close(id: change.split)
+    } else {
+        let batch = try store.liveClearToday(windowId: "one", spaceId: "work")
+        #expect(try store.pendingHistoryPurges().isEmpty)
+        session.closeLiveTargets(batch.targets, report: { _ in })
+    }
+    try await waitUntil { submitted == Set(ids) && session.queue.sync { (try? store.pendingHistoryPurges().isEmpty) == true } }
+    #expect(try store.pendingHistoryPurges().isEmpty)
+    #expect(ids.allSatisfy { store.liveTab(item: $0) == nil })
+    engine.shutdown()
+}
