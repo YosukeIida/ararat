@@ -614,7 +614,7 @@ extension Runtime {
             // p4checks: a folder that holds tabs is deleted from its row menu, and the sheet the
             // app asks first is answered with its own Delete Folder button.
             guard let folder = row("folder"), folder.kind == .folder else {
-                check.report("delete_row_menu", false); step(4); return
+                check.report("delete_row_menu", false); finish(); return
             }
             check.deletedFolder = folder.id
             let children = (sidebarCheckShownSpace()?.pinned ?? []).filter { $0.parentId == folder.id }
@@ -623,7 +623,7 @@ extension Runtime {
             check.report("delete_row_menu", titles.contains("Delete"))
             trace("folder menu \(titles); delete \(folder.id) with \(children.count) children")
             guard sidebar.checkPerformRowMenuCommand(id: folder.id, title: "Delete") else {
-                check.report("delete_sheet", false); step(6); return
+                check.report("delete_sheet", false); finish(); return
             }
             step(4)
         case 4:
@@ -634,7 +634,7 @@ extension Runtime {
             _ = capture("delete-sheet")
             trace("accept the delete sheet \(sheet.title)")
             guard pressSheetButton(sheet, title: "Delete Folder") else {
-                note("the sheet has no Delete Folder button"); check.report("delete_accept", false); step(6); return
+                note("the sheet has no Delete Folder button"); check.report("delete_accept", false); finish(); return
             }
             check.report("delete_accept", true)
             step(5)

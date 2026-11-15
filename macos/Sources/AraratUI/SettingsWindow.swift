@@ -275,14 +275,16 @@ extension SettingsWindowController: NSToolbarDelegate {
 
     // MARK: p4checks — what the Settings toolbar screen check reads
 
-    /// The two items' frames in the window: the pair's capsule size and the title's own place.
+    /// The two items' frames in their window: the pair's capsule size and the title's own place.
     public var toolbarCheckItems: [String: NSRect] {
         guard let toolbar = window?.toolbar else { return [:] }
         var frames: [String: NSRect] = [:]
         for item in toolbar.items {
+            guard let view = item.view else { continue }
+            let frame = view.convert(view.bounds, to: nil)
             switch item.itemIdentifier {
-            case Self.navigationItem: frames["navigation"] = item.view?.frame ?? .zero
-            case Self.titleItem: frames["title"] = item.view?.frame ?? .zero
+            case Self.navigationItem: frames["navigation"] = frame
+            case Self.titleItem: frames["title"] = frame
             default: break
             }
         }

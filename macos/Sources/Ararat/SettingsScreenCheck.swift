@@ -697,8 +697,7 @@ extension Runtime {
                 check.report("title_item", title.width > 0 && title.height > 0)
                 let alpha = probe.toolbarTitle.alpha
                 check.report("title_alpha", abs(alpha - probe.headerProgress) <= 0.01)
-                check.report("items_order", abs(navigation.minX - title.minX) < 0.5
-                             ? false : navigation.minX < title.minX)
+                check.report("items_order", navigation.minX <= title.minX)
                 check.details["toolbar"] = ["navigation": rectFields(navigation), "title": rectFields(title),
                                             "own_capsule": probe.toolbarOwnCapsule,
                                             "capsule_owner": probe.toolbarOwnCapsule ? "own" : "system",

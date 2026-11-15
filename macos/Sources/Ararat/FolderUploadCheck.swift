@@ -90,14 +90,22 @@ extension Runtime {
         }
         switch browserCheckPhase {
         case 0:
+            guard let port = promptFixturePort,
+                  let row = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first,
+                  row.url != nil, window.isVisible else { wait("seed row"); return }
+            check.details["seed"] = ["item": row.id, "url": row.url ?? "", "fixture": port]
+            browserCheckSeedID = row.id
+            selectCheckSeed(row)
+            browserCheckPhase = 1
+        case 1:
             guard let port = promptFixturePort, let id = browserCheckSeedID,
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) else { wait("seed tab"); return }
             guard snapshot.selectedId == id, host.activeItemId() == id, !tab.isLoading, tab.navigationCount > 0,
-                  window.isVisible else { wait("active seed tab and key window"); return }
+                  window.isVisible, !screen || window.isKeyWindow else { wait("active seed tab and key window"); return }
             check.mark("seed")
             host.checkNavigate("http://127.0.0.1:\(port)/folder-upload", disposition: "current")
-            browserCheckPhase = 1
-        case 1:
+            browserCheckPhase = 2
+        case 2:
             guard let id = browserCheckSeedID,
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }),
                   tab.url.hasSuffix("/folder-upload"), !tab.isLoading, tab.navigationCount > 0,
@@ -123,8 +131,8 @@ extension Runtime {
             check.details["click"] = ["local": NSStringFromPoint(local), "window_point": NSStringFromPoint(location),
                                       "view_attached": true, "app_active": NSApp.isActive]
             check.mark("click_sent")
-            browserCheckPhase = 2
-        case 2:
+            browserCheckPhase = 3
+        case 3:
             let found = panels()
             guard let panel = found.first else {
                 // A modal loop would stop the tick here; the timeout diagnostics then list the
@@ -154,8 +162,8 @@ extension Runtime {
             } else {
                 panel.performClose(nil)
             }
-            browserCheckPhase = 3
-        case 3:
+            browserCheckPhase = 4
+        case 4:
             guard panels().isEmpty else { wait("panel cancel"); return }
             check.mark("chooser_cancelled")
             guard let id = browserCheckSeedID,
