@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 /// The command bar's NSTextField with Chrome/Arc-style inline completion, adapted from Cra's
 /// MIT `Sources/Cra/UI/CommandBar/CommandTextField.swift`: the completed suffix is inserted
@@ -33,7 +34,8 @@ public final class CommandTextField {
     }
 
     private static func makeField(controller: CommandBarController, coordinator: Coordinator) -> NSTextField {
-        let field = NSTextField(string: controller.fieldText)
+        let field = NSTextField()
+        field.cell = CommandFieldCell(textCell: controller.fieldText)
         field.isBordered = false
         field.isBezeled = false
         field.drawsBackground = false
@@ -94,7 +96,7 @@ public final class CommandTextField {
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            if textView.hasMarkedText() && (selector == #selector(NSResponder.insertNewline(_:))
+            if (textView.hasMarkedText() || (textView as? CommandFieldEditor)?.wasMarkedBeforeKeyDown == true) && (selector == #selector(NSResponder.insertNewline(_:))
                 || selector == #selector(NSResponder.moveUp(_:)) || selector == #selector(NSResponder.moveDown(_:))
                 || selector == #selector(NSResponder.cancelOperation(_:))) {
                 return false
@@ -119,5 +121,40 @@ public final class CommandTextField {
                 return false
             }
         }
+    }
+}
+
+@MainActor
+final class CommandFieldCell: NSTextFieldCell {
+    private let editor = CommandFieldEditor()
+
+    override func fieldEditor(for controlView: NSView) -> NSTextView? {
+        editor.isFieldEditor = true
+        return editor
+    }
+}
+
+@MainActor
+final class CommandFieldEditor: NSTextView {
+    var wasMarkedBeforeKeyDown = false
+
+    override func keyDown(with event: NSEvent) {
+        wasMarkedBeforeKeyDown = hasMarkedText()
+        defer { wasMarkedBeforeKeyDown = false }
+        super.keyDown(with: event)
+    }
+
+    override func doCommand(by selector: Selector) {
+        // The input method can clear the mark before forwarding the same Return.
+        if wasMarkedBeforeKeyDown && selector == #selector(NSResponder.insertNewline(_:)) { return }
+        super.doCommand(by: selector)
+    }
+
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        guard let text = pasteboard.string(forType: .string) else {
+            return super.readSelection(from: pasteboard, type: type)
+        }
+        insertText(commandBarPastedText(text: text), replacementRange: selectedRange())
+        return true
     }
 }
