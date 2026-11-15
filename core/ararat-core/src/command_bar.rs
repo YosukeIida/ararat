@@ -4,32 +4,54 @@ use crate::model::{ItemKind, Lifecycle, Workspace};
 
 pub const SEARCH_URL: &str = "https://www.google.com/search?q=";
 
-/// The search builder's text. A run of tab, CR or LF becomes one space (`foo\nbar` searches
-/// `foo bar`), and every other C0 control and DEL is dropped: the VM's input delivered 0x10
-/// around "google" (2026-11-15), which the form encoding then wrote into the query as `%10`.
+/// The characters typed text treats as a line break (design, 2026-11-16): tab, CR and LF from
+/// the ASCII keyboard, and U+2028, U+2029 and NEL (U+0085) as well. A run of them is one space in
+/// a search, and the address builder drops them.
+fn is_line_break(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{2028}' | '\u{2029}' | '\u{0085}')
+}
+
+/// Typed text with its line breaks kept and every other C0 control and DEL dropped. The
+/// classification reads this text: a line break still keeps a typed line out of the address
+/// branch, while a stray control (the VM delivered 0x10 around the typed word) cannot change
+/// whether the text opens an address or a search.
+fn text_without_other_controls(text: &str) -> String {
+    text.chars().filter(|c| !c.is_ascii_control() || is_line_break(*c)).collect()
+}
+
+/// The search builder's text. A run of line breaks becomes one space (`foo\nbar` searches
+/// `foo bar`), an NBSP (U+00A0) is a space, and every other C0 control and DEL is dropped: the
+/// VM's input delivered 0x10 around "google" (2026-11-15), which the form encoding then wrote
+/// into the query as `%10`.
 fn search_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_break = false;
     for c in text.chars() {
-        match c {
-            '\t' | '\n' | '\r' => {
-                if !in_break { out.push(' '); }
-                in_break = true;
-            }
-            c if c.is_ascii_control() => {}
-            c => {
-                out.push(c);
-                in_break = false;
-            }
+        if is_line_break(c) {
+            if !in_break { out.push(' '); }
+            in_break = true;
+        } else if c == '\u{a0}' {
+            out.push(' ');
+            in_break = false;
+        } else if c.is_ascii_control() {
+            continue;
+        } else {
+            out.push(c);
+            in_break = false;
         }
     }
     out
 }
 
-/// The address builder's text: tab, CR and LF go with the other controls, so a URL with a
-/// trailing newline opens the same URL.
+/// The address builder's text: the line breaks go with the other controls, and the edges are
+/// trimmed like a typed space, NBSP included (design, 2026-11-16). So a URL with a trailing
+/// newline or NBSP opens the same URL.
 fn address_text(text: &str) -> String {
-    text.chars().filter(|c| !c.is_ascii_control()).collect()
+    text.chars()
+        .filter(|c| !c.is_ascii_control() && !is_line_break(*c))
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn encode_search(text: &str) -> String {
@@ -439,18 +461,21 @@ fn starts_with_at_word_start(title: &str, query: &str) -> bool {
 }
 
 fn typed_row(query: &str) -> Suggestion {
-    // Why the classification reads the text as typed: `looks_like_url` refuses whitespace, so a
-    // line break between non-space characters keeps the whole text a search (`a.com\nb.com`
-    // searches `a.com b.com` and never opens `https://a.comb.com`). Each builder then handles the
-    // line breaks its own way: one space in a search, dropped in an address (design, 2026-11-16).
-    let url_like = looks_like_url(query);
+    // Why the classification reads the text with its line breaks kept and every other control
+    // dropped: `looks_like_url` refuses whitespace, so a line break between non-space characters
+    // keeps the whole text a search (`a.com\nb.com` searches `a.com b.com` and never opens
+    // `https://a.comb.com`), while a stray control (the VM's 0x10 around the typed word) cannot
+    // turn a typed address into a search. Each builder then handles the line breaks its own way:
+    // one space in a search, dropped in an address (design, 2026-11-16).
+    let typed = text_without_other_controls(query);
+    let url_like = looks_like_url(&typed);
     let (title, target) = if url_like {
-        let text = address_text(query);
+        let text = address_text(&typed);
         let host = text.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
         let url = if text.contains("://") || text.starts_with("about:") || text.starts_with("file:") { text.clone() } else if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { format!("http://{text}") } else { format!("https://{text}") };
         (text, Target::OpenUrl { url })
     } else {
-        let text = search_text(query);
+        let text = search_text(&typed);
         let url = encode_search(&text);
         (text, Target::Search { url })
     };

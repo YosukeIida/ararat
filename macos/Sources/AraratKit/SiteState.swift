@@ -140,15 +140,6 @@ public struct SiteState {
         }
     }
 
-    public var securityTitle: String {
-        switch security {
-        case "secure": return "Secure connection"
-        case "not_secure": return "Not secure"
-        case "error": return "Connection is not secure"
-        default: return "No connection information"
-        }
-    }
-
     /// The site-controls footer's pill (P4, 2026-11-15): Arc's two words, and a quiet line for a
     /// page with no connection information (an error page, a local page).
     public var securityPillTitle: String {

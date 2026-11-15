@@ -70,7 +70,6 @@ func siteStateTreatsMissingSettingAsDefaultAndReadOnly() throws {
     #expect(row.current?.title == "Ask")
     #expect(state.certificateChain.isEmpty)
     #expect(!state.canShowCertificate)
-    #expect(state.securityTitle == "Not secure")
 }
 
 @Test @MainActor
