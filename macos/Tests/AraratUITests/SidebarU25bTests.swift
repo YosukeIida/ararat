@@ -266,6 +266,8 @@ func twoQuickCommandWPressesActOnTheCoreSuccessor() async throws {
     let path = directory.appendingPathComponent("busy.sqlite").path
     let session = WorkspaceSession()
     let engine = try EngineAdapter(path: path, windowID: "busy", card: NSView(), session: session)
+    var closedRows: [String] = []
+    engine.onRowClose = { closedRows.append($0) }
     let store = try #require(session.store)
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":["p"],"data":{"itemContainer":{}}},"p",{"id":"p","parentID":"pin","childrenIds":[],"data":{"tab":{"savedURL":"https://p.example"}}},"today",{"id":"today","parentID":null,"childrenIds":["a"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}}]}]}}"#
     _ = try store.importArcSidebar(windowId: "busy", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
@@ -294,6 +296,7 @@ func twoQuickCommandWPressesActOnTheCoreSuccessor() async throws {
     let p = try #require(work.pinned.first { $0.id == "p" })
     #expect(p.unloaded)
     #expect(!after.archive.contains { $0.id == "p" })
+    try await waitUntil { closedRows == ["a"] }
 }
 
 @Test @MainActor
@@ -327,8 +330,8 @@ func theRowCapsFollowTheCloseBindingWithoutAMenuItem() throws {
     #expect(sidebar.tooltip.keycaps.map(\.stringValue) == ["⌃", "⌘", "Q"])
 }
 
-@Test @MainActor
-func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
+@Test(arguments: [true, false]) @MainActor
+func anUnloadedPinsCloseArchivesItThroughTheRowsAction(animate: Bool) async throws {
     // D2: an unloaded pin's ✕ archives it (the row showed Archive Tab). The check presses
     // the row's rule directly, which lands on actions.onArchive → adapter.close(archive: true).
     let directory = try testTemporaryDirectory()
@@ -336,6 +339,10 @@ func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
     let path = directory.appendingPathComponent("pin-archive.sqlite").path
     let session = WorkspaceSession()
     let engine = try EngineAdapter(path: path, windowID: "archive", card: NSView(), session: session)
+    var closedRows: [String] = []
+    var delivered = false
+    engine.onRowClose = { closedRows.append($0) }
+    engine.onSnapshot = { _ in delivered = true }
     let store = try #require(session.store)
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":["p"],"data":{"itemContainer":{}}},"p",{"id":"p","parentID":"pin","childrenIds":[],"data":{"tab":{"savedURL":"https://p.example"}}},"today",{"id":"today","parentID":null,"childrenIds":["a"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}}]}]}}"#
     _ = try store.importArcSidebar(windowId: "archive", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
@@ -350,7 +357,7 @@ func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
     #expect(unloadedPin.unloaded)
     // The unloaded pin's ✕ is Archive Tab: the row's own rule.
     #expect(rowCloseArchives(unloadedPin, in: unloaded))
-    engine.close(id: "p", archive: true)
+    engine.close(id: "p", archive: true, animate: animate)
     try await waitUntil {
         let now = store.snapshot(windowId: "archive")
         return now.archive.contains { $0.id == "p" }
@@ -360,6 +367,8 @@ func anUnloadedPinsCloseArchivesItThroughTheRowsAction() async throws {
     #expect(after.archive.contains { $0.id == "p" })
     #expect(!work.pinned.contains { $0.id == "p" })
     #expect(work.today.contains { $0.id == "a" })
+    try await waitUntil { delivered }
+    #expect(closedRows == (animate ? ["p"] : []))
 }
 
 @Test @MainActor

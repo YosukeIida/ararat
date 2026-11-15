@@ -182,6 +182,47 @@ func harnessTerminationSignalsUseNormalCleanup() throws {
 }
 
 @Test
+func harnessParentExitUsesNormalCleanup() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let harness = Bundle(for: HarnessTestBundle.self).bundleURL.deletingLastPathComponent().appendingPathComponent("AraratHarness")
+    let parent = Process()
+    parent.executableURL = URL(fileURLWithPath: "/bin/sh")
+    parent.arguments = ["-c", "\"$1\" --headless </dev/null >/dev/null 2>/dev/null & echo $!; read hold", "parent", harness.path]
+    var environment = ProcessInfo.processInfo.environment
+    environment["TMPDIR"] = directory.path + "/"
+    parent.environment = environment
+    let input = Pipe()
+    let output = Pipe()
+    parent.standardInput = input
+    parent.standardOutput = output
+    try parent.run()
+    defer {
+        if parent.isRunning { _ = kill(parent.processIdentifier, SIGKILL) }
+        parent.waitUntilExit()
+    }
+    let pidText = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    let child = try #require(Int32(pidText))
+    let exited = DispatchSemaphore(value: 0)
+    let watcher = DispatchSource.makeProcessSource(identifier: child, eventMask: .exit, queue: .global())
+    watcher.setEventHandler { exited.signal() }
+    watcher.resume()
+    defer {
+        watcher.cancel()
+        if kill(child, 0) == 0 { _ = kill(child, SIGKILL) }
+    }
+    let deadline = Date().addingTimeInterval(8)
+    while try harnessDatabaseFiles(in: directory).isEmpty && Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    #expect(try !harnessDatabaseFiles(in: directory).isEmpty)
+    _ = kill(parent.processIdentifier, SIGKILL)
+    parent.waitUntilExit()
+    #expect(exited.wait(timeout: .now() + 8) == .success)
+    #expect(try harnessDatabaseFiles(in: directory).isEmpty)
+}
+
+@Test
 func harnessRepliesWaitForMRUUnloadsAndReselections() throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

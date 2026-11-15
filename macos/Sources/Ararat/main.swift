@@ -1255,6 +1255,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
     }
     adapter.onWorkspaceChange = { [weak self] in self?.refreshOtherWindows() }
+    adapter.onRowClose = { [weak self] id in self?.sidebar?.expectRowClose(id: id) }
     adapter.onQuitProfileSwitch = { [weak self] in self?.quitDuringProfileSwitch = self?.captureCheckRows() }
     adapter.onCloseStarted = { [weak self] in
       self?.selectionGeneration += 1
@@ -1286,6 +1287,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     actions.onArchive = { [weak self] id in
       self?.adapter?.close(id: id, archive: true)
     }
+    actions.onRemoveFavorite = { [weak self] id in
+      self?.adapter?.close(id: id, archive: true, animate: false)
+    }
     actions.onNewTab = { [weak self] in self?.performWorkspaceCommand("new_tab") }
     actions.onClearToday = { [weak self] in self?.clearToday() }
     actions.onShowSpace = { [weak self] id in
@@ -1306,11 +1310,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
     }
     actions.onDeleteSpace = { [weak self, weak workspace] id in
-      workspace?.deleteSpace(id: id) { [weak self] result in self?.showAndSelect(result) }
+      workspace?.deleteSpace(id: id) { [weak self] result in
+        switch result {
+        case .success(let next): self?.showWorkspaceEdit(next)
+        case .failure(let error): self?.report(error)
+        }
+      }
     }
     actions.onSpaceSettings = { [weak self] id in self?.openSettings(spaceID: id) }
     if let keyBindings, let airTraffic {
-      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.showSettingsEdit($0) },
+      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.showWorkspaceEdit($0) },
         resetWidth: { [weak self] in self?.container?.resizeHandle.resetWidth() },
         preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) },
         keyBindings: keyBindings, airTraffic: airTraffic)
@@ -1518,7 +1527,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     refreshOtherWindows()
   }
 
-  func showSettingsEdit(_ next: WorkspaceSnapshot) {
+  func showWorkspaceEdit(_ next: WorkspaceSnapshot) {
     if let shown = snapshot.shownSpaceId, !next.spaces.contains(where: { $0.id == shown }) {
       showAndSelect(.success(next))
     } else {
@@ -1981,7 +1990,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     guard let workspace, let keyBindings, let airTraffic else { return }
     let owner = root ?? self
-    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.showSettingsEdit($0) }
+    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.showWorkspaceEdit($0) }
     let resetWidth: () -> Void = { [weak self] in self?.container?.resizeHandle.resetWidth() }
     let preview: (String, Look?, Bool) -> Void = { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }
     if owner.settings == nil {

@@ -51,6 +51,10 @@ public final class SidebarView: NSView {
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
+    public var onRemoveFavorite: ((String) -> Void)?
+    private var requestedCloses: Set<String> = []
+
+    public func expectRowClose(id: String) { requestedCloses.insert(id) }
     let tooltip = SidebarTooltip()
     public func checkClosePressed(id: String) -> Bool {
         guard let row = rowViews[id] else { return false }
@@ -640,13 +644,14 @@ public final class SidebarView: NSView {
     }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        defer { requestedCloses.removeAll() }
         if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
            let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
             let remaining = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
             let removed = (current.today + current.pinned + current.favorites).filter { !remaining.contains($0.id) }
             let removedIDs = Set(removed.map(\.id))
             let roots = removed.filter { !removedIDs.contains($0.parentId) }
-            if roots.count == 1 {
+            if roots.count == 1, !requestedCloses.isDisjoint(with: removedIDs) {
                 applyClose(id: roots[0].id, snapshot: snapshot)
                 return
             }
@@ -2598,7 +2603,7 @@ extension SidebarView: NSMenuDelegate {
         }
         close.identifier = NSUserInterfaceItemIdentifier("close_tab")
         return itemMenu([copyItem(row), renameItem(row), moveItem(row), close,
-                  SidebarMenuItem("Remove Favorite") { [weak self] in self?.onArchive?(row.id) }])
+                  SidebarMenuItem("Remove Favorite") { [weak self] in self?.onRemoveFavorite?(row.id) }])
     }
 
     func folderMenu(row: Row) -> NSMenu {

@@ -255,6 +255,14 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 }
             }
         }
+        actions.onRemoveFavorite = { [weak self] id in
+            guard let self, !self.terminating else { return }
+            self.adapter.archive(id: id) { [weak self] result in
+                if let error = self?.publish(result.map(\.snapshot)) {
+                    FileHandle.standardError.write(Data("cannot remove favorite: \(error)\n".utf8))
+                }
+            }
+        }
         actions.onShowSpace = { [weak self] id in
             guard let self, !self.terminating else { return }
             self.adapter.showSpace(id: id) { result in
@@ -897,5 +905,11 @@ let terminationSignals = [SIGTERM, SIGINT].map { number in
     source.resume()
     return source
 }
-withExtendedLifetime(terminationSignals) { app.run() }
+let parentExit: DispatchSourceProcess? = headless ? DispatchSource.makeProcessSource(identifier: getppid(), eventMask: .exit, queue: .main) : nil
+parentExit?.setEventHandler { MainActor.assumeIsolated { NSApp.terminate(nil) } }
+parentExit?.resume()
+if headless && getppid() == 1 {
+    DispatchQueue.main.async { NSApp.terminate(nil) }
+}
+withExtendedLifetime((terminationSignals, parentExit)) { app.run() }
 exit(delegate.exitStatus)

@@ -27,6 +27,7 @@ private func closeSidebar(_ snapshot: WorkspaceSnapshot) -> SidebarView {
 func engineSnapshotRemovalUsesTheRowCloseMotion() throws {
     let sidebar = closeSidebar(closeSnapshot(["a", "b", "c"], selected: "b"))
     let survivor = try #require(closeViews(sidebar).first { $0.row.id == "c" })
+    sidebar.expectRowClose(id: "b")
     sidebar.update(snapshot: closeSnapshot(["a", "c"], selected: "c"))
     #expect(sidebar.selectedRowID == "c")
     #expect(!closeViews(sidebar).contains { $0.row.id == "b" })
@@ -45,6 +46,7 @@ func engineSnapshotRemovalAnimatesARowInsideAFolder() throws {
     let survivor = try #require(closeViews(sidebar).first { $0.row.id == "c" })
     var next = initial
     next.spaces[0].today.remove(at: 1)
+    sidebar.expectRowClose(id: "b")
     sidebar.update(snapshot: next)
     #expect(survivor.layer?.animation(forKey: "row.close.move") != nil)
 }
@@ -56,7 +58,39 @@ func snapshotMovingARowToAnotherSpaceDoesNotAnimateAClose() throws {
     var other = closeSnapshot(["b"]).spaces[0]
     other.id = "other"
     next.spaces.append(other)
+    sidebar.expectRowClose(id: "b")
     sidebar.update(snapshot: next)
+    #expect(closeViews(sidebar).allSatisfy { $0.layer?.animation(forKey: "row.close.move") == nil })
+}
+
+@Test @MainActor
+func snapshotRemovalWithoutACloseRequestDoesNotAnimate() {
+    for kind in [RowKind.tab, .folder] {
+        var initial = closeSnapshot(["a", "b", "c"])
+        initial.spaces[0].today[1].kind = kind
+        let sidebar = closeSidebar(initial)
+        sidebar.update(snapshot: closeSnapshot(["a", "c"]))
+        #expect(closeViews(sidebar).allSatisfy { $0.layer?.animation(forKey: "row.close.move") == nil })
+    }
+}
+
+@Test @MainActor
+func removeFavoriteDoesNotRequestCloseMotion() throws {
+    var initial = closeSnapshot(["a", "b", "c"])
+    let favorite = initial.spaces[0].today.remove(at: 1)
+    initial.spaces[0].favorites = [favorite]
+    let sidebar = closeSidebar(initial)
+    var archives = 0
+    sidebar.onArchive = { _ in archives += 1 }
+    sidebar.onRemoveFavorite = { id in
+        #expect(id == "b")
+        var next = initial
+        next.spaces[0].favorites = []
+        sidebar.update(snapshot: next)
+    }
+    let item = try #require(sidebar.favoriteMenu(row: favorite).items.first { $0.title == "Remove Favorite" })
+    #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+    #expect(archives == 0)
     #expect(closeViews(sidebar).allSatisfy { $0.layer?.animation(forKey: "row.close.move") == nil })
 }
 
