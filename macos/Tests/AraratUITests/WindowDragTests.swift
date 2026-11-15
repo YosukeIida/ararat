@@ -183,11 +183,36 @@ func aStationarySecondClickRunsTheActionOnce() throws {
     #expect(press.acted() == 1)
     press.held.released(at: NSPoint(x: origin.x + 1, y: origin.y))
     #expect(press.acted() == 1)
+    // A third press is a fresh press, not another double click: nothing acts on its release.
+    let triple = try dragPress(clickCount: 3)
+    defer { triple.window.contentView = nil }
+    triple.held.released(at: triple.held.origin)
+    #expect(triple.acted() == 0)
+    #expect(triple.handed().isEmpty)
     // A single click on the title bar does nothing on its release.
     let single = try dragPress(clickCount: 1)
     defer { single.window.contentView = nil }
     single.held.released(at: single.held.origin)
     #expect(single.acted() == 0)
+}
+
+/// The threshold is exactly 3 pt: a point 3 pt from the press is still a click (and a second
+/// click released there acts), and a point 3.1 pt away is a drag.
+@Test @MainActor
+func theThresholdIsExactlyThreePoints() throws {
+    let atLimit = try dragPress(clickCount: 2)
+    defer { atLimit.window.contentView = nil }
+    let origin = atLimit.held.origin
+    atLimit.held.dragged(to: NSPoint(x: origin.x + 3, y: origin.y))
+    #expect(atLimit.handed().isEmpty)
+    #expect(!atLimit.held.handedOver)
+    atLimit.held.released(at: NSPoint(x: origin.x + 3, y: origin.y))
+    #expect(atLimit.acted() == 1)
+    let past = try dragPress()
+    defer { past.window.contentView = nil }
+    past.held.dragged(to: NSPoint(x: past.held.origin.x + 3.1, y: past.held.origin.y))
+    #expect(past.handed().count == 1)
+    #expect(past.held.handedOver)
 }
 
 /// A second press that moves drags the window and never runs the action (review H1), including a

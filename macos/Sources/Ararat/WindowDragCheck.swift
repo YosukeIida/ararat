@@ -5,11 +5,12 @@ import AraratUI
 
 /// P4 item 1: the window moves from the sidebar's empty areas and from the frame around the page
 /// card, and not from a row, a dock cell or a control (the owner, 2026-11-15). Each step posts a
-/// press, a move and a release at the window server and reads the window's frame. The events go
-/// to the HID tap because `NSWindow.performDrag(with:)` does not start from an event injected into
-/// the app's own queue: measured on the host (2026-11-16), a pre-pressed event returns at once and
-/// the frame stays, while an event the window server delivers starts the drag and follows the
-/// later moves.
+/// press, two moves and a release at the window server and reads the window's frame: the first
+/// move is just past 3 pt and is what hands the press over, and the second is the motion the
+/// window follows after it. The events go to the HID tap because `NSWindow.performDrag(with:)`
+/// does not start from an event injected into the app's own queue: measured on the host
+/// (2026-11-16), a pre-pressed event returns at once and the frame stays, while an event the
+/// window server delivers starts the drag and follows the later moves.
 ///
 /// The drag views store the press on `mouseDown` and hand it to `performDrag(with:)` on the first
 /// `mouseDragged` past 3 pt (design, 2026-11-16), so this check's posted sequence is the whole
@@ -50,6 +51,10 @@ final class WindowDragCheckState {
     var frameStable = true
     var frameBefore = NSRect.zero
     var dragDelta = NSPoint.zero
+    /// The offset from the press to the dragged point that hands the drag over: the window server
+    /// may catch the window up from it, or move it only with the motion after it (review M1 of
+    /// review 8).
+    var handover = NSPoint.zero
     var points: [String: NSPoint] = [:]
     var targets: [String: String] = [:]
     var steps: [Step] = []
@@ -176,10 +181,23 @@ extension Runtime {
             let predictedHit = container.checkPressTarget(at: startPoint)
             FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) predicted_hit=\(predictedHit) key=\(window.isKeyWindow)\n".utf8))
             let startCG = cgScreen(posted(startScreen)), endCG = cgScreen(posted(endScreen)), neutralCG = cgScreen(posted(neutralScreen))
+            // A dragged point just past 3 pt comes first: that point is what hands the press to
+            // the window server, and the end point is the motion that follows the hand-over, so
+            // the drag is not left with only the release to come (review M1 of review 8).
+            let length = hypot(step.delta.x, step.delta.y)
+            let handover = length > 0 ? NSPoint(x: step.delta.x * min(5, length) / length,
+                                                y: step.delta.y * min(5, length) / length) : .zero
+            let midwayScreen = NSPoint(x: startScreen.x + handover.x, y: startScreen.y + handover.y)
+            // The window server may catch the window up from the press at the hand-over, or move
+            // it only with the motion after it: both are accepted, and which one happened is
+            // recorded, so a shortfall of up to the hand-over offset is not read as a fault.
+            check.handover = handover
+            let midwayCG = cgScreen(posted(midwayScreen))
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
             post(.mouseMoved, at: neutralCG)
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startCG) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.20) { post(.leftMouseDragged, at: endCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, at: midwayCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, at: endCG) }
             DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, at: endCG) }
             check.dragDeadline = ProcessInfo.processInfo.systemUptime + gap + 0.9
         }
@@ -245,8 +263,16 @@ extension Runtime {
             guard ProcessInfo.processInfo.systemUptime >= check.dragDeadline else { wait("drag \(check.stepIndex)"); return }
             let step = check.steps[check.stepIndex]
             let after = window.frame
-            let moved = abs(after.origin.x - (check.frameBefore.origin.x + check.dragDelta.x)) <= 2
-                && abs(after.origin.y - (check.frameBefore.origin.y + check.dragDelta.y)) <= 2
+            // The window follows the motion after the hand-over; whether the window server also
+            // catches it up from the press is not known, so the full delta and the delta less the
+            // hand-over offset are both accepted, and the anchor is recorded (review M1 of
+            // review 8). A real hand loses the same few points.
+            let full = NSPoint(x: check.frameBefore.origin.x + check.dragDelta.x,
+                               y: check.frameBefore.origin.y + check.dragDelta.y)
+            let handOver = NSPoint(x: full.x - check.handover.x, y: full.y - check.handover.y)
+            let movedFull = abs(after.origin.x - full.x) <= 2 && abs(after.origin.y - full.y) <= 2
+            let movedFromHandOver = abs(after.origin.x - handOver.x) <= 3 && abs(after.origin.y - handOver.y) <= 3
+            let moved = movedFull || movedFromHandOver
             if step.movesWindow {
                 check.movedPositive = check.movedPositive || moved
                 check.mark(step.name, moved)
@@ -257,8 +283,9 @@ extension Runtime {
             }
             check.details[step.name] = ["from": step.point, "moves": step.movesWindow,
                                         "before": ["x": check.frameBefore.origin.x, "y": check.frameBefore.origin.y],
-                                        "expected": ["x": check.frameBefore.origin.x + (step.movesWindow ? check.dragDelta.x : 0),
-                                                     "y": check.frameBefore.origin.y + (step.movesWindow ? check.dragDelta.y : 0)],
+                                        "expected": ["x": full.x, "y": full.y],
+                                        "expected_from_hand_over": ["x": handOver.x, "y": handOver.y],
+                                        "anchor": movedFull ? "full" : (movedFromHandOver ? "hand_over" : "none"),
                                         "after": ["x": after.origin.x, "y": after.origin.y],
                                         "delta": ["x": check.dragDelta.x, "y": check.dragDelta.y]]
             restore()

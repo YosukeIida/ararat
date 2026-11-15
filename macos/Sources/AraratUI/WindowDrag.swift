@@ -122,7 +122,9 @@ enum WindowDrag {
         /// mouse-down event itself.
         let press: NSEvent
         let action: WindowDoubleClickAction
-        private let window: NSWindow
+        /// Weak: a drag the window server swallows the release of must not keep its window alive
+        /// through a view → press → window → content view cycle (review L1 of review 8).
+        private weak var window: NSWindow?
         private let hand: (NSEvent) -> Void
         private let run: (WindowDoubleClickAction) -> Void
         private(set) var state: Press
@@ -150,11 +152,14 @@ enum WindowDrag {
             self.action = action
             self.state = Press(origin: window.convertPoint(toScreen: event.locationInWindow),
                                clickCount: event.clickCount)
-            self.hand = hand ?? { [window] event in window.performDrag(with: event) }
-            self.run = run ?? { [window] action in WindowDrag.perform(action, in: window) }
+            self.hand = hand ?? { [weak window] event in window?.performDrag(with: event) }
+            self.run = run ?? { [weak window] action in
+                guard let window else { return }
+                WindowDrag.perform(action, in: window)
+            }
             WindowDrag.trace("press click=\(event.clickCount) at=\(WindowDrag.text(state.origin))"
-                             + " frame=\(WindowDrag.text(window.frame)) key=\(window.isKeyWindow)"
-                             + " visible=\(window.isVisible) active=\(NSApp.isActive)")
+                             + " frame=\(frameText) key=\(keyText)"
+                             + " visible=\(visibleText) active=\(NSApp.isActive)")
         }
 
         /// The pointer while the button is down. The first point past the threshold hands the
@@ -170,10 +175,10 @@ enum WindowDrag {
             }
             WindowDrag.trace("dragged d=\(String(format: "%.1f", distance)) step=drag"
                              + " click=\(state.clickCount) at=\(WindowDrag.text(point))"
-                             + " frame=\(WindowDrag.text(window.frame)) key=\(window.isKeyWindow)"
-                             + " visible=\(window.isVisible) active=\(NSApp.isActive)")
+                             + " frame=\(frameText) key=\(keyText)"
+                             + " visible=\(visibleText) active=\(NSApp.isActive)")
             hand(press)
-            WindowDrag.trace("performDrag returned frame=\(WindowDrag.text(window.frame))")
+            WindowDrag.trace("performDrag returned frame=\(frameText)")
         }
 
         /// The button came up. A second click that stayed within the threshold runs the action
@@ -182,10 +187,14 @@ enum WindowDrag {
             let step = state.released(at: point)
             WindowDrag.trace("released step=\(step) click=\(state.clickCount)"
                              + " handed=\(state.handedOver) up=\(WindowDrag.text(point))"
-                             + " frame=\(WindowDrag.text(window.frame))")
+                             + " frame=\(frameText)")
             guard step == .act else { return }
             run(action)
         }
+
+        private var frameText: String { window.map { WindowDrag.text($0.frame) } ?? "nil" }
+        private var keyText: String { window.map { String($0.isKeyWindow) } ?? "nil" }
+        private var visibleText: String { window.map { String($0.isVisible) } ?? "nil" }
     }
 
     /// `--ararat-trace-window-drag`, and on for the window-drag check, which posts its gestures at
