@@ -754,7 +754,10 @@ extension Runtime {
                   (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == check.commandWId }) == true else { return }
             let others = check.seen.subtracting([check.commandWId])
             // Do not press from core state alone: its restore can precede main-queue delivery.
-            guard sidebar.rowCheckInfo(id: check.commandWId)?.unloaded == false,
+            let restoredRow = check.clearSplitId.isEmpty
+                ? sidebar.rowCheckInfo(id: check.commandWId)?.unloaded == false
+                : sidebar.rowCheckInfo(id: check.clearSplitId) != nil
+            guard restoredRow,
                   sidebar.todayDividerForCheck != nil else { note("wait=clear-stay-sidebar-restore"); return }
             check.report("divider_back_after_stay", true)
             check.report("clear_today_stay_keeps_only_refused_row", !others.isEmpty && others.allSatisfy { id in core.archive.contains { $0.id == id } })
