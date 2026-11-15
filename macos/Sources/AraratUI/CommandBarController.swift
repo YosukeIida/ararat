@@ -185,8 +185,12 @@ public final class CommandBarController {
     private func relist(preserving selected: SuggestionTarget? = nil) {
         var result: CommandBarResult
         if mode == .search, let store, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // A query of nothing but control characters cleans to nothing in core, which answers
+            // with no URL: no row, exactly like an empty field (review L2).
             let url = store.searchURL(query)
-            result = CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], privateWindow: privateWindow)
+            result = url.isEmpty
+                ? CommandBarResult(rows: [], privateWindow: privateWindow)
+                : CommandBarResult(rows: [Suggestion(title: query, subtitle: "Search", url: nil, key: nil, target: .search(url: url), score: 0)], privateWindow: privateWindow)
         } else if mode == .search {
             result = CommandBarResult(rows: [], privateWindow: privateWindow)
         } else {

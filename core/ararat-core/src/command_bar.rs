@@ -4,11 +4,11 @@ use crate::model::{ItemKind, Lifecycle, Workspace};
 
 pub const SEARCH_URL: &str = "https://www.google.com/search?q=";
 
-/// The characters typed text treats as a line break (design, 2026-11-16): tab, CR and LF from
-/// the ASCII keyboard, and U+2028, U+2029 and NEL (U+0085) as well. A run of them is one space in
-/// a search, and the address builder drops them.
+/// The characters typed text treats as a line break (design, 2026-11-16): tab, CR, LF, VT and FF
+/// from the ASCII keyboard, and U+2028, U+2029 and NEL (U+0085) as well. A run of them is one
+/// space in a search, and the address builder drops them.
 fn is_line_break(c: char) -> bool {
-    matches!(c, '\t' | '\n' | '\r' | '\u{2028}' | '\u{2029}' | '\u{0085}')
+    matches!(c, '\t' | '\n' | '\r' | '\u{000b}' | '\u{000c}' | '\u{2028}' | '\u{2029}' | '\u{0085}')
 }
 
 /// Typed text with its line breaks kept and every other C0 control and DEL dropped. The
@@ -60,7 +60,12 @@ fn encode_search(text: &str) -> String {
 }
 
 pub fn search_url(query: &str) -> String {
-    encode_search(&search_text(query))
+    // A text of nothing but controls, breaks and spaces has no search to build: the caller shows
+    // no row rather than an empty `q=` URL (review L2).
+    let text = search_text(query);
+    let text = text.trim();
+    if text.is_empty() { return String::new(); }
+    encode_search(text)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -424,7 +429,11 @@ pub struct CommandBarResult {
 /// command whose title starts with the typed text at a word start takes the second row. Ties
 /// keep source order.
 pub fn rank_result(query: &str, sources: &[&dyn Source], private_window: bool) -> CommandBarResult {
-    let query = query.trim();
+    // Why the query is cleaned before the empty test: a text of nothing but control characters
+    // (the VM's stray 0x10) must behave like an empty field, with no empty Search row and no
+    // `q=` URL (review L2).
+    let typed = text_without_other_controls(query);
+    let query = typed.trim();
     let mut results: Vec<_> = sources.iter().flat_map(|s| s.candidates(query)).collect();
     if query.is_empty() {
         results.truncate(ROW_LIMIT);
@@ -480,4 +489,29 @@ fn typed_row(query: &str) -> Suggestion {
         (text, Target::Search { url })
     };
     Suggestion { title, subtitle: if url_like { "Open URL" } else { "Search" }.into(), url: None, key: None, target, score: 0.0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `rank_result` cleans and trims the raw query first, so only a dropped control can keep an
+    /// edge NBSP or break alive until the address builder's own trim (review L3).
+    #[test]
+    fn address_text_trims_the_edges_after_dropping_the_breaks() {
+        assert_eq!(address_text("\u{10}\u{a0}https://example.com/\u{a0}\u{10}"), "https://example.com/");
+        assert_eq!(address_text("https://example.com/\n"), "https://example.com/");
+        assert_eq!(address_text("https://example.com/\u{2029}"), "https://example.com/");
+        assert_eq!(address_text("\u{b}https://example.com/\u{c}"), "https://example.com/");
+    }
+
+    #[test]
+    fn search_text_makes_breaks_one_space_and_nbsp_a_space() {
+        assert_eq!(search_text("foo\u{b}bar"), "foo bar");
+        assert_eq!(search_text("foo\u{c}bar"), "foo bar");
+        assert_eq!(search_text("foo\n\nbar"), "foo bar");
+        assert_eq!(search_text("foo\u{a0}bar"), "foo bar");
+        assert_eq!(search_text("\u{10}google\u{10}"), "google");
+        assert!(search_url("\u{10}\u{a0}").is_empty());
+    }
 }

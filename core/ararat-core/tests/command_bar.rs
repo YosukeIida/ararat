@@ -48,12 +48,14 @@ fn line_breaks_are_a_space_in_a_search_and_dropped_in_an_address() {
     // Design's rule (2026-11-16): each run of tab, CR, LF, U+2028, U+2029 or NEL is one space in
     // the search builder, and an NBSP is a space.
     for typed in ["foo\nbar", "foo\n\nbar", "foo\tbar", "foo\rbar", "foo\u{2028}bar",
-                  "foo\u{2029}bar", "foo\u{0085}bar", "foo\n\u{2028}\tbar", "foo\u{a0}bar"] {
+                  "foo\u{2029}bar", "foo\u{0085}bar", "foo\n\u{2028}\tbar", "foo\u{a0}bar",
+                  "foo\u{b}bar", "foo\u{c}bar"] {
         assert_eq!(command_bar::search_url(typed), "https://www.google.com/search?q=foo+bar",
                    "typed: {typed:?}");
     }
     // A line break between non-space characters keeps the text a search, never an address.
-    for typed in ["a.com\nb.com", "a.com\u{2028}b.com", "a.com\u{0085}b.com"] {
+    for typed in ["a.com\nb.com", "a.com\u{2028}b.com", "a.com\u{0085}b.com",
+                  "a.com\u{b}b.com", "a.com\u{c}b.com"] {
         let rows = command_bar::rank(typed, &[]);
         assert!(matches!(&rows[0].target, Target::Search { url } if url == "https://www.google.com/search?q=a.com+b.com"),
                 "typed: {typed:?}");
@@ -63,7 +65,9 @@ fn line_breaks_are_a_space_in_a_search_and_dropped_in_an_address() {
     // The address builder drops the breaks and trims the edges like a space, NBSP included.
     for typed in ["https://example.com/", "https://example.com/\n", "https://example.com/\t",
                   "\nhttps://example.com/", "https://example.com/\u{2029}",
-                  "\u{a0}https://example.com/\u{a0}"] {
+                  "https://example.com/\u{c}", "\u{a0}https://example.com/\u{a0}",
+                  "\u{10}\u{a0}https://example.com/",
+                  "\u{10}\u{a0}https://example.com/\u{a0}\u{10}"] {
         assert!(matches!(&command_bar::rank(typed, &[])[0].target,
                          Target::OpenUrl { url } if url == "https://example.com/"),
                 "typed: {typed:?}");
@@ -662,4 +666,18 @@ fn recent_tabs_are_the_shown_space_s_mru_minus_the_current_tab_and_favourites() 
     assert_eq!(command_bar::recent_tabs(&ws, "one", 2).len(), 2);
     // The empty command-bar list and the switcher share the rule.
     assert_eq!(ids(command_bar::recent_tabs(&ws, "one", 5)), ids(Index::new(&ws, "one", 0).query("", &[]).rows));
+}
+
+#[test]
+fn text_of_nothing_but_controls_behaves_like_an_empty_field() {
+    // Review L2: a stray 0x10 (or NBSP, or a lone newline) cleans to nothing, so the bar shows no
+    // typed row and no empty `q=` URL can be built.
+    for typed in ["\u{10}", "\u{10}\u{10}", "\u{10}\u{a0}", "\n", "\u{a0}", "\u{10}\n\u{a0}\u{10}"] {
+        assert!(command_bar::rank(typed, &[]).is_empty(), "typed: {typed:?}");
+        assert_eq!(command_bar::search_url(typed), "", "typed: {typed:?}");
+    }
+    // A query with any real character still gets its typed row.
+    assert_eq!(command_bar::rank("\u{10}google\u{10}", &[]).len(), 1);
+    assert!(matches!(&command_bar::rank("\u{10}google\u{10}", &[])[0].target,
+                     Target::Search { url } if url == "https://www.google.com/search?q=google"));
 }

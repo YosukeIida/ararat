@@ -853,3 +853,34 @@ func historyReplyKeepsTheSelectedCommand() {
     controller.commit(forceNewTab: false)
     #expect(committed == command.target)
 }
+
+/// Review L2: the search mode's store answers a query of nothing but controls with no URL, so the
+/// bar shows no row — the same as an empty field — instead of an empty `q=` search.
+@Test @MainActor
+func searchModeShowsNoRowWhenTheQueryCleansToNothing() {
+    let controller = CommandBarController()
+    let store = FakeCommandBarStore()
+    // A store that mimics core's answer for a text of controls only.
+    let emptyStore = EmptyCleaningCommandBarStore()
+    controller.open(mode: .search, prefill: nil, store: store)
+    controller.update(query: "example.com")
+    #expect(controller.result.rows.count == 1)
+    controller.applyStore(emptyStore)
+    controller.update(query: "\u{10}\u{10}")
+    #expect(controller.result.rows.isEmpty)
+    // A real query still gets its row through the same store.
+    controller.update(query: "example.com")
+    #expect(controller.result.rows.count == 1)
+}
+
+/// A store whose search URL is empty exactly when the text has no real characters, as core's
+/// `search_url` now answers.
+@MainActor
+private final class EmptyCleaningCommandBarStore: CommandBarStore {
+    func query(_ text: String, history: [HistoryEntry]) -> CommandBarResult { CommandBarResult(rows: [], privateWindow: false) }
+    func searchURL(_ text: String) -> String {
+        // Core's answer for this test's inputs: a text with no letter, digit or dot cleans to
+        // nothing.
+        text.contains { $0.isLetter || $0.isNumber || $0 == "." } ? "search:" + text : ""
+    }
+}
