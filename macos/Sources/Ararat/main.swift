@@ -5615,20 +5615,30 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       keyboardResults["inactive_profile_teardown"] = true
       adapter?.windowHost(host, showProfile: "Profile 1")
-      adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard", expectedSpace: "named", profile: "Profile 1")
+      adapter?.openCommandURL("http://127.0.0.1:\(port)/keyboard?profile-reload", expectedSpace: "named", profile: "Profile 1")
       browserCheckPhase = 55
       return
     }
     if browserCheckPhase == 55 {
       guard host.profileDirectory() == "Profile 1", host.hasBrowser(forProfile: "Profile 1"), host.activeItemId() != nil,
+            let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == host.activeItemId() }),
+            tab.url == "http://127.0.0.1:\(port)/keyboard?profile-reload", !tab.isLoading, tab.navigationCount > 0,
             host.extensionActions().contains(where: { $0["id"] as? String == "kmgaadhbnkendcanjninlfmfgehagggl" }) else { return }
       host.checkExtensionAction(5)
       guard host.checkReassignedAction() else { finishBrowserCheck(ok: false, values: ["profile_reload_action": false]); return }
+      FileHandle.standardError.write(Data("ararat-trace: keyboard profile_reload_action=true profile=\(host.profileDirectory()) active=\(host.activeItemId() ?? "nil") popup=\(host.checkExtensionActionState())\n".utf8))
       browserCheckPhase = 56
       return
     }
     if browserCheckPhase == 56 {
-      guard (host.checkExtensionActionState()["loaded"] as? Int ?? 0) > 0 else { return }
+      let state = host.checkExtensionActionState()
+      guard (state["loaded"] as? Int ?? 0) > 0 else {
+        if browserCheckAttempts % 20 == 0 {
+          let tabs = (host.tabs() as? [any ARTabAPI] ?? []).map { "\($0.itemId):loading=\($0.isLoading)" }
+          FileHandle.standardError.write(Data("ararat-trace: keyboard wait=profile_reload_popup profile=\(host.profileDirectory()) active=\(host.activeItemId() ?? "nil") popup=\(state) tabs=\(tabs)\n".utf8))
+        }
+        return
+      }
       host.checkExtensionAction(1)
       browserCheckPhase = 560
       return

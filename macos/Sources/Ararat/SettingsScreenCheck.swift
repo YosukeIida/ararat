@@ -114,6 +114,7 @@ final class SettingsScreenCheck {
     // the reversed wheel must mirror.
     var wheelStart = ""
     var naturalDelta = 0
+    var naturalWheelSentAt = -Double.infinity
     // U27d: the Today row the New Tab row's close-up is measured on, its frame before the switch,
     // and whether the header tooltip showed before the Tooltips switch was turned off.
     var appearanceTodayRow = ""
@@ -1183,16 +1184,27 @@ extension Runtime {
     /// natural scrolling on gets the inverse CGEvent and lands on the same delta.
     @discardableResult
     func settingsSpacesSendWheel() -> Bool {
-        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -5, wheel3: 0),
-              var input = NSEvent(cgEvent: event) else { return false }
-        if input.isDirectionInvertedFromDevice,
-           let inverse = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: 5, wheel3: 0),
-           let corrected = NSEvent(cgEvent: inverse) { input = corrected }
-        FileHandle.standardError.write(Data("ararat-trace: settings-spaces send wheel\n".utf8))
+        guard let input = SettingsScreenCheck.spaceWheelEvent() else { return false }
+        FileHandle.standardError.write(Data("ararat-trace: settings-spaces send wheel time=\(input.timestamp) dx=\(input.scrollingDeltaX) dy=\(input.scrollingDeltaY) inverted=\(input.isDirectionInvertedFromDevice)\n".utf8))
         sidebar?.scrollWheel(with: input)
         return true
     }
+}
 
+extension SettingsScreenCheck {
+    static func spaceWheelEvent(time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> NSEvent? {
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -5, wheel3: 0),
+              let input = NSEvent(cgEvent: event) else { return nil }
+        var wheel = event
+        if input.isDirectionInvertedFromDevice,
+           let inverse = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: 5, wheel3: 0) { wheel = inverse }
+        // Unposted CGEvents have timestamp zero, so waiting cannot expire the classifier's pause.
+        wheel.timestamp = UInt64(time * 1_000_000_000)
+        return NSEvent(cgEvent: wheel)
+    }
+}
+
+extension Runtime {
     /// Phases 4 to 11 of `settings-spaces` (U27c): with Natural the sidebar's wheel pages to
     /// the next space; the pane then writes Reversed, the window closes and reopens on the card
     /// with Reversed still chosen, and the same wheel pages the other way.
@@ -1229,6 +1241,7 @@ extension Runtime {
             check.wheelStart = spaces[start].id
             trace("natural wheel from \(start)")
             guard settingsSpacesSendWheel() else { end("scroll_wheel_natural", false); return }
+            check.naturalWheelSentAt = ProcessInfo.processInfo.systemUptime
             step(6)
         case 6:
             guard let start = index(check.wheelStart), snapshot.shownSpaceId != check.wheelStart,
@@ -1266,7 +1279,10 @@ extension Runtime {
                 note("after reopen visible=\(probe.isVisible) page=\(probe.pageID) direction=\(probe.spaceScrollDirectionLabel) shown=\(snapshot.shownSpaceId ?? "-")")
                 return
             }
-            // The reopened window's card shows the value the record kept.
+            // Reopening Settings and changing direction must not bypass the sidebar's wheel pause.
+            guard ProcessInfo.processInfo.systemUptime - check.naturalWheelSentAt >= 0.250 else {
+                note("waiting for the natural wheel's 250 ms pause"); return
+            }
             check.report("scroll_write_reopen", probe.marker(SettingsModel.rowMarker(SettingsModel.spaceScrollDirectionCardId)) != nil)
             trace("reversed wheel")
             guard settingsSpacesSendWheel() else { end("scroll_wheel_reversed", false); return }
