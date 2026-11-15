@@ -46,17 +46,33 @@ enum WindowDrag {
     /// unconsumed press to its superview, so without the check a press on an overlay inside the
     /// page (an error page, the "Shown in another window" placeholder) would reach the container
     /// and move or zoom the window (review M1).
+    ///
+    /// The title-bar action runs only for a second press that did not become a drag, which is
+    /// what the real title bar does: it zooms, minimizes or does nothing on the release of a
+    /// stationary second click, and a drag there moves the window instead. A single press
+    /// (`clickCount` 1) therefore never runs it, however the system's setting reads.
     static func press(in view: NSView, with event: NSEvent, action: WindowDoubleClickAction = .fromDefaults()) {
         guard event.type == .leftMouseDown, let window = view.window, allowsDrag(styleMask: window.styleMask),
               pressTarget(in: window, at: event.locationInWindow) === view else { return }
-        if event.clickCount >= 2 {
-            switch action {
-            case .zoom: window.zoom(nil)
-            case .minimize: window.performMiniaturize(nil)
-            case .nothing: break
-            }
-            return
-        }
+        let start = window.convertPoint(toScreen: event.locationInWindow)
         window.performDrag(with: event)
+        let end = NSEvent.mouseLocation
+        guard runsDoubleClickAction(clickCount: event.clickCount,
+                                    travelled: hypot(end.x - start.x, end.y - start.y)) else { return }
+        switch action {
+        case .zoom: window.zoom(nil)
+        case .minimize: window.performMiniaturize(nil)
+        case .nothing: break
+        }
+    }
+
+    /// Our drag threshold, the same 3 pt a row drag uses: the title bar's double click tolerates a
+    /// point or two of hand movement, and this is the same order.
+    nonisolated static let dragThreshold: CGFloat = 3
+
+    /// The rule above, as a pure function: a second press (`clickCount` 2 or more) runs the
+    /// action only when the pointer did not travel past `dragThreshold`.
+    nonisolated static func runsDoubleClickAction(clickCount: Int, travelled: CGFloat) -> Bool {
+        clickCount >= 2 && travelled <= dragThreshold
     }
 }

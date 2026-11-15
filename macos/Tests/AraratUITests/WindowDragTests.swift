@@ -124,3 +124,15 @@ func doubleClickFollowsTheTitleBarSetting() {
     #expect(WindowDoubleClickAction.fromSetting(nil) == .zoom)
     #expect(WindowDoubleClickAction.fromSetting("Fill") == .zoom)
 }
+
+/// A single press or a drag never runs the title-bar action (design's rerun, 2026-11-16): the
+/// action follows the real title bar, which acts on the release of a stationary second click.
+@Test
+func onlyAStationarySecondClickRunsTheTitleBarAction() {
+    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 1, travelled: 0))
+    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 1, travelled: 40))
+    #expect(WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: 0))
+    #expect(WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: 1))
+    #expect(!WindowDrag.runsDoubleClickAction(clickCount: 2, travelled: WindowDrag.dragThreshold + 1))
+    #expect(WindowDrag.runsDoubleClickAction(clickCount: 3, travelled: 0))
+}
