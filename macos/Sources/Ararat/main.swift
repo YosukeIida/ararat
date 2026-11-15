@@ -1470,6 +1470,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       MainActor.assumeIsolated {
         self?.hostClosing = true
         self?.autoArchive?.stop()
+        self?.sidebar?.onAutoArchiveReady = nil
         self?.commandPresenter?.close(restoreFocus: false)
         if let host = weakHost as? any ARWindowHostAPI {
           self?.captureCheckState(host)
