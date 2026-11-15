@@ -3856,7 +3856,13 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)closeCancelled:(const tabs::TabInterface*)tab {
-  [pending_closes_ removeObjectForKey:[NSValue valueWithPointer:tab->GetContents()]];
+  NSValue* key = [NSValue valueWithPointer:tab->GetContents()];
+  NSString* command = pending_closes_[key];
+  [pending_closes_ removeObjectForKey:key];
+  auto* identity = static_cast<TabIdentity*>(tab->GetContents()->GetUserData(kTabIdentityKey));
+  NSString* item = identity ? identity->item_id : nil;
+  if (command && item.length && [self.delegate respondsToSelector:@selector(tabCloseCancelled:commandId:)])
+    [self.delegate tabCloseCancelled:item commandId:command];
 }
 
 - (void)normalizeChromeSplit:(split_tabs::SplitTabId)splitId {

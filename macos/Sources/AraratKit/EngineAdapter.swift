@@ -965,9 +965,20 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         MainActor.assumeIsolated { onCloseStarted?() }
     }
 
-    public func tabCloseCancelled(_ itemId: String) {
+    public func tabCloseCancelled(_ itemId: String, commandId: String) {
         precondition(Thread.isMainThread)
         closingRows.remove(itemId)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                guard try store.liveCancelClose(commandId: commandId) else { return }
+                let snapshot = store.snapshot(windowId: self.windowID)
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
+            } catch { self.report(error) }
+        }
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {

@@ -533,6 +533,58 @@ fn archiving_a_live_tab_returns_a_close_and_keeps_the_row_archived() {
     assert_eq!(live.live_tab("a"), None);
 }
 
+#[test]
+fn refused_close_restores_placement_selection_history_and_the_same_live_tab() {
+    for (item, archive) in [("b", false), ("b", true), ("pinned", false), ("pinned", true), ("nested", false)] {
+        let mut ws = workspace();
+        ws.create_folder("folder", "Folder", "space-work:pinned", 0, &[]).unwrap();
+        tab(&mut ws, "nested", "folder", "https://nested.example/");
+        let mut live = Live::new();
+        let tabs = ["a", item].into_iter().map(|id| LiveTab {
+            off_the_record: false, profile: Default::default(), live_id: format!("live-{id}"),
+            item: Some(id.into()), opener: None, navigated: false, url: None, title: None,
+        }).collect();
+        live.apply(&mut ws, snapshot_tx(vec![Strip { window: "one".into(), tabs, active: Some(format!("live-{item}")) }]));
+        let before = ws.clone();
+        let (_, command) = if archive { live.archive(&mut ws, item) } else { live.close(&mut ws, item) }.unwrap();
+        assert_eq!(live.live_tab(item), None);
+        assert!(ws.history_purges.keys().all(|id| live.pending_close_purge(id)));
+        let (cancelled, ops) = live.cancel_close(&mut ws, &command.id);
+        assert!(cancelled);
+        assert!(!ops.is_empty());
+        assert_eq!(ws, before);
+        assert_eq!(live.live_tab(item), Some(format!("live-{item}")));
+        assert_eq!(live.item_for(&format!("live-{item}")), Some(item.into()));
+        assert_eq!(live.live_window(item).as_deref(), Some("one"));
+        assert!(!live.pending_close_purge("unknown"));
+        assert_eq!(live.cancel_close(&mut ws, &command.id), (false, vec![]));
+        assert_eq!(live.cancel_close(&mut ws, "unknown"), (false, vec![]));
+        let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1,
+            cause: Cause::Engine, strips: vec![strip(&live, &["a", item], Some(item))] });
+        assert!(outcome.applied);
+        let (_, later) = live.close(&mut ws, item).unwrap();
+        assert!(live.settle_close(&later.id));
+        assert_eq!(live.cancel_close(&mut ws, &later.id), (false, vec![]));
+        assert_eq!(live.live_tab(item), None);
+    }
+}
+
+#[test]
+fn refused_close_keeps_a_later_edit_and_an_unrelated_row() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    live.apply(&mut ws, snapshot_tx(vec![Strip { window: "one".into(), tabs: vec![LiveTab {
+        off_the_record: false, profile: Default::default(), live_id: "live".into(), item: Some("a".into()),
+        opener: None, navigated: false, url: None, title: None,
+    }], active: Some("live".into()) }]));
+    let (_, close) = live.close(&mut ws, "a").unwrap();
+    ws.items.get_mut("c").unwrap().title = Some("new title".into());
+    ws.set_new_tab_row_shown(false);
+    assert!(live.cancel_close(&mut ws, &close.id).0);
+    assert_eq!(ws.items["c"].title.as_deref(), Some("new title"));
+    assert!(!ws.settings.new_tab_row_shown);
+}
+
 fn snapshot_tx(strips: Vec<Strip>) -> Transaction {
     Transaction { off_the_record: false, epoch: 1, rev: 0, cause: Cause::Engine, strips }
 }

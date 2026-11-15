@@ -83,6 +83,13 @@ pub struct ApplyOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveError(pub String);
 
+#[derive(Debug)]
+struct CancelledClose {
+    live: Id,
+    window: Option<Id>,
+    undo: Vec<(Op, Op)>,
+}
+
 impl From<crate::edit::EditError> for LiveError {
     fn from(error: crate::edit::EditError) -> Self {
         LiveError(error.0)
@@ -95,6 +102,7 @@ pub struct Live {
     reverse: HashMap<Id, Id>,
     windows: HashMap<Id, Id>,
     pending: HashMap<Id, (CommandKind, Id)>,
+    close_undo: HashMap<Id, CancelledClose>,
     selection_intents: HashMap<Id, Id>,
     epoch: Option<u64>,
     last_rev: u64,
@@ -226,8 +234,45 @@ impl Live {
     pub fn settle_close(&mut self, command_id: &str) -> bool {
         if self.pending.get(command_id).is_some_and(|(kind, _)| *kind == CommandKind::Close) {
             self.pending.remove(command_id);
+            self.close_undo.remove(command_id);
             true
         } else { false }
+    }
+
+    pub fn pending_close_purge(&self, id: &str) -> bool {
+        self.close_undo.values().any(|close| close.undo.iter().any(|(op, _)|
+            matches!(op, Op::Put(Record::HistoryPurge { id: purge, .. }) if purge == id)))
+    }
+
+    pub fn cancel_close(&mut self, workspace: &mut Workspace, command_id: &str) -> (bool, Vec<Op>) {
+        let Some((CommandKind::Close, item)) = self.pending.get(command_id).cloned() else {
+            return (false, Vec::new());
+        };
+        let Some(saved) = self.close_undo.remove(command_id) else {
+            return (self.settle_close(command_id), Vec::new());
+        };
+        self.pending.remove(command_id);
+        let current = workspace.to_ops();
+        let mut ops = Vec::new();
+        for (expected, undo) in saved.undo {
+            let (kind, id) = match &expected {
+                Op::Put(record) => (record.kind(), record.id()),
+                Op::Delete(kind, id) => (*kind, id.clone()),
+            };
+            let actual = current.iter().find(|op| matches!(op, Op::Put(record) if record.kind() == kind && record.id() == id));
+            // A later edit must not be overwritten by the refused close's rollback.
+            if actual == Some(&expected) || (actual.is_none() && matches!(expected, Op::Delete(..))) {
+                workspace.apply(&undo);
+                ops.push(undo);
+            }
+        }
+        if workspace.items.get(&item).is_some_and(|item| item.lifecycle == Lifecycle::Open)
+            && !self.map.contains_key(&item) && !self.reverse.contains_key(&saved.live) {
+            self.map.insert(item.clone(), saved.live.clone());
+            self.reverse.insert(saved.live.clone(), item);
+            if let Some(window) = saved.window { self.windows.insert(saved.live, window); }
+        }
+        (true, ops)
     }
 
     fn cancel_open(
@@ -368,15 +413,30 @@ impl Live {
 
     fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {
         let live = self.map.get(item).cloned().ok_or_else(|| LiveError(format!("item {item} has no live tab")))?;
+        // restore_item changes placement and cannot undo the close's selection/history ops.
+        let before = workspace.to_ops();
         let ops = if archive { workspace.archive_item(item)? } else { workspace.close_item(item)? };
+        let after = workspace.to_ops();
+        let mut undo = Vec::new();
+        for op in &ops {
+            let (kind, id) = match op {
+                Op::Put(record) => (record.kind(), record.id()),
+                Op::Delete(kind, id) => (*kind, id.clone()),
+            };
+            let lookup = |records: &[Op]| records.iter().find(|op| matches!(op, Op::Put(record) if record.kind() == kind && record.id() == id)).cloned()
+                .unwrap_or_else(|| Op::Delete(kind, id.clone()));
+            let change = (lookup(&after), lookup(&before));
+            if !undo.contains(&change) { undo.push(change); }
+        }
         self.map.remove(item);
         self.reverse.remove(&live);
-        self.windows.remove(&live);
+        let window = self.windows.remove(&live);
         let command = Command {
             id: self.fresh_command_id(workspace), kind: CommandKind::Close,
             item: item.into(), url: None,
         };
         self.pending.insert(command.id.clone(), (CommandKind::Close, item.into()));
+        self.close_undo.insert(command.id.clone(), CancelledClose { live, window, undo });
         Ok((ops, command))
     }
 
@@ -548,6 +608,7 @@ impl Live {
             self.reverse = next_reverse;
             self.windows = next_windows;
             self.pending = next_pending;
+            self.close_undo.clear();
             self.selection_intents = next_intents;
             return (ops, outcome);
         }
@@ -727,6 +788,7 @@ impl Live {
         self.reverse = next_reverse;
         self.windows = next_windows;
         self.pending = next_pending;
+        self.close_undo.retain(|id, _| self.pending.contains_key(id));
         self.selection_intents = next_intents;
         (ops, outcome)
     }

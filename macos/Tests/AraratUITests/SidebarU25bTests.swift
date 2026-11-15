@@ -420,7 +420,7 @@ func aRefusedCloseDoesNotAnimateALaterRemoval(removal: String) async throws {
     #expect(closed.isEmpty)
     delivered = nil
     if removal == "cancel" {
-        engine.tabCloseCancelled(id)
+        engine.tabCloseCancelled(id, commandId: "unknown")
         _ = try store.archiveItem(windowId: "cancel", id: id)
         engine.refresh()
     } else {
@@ -429,4 +429,33 @@ func aRefusedCloseDoesNotAnimateALaterRemoval(removal: String) async throws {
     }
     try await waitUntil { delivered?.archive.contains { $0.id == id } == true }
     #expect(closed == (removal == "close" ? [id] : []))
+}
+
+@Test @MainActor
+func aCancelledLiveClosePublishesTheRestoredRow() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("stay.sqlite").path,
+                                   windowID: "stay", card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: "stay", name: "Work", spaceId: "work")
+    let created = try store.createTab(windowId: "stay", url: "https://stay.example/")
+    let id = try #require(created.selectedId)
+    let live = try store.liveOpen(item: id, url: "https://stay.example/")
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: "stay", tabs: [LiveTab(offTheRecord: false, profile: .default, liveId: live.id,
+            item: id, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)]))
+    let before = store.snapshot(windowId: "stay")
+    let close = try store.liveArchive(item: id)
+    var delivered: WorkspaceSnapshot?
+    var closed: [String] = []
+    engine.onSnapshot = { delivered = $0 }
+    engine.onRowClose = { closed.append($0) }
+    engine.tabCloseCancelled(id, commandId: close.id)
+    try await waitUntil { delivered == before }
+    #expect(store.liveTab(item: id) == live.id)
+    #expect(try store.pendingHistoryPurges().isEmpty)
+    #expect(closed.isEmpty)
+    #expect(try store.liveCancelClose(commandId: close.id) == false)
 }

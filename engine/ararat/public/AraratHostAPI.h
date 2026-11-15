@@ -93,7 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
-- (void)tabCloseCancelled:(NSString*)itemId;
+- (void)tabCloseCancelled:(NSString*)itemId commandId:(NSString*)commandId;
 - (BOOL)isLittleWindowForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)extensionActionsChangedForWindowHost:(id<ARWindowHostAPI>)host;
