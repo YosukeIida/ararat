@@ -78,7 +78,7 @@ extension Runtime {
             NSApp.windows.filter { window in
                 let name = String(describing: type(of: window))
                 return name.contains("OpenPanel") || name.contains("SavePanel") || name.contains("FileDialog")
-                    || name.contains("SelectFileDialog")
+                    || name.contains("SelectFileDialog") || name.contains("Panel")
             }
         }
         func capture(_ name: String, window target: NSWindow) -> Bool {
