@@ -83,6 +83,18 @@ final class WindowDragCheckState {
         names + (screen ? screens : [])
     }
 
+    static func mouseEvent(_ type: CGEventType, at point: CGPoint, from previous: CGPoint? = nil) -> CGEvent? {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let event = CGEvent(mouseEventSource: source, mouseType: type,
+                                  mouseCursorPosition: point, mouseButton: .left) else { return nil }
+        let previous = previous ?? point
+        // Do not rely on source state for deltas; each drag follows the previous posted point.
+        event.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - previous.x).rounded()))
+        event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - previous.y).rounded()))
+        if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: 1) }
+        return event
+    }
+
     func diagnostics(screen: Bool) -> [String: Any] {
         let names = Self.conditionNames(screen: screen)
         return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
@@ -115,11 +127,9 @@ extension Runtime {
         /// A real event at the HID tap, at a CG screen point (top-left origin) computed once
         /// before anything is posted: a point converted later would follow a window the first
         /// event has already moved (review M1).
-        func post(_ type: CGEventType, at point: CGPoint) {
-            guard let source = CGEventSource(stateID: .hidSystemState),
-                  let event = CGEvent(mouseEventSource: source, mouseType: type,
-                                      mouseCursorPosition: point, mouseButton: .left) else { return }
-            if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: 1) }
+        func post(_ type: CGEventType, at point: CGPoint, from previous: CGPoint? = nil) {
+            guard let event = WindowDragCheckState.mouseEvent(type, at: point, from: previous) else { return }
+            FileHandle.standardError.write(Data("ararat-trace: window-drag post type=\(type.rawValue) at=\(point) delta=\(event.getIntegerValueField(.mouseEventDeltaX)),\(event.getIntegerValueField(.mouseEventDeltaY)) frame=\(window.frame)\n".utf8))
             event.post(tap: .cghidEventTap)
         }
         /// The window point in AppKit screen coordinates and in CG's top-left screen coordinates.
@@ -196,8 +206,8 @@ extension Runtime {
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
             post(.mouseMoved, at: neutralCG)
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startCG) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, at: midwayCG) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, at: endCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, at: midwayCG, from: startCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, at: endCG, from: midwayCG) }
             DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, at: endCG) }
             check.dragDeadline = ProcessInfo.processInfo.systemUptime + gap + 0.9
         }
