@@ -1,5 +1,29 @@
+import AppKit
+import AraratKit
 import Testing
 @testable import Ararat
+@testable import AraratUI
+
+@Test @MainActor
+func settingsWheelsExpireThePauseBeforeReversedPaging() throws {
+    let unstamped = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -5, wheel3: 0))
+    #expect(try #require(NSEvent(cgEvent: unstamped)).timestamp == 0)
+    let now = ProcessInfo.processInfo.systemUptime
+    let live = try #require(SettingsScreenCheck.spaceWheelEvent())
+    #expect(live.timestamp >= now && live.timestamp <= ProcessInfo.processInfo.systemUptime)
+    var state = SpaceScrollState()
+    var pause = -Double.infinity
+    for (time, direction, expected) in [(100.0, SpaceScrollDirection.natural, 2), (100.25, .reversed, 0)] {
+        let event = try #require(SettingsScreenCheck.spaceWheelEvent(time: time))
+        #expect(event.timestamp == time)
+        #expect(event.phase.isEmpty && event.momentumPhase.isEmpty)
+        let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                     inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
+        #expect(state.handle(input, index: 1, count: 3, pitch: 180, direction: direction,
+                             wheelPausedUntil: &pause) == .settle(index: expected, offset: 0, switched: true))
+        state = SpaceScrollState()
+    }
+}
 
 // U27a: the `--ararat-screen=` argument reaches the mode through the same two steps `main.swift`
 // uses — argument to `screenMode`, then `checkMode`, and every later site parses that check mode
