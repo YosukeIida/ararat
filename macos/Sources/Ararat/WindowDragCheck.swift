@@ -5,10 +5,17 @@ import AraratUI
 
 /// P4 item 1: the window moves from the sidebar's empty areas and from the frame around the page
 /// card, and not from a row, a dock cell or a control (the owner, 2026-11-15). Each step posts a
-/// pressed drag at the window server and reads the window's frame. The events go to the HID tap
-/// because `NSWindow.performDrag(with:)` does not start from an event injected into the app's own
-/// queue: measured on the host (2026-11-16), a pre-pressed event returns at once and the frame
-/// stays, while an event the window server delivers starts the drag and follows the later moves.
+/// press, a move and a release at the window server and reads the window's frame. The events go
+/// to the HID tap because `NSWindow.performDrag(with:)` does not start from an event injected into
+/// the app's own queue: measured on the host (2026-11-16), a pre-pressed event returns at once and
+/// the frame stays, while an event the window server delivers starts the drag and follows the
+/// later moves.
+///
+/// The drag views store the press on `mouseDown` and hand it to `performDrag(with:)` on the first
+/// `mouseDragged` past 3 pt (design, 2026-11-16), so this check's posted sequence is the whole
+/// model: without the move nothing moves, and a stationary second press is what runs the
+/// title-bar action. `WindowDrag` traces each of those steps, and the check's own run turns that
+/// trace on, so a VM run shows whether a posted `leftMouseDragged` reaches the drag view at all.
 /// The check also captures the row list's scroller after a scroll (P4 item 5), which needs the
 /// same drawn sidebar.
 @MainActor
@@ -150,11 +157,25 @@ extension Runtime {
                                                                  "start": ["x": startScreen.x, "y": startScreen.y],
                                                                  "end": ["x": endScreen.x, "y": endScreen.y]]
             }
+            // Every posted point stays inside the screen's visible frame: a drag that reached the
+            // menu bar or an edge would fill the screen instead of moving the window (review H2).
+            // A point that had to be pulled in is recorded; `points_inside_screen` has already
+            // named the step whose intended geometry was outside.
+            let safe = visible.insetBy(dx: 1, dy: 1)
+            func posted(_ point: NSPoint) -> NSPoint {
+                let clamped = NSPoint(x: min(max(point.x, safe.minX), safe.maxX),
+                                      y: min(max(point.y, safe.minY), safe.maxY))
+                if clamped != point {
+                    check.details["clamped_\(step.name)"] = ["intended": ["x": point.x, "y": point.y],
+                                                             "posted": ["x": clamped.x, "y": clamped.y]]
+                }
+                return clamped
+            }
             // The target this check expects the press to reach, computed before it is posted: a
             // prediction, not the view AppKit dispatches to (review L3 of review 6).
             let predictedHit = container.checkPressTarget(at: startPoint)
             FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) predicted_hit=\(predictedHit) key=\(window.isKeyWindow)\n".utf8))
-            let startCG = cgScreen(startScreen), endCG = cgScreen(endScreen), neutralCG = cgScreen(neutralScreen)
+            let startCG = cgScreen(posted(startScreen)), endCG = cgScreen(posted(endScreen)), neutralCG = cgScreen(posted(neutralScreen))
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
             post(.mouseMoved, at: neutralCG)
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, at: startCG) }

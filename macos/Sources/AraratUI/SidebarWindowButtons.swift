@@ -8,6 +8,11 @@ final class SidebarWindowButtons: NSView {
     private var hovered = false {
         didSet { subviews.forEach { $0.needsDisplay = true } }
     }
+    /// The minimize button, disabled while the window is in full screen: a full-screen window has
+    /// nothing to minimize, as AppKit's own title bar keeps it disabled there (design,
+    /// 2026-11-16, from Yab's `Lights`; reimplemented).
+    private weak var minimize: NSButton?
+    private var fullScreenObservers: [NSObjectProtocol] = []
 
     override var isFlipped: Bool { true }
 
@@ -21,10 +26,36 @@ final class SidebarWindowButtons: NSView {
             button.target = self
             button.action = [#selector(closeWindow), #selector(minimizeWindow), #selector(zoomWindow)][index]
             addSubview(button)
+            if type == .miniaturizeButton { minimize = button }
         }
+        refreshMinimize()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// The window's full-screen change is followed from the two notifications, registered while
+    /// this view is in the window and dropped when it leaves it.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        stopFollowingFullScreen()
+        guard let window else { return }
+        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            fullScreenObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshMinimize() }
+            })
+        }
+        refreshMinimize()
+    }
+
+    private func stopFollowingFullScreen() {
+        for observer in fullScreenObservers { NotificationCenter.default.removeObserver(observer) }
+        fullScreenObservers.removeAll()
+    }
+
+    private func refreshMinimize() {
+        minimize?.isEnabled = browserWindow?.styleMask.contains(.fullScreen) != true
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

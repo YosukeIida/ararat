@@ -125,87 +125,107 @@ func doubleClickFollowsTheTitleBarSetting() {
     #expect(WindowDoubleClickAction.fromSetting("Fill") == .zoom)
 }
 
-/// A double click's second press that moves drags the window and never runs the title-bar action
-/// (review H1): the tracker only acts on a release that stayed within the threshold, and each
-/// drag step moves the window by the pointer's own step.
-@Test @MainActor
-func aSecondPressThatMovesDragsAndNeverActs() {
-    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
-    // A point or two of hand movement is still a stationary click.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 102, y: 100))) == .ignore)
-    // Past the threshold it is a drag, and the first step catches up from the press point.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 140, y: 90)))
-            == .move(NSPoint(x: 40, y: -10)))
-    #expect(tracker.dragging)
-    // Later steps move by their own delta only.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 150, y: 80)))
-            == .move(NSPoint(x: 10, y: -10)))
-    #expect(tracker.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 150, y: 80))) == .end)
-}
-
-/// A release that stayed within the threshold runs the action, and a press that jumps before its
-/// release does not (review H1).
-@Test @MainActor
-func aStationarySecondClickActsOnTheRelease() {
-    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
-    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 101, y: 101))) == .ignore)
-    #expect(tracker.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 101, y: 101))) == .action)
-    #expect(!tracker.dragging)
-    var jumped = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
-    #expect(jumped.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 160, y: 100))) == .end)
-    // Anything that is not a drag or a release leaves the decision open.
-    var other = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
-    #expect(other.handle(.init(type: .mouseMoved, screenLocation: NSPoint(x: 300, y: 300))) == .ignore)
-    #expect(other.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 100, y: 100))) == .action)
-}
-
-/// The loop `press` runs around the tracker, driven by fake events (review M1/M2 of review 6): a
-/// nil follow-up is the timeout and ends the press with nothing owed; a queued point is used as
-/// given in screen coordinates, so our own window moves cannot skew the delta.
-@Test @MainActor
-func theSecondPressLoopEndsAtATimeoutAndMovesByTheGivenScreenSteps() {
-    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
-    var moves: [NSPoint] = []
-    var acts = 0
-    #expect(WindowDrag.handleSecondPress(nil, tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }))
-    #expect(moves.isEmpty && acts == 0)
-    // A second press that moves drags: 2 pt is still a click, then the first step past the
-    // threshold catches up from the press point and later steps move by their own delta.
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 102, y: 100)),
-                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 140, y: 90)),
-                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 150, y: 80)),
-                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
-    #expect(moves == [NSPoint(x: 40, y: -10), NSPoint(x: 10, y: -10)])
-    // The release of a drag ends it without the action.
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 150, y: 80)),
-                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }))
-    #expect(acts == 0)
-    // A stationary second click acts on its release.
-    var still = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 200, y: 200))
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 201, y: 201)),
-                                        tracker: &still, move: { moves.append($0) }, act: { acts += 1 }) == false)
-    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 201, y: 201)),
-                                        tracker: &still, move: { moves.append($0) }, act: { acts += 1 }))
-    #expect(acts == 1)
-}
-
-/// A manual drag step keeps the window's title area reachable (review L1 of review 6): an inward
-/// step passes through, a step far above the screen is pulled back. No window is ordered front.
-@Test @MainActor
-func theManualMoveIsConstrainedToTheScreen() throws {
+/// A drag area's press is stored and follows one rule (design, 2026-11-16): within the threshold
+/// nothing happens, past it the stored press is handed to the window server exactly once, with the
+/// event the view kept. The two effectful steps are injected, so no event goes through `NSApp` and
+/// no window is ordered front.
+@MainActor
+private func dragPress(clickCount: Int = 1, at point: NSPoint = NSPoint(x: 100, y: 100)) throws
+    -> (window: NSWindow, view: NSView, event: NSEvent, held: WindowDrag.Held, handed: () -> [NSEvent], acted: () -> Int) {
     _ = NSApplication.shared
-    let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 300), styleMask: [.titled],
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled],
                           backing: .buffered, defer: false)
-    // Without a screen there is nothing to constrain against: fail by name rather than pass.
-    let screen = try #require(window.screen ?? NSScreen.screens.first, "no screen to constrain against")
-    let inward = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: 300), size: NSSize(width: 400, height: 300), in: window)
-    #expect(inward.origin == NSPoint(x: 300, y: 300))
-    let high = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: screen.visibleFrame.maxY + 4000),
-                                           size: NSSize(width: 400, height: 300), in: window)
-    // The claim is that the clamped frame's top stays inside the visible frame, so the title area
-    // stays reachable (review N3 of review 7).
-    #expect(high.maxY <= screen.visibleFrame.maxY)
-    #expect(high.origin.y < screen.visibleFrame.maxY + 4000)
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    window.contentView = view
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: clickCount, pressure: 1))
+    var handed: [NSEvent] = []
+    var acts = 0
+    let held = try #require(WindowDrag.Held(in: view, with: event, action: .zoom,
+                                            hand: { handed.append($0) },
+                                            run: { _ in acts += 1 }))
+    return (window, view, event, held, { handed }, { acts })
+}
+
+@Test @MainActor
+func aStoredPressAsksForOneDragPastTheThresholdWithThePressItKept() throws {
+    let press = try dragPress()
+    defer { press.window.contentView = nil }
+    let origin = press.held.origin
+    // A point or two of hand movement is still a click.
+    press.held.dragged(to: NSPoint(x: origin.x + 2, y: origin.y + 1))
+    #expect(press.handed().isEmpty)
+    #expect(!press.held.handedOver)
+    // Past 3 pt it is a drag, asked for once, with the stored mouse-down event itself.
+    press.held.dragged(to: NSPoint(x: origin.x + 40, y: origin.y - 10))
+    #expect(press.handed().count == 1)
+    #expect(press.handed().first === press.event)
+    #expect(press.held.handedOver)
+    // Later points ask for nothing more, and the system's release runs no action.
+    press.held.dragged(to: NSPoint(x: origin.x + 80, y: origin.y - 20))
+    press.held.released(at: NSPoint(x: origin.x + 80, y: origin.y - 20))
+    #expect(press.handed().count == 1)
+    #expect(press.acted() == 0)
+}
+
+/// A second click that never moved runs the title-bar action on its release, once (review H1 of
+/// review 6): a third press is a fresh one and does nothing, and a release after the action owes
+/// nothing.
+@Test @MainActor
+func aStationarySecondClickRunsTheActionOnce() throws {
+    let press = try dragPress(clickCount: 2)
+    defer { press.window.contentView = nil }
+    let origin = press.held.origin
+    // A point of movement, and then the release, still a click.
+    press.held.dragged(to: NSPoint(x: origin.x + 1, y: origin.y))
+    press.held.released(at: NSPoint(x: origin.x + 1, y: origin.y))
+    #expect(press.acted() == 1)
+    press.held.released(at: NSPoint(x: origin.x + 1, y: origin.y))
+    #expect(press.acted() == 1)
+    // A single click on the title bar does nothing on its release.
+    let single = try dragPress(clickCount: 1)
+    defer { single.window.contentView = nil }
+    single.held.released(at: single.held.origin)
+    #expect(single.acted() == 0)
+}
+
+/// A second press that moves drags the window and never runs the action (review H1), including a
+/// release past the threshold whose dragged events were lost: the release point decides too.
+@Test @MainActor
+func aSecondClickThatMovesNeverActs() throws {
+    let press = try dragPress(clickCount: 2)
+    defer { press.window.contentView = nil }
+    let origin = press.held.origin
+    press.held.dragged(to: NSPoint(x: origin.x + 30, y: origin.y))
+    #expect(press.handed().count == 1)
+    press.held.released(at: NSPoint(x: origin.x + 30, y: origin.y))
+    #expect(press.acted() == 0)
+    // A release that jumped with no dragged event at all is a move as well.
+    let jumped = try dragPress(clickCount: 2)
+    defer { jumped.window.contentView = nil }
+    jumped.held.released(at: NSPoint(x: jumped.held.origin.x + 60, y: jumped.held.origin.y))
+    #expect(jumped.acted() == 0)
+    #expect(jumped.handed().isEmpty)
+}
+
+/// A press that landed on a view inside the drag area keeps its own click: the press is not the
+/// area's to take, so no held press is made for it (review M1 of review 5).
+@Test @MainActor
+func aPressOnAnInnerViewIsNotTheDragAreasToTake() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled],
+                          backing: .buffered, defer: false)
+    let area = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    window.contentView = area
+    defer { window.contentView = nil }
+    let inner = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 120))
+    area.addSubview(inner)
+    func mouseDown(_ point: NSPoint) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                                        windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                        clickCount: 1, pressure: 1))
+    }
+    #expect(WindowDrag.Held(in: area, with: try mouseDown(NSPoint(x: 60, y: 60))) == nil)
+    #expect(WindowDrag.Held(in: area, with: try mouseDown(NSPoint(x: 300, y: 200))) != nil)
 }

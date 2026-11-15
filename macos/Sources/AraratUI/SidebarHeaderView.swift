@@ -25,6 +25,9 @@ public final class SidebarHeaderView: NSView {
     private var pressedCommands: Set<String> = []
     private let commands = ["toggle_sidebar", "back", "forward", "reload", "menu"]
     private var buttons: [NSButton] { [sidebar, back, forward, reload, more] }
+    /// The press this view's drag area stored, from its `mouseDown` to its release. The header's
+    /// own gaps are the drag area; its buttons keep their clicks.
+    private var windowDrag: WindowDrag.Held?
     override public var isFlipped: Bool { true }
 
     public override init(frame: NSRect) {
@@ -174,8 +177,21 @@ public final class SidebarHeaderView: NSView {
     }
     @objc private func menuPressed(_ sender: NSMenuItem) { if let command = sender.representedObject as? String { onCommand?(command) } }
     override public func mouseDown(with event: NSEvent) {
-        WindowDrag.press(in: self, with: event)
+        windowDrag = WindowDrag.Held(in: self, with: event)
     }
+
+    override public func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    override public func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    /// The press that activates a background window drags it too, as a title bar's does; only the
+    /// header's own gaps resolve to this view, never its buttons.
+    override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override public func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)

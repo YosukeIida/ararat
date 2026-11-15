@@ -1728,9 +1728,25 @@ public final class SidebarView: NSView {
             || hit === actionsRow || hit === bottomBar || hit === dock
     }
 
+    /// The press this view's drag area stored, from its `mouseDown` to its release.
+    private var windowDrag: WindowDrag.Held?
+
     override public func mouseDown(with event: NSEvent) {
-        WindowDrag.press(in: self, with: event)
+        windowDrag = WindowDrag.Held(in: self, with: event)
     }
+
+    override public func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    override public func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    /// The press that activates a background window drags it too, as a title bar's does; only
+    /// this view's own hit (a drag area, see `hitTest`) reaches here.
+    override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override public func accessibilityChildren() -> [Any]? {
         isScrollPreview ? [] : super.accessibilityChildren()

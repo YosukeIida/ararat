@@ -117,6 +117,10 @@ public final class SidebarContainerView: NSView {
         }
     }
     private var windowButtons: SidebarWindowButtons?
+    /// The press this view's drag area stored, from its `mouseDown` to its release. The card's
+    /// frame, the private backdrop and the gaps between the traffic lights are the drag area; the
+    /// buttons, the rows, the sidebar and the page keep their own hits (see `hitTest`).
+    private var windowDrag: WindowDrag.Held?
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
@@ -341,8 +345,21 @@ public final class SidebarContainerView: NSView {
     }
 
     override public func mouseDown(with event: NSEvent) {
-        WindowDrag.press(in: self, with: event)
+        windowDrag = WindowDrag.Held(in: self, with: event)
     }
+
+    override public func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    override public func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    /// The press that activates a background window drags it too, as a title bar's does; a press
+    /// on the card's frame or the private backdrop resolves to this view (see `hitTest`).
+    override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     // MARK: P4 item 1 check seams
 

@@ -14,6 +14,8 @@ class SidebarScrollView: NSScrollView {
     private var permitsScroller = false
     /// The trailing strip that reveals the knob on hover (P4: Arc's overlay look).
     private let knobHoverWidth: CGFloat = 12
+    /// The press this view's drag area stored, from its `mouseDown` to its release.
+    private var windowDrag: WindowDrag.Held?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -183,8 +185,21 @@ class SidebarScrollView: NSScrollView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        WindowDrag.press(in: self, with: event)
+        windowDrag = WindowDrag.Held(in: self, with: event)
     }
+
+    override func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    /// The press that activates a background window drags it too, as a title bar's does; only the
+    /// empty area below the last row resolves to this view (see `hitTest`).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func scrollNatively(with event: NSEvent) { super.scrollWheel(with: event) }
 
