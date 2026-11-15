@@ -622,7 +622,7 @@ fn space_edits_flush_complete_records_and_local_window_changes() {
     store.set_space_look("one".into(), "space-work".into(), None).unwrap();
     let view = store.move_space("one".into(), "space-home".into(), 0).unwrap(); assert_eq!(view.spaces[0].id, "space-home");
     for window in ["one", "two"] { store.show_space(window.into(), "space-work".into()).unwrap(); store.select_item(window.into(), "tab-spec".into()).unwrap(); }
-    let deleted = store.delete_space("one".into(), "space-work".into()).unwrap();
+    let deleted = store.live_delete_space("one".into(), "space-work".into()).unwrap().snapshot;
     assert_eq!(deleted.shown_space_id.as_deref(), Some("space-home")); assert_eq!(deleted.selected_id, None); assert_eq!(deleted.archive.len(), 3);
     assert_eq!(store.snapshot("two".into()).shown_space_id.as_deref(), Some("space-home"));
     let (_, disk) = Store::open(&path).unwrap(); disk.check_tree().unwrap();
@@ -645,10 +645,10 @@ fn rejected_space_edits_write_neither_records_nor_journal() {
     assert!(store.set_space_icon("one".into(), "space-work".into(), Some(" ".into())).is_err());
     assert!(store.set_space_look("one".into(), "space-work".into(), Some(ararat_ffi::Look { colors: vec![], opacity: 0.0, grain: 0.0, glass: false, appearance: ararat_ffi::Appearance::Auto })).is_err());
     assert!(store.move_space("one".into(), "space-work".into(), 2).is_err());
-    assert!(store.delete_space("one".into(), "missing".into()).is_err());
+    assert!(store.live_delete_space("one".into(), "missing".into()).is_err());
     store.flush().unwrap(); assert_eq!(records(&path), before); assert_eq!(count(), journal); assert_eq!(store.snapshot("one".into()), original);
-    store.delete_space("one".into(), "space-home".into()).unwrap(); let before = records(&path); let journal = count();
-    assert!(store.delete_space("one".into(), "space-work".into()).is_err());
+    store.live_delete_space("one".into(), "space-home".into()).unwrap(); let before = records(&path); let journal = count();
+    assert!(store.live_delete_space("one".into(), "space-work".into()).is_err());
     store.flush().unwrap(); assert_eq!(records(&path), before); assert_eq!(count(), journal);
 }
 
@@ -680,7 +680,7 @@ fn profile_archive_options_times_and_auto_archive_persist_across_ffi_reopen() {
         assert_eq!(snapshot.spaces[0].archive_after, value);
     }
     store.set_archive_after("test".into(), "space-work".into(), ArchiveAfter::Hours12).unwrap();
-    let archived = store.auto_archive("test".into(), started + 12 * 3_600_000 + 1).unwrap().unwrap();
+    let archived = store.live_auto_archive("test".into(), started + 12 * 3_600_000 + 1).unwrap().unwrap().snapshot;
     assert!(archived.archive.iter().any(|i| i.id == "tab-a"));
     assert!(!archived.spaces[0].today.iter().any(|i| i.id == "tab-a"));
     store.flush().unwrap(); drop(store);
@@ -695,7 +695,7 @@ fn idle_auto_archive_returns_none_without_publishing_or_writing() {
     let imported = store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap().snapshot;
     let now = imported.spaces[0].today.iter().find(|r| r.id == "tab-a").unwrap().last_selected_at.unwrap();
     let before = records(&path);
-    assert_eq!(store.auto_archive("test".into(), now).unwrap(), None);
+    assert_eq!(store.live_auto_archive("test".into(), now).unwrap(), None);
     assert_eq!(records(&path), before);
 }
 
@@ -751,7 +751,7 @@ fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
     store.move_item("one".into(), "tab-spec".into(), "today-work".into(), 0, false).unwrap();
     let (disk, reopened) = Store::open(&path).unwrap();
     assert!(reopened.last_selected["tab-spec"] >= now); assert_eq!(count(), journal + 1); drop(disk);
-    store.auto_archive("one".into(), now + 1).unwrap();
+    store.live_auto_archive("one".into(), now + 1).unwrap();
     let (disk, reopened) = Store::open(&path).unwrap();
     assert_eq!(reopened.items["tab-spec"].lifecycle, ararat_core::model::Lifecycle::Open); drop(disk);
 }
@@ -1318,7 +1318,7 @@ fn deleting_a_space_removes_its_section_record() {
     store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
     store.set_section_collapsed("one".into(), "space-work".into(), true).unwrap();
     assert!(store.section_collapsed("space-work".into()));
-    store.delete_space("one".into(), "space-work".into()).unwrap();
+    store.live_delete_space("one".into(), "space-work".into()).unwrap();
     assert!(!store.section_collapsed("space-work".into()));
     assert!(!records(&path).iter().any(|(kind, id, _)| kind == "section_state" && id == "space-work"));
     drop(store);
@@ -1526,4 +1526,48 @@ fn the_privacy_record_reads_through_the_ffi_and_survives_reopen() {
     let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
     assert_eq!(journalled, 2);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+#[test]
+fn live_auto_archive_returns_close_targets_and_the_committed_snapshot() {
+    let path = fresh_db("live-auto-archive");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let before = store.import_arc_sidebar("one".into(), today_fixture(), None, None, None, None).unwrap().snapshot;
+    let a = store.live_open("tab-a".into(), "https://a.test/".into()).unwrap();
+    let pin = store.live_open("tab-spec".into(), "https://pin.test/".into()).unwrap();
+    store.select_item("one".into(), "tab-b".into()).unwrap();
+    let batch = store.live_auto_archive("one".into(), u64::MAX).unwrap().unwrap();
+    assert_eq!(batch.targets.len(), 1);
+    assert_eq!(batch.targets[0].live_id, a.id);
+    assert_eq!(batch.targets[0].command.item, "tab-a");
+    assert_eq!(store.live_tab("tab-spec".into()), Some(pin.id));
+    assert_eq!(batch.snapshot.selected_id.as_deref(), Some("tab-b"));
+    assert!(batch.snapshot.spaces[0].today.iter().any(|row| row.id == "tab-b"));
+    assert_eq!(batch.snapshot.spaces[0].favorites, before.spaces[0].favorites);
+    assert!(batch.snapshot.archive.iter().any(|entry| entry.id == "tab-a"));
+    assert_eq!(batch.snapshot, store.snapshot("one".into()));
+    assert!(store.live_settle_close(batch.targets[0].command.id.clone()));
+    assert!(store.live_auto_archive("one".into(), u64::MAX).unwrap().is_none());
+}
+
+#[test]
+fn live_delete_shown_space_returns_only_its_loaded_rows_and_the_neighbour_snapshot() {
+    let path = fresh_db("live-delete-space");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), today_fixture(), None, None, None, None).unwrap();
+    let a = store.live_open("tab-a".into(), "https://a.test/".into()).unwrap();
+    let pin = store.live_open("tab-spec".into(), "https://pin.test/".into()).unwrap();
+    let favorite = store.live_open("tab-mail".into(), "https://favorite.test/".into()).unwrap();
+    let batch = store.live_delete_space("one".into(), "space-work".into()).unwrap();
+    let mut ids: Vec<_> = batch.targets.iter().map(|target| target.live_id.clone()).collect();
+    ids.sort();
+    let mut expected = vec![a.id, pin.id]; expected.sort();
+    assert_eq!(ids, expected);
+    assert_eq!(batch.snapshot.shown_space_id.as_deref(), Some("space-home"));
+    assert_eq!(store.live_tab("tab-mail".into()), Some(favorite.id));
+    assert_eq!(batch.snapshot, store.snapshot("one".into()));
+    assert!(store.live_delete_space("one".into(), "space-home".into()).is_err());
+    for target in batch.targets { assert!(store.live_settle_close(target.command.id)); }
+    drop(store);
+    assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()).spaces.len(), 1);
 }

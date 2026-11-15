@@ -835,21 +835,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 guard let store = self.store else { DispatchQueue.main.async { completion(nil) }; return }
                 let result = try store.liveClearToday(windowId: self.windowID, spaceId: spaceID)
                 DispatchQueue.main.async {
-                    for target in result.targets {
-                        if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
-                        else if self.session.cancelPendingOpen(target.liveId) {
-                            self.queue.async {
-                                _ = self.store?.liveCancel(commandId: target.liveId)
-                                _ = self.store?.liveSettleClose(commandId: target.command.id)
-                            }
-                        }
-                        else {
-                            // A target the engine no longer has: settle its Close so the row is not
-                            // left pending for a later restore.
-                            self.queue.async { _ = self.store?.liveSettleClose(commandId: target.command.id) }
-                            self.report(CoreError.Live(message: "Cannot find live tab \(target.liveId) to close"))
-                        }
-                    }
+                    self.session.closeLiveTargets(result.targets, report: self.report)
                     self.deliverIfCurrent(result.snapshot)
                     completion(result)
                 }
