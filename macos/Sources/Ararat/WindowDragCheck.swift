@@ -40,6 +40,7 @@ final class WindowDragCheckState {
     var images: [String: String] = [:]
     var details: [String: Any] = [:]
     var waitName = ""
+    var waitTicks = 0
     /// The frame phase 0 recorded; every step starts from it and the check asserts it.
     var baseFrame = NSRect.zero
     /// A point on the page, away from every drag area: each gesture parks the pointer there, so
@@ -66,6 +67,15 @@ final class WindowDragCheckState {
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
+        FileHandle.standardError.write(Data("ararat-trace: window-drag \(name)=\(value)\n".utf8))
+    }
+
+    func wait(_ name: String, _ value: String) {
+        if waitName != name || waitTicks % 20 == 0 {
+            FileHandle.standardError.write(Data("ararat-trace: window-drag wait=\(name) current=\(value)\n".utf8))
+        }
+        if waitName != name { waitTicks = 0; waitName = name }
+        waitTicks += 1
     }
 
     static func conditionNames(screen: Bool) -> [String] {
@@ -102,7 +112,7 @@ extension Runtime {
         guard let check = windowDragCheck, !check.capturing, let sidebar, let container else { return }
         let window = host.window()
         func wait(_ name: String) {
-            check.waitName = name
+            check.wait(name, "phase=\(browserCheckPhase) step=\(check.stepIndex) frame=\(window.frame) key=\(window.isKeyWindow) visible=\(window.isVisible)")
         }
         func capture(_ name: String) -> Bool {
             guard screen else { return true }
