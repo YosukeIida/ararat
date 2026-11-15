@@ -114,12 +114,14 @@ struct SpaceWheelRecordingResetTests {
         }
     }
 
-    @Test func playingPullPassesVerticalAndCancelsOnReverse() {
+    @Test func playingPullPassesVerticalAndSettlesOnClassifiedReverse() {
         for reversed in [false, true] {
             for inverted in [false, true] {
                 let sidebar = SidebarView(snapshot: snapshot(5))
                 sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
                 sidebar.spaceScrollDirection = reversed ? .reversed : .natural
+                var now = 0.0
+                sidebar.pullClock = { now }
                 defer { sidebar.finishScrollPresentation() }
                 let forward = -2.0 * (inverted ? -1 : 1) * (reversed ? -1 : 1)
                 #expect(sidebar.decideSpaceScroll(wheel(dx: forward, time: 100, inverted: inverted)).action == "pull")
@@ -130,8 +132,33 @@ struct SpaceWheelRecordingResetTests {
                 #expect(sidebar.decideSpaceScroll(wheel(dx: -forward, time: 100.25, inverted: inverted)).action == "settle 5->4 switched")
                 #expect(sidebar.spaceShown == 4)
                 #expect(!sidebar.createSpaceOpen)
+                now = 10
                 sidebar.stepPull()
                 #expect(!sidebar.createSpaceOpen)
+            }
+        }
+    }
+
+    @Test func ignoredReverseKeepsPullPlayingUntilCreationOpens() {
+        for reversed in [false, true] {
+            for inverted in [false, true] {
+                let sidebar = SidebarView(snapshot: snapshot(5))
+                sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
+                sidebar.spaceScrollDirection = reversed ? .reversed : .natural
+                var now = 0.0
+                sidebar.pullClock = { now }
+                defer { sidebar.finishScrollPresentation() }
+                let forward = -2.0 * (inverted ? -1 : 1) * (reversed ? -1 : 1)
+                #expect(sidebar.decideSpaceScroll(wheel(dx: forward, time: 100, inverted: inverted)).action == "pull")
+                for (time, reverse) in [(100.03, -forward), (100.25, -forward * 0.05)] {
+                    #expect(sidebar.decideSpaceScroll(wheel(dx: reverse, time: time, inverted: inverted)).action == "ignored")
+                    #expect(sidebar.decideSpaceScroll(wheel(dx: forward, time: time, inverted: inverted)).action == "wheel-pull-playing")
+                    #expect(!sidebar.createSpaceOpen)
+                }
+                now = 10
+                sidebar.stepPull()
+                #expect(sidebar.createSpaceOpen)
+                #expect(sidebar.spaceShown == 5)
             }
         }
     }

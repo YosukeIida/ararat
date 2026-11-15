@@ -1805,7 +1805,6 @@ public final class SidebarView: NSView {
         if input.kind == .wheel && wheelPullPlaying && abs(input.dx) > abs(input.dy) {
             let delta = input.dx * (input.inverted ? -1 : 1) * (spaceScrollDirection == .reversed ? -1 : 1)
             if delta < 0 { return (true, "wheel-pull-playing") }
-            finishScrollPresentation()
         }
         let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
         if phase == .began {
@@ -1862,6 +1861,7 @@ public final class SidebarView: NSView {
             pullIndicator.update(excess: spaceScroll.followedExcess)
             return (true, String(format: "follow %.1f", followed))
         case .settle(let index, let offset, let switched):
+            stopPullAnimation()
             if index == snapshot.spaces.count && switched {
                 openCreationAfterPull()
                 return (true, "pull-create")
