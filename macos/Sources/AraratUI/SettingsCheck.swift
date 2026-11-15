@@ -117,12 +117,11 @@ public final class SettingsCheckProbe {
 
     // MARK: p4checks, the Shortcuts pane's recorder
 
-    /// The row's own record button starts the recording (`toggleRecording`), and the pane's
-    /// `ShortcutsRecorderView` hands the typed event to the same model, so the check drives the
-    /// real recorder path rather than writing a binding it made up.
+    /// The row's record control is a SwiftUI Button, which the VM cannot press (no AX tree), so
+    /// the check calls `model.toggleRecording` — the exact action that button runs. From there the
+    /// pane's `ShortcutsRecorderView` takes the typed event, so the recorder path itself is real.
     public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
     public func beginShortcutRecording(_ command: String) { model.keyBindings.toggleRecording(command) }
-    public func cancelShortcutRecording() { model.keyBindings.cancelRecording() }
     public func resetShortcut(_ command: String) { model.resetShortcut(command) }
     @discardableResult
     public func recordShortcutKey(_ event: NSEvent) -> Bool {
@@ -159,7 +158,6 @@ public final class SettingsCheckProbe {
 
     public var toolbarItems: [String: NSRect] { controller.toolbarCheckItems }
     public var toolbarOwnCapsule: Bool { controller.toolbarCheckOwnCapsule }
-    public var toolbarTitle: (text: String, alpha: Double) { controller.toolbarCheckTitle }
 
     // MARK: U27w, the Websites pane
 

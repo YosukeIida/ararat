@@ -295,10 +295,6 @@ extension SettingsWindowController: NSToolbarDelegate {
     /// The navigation view's own capsule fill: false on macOS 26, where the system's glass is
     /// the pair's one capsule.
     public var toolbarCheckOwnCapsule: Bool { SettingsToolbarNavigation.drawsOwnCapsule }
-    /// The label the title item draws, and its opacity from the header fade.
-    public var toolbarCheckTitle: (text: String, alpha: Double) {
-        (model.title, model.headerProgress)
-    }
 }
 
 private struct SettingsToolbarNavigation: View {

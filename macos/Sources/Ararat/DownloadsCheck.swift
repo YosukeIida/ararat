@@ -148,10 +148,6 @@ extension Runtime {
       guard number(find("fixture.bin"), "received") > check.received else { wait("next progress update"); return }
       let identity = (state["rows"] as? [String: UInt])?[check.slowID]
       check.mark("popover_row_stable", identity != nil && identity == check.rowIdentity)
-      // p4checks: the popover row's own Cancel button, not the engine host call.
-      let pressed = sidebar.checkPressDownloadsRowButton(action: "cancel", id: check.slowID)
-      check.mark("popover_cancel_button", pressed)
-      check.mark("cancel", pressed)
       sidebar.downloadsCheckClosePopover()
       browserCheckPhase = 51
     case 51:
@@ -167,7 +163,8 @@ extension Runtime {
       browserCheckPhase = 7
     case 7:
       guard state["library_open"] as? Bool == true, state["library_page"] as? String == "Downloads",
-            (state["page_ids"] as? [String] ?? []).contains(check.slowID) else { wait("Library Downloads page"); return }
+            (state["page_ids"] as? [String] ?? []).contains(check.slowID),
+            actions(find("fixture.bin")).contains("cancel") else { wait("Library Downloads page with the running row"); return }
       check.mark("library_downloads_page")
       if screen {
         check.mark("page_actions_fit", state["page_actions_fit"] as? Bool == true)
@@ -183,12 +180,18 @@ extension Runtime {
       guard clickLibrary() else { fail("cannot post the downloads click again"); return }
       browserCheckPhase = 72
     case 72:
-      guard state["list"] as? Bool == true else { wait("popover for the remove button"); return }
-      guard let item = items.first(where: { itemID($0) == check.slowID }), number(item, "state") == 2 else {
-        wait("cancelled item in the popover"); return
-      }
-      check.mark("cancel", check.conditions["cancel"] == true && actions(item).contains("remove"))
-      // p4checks: the popover row's own Remove button.
+      // The popover row's own Cancel button, on the still-running row the Library page showed.
+      guard state["list"] as? Bool == true,
+            actions(find("fixture.bin")).contains("cancel") else { wait("popover with the running row"); return }
+      let pressed = sidebar.checkPressDownloadsRowButton(action: "cancel", id: check.slowID)
+      check.mark("popover_cancel_button", pressed)
+      browserCheckPhase = 73
+    case 73:
+      // The cancelled row offers Remove; that button, in the same popover, removes it.
+      guard state["list"] as? Bool == true,
+            let item = items.first(where: { itemID($0) == check.slowID }), number(item, "state") == 2,
+            actions(item).contains("remove") else { wait("cancelled item with Remove"); return }
+      check.mark("cancel", true)
       let removed = sidebar.checkPressDownloadsRowButton(action: "remove", id: check.slowID)
       check.mark("popover_remove_button", removed)
       sidebar.downloadsCheckClosePopover()

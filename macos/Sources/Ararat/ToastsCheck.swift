@@ -239,19 +239,22 @@ extension Runtime {
       check.mark("undo_hit", hits.undoReceives)
       // p4checks: the Edit menu's Undo Clear Tabs item — the app's own undo path (it carries no
       // ⌘Z on purpose: a page's editable first responder keeps its own undo) — rather than the
-      // toast's button, so dismissTabsCleared and the rows' return are driven by the menu.
+      // toast's button, so dismissTabsCleared and the rows' return are driven by the menu. A
+      // missing or disabled item fails the condition outright: the toast's button would make it
+      // pass without the menu path.
       guard let edit = NSApp.mainMenu?.item(withTitle: "Edit")?.submenu,
             let item = edit.items.first(where: { $0.action == #selector(Runtime.undoClearTabs(_:)) }) else {
         check.mark("clear_undo_menu", false)
-        container.checkUndoToast()
-        browserCheckPhase = 17
+        let result = check.diagnostics(screen: screen)
+        finishBrowserCheck(ok: false, values: result)
         return
       }
       edit.update()
       guard item.isEnabled else {
         check.mark("clear_undo_menu", false)
-        container.checkUndoToast()
-        browserCheckPhase = 17
+        FileHandle.standardError.write(Data("ararat-trace: toasts the Edit menu's Undo Clear Tabs item is disabled\n".utf8))
+        let result = check.diagnostics(screen: screen)
+        finishBrowserCheck(ok: false, values: result)
         return
       }
       FileHandle.standardError.write(Data("ararat-trace: toasts run the Edit menu's \(item.title)\n".utf8))
@@ -261,7 +264,8 @@ extension Runtime {
       guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
             space.today.map(\.id) == check.clearOrder, snapshot.selectedId == check.clearSelected,
             host.activeItemId() == check.clearSelected else { wait("undo restored"); return }
-      check.mark("clear_undo_menu", !container.checkToastState.visible)
+      // The menu path ran and restored the rows; the toast it dismissed must be gone too.
+      check.mark("clear_undo_menu", check.conditions["clear_undo_menu"] != false && !container.checkToastState.visible)
       check.mark("clear_undo", space.today.filter { $0.id != check.clearSelected }.allSatisfy(\.unloaded))
       clearToday(); browserCheckPhase = 18
     case 18:

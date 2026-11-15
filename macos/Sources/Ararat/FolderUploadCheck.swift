@@ -25,7 +25,6 @@ final class FolderUploadCheckState {
     var navigation: UInt = 0
     var panelClass = ""
     var panelParent = ""
-    var panelWindow: NSWindow?
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -74,11 +73,12 @@ extension Runtime {
             let result = check.diagnostics(screen: screen)
             finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
         }
-        func panels() -> [NSWindow] {
-            NSApp.windows.filter { window in
-                let name = String(describing: type(of: window))
-                return name.contains("OpenPanel") || name.contains("SavePanel") || name.contains("FileDialog")
-                    || name.contains("SelectFileDialog") || name.contains("Panel")
+        func panels() -> [NSSavePanel] {
+            // The chooser is a stock NSSavePanel (NSOpenPanel inherits it), on screen, and new
+            // since the click: any other NSPanel (the command bar's, for one) or a retained
+            // panel from an earlier phase must not stand in for it.
+            NSApp.windows.compactMap { $0 as? NSSavePanel }.filter {
+                $0.isVisible && !check.windowsBefore.contains($0.windowNumber)
             }
         }
         func capture(_ name: String, window target: NSWindow) -> Bool {
@@ -143,7 +143,6 @@ extension Runtime {
             check.panelClass = String(describing: type(of: panel))
             let parent = panel.sheetParent ?? panel.parent
             check.panelParent = parent.map { String(describing: type(of: $0)) } ?? "nil"
-            check.panelWindow = panel
             check.mark("chooser_opened")
             // The panel must be attached to the window a person sees (ours), not to the Browser
             // Chromium keeps off screen.
@@ -156,16 +155,15 @@ extension Runtime {
             if screen {
                 check.mark("capture_chooser", capture("chooser", window: panel))
             }
-            // Cancel through the panel's own answer: the sheet's cancel, or the panel's close.
-            if let parent = panel.sheetParent {
-                parent.endSheet(panel, returnCode: .cancel)
-            } else {
-                panel.performClose(nil)
-            }
+            // Cancel through the panel's own action (its Cancel button's selector), the answer
+            // a person's click sends, whether it is a sheet or a free panel.
+            panel.cancel(nil)
             browserCheckPhase = 4
         case 4:
             guard panels().isEmpty else { wait("panel cancel"); return }
             check.mark("chooser_cancelled")
+            // Our layer has no page-script read, so the fixture's own `cancel` dataset entry is not
+            // observable here; `page_alive` is the "nothing broke on cancel" half.
             guard let id = browserCheckSeedID,
                   let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) else { wait("tab after cancel"); return }
             let alive = !tab.isLoading && tab.url.hasSuffix("/folder-upload") && tab.navigationCount == check.navigation

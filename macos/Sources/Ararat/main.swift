@@ -592,6 +592,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var organizeCancelStarted = false
   /// p4checks: when the hover-hold drag began, so a folder that never opens is a named failure.
   var organizeHoverStarted: TimeInterval = 0
+  /// p4checks: the resolver's answer for the first-favourite drop, scored only once it lands.
+  var organizeFirstFavoriteTarget = false
   var organizeImage: String?
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
@@ -615,7 +617,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var keyboardRestoreItem = ""
   // p4checks: the Library phase's second archived row, its presses and their bounded waits.
   var keyboardLibraryDeleteItem = ""
-  var keyboardLibraryDeleteGone = false
   var keyboardRowWaited = 0
   var keyboardRestoreWaited = 0
   var keyboardFindOtherItem = ""
@@ -5027,7 +5028,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 3641:
       guard snapshot.shownSpaceId == "default", host.profileDirectory() == "Default" else { return }
       guard let sidebar, !sidebar.libraryOpen else { return }
-      keyboardLibraryDeleteGone = false
       sidebar.setLibraryOpen(true)
       browserCheckPhase = 3642
     case 3642:
@@ -5049,7 +5049,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       } else {
         keyboardResults["library_delete_press"] = true
       }
-      keyboardLibraryDeleteGone = (keyboardResults["library_delete_press"] as? Bool) == true
       keyboardRowWaited = 0
       // The archive row's own restore control; the app's A3 completion closes the Library and
       // moves the sidebar to the item's space.
@@ -8157,8 +8156,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let point = sidebar.dragCheckFavoritesPoint
       let drop = point.flatMap { sidebar.resolveDropForCheck(position: $0, draggedID: row("dock")?.id ?? "") }
       // No container yet: the resolver answers `.favorites(nil, index)`, the first-favourite path.
-      organizeConditions["first_favorite_drop"] = drop?.kind == "favorites" && drop?.container == nil
-        && other.favoritesId == nil
+      // The result is kept aside; the condition is scored only after the drop lands (phase 82), so
+      // a stall here leaves it unset rather than true.
+      organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && other.favoritesId == nil
       if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
         organizeImage = image
       }
@@ -8168,8 +8168,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckIdle,
             let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
       let landed = other.favorites.contains { $0.url == "about:blank?organize-dock" }
-      organizeConditions["first_favorite_drop"] = organizeConditions["first_favorite_drop"] == true
-        && landed && other.favoritesId != nil
+      organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && other.favoritesId != nil
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
     case 83:

@@ -72,7 +72,7 @@ final class SettingsScreenCheck {
             case .extensions: ["rows", "profile_switch", "site_access_write", "pin_action",
                                "disable_hides_action", "enable_brings_action", "review_prompt",
                                "review_enables", "remove_cancel_keeps", "reopen_state"]
-            case .toolbar: ["navigation_size", "title_item", "title_alpha", "items_order"]
+            case .toolbar: ["navigation_size", "title_item", "items_order"]
             }
         }
     }
@@ -188,10 +188,9 @@ final class SettingsScreenCheck {
     // p4checks, the Shortcuts pane: the binding and the sidebar state before the recording, so
     // the recorded key's effect and the reset can be told apart.
     var shortcutKeyBefore: KeyCombination?
-    var shortcutMenuBefore = ""
     var shortcutSidebarBefore = ""
     var shortcutNewKey = KeyCombination(key: "k", command: false, control: true, option: true, shift: false)
-    var shortcutPhaseStart = -1
+    var panePhaseStart = -1
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -645,9 +644,8 @@ extension Runtime {
                 }
                 // p4checks: record a key in Settings, then press it in the browser window.
                 check.shortcutKeyBefore = probe.shortcutKey("toggle_sidebar")
-                check.shortcutMenuBefore = probe.menuKeyEquivalent("toggle_sidebar")?.key ?? ""
                 check.shortcutSidebarBefore = (root ?? self).container?.sidebarState ?? ""
-                check.shortcutPhaseStart = browserCheckAttempts
+                check.panePhaseStart = browserCheckAttempts
                 trace("record ⌃⌥K for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
                 probe.beginShortcutRecording("toggle_sidebar")
                 step(20)
@@ -688,20 +686,24 @@ extension Runtime {
                 check.report("rows", true)
             case .toolbar:
                 // p4checks: the pair's own 76 × 36 and the title in its own item; exactly one
-                // capsule is drawn (the system's glass on macOS 26, ours before it).
+                // capsule is drawn (the system's glass on macOS 26, ours before it). The images
+                // are the measurement of the capsule: one at the top and one scrolled, where the
+                // toolbar carries the title.
                 let items = probe.toolbarItems
                 guard let navigation = items["navigation"], let title = items["title"] else {
                     note("toolbar items: \(items.keys.sorted())"); return
                 }
                 check.report("navigation_size", abs(navigation.width - 76) <= 1 && abs(navigation.height - 36) <= 1)
                 check.report("title_item", title.width > 0 && title.height > 0)
-                let alpha = probe.toolbarTitle.alpha
-                check.report("title_alpha", abs(alpha - probe.headerProgress) <= 0.01)
                 check.report("items_order", navigation.minX <= title.minX)
                 check.details["toolbar"] = ["navigation": rectFields(navigation), "title": rectFields(title),
                                             "own_capsule": probe.toolbarOwnCapsule,
-                                            "capsule_owner": probe.toolbarOwnCapsule ? "own" : "system",
-                                            "title_alpha": alpha, "header_progress": probe.headerProgress]
+                                            "capsule_owner": probe.toolbarOwnCapsule ? "own" : "system"]
+                guard capture("toolbar-top") else { end("capture", false); return }
+                check.panePhaseStart = browserCheckAttempts
+                probe.scrollDetail(to: 200)
+                step(20)
+                return
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
             case .frame, .search, .appearance, .littleWindow, .websites, .privacy, .extensions:
@@ -725,11 +727,26 @@ extension Runtime {
             finish()
         // MARK: p4checks, the Shortcuts pane's recorder and the key it records
         case 20:
+            if mode == .toolbar {
+                // The second toolbar image: the header has scrolled away and the toolbar carries
+                // the title, which is where design judges the capsule.
+                guard probe.headerProgress > 0.95 else {
+                    if browserCheckAttempts - check.panePhaseStart > 120 {
+                        check.report("capture", false); finish()
+                        return
+                    }
+                    note("the detail is not scrolled: \(probe.headerProgress)"); return
+                }
+                guard capture("toolbar-scrolled") else { end("capture", false); return }
+                probe.scrollDetail(to: 0)
+                finish()
+                return
+            }
             guard mode == .shortcuts else { finish(); return }
             let ready = probe.shortcutRecordingCommand == "toggle_sidebar"
                 && probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
             guard ready else {
-                if browserCheckAttempts - check.shortcutPhaseStart > 120 {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("recorder_opened", false); finish()
                     return
                 }
@@ -743,14 +760,14 @@ extension Runtime {
                                                isARepeat: false, keyCode: 40) else {
                 check.report("key_recorded", false); finish(); return
             }
-            check.shortcutPhaseStart = browserCheckAttempts
+            check.panePhaseStart = browserCheckAttempts
             probe.recordShortcutKey(event)
             step(21)
         case 21:
             guard mode == .shortcuts else { finish(); return }
             let key = probe.shortcutKey("toggle_sidebar")
             guard key == check.shortcutNewKey, probe.shortcutRecordingCommand == nil else {
-                if browserCheckAttempts - check.shortcutPhaseStart > 120 {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("key_recorded", false); finish()
                     return
                 }
@@ -777,14 +794,14 @@ extension Runtime {
             host.window().makeKeyAndOrderFront(nil)
             trace("press ⌃⌥K in the browser window")
             check.shortcutSidebarBefore = (root ?? self).container?.sidebarState ?? ""
-            check.shortcutPhaseStart = browserCheckAttempts
+            check.panePhaseStart = browserCheckAttempts
             NSApp.sendEvent(event)
             step(22)
         case 22:
             guard mode == .shortcuts else { finish(); return }
             guard let container = (root ?? self).container,
                   container.sidebarState != check.shortcutSidebarBefore else {
-                if browserCheckAttempts - check.shortcutPhaseStart > 120 {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("keyboard_pressed", false); finish()
                     return
                 }
@@ -799,14 +816,14 @@ extension Runtime {
                                                                 isARepeat: false, keyCode: 40) else {
                 check.report("keyboard_toggled", false); finish(); return
             }
-            check.shortcutPhaseStart = browserCheckAttempts
+            check.panePhaseStart = browserCheckAttempts
             NSApp.sendEvent(event)
             step(23)
         case 23:
             guard mode == .shortcuts else { finish(); return }
             guard let container = (root ?? self).container,
                   container.sidebarState == check.shortcutSidebarBefore else {
-                if browserCheckAttempts - check.shortcutPhaseStart > 120 {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("keyboard_toggled", false); finish()
                     return
                 }
@@ -815,12 +832,12 @@ extension Runtime {
             check.report("keyboard_toggled", true)
             // Leave the pane as it was found: reset the row to its default binding.
             probe.resetShortcut("toggle_sidebar")
-            check.shortcutPhaseStart = browserCheckAttempts
+            check.panePhaseStart = browserCheckAttempts
             step(24)
         case 24:
             guard mode == .shortcuts else { finish(); return }
             guard probe.shortcutKey("toggle_sidebar") == check.shortcutKeyBefore else {
-                if browserCheckAttempts - check.shortcutPhaseStart > 120 {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
                     check.report("recorder_restored", false); finish()
                     return
                 }

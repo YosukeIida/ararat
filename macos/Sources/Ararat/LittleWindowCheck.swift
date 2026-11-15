@@ -32,9 +32,9 @@ final class LittleWindowCheckState {
     static func fixtureURL(port: UInt16) -> String { "http://127.0.0.1:\(port)/search?little-window" }
     var handoffLive = ""
     var handoffNavigation: UInt = 0
-    // p4checks: the Open button's page, read before the press so the handoff can be told apart.
+    // p4checks: the Open button's page live id, read before the press so the handoff can be
+    // told apart.
     var openButtonLive = ""
-    var openButtonNavigation: UInt = 0
     var targetFrame = NSRect(x: 200, y: 150, width: 720, height: 480)
     var savedFrame: LittleWindowFrame?
     var commandBarViaKey = false
@@ -498,7 +498,6 @@ extension Runtime {
                        && controller.profileName == "Profile 1" && tab.url == check.pageURL)
             // p4checks: the bar's own Open button (onOpen → performOpenIn), not ⌘O's monitor.
             check.openButtonLive = tab.liveId
-            check.openButtonNavigation = tab.navigationCount
             FileHandle.standardError.write(Data("ararat-trace: little-window press the Open button \(controller.bar.checkOpenTitle)\n".utf8))
             guard controller.bar.checkOpenEnabled else {
                 check.mark("open_button", false); finish(); return
