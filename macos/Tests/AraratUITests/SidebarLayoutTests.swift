@@ -352,14 +352,16 @@ func longHostKeepsItsEndAtBothWidths() {
     short.layoutSubtreeIfNeeded()
     #expect(abs(short.checkHostLabelFrame.minX - short.checkHostClipFrame.minX) <= 0.5)
     #expect(!short.urlFieldHostHasLeadingFade)
-    // D6 applies to the host only: a long file name or internal URL keeps its start.
+    // D6 applies to the host only: a long file name or internal URL keeps its start. Its tail is
+    // now cut by the field's own tail truncation inside the text area (an ellipsis, U25a2), not
+    // by the clip container, which cut it with no ellipsis.
     for other in ["file:///Users/yosuke/Notes/a-very-long-file-name-for-the-url-field-check.md",
                   "chrome://settings/a-very-long-internal-path-for-the-url-field-check"] {
         let view = urlFieldSidebar(live: other, width: 240)
         view.layoutSubtreeIfNeeded()
         view.layoutSubtreeIfNeeded()
         #expect(abs(view.checkHostLabelFrame.minX - view.checkHostClipFrame.minX) <= 0.5)
-        #expect(view.checkHostLabelFrame.maxX > view.checkHostClipFrame.maxX)
+        #expect(abs(view.checkHostLabelFrame.maxX - view.checkHostClipFrame.maxX) <= 0.5)
         #expect(!view.urlFieldHostHasLeadingFade)
     }
 }
@@ -387,6 +389,53 @@ func urlFieldAndButtonsKeepTheBoardGeometryAndStates() {
     #expect(!copy.checkImageIsTick())
 }
 
+
+@Test @MainActor
+func placeholderTruncatesWithAnEllipsisAtTheNarrowWidth() {
+    let sidebar = urlFieldSidebar(live: "about:blank", width: 164)
+    sidebar.layoutSubtreeIfNeeded()
+    sidebar.layoutSubtreeIfNeeded()
+    #expect(sidebar.urlFieldShowsPlaceholder)
+    let label = sidebar.checkHostLabelFrame
+    let clip = sidebar.checkHostClipFrame
+    // "Search or enter URL" is wider than the text area at 164, so the label is clamped to it and
+    // the field's tail truncation turns the cut into an ellipsis. An intrinsic-width frame drew
+    // "Search or e" with no ellipsis (U25a2).
+    #expect(sidebar.urlFieldPlaceholderLineBreakMode == .byTruncatingTail)
+    #expect(sidebar.checkHostLabelIntrinsicWidth > clip.width + 0.5)
+    #expect(abs(label.width - clip.width) <= 0.5)
+    #expect(label.minX >= clip.minX - 0.5 && label.maxX <= clip.maxX + 0.5)
+    #expect(!sidebar.urlFieldHostHasLeadingFade)
+    // D6 still holds for a host at the same width: it keeps its width, sits at the trailing edge
+    // and fades its start.
+    let long = urlFieldSidebar(live: "https://averyveryveryverylongsubdomainname.docs.example.com/path", width: 164)
+    long.layoutSubtreeIfNeeded()
+    long.layoutSubtreeIfNeeded()
+    #expect(long.urlFieldHostHasLeadingFade)
+    #expect(abs(long.checkHostLabelFrame.maxX - long.checkHostClipFrame.maxX) <= 0.5)
+    #expect(long.checkHostLabelFrame.minX < long.checkHostClipFrame.minX)
+}
+
+@Test @MainActor
+func urlFieldButtonsTakeKeyboardFocusOnlyWithFullKeyboardAccess() {
+    _ = NSApplication.shared
+    let previous = URLFieldButton.fullKeyboardAccess
+    defer { URLFieldButton.fullKeyboardAccess = previous }
+    URLFieldButton.fullKeyboardAccess = { false }
+    let copy = URLFieldButton(role: .copyLink)
+    let site = URLFieldButton(role: .siteControls)
+    #expect(!copy.acceptsFirstResponder && !site.acceptsFirstResponder)
+    URLFieldButton.fullKeyboardAccess = { true }
+    #expect(copy.acceptsFirstResponder && site.acceptsFirstResponder)
+    // With Full Keyboard Access on the button can take focus and draws the board's ring there;
+    // leaving it takes the ring away again. The click path is S3's and is checked in urlfield.
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView?.addSubview(copy)
+    #expect(window.makeFirstResponder(copy))
+    #expect(copy.showsFocusRing)
+    _ = window.makeFirstResponder(nil)
+    #expect(!copy.showsFocusRing)
+}
 
 @Test @MainActor
 func fieldTextInsetAndGlyphStepFollowTheStepRule() {

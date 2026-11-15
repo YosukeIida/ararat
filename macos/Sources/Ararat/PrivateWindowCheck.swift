@@ -14,7 +14,7 @@ final class PrivateWindowCheckState {
         "private_regular_bar_no_private_tab", "private_arc_import_disabled", "private_menu_disabled",
         "private_import_item_fabricated", "private_last_tab_closes_window", "private_last_close_releases",
         "private_new_starts_empty", "private_open_without_browser_refused", "private_routing_domain",
-        "private_rows_unchanged", "private_history_unchanged", "private_disk_recorded",
+        "private_rows_unchanged", "private_history_baseline", "private_history_unchanged", "private_disk_recorded",
     ]
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
@@ -48,6 +48,7 @@ final class PrivateWindowCheckState {
          "failed_conditions": Self.names.filter { conditions[$0] != true },
          "wait": waitName, "images": images,
          "private_title": title, "private_db": db, "private_profile": userDataDir,
+         "private_history_path": userDataDir.isEmpty ? "" : (userDataDir as NSString).appendingPathComponent("Default/History"),
          "private_disk_before": diskBefore, "private_history_before": historyBefore,
          "private_disk_command": "AraratHarness --private-disk --db \(db) --profile-dir \(userDataDir) --title \(title)",
          "private_import_item": "fabricated by the check (no Arc import menu item in this build); only the title rule is tested"]
@@ -123,11 +124,26 @@ extension Runtime {
             quitBefore = captureCheckRows()
             check.title = "ararat-private-\(UUID().uuidString)"
             check.db = quitPath ?? ""
-            check.userDataDir = (quitPath as NSString?)?.deletingLastPathComponent ?? ""
-            check.userDataDir = (check.userDataDir as NSString).deletingLastPathComponent
+            // The profile is the runners' `--user-data-dir` (RelaunchDriver.swift:195), not the
+            // database's grandparent: that is the scratch root, where Default/History never exists.
+            // Take the argument as main.swift's scratch guard does.
+            check.userDataDir = CommandLine.arguments
+                .first { $0.hasPrefix("--user-data-dir=") }
+                .map { String($0.dropFirst("--user-data-dir=".count)) } ?? ""
             check.diskBefore = diskSnapshot()
             check.historyBefore = historySize()
+            // The comparison below is only evidence when there is a History file to grow:
+            // without this, a missing Default/History leaves 0 == 0 and the condition passes
+            // vacuously. The named condition fails the run instead.
+            let baseline = check.historyBefore > 0
+            check.mark("private_history_baseline", baseline)
             check.mark("private_disk_recorded", !check.title.isEmpty && !check.db.isEmpty && !check.userDataDir.isEmpty)
+            guard baseline else {
+                var result = check.diagnostics()
+                result["error"] = "no non-empty Default/History under --user-data-dir; private_history_unchanged would pass vacuously"
+                finishBrowserCheck(ok: false, values: result)
+                return
+            }
             host.checkCreateIncognito()
             browserCheckPhase = 2
         case 2:

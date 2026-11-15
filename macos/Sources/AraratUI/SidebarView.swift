@@ -805,6 +805,8 @@ public final class SidebarView: NSView {
     public var urlFieldHostHasLeadingFade: Bool { hostClip.checkHasFade }
     public var checkHostLabelFrame: NSRect { hostClip.convert(hostClip.checkLabelFrame, to: nil) }
     public var checkHostClipFrame: NSRect { hostClip.convert(hostClip.bounds, to: nil) }
+    public var checkHostLabelIntrinsicWidth: CGFloat { hostClip.checkLabelIntrinsicWidth }
+    public var urlFieldPlaceholderLineBreakMode: NSLineBreakMode { placeholder.lineBreakMode }
     public var urlFieldCopyIsTick: Bool { copyLinkButton.checkImageIsTick() }
     public var urlFieldCopyButton: URLFieldButton { copyLinkButton }
     public var urlFieldSiteControlsButton: URLFieldButton { siteControlsButton }

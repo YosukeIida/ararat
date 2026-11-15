@@ -147,9 +147,26 @@ public class URLFieldButton: NSButton {
     // required 24 pt height would render a 33 pt frame. The board's 24 x 24 is the frame.
     public override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    // S3: a click on Copy Link or the site controls must not take focus from the page. The
-    // board's focus look is still drawn from `showsFocusRing`.
-    public override var acceptsFirstResponder: Bool { false }
+    // S3: a click on Copy Link or the site controls must not take focus from the page. With Full
+    // Keyboard Access on, a keyboard user must still reach both, so focus follows that setting;
+    // the board's focus look is drawn from `showsFocusRing`.
+    /// The session's Full Keyboard Access answer. A unit test replaces it: the real one,
+    /// `NSApp.isFullKeyboardAccessEnabled`, is read-only and belongs to the machine.
+    public static var fullKeyboardAccess: () -> Bool = { NSApp?.isFullKeyboardAccessEnabled ?? false }
+
+    public override var acceptsFirstResponder: Bool { Self.fullKeyboardAccess() }
+
+    public override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { showsFocusRing = true }
+        return accepted
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { showsFocusRing = false }
+        return accepted
+    }
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -164,8 +181,15 @@ public class URLFieldButton: NSButton {
 
     public override func mouseDown(with event: NSEvent) {
         isPressed = true
+        // S3's mouse path: a click must not move focus or leave a ring, even when Full Keyboard
+        // Access makes the button reachable. A focus the action itself took (a popover) stays.
+        let window = self.window
+        let previous = window?.firstResponder
         super.mouseDown(with: event)
         isPressed = false
+        if let window, let previous, previous !== self, window.firstResponder === self {
+            window.makeFirstResponder(previous)
+        }
     }
 
     public override func layout() {
@@ -277,8 +301,13 @@ public final class URLFieldTextClipView: NSView {
         let intrinsic = visible.intrinsicContentSize
         let height = min(Self.height, intrinsic.height)
         let fades = fadesStart && intrinsic.width > bounds.width + 0.5
+        // A fading host keeps its intrinsic width and is anchored at the trailing edge. Anything
+        // else (the placeholder, a long file name or internal URL) never draws past the text area,
+        // so the field's `.byTruncatingTail` cuts the tail with an ellipsis instead of the clip
+        // container cutting it without one (U25a2).
+        let width = fades ? intrinsic.width : min(intrinsic.width, bounds.width)
         let x = fades ? bounds.width - intrinsic.width : 0
-        let frame = NSRect(x: x, y: (Self.height - height) / 2, width: intrinsic.width, height: height)
+        let frame = NSRect(x: x, y: (Self.height - height) / 2, width: width, height: height)
         visible.frame = frame
         // The hidden label keeps the visible label's frame, so an incremental update and a fresh
         // view describe the same tree (the hidden label is not drawn either way).
@@ -293,5 +322,8 @@ public final class URLFieldTextClipView: NSView {
     }
 
     public var checkLabelFrame: NSRect { (placeholder.isHidden ? host : placeholder).frame }
+    /// The visible label's intrinsic width, so a layout test can tell a clamped frame from one
+    /// that keeps the label's width (the placeholder's tail truncation needs the former).
+    public var checkLabelIntrinsicWidth: CGFloat { (placeholder.isHidden ? host : placeholder).intrinsicContentSize.width }
     public var checkHasFade: Bool { layer?.mask != nil }
 }

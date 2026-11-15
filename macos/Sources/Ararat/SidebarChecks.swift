@@ -506,11 +506,24 @@ extension Runtime {
             host.checkNavigate("http://127.0.0.1:\(port)/keyboard", disposition: "current")
             step(15)
         case 15:
-            guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId }),
+            // `rowStates` is replaced wholesale by each applied transaction (EngineAdapter.swift:
+            // 1122-1124), so a tick between `navigationFinished` and that delivery reads the new
+            // `tab.url` beside the old `muted == true` and passes even when M1 has regressed.
+            // Waiting for `loading == false` closes that window: /pending never finishes its body
+            // (PromptFixtureServer holds the connection), so the strip is still loading when the
+            // check navigates away, and only /keyboard's own load stop turns the spinner off —
+            // after the commit whose PrimaryPageChanged is where a regressed M1 unmutes. The store
+            // snapshot row cannot be the barrier: this row is a pin, and the core refreshes URL
+            // metadata for Today rows only (live.rs:710). Reading the tab's mute needs a getter
+            // ARTab lacks, and this unit takes no engine change.
+            let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.statusId })
+            let state = adapter?.rowStates[check.statusId]
+            guard let tab,
                   tab.url.hasSuffix("/keyboard"), tab.navigationCount > check.statusNavigationCount,
-                  adapter?.rowStates[check.statusId]?.muted == true,
+                  state?.loading == false, state?.muted == true,
                   sidebar.rowCheckInfo(id: check.statusId)?.audioLabel == "Unmute Tab" else {
-                note("waiting for committed /keyboard with mute retained on \(check.statusId)"); return
+                note("waiting for the applied /keyboard transaction with mute retained on \(check.statusId): tab=\(tab?.url ?? "-") count=\(tab?.navigationCount ?? 0)/after=\(check.statusNavigationCount) loading=\(state.map { "\($0.loading)" } ?? "-") muted=\(state.map { "\($0.muted)" } ?? "-") label=\(sidebar.rowCheckInfo(id: check.statusId)?.audioLabel ?? "-")")
+                return
             }
             sidebar.pressRowAudioForCheck(id: check.statusId)
             step(16)
