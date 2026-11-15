@@ -20,6 +20,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard CommandLine.arguments.contains("--ararat-check=little-window") || CommandLine.arguments.contains("--ararat-screen=little-window") else { return }
         FileHandle.standardError.write(Data("ararat-trace: little-handoff window=\(windowID) \(message())\n".utf8))
     }
+    private func traceToday(_ message: @autoclosure () -> String) {
+        guard CommandLine.arguments.contains("--ararat-screen=today") else { return }
+        FileHandle.standardError.write(Data("ararat-trace: today window=\(windowID) \(message())\n".utf8))
+    }
     public let session: WorkspaceSession
     public let isPrivate: Bool
     private var queue: DispatchQueue { session.queue }
@@ -836,8 +840,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             do {
                 guard let store = self.store else { DispatchQueue.main.async { completion(nil) }; return }
                 let result = try store.liveClearToday(windowId: self.windowID, spaceId: spaceID)
+                self.traceToday("clear=prepared targets=\(result.targets.map { $0.command.id }) items=\(result.targets.map { $0.command.item })")
                 DispatchQueue.main.async {
+                    self.traceToday("clear=dispatch")
                     self.session.closeLiveTargets(result.targets, report: self.report)
+                    self.traceToday("clear=close-returned")
                     self.deliverIfCurrent(result.snapshot)
                     completion(result)
                 }
@@ -968,11 +975,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func tabCloseCancelled(_ itemId: String, commandId: String) {
         precondition(Thread.isMainThread)
+        traceToday("close=cancelled item=\(itemId) command=\(commandId)")
         closingRows.remove(itemId)
         queue.async {
             do {
                 guard let store = self.store else { return }
-                guard try store.liveCancelClose(commandId: commandId) else { return }
+                let cancelled = try store.liveCancelClose(commandId: commandId)
+                self.traceToday("close=cancel-settled command=\(commandId) restored=\(cancelled)")
+                guard cancelled else { return }
                 let snapshot = store.snapshot(windowId: self.windowID)
                 DispatchQueue.main.async {
                     self.deliverIfCurrent(snapshot)
