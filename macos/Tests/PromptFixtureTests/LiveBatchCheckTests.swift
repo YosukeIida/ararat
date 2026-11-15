@@ -27,6 +27,7 @@ func liveBatchFixtureBackdatesTodayAndKeepsAProfileNeighbour() throws {
         #expect(batch.snapshot.archive.contains { $0.id == "expired" })
         #expect(batch.snapshot.spaces.flatMap(\.pinned).contains { $0.id == "pinned" })
         #expect(batch.snapshot.spaces.flatMap(\.today).contains { $0.id == "selected" })
+        #expect(try store.liveAutoArchive(windowId: "one", now: UInt64(Date().timeIntervalSince1970 * 1000) + 13 * 3_600_000) == nil)
     }
 }
 

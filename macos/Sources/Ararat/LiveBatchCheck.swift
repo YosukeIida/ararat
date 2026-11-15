@@ -13,6 +13,7 @@ final class LiveBatchCheck {
     var conditions: [String: Bool] = [:]
     var expiredAt: UInt64 = 0
     var started = false
+    var profileBeforeDelete: String?
 
     func mark(_ mode: String, _ name: String, _ value: Bool) {
         conditions[name] = value
@@ -60,6 +61,7 @@ extension Runtime {
             guard host.activeItemId() == "selected", tabs().contains(where: { $0.itemId == "selected" && !$0.isLoading }) else { return }
             if mode == "delete-space-live" {
                 mark("loaded")
+                check.profileBeforeDelete = host.profileDirectory()
                 browserCheckPhase = 4
                 sidebar.onDeleteSpace?("default")
                 return
@@ -97,15 +99,21 @@ extension Runtime {
             mark("row_removed", sidebar.rowCheckInfo(id: "expired") == nil && !snapshot.spaces.flatMap(\.today).contains { $0.id == "expired" })
             mark("engine_tab_closed", !tabs().contains { $0.itemId == "expired" })
             mark("pinned_stays", snapshot.spaces.flatMap(\.pinned).contains { $0.id == "pinned" } && tabs().contains { $0.itemId == "pinned" })
-            mark("selected_stays", snapshot.selectedId == "selected" && host.activeItemId() == "selected" && tabs().contains { $0.itemId == "selected" })
-            finish()
+            let selectedStays = snapshot.selectedId == "selected" && host.activeItemId() == "selected" && tabs().contains { $0.itemId == "selected" }
+            browserCheckPhase = 5
+            workspace.autoArchive(now: UInt64(Date().timeIntervalSince1970 * 1000) + 13 * 3_600_000) { [weak self] result in
+                switch result {
+                case .success(let next): mark("selected_stays", selectedStays && next == nil); finish()
+                case .failure(let error): self?.report(error); finish()
+                }
+            }
         case 4:
             guard !snapshot.spaces.contains(where: { $0.id == "default" }), !tabs().contains(where: { $0.itemId == "selected" }) else { return }
             mark("shown_space_deleted")
             mark("row_archived", snapshot.archive.contains { $0.id == "selected" })
             mark("engine_tab_closed", !tabs().contains { ["selected", "expired", "pinned"].contains($0.itemId ?? "") })
             mark("neighbour_shown", snapshot.shownSpaceId == "named")
-            mark("neighbour_profile", host.profileDirectory() == "Profile 1")
+            mark("neighbour_profile", check.profileBeforeDelete != nil && check.profileBeforeDelete != "Profile 1" && host.profileDirectory() == "Profile 1")
             finish()
         default: break
         }

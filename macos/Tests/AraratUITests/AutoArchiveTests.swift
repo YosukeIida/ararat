@@ -355,3 +355,59 @@ func engineRefreshesHoldArchivedRowsInEveryWindowAndResumeWithFreshSnapshots() a
     first.shutdown()
     second.shutdown()
 }
+
+@Test(arguments: ["reveal", "gesture", "momentum"]) @MainActor
+func engineHeldSnapshotPublishesWhenSidebarMotionExpires(motion: String) async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("motion.sqlite").path,
+                                   windowID: "motion", card: NSView(), seedSingleCheck: true)
+    defer { engine.shutdown() }
+    let store = try #require(engine.session.store)
+    let sidebar = SidebarView(snapshot: store.snapshot(windowId: "motion"))
+    var clock = 100.0
+    sidebar.pullClock = { clock }
+    let list = try #require(archiveDescendants(sidebar).compactMap { $0 as? SidebarScrollView }.first)
+    list.clock = { clock }
+    list.reduceMotion = { false }
+    var received: WorkspaceSnapshot?
+    var attempts = 0
+    engine.canPublishSnapshot = { attempts += 1; return sidebar.canPublishAutoArchive }
+    engine.onSnapshot = { received = $0 }
+    sidebar.onAutoArchiveReady = { engine.publishDeferredSnapshot() }
+    if motion == "reveal" {
+        list.frame = NSRect(x: 0, y: 0, width: 200, height: 100)
+        list.documentView?.frame = NSRect(x: 0, y: 0, width: 200, height: 1000)
+        list.reveal(NSRect(x: 0, y: 800, width: 100, height: 30))
+        #expect(list.isRevealing)
+    } else {
+        let cg = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -10, wheel2: 0, wheel3: 0))
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(CGScrollPhase.began.rawValue))
+        sidebar.scrollWheel(with: try #require(NSEvent(cgEvent: cg)))
+        if motion == "momentum" {
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: 0)
+            cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(CGMomentumScrollPhase.begin.rawValue))
+            sidebar.scrollWheel(with: try #require(NSEvent(cgEvent: cg)))
+        }
+    }
+    #expect(!sidebar.canPublishAutoArchive)
+    let next = try store.createTab(windowId: "motion", url: "https://held.example/")
+    engine.refresh()
+    try await waitUntil { attempts > 0 }
+    #expect(received == nil)
+    if motion == "reveal" {
+        clock += 0.23
+        list.stepReveal()
+    } else {
+        clock += 1.99
+        sidebar.stepGestureExpiry()
+        #expect(!sidebar.canPublishAutoArchive && received == nil)
+        clock += 0.02
+        sidebar.stepGestureExpiry()
+    }
+    #expect(sidebar.canPublishAutoArchive)
+    try await waitUntil { received?.selectedId == next.selectedId }
+    engine.onSnapshot = nil
+    sidebar.onAutoArchiveReady = nil
+}
