@@ -268,7 +268,7 @@ func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() asyn
 }
 
 @Test @MainActor
-func engineBatchEditsReturnArchivedRowsAndTheShownSpaceSuccessor() async throws {
+func workspaceBatchEditsPublishCommittedSnapshotsWhenLiveTabsAreMissing() async throws {
     _ = NSApplication.shared
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -280,18 +280,25 @@ func engineBatchEditsReturnArchivedRowsAndTheShownSpaceSuccessor() async throws 
     let json = try String(contentsOf: fixture, encoding: .utf8)
         .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
     _ = try store.importArcSidebar(windowId: "batch", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
-    let engine = try EngineAdapter(path: path, windowID: "batch", card: NSView(), session: session)
-    let archived: WorkspaceSnapshot? = try await withCheckedThrowingContinuation { continuation in
-        engine.autoArchive(now: UInt64.max) { continuation.resume(with: $0) }
-    }
+    var reports: [String] = []
+    let adapter = WorkspaceAdapter(windowID: "batch", session: session, report: { reports.append(String(describing: $0)) })
+    let archivedLive = try store.liveOpen(item: "tab-spec", url: "https://archive.test/")
+    let archived: WorkspaceSnapshot? = try await archiveValue { adapter.autoArchive(now: UInt64.max, completion: $0) }
     #expect(archived?.archive.contains { $0.id == "tab-spec" } == true)
-    let idle: WorkspaceSnapshot? = try await withCheckedThrowingContinuation { continuation in
-        engine.autoArchive(now: UInt64.max) { continuation.resume(with: $0) }
-    }
+    #expect(store.liveTab(item: "tab-spec") == nil)
+    #expect(reports.count == 1)
+    #expect(reports.first?.contains(archivedLive.id) == true)
+    let idle: WorkspaceSnapshot? = try await archiveValue { adapter.autoArchive(now: UInt64.max, completion: $0) }
     #expect(idle == nil)
-    let deleted: WorkspaceSnapshot = try await withCheckedThrowingContinuation { continuation in
-        engine.deleteSpace(id: "space-work") { continuation.resume(with: $0) }
-    }
+    #expect(reports.count == 1)
+    let created = try store.createTab(windowId: "batch", url: "https://delete.test/")
+    let deletedID = try #require(created.selectedId)
+    let deletedLive = try store.liveOpen(item: deletedID, url: "https://delete.test/")
+    let deleted = try await archiveValue { adapter.deleteSpace(id: "space-work", completion: $0) }
+    #expect(deleted.archive.contains { $0.id == deletedID })
     #expect(deleted.shownSpaceId == "space-home")
     #expect(deleted.spaces.count == 1)
+    #expect(store.liveTab(item: deletedID) == nil)
+    #expect(reports.count == 2)
+    #expect(reports.last?.contains(deletedLive.id) == true)
 }

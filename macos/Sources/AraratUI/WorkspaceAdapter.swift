@@ -5,6 +5,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     public typealias Completion<T> = @MainActor @Sendable (Result<T, Error>) -> Void
     public typealias Change = (id: String?, snapshot: WorkspaceSnapshot)
 
+    private let report: @MainActor @Sendable (Error) -> Void
     private let session: WorkspaceSession
     private var queue: DispatchQueue { session.queue }
     private let windowID: String
@@ -18,7 +19,11 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         set { session.store = newValue }
     }
 
-    public init(windowID: String, session: WorkspaceSession = WorkspaceSession(), private isPrivate: Bool = false) {
+    public init(windowID: String, session: WorkspaceSession = WorkspaceSession(), private isPrivate: Bool = false,
+                report: @escaping @MainActor @Sendable (Error) -> Void = {
+                    FileHandle.standardError.write(Data("workspace adapter: \($0)\n".utf8))
+                }) {
+        self.report = report
         self.windowID = windowID
         self.session = session
         self.isPrivate = isPrivate
@@ -128,11 +133,9 @@ public final class WorkspaceAdapter: @unchecked Sendable {
 
     public func autoArchive(now: UInt64, completion: @escaping Completion<WorkspaceSnapshot?>) {
         enqueue({ try self.opened().liveAutoArchive(windowId: self.windowID, now: now) }) { result in
-            completion(result.flatMap { batch in
-                var error: Error?
-                if let batch { self.session.closeLiveTargets(batch.targets) { error = $0 } }
-                if let error { return .failure(error) }
-                return .success(batch?.snapshot)
+            completion(result.map { batch in
+                if let batch { self.session.closeLiveTargets(batch.targets, report: self.report) }
+                return batch?.snapshot
             })
         }
     }
@@ -304,11 +307,9 @@ extension WorkspaceAdapter {
     }
     public func deleteSpace(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({ try self.opened().liveDeleteSpace(windowId: self.windowID, spaceId: id) }) { result in
-            completion(result.flatMap { batch in
-                var error: Error?
-                self.session.closeLiveTargets(batch.targets) { error = $0 }
-                if let error { return .failure(error) }
-                return .success(batch.snapshot)
+            completion(result.map { batch in
+                self.session.closeLiveTargets(batch.targets, report: self.report)
+                return batch.snapshot
             })
         }
     }

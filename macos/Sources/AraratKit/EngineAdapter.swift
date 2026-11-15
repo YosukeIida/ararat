@@ -846,40 +846,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
     }
 
-    public func autoArchive(now: UInt64, completion: @escaping @MainActor (Result<WorkspaceSnapshot?, Error>) -> Void) {
-        precondition(Thread.isMainThread)
-        queue.async {
-            defer { self.session.drainHistoryPurges() }
-            do {
-                guard let store = self.store else { throw CoreError.Store(message: "workspace is not open") }
-                let result = try store.liveAutoArchive(windowId: self.windowID, now: now)
-                DispatchQueue.main.async {
-                    if let result { self.session.closeLiveTargets(result.targets, report: self.report) }
-                    completion(.success(result?.snapshot))
-                }
-            } catch {
-                DispatchQueue.main.async { completion(.failure(error)) }
-            }
-        }
-    }
-
-    public func deleteSpace(id: String, completion: @escaping @MainActor (Result<WorkspaceSnapshot, Error>) -> Void) {
-        precondition(Thread.isMainThread)
-        queue.async {
-            defer { self.session.drainHistoryPurges() }
-            do {
-                guard let store = self.store else { throw CoreError.Store(message: "workspace is not open") }
-                let result = try store.liveDeleteSpace(windowId: self.windowID, spaceId: id)
-                DispatchQueue.main.async {
-                    self.session.closeLiveTargets(result.targets, report: self.report)
-                    completion(.success(result.snapshot))
-                }
-            } catch {
-                DispatchQueue.main.async { completion(.failure(error)) }
-            }
-        }
-    }
-
     public func undoClearToday(_ batch: ClearTodayUndo, completion: @escaping @MainActor (WorkspaceSnapshot?) -> Void) {
         precondition(Thread.isMainThread)
         queue.async {
