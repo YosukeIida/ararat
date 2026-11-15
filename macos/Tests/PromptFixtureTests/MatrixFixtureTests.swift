@@ -1343,3 +1343,33 @@ func privacyFlagsRejectMissingTransactionOrTabFlags() async throws {
     try await matrixWait { received == 2 }
     engine.shutdown()
 }
+
+@Test @MainActor
+func settingsSpaceDeletionFollowsTheNeighboursProfile() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("db").path, windowID: "settings-delete", card: NSView(), seedProfiles: true, session: session)
+    defer { engine.shutdown() }
+    let (fake, host) = matrixFake()
+    let runtime = Runtime(windowID: "settings-delete")
+    runtime.host = host
+    runtime.snapshot = try session.queue.sync {
+        try #require(session.store).showSpaceSelecting(windowId: "settings-delete", spaceId: "default")
+    }
+    let renamed = try session.queue.sync {
+        try #require(session.store).renameSpace(windowId: "settings-delete", spaceId: "default", name: "Renamed")
+    }
+    runtime.showSettingsEdit(renamed)
+    #expect(runtime.snapshot == renamed)
+    #expect(fake.shownProfile == "Default")
+    let deleted = try session.queue.sync {
+        try #require(session.store).liveDeleteSpace(windowId: "settings-delete", spaceId: "default").snapshot
+    }
+    runtime.showSettingsEdit(deleted)
+    let neighbour = try #require(deleted.spaces.first { $0.id == deleted.shownSpaceId })
+    #expect(neighbour.profileName != "Default")
+    #expect(fake.shownProfile == neighbour.profileName)
+    #expect(runtime.snapshot == deleted)
+}

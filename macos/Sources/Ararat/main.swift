@@ -1306,11 +1306,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
     }
     actions.onDeleteSpace = { [weak self, weak workspace] id in
-      workspace?.deleteSpace(id: id) { [weak self] result in self?.showResult(result) }
+      workspace?.deleteSpace(id: id) { [weak self] result in self?.showAndSelect(result) }
     }
     actions.onSpaceSettings = { [weak self] id in self?.openSettings(spaceID: id) }
     if let keyBindings, let airTraffic {
-      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.show($0) },
+      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.showSettingsEdit($0) },
         resetWidth: { [weak self] in self?.container?.resizeHandle.resetWidth() },
         preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) },
         keyBindings: keyBindings, airTraffic: airTraffic)
@@ -1518,6 +1518,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
     refreshOtherWindows()
   }
 
+  func showSettingsEdit(_ next: WorkspaceSnapshot) {
+    if let shown = snapshot.shownSpaceId, !next.spaces.contains(where: { $0.id == shown }) {
+      showAndSelect(.success(next))
+    } else {
+      show(next)
+    }
+  }
+
   func updatePageVisibility(_ snapshot: WorkspaceSnapshot) {
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-measure=") }) {
       host?.setWorkspacePageHidden(false)
@@ -1696,6 +1704,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard let self, self.selectionGeneration == generation else { return }
       if case .success = result { self.adapter?.invalidateSelection() }
       self.showAndSelect(result)
+      if case .success(let snapshot) = result {
+        if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) {
+          self.sidebar?.showSpaceWithoutNotification(at: index)
+        }
+        self.sidebar?.setLibraryOpen(false)
+      }
     }
   }
 
@@ -1967,7 +1981,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     guard let workspace, let keyBindings, let airTraffic else { return }
     let owner = root ?? self
-    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.show($0) }
+    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.showSettingsEdit($0) }
     let resetWidth: () -> Void = { [weak self] in self?.container?.resizeHandle.resetWidth() }
     let preview: (String, Look?, Bool) -> Void = { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }
     if owner.settings == nil {
@@ -2509,11 +2523,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     presenter.open(mode: spec.mode, prefill: spec.prefill)
     workspace.commandBarSession(privateWindow: presenter.controller.privateWindow) { [weak self, weak presenter] result in
-      guard let self, let presenter, self.commandPresenter === presenter,
-            let session = try? result.get() else { return }
-      let base = CommandBarSessionStore(session: session)
-      // U27j O7: the "Import from Arc…" row rides only a check, the same gate as its menu item.
-      presenter.applyStore(Runtime.onboardingEntryVisible ? OnboardingCommandStore(base: base) : base)
+      guard let self, let presenter, self.commandPresenter === presenter else { return }
+      switch result {
+      case .success(let session):
+        let base = CommandBarSessionStore(session: session)
+        // U27j O7: the "Import from Arc…" row rides only a check, the same gate as its menu item.
+        presenter.applyStore(Runtime.onboardingEntryVisible ? OnboardingCommandStore(base: base) : base)
+      case .failure(let error):
+        self.report(error)
+        presenter.close()
+      }
     }
   }
 

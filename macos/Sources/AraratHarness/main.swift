@@ -596,8 +596,13 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         presenter.open(mode: spec.mode, prefill: spec.prefill)
         adapter.commandBarSession { [weak self, weak presenter] result in
-            guard let self, let presenter, !self.terminating, let session = try? result.get(), self.commandPresenter === presenter else { return }
-            presenter.applyStore(CommandBarSessionStore(session: session))
+            guard let self, let presenter, !self.terminating, self.commandPresenter === presenter else { return }
+            switch result {
+            case .success(let session): presenter.applyStore(CommandBarSessionStore(session: session))
+            case .failure(let error):
+                FileHandle.standardError.write(Data("cannot load command bar: \(error)\n".utf8))
+                presenter.close()
+            }
         }
     }
 

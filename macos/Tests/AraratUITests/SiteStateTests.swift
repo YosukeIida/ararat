@@ -186,6 +186,29 @@ func permissionRowWithoutExplicitSettingShowsItsDefaultNotAllow() throws {
 }
 
 @Test @MainActor
+func refusedPermissionChoiceRestoresTheCurrentPopupValue() throws {
+    let state = try #require(SiteState([
+        "document": "4", "origin": "https://127.0.0.1:4444", "security": "secure",
+        "certificateChain": [Data](), "permissions": [permissionRow(setting: nil)],
+        "blocked": false, "internal": false,
+    ]))
+    let content = SiteControlsContent(model: state, includesFullPage: false)
+    func popups(_ view: NSView) -> [NSPopUpButton] {
+        view.subviews.flatMap { ($0 as? NSPopUpButton).map { [$0] } ?? popups($0) }
+    }
+    let popup = try #require(popups(content).first)
+    let allow = try #require(popup.itemArray.first { $0.title == "Allow" })
+    var requested = false
+    content.onPermission = { _ in requested = true; return false }
+    popup.select(allow)
+    #expect(popup.titleOfSelectedItem == "Allow")
+    let target = try #require(allow.target as? NSObject)
+    target.perform(try #require(allow.action), with: allow)
+    #expect(requested)
+    #expect(content.checkPermissionRows[0].current == "Ask (default)")
+}
+
+@Test @MainActor
 func extensionActionRowWrapsBeyondOneLine() throws {
     let icon = NSImage(size: NSSize(width: 16, height: 16))
     func item(_ index: Int) throws -> ExtensionActionItem {

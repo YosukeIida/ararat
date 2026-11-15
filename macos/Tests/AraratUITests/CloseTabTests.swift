@@ -24,6 +24,43 @@ private func closeSidebar(_ snapshot: WorkspaceSnapshot) -> SidebarView {
 }
 
 @Test @MainActor
+func engineSnapshotRemovalUsesTheRowCloseMotion() throws {
+    let sidebar = closeSidebar(closeSnapshot(["a", "b", "c"], selected: "b"))
+    let survivor = try #require(closeViews(sidebar).first { $0.row.id == "c" })
+    sidebar.update(snapshot: closeSnapshot(["a", "c"], selected: "c"))
+    #expect(sidebar.selectedRowID == "c")
+    #expect(!closeViews(sidebar).contains { $0.row.id == "b" })
+    #expect(survivor.layer?.animation(forKey: "row.close.move") != nil)
+}
+
+@Test @MainActor
+func engineSnapshotRemovalAnimatesARowInsideAFolder() throws {
+    var initial = closeSnapshot(["a", "b", "c"])
+    initial.spaces[0].today[0].kind = .folder
+    for index in [1, 2] {
+        initial.spaces[0].today[index].parentId = "a"
+        initial.spaces[0].today[index].depth = 1
+    }
+    let sidebar = closeSidebar(initial)
+    let survivor = try #require(closeViews(sidebar).first { $0.row.id == "c" })
+    var next = initial
+    next.spaces[0].today.remove(at: 1)
+    sidebar.update(snapshot: next)
+    #expect(survivor.layer?.animation(forKey: "row.close.move") != nil)
+}
+
+@Test @MainActor
+func snapshotMovingARowToAnotherSpaceDoesNotAnimateAClose() throws {
+    let sidebar = closeSidebar(closeSnapshot(["a", "b", "c"], selected: "b"))
+    var next = closeSnapshot(["a", "c"], selected: "c")
+    var other = closeSnapshot(["b"]).spaces[0]
+    other.id = "other"
+    next.spaces.append(other)
+    sidebar.update(snapshot: next)
+    #expect(closeViews(sidebar).allSatisfy { $0.layer?.animation(forKey: "row.close.move") == nil })
+}
+
+@Test @MainActor
 func closeMiddleMovesOnlyRowsBelowAndRetainsInstances() throws {
     let sidebar = closeSidebar(closeSnapshot(["a", "b", "c", "d"], selected: "b"))
     let before = Dictionary(uniqueKeysWithValues: closeViews(sidebar).map { ($0.row.id, $0) })

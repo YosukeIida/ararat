@@ -640,6 +640,17 @@ public final class SidebarView: NSView {
     }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
+           let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
+            let remaining = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
+            let removed = (current.today + current.pinned + current.favorites).filter { !remaining.contains($0.id) }
+            let removedIDs = Set(removed.map(\.id))
+            let roots = removed.filter { !removedIDs.contains($0.parentId) }
+            if roots.count == 1 {
+                applyClose(id: roots[0].id, snapshot: snapshot)
+                return
+            }
+        }
         finishRowMotion()
         replaceSnapshot(snapshot)
         library.update(archive: snapshot.archive)

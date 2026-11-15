@@ -352,15 +352,17 @@ func theRemoveSheetHasTheDesignsTextAndCancelDefault() async throws {
     let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
     model.extensionHost = host
     model.readExtensions(shownSpaceID: "default")
-    let controller = SettingsWindowController(model: model)
+    let controller = SettingsWindowController(model: model, orderWindowFront: { _ in })
     controller.setExtensionSettings(host: host, manage: { _, _ in })
     let window = try #require(controller.window)
-    window.orderFront(nil)
+    var alert: NSAlert?
+    var answer: ((NSApplication.ModalResponse) -> Void)?
+    controller.presentSheet = { sheet, _, completion in alert = sheet; answer = completion }
     defer { window.contentViewController = nil }
 
     model.requestRemoveExtension("windows")
-    try await waitUntil { window.attachedSheet != nil }
-    let sheet = try #require(window.attachedSheet)
+    try await waitUntil { alert != nil }
+    let sheet = try #require(alert?.window)
     #expect(sheet.title == SettingsModel.removeSheetTitle(for: "Ararat windows check"))
     func buttons(_ view: NSView) -> [NSButton] {
         view.subviews.compactMap { $0 as? NSButton } + view.subviews.flatMap(buttons)
@@ -371,7 +373,7 @@ func theRemoveSheetHasTheDesignsTextAndCancelDefault() async throws {
     #expect(sheet.defaultButtonCell?.title == "Cancel")
     #expect(remove.hasDestructiveAction)
 
-    window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+    answer?(.alertFirstButtonReturn)
     try await waitUntil { model.pendingRemoval == nil }
     #expect(model.extensions.map(\.id) == ["windows"])
     #expect(host.removals.isEmpty)
@@ -393,25 +395,26 @@ func theRemoveSheetAnswersOnlyItsOwnEsc() async throws {
     let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
     model.extensionHost = host
     model.readExtensions(shownSpaceID: "default")
-    let controller = SettingsWindowController(model: model)
+    let controller = SettingsWindowController(model: model, orderWindowFront: { _ in })
     controller.setExtensionSettings(host: host, manage: { _, _ in })
     let window = try #require(controller.window)
-    window.orderFront(nil)
+    var alert: NSAlert?
+    controller.presentSheet = { sheet, _, _ in alert = sheet }
     defer { window.contentViewController = nil }
 
     model.requestRemoveExtension("windows")
-    try await waitUntil { window.attachedSheet != nil }
-    let sheet = try #require(window.attachedSheet)
+    try await waitUntil { alert != nil }
+    let sheet = try #require(alert?.window)
 
     // Esc typed in the Settings window itself is returned untouched and does not end the sheet.
     let untouched = try #require(esc(for: window))
-    #expect(controller.handleRemoveSheetKey(untouched) === untouched)
-    #expect(window.attachedSheet === sheet && model.pendingRemoval?.id == "windows")
+    #expect(controller.handleRemoveSheetKey(untouched, targetWindow: window) === untouched)
+    #expect(alert?.window === sheet && model.pendingRemoval?.id == "windows")
 
     // Esc aimed at the sheet cancels it; the extension stays.
-    #expect(controller.handleRemoveSheetKey(try #require(esc(for: sheet))) == nil)
+    #expect(controller.handleRemoveSheetKey(try #require(esc(for: sheet)), targetWindow: sheet) == nil)
     try await waitUntil { model.pendingRemoval == nil }
-    #expect(window.attachedSheet == nil && model.extensions.map(\.id) == ["windows"])
+    #expect(model.extensions.map(\.id) == ["windows"])
     #expect(host.removals.isEmpty)
 }
 
@@ -423,25 +426,28 @@ func closingSettingsWithTheRemoveSheetUpClearsIt() async throws {
     let host = FakeExtensionSettingsHost(rowsByProfile: ["Default": [aRow("windows")]])
     model.extensionHost = host
     model.readExtensions(shownSpaceID: "default")
-    let controller = SettingsWindowController(model: model)
+    let controller = SettingsWindowController(model: model, orderWindowFront: { _ in })
     controller.setExtensionSettings(host: host, manage: { _, _ in })
     let window = try #require(controller.window)
-    window.orderFront(nil)
+    var alert: NSAlert?
+    var answer: ((NSApplication.ModalResponse) -> Void)?
+    controller.presentSheet = { sheet, _, completion in alert = sheet; answer = completion }
     defer { window.contentViewController = nil }
 
     model.requestRemoveExtension("windows")
-    try await waitUntil { window.attachedSheet != nil }
+    try await waitUntil { alert != nil }
     window.close()
     try await waitUntil { model.pendingRemoval == nil && window.attachedSheet == nil }
     #expect(model.extensions.map(\.id) == ["windows"])
 
     // The next Remove… is not refused by leftover state.
     controller.open(shownSpaceID: "default")
-    try await waitUntil { window.isVisible }
+    #expect(!window.isVisible)
+    alert = nil
     model.requestRemoveExtension("windows")
-    try await waitUntil { window.attachedSheet != nil }
-    let sheet = try #require(window.attachedSheet)
-    window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+    try await waitUntil { alert != nil }
+    #expect(alert?.window.isVisible == false)
+    answer?(.alertFirstButtonReturn)
     try await waitUntil { model.pendingRemoval == nil }
     #expect(model.extensions.map(\.id) == ["windows"])
 }
@@ -461,7 +467,7 @@ func theExtensionsPaneDrawsItsRowsAndMarkers() async throws {
     model.extensionHost = host
     model.readExtensions(shownSpaceID: "default")
     model.navigate(.extensions)
-    let controller = SettingsWindowController(model: model)
+    let controller = SettingsWindowController(model: model, orderWindowFront: { _ in })
     let window = try #require(controller.window)
     defer { window.contentViewController = nil }
     let probe = try #require(controller.checkProbe())

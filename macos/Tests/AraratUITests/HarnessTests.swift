@@ -19,7 +19,7 @@ private func harnessDiagnostics(_ error: String) -> [Substring] {
 
 private final class HarnessTestBundle: NSObject {}
 
-private func runHarness(in directory: URL, arguments: [String] = [], commands: String = "", stopSignal: Int32? = nil, nullInput: Bool = false) throws -> HarnessRun {
+private func runHarness(in directory: URL, arguments: [String] = [], commands: String = "", stopSignal: Int32? = nil, nullInput: Bool = false, timeoutSeconds: TimeInterval = 8) throws -> HarnessRun {
     let process = Process()
     process.executableURL = Bundle(for: HarnessTestBundle.self).bundleURL.deletingLastPathComponent().appendingPathComponent("AraratHarness")
     process.arguments = ["--headless"] + arguments
@@ -35,17 +35,19 @@ private func runHarness(in directory: URL, arguments: [String] = [], commands: S
     process.standardError = error
     try process.run()
     let timeout = DispatchSource.makeTimerSource(queue: .global())
-    timeout.schedule(deadline: .now() + 8)
+    timeout.schedule(deadline: .now() + timeoutSeconds)
     timeout.setEventHandler { if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) } }
     timeout.resume()
     defer {
         timeout.cancel()
-        if process.isRunning { _ = kill(process.processIdentifier, SIGKILL); process.waitUntilExit() }
+        if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+        process.waitUntilExit()
+        #expect(kill(process.processIdentifier, 0) == -1 && errno == ESRCH, "Harness child \(process.processIdentifier) outlived its test")
     }
     let interactive = !arguments.contains("--check")
     var stdout = Data()
     if nullInput {
-        let deadline = Date().addingTimeInterval(8)
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
         while process.isRunning && Date() < deadline, try harnessDatabaseFiles(in: directory).isEmpty {
             Thread.sleep(forTimeInterval: 0.01)
         }
@@ -343,4 +345,12 @@ func harnessDiagnosticsIgnoreOnlyHitchMeasurements() {
     #expect(harnessDiagnostics("hitch 160 ms\nhitch 101 ms\n").isEmpty)
     #expect(harnessDiagnostics("hitch 160 ms\nstore failed\n") == ["store failed"])
     #expect(harnessDiagnostics("hitch unexpected ms\nhitch 160 ms extra") == ["hitch unexpected ms", "hitch 160 ms extra"])
+}
+
+@Test
+func harnessTimeoutReapsTheChild() throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let run = try runHarness(in: directory, nullInput: true, timeoutSeconds: 0.2)
+    #expect(run.status == SIGKILL)
 }
