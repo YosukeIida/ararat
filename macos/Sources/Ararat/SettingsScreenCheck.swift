@@ -726,15 +726,17 @@ extension Runtime {
         // MARK: p4checks, the Shortcuts pane's recorder and the key it records
         case 20:
             guard mode == .shortcuts else { finish(); return }
-            guard probe.shortcutRecordingCommand == "toggle_sidebar" else {
+            let ready = probe.shortcutRecordingCommand == "toggle_sidebar"
+                && probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
+            guard ready else {
                 if browserCheckAttempts - check.shortcutPhaseStart > 120 {
                     check.report("recorder_opened", false); finish()
                     return
                 }
-                note("the recorder did not start"); return
+                note("the recorder is not ready: recording=\(probe.shortcutRecordingCommand ?? "nil") present=\(probe.shortcutRecorderPresent) first=\(probe.shortcutRecorderIsFirstResponder)")
+                return
             }
-            let recorderReady = probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
-            check.report("recorder_opened", recorderReady)
+            check.report("recorder_opened", true)
             guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
                                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
                                                context: nil, characters: "k", charactersIgnoringModifiers: "k",

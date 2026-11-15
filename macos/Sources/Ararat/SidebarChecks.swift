@@ -884,6 +884,7 @@ extension Runtime {
             // onCreatePageChanged reaches the container's selection rule: a create page has none.
             check.report("create_page", sidebar.checkCreateSpace.open)
             check.report("create_page_selection", container?.sidebarHasSelection == false)
+            _ = capture("create-page")
             sidebar.checkTypeSpaceName("Research")
             guard sidebar.checkCreateSpace.name == "Research", sidebar.checkCreateSpace.buttonEnabled else {
                 note("the create field did not take the name"); return

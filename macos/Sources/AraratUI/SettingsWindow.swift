@@ -253,9 +253,10 @@ extension SettingsWindowController: NSToolbarDelegate {
             item.paletteLabel = "Navigation"
             let view = NSHostingView(rootView: SettingsToolbarNavigation(model: model))
             view.frame = NSRect(origin: .zero, size: Self.navigationSize)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalToConstant: Self.navigationSize.width).isActive = true
+            view.heightAnchor.constraint(equalToConstant: Self.navigationSize.height).isActive = true
             item.view = view
-            item.minSize = Self.navigationSize
-            item.maxSize = Self.navigationSize
             item.visibilityPriority = .high
             return item
         case Self.titleItem:
@@ -263,9 +264,10 @@ extension SettingsWindowController: NSToolbarDelegate {
             item.paletteLabel = "Title"
             let view = NSHostingView(rootView: SettingsToolbarTitle(model: model))
             view.frame = NSRect(origin: .zero, size: Self.titleSize)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalToConstant: Self.titleSize.width).isActive = true
+            view.heightAnchor.constraint(equalToConstant: Self.titleSize.height).isActive = true
             item.view = view
-            item.minSize = Self.titleSize
-            item.maxSize = Self.titleSize
             item.visibilityPriority = .high
             return item
         default:
@@ -329,8 +331,7 @@ private struct SettingsToolbarTitle: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .opacity(model.headerProgress)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 20)
+            .frame(width: 220, height: 20, alignment: .leading)
             .accessibilityLabel("Settings page")
     }
 }
