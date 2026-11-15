@@ -324,6 +324,33 @@ impl Live {
             .filter(|id| matches!(workspace.items[id].kind, ItemKind::Tab { .. }) && self.map.contains_key(id))
             .collect();
         let (ops, batch) = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
+        let targets = self.close_targets(workspace, items);
+        Ok((ops, targets, batch))
+    }
+
+    pub fn auto_archive(&mut self, workspace: &mut Workspace, now: u64) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+        if workspace.is_private() { return Ok((Vec::new(), Vec::new())); }
+        let ops = workspace.auto_archive(now)?;
+        let targets = self.close_archived(workspace, &ops);
+        Ok((ops, targets))
+    }
+
+    pub fn delete_space(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+        if workspace.is_private() { return Err(LiveError("operation unavailable in a private workspace".into())); }
+        let ops = workspace.delete_space(space)?;
+        let targets = self.close_archived(workspace, &ops);
+        Ok((ops, targets))
+    }
+
+    fn close_archived(&mut self, workspace: &Workspace, ops: &[Op]) -> Vec<(Id, Command)> {
+        let items = ops.iter().filter_map(|op| match op {
+            Op::Put(Record::Item(item)) if item.lifecycle == Lifecycle::Archived && matches!(item.kind, ItemKind::Tab { .. }) => Some(item.id.clone()),
+            _ => None,
+        }).collect();
+        self.close_targets(workspace, items)
+    }
+
+    fn close_targets(&mut self, workspace: &Workspace, items: Vec<Id>) -> Vec<(Id, Command)> {
         let mut targets = Vec::new();
         for item in items {
             let Some(live) = self.map.remove(&item) else { continue };
@@ -336,7 +363,7 @@ impl Live {
             targets.push((live, command));
         }
         self.selection_intents.retain(|id, _| self.pending.contains_key(id));
-        Ok((ops, targets, batch))
+        targets
     }
 
     fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {

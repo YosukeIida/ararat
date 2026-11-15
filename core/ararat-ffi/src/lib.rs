@@ -114,17 +114,6 @@ impl WorkspaceStore {
         Ok(key_bindings(&workspace))
     }
 
-    pub fn auto_archive(&self, window_id: String, now: u64) -> Result<Option<WorkspaceSnapshot>, CoreError> {
-        if self.private { return Ok(None); }
-        self.admit(false)?;
-        let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.auto_archive(now)?;
-        if ops.is_empty() { return Ok(None); }
-        self.store.write(ops);
-        self.store.flush()?;
-        Ok(Some(snapshot(workspace.clone(), &window_id)))
-    }
-
     pub fn set_archive_after(&self, window_id: String, space_id: String, value: ArchiveAfter) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
@@ -513,15 +502,6 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
-    pub fn delete_space(&self, window_id: String, space_id: String) -> Result<WorkspaceSnapshot, CoreError> {
-        self.admit(true)?;
-        let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.delete_space(&space_id)?;
-        self.store.write(ops);
-        self.store.flush()?;
-        Ok(snapshot(workspace.clone(), &window_id))
-    }
-
     pub fn delete_archive_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
@@ -838,6 +818,31 @@ impl WorkspaceStore {
         self.store.flush()?;
         live.command_sent(&command);
         Ok(command.into())
+    }
+
+    pub fn live_auto_archive(&self, window_id: String, now: u64) -> Result<Option<LiveBatch>, CoreError> {
+        if self.private { return Ok(None); }
+        let mut workspace = self.workspace.lock().unwrap();
+        let (ops, targets) = self.live.lock().unwrap().auto_archive(&mut workspace, now)?;
+        if ops.is_empty() { return Ok(None); }
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(Some(LiveBatch {
+            snapshot: snapshot(workspace.clone(), &window_id),
+            targets: targets.into_iter().map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect(),
+        }))
+    }
+
+    pub fn live_delete_space(&self, window_id: String, space_id: String) -> Result<LiveBatch, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let (ops, targets) = self.live.lock().unwrap().delete_space(&mut workspace, &space_id)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(LiveBatch {
+            snapshot: snapshot(workspace.clone(), &window_id),
+            targets: targets.into_iter().map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect(),
+        })
     }
 
     // Clear Today in one batch, with a Close command in flight for every mapped live row it
@@ -1567,6 +1572,12 @@ pub struct ClearTodayResult {
     pub batch: Option<std::sync::Arc<ClearTodayUndo>>,
 }
 
+#[derive(Debug, PartialEq, uniffi::Record)]
+pub struct LiveBatch {
+    pub snapshot: WorkspaceSnapshot,
+    pub targets: Vec<LiveCloseTarget>,
+}
+
 #[derive(uniffi::Record)]
 pub struct LiveClearToday {
     pub snapshot: WorkspaceSnapshot,
@@ -1866,7 +1877,8 @@ mod tests {
         assert!(applied.applied);
         assert_eq!(applied.adopted.len(), 2);
         let before = store.snapshot("w".into());
-        assert!(store.auto_archive("w".into(), u64::MAX).unwrap().is_none());
+        assert!(store.live_auto_archive("w".into(), u64::MAX).unwrap().is_none());
+        assert!(store.live_delete_space("w".into(), "private".into()).is_err());
         assert_eq!(store.snapshot("w".into()), before);
         let first = applied.adopted.iter().find(|tab| tab.live_id == "one").unwrap().item.clone();
         let second = applied.adopted.iter().find(|tab| tab.live_id == "two").unwrap().item.clone();
@@ -2248,7 +2260,7 @@ mod tests {
         // A rule whose space is deleted still matches, and its link answers the remaining
         // space of the rule's own profile, while the FFI answer still names the rule that
         // held the stale id.
-        store.delete_space(window.clone(), "space-work".into()).unwrap();
+        store.live_delete_space(window.clone(), "space-work".into()).unwrap();
         let decision = store.route("https://www.meet.google.com/x".into());
         assert_eq!(decision.rule_id.as_deref(), Some("meet"));
         assert_eq!(decision.destination, Destination::Space(SpaceTarget::Space("space-home".into())));

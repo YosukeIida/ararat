@@ -28,6 +28,25 @@ public final class WorkspaceSession: @unchecked Sendable {
 
     public init() {}
 
+    public func closeLiveTargets(_ targets: [LiveCloseTarget], report: (Error) -> Void) {
+        precondition(Thread.isMainThread)
+        for target in targets {
+            if let tab = self.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
+            else if self.cancelPendingOpen(target.liveId) {
+                self.queue.async {
+                    _ = self.store?.liveCancel(commandId: target.liveId)
+                    _ = self.store?.liveSettleClose(commandId: target.command.id)
+                }
+            }
+            else {
+                // A target the engine no longer has: settle its Close so the row is not
+                // left pending for a later restore.
+                self.queue.async { _ = self.store?.liveSettleClose(commandId: target.command.id) }
+                report(CoreError.Live(message: "Cannot find live tab \(target.liveId) to close"))
+            }
+        }
+    }
+
     func register(_ adapter: EngineAdapter, window: String) {
         precondition(Thread.isMainThread)
         adapters[window] = WeakAdapter(adapter)

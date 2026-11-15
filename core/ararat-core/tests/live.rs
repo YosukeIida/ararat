@@ -1622,3 +1622,74 @@ fn clearing_today_puts_a_close_in_flight_for_each_live_row() {
     assert!(second.applied);
     for item in ["a", "b"] { assert_eq!(live.live_tab(item), None, "{item}"); }
 }
+
+#[test]
+fn live_auto_archive_keeps_thresholds_and_protected_rows_and_closes_only_loaded_rows() {
+    use ararat_core::model::ArchiveAfter;
+    for option in [ArchiveAfter::Hours12, ArchiveAfter::Hours24, ArchiveAfter::Days7, ArchiveAfter::Days30] {
+        let mut ws = workspace();
+        let mut live = Live::new();
+        ws.ensure_favorites("space-work", "favorites").unwrap();
+        tab(&mut ws, "favorite", "favorites", "https://favorite.test/");
+        tab(&mut ws, "unloaded", "space-work:today", "https://unloaded.test/");
+        ws.items.get_mut("unloaded").unwrap().lifecycle = Lifecycle::Unloaded;
+        for item in ["a", "b", "c", "pinned", "favorite"] {
+            let (_, command) = live.open(&mut ws, item, "https://example.test/").unwrap();
+            live.command_sent(&command);
+        }
+        live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b", "c", "pinned", "favorite"], Some("b"))]));
+        ws.select_item_at("other", "c", 0).unwrap();
+        for item in ["a", "b", "c", "unloaded", "pinned", "favorite"] { ws.last_selected.insert(item.into(), 0); }
+        ws.set_archive_after(Default::default(), option);
+        assert!(live.auto_archive(&mut ws, option.millis()).unwrap().0.is_empty());
+        let activation = live.activate(&ws, "a").unwrap();
+        live.command_sent(&activation);
+        live.selection_intent(&activation.id, "one");
+        let (_, targets) = live.auto_archive(&mut ws, option.millis() + 1).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].1.item, "a");
+        for item in ["a", "unloaded"] { assert_eq!(ws.items[item].lifecycle, Lifecycle::Archived); }
+        for item in ["b", "c", "pinned", "favorite"] { assert_ne!(ws.items[item].lifecycle, Lifecycle::Archived); }
+        assert!(live.live_tab("a").is_none());
+        assert!(!live.selection_intent(&activation.id, "one"));
+        let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Command(targets[0].1.id.clone()),
+            strips: vec![strip(&live, &["b", "c", "pinned", "favorite"], Some("b"))] });
+        assert!(outcome.applied);
+    }
+}
+
+#[test]
+fn live_delete_space_closes_its_loaded_rows_and_preserves_profile_favorites_and_last_space() {
+    let mut ws = workspace();
+    ws.create_space("two", "Home", "space-home").unwrap();
+    ws.show_space("one", "space-work").unwrap();
+    ws.ensure_favorites("space-work", "favorites").unwrap();
+    tab(&mut ws, "favorite", "favorites", "https://favorite.test/");
+    let mut live = Live::new();
+    for item in ["a", "pinned", "favorite"] {
+        let (_, command) = live.open(&mut ws, item, "https://example.test/").unwrap();
+        live.command_sent(&command);
+    }
+    let (_, targets) = live.delete_space(&mut ws, "space-work").unwrap();
+    let mut items: Vec<_> = targets.iter().map(|(_, command)| command.item.as_str()).collect();
+    items.sort();
+    assert_eq!(items, ["a", "pinned"]);
+    assert_eq!(ws.shown_space("one"), Some("space-home"));
+    assert!(live.live_tab("favorite").is_some());
+    assert_eq!(ws.items["favorite"].lifecycle, Lifecycle::Open);
+    for item in ["a", "b", "c", "pinned"] { assert_eq!(ws.items[item].lifecycle, Lifecycle::Archived); }
+    let before = ws.clone();
+    assert!(live.delete_space(&mut ws, "space-home").is_err());
+    assert_eq!(ws, before);
+    for (_, command) in targets { assert!(live.settle_close(&command.id)); }
+}
+
+#[test]
+fn private_live_batches_do_not_auto_archive_or_delete_spaces() {
+    let mut ws = Workspace::private(Default::default());
+    let mut live = Live::new();
+    let before = ws.clone();
+    assert!(live.auto_archive(&mut ws, u64::MAX).unwrap().0.is_empty());
+    assert!(live.delete_space(&mut ws, "private").is_err());
+    assert_eq!(ws, before);
+}

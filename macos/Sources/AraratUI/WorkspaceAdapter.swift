@@ -127,7 +127,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func autoArchive(now: UInt64, completion: @escaping Completion<WorkspaceSnapshot?>) {
-        enqueue({ try self.opened().autoArchive(windowId: self.windowID, now: now) }, completion: completion)
+        enqueue({ try self.opened().liveAutoArchive(windowId: self.windowID, now: now) }) { result in
+            completion(result.flatMap { batch in
+                var error: Error?
+                if let batch { self.session.closeLiveTargets(batch.targets) { error = $0 } }
+                if let error { return .failure(error) }
+                return .success(batch?.snapshot)
+            })
+        }
     }
 
     public func setArchiveAfter(spaceID: String, value: ArchiveAfter, completion: @escaping Completion<WorkspaceSnapshot>) {
@@ -296,7 +303,14 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().moveSpace(windowId: self.windowID, spaceId: id, index: UInt32(index)) }, completion: completion)
     }
     public func deleteSpace(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().deleteSpace(windowId: self.windowID, spaceId: id) }, completion: completion)
+        enqueue({ try self.opened().liveDeleteSpace(windowId: self.windowID, spaceId: id) }) { result in
+            completion(result.flatMap { batch in
+                var error: Error?
+                self.session.closeLiveTargets(batch.targets) { error = $0 }
+                if let error { return .failure(error) }
+                return .success(batch.snapshot)
+            })
+        }
     }
 }
 

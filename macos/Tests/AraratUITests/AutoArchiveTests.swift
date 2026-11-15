@@ -266,3 +266,32 @@ func archiveReplyDuringAGestureWaitsForNextTickAndPublishesAFreshSnapshot() asyn
     _ = try await archiveValue { adapter.shutdown(completion: $0) }
     try FileManager.default.removeItem(at: directory)
 }
+
+@Test @MainActor
+func engineBatchEditsReturnArchivedRowsAndTheShownSpaceSuccessor() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let path = directory.appendingPathComponent("live-batch.sqlite").path
+    let store = try WorkspaceStore.open(path: path)
+    session.store = store
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let json = try String(contentsOf: fixture, encoding: .utf8)
+        .replacingOccurrences(of: "\"parentID\": \"folder-docs\"", with: "\"parentID\": \"today-work\"")
+    _ = try store.importArcSidebar(windowId: "batch", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+    let engine = try EngineAdapter(path: path, windowID: "batch", card: NSView(), session: session)
+    let archived: WorkspaceSnapshot? = try await withCheckedThrowingContinuation { continuation in
+        engine.autoArchive(now: UInt64.max) { continuation.resume(with: $0) }
+    }
+    #expect(archived?.archive.contains { $0.id == "tab-spec" } == true)
+    let idle: WorkspaceSnapshot? = try await withCheckedThrowingContinuation { continuation in
+        engine.autoArchive(now: UInt64.max) { continuation.resume(with: $0) }
+    }
+    #expect(idle == nil)
+    let deleted: WorkspaceSnapshot = try await withCheckedThrowingContinuation { continuation in
+        engine.deleteSpace(id: "space-work") { continuation.resume(with: $0) }
+    }
+    #expect(deleted.shownSpaceId == "space-home")
+    #expect(deleted.spaces.count == 1)
+}
