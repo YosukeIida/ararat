@@ -886,6 +886,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                             self.queue.async {
                                 _ = self.store?.liveCancel(commandId: target.liveId)
                                 _ = self.store?.liveSettleClose(commandId: target.command.id)
+                                self.session.drainHistoryPurges()
                             }
                         } else {
                             self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))

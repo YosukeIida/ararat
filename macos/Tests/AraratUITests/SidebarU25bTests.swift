@@ -459,3 +459,33 @@ func aCancelledLiveClosePublishesTheRestoredRow() async throws {
     #expect(closed.isEmpty)
     #expect(try store.liveCancelClose(commandId: close.id) == false)
 }
+
+@Test @MainActor
+func clearTodayStayPublishesOnlyTheRefusedRowWithoutCloseMotion() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("clear-stay.sqlite").path,
+                                   windowID: "stay", card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: "stay", name: "Work", spaceId: "work")
+    let kept = try #require(store.createTab(windowId: "stay", url: "https://stay.example/").selectedId)
+    let other = try #require(store.createTab(windowId: "stay", url: "https://leave.example/").selectedId)
+    let live = try store.liveOpen(item: kept, url: "https://stay.example/")
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: "stay", tabs: [LiveTab(offTheRecord: false, profile: .default, liveId: live.id,
+            item: kept, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)]))
+    let clear = try store.liveClearToday(windowId: "stay", spaceId: "work")
+    let command = try #require(clear.targets.first { $0.command.item == kept }?.command)
+    var delivered: WorkspaceSnapshot?
+    var closed: [String] = []
+    engine.onSnapshot = { delivered = $0 }
+    engine.onRowClose = { closed.append($0) }
+    engine.tabCloseCancelled(kept, commandId: command.id)
+    try await waitUntil { delivered?.spaces.first { $0.id == "work" }?.today.map(\.id) == [kept] }
+    #expect(delivered?.archive.contains { $0.id == other } == true)
+    #expect(delivered?.spaces.first { $0.id == "work" }?.today.first?.unloaded == false)
+    #expect(store.liveTab(item: kept) == live.id)
+    #expect(try store.pendingHistoryPurges().allSatisfy { $0.item != kept })
+    #expect(closed.isEmpty)
+}

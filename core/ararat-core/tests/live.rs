@@ -1745,3 +1745,91 @@ fn private_live_batches_do_not_auto_archive_or_delete_spaces() {
     assert!(live.delete_space(&mut ws, "private").is_err());
     assert_eq!(ws, before);
 }
+
+#[test]
+fn bulk_close_stay_restores_only_the_refused_row_and_keeps_its_live_identity() {
+    use ararat_core::model::{ArchiveAfter, SplitSide};
+    for operation in ["split", "clear", "auto", "delete"] {
+        for refused in ["a", "b"] {
+            let mut ws = workspace();
+            ws.create_space("two", "Home", "home").unwrap();
+            ws.create_space("three", "Other", "other").unwrap();
+            ws.show_space("one", "space-work").unwrap();
+            let split = if operation == "split" {
+                Some(ws.make_split("a", "b", SplitSide::Right).unwrap().1.split)
+            } else { None };
+            let mut live = Live::new();
+            let tabs = ["a", "b", "pinned"].into_iter().map(|id| LiveTab {
+                off_the_record: false, profile: Default::default(), live_id: format!("live-{id}"),
+                item: Some(id.into()), opener: None, navigated: false, url: None, title: None,
+            }).collect();
+            live.apply(&mut ws, snapshot_tx(vec![Strip { window: "one".into(), tabs, active: Some(if operation == "auto" { "live-pinned" } else { "live-a" }.into()) }]));
+            ws.last_selected.insert("a".into(), 0);
+            ws.last_selected.insert("b".into(), 0);
+            let history_profile = ws.history_profiles.get(refused).cloned();
+            let targets = match operation {
+                "split" => live.close_split(&mut ws, split.as_ref().unwrap()).unwrap().1,
+                "clear" => live.clear_today(&mut ws, "space-work").unwrap().1,
+                "auto" => live.auto_archive(&mut ws, ArchiveAfter::Hours12.millis() + 1).unwrap().1,
+                "delete" => live.delete_space(&mut ws, "space-work").unwrap().1,
+                _ => unreachable!(),
+            };
+            let close = &targets.iter().find(|(_, command)| command.item == refused).unwrap().1;
+            let accepted = if refused == "a" { "b" } else { "a" };
+            let other = &targets.iter().find(|(_, command)| command.item == accepted).unwrap().1;
+            assert!(live.settle_close(&other.id));
+            let settled = ws.items[accepted].clone();
+            if operation == "delete" { ws.show_space("one", "other").unwrap(); }
+            let mut replay = ws.clone();
+            let (cancelled, ops) = live.cancel_close(&mut ws, &close.id);
+            for op in &ops { replay.apply(op); }
+            assert!(cancelled, "{operation}");
+            assert_eq!(ws, replay);
+            ws.check_tree().unwrap();
+            assert_eq!(ws.items[refused].lifecycle, Lifecycle::Open, "{operation}");
+            assert_eq!(ws.items[accepted], settled, "{operation}");
+            assert_eq!(live.live_tab(refused), Some(format!("live-{refused}")));
+            assert_eq!(live.live_window(refused).as_deref(), Some("one"));
+            assert_eq!(live.live_tab(accepted), None);
+            assert!(ws.history_purges.values().all(|(_, item, _)| item != refused));
+            assert_eq!(ws.history_profiles.get(refused), history_profile.as_ref());
+            if operation != "auto" && refused == "a" { assert_eq!(ws.selected("one"), Some("a")); }
+            if operation == "delete" {
+                assert!(ws.spaces.iter().all(|space| space.id != "space-work"));
+                assert_eq!(ws.items[refused].membership.parent.as_deref(), Some("other:today"));
+            }
+            let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Engine,
+                strips: vec![strip(&live, &[refused], Some(refused))] });
+            assert!(outcome.applied);
+            assert!(outcome.commands.iter().all(|command| command.kind != CommandKind::Close || command.item != refused));
+        }
+    }
+}
+
+#[test]
+fn private_split_stay_restores_the_refused_pane_without_restoring_the_other() {
+    use ararat_core::model::SplitSide;
+    let mut ws = Workspace::private(Default::default());
+    let a = ws.create_tab("one", "https://a.example").unwrap().iter().find_map(|op| match op {
+        Op::Put(Record::Item(item)) if matches!(item.kind, ItemKind::Tab { .. }) => Some(item.id.clone()), _ => None,
+    }).unwrap();
+    let b = ws.create_tab("one", "https://b.example").unwrap().iter().find_map(|op| match op {
+        Op::Put(Record::Item(item)) if matches!(item.kind, ItemKind::Tab { .. }) => Some(item.id.clone()), _ => None,
+    }).unwrap();
+    let split = ws.make_split(&a, &b, SplitSide::Right).unwrap().1.split;
+    let mut live = Live::new();
+    let tabs = [&a, &b].into_iter().map(|id| LiveTab {
+        off_the_record: true, profile: Default::default(), live_id: format!("live-{id}"), item: Some(id.clone()),
+        opener: None, navigated: false, url: None, title: None,
+    }).collect();
+    live.apply(&mut ws, Transaction { off_the_record: true, epoch: 1, rev: 0, cause: Cause::Engine,
+        strips: vec![Strip { window: "one".into(), tabs, active: Some(format!("live-{a}")) }] });
+    let (_, targets) = live.close_split(&mut ws, &split).unwrap();
+    let command = &targets.iter().find(|(_, command)| command.item == a).unwrap().1;
+    assert!(live.cancel_close(&mut ws, &command.id).0);
+    assert_eq!(ws.items[&a].lifecycle, Lifecycle::Open);
+    assert!(!ws.items.contains_key(&b));
+    assert_eq!(live.live_tab(&a), Some(format!("live-{a}")));
+    assert_eq!(ws.selected("one"), Some(a.as_str()));
+    ws.check_tree().unwrap();
+}

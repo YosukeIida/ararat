@@ -28,7 +28,7 @@ assert 'navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()' in tab
 assert '!navigation->IsSameDocument()' in tab
 assert 'AraratCheckUnregisterBeforeUnload' in tab[tab.index('- (void)replaceContents:'):]
 assert 'AraratCheckDocumentRevision() != generation' in tab
-assert 'let ok = ok && (host?.checkDialogIntegrity() ?? true)' in swift
+assert 'let ok = ok && cleanupSucceeded && (host?.checkDialogIntegrity() ?? true)' in swift
 start = swift[swift.index('adapter.attach(host)'):swift.index('if reopening {',swift.index('adapter.attach(host)'))]
 assert 'session == nil' in start and '--ararat-screen=' in start and 'host.installCheckDialogFactory()' in start
 assert 'if (script == 5 && !AraratCheckRegisterBeforeUnload' in tab
@@ -37,4 +37,13 @@ assert 'if passed { host.configureProfileCloseCheck(0) }' in swift
 assert 'beginCloseRaceCheck(host) { host.expectCheckDialogs(1); NSApp.terminate(nil) }' in swift
 assert 'beginCloseRaceCheck(host) { host.expectCheckDialogs(2); NSApp.terminate(nil) }' in swift
 assert 'g_check_dialog_failed = false' not in host[host.index('- (void)installCheckDialogFactory {'):]
+
+observer = tab[tab.index('  void BeforeUnloadDialogCancelled() override {'):tab.index('  void PrimaryMainFrameRenderProcessGone')]
+assert '[[tab_ ownerHost] tabCloseCancelled:web_contents()]' in observer
+cancel = host[host.index('- (void)tabCloseCancelled:(content::WebContents*)contents {'):host.index('- (void)normalizeChromeSplit:', host.index('- (void)tabCloseCancelled:(content::WebContents*)contents {'))]
+assert 'pending_closes_[key]' in cancel and '[pending_closes_ removeObjectForKey:key]' in cancel
+assert 'if (command && item.length' in cancel
+assert '[self.delegate tabCloseCancelled:item commandId:command]' in cancel
+assert 'g_check_admitted_count == g_check_cancel_dialog || (check == "today" && g_check_admitted_count == 2)' in host
+
 print('containment source checks passed')

@@ -169,6 +169,7 @@ void AraratOpenOffTheRecordURLs(Profile* profile, NSArray* urls);
 - (void)browserCreated:(BrowserWindowInterface*)browser;
 - (void)browserDestroyed:(BrowserWindowInterface*)browser;
 - (void)closeCancelled;
+- (void)tabCloseCancelled:(content::WebContents*)contents;
 - (void)beginClosing;
 - (void)showBrowserProfile:(BrowserWindowInterface*)browser;
 - (void)showBrowserProfileForClose:(BrowserWindowInterface*)browser;

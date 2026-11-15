@@ -88,6 +88,8 @@ struct CancelledClose {
     live: Id,
     window: Option<Id>,
     undo: Vec<(Op, Op)>,
+    bulk: bool,
+    space: Option<Id>,
 }
 
 impl From<crate::edit::EditError> for LiveError {
@@ -254,7 +256,35 @@ impl Live {
         self.pending.remove(command_id);
         let current = workspace.to_ops();
         let mut ops = Vec::new();
-        for (expected, undo) in saved.undo {
+        let destination = saved.space.as_ref().filter(|space| !workspace.spaces.iter().any(|entry| &entry.id == *space))
+            .and_then(|_| workspace.shown_space(saved.window.as_deref().unwrap_or("")).and_then(|id|
+                workspace.spaces.iter().find(|space| space.id == id)).map(|space| space.today.clone()));
+        for (expected, mut undo) in saved.undo {
+            if saved.bulk {
+                if let Op::Put(Record::Window(before)) = &undo {
+                    let Some(mut state) = workspace.windows.get(&before.id).cloned() else { continue };
+                    let Op::Put(Record::Window(after)) = &expected else { continue };
+                    if before.selected.as_deref() == Some(&item) && state.selected == after.selected {
+                        state.selected = Some(item.clone());
+                    }
+                    if before.history.contains(&item) && !state.history.contains(&item) {
+                        let index = before.history.iter().position(|id| id == &item).unwrap().min(state.history.len());
+                        state.history.insert(index, item.clone());
+                    }
+                    if workspace.windows.get(&state.id) != Some(&state) {
+                        let op = Op::Put(Record::Window(state));
+                        workspace.apply(&op);
+                        ops.push(op);
+                    }
+                    continue;
+                }
+                if let (Some(today), Op::Put(Record::Item(row))) = (&destination, &mut undo) {
+                    if row.id != item { continue; }
+                    row.membership.parent = Some(today.clone());
+                    row.membership.previous_parent = None;
+                    row.membership.order = crate::order::key_between(workspace.children(today).last().map(|row| row.membership.order.as_str()), None);
+                }
+            }
             let (kind, id) = match &expected {
                 Op::Put(record) => (record.kind(), record.id()),
                 Op::Delete(kind, id) => (*kind, id.clone()),
@@ -326,27 +356,12 @@ impl Live {
         if !workspace.items.get(split).is_some_and(|item| matches!(item.kind, ItemKind::Split { .. })) {
             return Err(LiveError(format!("item {split} is not a split")));
         }
-        let mut stack = vec![split.to_string()];
-        let mut items = Vec::new();
-        while let Some(id) = stack.pop() {
-            for child in workspace.children(&id) {
-                if matches!(child.kind, ItemKind::Tab { .. }) {
-                    if let Some(live) = self.map.get(&child.id) { items.push((child.id.clone(), live.clone())); }
-                } else { stack.push(child.id.clone()); }
-            }
-        }
+        let before = workspace.clone();
+        let items = workspace.outline_entries(split).into_iter()
+            .filter(|(_, child, _)| matches!(child.kind, ItemKind::Tab { .. }))
+            .map(|(_, child, _)| child.id.clone()).collect();
         let ops = workspace.close_item(split)?;
-        let mut commands = Vec::new();
-        for (item, live) in items {
-            self.pending.retain(|_, (kind, pending)| !(*kind == CommandKind::Activate && pending == &item));
-            self.map.remove(&item);
-            self.reverse.remove(&live);
-            self.windows.remove(&live);
-            let command = Command { id: self.fresh_command_id(workspace), kind: CommandKind::Close, item: item.clone(), url: None };
-            self.pending.insert(command.id.clone(), (CommandKind::Close, item));
-            commands.push((live, command));
-        }
-        self.selection_intents.retain(|id, _| self.pending.contains_key(id));
+        let commands = self.close_targets(workspace, &before, &ops, items);
         Ok((ops, commands))
     }
 
@@ -368,47 +383,84 @@ impl Live {
             .map(|(_, item, _)| item.id.clone())
             .filter(|id| matches!(workspace.items[id].kind, ItemKind::Tab { .. }) && self.map.contains_key(id))
             .collect();
+        let before = workspace.clone();
         let (ops, batch) = workspace.clear_today(space).map_err(|error| LiveError(error.0))?;
-        let targets = self.close_targets(workspace, items);
+        let targets = self.close_targets(workspace, &before, &ops, items);
         Ok((ops, targets, batch))
     }
 
     pub fn auto_archive(&mut self, workspace: &mut Workspace, now: u64) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
         if workspace.is_private() { return Ok((Vec::new(), Vec::new())); }
+        let before = workspace.clone();
         let ops = workspace.auto_archive(now)?;
-        let targets = self.close_archived(workspace, &ops);
+        let targets = self.close_archived(workspace, &before, &ops);
         Ok((ops, targets))
     }
 
     pub fn delete_space(&mut self, workspace: &mut Workspace, space: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
         if workspace.is_private() { return Err(LiveError("operation unavailable in a private workspace".into())); }
+        let before = workspace.clone();
         let ops = workspace.delete_space(space)?;
-        let targets = self.close_archived(workspace, &ops);
+        let targets = self.close_archived(workspace, &before, &ops);
         Ok((ops, targets))
     }
 
-    fn close_archived(&mut self, workspace: &Workspace, ops: &[Op]) -> Vec<(Id, Command)> {
+    fn close_archived(&mut self, workspace: &Workspace, before: &Workspace, ops: &[Op]) -> Vec<(Id, Command)> {
         let items = ops.iter().filter_map(|op| match op {
             Op::Put(Record::Item(item)) if item.lifecycle == Lifecycle::Archived && matches!(item.kind, ItemKind::Tab { .. }) => Some(item.id.clone()),
             _ => None,
         }).collect();
-        self.close_targets(workspace, items)
+        self.close_targets(workspace, before, ops, items)
     }
 
-    fn close_targets(&mut self, workspace: &Workspace, items: Vec<Id>) -> Vec<(Id, Command)> {
+    fn close_targets(&mut self, workspace: &Workspace, before: &Workspace, ops: &[Op], items: Vec<Id>) -> Vec<(Id, Command)> {
         let mut targets = Vec::new();
+        let inverse = Self::close_inverse(&before.to_ops(), &workspace.to_ops(), ops);
         for item in items {
             let Some(live) = self.map.remove(&item) else { continue };
             self.reverse.remove(&live);
-            self.windows.remove(&live);
+            let window = self.windows.remove(&live);
             // A row that leaves the map cannot answer an Activate any more.
             self.pending.retain(|_, (kind, pending)| !(*kind == CommandKind::Activate && pending == &item));
             let command = Command { id: self.fresh_command_id(workspace), kind: CommandKind::Close, item: item.clone(), url: None };
+            let mut ancestors = HashSet::from([item.clone()]);
+            let mut parent = before.items[&item].membership.parent.as_ref();
+            while let Some(ancestor) = parent.and_then(|id| before.items.get(id)) {
+                if matches!(ancestor.kind, ItemKind::Split { .. }) { ancestors.insert(ancestor.id.clone()); }
+                parent = ancestor.membership.parent.as_ref();
+            }
+            let undo = inverse.iter().cloned().filter(|(expected, _)| match expected {
+                Op::Put(Record::Item(row)) => ancestors.contains(&row.id),
+                Op::Delete(crate::model::Kind::Item, row) => ancestors.contains(row),
+                Op::Put(Record::HistoryPurge { item: row, .. } | Record::HistoryProfile { item: row, .. }) => row == &item,
+                Op::Put(Record::Window(_)) => true,
+                Op::Put(Record::LastSelected { item: row, .. }) => row == &item,
+                Op::Delete(crate::model::Kind::LastSelected, row) => row == &item,
+                _ => false,
+            }).collect();
+            let space = before.list_for(&item).and_then(|(root, _)| before.spaces.iter()
+                .find(|space| space.today == root || space.pinned == root)).map(|space| space.id.clone());
+            self.close_undo.insert(command.id.clone(), CancelledClose { live: live.clone(), window, undo, bulk: true, space });
             self.pending.insert(command.id.clone(), (CommandKind::Close, item));
             targets.push((live, command));
         }
         self.selection_intents.retain(|id, _| self.pending.contains_key(id));
         targets
+    }
+
+    fn close_inverse(before: &[Op], after: &[Op], ops: &[Op]) -> Vec<(Op, Op)> {
+        let mut undo = Vec::new();
+        for op in ops {
+            let (kind, id) = match op {
+                Op::Put(record) => (record.kind(), record.id()),
+                Op::Delete(kind, id) => (*kind, id.clone()),
+            };
+            let lookup = |records: &[Op]| records.iter().find(|op| matches!(op, Op::Put(record) if record.kind() == kind && record.id() == id)).cloned()
+                .unwrap_or_else(|| Op::Delete(kind, id.clone()));
+            let change = (lookup(after), lookup(before));
+            if !undo.contains(&change) { undo.push(change); }
+        }
+        undo
     }
 
     fn finish(&mut self, workspace: &mut Workspace, item: &str, archive: bool) -> Result<(Vec<Op>, Command), LiveError> {
@@ -417,17 +469,7 @@ impl Live {
         let before = workspace.to_ops();
         let ops = if archive { workspace.archive_item(item)? } else { workspace.close_item(item)? };
         let after = workspace.to_ops();
-        let mut undo = Vec::new();
-        for op in &ops {
-            let (kind, id) = match op {
-                Op::Put(record) => (record.kind(), record.id()),
-                Op::Delete(kind, id) => (*kind, id.clone()),
-            };
-            let lookup = |records: &[Op]| records.iter().find(|op| matches!(op, Op::Put(record) if record.kind() == kind && record.id() == id)).cloned()
-                .unwrap_or_else(|| Op::Delete(kind, id.clone()));
-            let change = (lookup(&after), lookup(&before));
-            if !undo.contains(&change) { undo.push(change); }
-        }
+        let undo = Self::close_inverse(&before, &after, &ops);
         self.map.remove(item);
         self.reverse.remove(&live);
         let window = self.windows.remove(&live);
@@ -436,7 +478,7 @@ impl Live {
             item: item.into(), url: None,
         };
         self.pending.insert(command.id.clone(), (CommandKind::Close, item.into()));
-        self.close_undo.insert(command.id.clone(), CancelledClose { live, window, undo });
+        self.close_undo.insert(command.id.clone(), CancelledClose { live, window, undo, bulk: false, space: None });
         Ok((ops, command))
     }
 
