@@ -12,9 +12,11 @@ repo の中のファイル（README、AGENTS.md、`docs/` の下すべて、コ�
 
 作業の 1 単位ごとに、design、orchestrator、implementation、review の席で分担する。
 
-1. 範囲と設計: Claude Opus、effort medium を使う。作るもの、触るファイル、不変条件、境界の場合を書く。orchestrator は Claude Sonnet、effort medium を使う。
-2. 実装: 2 つの席を別々の worktree で並べて動かす。1 つは Codex の `gpt-6.1-terra`、effort high、personal アカウント、もう 1 つは DeepSeek V4.1 Flash、variant high、OpenCode Go（`opencode-go/deepseek-v4.1-flash#high`）を使う。personal の Codex の週枠が尽きたときは、OpenCode の席でできる作業だけを続け、枠の復帰を待つ。Codex は `CODEX_HOME=$HOME/.codex-personal` を使い、Ararat では labteam を使わない。
-3. レビュー: Claude Opus、effort medium を使う。指摘ごとに、直すか直さないかとその理由を決め、直すものを 2 に戻す。
+1. 範囲と設計: Claude を使う。作るもの、触るファイル、不変条件、境界の場合を書く。orchestrator も Claude の席である。
+2. 実装: 2 つの席を別々の worktree で並べて動かす。1 つは personal アカウントの Codex、もう 1 つは OpenCode Go の席である。personal の Codex の週枠が尽きたときは、OpenCode の席でできる作業だけを続け、枠の復帰を待つ。Codex は `CODEX_HOME=$HOME/.codex-personal` を使い、Ararat では labteam を使わない。
+3. レビュー: Claude を使う。指摘ごとに、直すか直さないかとその理由を決め、直すものを 2 に戻す。
+
+各席のモデルと effort は、ここではなくチームの設定 `~/.config/herdr-agent-team/ararat.json` で決める。
 
 際どい境界の不具合では順序を逆にする。implementation が調べ、design がセカンドオピニオンを出し、implementation が修正し、review が確認する。
 

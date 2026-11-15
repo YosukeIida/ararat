@@ -10,9 +10,11 @@ Write repository files (README, AGENTS.md, everything under `docs/`, code commen
 
 Every unit of work is split between design, orchestrator, implementation and review seats:
 
-1. Scope and design: Claude Opus, effort medium. It writes what to build, the files it touches, the invariants and the edge cases. The orchestrator is Claude Sonnet, effort medium.
-2. Implementation: two seats run in parallel on separate worktrees: Codex `gpt-6.1-terra`, effort high, on the personal account, and DeepSeek V4.1 Flash, variant high, on OpenCode Go (`opencode-go/deepseek-v4.1-flash#high`). When the personal Codex weekly quota is exhausted, continue only work the OpenCode seat can do and wait for the quota to reset. Codex uses `CODEX_HOME=$HOME/.codex-personal`; Ararat never uses labteam.
-3. Review: Claude Opus, effort medium. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
+1. Scope and design: Claude. It writes what to build, the files it touches, the invariants and the edge cases. The orchestrator is a Claude seat.
+2. Implementation: two seats run in parallel on separate worktrees: Codex on the personal account, and an OpenCode Go seat. When the personal Codex weekly quota is exhausted, continue only work the OpenCode seat can do and wait for the quota to reset. Codex uses `CODEX_HOME=$HOME/.codex-personal`; Ararat never uses labteam.
+3. Review: Claude. For each finding, decide fix or no fix and why, and send the fixes back to step 2.
+
+Each seat's model and effort are set in the team config, `~/.config/herdr-agent-team/ararat.json`, not here.
 
 For a hard edge-case bug the order is reversed: implementation investigates, design gives a second opinion, implementation fixes it, and review checks it.
 
