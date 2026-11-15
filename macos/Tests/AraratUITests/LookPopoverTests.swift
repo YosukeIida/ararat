@@ -965,7 +965,7 @@ func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
     func arrow(_ code: UInt16) throws {
         let character = String(UnicodeScalar(code == 126 ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!)
         let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
-        window.sendEvent(event)
+        window.firstResponder?.keyDown(with: event)
     }
     let focusView = try #require(track as? LookTrackProbeView)
     #expect(focusView.requestControlFocus())

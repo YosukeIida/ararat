@@ -28,6 +28,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private var profilePanel: LittleWindowMenuPanel?
     private var spacePanel: LittleWindowMenuPanel?
     private var presenter: CommandBarPresenter?
+    private let commandBarVisible: Bool
     private var keyMonitor: Any?
     private var closeObserver: NSObjectProtocol?
     private var moveObservers: [NSObjectProtocol] = []
@@ -42,11 +43,12 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private(set) var checkHandoffLive: String?
     private(set) var checkHandoffNavigationCount: UInt = 0
 
-    init(popup: PopupHost, origin: Runtime, profile: String, frame: NSRect, url: String?) {
+    init(popup: PopupHost, origin: Runtime, profile: String, frame: NSRect, url: String?, commandBarVisible: Bool = true) {
         self.popup = popup
         self.origin = origin
         self.profileName = profile
         self.initialURL = url
+        self.commandBarVisible = commandBarVisible
         super.init()
         popup.littleWindow = self
         installBar(frame: frame)
@@ -471,7 +473,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     func openCommandBar() {
         guard let window, popup.host != nil, !opening else { return }
         presenter?.close(restoreFocus: false)
-        let presenter = CommandBarPresenter(parent: window, visible: true, bindings: defaultKeyBindings(),
+        let presenter = CommandBarPresenter(parent: window, visible: commandBarVisible, bindings: defaultKeyBindings(),
                                             highlight: .selectedContentBackgroundColor,
                                             width: LittleWindowMetrics.commandBarWidth)
         presenter.onCommit = { [weak self, weak presenter] suggestion, mode, _ in
@@ -482,9 +484,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         checkActions["command_bar", default: 0] += 1
         presenter.open(mode: .editURL, prefill: pageTab?.url)
         guard let adapter = origin?.workspace else { return }
-        adapter.commandBarSession { result in
-            guard case .success(let session) = result else { return }
-            presenter.applyStore(LittleWindowCommandStore(session: session))
+        adapter.commandBarSession { [weak self, weak presenter] result in
+            guard let self, let presenter, self.presenter === presenter else { return }
+            switch result {
+            case .success(let session): presenter.applyStore(LittleWindowCommandStore(session: session))
+            case .failure(let error):
+                self.origin?.report(error)
+                presenter.close()
+            }
         }
     }
 

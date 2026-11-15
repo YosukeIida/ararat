@@ -12,6 +12,7 @@ public final class SidebarActions {
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
+    public var onRemoveFavorite: ((String) -> Void)?
     public var onNewTab: (() -> Void)?
     public var onClearToday: (() -> Void)?
     public var onShowSpace: ((String) -> Void)?
@@ -102,6 +103,7 @@ public final class SidebarActions {
         sidebar.onClose = onClose
         sidebar.onCloseSelected = onCloseSelected
         sidebar.onArchive = onArchive
+        sidebar.onRemoveFavorite = onRemoveFavorite
         sidebar.onNewTab = onNewTab
         sidebar.onClearToday = onClearToday
         sidebar.onShowSpace = onShowSpace

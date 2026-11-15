@@ -126,6 +126,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onWorkspaceChange: (@MainActor () -> Void)?
     public var onQuitProfileSwitch: (@MainActor () -> Void)?
     public var onCloseStarted: (@MainActor () -> Void)?
+    public var onRowClose: (@MainActor (String) -> Void)?
+    private var closingRows: Set<String> = []
     public var onPageFullscreenChanged: (@MainActor (Bool) -> Void)?
     public var onWindowFullscreenChanged: (@MainActor (Bool) -> Void)?
     public var onWorkspaceCommand: (@MainActor (String) -> Void)?
@@ -799,7 +801,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return host.navigateURL(url, target: target)
     }
 
-    public func close(id: String, archive: Bool? = nil, expectedLive: String? = nil) {
+    public func close(id: String, archive: Bool? = nil, expectedLive: String? = nil, animate: Bool = true) {
         precondition(Thread.isMainThread)
         // Only the row-less ⌘W (a nil archive) resolves a split member to its split row; a
         // row's ✕/− acts on the row that showed it until U25c draws splits as one row.
@@ -808,7 +810,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let rows = store.snapshot(windowId: windowID).spaces.flatMap { $0.today + $0.pinned + $0.favorites }
             return store.splitLayout(itemId: selected)?.id == splitOwner(id, rows: rows)
         }) { invalidateSelection() }
-        queue.async { self.closeInQueue(id: id, archive: archive, expectedLive: expectedLive) }
+        queue.async { self.closeInQueue(id: id, archive: archive, expectedLive: expectedLive, animate: animate) }
     }
 
     // ⌘W with no sidebar row: the selection is read and the close is decided in one queue
@@ -821,7 +823,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let rows = store.snapshot(windowId: self.windowID).spaces.flatMap { $0.today + $0.pinned + $0.favorites }
             let item = splitOwner(selected, rows: rows)
             if store.splitLayout(itemId: selected)?.id == item { DispatchQueue.main.async { self.invalidateSelection() } }
-            self.closeInQueue(id: item, archive: nil, expectedLive: nil)
+            self.closeInQueue(id: item, archive: nil, expectedLive: nil, animate: true)
         }
     }
 
@@ -861,7 +863,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     // Runs on the adapter's queue. A nil archive applies R1/D2 to the row it reads.
-    private func closeInQueue(id: String, archive: Bool?, expectedLive: String?) {
+    private func closeInQueue(id: String, archive: Bool?, expectedLive: String?, animate: Bool) {
         defer { session.drainHistoryPurges() }
         do {
             guard let store = self.store else { return }
@@ -876,6 +878,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 let targets = try store.liveCloseSplit(item: item)
                 let snapshot = store.snapshot(windowId: self.windowID)
                 DispatchQueue.main.async {
+                    if animate { self.closingRows.insert(item) }
+                    else { self.closingRows.remove(item) }
                     for target in targets {
                         if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
                         else if self.session.cancelPendingOpen(target.liveId) {
@@ -896,11 +900,19 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 let snapshot = try archive
                     ? store.archiveItem(windowId: self.windowID, id: item)
                     : store.closeItem(windowId: self.windowID, id: item)
-                DispatchQueue.main.async { self.deliverIfCurrent(snapshot) }
+                DispatchQueue.main.async {
+                    if animate { self.closingRows.insert(item) }
+                    else { self.closingRows.remove(item) }
+                    self.deliverIfCurrent(snapshot)
+                }
                 return
             }
             let command = try archive ? store.liveArchive(item: item) : store.liveClose(item: item)
-            DispatchQueue.main.async { self.session.tab(liveID)?.close(withCommandId: command.id) }
+            DispatchQueue.main.async {
+                if animate { self.closingRows.insert(item) }
+                else { self.closingRows.remove(item) }
+                self.session.tab(liveID)?.close(withCommandId: command.id)
+            }
         } catch { self.report(error) }
     }
 
@@ -951,6 +963,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         handoffGeneration += 1
         invalidateSelection()
         MainActor.assumeIsolated { onCloseStarted?() }
+    }
+
+    public func tabCloseCancelled(_ itemId: String) {
+        precondition(Thread.isMainThread)
+        closingRows.remove(itemId)
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {
@@ -1231,6 +1248,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
         layoutSplit(skipNearSplitFrames: skipNearSplitFrames)
         layoutFailures(snapshot: snapshot)
+        let rows = snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }
+        let remaining = Set(rows.map(\.id))
+        for id in closingRows where !remaining.contains(id) { onRowClose?(id) }
+        closingRows.formIntersection(rows.filter { !$0.unloaded }.map(\.id))
         onSnapshot?(snapshot)
     }
 

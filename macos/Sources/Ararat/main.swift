@@ -1255,6 +1255,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
     }
     adapter.onWorkspaceChange = { [weak self] in self?.refreshOtherWindows() }
+    adapter.onRowClose = { [weak self] id in self?.sidebar?.expectRowClose(id: id) }
     adapter.onQuitProfileSwitch = { [weak self] in self?.quitDuringProfileSwitch = self?.captureCheckRows() }
     adapter.onCloseStarted = { [weak self] in
       self?.selectionGeneration += 1
@@ -1286,6 +1287,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     actions.onArchive = { [weak self] id in
       self?.adapter?.close(id: id, archive: true)
     }
+    actions.onRemoveFavorite = { [weak self] id in
+      self?.adapter?.close(id: id, archive: true, animate: false)
+    }
     actions.onNewTab = { [weak self] in self?.performWorkspaceCommand("new_tab") }
     actions.onClearToday = { [weak self] in self?.clearToday() }
     actions.onShowSpace = { [weak self] id in
@@ -1306,11 +1310,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
     }
     actions.onDeleteSpace = { [weak self, weak workspace] id in
-      workspace?.deleteSpace(id: id) { [weak self] result in self?.showResult(result) }
+      workspace?.deleteSpace(id: id) { [weak self] result in
+        switch result {
+        case .success(let next): self?.showWorkspaceEdit(next)
+        case .failure(let error): self?.report(error)
+        }
+      }
     }
     actions.onSpaceSettings = { [weak self] id in self?.openSettings(spaceID: id) }
     if let keyBindings, let airTraffic {
-      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.show($0) },
+      actions.lookSettings = SettingsModel(snapshot: snapshot, adapter: workspace, publish: { [weak self] in self?.showWorkspaceEdit($0) },
         resetWidth: { [weak self] in self?.container?.resizeHandle.resetWidth() },
         preview: { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) },
         keyBindings: keyBindings, airTraffic: airTraffic)
@@ -1369,7 +1378,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if session == nil && adoptedWindow { adapter.restoreSelection() }
     if session == nil && !adoptedWindow { running.finishCrashRecovery?() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
-       (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || quitMode == "quit-cancel" || quitMode == "close") {
+       (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || browserCheckMode == "today" || quitMode == "quit-cancel" || quitMode == "close") {
       host.installCheckDialogFactory()
     }
     if root == nil { installCoreMenu() }
@@ -1516,6 +1525,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
     refreshSidebarRowState(snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
+  }
+
+  func showWorkspaceEdit(_ next: WorkspaceSnapshot) {
+    if let shown = snapshot.shownSpaceId, !next.spaces.contains(where: { $0.id == shown }) {
+      showAndSelect(.success(next))
+    } else {
+      show(next)
+    }
   }
 
   func updatePageVisibility(_ snapshot: WorkspaceSnapshot) {
@@ -1696,6 +1713,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard let self, self.selectionGeneration == generation else { return }
       if case .success = result { self.adapter?.invalidateSelection() }
       self.showAndSelect(result)
+      if case .success(let snapshot) = result {
+        if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) {
+          self.sidebar?.showSpaceWithoutNotification(at: index)
+        }
+        self.sidebar?.setLibraryOpen(false)
+      }
     }
   }
 
@@ -1967,7 +1990,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     guard let workspace, let keyBindings, let airTraffic else { return }
     let owner = root ?? self
-    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.show($0) }
+    let publish: (WorkspaceSnapshot) -> Void = { [weak self] in self?.showWorkspaceEdit($0) }
     let resetWidth: () -> Void = { [weak self] in self?.container?.resizeHandle.resetWidth() }
     let preview: (String, Look?, Bool) -> Void = { [weak self] id, look, active in self?.sidebar?.previewLook(spaceID: id, look: look, active: active) }
     if owner.settings == nil {
@@ -2509,11 +2532,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     presenter.open(mode: spec.mode, prefill: spec.prefill)
     workspace.commandBarSession(privateWindow: presenter.controller.privateWindow) { [weak self, weak presenter] result in
-      guard let self, let presenter, self.commandPresenter === presenter,
-            let session = try? result.get() else { return }
-      let base = CommandBarSessionStore(session: session)
-      // U27j O7: the "Import from Arc…" row rides only a check, the same gate as its menu item.
-      presenter.applyStore(Runtime.onboardingEntryVisible ? OnboardingCommandStore(base: base) : base)
+      guard let self, let presenter, self.commandPresenter === presenter else { return }
+      switch result {
+      case .success(let session):
+        let base = CommandBarSessionStore(session: session)
+        // U27j O7: the "Import from Arc…" row rides only a check, the same gate as its menu item.
+        presenter.applyStore(Runtime.onboardingEntryVisible ? OnboardingCommandStore(base: base) : base)
+      case .failure(let error):
+        self.report(error)
+        presenter.close()
+      }
     }
   }
 
