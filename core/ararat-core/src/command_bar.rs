@@ -4,8 +4,16 @@ use crate::model::{ItemKind, Lifecycle, Workspace};
 
 pub const SEARCH_URL: &str = "https://www.google.com/search?q=";
 
+/// Typed text without C0 controls and DEL. The VM's input delivered 0x10 around "google"
+/// (2026-11-15), which the form encoding then wrote into the query as `%10`; no control is
+/// meaningful in an address or a search, so both URL builders drop them.
+pub fn strip_controls(text: &str) -> String {
+    text.chars().filter(|c| !c.is_ascii_control()).collect()
+}
+
 pub fn search_url(query: &str) -> String {
-    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let text = strip_controls(query);
+    let encoded: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect();
     format!("{SEARCH_URL}{encoded}")
 }
 
@@ -407,13 +415,15 @@ fn starts_with_at_word_start(title: &str, query: &str) -> bool {
 }
 
 fn typed_row(query: &str) -> Suggestion {
-    let url_like = looks_like_url(query);
+    // A control character in typed text never belongs in the address either (see strip_controls).
+    let query = strip_controls(query);
+    let url_like = looks_like_url(&query);
     let target = if url_like {
         let host = query.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
-        let url = if query.contains("://") || query.starts_with("about:") || query.starts_with("file:") { query.to_string() } else if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { format!("http://{query}") } else { format!("https://{query}") };
+        let url = if query.contains("://") || query.starts_with("about:") || query.starts_with("file:") { query.clone() } else if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { format!("http://{query}") } else { format!("https://{query}") };
         Target::OpenUrl { url }
     } else {
-        Target::Search { url: search_url(query) }
+        Target::Search { url: search_url(&query) }
     };
     Suggestion { title: query.into(), subtitle: if url_like { "Open URL" } else { "Search" }.into(), url: None, key: None, target, score: 0.0 }
 }

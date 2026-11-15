@@ -24,6 +24,17 @@ fn url_detection_and_typed_rows() {
 fn search_url_encodes_url_like_and_unicode_input() {
     assert_eq!(command_bar::search_url("example.com & 日本"), "https://www.google.com/search?q=example.com+%26+%E6%97%A5%E6%9C%AC");
 }
+#[test]
+fn control_characters_never_reach_the_url() {
+    // The owner's VM delivered 0x10 around "google" (2026-11-15): the form encoding wrote it
+    // into the query as %10. Typed text loses every C0 control and DEL before a URL is built.
+    assert_eq!(command_bar::search_url("\u{10}\u{10}google\u{10}"), "https://www.google.com/search?q=google");
+    assert!(matches!(&command_bar::rank("\u{10}google\u{10}", &[])[0].target,
+                     Target::Search { url } if url == "https://www.google.com/search?q=google"));
+    assert!(matches!(&command_bar::rank("https://exa\u{10}mple.com/\u{7}path", &[])[0].target,
+                     Target::OpenUrl { url } if url == "https://example.com/path"));
+    assert_eq!(command_bar::strip_controls("a\tb\nc\u{0}\u{7f}"), "abc");
+}
 struct Extra;
 impl Source for Extra {
     fn candidates(&self, _: &str) -> Vec<Suggestion> {
