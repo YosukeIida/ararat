@@ -1748,6 +1748,13 @@ public final class SidebarView: NSView {
     /// this view's own hit (a drag area, see `hitTest`) reaches here.
     override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// AppKit's own window drag never runs here: the press is stored and handed to
+    /// `performDrag(with:)` by `WindowDrag`, and a full-size content view would otherwise let
+    /// AppKit start a second drag on the same gesture from its title strip — the two fought on
+    /// design's VM run (2026-11-16), where a press in the strip lost x while one lower in the
+    /// window moved both axes.
+    override public var mouseDownCanMoveWindow: Bool { false }
+
     override public func accessibilityChildren() -> [Any]? {
         isScrollPreview ? [] : super.accessibilityChildren()
     }

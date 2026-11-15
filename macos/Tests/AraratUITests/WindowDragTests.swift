@@ -105,6 +105,30 @@ func cardMarginsAreTheContainersDragArea() throws {
     #expect(container.checkPressTarget(at: pagePoint) == "NSView")
 }
 
+/// The four drag areas refuse AppKit's own window drag: `WindowDrag` hands the stored press to
+/// `performDrag(with:)`, and a full-size content view would otherwise let AppKit start a second
+/// drag on the same gesture from its title strip (design's VM run, 2026-11-16).
+@Test @MainActor
+func theDragAreasRefuseAppKitsOwnWindowDrag() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 300),
+                          styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+    // The premise: in this window a plain view is AppKit's own drag area.
+    window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
+    #expect(try #require(window.contentView).mouseDownCanMoveWindow)
+    window.contentView = SidebarHeaderView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+    #expect(!(try #require(window.contentView)).mouseDownCanMoveWindow)
+    window.contentView = SidebarScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+    #expect(!(try #require(window.contentView)).mouseDownCanMoveWindow)
+    let sidebar = SidebarView(snapshot: dragSnapshot())
+    window.contentView = sidebar
+    #expect(!sidebar.mouseDownCanMoveWindow)
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    window.contentView = container
+    #expect(!container.mouseDownCanMoveWindow)
+    defer { window.contentView = nil }
+}
+
 @Test
 func fullScreenWindowsRefuseTheDrag() {
     #expect(WindowDrag.allowsDrag(styleMask: [.titled, .resizable]))

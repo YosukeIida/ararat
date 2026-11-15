@@ -193,6 +193,12 @@ public final class SidebarHeaderView: NSView {
     /// header's own gaps resolve to this view, never its buttons.
     override public func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// AppKit's own window drag never runs here: `WindowDrag` owns the press, and a full-size
+    /// content view would otherwise let AppKit start a second drag on the same gesture from its
+    /// title strip (design's VM run, 2026-11-16: the strip's press lost x, one lower in the
+    /// window moved both axes).
+    override public var mouseDownCanMoveWindow: Bool { false }
+
     override public func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))

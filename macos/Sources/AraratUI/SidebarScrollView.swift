@@ -201,6 +201,12 @@ class SidebarScrollView: NSScrollView {
     /// empty area below the last row resolves to this view (see `hitTest`).
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// AppKit's own window drag never runs here: `WindowDrag` owns the press, and a full-size
+    /// content view would otherwise let AppKit start a second drag on the same gesture from its
+    /// title strip (design's VM run, 2026-11-16: the strip's press lost x, one lower in the
+    /// window moved both axes).
+    override var mouseDownCanMoveWindow: Bool { false }
+
     func scrollNatively(with event: NSEvent) { super.scrollWheel(with: event) }
 
     override func flashScrollers() {
