@@ -20,6 +20,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         guard CommandLine.arguments.contains("--ararat-check=little-window") || CommandLine.arguments.contains("--ararat-screen=little-window") else { return }
         FileHandle.standardError.write(Data("ararat-trace: little-handoff window=\(windowID) \(message())\n".utf8))
     }
+    private func traceToday(_ message: @autoclosure () -> String) {
+        guard CommandLine.arguments.contains("--ararat-screen=today") else { return }
+        FileHandle.standardError.write(Data("ararat-trace: today window=\(windowID) \(message())\n".utf8))
+    }
     public let session: WorkspaceSession
     public let isPrivate: Bool
     private var queue: DispatchQueue { session.queue }
@@ -831,13 +835,17 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     // engine's replies match commands; the caller closes the pages it returns (U25b D6).
     public func clearToday(spaceID: String, completion: @escaping @MainActor (LiveClearToday?) -> Void) {
         precondition(Thread.isMainThread)
+        traceToday("clear=request space=\(spaceID)")
         queue.async {
             defer { self.session.drainHistoryPurges() }
             do {
                 guard let store = self.store else { DispatchQueue.main.async { completion(nil) }; return }
                 let result = try store.liveClearToday(windowId: self.windowID, spaceId: spaceID)
+                self.traceToday("clear=prepared targets=\(result.targets.map { $0.command.id }) items=\(result.targets.map { $0.command.item })")
                 DispatchQueue.main.async {
+                    self.traceToday("clear=dispatch")
                     self.session.closeLiveTargets(result.targets, report: self.report)
+                    self.traceToday("clear=close-returned")
                     self.deliverIfCurrent(result.snapshot)
                     completion(result)
                 }
@@ -886,6 +894,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                             self.queue.async {
                                 _ = self.store?.liveCancel(commandId: target.liveId)
                                 _ = self.store?.liveSettleClose(commandId: target.command.id)
+                                self.session.drainHistoryPurges()
                             }
                         } else {
                             self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))
@@ -965,9 +974,23 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         MainActor.assumeIsolated { onCloseStarted?() }
     }
 
-    public func tabCloseCancelled(_ itemId: String) {
+    public func tabCloseCancelled(_ itemId: String, commandId: String) {
         precondition(Thread.isMainThread)
+        traceToday("close=cancelled item=\(itemId) command=\(commandId)")
         closingRows.remove(itemId)
+        queue.async {
+            do {
+                guard let store = self.store else { return }
+                let cancelled = try store.liveCancelClose(commandId: commandId)
+                self.traceToday("close=cancel-settled command=\(commandId) restored=\(cancelled)")
+                guard cancelled else { return }
+                let snapshot = store.snapshot(windowId: self.windowID)
+                DispatchQueue.main.async {
+                    self.deliverIfCurrent(snapshot)
+                    self.onWorkspaceChange?()
+                }
+            } catch { self.report(error) }
+        }
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {

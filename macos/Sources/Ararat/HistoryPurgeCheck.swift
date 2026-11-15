@@ -97,14 +97,23 @@ final class HistoryPurgeCheck {
       tab.checkFlushHistory { written in MainActor.assumeIsolated {
         guard written, let session = runtime.adapter?.session else { self.fail("initial history flush failed"); return }
         let archiveItem = self.item
+        guard let original = session.purgeHistory else { self.fail("purge API missing"); return }
+        self.originalPurge = original
+        session.purgeHistory = { profile, item, stamp, completion in
+          if item == archiveItem, self.stale == nil {
+            self.stale = session.queue.sync {
+              try? session.store?.pendingHistoryPurges().first(where: { $0.item == archiveItem })
+            }
+            session.purgeHistory = original
+          }
+          original(profile, item, stamp, completion)
+        }
         session.queue.async {
           do {
             guard let store = session.store else { throw NSError(domain: "history-check", code: 1) }
             let command = try store.liveArchive(item: archiveItem)
-            guard let purge = try store.pendingHistoryPurges().first(where: { $0.item == archiveItem }) else { throw NSError(domain: "history-check", code: 2) }
             session.drainHistoryPurges()
             DispatchQueue.main.async {
-              self.stale = purge
               guard let host = self.runtime?.host,
                     let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == self.item }) else { self.fail("archive tab missing"); return }
               self.phase = 3
@@ -113,7 +122,7 @@ final class HistoryPurgeCheck {
           } catch { DispatchQueue.main.async { self.fail("archive failed: \(error)") } }
         }
       } }
-    } else if phase == 3, !pending(item), !live(item), !tabs.contains(where: { $0.itemId == item }) {
+    } else if phase == 3, stale != nil, !pending(item), !live(item), !tabs.contains(where: { $0.itemId == item }) {
       phase = 100
       inspect(item) { state in
         guard state["exists"] as? Bool == false, let workspace = runtime.workspace else { self.fail("archived file still exists"); return }
