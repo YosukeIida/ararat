@@ -30,9 +30,8 @@ struct SpaceScrollState {
     private(set) var followedExcess = 0.0
     private var motion: [(time: TimeInterval, delta: Double)] = []
     private var wheel: [(time: TimeInterval, delta: Double)] = []
-    private var wheelPausedUntil = -Double.infinity
 
-    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double, presentationOffset: Double = 0, direction: SpaceScrollDirection = .natural) -> Action {
+    mutating func handle(_ event: SpaceScrollEvent, index: Int, count: Int, pitch: Double, presentationOffset: Double = 0, direction: SpaceScrollDirection = .natural, wheelPausedUntil: inout TimeInterval) -> Action {
         guard count > 0 else { return .vertical }
         // The one place the Spaces pane's direction applies (D3, architecture §7): the event's
         // horizontal delta is turned around before the state machine reads it, so the wheel's

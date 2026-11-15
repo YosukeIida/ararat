@@ -501,10 +501,11 @@ private struct SettingsDetail: View {
         }
     }
     @State private var scroll = SpaceScrollState()
+    @State private var wheelPausedUntil = -Double.infinity
     func handleScroll(_ event: NSEvent) -> Bool {
         guard let space = model.space, let index = model.snapshot.spaces.firstIndex(where: { $0.id == space.id }) else { return false }
         let phase: SpaceScrollEvent.Phase = event.phase.contains(.began) ? .began : event.phase.contains(.ended) ? .ended : event.phase.contains(.cancelled) ? .cancelled : event.phase.isEmpty ? .none : .changed
-        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection)
+        let action = scroll.handle(SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase, momentum: !event.momentumPhase.isEmpty, inverted: event.isDirectionInvertedFromDevice, time: event.timestamp), index: index, count: model.snapshot.spaces.count, pitch: pageWidth, direction: model.spaceScrollDirection, wheelPausedUntil: &wheelPausedUntil)
         switch action {
         case .vertical: return false
         case .follow(let value): followedOffset = SettingsModel.settingsOffset(value, index: index)

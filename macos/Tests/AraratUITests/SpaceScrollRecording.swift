@@ -87,18 +87,21 @@ struct SpaceScrollReplay {
     @MainActor
     static func run(_ events: [SpaceScrollRecordedEvent], from index: Int, count: Int,
                     pitch: Double = 180,
-                    direction: SpaceScrollDirection = .natural) -> SpaceScrollReplay {
+                    direction: SpaceScrollDirection = .natural,
+                    resetAfterSwitch: Bool = false) -> SpaceScrollReplay {
+        var statePause = -Double.infinity
         var state = SpaceScrollState()
         var current = index
         var steps: [SpaceScrollReplay.Step] = []
         for event in events {
             let action = state.handle(event.event, index: current, count: count, pitch: pitch,
-                                      direction: direction)
+                                      direction: direction, wheelPausedUntil: &statePause)
             if case .settle(let target, _, let switched) = action, switched,
                (0..<count).contains(target) {
                 // The pull past either end targets -1 or count; keep the page for the next event.
                 steps.append(Step(time: event.time, from: current, to: target))
                 current = target
+                if resetAfterSwitch { state = SpaceScrollState() }
             }
         }
         return SpaceScrollReplay(index: current, steps: steps)
