@@ -38,6 +38,7 @@ fn address_classification_and_destinations() {
         ("example.com:65535", Some("https://example.com:65535")),
         ("my_host.example", Some("https://my_host.example")),
         ("example.xn--p1ai", Some("https://example.xn--p1ai")),
+        ("example.XN--P1AI", Some("https://example.XN--P1AI")),
         ("/Users/x.html", Some("file:///Users/x.html")),
         ("/Users/a b#c.html", Some("file:///Users/a%20b%23c.html")),
         ("mailto:x@example.com", Some("mailto:x@example.com")),
