@@ -127,6 +127,27 @@ func clearTodayPressDiagnosticsDistinguishDisabledButtonsFromDispatchedActions()
 }
 
 @Test @MainActor
+func todayDividerReturnsAfterClearTodayIsCancelled() throws {
+    _ = NSApplication.shared
+    let space = u25Space(today: [u25Row("a"), u25Row("b")])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
+    var cleared = 0
+    sidebar.onClearToday = { cleared += 1 }
+    #expect(sidebar.pressClearToday { _ in })
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil,
+                                             spaces: [u25Space()]))
+    #expect(sidebar.todayDividerForCheck == nil)
+    #expect(!sidebar.pressClearToday { _ in })
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: "b",
+                                             spaces: [u25Space(today: [u25Row("b")])]))
+    #expect(sidebar.todayDividerForCheck != nil)
+    #expect(u25Descendants(sidebar).compactMap { $0 as? SidebarTodayDivider }.count == 1)
+    #expect(sidebar.rowCheckIds == ["b"])
+    #expect(sidebar.pressClearToday { _ in })
+    #expect(cleared == 2)
+}
+
+@Test @MainActor
 func todayDividerClearAndNewTabFollowTodayAndTheSetting() throws {
     let space = u25Space(today: [u25Row("a")])
     let (window, sidebar) = u25Sidebar(space)

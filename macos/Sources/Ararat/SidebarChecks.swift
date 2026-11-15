@@ -82,7 +82,7 @@ final class SidebarCheck {
         case .today:
             base = ["divider_visible", "divider_frame", "clear_present", "new_tab_row",
                     "clear_archives", "divider_hidden_without_today", "new_tab_setting_hides",
-                    "name_drop_pins", "beforeunload_stay_keeps_row", "clear_today_stay_keeps_only_refused_row", "clear_after_stay_without_close_motion"]
+                    "name_drop_pins", "beforeunload_stay_keeps_row", "clear_today_stay_keeps_only_refused_row", "divider_back_after_stay", "clear_after_stay_without_close_motion"]
         case .spaceName:
             base = ["name_x", "chevron_hover", "name_x_hover", "name_x_collapsed", "click_toggles",
                     "menu_items", "menu_dock_same", "rename_menu_only", "rename_field_height", "look_anchor"]
@@ -733,12 +733,17 @@ extension Runtime {
                 guard answerDialog(true) else { note("wait=clear-stay-dialog"); return }
                 trace("dialog=clear answer=stay")
                 check.conditions["clear_today_stay_keeps_only_refused_row"] = false
+                return
             }
             guard screen || (host.checkDialogCount() > check.cancelDialogCount && host.checkDialogIntegrity()) else { return }
             guard let core = sidebarCheckCore(), let space = core.spaces.first(where: { $0.id == core.shownSpaceId }),
                   space.today.map(\.id) == [check.commandWId], space.today.first?.unloaded == false,
                   (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == check.commandWId }) == true else { return }
             let others = check.seen.subtracting([check.commandWId])
+            // Do not press from core state alone: its restore can precede main-queue delivery.
+            guard sidebar.rowCheckInfo(id: check.commandWId)?.unloaded == false,
+                  sidebar.todayDividerForCheck != nil else { note("wait=clear-stay-sidebar-restore"); return }
+            check.report("divider_back_after_stay", true)
             check.report("clear_today_stay_keeps_only_refused_row", !others.isEmpty && others.allSatisfy { id in core.archive.contains { $0.id == id } })
             if !screen { host.expectCheckDialogs(3) }
             trace("action=clear-after-stay today=\(space.today.map(\.id)) live=\(host.tabs().count)")
