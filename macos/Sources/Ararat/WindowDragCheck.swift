@@ -252,6 +252,7 @@ extension Runtime {
             check.mark("seed", !empty.isEmpty)
             check.mark("points_inside_screen", true)
             // The frame every step starts from, and the pointer's parking place on the page.
+            window.setFrameOrigin(NSPoint(x: 200, y: window.frame.origin.y))
             check.baseFrame = window.frame
             check.neutralPoint = NSPoint(x: max(60, window.frame.width - 60), y: 60)
             if screen { check.mark("capture_sidebar", capture("sidebar")) }
