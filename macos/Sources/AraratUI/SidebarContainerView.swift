@@ -331,7 +331,46 @@ public final class SidebarContainerView: NSView {
                 if convert(button.bounds, from: button).contains(local) { return button }
             }
         }
-        return super.hitTest(point)
+        guard let hit = super.hitTest(point) else { return nil }
+        // P4: the traffic lights' own row, the frame around the page card and a private
+        // window's black backdrop behind the card are the window's title bar, so a press in
+        // their gaps moves the window (2026-11-15, the owner's hands-on session). The buttons,
+        // rows, the sidebar and the page keep their own hits.
+        if hit === windowButtons || hit === privateBackdrop { return self }
+        return hit
+    }
+
+    override public func mouseDown(with event: NSEvent) {
+        WindowDrag.press(in: self, with: event)
+    }
+
+    // MARK: P4 item 1 check seams
+
+    /// A window point in the header's gap between the traffic lights and the first button (the
+    /// header starts its buttons at 80 pt).
+    public func checkHeaderGapPoint() -> NSPoint {
+        let lightsRight = windowButtons.map { $0.frame.maxX } ?? 72.5
+        return convert(NSPoint(x: (lightsRight + 80) / 2, y: 24), to: nil)
+    }
+
+    /// A window point in the strip above the page card: the card sits 10 pt inside the window.
+    public func checkAboveCardPoint() -> NSPoint {
+        convert(NSPoint(x: bounds.midX, y: SidebarMetrics.cardInset / 2), to: nil)
+    }
+
+    /// The four views that own a drag area (the container for the card's frame, the sidebar and
+    /// the header for their empty areas, the list for the space below its last row), the
+    /// traffic lights' own row, or the class of whatever else the press reaches.
+    public func checkPressTarget(at windowPoint: NSPoint) -> String {
+        let local = convert(windowPoint, from: nil)
+        let point = superview.map { convert(local, to: $0) } ?? local
+        guard let hit = hitTest(point) else { return "none" }
+        if hit === self { return "frame" }
+        if hit === sidebar { return "sidebar" }
+        if hit === header { return "header" }
+        if hit === windowButtons { return "lights" }
+        if hit is SidebarScrollView { return "list" }
+        return String(describing: type(of: hit))
     }
 
     public func selectionChanged() {

@@ -188,6 +188,11 @@ public final class SiteControlsPopover: NSObject, NSPopoverDelegate {
     public var checkLabelsComplete: Bool { content?.checkLabelsComplete ?? false }
     public var checkAllSiteSettingsTitle: String { content?.allSiteSettingsTitle ?? "" }
     public func checkClickAllSiteSettings() -> Bool { content?.checkClickAllSiteSettings() ?? false }
+    public var checkPillStyle: SiteState.SecurityPill? { content?.pillStyle }
+    public var checkActionRow: (sameRow: Bool, height: CGFloat, equalWidth: Bool, iconOnly: Bool, tooltipsMatch: Bool) {
+        content?.checkActionRow ?? (false, 0, false, false, false)
+    }
+    public var checkAllSiteSettingsFrame: NSRect { content?.allSiteSettingsFrame ?? .zero }
 }
 
 @MainActor
@@ -195,8 +200,17 @@ final class SiteControlsContent: NSView {
     static let width: CGFloat = 262
     static let padding: CGFloat = 16
     static let gap: CGFloat = 16
-    static let actionHeight: CGFloat = 24
+    /// The board's action row: one row of 48 pt icon buttons, 8 pt apart, radius 8 (P4,
+    /// 2026-11-15: the owner asked for icons with their names as tooltips, not two text rows).
+    static let actionHeight: CGFloat = 48
+    static let actionGap: CGFloat = 8
+    static let actionRadius: CGFloat = 8
     static let rowHeight: CGFloat = 24
+    /// The footer is the popover's bottom band: 8 pt above and below the pill and the link.
+    static let footerHeight: CGFloat = 40
+    static let pillHeight: CGFloat = 24
+    static let pillRadius: CGFloat = 8
+    static let linkHeight: CGFloat = 24
 
     var onCaptureRegion: (() -> Void)?
     var onCaptureFullPage: (() -> Void)?
@@ -207,18 +221,34 @@ final class SiteControlsContent: NSView {
     private let stack = NSStackView()
     private let includesFullPage: Bool
     private var model: SiteState
-    private var actions: [NSButton] = []
+    private var actions: [SiteControlActionButton] = []
     private var rows: [(button: NSButton?, icon: NSImageView, label: NSTextField, control: NSView, row: SiteState.Permission)] = []
-    private var footer = NSButton()
-    private var allSiteSettings = NSButton()
+    private let footer = NSView()
+    private let footerLine = NSView()
+    private let pill = SiteControlPillButton()
+    private let allSiteSettings = SiteControlLinkButton()
     private var permissionPopups: [NSPopUpButton] = []
 
-    var actionTitles: [String] { actions.map(\.title) }
-    var actionFrames: [NSRect] { actions.map { convert($0.bounds, from: $0) } }
-    var footerTitle: String { footer.title }
-    var footerEnabled: Bool { footer.isEnabled }
-    var footerFrame: NSRect { convert(footer.bounds, from: footer) }
+    var actionTitles: [String] { actions.compactMap { $0.accessibilityLabel() } }
+    var actionFrames: [NSRect] { actions.map { convert($0.bounds, from: $0) }.sorted { $0.minX < $1.minX } }
+    var actionTooltips: [String?] { actions.map(\.toolTip) }
+    var footerTitle: String { pill.title }
+    var footerEnabled: Bool { pill.isEnabled }
+    var footerFrame: NSRect { convert(pill.bounds, from: pill) }
     var allSiteSettingsTitle: String { allSiteSettings.title }
+    var allSiteSettingsFrame: NSRect { convert(allSiteSettings.bounds, from: allSiteSettings) }
+    var pillStyle: SiteState.SecurityPill { pill.style }
+
+    /// One row: every action shares a baseline and a height, the two tiles share the width, and
+    /// each tile is an icon with its name as a tooltip.
+    var checkActionRow: (sameRow: Bool, height: CGFloat, equalWidth: Bool, iconOnly: Bool, tooltipsMatch: Bool) {
+        let frames = actionFrames
+        return (Set(frames.map { $0.minY }).count <= 1 && Set(frames.map { $0.height }).count == 1,
+                frames.first?.height ?? 0,
+                frames.count < 2 || abs(frames[0].width - frames[1].width) < 0.5,
+                actions.allSatisfy { $0.title.isEmpty && $0.image != nil },
+                zip(actions, actions.map { $0.accessibilityLabel() }).allSatisfy { $0.toolTip == $1 })
+    }
 
     var checkPermissionRows: [(type: String, name: String, current: String, items: [String], readOnly: Bool, frame: NSRect)] {
         rows.map { entry in
@@ -244,13 +274,42 @@ final class SiteControlsContent: NSView {
         stack.spacing = Self.gap
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(footer)
+        footerLine.wantsLayer = true
+        footerLine.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(footerLine)
+        pill.target = self
+        pill.action = #selector(openCertificate)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(pill)
+        allSiteSettings.target = self
+        allSiteSettings.action = #selector(openAllSiteSettings)
+        allSiteSettings.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(allSiteSettings)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.padding),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.padding),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.padding),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -Self.padding),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: footer.topAnchor, constant: -Self.gap),
+            footer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            footer.heightAnchor.constraint(equalToConstant: Self.footerHeight),
+            footerLine.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
+            footerLine.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
+            footerLine.topAnchor.constraint(equalTo: footer.topAnchor),
+            footerLine.heightAnchor.constraint(equalToConstant: 1),
+            pill.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: Self.padding),
+            pill.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            pill.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+            allSiteSettings.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -Self.padding),
+            allSiteSettings.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            allSiteSettings.heightAnchor.constraint(equalToConstant: Self.linkHeight),
+            allSiteSettings.leadingAnchor.constraint(greaterThanOrEqualTo: pill.trailingAnchor, constant: 8),
         ])
         build()
+        updateColors()
     }
 
     @available(*, unavailable)
@@ -263,7 +322,7 @@ final class SiteControlsContent: NSView {
             if index > 0 { height += Self.gap }
             height += view.fittingSize.height
         }
-        height += Self.padding * 2
+        height += Self.padding + Self.gap + Self.footerHeight
         return NSSize(width: Self.width, height: ceil(height / 8) * 8)
     }
 
@@ -279,18 +338,18 @@ final class SiteControlsContent: NSView {
 
     private func build() {
         clearStack()
-        let actionsStack = NSStackView()
-        actionsStack.orientation = .vertical
-        actionsStack.alignment = .leading
-        actionsStack.spacing = 8
-        actionsStack.addArrangedSubview(actionButton(title: "Screenshot a region", symbol: "viewfinder",
-                                                     action: #selector(captureRegion)))
+        // P4: the action row is one row of icon buttons; the names live in their tooltips and
+        // accessibility labels.
+        let actionsRow = SiteActionRow(frame: .zero)
+        actionsRow.add(actionButton(title: "Screenshot a region", symbol: "viewfinder",
+                                    action: #selector(captureRegion)))
         if includesFullPage {
-            actionsStack.addArrangedSubview(actionButton(title: "Capture the full page", symbol: "rectangle.dashed",
-                                                         action: #selector(captureFullPage)))
+            actionsRow.add(actionButton(title: "Capture the full page", symbol: "rectangle.dashed",
+                                        action: #selector(captureFullPage)))
         }
-        actionsStack.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
-        stack.addArrangedSubview(actionsStack)
+        actionsRow.heightAnchor.constraint(equalToConstant: Self.actionHeight).isActive = true
+        actionsRow.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
+        stack.addArrangedSubview(actionsRow)
 
         if !model.permissions.isEmpty {
             let permissionStack = NSStackView()
@@ -308,26 +367,32 @@ final class SiteControlsContent: NSView {
             stack.addArrangedSubview(permissionStack)
         }
 
-        footer = securityButton()
-        let footerLine = NSStackView(views: [footer])
-        footerLine.orientation = .vertical
-        footerLine.alignment = .leading
-        footerLine.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
-        stack.addArrangedSubview(footerLine)
-        // U27w W4: the site's own page in Settings, the last row above the footer. A site with no
-        // exceptions still opens the pane's list, which the settings window decides.
-        allSiteSettings = plainButton(title: "All Site Settings…", symbol: "gearshape",
-                                      action: #selector(openAllSiteSettings))
-        let settingsLine = NSStackView(views: [allSiteSettings])
-        settingsLine.orientation = .vertical
-        settingsLine.alignment = .leading
-        settingsLine.widthAnchor.constraint(equalToConstant: Self.width - Self.padding * 2).isActive = true
-        stack.insertArrangedSubview(settingsLine, at: stack.arrangedSubviews.count - 1)
+        // The footer's pill is the page's own verdict; the button opens the certificate panel
+        // when Chromium gave us a chain.
+        pill.update(model: model)
+        pill.isEnabled = model.canShowCertificate
+        allSiteSettings.title = "All Site Settings…"
     }
 
     func rebuild(model: SiteState) {
         self.model = model
         build()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        footerLine.layer?.backgroundColor = Self.overlay(0.12, appearance: effectiveAppearance)
+        allSiteSettings.updateFill(appearance: effectiveAppearance)
+    }
+
+    /// The board's translucent fills: black over the light material, white over the dark one.
+    static func overlay(_ alpha: CGFloat, appearance: NSAppearance) -> CGColor {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (dark ? NSColor.white : NSColor.black).withAlphaComponent(alpha).cgColor
     }
 
     private var shortOrigin: String {
@@ -336,24 +401,12 @@ final class SiteControlsContent: NSView {
         return value.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
     }
 
-    private func actionButton(title: String, symbol: String, action: Selector) -> NSButton {
-        let button = plainButton(title: title, symbol: symbol, action: action)
-        actions.append(button)
-        return button
-    }
-
-    /// A row that is not one of the capture actions (U27w's All Site Settings…): same look, but
-    /// the site-controls check's action list and geometry stay the two capture rows.
-    private func plainButton(title: String, symbol: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, image: NSImage(systemSymbolName: symbol, accessibilityDescription: title) ?? NSImage(), target: self, action: action)
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.imagePosition = .imageLeading
-        button.alignment = .left
-        button.font = .systemFont(ofSize: 13)
-        button.imageHugsTitle = true
-        button.setAccessibilityLabel(title)
+    private func actionButton(title: String, symbol: String, action: Selector) -> SiteControlActionButton {
+        let button = SiteControlActionButton(title: title, symbol: symbol)
+        button.target = self
+        button.action = action
         button.heightAnchor.constraint(equalToConstant: Self.actionHeight).isActive = true
+        actions.append(button)
         return button
     }
 
@@ -442,22 +495,6 @@ final class SiteControlsContent: NSView {
         return line
     }
 
-    private func securityButton() -> NSButton {
-        let button = NSButton(title: model.securityTitle, image: NSImage(systemSymbolName: model.securitySymbol, accessibilityDescription: model.securityTitle) ?? NSImage(), target: self, action: #selector(openCertificate))
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.imagePosition = .imageLeading
-        button.alignment = .left
-        button.font = .systemFont(ofSize: 12)
-        button.imageHugsTitle = true
-        button.isEnabled = model.canShowCertificate
-        button.contentTintColor = model.security == "secure" ? .secondaryLabelColor : .systemOrange
-        button.toolTip = model.canShowCertificate ? "Show certificate" : "No certificate for this page"
-        button.setAccessibilityLabel(model.securityTitle)
-        button.setAccessibilityHelp(button.toolTip ?? "")
-        return button
-    }
-
     @objc private func captureRegion() { onCaptureRegion?() }
     @objc private func captureFullPage() { onCaptureFullPage?() }
     @objc private func openCertificate() { onCertificate?() }
@@ -489,13 +526,13 @@ final class SiteControlsContent: NSView {
     }
 
     func checkClickFooter() -> Bool {
-        guard footer.isEnabled else { return false }
-        footer.performClick(nil)
+        guard pill.isEnabled else { return false }
+        pill.performClick(nil)
         return true
     }
 
     func checkClickAction(_ title: String) -> Bool {
-        guard let button = actions.first(where: { $0.title == title }) else { return false }
+        guard let button = actions.first(where: { $0.accessibilityLabel() == title }) else { return false }
         button.performClick(nil)
         return true
     }
@@ -510,9 +547,202 @@ final class SiteControlsContent: NSView {
     var checkLabelsComplete: Bool {
         !actions.isEmpty && actions.allSatisfy { ($0.accessibilityLabel() ?? "").isEmpty == false }
             && rows.allSatisfy { ($0.control.accessibilityLabel() ?? "").isEmpty == false }
-            && (footer.accessibilityLabel() ?? "").isEmpty == false
+            && (pill.accessibilityLabel() ?? "").isEmpty == false
             && (allSiteSettings.accessibilityLabel() ?? "").isEmpty == false
     }
 
     override var isFlipped: Bool { true }
+}
+
+/// The action row: equal tiles edge to edge with an 8 pt gap (P4). Laid out by hand so the tiles
+/// keep the row's height; a stack view centres an NSButton at its own intrinsic height.
+@MainActor
+final class SiteActionRow: NSView {
+    private(set) var tiles: [SiteControlActionButton] = []
+    override var isFlipped: Bool { true }
+
+    func add(_ tile: SiteControlActionButton) {
+        tiles.append(tile)
+        addSubview(tile)
+    }
+
+    static func tileFrames(count: Int, bounds: NSRect, gap: CGFloat) -> [NSRect] {
+        guard count > 0 else { return [] }
+        let width = max(0, (bounds.width - gap * CGFloat(count - 1)) / CGFloat(count))
+        return (0..<count).map { NSRect(x: CGFloat($0) * (width + gap), y: 0, width: width, height: bounds.height) }
+    }
+
+    override func layout() {
+        super.layout()
+        for (tile, frame) in zip(tiles, Self.tileFrames(count: tiles.count, bounds: bounds, gap: SiteControlsContent.actionGap)) {
+            tile.frame = frame
+        }
+    }
+}
+
+/// The capture action: an icon tile with its name in the tooltip (P4).
+@MainActor
+final class SiteControlActionButton: NSButton {    private var hovered = false { didSet { updateFill() } }
+    private var pressed = false { didSet { updateFill() } }
+
+    init(title: String, symbol: String) {
+        super.init(frame: .zero)
+        self.title = ""
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        isBordered = false
+        bezelStyle = .inline
+        focusRingType = .none
+        toolTip = title
+        setAccessibilityLabel(title)
+        contentTintColor = .labelColor
+        wantsLayer = true
+        layer?.cornerRadius = SiteControlsContent.actionRadius
+        layer?.cornerCurve = .continuous
+        // The tile fills the 48 pt row: the stack's alignment centers arranged subviews, so the
+        // tile's own hugging and compression must yield to the row's height.
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        updateFill()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+    override func mouseDown(with event: NSEvent) { pressed = true; super.mouseDown(with: event); pressed = false }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
+
+    private func updateFill() {
+        let alpha: CGFloat = pressed ? 0.14 : hovered ? 0.07 : 0.055
+        layer?.backgroundColor = SiteControlsContent.overlay(alpha, appearance: effectiveAppearance)
+    }
+}
+
+/// The footer's security pill: the page's verdict, opens the certificate viewer (P4). A page
+/// with no connection information keeps the quiet fill and prints that text.
+@MainActor
+final class SiteControlPillButton: NSButton {
+    private(set) var style: SiteState.SecurityPill = .neutral
+    /// The drawn box: the button's frame carries the board's padding (7 pt leading, 10 trailing)
+    /// so the fill and the text both start where the board puts them.
+    private let box = NSView()
+
+    init() {
+        super.init(frame: .zero)
+        isBordered = false
+        bezelStyle = .inline
+        imagePosition = .imageLeading
+        imageHugsTitle = true
+        alignment = .left
+        font = .systemFont(ofSize: 12)
+        contentTintColor = .secondaryLabelColor
+        setAccessibilityLabel("Security")
+        box.wantsLayer = true
+        box.layer?.cornerRadius = SiteControlsContent.pillRadius
+        box.layer?.cornerCurve = .continuous
+        addSubview(box, positioned: .below, relativeTo: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var alignmentRectInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 7, bottom: 0, right: 10)
+    }
+
+    override func layout() {
+        super.layout()
+        box.frame = NSRect(x: 7, y: 0, width: max(0, bounds.width - 17), height: bounds.height)
+    }
+
+    func update(model: SiteState) {
+        style = model.securityPill
+        title = model.securityPillTitle
+        image = NSImage(systemSymbolName: model.securitySymbol, accessibilityDescription: model.securityPillTitle)
+        imageScaling = .scaleProportionallyDown
+        let tint: NSColor = switch style {
+        case .secure, .neutral: .secondaryLabelColor
+        case .warn: .systemOrange
+        case .bad: .systemRed
+        }
+        contentTintColor = tint
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12), .foregroundColor: tint,
+        ])
+        updateFill()
+        toolTip = model.canShowCertificate ? "Show certificate" : "No certificate for this page"
+        setAccessibilityLabel(model.securityPillTitle)
+        setAccessibilityHelp(toolTip ?? "")
+    }
+
+    private func updateFill() {
+        box.layer?.backgroundColor = switch style {
+        case .secure, .neutral: SiteControlsContent.overlay(0.055, appearance: effectiveAppearance)
+        case .warn: NSColor.systemOrange.withAlphaComponent(0.22).cgColor
+        case .bad: NSColor.systemRed.withAlphaComponent(0.22).cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+}
+
+/// The footer's quiet link: All Site Settings… (P4).
+@MainActor
+final class SiteControlLinkButton: NSButton {
+    private var hovered = false { didSet { updateFill() } }
+    private let box = NSView()
+
+    init() {
+        super.init(frame: .zero)
+        isBordered = false
+        bezelStyle = .inline
+        alignment = .center
+        font = .systemFont(ofSize: 12)
+        contentTintColor = .secondaryLabelColor
+        setAccessibilityLabel("All Site Settings…")
+        box.wantsLayer = true
+        box.layer?.cornerRadius = 6
+        box.layer?.cornerCurve = .continuous
+        addSubview(box, positioned: .below, relativeTo: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var alignmentRectInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+    }
+
+    override func layout() {
+        super.layout()
+        box.frame = NSRect(x: 8, y: 0, width: max(0, bounds.width - 16), height: bounds.height)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+
+    func updateFill(appearance: NSAppearance) {
+        box.layer?.backgroundColor = hovered ? SiteControlsContent.overlay(0.07, appearance: appearance) : nil
+        contentTintColor = hovered ? .labelColor : .secondaryLabelColor
+    }
+
+    private func updateFill() { updateFill(appearance: effectiveAppearance) }
 }

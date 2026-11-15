@@ -148,6 +148,28 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
     override func cancelOperation(_ sender: Any?) { cancelCreation() }
     override func hitTest(_ point: NSPoint) -> NSView? { active ? super.hitTest(point) : nil }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
+
+    // MARK: P4 item 6 check seams
+
+    /// The page's state as the create-space check reads it. `submitting` is what greys the
+    /// button and locks the name; it must drop when the core answers either way.
+    var checkState: (open: Bool, submitting: Bool, buttonEnabled: Bool, name: String, error: String, errorShown: Bool) {
+        (active, submitting, create.isEnabled, name.stringValue, error.stringValue, !error.isHidden)
+    }
+
+    func checkType(_ text: String) {
+        name.stringValue = text
+        refresh()
+    }
+
+    /// The same path a Return takes (the button's key equivalent and the field's action), so a
+    /// second press while the first is in flight is refused by the same guard.
+    @discardableResult
+    func checkSubmit() -> Bool {
+        let before = submitting
+        submit()
+        return !before && submitting
+    }
     private func updateFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor

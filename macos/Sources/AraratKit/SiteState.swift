@@ -149,6 +149,32 @@ public struct SiteState {
         }
     }
 
+    /// The site-controls footer's pill (P4, 2026-11-15): Arc's two words, and a quiet line for a
+    /// page with no connection information (an error page, a local page).
+    public var securityPillTitle: String {
+        switch security {
+        case "secure": return "Secure"
+        case "not_secure", "error": return "Not Secure"
+        default: return "No connection information"
+        }
+    }
+
+    /// How the pill looks: `secure` and `neutral` take the quiet fill, `warn` and `bad` the
+    /// board's amber and red. A page without connection information is `neutral`, never a
+    /// warning colour (the board draws no such state).
+    public enum SecurityPill: String, Equatable {
+        case secure, neutral, warn, bad
+    }
+
+    public var securityPill: SecurityPill {
+        switch security {
+        case "secure": return .secure
+        case "not_secure": return .warn
+        case "error": return .bad
+        default: return .neutral
+        }
+    }
+
     public var securitySymbol: String {
         switch security {
         case "secure": return "lock.fill"

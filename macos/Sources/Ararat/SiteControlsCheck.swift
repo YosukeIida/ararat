@@ -10,7 +10,8 @@ import AraratUI
 @MainActor
 final class SiteControlsCheck {
     static let common = ["fixture", "seed", "secure_page", "secure_security", "chain",
-                         "actions", "popover_geometry", "permission_prompt", "permission_row",
+                         "actions", "action_row", "popover_geometry", "footer_pill",
+                         "insecure_pill", "internal_footer", "permission_prompt", "permission_row",
                          "blocked_dot", "dot_same_origin", "dot_cleared_on_navigation", "dot_restored", "tab_switch_dot",
                          "permission_change", "permission_reset", "menu_items",
                          "certificate_panel", "certificate_closed", "popover_dismiss",
@@ -191,12 +192,22 @@ extension Runtime {
             openPopover()
             guard let controls = siteControls, controls.isShown else { wait("site controls popover"); return }
             check.mark("actions", controls.checkActionTitles == ["Screenshot a region", "Capture the full page"])
+            // P4: one row of icon tiles, their names in the tooltips, 48 pt on the grid.
+            let row = controls.checkActionRow
+            check.mark("action_row", row.sameRow && row.height == 48 && isGrid(row.height)
+                       && row.equalWidth && row.iconOnly && row.tooltipsMatch)
             let size = controls.checkContentSize
             let frames = controls.checkActionFrames
             let rows = controls.checkPermissionRows
-            let padded = frames.allSatisfy { $0.minX == controls.checkPadding && isGrid($0.height) }
+            let padded = frames.first.map { $0.minX == controls.checkPadding } == true
+                && frames.last.map { abs($0.maxX - (262 - controls.checkPadding)) < 0.5 } == true
             check.mark("popover_geometry", size.width == 262 && isGrid(size.height) && padded
                        && controls.checkPadding == 16 && controls.checkGap == 16 && rows.isEmpty)
+            // P4: the footer is the security pill and the All Site Settings… link.
+            check.mark("footer_pill", controls.checkFooterTitle == "Secure" && controls.checkFooterEnabled
+                       && controls.checkFooterFrame.height == 24 && controls.checkPillStyle == .secure
+                       && controls.checkAllSiteSettingsTitle == "All Site Settings…"
+                       && controls.checkAllSiteSettingsFrame.minX > controls.checkFooterFrame.maxX)
             check.mark("voiceover_labels", controls.checkLabelsComplete)
             if screen {
                 window.makeKeyAndOrderFront(nil)
@@ -381,6 +392,7 @@ extension Runtime {
             check.mark("insecure_no_chain")
             guard let controls = siteControls, controls.isShown else { wait("insecure popover"); return }
             check.mark("insecure_no_chain", state.certificateChain.isEmpty && !controls.checkFooterEnabled)
+            check.mark("insecure_pill", controls.checkFooterTitle == "Not Secure" && controls.checkPillStyle == .warn)
             controls.close()
             host.checkNavigate("chrome://version", disposition: "current")
             browserCheckPhase = 23
@@ -395,6 +407,11 @@ extension Runtime {
         case 24:
             guard let controls = siteControls, controls.isShown else { wait("internal popover"); return }
             guard controls.checkPermissionRows.isEmpty else { wait("internal popover rows"); return }
+            // P4: no connection information keeps the quiet pill with its own words; the board
+            // draws no such state, so this is ours (listed as a board difference).
+            check.mark("internal_footer", controls.checkFooterTitle == "No connection information"
+                       && controls.checkPillStyle == .neutral && !controls.checkFooterEnabled
+                       && !controls.checkAllSiteSettingsTitle.isEmpty)
             controls.close()
             guard let ports = fixturePorts() else { wait("region cancel fixture"); return }
             host.checkNavigate("https://127.0.0.1:\(ports.secure)/site", disposition: "current")

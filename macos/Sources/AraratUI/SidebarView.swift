@@ -210,6 +210,7 @@ public final class SidebarView: NSView {
         return row
     }()
     private let dock = SpaceDockView()
+    private let bottomBar = NSView()
     private let spaceViewport = NSView()
     private let spaceColumn = NSStackView()
     private var spaceScroll = SpaceScrollState()
@@ -298,6 +299,78 @@ public final class SidebarView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     @objc public func showCreateSpace(_ sender: Any? = nil) { setCreateSpaceOpen(true) }
+
+    // MARK: P4 check seams
+
+    /// The create-space page's state, for the app's `create-space` check (the harness drives
+    /// its own button; this reads the same view the owner used).
+    public var checkCreateSpace: (open: Bool, submitting: Bool, buttonEnabled: Bool, name: String, error: String, errorShown: Bool) {
+        creation.checkState
+    }
+
+    public func checkTypeSpaceName(_ text: String) { creation.checkType(text) }
+
+    /// A Return: false when the page was already submitting, so a check can prove one press
+    /// makes one request.
+    @discardableResult
+    public func checkSubmitSpaceName() -> Bool { creation.checkSubmit() }
+
+    /// The window-drag check's points in the sidebar's empty areas (P4): the space below the
+    /// last row while the rows do not fill the list, the bottom bar outside the dock's cells,
+    /// and the column's gap above the bottom bar. Window coordinates.
+    public func checkDragAreaPoints() -> [String: NSPoint] {
+        layoutSubtreeIfNeeded()
+        listScroll.layoutSubtreeIfNeeded()
+        var points: [String: NSPoint] = [:]
+        let clipHeight = listScroll.contentView.bounds.height
+        if listScroll.contentView.bounds.minY <= 0.5, rows.frame.height + 8 < clipHeight {
+            let list = listScroll.convert(listScroll.bounds, to: nil)
+            points["below_rows"] = NSPoint(x: list.midX,
+                                           y: list.minY + (clipHeight - rows.frame.height) / 2)
+        }
+        if dock.bounds.width > 0 {
+            let rightmost = dock.subviews.map { $0.frame.maxX }.max() ?? 0
+            if rightmost + 4 < dock.bounds.width {
+                points["dock_gap"] = dock.convert(NSPoint(x: rightmost + 4, y: dock.bounds.midY), to: nil)
+            }
+        }
+        points["column_gap"] = bottomBar.convert(NSPoint(x: bottomBar.bounds.midX, y: bottomBar.bounds.maxY + 5), to: nil)
+        return points
+    }
+
+    /// The window-drag check's points on a row and on the open space's dock cell: presses there
+    /// must not move the window.
+    public func checkRowPoint() -> NSPoint? {
+        layoutSubtreeIfNeeded()
+        guard let id = selectedRowID ?? rowViews.keys.sorted().first, let row = rowViews[id] else { return nil }
+        return row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+    }
+
+    public func checkDockCellPoint() -> NSPoint? {
+        layoutSubtreeIfNeeded()
+        guard let cell = dock.subviews.first(where: { ($0 as? SpaceDockButton)?.spaceID == snapshotSpace?.id })
+                ?? dock.subviews.first else { return nil }
+        return cell.convert(NSPoint(x: cell.bounds.midX, y: cell.bounds.midY), to: nil)
+    }
+
+    public func checkDockShowsSpace(_ id: String) -> Bool {
+        dock.subviews.contains { ($0 as? SpaceDockButton)?.spaceID == id }
+    }
+
+    /// The row list's scroller with the polish rule applied (P4 item 5): the style and whether
+    /// the overlay knob is currently allowed to show.
+    public var checkListScroller: (style: NSScroller.Style, hasVerticalScroller: Bool) {
+        (listScroll.scrollerStyle, listScroll.hasVerticalScroller)
+    }
+
+    /// A wheel through the same path a device takes; the check's scroll needs the list to react
+    /// (hairlines, knob) without a real event loop.
+    public func checkScrollList(dx: CGFloat, dy: CGFloat) {
+        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                               wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0),
+              let event = NSEvent(cgEvent: cg) else { return }
+        listScroll.scrollWheel(with: event)
+    }
 
     public func setCreateSpaceOpen(_ open: Bool, scrolling: Bool = false) {
         guard open != createSpaceOpen else { return }
@@ -969,7 +1042,6 @@ public final class SidebarView: NSView {
         spaceViewport.addSubview(spaceColumn)
 
         dock.translatesAutoresizingMaskIntoConstraints = false
-        let bottomBar = NSView()
         bottomBar.addSubview(dock)
         NSLayoutConstraint.activate([
             dock.topAnchor.constraint(equalTo: bottomBar.topAnchor), dock.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
@@ -1643,9 +1715,21 @@ public final class SidebarView: NSView {
     override public func scrollWheel(with event: NSEvent) {
         if !handleSpaceScroll(event) { super.scrollWheel(with: event) }
     }
-
     override public func hitTest(_ point: NSPoint) -> NSView? {
-        isScrollPreview ? nil : super.hitTest(point)
+        guard !isScrollPreview, let hit = super.hitTest(point) else { return nil }
+        return isWindowDragArea(hit) ? self : hit
+    }
+
+    /// The sidebar's empty areas (P4, the owner's hands-on session 2026-11-15): a press there
+    /// moves the window as a title bar does. The row list's own empty area belongs to
+    /// `SidebarScrollView`, so a wheel below the last row still scrolls the rows.
+    func isWindowDragArea(_ hit: NSView) -> Bool {
+        hit === mainColumn || hit === spaceViewport || hit === favorites
+            || hit === actionsRow || hit === bottomBar || hit === dock
+    }
+
+    override public func mouseDown(with event: NSEvent) {
+        WindowDrag.press(in: self, with: event)
     }
 
     override public func accessibilityChildren() -> [Any]? {
@@ -1653,7 +1737,16 @@ public final class SidebarView: NSView {
     }
 
     private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
-        guard !isScrollPreview else { return false }
+        let decision = decideSpaceScroll(event, from: source)
+        SpaceScrollTrace.write(event, action: decision.action)
+        return decision.handled
+    }
+
+    /// The scroll classifier's answer for one event and the name the trace prints for it. Split
+    /// out of `handleSpaceScroll` so the trace sees every decision, including the ones that hand
+    /// the event back to AppKit.
+    private func decideSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> (handled: Bool, action: String) {
+        guard !isScrollPreview else { return (false, "preview") }
         defer {
             if !event.momentumPhase.isEmpty {
                 if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
@@ -1687,8 +1780,9 @@ public final class SidebarView: NSView {
         else { phase = .changed }
         let input = SpaceScrollEvent(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, phase: phase,
                                      momentum: !event.momentumPhase.isEmpty,
-                                     inverted: event.isDirectionInvertedFromDevice, time: event.timestamp)
-        if input.kind == .wheel && wheelPullPlaying { return true }
+                                     inverted: event.isDirectionInvertedFromDevice,
+                                     precise: event.hasPreciseScrollingDeltas, time: event.timestamp)
+        if input.kind == .wheel && wheelPullPlaying { return (true, "wheel-pull-playing") }
         let origin: ScrollOrigin = libraryOpen ? (library.isOverRail(event) ? .rail : .list) : .page
         if phase == .began {
             scrollOrigin = origin
@@ -1705,14 +1799,14 @@ public final class SidebarView: NSView {
             }
             axis = scrollAxis
         }
-        if (drag != nil || dragSettling) && axis != .vertical { return true }
+        if (drag != nil || dragSettling) && axis != .vertical { return (true, "row-drag") }
         if owner == .list || axis == .vertical {
-            if axis == .horizontal { return true }
+            if axis == .horizontal { return (true, "list-horizontal") }
             if input.kind == .trackpad, let scroll = gestureScroll, scroll !== source {
                 scroll.scrollWheel(with: event)
-                return true
+                return (true, "forwarded-to-gesture-view")
             }
-            return false
+            return (false, "vertical")
         }
         let layer = libraryOpen ? library.layer : createSpaceOpen ? creation.layer : spaceColumn.layer
         let offset = layer?.animation(forKey: "space.scroll") == nil
@@ -1725,26 +1819,28 @@ public final class SidebarView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         switch action {
-        case .vertical: return false
-        case .ignored: return true
+        case .vertical: return (false, "vertical")
+        case .ignored: return (true, "ignored")
         case .pull:
             playWheelPull(from: Double(offset ?? 0))
-        case .follow(let offset):
+            return (true, "pull")
+        case .follow(let followed):
             lookSampling?.invalidate()
             lookSampling = nil
             listScroll.stopReveal()
             stopPullAnimation()
             scrollGeneration += 1
             for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
-            prepareScrollPages(offset: offset)
-            refreshLook(offset: offset)
-            updateDockSelection(offset: offset)
-            for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + offset, 0, 0) }
+            prepareScrollPages(offset: followed)
+            refreshLook(offset: followed)
+            updateDockSelection(offset: followed)
+            for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + followed, 0, 0) }
             pullIndicator.update(excess: spaceScroll.followedExcess)
+            return (true, String(format: "follow %.1f", followed))
         case .settle(let index, let offset, let switched):
             if index == snapshot.spaces.count && switched {
                 openCreationAfterPull()
-                return true
+                return (true, "pull-create")
             }
             let excess = pullIndicator.excess
             let from = offset + Double(index - logicalIndex) * spacePagePitch
@@ -1755,8 +1851,8 @@ public final class SidebarView: NSView {
             prepareScrollPages(offset: from, departingIndex: logicalIndex)
             settleScroll(from: from, switched: switched)
             if excess > 0 { returnPullIndicator(excess: excess) }
+            return (true, "settle \(logicalIndex)->\(index)\(switched ? " switched" : "")")
         }
-        return true
     }
 
     private var libraryPageOrigin: Double { Double(-1 - scrollPageIndex) * spacePagePitch }

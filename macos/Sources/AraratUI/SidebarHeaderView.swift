@@ -173,6 +173,10 @@ public final class SidebarHeaderView: NSView {
         return menu
     }
     @objc private func menuPressed(_ sender: NSMenuItem) { if let command = sender.representedObject as? String { onCommand?(command) } }
+    override public func mouseDown(with event: NSEvent) {
+        WindowDrag.press(in: self, with: event)
+    }
+
     override public func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))

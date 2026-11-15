@@ -12,6 +12,8 @@ class SidebarScrollView: NSScrollView {
     var isRevealing: Bool { revealTimer != nil }
     private var revealStep: (() -> Void)?
     private var permitsScroller = false
+    /// The trailing strip that reveals the knob on hover (P4: Arc's overlay look).
+    private let knobHoverWidth: CGFloat = 12
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -24,6 +26,12 @@ class SidebarScrollView: NSScrollView {
         contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(boundsChanged),
                                               name: NSView.boundsDidChangeNotification, object: contentView)
+        // P4 (2026-11-15): the row list always uses the overlay knob, whatever the system's
+        // "Automatically based on mouse or trackpad" says, so a mouse never brings back the
+        // legacy track-and-arrows scroller.
+        scrollerStyle = .overlay
+        NotificationCenter.default.addObserver(self, selector: #selector(preferredScrollerStyleChanged),
+                                              name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -115,17 +123,68 @@ class SidebarScrollView: NSScrollView {
         stopReveal()
         if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
             permitsScroller = false
-            if scrollerStyle == .overlay { hasVerticalScroller = false }
+            hasVerticalScroller = false
         }
         if onScroll?(event) == true {
-            if scrollerStyle == .overlay { hasVerticalScroller = false }
+            hasVerticalScroller = false
             return
         }
-        if event.scrollingDeltaY != 0 {
+        switch Self.knobStep(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY) {
+        case .hide:
+            // At once, with no fade-out wait: a horizontal swipe or the owner's trackball hides
+            // the knob even when a vertical scroll showed it a moment ago (P4, 2026-11-15).
+            hasVerticalScroller = false
+            permitsScroller = false
+        case .show:
             hasVerticalScroller = true
             permitsScroller = true
+        case .keep:
+            break
         }
         scrollNatively(with: event)
+    }
+
+    /// The knob's rule (P4): vertical input shows the overlay knob, horizontal input hides it at
+    /// once whatever the event's phase, and neither is a phase-less wheel's deltas of zero. The
+    /// system's overlay scroller fades the knob out on its own after the last scroll.
+    enum KnobStep: Equatable { case show, hide, keep }
+
+    static func knobStep(dx: Double, dy: Double) -> KnobStep {
+        if abs(dx) > abs(dy) { return .hide }
+        if dy != 0 { return .show }
+        return .keep
+    }
+
+    @objc private func preferredScrollerStyleChanged() {
+        // The system preference can land at any time; the row list keeps the overlay knob.
+        if scrollerStyle != .overlay { scrollerStyle = .overlay }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: NSRect(x: bounds.width - knobHoverWidth, y: 0,
+                                                    width: knobHoverWidth, height: bounds.height),
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                                       owner: self, userInfo: nil))
+    }
+
+    /// The knob a horizontal scroll hid comes back when the pointer enters the scroller's strip,
+    /// as the overlay scroller does on its own when the list still has one.
+    override func mouseEntered(with event: NSEvent) {
+        guard !hasVerticalScroller else { return }
+        hasVerticalScroller = true
+    }
+
+    /// The space below the last row (P4): a press there moves the window as a title bar does.
+    /// The scroll view keeps the wheel, so vertical scrolling from that empty area still works.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        return hit === contentView || hit === documentView ? self : hit
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        WindowDrag.press(in: self, with: event)
     }
 
     func scrollNatively(with event: NSEvent) { super.scrollWheel(with: event) }

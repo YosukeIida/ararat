@@ -175,23 +175,47 @@ private func listEvent(dx: Int32, dy: Int32, phase: CGScrollPhase) -> NSEvent {
 }
 
 @Test @MainActor
-func listScrollerWaitsForVerticalIntentAndKeepsSystemStyle() throws {
+func listScrollerWaitsForVerticalIntentAndAlwaysUsesTheOverlayStyle() throws {
     let (window, sidebar, scroll) = listWindow()
     defer { window.contentView = nil }
-    let style = scroll.scrollerStyle
+    // P4 (2026-11-15): the row list is the overlay knob whatever the system setting says, so a
+    // mouse never brings back the legacy track.
+    #expect(scroll.scrollerStyle == .overlay)
     scroll.scrollWheel(with: listEvent(dx: 0, dy: 0, phase: .mayBegin))
-    if style == .overlay { #expect(!scroll.hasVerticalScroller) }
+    #expect(!scroll.hasVerticalScroller)
     scroll.scrollWheel(with: listEvent(dx: -20, dy: 0, phase: .began))
-    if style == .overlay { #expect(!scroll.hasVerticalScroller) }
-    #expect(scroll.scrollerStyle == style)
+    #expect(!scroll.hasVerticalScroller)
     scroll.scrollWheel(with: listEvent(dx: 0, dy: 0, phase: .ended))
     scroll.scrollWheel(with: listEvent(dx: 0, dy: -20, phase: .began))
     #expect(scroll.hasVerticalScroller)
-    #expect(scroll.scrollerStyle == style)
+    // A preference change cannot take the overlay away, and the knob hides at once on a
+    // horizontal event, even one with no phase.
     sidebar.showSpace(at: 0)
     scroll.scrollerStyle = .legacy
-    scroll.scrollWheel(with: listEvent(dx: -20, dy: 0, phase: .began))
-    #expect(scroll.hasVerticalScroller && scroll.scrollerStyle == .legacy)
+    NotificationCenter.default.post(name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+    #expect(scroll.scrollerStyle == .overlay)
+    scroll.scrollWheel(with: listEvent(dx: 0, dy: -20, phase: .began))
+    #expect(scroll.hasVerticalScroller)
+    sidebar.checkScrollList(dx: -1, dy: 0)
+    #expect(!scroll.hasVerticalScroller)
+}
+
+/// P4 item 5 addendum: a vertical scroll shows the knob, and the next horizontal scroll hides it
+/// in that same event, with no fade-out wait.
+@Test @MainActor
+func listKnobHidesAtOnceWhenAHorizontalWheelFollowsAVerticalOne() throws {
+    let (window, sidebar, scroll) = listWindow()
+    defer { window.contentView = nil }
+    #expect(SidebarScrollView.knobStep(dx: 0, dy: -20) == .show)
+    #expect(SidebarScrollView.knobStep(dx: 20, dy: -2) == .hide)
+    #expect(SidebarScrollView.knobStep(dx: 0, dy: 0) == .keep)
+    sidebar.checkScrollList(dx: 0, dy: -24)
+    #expect(scroll.hasVerticalScroller)
+    sidebar.checkScrollList(dx: -1, dy: 0)
+    #expect(!scroll.hasVerticalScroller)
+    // The next vertical scroll shows it again.
+    sidebar.checkScrollList(dx: 0, dy: -24)
+    #expect(scroll.hasVerticalScroller)
 }
 
 @Test @MainActor
