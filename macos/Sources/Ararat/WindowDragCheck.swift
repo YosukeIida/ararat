@@ -150,8 +150,10 @@ extension Runtime {
                                                                  "start": ["x": startScreen.x, "y": startScreen.y],
                                                                  "end": ["x": endScreen.x, "y": endScreen.y]]
             }
-            let hit = container.checkPressTarget(at: startPoint)
-            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) hit=\(hit) key=\(window.isKeyWindow)\n".utf8))
+            // The target this check expects the press to reach, computed before it is posted: a
+            // prediction, not the view AppKit dispatches to (review L3 of review 6).
+            let predictedHit = container.checkPressTarget(at: startPoint)
+            FileHandle.standardError.write(Data("ararat-trace: window-drag drag step=\(step.name) from=\(startPoint) to=\(endPoint) frame=\(window.frame) base=\(check.baseFrame) stable=\(stable) inside=\(inside) predicted_hit=\(predictedHit) key=\(window.isKeyWindow)\n".utf8))
             let startCG = cgScreen(startScreen), endCG = cgScreen(endScreen), neutralCG = cgScreen(neutralScreen)
             let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
             post(.mouseMoved, at: neutralCG)

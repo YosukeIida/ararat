@@ -130,31 +130,79 @@ func doubleClickFollowsTheTitleBarSetting() {
 /// drag step moves the window by the pointer's own step.
 @Test @MainActor
 func aSecondPressThatMovesDragsAndNeverActs() {
-    var tracker = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
+    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
     // A point or two of hand movement is still a stationary click.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 102, y: 100))) == .ignore)
+    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 102, y: 100))) == .ignore)
     // Past the threshold it is a drag, and the first step catches up from the press point.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 140, y: 90)))
+    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 140, y: 90)))
             == .move(NSPoint(x: 40, y: -10)))
     #expect(tracker.dragging)
     // Later steps move by their own delta only.
-    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 150, y: 80)))
+    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 150, y: 80)))
             == .move(NSPoint(x: 10, y: -10)))
-    #expect(tracker.handle(.init(type: .leftMouseUp, location: NSPoint(x: 150, y: 80))) == .end)
+    #expect(tracker.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 150, y: 80))) == .end)
 }
 
 /// A release that stayed within the threshold runs the action, and a press that jumps before its
 /// release does not (review H1).
 @Test @MainActor
 func aStationarySecondClickActsOnTheRelease() {
-    var tracker = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
-    #expect(tracker.handle(.init(type: .leftMouseDragged, location: NSPoint(x: 101, y: 101))) == .ignore)
-    #expect(tracker.handle(.init(type: .leftMouseUp, location: NSPoint(x: 101, y: 101))) == .action)
+    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
+    #expect(tracker.handle(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 101, y: 101))) == .ignore)
+    #expect(tracker.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 101, y: 101))) == .action)
     #expect(!tracker.dragging)
-    var jumped = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
-    #expect(jumped.handle(.init(type: .leftMouseUp, location: NSPoint(x: 160, y: 100))) == .end)
+    var jumped = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
+    #expect(jumped.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 160, y: 100))) == .end)
     // Anything that is not a drag or a release leaves the decision open.
-    var other = WindowDrag.SecondPressTracker(press: NSPoint(x: 100, y: 100))
-    #expect(other.handle(.init(type: .mouseMoved, location: NSPoint(x: 300, y: 300))) == .ignore)
-    #expect(other.handle(.init(type: .leftMouseUp, location: NSPoint(x: 100, y: 100))) == .action)
+    var other = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
+    #expect(other.handle(.init(type: .mouseMoved, screenLocation: NSPoint(x: 300, y: 300))) == .ignore)
+    #expect(other.handle(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 100, y: 100))) == .action)
+}
+
+/// The loop `press` runs around the tracker, driven by fake events (review M1/M2 of review 6): a
+/// nil follow-up is the timeout and ends the press with nothing owed; a queued point is used as
+/// given in screen coordinates, so our own window moves cannot skew the delta.
+@Test @MainActor
+func theSecondPressLoopEndsAtATimeoutAndMovesByTheGivenScreenSteps() {
+    var tracker = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 100, y: 100))
+    var moves: [NSPoint] = []
+    var acts = 0
+    #expect(WindowDrag.handleSecondPress(nil, tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }))
+    #expect(moves.isEmpty && acts == 0)
+    // A second press that moves drags: 2 pt is still a click, then the first step past the
+    // threshold catches up from the press point and later steps move by their own delta.
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 102, y: 100)),
+                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 140, y: 90)),
+                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 150, y: 80)),
+                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }) == false)
+    #expect(moves == [NSPoint(x: 40, y: -10), NSPoint(x: 10, y: -10)])
+    // The release of a drag ends it without the action.
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 150, y: 80)),
+                                        tracker: &tracker, move: { moves.append($0) }, act: { acts += 1 }))
+    #expect(acts == 0)
+    // A stationary second click acts on its release.
+    var still = WindowDrag.SecondPressTracker(pressScreen: NSPoint(x: 200, y: 200))
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseDragged, screenLocation: NSPoint(x: 201, y: 201)),
+                                        tracker: &still, move: { moves.append($0) }, act: { acts += 1 }) == false)
+    #expect(WindowDrag.handleSecondPress(.init(type: .leftMouseUp, screenLocation: NSPoint(x: 201, y: 201)),
+                                        tracker: &still, move: { moves.append($0) }, act: { acts += 1 }))
+    #expect(acts == 1)
+}
+
+/// A manual drag step keeps the window's title area reachable (review L1 of review 6): an inward
+/// step passes through, a step far above the screen is pulled back. No window is ordered front.
+@Test @MainActor
+func theManualMoveIsConstrainedToTheScreen() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 300), styleMask: [.titled],
+                          backing: .buffered, defer: false)
+    guard let screen = window.screen ?? NSScreen.screens.first else { return }
+    let inward = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: 300), size: NSSize(width: 400, height: 300), in: window)
+    #expect(inward.origin == NSPoint(x: 300, y: 300))
+    let high = WindowDrag.constrainedFrame(from: NSPoint(x: 300, y: screen.visibleFrame.maxY + 4000),
+                                           size: NSSize(width: 400, height: 300), in: window)
+    #expect(high.origin.y < screen.visibleFrame.maxY + 4000)
+    #expect(high.origin.y <= screen.visibleFrame.maxY)
 }
