@@ -2451,6 +2451,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
       guard let row else { return }
       switch row.target {
       case .openUrl(let url), .search(let url), .history(let url):
+        if let external = URL(string: url), ["mailto", "tel"].contains(external.scheme?.lowercased() ?? "") {
+          if !NSWorkspace.shared.open(external) {
+            self.report(NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnsupportedSchemeError,
+              userInfo: [NSLocalizedDescriptionKey: "No application could open \(url)"]))
+          }
+          return
+        }
         if mode == .search && !forceNew && missingTarget { return }
         if mode != .newTab && !forceNew, let target { _ = adapter.navigateCommandURL(url, target: target) }
         else { adapter.openCommandURL(url, expectedSpace: capturedSpace, profile: capturedProfile) }
