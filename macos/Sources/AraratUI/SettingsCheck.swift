@@ -145,7 +145,7 @@ public final class SettingsCheckProbe {
         guard let rect = marker(markerID), let point = windowPoint(topDown: rect), clickWindowPoint(point) else {
             return (false, "none", tree)
         }
-        return (true, "click", tree)
+        return (true, "click-sent", tree)
     }
 
     /// The fallback only: `model.toggleRecording`, the action the row's button runs, for the case

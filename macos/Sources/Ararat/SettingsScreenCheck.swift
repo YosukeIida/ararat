@@ -55,7 +55,7 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .airTraffic: ["rows"]
-            case .shortcuts: ["rows", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
+            case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
             case .appearance: ["rows", "theme_dark", "theme_light", "theme_page", "theme_reopen", "theme_system",
                                "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
@@ -652,8 +652,11 @@ extension Runtime {
                 check.details["shortcut_press"] = ["pressed": press.pressed, "way": press.way]
                 if !press.tree.isEmpty { check.details["shortcut_ax_tree"] = press.tree }
                 if press.pressed {
-                    trace("record button pressed through \(press.way) for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
+                    trace("record button UI attempt through \(press.way) for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
                 } else {
+                    check.report("record_button_pressed", false)
+                    check.details["shortcut_press_fallback"] = true
+                    check.details["shortcut_press_fallback_reason"] = "no_ui_path"
                     trace("neither the AX tree nor a click reached the record button; calling the model")
                     probe.beginShortcutRecording("toggle_sidebar")
                 }
@@ -752,15 +755,20 @@ extension Runtime {
                 return
             }
             guard mode == .shortcuts else { finish(); return }
+            if check.details["shortcut_press_fallback"] == nil,
+               probe.shortcutRecordingCommand == "toggle_sidebar" {
+                check.report("record_button_pressed", true)
+            }
             let ready = probe.shortcutRecordingCommand == "toggle_sidebar"
                 && probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
             guard ready else {
-                // A press that reported success but started no recording gets one direct call, so
-                // the run still proves the rest of the path; the detail says it was needed.
+                // shortcut: the UI press may start no recording; keep downstream checks running until the VM press path is fixed.
                 if probe.shortcutRecordingCommand == nil,
                    browserCheckAttempts - check.panePhaseStart > 20,
                    check.details["shortcut_press_fallback"] == nil {
                     check.details["shortcut_press_fallback"] = true
+                    check.details["shortcut_press_fallback_reason"] = "no_recording_after_press"
+                    check.report("record_button_pressed", false)
                     FileHandle.standardError.write(Data("ararat-trace: shortcuts the UI press did not start the recording; calling the model\n".utf8))
                     probe.beginShortcutRecording("toggle_sidebar")
                 }

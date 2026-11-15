@@ -5,6 +5,17 @@ import Testing
 @testable import AraratUI
 
 @Test @MainActor
+func shortcutFallbackCannotPassWithOnlyDownstreamConditions() {
+    var conditions = Dictionary(uniqueKeysWithValues: SettingsScreenCheck.conditionNames(.shortcuts).map { ($0, true) })
+    for pressed in [nil, false, true] as [Bool?] {
+        conditions["record_button_pressed"] = pressed
+        let result = SettingsScreenCheck.conditionResults(conditions, mode: .shortcuts)
+        #expect(result.values["record_button_pressed"] == (pressed == true))
+        #expect(result.failed == (pressed == true ? [] : ["record_button_pressed"]))
+    }
+}
+
+@Test @MainActor
 func settingsWheelsExpireThePauseBeforeReversedPaging() throws {
     let unstamped = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2, wheel1: 0, wheel2: -5, wheel3: 0))
     #expect(try #require(NSEvent(cgEvent: unstamped)).timestamp == 0)
