@@ -385,3 +385,48 @@ func theCloseCapsSeamReadsTheCurrentRowNotAnArbitraryOne() throws {
     sidebar.updateSelection(id: nil)
     #expect(sidebar.closeCapsForCheck == nil)
 }
+
+@Test(arguments: ["cancel", "silent", "close"]) @MainActor
+func aRefusedCloseDoesNotAnimateALaterRemoval(removal: String) async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("cancel.sqlite").path,
+                                   windowID: "cancel", card: NSView(), session: session)
+    let store = try #require(session.store)
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    _ = try store.importArcSidebar(windowId: "cancel", json: String(contentsOf: fixture, encoding: .utf8),
+                                   windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+    let created = try store.createTab(windowId: "cancel", url: "https://cancel.example/")
+    let id = try #require(created.selectedId)
+    let live = try store.liveOpen(item: id, url: "https://cancel.example/")
+    func keptTransaction(_ rev: UInt64) -> LiveTransaction {
+        LiveTransaction(offTheRecord: false, epoch: 1, rev: rev, cause: .engine,
+                        strips: [LiveStrip(window: "cancel", tabs: [LiveTab(offTheRecord: false, profile: .default,
+                            liveId: live.id, item: id, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)])
+    }
+    _ = try store.liveApply(transaction: keptTransaction(0))
+    var delivered: WorkspaceSnapshot?
+    var closed: [String] = []
+    engine.onSnapshot = { delivered = $0 }
+    engine.onRowClose = { closed.append($0) }
+    engine.close(id: id, archive: true)
+    await withCheckedContinuation { continuation in session.queue.async { continuation.resume() } }
+    _ = try store.restoreItem(windowId: "cancel", id: id)
+    _ = try store.selectItem(windowId: "cancel", id: id)
+    engine.refresh()
+    try await waitUntil { delivered?.spaces.flatMap(\.today).contains { $0.id == id && !$0.unloaded } == true }
+    #expect(closed.isEmpty)
+    delivered = nil
+    if removal == "cancel" {
+        engine.tabCloseCancelled(id)
+        _ = try store.archiveItem(windowId: "cancel", id: id)
+        engine.refresh()
+    } else {
+        engine.close(id: id, archive: true, animate: removal == "close")
+        engine.refresh()
+    }
+    try await waitUntil { delivered?.archive.contains { $0.id == id } == true }
+    #expect(closed == (removal == "close" ? [id] : []))
+}

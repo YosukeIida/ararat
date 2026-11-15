@@ -1378,7 +1378,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if session == nil && adoptedWindow { adapter.restoreSelection() }
     if session == nil && !adoptedWindow { running.finishCrashRecovery?() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
-       (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || quitMode == "quit-cancel" || quitMode == "close") {
+       (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || browserCheckMode == "today" || quitMode == "quit-cancel" || quitMode == "close") {
       host.installCheckDialogFactory()
     }
     if root == nil { installCoreMenu() }

@@ -879,6 +879,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 let snapshot = store.snapshot(windowId: self.windowID)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
+                    else { self.closingRows.remove(item) }
                     for target in targets {
                         if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
                         else if self.session.cancelPendingOpen(target.liveId) {
@@ -901,6 +902,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     : store.closeItem(windowId: self.windowID, id: item)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
+                    else { self.closingRows.remove(item) }
                     self.deliverIfCurrent(snapshot)
                 }
                 return
@@ -908,6 +910,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let command = try archive ? store.liveArchive(item: item) : store.liveClose(item: item)
             DispatchQueue.main.async {
                 if animate { self.closingRows.insert(item) }
+                else { self.closingRows.remove(item) }
                 self.session.tab(liveID)?.close(withCommandId: command.id)
             }
         } catch { self.report(error) }
@@ -960,6 +963,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         handoffGeneration += 1
         invalidateSelection()
         MainActor.assumeIsolated { onCloseStarted?() }
+    }
+
+    public func tabCloseCancelled(_ itemId: String) {
+        precondition(Thread.isMainThread)
+        closingRows.remove(itemId)
     }
 
     public func windowHostClosingAllCancelled(_ host: any ARWindowHostAPI) {

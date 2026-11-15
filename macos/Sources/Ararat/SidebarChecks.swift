@@ -67,6 +67,8 @@ final class SidebarCheck {
     var unreadId = ""
     var statusId = ""
     var statusNavigationCount: UInt = 0
+    var cancelDialogCount: UInt = 0
+    var clearRequestedClose = false
 
     static func conditionNames(mode: Mode, screen: Bool) -> [String] {
         let base: [String]
@@ -79,7 +81,7 @@ final class SidebarCheck {
         case .today:
             base = ["divider_visible", "divider_frame", "clear_present", "new_tab_row",
                     "clear_archives", "divider_hidden_without_today", "new_tab_setting_hides",
-                    "name_drop_pins"]
+                    "name_drop_pins", "beforeunload_stay_keeps_row", "clear_after_stay_without_close_motion"]
         case .spaceName:
             base = ["name_x", "chevron_hover", "name_x_hover", "name_x_collapsed", "click_toggles",
                     "menu_items", "menu_dock_same", "rename_menu_only", "rename_field_height", "look_anchor"]
@@ -686,19 +688,63 @@ extension Runtime {
             // first so Clear has a live tab to close, not only core rows to archive.
             guard let space = sidebarCheckShownSpace(), !space.today.isEmpty else { return }
             if let todayB = row("today-b") {
+                if space.today.count > 1 {
+                    for other in space.today where other.id != todayB.id {
+                        adapter?.close(id: other.id, archive: true, animate: false)
+                    }
+                    step(42)
+                    return
+                }
                 if snapshot.selectedId != todayB.id { sidebar.selectRow(id: todayB.id); return }
-                let live = (host.tabs() as? [any ARTabAPI])?.contains { $0.itemId == todayB.id } == true
-                guard live else { note("waiting for a native tab on \(todayB.id)"); return }
+                guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayB.id }),
+                      !tab.isLoading, tab.navigationCount > 0 else { note("waiting for a native tab on \(todayB.id)"); return }
+                tab.prepareCheckBeforeUnload()
+                step(40)
+            }
+        case 42:
+            guard let core = sidebarCheckCore(),
+                  core.spaces.first(where: { $0.id == core.shownSpaceId })?.today.count == 1 else { return }
+            step(4)
+        case 40:
+            guard let todayB = row("today-b"),
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == todayB.id }),
+                  tab.checkHasBeforeUnload() else { return }
+            check.commandWId = todayB.id
+            check.cancelDialogCount = host.checkDialogCount()
+            if !screen { host.expectCheckDialogs(1) }
+            sidebar.closeSelectedTab(nil)
+            step(41)
+        case 41:
+            if screen && check.conditions["beforeunload_stay_keeps_row"] == nil {
+                guard clickScreenDialog(stay: true) else { return }
+                check.conditions["beforeunload_stay_keeps_row"] = false
+            }
+            guard screen || host.checkDialogCount() > check.cancelDialogCount else { return }
+            guard screen || host.checkDialogIntegrity() else { return }
+            guard let core = sidebarCheckCore(), let space = core.spaces.first(where: { $0.id == core.shownSpaceId }),
+                  space.today.contains(where: { $0.id == check.commandWId && !$0.unloaded }),
+                  (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId == check.commandWId }) == true else { return }
+            check.report("beforeunload_stay_keeps_row", true)
+            let previous = adapter?.onRowClose
+            adapter?.onRowClose = { id in
+                check.clearRequestedClose = true
+                previous?(id)
             }
             check.seen = Set(space.today.map(\.id))
+            if !screen { host.expectCheckDialogs(1) }
             trace("press Clear")
             guard sidebar.pressClearToday() else { check.report("clear_archives", false); step(5); return }
             step(5)
         case 5:
             guard let core = sidebarCheckCore(), let space = core.spaces.first(where: { $0.id == core.shownSpaceId }) else { return }
             guard space.today.isEmpty else { return }
+            if (host.tabs() as? [any ARTabAPI])?.contains(where: { $0.itemId.map(check.seen.contains) == true }) == true {
+                if screen { _ = clickScreenDialog(stay: false) }
+                return
+            }
             let archived = check.seen.allSatisfy { id in core.archive.contains { $0.id == id } }
             check.report("clear_archives", archived)
+            check.report("clear_after_stay_without_close_motion", !check.clearRequestedClose)
             check.report("divider_hidden_without_today", sidebar.todayDividerForCheck == nil)
             _ = capture("cleared")
             trace("done")

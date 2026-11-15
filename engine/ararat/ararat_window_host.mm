@@ -730,7 +730,7 @@ bool AraratCheckDialogIntegrity() { return !g_check_dialog_failed && g_check_req
 bool AraratCheckRejectJavaScriptDialog() {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
-  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return false;
+  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return false;
   g_check_dialog_failed = true;
   static unsigned count = 0;
   if (count++ < 32) std::fprintf(stderr, "ararat-check-dialog: unexpected javascript pid=%d\n", getpid());
@@ -1519,7 +1519,7 @@ bool AraratCheckRecoveryBarrier() {
 uint64_t AraratCheckBeginBeforeUnload(content::WebContents* contents, content::RenderFrameHost* frame, bool guest) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
-  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return 0;
+  if (args->HasSwitch("ararat-screen") || (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return 0;
   ARWindowHost* host = g_check_dialog_host;
   NSDictionary* page = host && contents ? [host checkDialogPage:contents] : nil;
   NSString* value = page[@"live"];
@@ -2143,7 +2143,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
   if (args->HasSwitch("ararat-screen") ||
-      (check != "profiles" && check != "keyboard" && check != "quit-cancel" && check != "close")) return;
+      (check != "profiles" && check != "keyboard" && check != "today" && check != "quit-cancel" && check != "close")) return;
   g_check_dialog_count = 0;
   g_check_cancel_dialog = 1;
   g_check_dialog_limit = 0;

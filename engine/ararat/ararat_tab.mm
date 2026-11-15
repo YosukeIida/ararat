@@ -122,7 +122,13 @@ class TabContentsObserver : public content::WebContentsObserver {
   void NavigationEntriesDeleted() override { [[tab_ ownerHost] tabMetadataChanged:@"navigation-entries" tab:tab_]; }
   void OnAudioStateChanged(bool audible) override { [tab_ audioStateChanged:@"audible"]; }
   void DidUpdateAudioMutingState(bool muted) override { [tab_ audioStateChanged:@"muted"]; }
-  void BeforeUnloadDialogCancelled() override { [tab_ refresh]; }
+  void BeforeUnloadDialogCancelled() override {
+    ARWindowHost* host = [tab_ ownerHost];
+    NSString* item = [host itemIdForTab:tab_];
+    if (item && [host.delegate respondsToSelector:@selector(tabCloseCancelled:)])
+      [host.delegate tabCloseCancelled:item];
+    [tab_ refresh];
+  }
   void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
     [tab_ rendererCrashed];
   }
