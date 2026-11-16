@@ -310,6 +310,23 @@ func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: A
   }
 }
 
+func pageOnlyTraceDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
+  func tab(_ rows: [[String]]?, id: String) -> [String: Any]? {
+    guard let row = rows?.first(where: { $0.count == 3 && $0[0] == "item" && $0[1] == id }),
+          let data = row[2].data(using: .utf8),
+          let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let kind = record["kind"] as? [String: Any] else { return nil }
+    return kind["Tab"] as? [String: Any]
+  }
+  return checkRecordDiff(before, after).map { diff in
+    guard diff["kind"] as? String == "item", let id = diff["id"] as? String,
+          let old = tab(before, id: id), let new = tab(after, id: id) else { return diff }
+    var result = diff
+    result["tab_fields"] = ["url", "saved_title"].filter { old[$0] as? String != new[$0] as? String }
+    return result
+  }
+}
+
 func checkWindowSelection(_ rows: [[String]]?, windowID: String) -> String? {
   guard let row = rows?.first(where: { $0.count == 3 && $0[0] == "window" && $0[1] == windowID }),
         let data = row[2].data(using: .utf8),
@@ -2574,6 +2591,23 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  func pageOnlyTabTrace(_ rows: [[String]]?) -> [[String: Any]] {
+    func tabs(_ host: any ARWindowHostAPI, window: String, pageOnly: Bool) -> [[String: Any]] {
+      (host.tabs() as? [any ARTabAPI] ?? []).map { tab in
+        ["window": window, "page_only": pageOnly, "item": tab.itemId ?? "nil", "live": tab.liveId,
+         "loading": tab.isLoading, "navigations": tab.navigationCount,
+         "title_empty": tab.title.isEmpty,
+         "stored_matches_live": tab.itemId.map { checkStoredTabMetadata(rows ?? [], item: $0, url: tab.url, title: tab.title) } ?? false]
+      }
+    }
+    return windowTree.flatMap { runtime in
+      let regular = runtime.host.map { tabs($0, window: runtime.windowID, pageOnly: false) } ?? []
+      return regular + runtime.popups.flatMap { popup in
+        popup.host.map { tabs($0, window: runtime.windowID, pageOnly: true) } ?? []
+      }
+    }
+  }
+
   func sendQuitKey(_ host: any ARWindowHostAPI) {
     (host.tabs() as? [any ARTabAPI])?.first?.focusCheckPage()
     guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
@@ -3488,7 +3522,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
         guard placed, let rows = captureCheckRows() else { return }
         quitBefore = rows
-        let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "before", "rows": pageOnlyTraceRows(rows) ?? []]
+        let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "before", "rows": pageOnlyTraceRows(rows) ?? [], "tabs": pageOnlyTabTrace(rows)]
         if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
            let line = String(data: data, encoding: .utf8) {
           FileHandle.standardError.write(Data("ararat-trace: page-only-rows \(line)\n".utf8))
@@ -3505,6 +3539,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     } else if mode == "screen-links", browserCheckPhase == 41, let popup = popups.first?.host,
               popup.window().isKeyWindow, let tab = (popup.tabs() as? [any ARTabAPI])?.first,
               tab.title == "Ararat save check", !tab.isLoading {
+      let rows = captureCheckRows()
+      let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "before-save",
+        "diff": pageOnlyTraceDiff(quitBefore, rows), "tabs": pageOnlyTabTrace(rows),
+        "save_count": popup.checkPageOnlySaveCount()]
+      if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
+         let line = String(data: data, encoding: .utf8) {
+        FileHandle.standardError.write(Data("ararat-trace: page-only-rows \(line)\n".utf8))
+      }
       guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: popup.window().windowNumber,
           context: nil, characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return }
@@ -3514,7 +3556,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               popup.checkPageOnlySaveCount() == 1,
               let save = NSApp.windows.compactMap({ $0 as? NSSavePanel }).first(where: { $0.isVisible }) {
       let rows = captureCheckRows()
-      let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "after", "rows": pageOnlyTraceRows(rows) as Any? ?? NSNull(), "diff": checkRecordDiff(quitBefore, rows)]
+      let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "after", "rows": pageOnlyTraceRows(rows) as Any? ?? NSNull(), "diff": pageOnlyTraceDiff(quitBefore, rows), "tabs": pageOnlyTabTrace(rows)]
       if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
          let line = String(data: data, encoding: .utf8) {
         FileHandle.standardError.write(Data("ararat-trace: page-only-rows \(line)\n".utf8))
