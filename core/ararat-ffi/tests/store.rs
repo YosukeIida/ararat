@@ -1564,6 +1564,35 @@ fn the_privacy_record_reads_through_the_ffi_and_survives_reopen() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
+// P5b: When Ararat opens is the same synced workspace record, Restore until changed, and a
+// change survives a reopen as one row.
+#[test]
+fn the_startup_choice_reads_through_the_ffi_and_survives_reopen() {
+    use ararat_ffi::StartupBehavior;
+    let path = fresh_db("startup-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::RestoreWindows);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_startup("one".into(), StartupBehavior::NewWindow).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::NewWindow);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    // The same value again writes nothing.
+    store.set_startup("one".into(), StartupBehavior::NewWindow).unwrap();
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::NewWindow);
+    // The fields that share the record keep their own values.
+    assert!(store.settings().new_tab_row_shown);
+    store.set_startup("one".into(), StartupBehavior::RestoreWindows).unwrap();
+    drop(store);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
 #[test]
 fn live_auto_archive_returns_close_targets_and_the_committed_snapshot() {
     let path = fresh_db("live-auto-archive");
@@ -1639,4 +1668,55 @@ fn archive_groups_and_clear_are_profile_scoped_and_persist_in_one_edit() {
     let (_, disk) = Store::open(&path).unwrap();
     for id in ["split-1", "tab-a", "tab-b"] { assert!(!disk.items.contains_key(id)); }
     assert_eq!(disk.archive()[0].archive.as_ref().unwrap().source, "littleArc");
+}
+
+// P5b: When Ararat opens is Open a new window, so the launch discards the kept Window records
+// through the FFI, as a user's close does one at a time. The spaces and their rows stay.
+#[test]
+fn the_launch_discard_removes_the_kept_window_records_through_the_ffi() {
+    let path = fresh_db("discard-windows");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
+    store.show_space("two".into(), "work".into()).unwrap();
+    let kept = store.kept_windows();
+    assert_eq!(kept.first().map(|w| w.id.as_str()), Some("two"));
+    // F9: each record carries the space a launch adopting it would show.
+    assert_eq!(kept.first().and_then(|w| w.shown_space.as_deref()), Some("work"));
+    store.discard_kept_windows().unwrap();
+    assert!(store.kept_windows().is_empty());
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.kept_windows().is_empty());
+    assert!(store.snapshot("fresh".into()).spaces.iter().any(|space| space.id == "work"));
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// folder is refused before anything is written.
+#[test]
+fn the_download_device_reads_through_the_ffi_refuses_a_relative_folder_and_stays_out_of_the_journal() {
+    use ararat_ffi::DownloadDevice;
+    let path = fresh_db("download-device");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.download_device(), DownloadDevice::default());
+    let refused = store.set_download_device(DownloadDevice { directory: "Desktop".into(), ask_where_to_save: false });
+    assert!(refused.is_err());
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "download_device"));
+    let changed = DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    store.set_download_device(changed.clone()).unwrap();
+    assert_eq!(store.download_device(), changed);
+    // F3: the pair is a device record, so its row exists but never enters the sync journal.
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "download_device").count(), 1);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 0);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.download_device(), changed);
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'download_device'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 0);
+    // The startup choice is the synced one and keeps its own value beside it.
+    store.set_startup("one".into(), ararat_ffi::StartupBehavior::NewWindow).unwrap();
+    assert_eq!(store.settings().startup, ararat_ffi::StartupBehavior::NewWindow);
+    assert_eq!(store.download_device(), changed);
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

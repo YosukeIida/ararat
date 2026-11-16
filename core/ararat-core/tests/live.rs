@@ -1277,6 +1277,35 @@ fn a_user_close_removes_the_id_from_the_kept_records() {
     // The id is gone; no launch or reopen can adopt it back, so no id is ever reused.
 }
 
+// P5b (review 1 F6): a launch that opens a new window throws every kept record away, as a user's
+// close does one at a time, so nothing piles up across launches and a later Restore has no window
+// to bring back. Only Window records go: the spaces and their items stay.
+#[test]
+fn a_new_window_launch_discards_every_kept_window_record() {
+    let mut ws = workspace();
+    ws.windows.get_mut("one").unwrap().changed_at = 0;
+    ws.show_space("older", "space-work").unwrap();
+    ws.windows.get_mut("older").unwrap().changed_at = 100;
+    ws.show_space("newer", "space-work").unwrap();
+    ws.windows.get_mut("newer").unwrap().changed_at = 200;
+    let spaces = ws.spaces.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+    let items = ws.items.len();
+    assert_eq!(ws.kept_windows().len(), 3);
+
+    let ops = ws.discard_kept_windows();
+    assert_eq!(ops.len(), 3);
+    assert!(ops.iter().all(|op| matches!(op, Op::Delete(ararat_core::model::Kind::Window, _))));
+    assert!(ws.kept_windows().is_empty());
+    assert!(ws.windows.is_empty());
+    assert_eq!(ws.spaces.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), spaces);
+    assert_eq!(ws.items.len(), items);
+    // A peer that applies the batch agrees, and a second call writes nothing.
+    let mut peer = ws.clone();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    assert!(ws.discard_kept_windows().is_empty());
+}
+
 #[test]
 fn a_window_record_write_stamps_it_for_the_kept_query() {
     let mut ws = workspace();

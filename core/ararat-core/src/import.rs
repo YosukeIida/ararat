@@ -86,7 +86,7 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
             }
         }
     }
-    let mut workspace = Workspace { off_the_record: false, key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), section_collapsed: HashMap::new(), settings: crate::model::Settings::default(), spaces, favorites, items, windows: HashMap::new(), little_window_frame: None, little_window_device: crate::model::LittleWindowDevice::default(), history_purges: HashMap::new(), history_profiles: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new(), routing_rules: HashMap::new(), routing_default: crate::routing::Destination::default() };
+    let mut workspace = Workspace { off_the_record: false, key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), section_collapsed: HashMap::new(), settings: crate::model::Settings::default(), spaces, favorites, items, windows: HashMap::new(), little_window_frame: None, little_window_device: crate::model::LittleWindowDevice::default(), download_device: crate::model::DownloadDevice::default(), history_purges: HashMap::new(), history_profiles: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new(), routing_rules: HashMap::new(), routing_default: crate::routing::Destination::default() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;

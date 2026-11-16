@@ -994,6 +994,16 @@ impl Workspace {
         Ok(ops)
     }
 
+    // P5b: a launch that opens a new window throws the kept records away, one delete each, as
+    // closing that window did: nothing piles up across launches and P5c finds no window to bring
+    // back. Only the Window records go; spaces, items and the rest of the workspace stay.
+    pub fn discard_kept_windows(&mut self) -> Vec<Op> {
+        let ops: Vec<Op> = self.kept_windows().into_iter()
+            .map(|window| Op::Delete(Kind::Window, window.id)).collect();
+        for op in &ops { self.apply(op); }
+        ops
+    }
+
     pub fn delete_archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
         if !self.archive().iter().any(|item| item.id == id) {
             return Err(EditError(format!("item {id} is not an archive entry")));
@@ -1486,6 +1496,30 @@ impl Workspace {
         let mut settings = self.settings.clone();
         settings.privacy = privacy;
         self.commit_settings(settings)
+    }
+
+    // P5b: the General pane's When Ararat opens. Same synced record as the switches above; the
+    // app reads it at the launch site, and the core keeps no state of its own for it.
+    pub fn set_startup(&mut self, startup: crate::model::StartupBehavior) -> Vec<Op> {
+        if self.settings.startup == startup { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.startup = startup;
+        self.commit_settings(settings)
+    }
+
+    // P5b: the General pane's downloads pair, one write of the whole device record (F3: the
+    // folder is a path of this Mac, so it stays beside the Little Window frame rather than in the
+    // synced Settings). The app pushes it into Chromium's prefs at the launch's first window and
+    // after every change, so the pane and the browser never disagree about where a download goes.
+    pub fn set_download_device(&mut self, device: crate::model::DownloadDevice) -> Vec<Op> {
+        debug_assert!(device.invalid().is_none(), "a download folder must be an absolute path");
+        if self.download_device == device { return Vec::new(); }
+        let op = if device == crate::model::DownloadDevice::default() {
+            Op::Delete(Kind::DownloadDevice, "workspace".into())
+        } else {
+            Op::Put(Record::DownloadDevice(device))
+        };
+        self.commit_edit(vec![op])
     }
 
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
