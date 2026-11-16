@@ -100,7 +100,7 @@ The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. 
 
 `ararat/find-close-command.patch` refreshes command state after ending a find session, when the find UI is no longer active.
 
-`ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset.
+`ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset. Native openURLs and Handoff normalize the last profile to its original regular profile, preserving forced-incognito policy, so an active private window does not divert external links away from Air Traffic Control.
 
 `ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
 the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:

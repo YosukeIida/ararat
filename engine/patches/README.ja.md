@@ -87,7 +87,7 @@ mode 1 の検査は `DeleteURLs` を要求し、ファイル用シーケンス�
 
 `ararat/find-close-command.patch` は検索セッションの終了後、検索 UI が非アクティブになった時点でコマンドの状態を更新する。
 
-`ararat/app-controller-hooks.patch` は Dock の再オープンとメニュー、外部 URL、表示中の Browser を独自 hook に渡す。hook が未設定のときは標準の動作を使う。
+`ararat/app-controller-hooks.patch` は Dock の再オープンとメニュー、外部 URL、表示中の Browser を独自 hook に渡す。hook が未設定のときは標準の動作を使う。native の openURLs と Handoff は、最後のプロファイルを元の通常プロファイルに戻し、ポリシーによる incognito の強制は維持する。これにより、プライベートウィンドウが active でも外部リンクは Air Traffic Control を通る。
 
 `ararat/remove-screenai-sandbox-parameter.patch` は `chrome/browser/chrome_content_browser_client.cc` の sandbox パラメータから ScreenAI の分岐を削除する。`disable-ai` が ScreenAI を削除するため、この分岐を残すと `ScreenAIInstallState::GetInstance()` が未定義シンボルになり、リンクに失敗する。
 

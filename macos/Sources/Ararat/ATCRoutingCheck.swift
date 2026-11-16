@@ -50,7 +50,9 @@ final class ATCRoutingCheck {
             let snapshot = current(window)
             return "\(window.windowID):space=\(snapshot?.shownSpaceId ?? "nil"):selected=\(snapshot?.selectedId ?? "nil"):active=\(window.host?.activeItemId() ?? "nil"):top=\(snapshot?.spaces.first { $0.id == snapshot?.shownSpaceId }?.today.first?.url ?? "nil")"
         }
-        let state = "phase=\(phase) queue=\(owner.externalURLs.map(\.url)) opening=\(owner.openingExternalURL) little=\(little.count) windows=\(windowStates)"
+        let hosts = owner.windowTree.map { "\($0.windowID):private=\($0.isPrivateWindow):host=\($0.host != nil):closing=\($0.hostClosing)" }
+        let forward = process.map { $0.isRunning ? "running" : "exit=\($0.terminationStatus):reason=\($0.terminationReason.rawValue)" } ?? "none"
+        let state = "phase=\(phase) queue=\(owner.externalURLs.map(\.url)) opening=\(owner.openingExternalURL) little=\(little.count) windows=\(windowStates) hosts=\(hosts) forward=\(forward)"
         if state != lastTrace {
             lastTrace = state
             FileHandle.standardError.write(Data("ararat-trace: atc-routing \(state)\n".utf8))
@@ -63,6 +65,7 @@ final class ATCRoutingCheck {
             }
         }
         func deliver(_ strings: [String]) {
+            FileHandle.standardError.write(Data("ararat-trace: atc-deliver phase=\(phase) delegate=\(String(describing: NSApp.delegate)) urls=\(strings)\n".utf8))
             NSApp.delegate?.application?(NSApp, open: strings.compactMap(URL.init(string:)))
         }
         func next() { phase += 1 }
@@ -147,13 +150,13 @@ final class ATCRoutingCheck {
                 child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
                 child.arguments = CommandLine.arguments.filter { $0.hasPrefix("--user-data-dir=") || $0 == "--use-mock-keychain" } + ["https://atc-space.test/second"]
                 child.standardOutput = FileHandle.nullDevice
-                child.standardError = FileHandle.nullDevice
+                child.standardError = FileHandle.standardError
                 try child.run()
                 process = child
                 next()
             case 10:
                 guard target("https://atc-space.test/second") != nil, process?.isRunning == false else { return }
-                conditions["second_launch"] = process?.terminationReason == .exit
+                conditions["second_launch"] = process?.terminationReason == .exit && process?.terminationStatus == 0
                 guard CommandLine.arguments.contains("--ararat-atc-launchservices") else { finish(); return }
                 let child = Process()
                 child.executableURL = URL(fileURLWithPath: "/usr/bin/open")

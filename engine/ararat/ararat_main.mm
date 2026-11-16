@@ -437,6 +437,9 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   };
   g_ararat_dock_menu = []() -> NSMenu* { return nil; };
   g_ararat_open_urls = [](NSArray* urls, Profile* profile) {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check"))
+      std::fprintf(stderr, "ararat-trace: engine-external-open count=%lu otr=%d\n",
+                   static_cast<unsigned long>(urls.count), profile && profile->IsOffTheRecord());
     if (profile && profile->IsOffTheRecord()) {
       AraratOpenOffTheRecordURLs(profile, urls);
       return;
