@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -68,7 +68,7 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
   let downloads = args.contains(where: { $0.hasSuffix("=downloads") || $0.hasSuffix("=toasts") })
   // A settings screen check refused here names itself by its argument (`settings-tabs`), which is
   // the mode's raw value, so the refusal's `check` is the same name the run would have reported.
-  let settingsScreen = args.first { $0.hasPrefix("--ararat-screen=settings-") }.map { String($0.dropFirst("--ararat-screen=".count)) }
+  let settingsScreen = args.first { $0.hasPrefix("--ararat-screen=settings-") || $0 == "--ararat-screen=space-wheel-motion" }.map { String($0.dropFirst("--ararat-screen=".count)) }
   guard args.contains("--use-mock-keychain"), scratch("--user-data-dir="), scratch("--ararat-db="), !downloads || args.contains("--disable-features=SystemNotifications") else {
     let result: [String: Any] = ["check": settingsScreen ?? args.first(where: { ["--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }).map { String($0.dropFirst("--ararat-check=".count)) } ?? (args.contains(where: { $0.hasSuffix("=onboarding") }) ? "onboarding" : args.contains(where: { $0.hasSuffix("=split-commands") }) ? "split-commands" : args.contains(where: { $0.hasSuffix("=split-focus") }) ? "split-focus" : args.contains(where: { $0.hasSuffix("=header") }) ? "header" : args.contains(where: { $0.hasSuffix("=urlfield") }) ? "urlfield" : args.contains(where: { $0.hasSuffix("=toasts") }) ? "toasts" : downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : args.contains(where: { $0.hasSuffix("=folder-upload") }) ? "folder-upload" : "organize"), "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
@@ -605,6 +605,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var sidebarChecksActive = false
   var sidebarSeedTraced = false
   var sidebarFirstTransactionTraced = false
+  var spaceWheelMotionCheck: SpaceWheelMotionCheck?
   var dockCheck: DockScreenCheck?
   var organizeConditions: [String: Bool] = [:]
   var organizeCancelStarted = false
@@ -973,6 +974,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "keyboard" { browserCheckMode = "screen-keyboard" }
       if screenName == "organize" { browserCheckMode = "screen-organize" }
       if screenName == "look" { browserCheckMode = "screen-look" }
+      if screenName == "space-wheel-motion" { browserCheckMode = "screen-space-wheel-motion" }
       if screenName == "dock" { browserCheckMode = "screen-dock" }
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
       if screenName == "sidebar-rows" { browserCheckMode = "screen-sidebar-rows" }
@@ -1043,7 +1045,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let userData = unsafeBitCast(pathSymbol, to: UserData.self)
     let requested = arguments.first { $0.hasPrefix("--ararat-db=") }.map { String($0.dropFirst(12)) }
     let organize = browserCheckMode == "organize" || browserCheckMode == "screen-organize"
-    let dockCheckMode = browserCheckMode == "dock" || browserCheckMode == "screen-dock"
+    let dockCheckMode = browserCheckMode == "screen-space-wheel-motion" || browserCheckMode == "dock" || browserCheckMode == "screen-dock"
     let directory: String
     if let requested {
       directory = (requested as NSString).deletingLastPathComponent
@@ -1212,6 +1214,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
     adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
+    if SpaceWheelMotionCheck.enabled {
+      adapter.onSnapshotTrace = { [weak sidebar] in sidebar?.traceSpaceWheelMotion($0) }
+    }
     adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
       guard self?.host?.isClosing() != true, self?.host?.isClosingAll() != true else { return }
       self?.snapshot = snapshot
@@ -1437,7 +1442,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "window-drag" || browserCheckMode == "screen-window-drag" || browserCheckMode == "create-space" || browserCheckMode == "screen-create-space" || browserCheckMode == "folder-upload" || browserCheckMode == "screen-folder-upload" || liveBatchCheckActive || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
+      if browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-space-wheel-motion" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "window-drag" || browserCheckMode == "screen-window-drag" || browserCheckMode == "create-space" || browserCheckMode == "screen-create-space" || browserCheckMode == "folder-upload" || browserCheckMode == "screen-folder-upload" || liveBatchCheckActive || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -3455,6 +3460,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "protocol" { protocolCheckTick(host); return }
     if mode == "relaunch-seed" || mode == "relaunch-verify" { relaunchCheckTick(host, mode: mode); return }
     if mode == "autofill" { autofillCheckTick(host); return }
+    if mode == "screen-space-wheel-motion" { spaceWheelMotionTick(); return }
     if mode == "dock" || mode == "screen-dock" { dockCheckTick(host, screen: mode == "screen-dock"); return }
     if SettingsScreenCheck.Mode.mode(mode) != nil { settingsCheckTick(mode); return }
     if mode == "look" || mode == "screen-look" { lookCheckTick(host, screen: mode == "screen-look"); return }
@@ -8455,6 +8461,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     browserCheckTimer?.invalidate()
     browserCheckTimer = nil
     dockCheck?.stop()
+    spaceWheelMotionCheck?.timer?.invalidate()
+    sidebar?.checkFinishSpaceWheelMotion()
     if let fullscreenObserver { NotificationCenter.default.removeObserver(fullscreenObserver) }
     fullscreenObserver = nil
     if let fullscreenActivationObserver { NotificationCenter.default.removeObserver(fullscreenActivationObserver) }
@@ -8490,6 +8498,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-organize" { result["check"] = "organize"; result["screen"] = "organize" }
     if browserCheckMode == "screen-look" { result["check"] = "look"; result["screen"] = "look" }
     if browserCheckMode == "screen-dock" { result["check"] = "dock"; result["screen"] = "dock" }
+    if browserCheckMode == "screen-space-wheel-motion" {
+      result["check"] = "space-wheel-motion"; result["screen"] = "space-wheel-motion"
+    }
     if browserCheckMode == "dock" || browserCheckMode == "screen-dock" {
       let check = DockScreenCheck.conditionResults(dockCheck?.conditions ?? [:], screen: browserCheckMode == "screen-dock")
       result["conditions"] = check.values
