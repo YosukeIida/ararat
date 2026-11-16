@@ -4,7 +4,7 @@ import AraratKit
 @testable import AraratUI
 
 private func download(_ id: String, start: Double = 0, running: Bool = false, received: Int64 = 0, total: Int64 = 0, actions: [String] = [], restored: Bool = false, state: Int? = nil, profile: String = "Default") -> [String: Any] {
-    ["id": id, "profile": profile, "name": id, "state": state ?? (running ? 0 : 1), "running": running, "restored": restored,
+    ["id": id, "profile": profile, "name": id, "url": "", "path": "", "paused": false, "state": state ?? (running ? 0 : 1), "running": running, "restored": restored,
      "start": start, "received": received, "total": total, "status": "", "actions": actions]
 }
 
@@ -252,6 +252,40 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "first")
 }
 
+@Test @MainActor func downloadRowClickTakesFocusAndBacktabVisitsHeaderControls() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    #expect(page.search.nextKeyView === page.clear)
+    #expect(page.clear.previousKeyView === page.search)
+    #expect(page.clear.nextKeyView === page.table)
+    let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let backtab = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.shift], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+    for clearable in [true, false] {
+        model.update([download("first", actions: clearable ? ["remove"] : ["cancel"])])
+        page.refresh()
+        page.layoutSubtreeIfNeeded()
+        page.focusFirst()
+        let button = try #require(window.firstResponder as? DownloadActionButton)
+        button.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+        let row = try #require(page.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? DownloadRowView)
+        page.focusSearch()
+        row.mouseDown(with: click)
+        #expect(window.firstResponder === row)
+        row.mouseUp(with: click)
+        row.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+        window.makeFirstResponder(page.table)
+        page.table.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+    }
+}
+
 @Test @MainActor func downloadsPageKeepsLongHistoryInAVirtualTable() {
     _ = NSApplication.shared
     let model = DownloadsModel()
@@ -309,4 +343,115 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     model.update([])
     page.refresh()
     #expect((window.firstResponder as? NSView)?.accessibilityLabel() == "Exit Library")
+}
+
+@Test @MainActor func downloadsSearchNamesAndSourceURLsAndDistinguishNoMatches() {
+    let model = DownloadsModel()
+    var source = download("report.pdf")
+    source["url"] = "https://example.org/Research"
+    model.update([source, download("other")])
+    #expect(model.filteredItems("REPORT").map(\.id) == ["report.pdf"])
+    #expect(model.filteredItems("research").map(\.id) == ["report.pdf"])
+    #expect(model.filteredItems("   ").count == 2)
+    let page = DownloadsPageView(frame: .zero)
+    page.setModel(model)
+    page.search.stringValue = "absent"
+    page.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    #expect(page.entries.isEmpty && page.emptyVisible)
+    #expect(page.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "No matching downloads" })
+}
+
+@Test @MainActor func clearDownloadsRemovesOnlyTerminalItemsFromTheCurrentModel() {
+    let model = DownloadsModel()
+    var paused = download("paused", actions: ["resume"], state: 0)
+    paused["paused"] = true
+    model.update([download("running", running: true), paused,
+                  download("done", actions: ["remove"]), download("cancelled", actions: ["remove"], state: 2),
+                  download("interrupted", actions: ["resume", "remove"], state: 3),
+                  download("security-terminal", actions: ["discard", "remove"], state: 3),
+                  download("scanning", actions: ["keep", "discard"], state: 0)])
+    var removed: [String] = []
+    model.onAction = { action, id in
+        #expect(action == "remove")
+        removed.append(id)
+        return true
+    }
+    let page = DownloadsPageView(frame: .zero)
+    page.setModel(model)
+    page.clear.performClick(nil)
+    #expect(Set(removed) == ["done", "cancelled", "interrupted", "security-terminal"])
+    #expect(model.clearableItems.count == 4)
+}
+
+@Test @MainActor func privatePopoverClearAllUsesOnlyItsOwnList() throws {
+    let regular = DownloadsModel()
+    regular.update([download("regular", actions: ["remove"])])
+    var regularActions = 0
+    regular.onAction = { _, _ in regularActions += 1; return true }
+    let model = DownloadsModel()
+    model.update([download("private-done", actions: ["remove"], profile: "private"),
+                  download("private-running", running: true, actions: ["cancel"], profile: "private")])
+    var removed: [String] = []
+    model.onAction = { [weak model] action, id in
+        guard let model else { return false }
+        #expect(action == "remove")
+        removed.append(id)
+        model.update(model.items.filter { $0.id != id }.map { download($0.id, running: $0.running, actions: $0.actions, profile: $0.profile) })
+        return true
+    }
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.privateWindow = true
+    sidebar.setDownloadsModel(model)
+    let popover = try #require(sidebar.downloadsPopover)
+    popover.refresh(limit: 10)
+    #expect(popover.library.isHidden && !popover.clear.isHidden && popover.clear.isEnabled)
+    popover.clear.performClick(nil)
+    popover.refresh(limit: 10)
+    #expect(removed == ["private-done"])
+    #expect(model.items.map(\.id) == ["private-running"])
+    #expect(regularActions == 0 && regular.items.map(\.id) == ["regular"])
+    #expect(!popover.clear.isEnabled && !sidebar.libraryOpen)
+}
+
+@Test @MainActor func pausedDownloadsKeepAStationaryProgressRingAndResumeButton() throws {
+    let model = DownloadsModel()
+    var paused = download("paused", received: 25, total: 100, actions: ["resume", "cancel"], state: 0)
+    paused["paused"] = true
+    model.update([paused])
+    #expect(model.progress == .paused(0.25))
+    let button = DownloadsButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+    button.progress = .indeterminate
+    button.progress = model.progress
+    #expect(button.ring.animation(forKey: "spin") == nil)
+    #expect(!button.ring.isHidden && button.ring.strokeEnd == 0.25)
+    #expect(button.accessibilityValue() as? String == "Paused, 25 %")
+    let row = DownloadRowView(item: try #require(model.items.first), model: model)
+    #expect(row.actionButtons.map(\.title) == ["Resume", "Cancel"])
+    paused["paused"] = false; paused["running"] = true; paused["actions"] = ["pause", "cancel"]
+    model.update([paused]); row.update(item: try #require(model.items.first))
+    #expect(row.actionButtons.map(\.title) == ["Pause", "Cancel"])
+}
+
+@Test @MainActor func downloadDragProviderWritesOnlyAnExistingCompletedFileURL() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + " download.txt")
+    try Data("download".utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = DownloadsModel()
+    var item = download("file", actions: ["open", "show", "remove"])
+    item["path"] = url.path
+    model.update([item])
+    let row = DownloadRowView(item: try #require(model.items.first), model: model)
+    let drag = try #require(row.draggingItem())
+    let writer = try #require(drag.item as? NSPasteboardWriting)
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    #expect(writer.writableTypes(for: pasteboard).contains(.fileURL))
+    #expect(pasteboard.writeObjects([writer]))
+    #expect(pasteboard.string(forType: .fileURL).flatMap(URL.init(string:)) == url)
+    let value = try #require(writer.pasteboardPropertyList(forType: .fileURL) as? String)
+    #expect(URL(string: value) == url)
+    item["state"] = 0; model.update([item])
+    #expect(row.draggingItem() == nil)
+    item["state"] = 1; item["path"] = url.path + ".missing"; model.update([item])
+    #expect(row.draggingItem() == nil)
 }

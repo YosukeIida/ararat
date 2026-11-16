@@ -482,6 +482,7 @@ public final class SidebarView: NSView {
         case .none: progress = "none"
         case .indeterminate: progress = "indeterminate"
         case .fraction: progress = "fraction"
+        case .paused: progress = "paused"
         }
         let flight = window?.contentView?.subviews.contains { $0.identifier?.rawValue == "download-flight" } ?? false
         let ring = libraryButton.ring
@@ -492,7 +493,7 @@ public final class SidebarView: NSView {
         let inside = window.map { $0.frame.insetBy(dx: -1, dy: -1).contains(panelFrame) } ?? false
         let fittingHeight = DownloadsPopover.headerHeight + CGFloat(downloadsPopover?.rows.count ?? 0) * DownloadsPopover.rowHeight
         let metrics = downloadsPopover?.checkMetrics ?? [:]
-        return ["progress": progress, "ring_visible": ringVisible, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "actions": $0.actions] as [String: Any] } ?? [],
+        return ["progress": progress, "ring_visible": ringVisible, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "paused": $0.paused, "actions": $0.actions] as [String: Any] } ?? [],
                 "list": downloadsPopover?.isShown ?? false, "first": downloadsPopover?.library.title ?? "",
                 "rows": downloadsPopover?.rows.mapValues { UInt(bitPattern: ObjectIdentifier($0)) } ?? [:],
                 "popover_inside_above": panel != nil && inside && panelFrame.minY >= buttonFrame.maxY - 1,
@@ -502,6 +503,24 @@ public final class SidebarView: NSView {
                 "page_rows_layout": library.downloadsPage.rowsLeadingAndStatusFit,
                 "library_open": libraryOpen, "library_page": library.page.rawValue,
                 "page_ids": library.downloadsPage.entries.map(\.id), "flight": flight]
+    }
+    public func downloadsCheckSearch(_ query: String) {
+        guard downloadsCheckEnabled else { return }
+        library.downloadsPage.search.stringValue = query
+        library.downloadsPage.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    }
+    public func downloadsCheckClearAll() {
+        guard downloadsCheckEnabled else { return }
+        if privateWindow { downloadsPopover?.clear.performClick(nil) }
+        else { library.downloadsPage.clear.performClick(nil) }
+    }
+    public func downloadsCheckDragURL(id: String, page: Bool) -> String? {
+        guard downloadsCheckEnabled else { return nil }
+        let row: DownloadRowView?
+        if page, let index = library.downloadsPage.entries.firstIndex(where: { $0.id == id }) {
+            row = library.downloadsPage.table.view(atColumn: 0, row: index, makeIfNecessary: true) as? DownloadRowView
+        } else { row = downloadsPopover?.rows[id] }
+        return (row?.draggingItem()?.item as? NSPasteboardWriting)?.pasteboardPropertyList(forType: .fileURL) as? String
     }
     public func downloadsCheckHover() {
         guard downloadsCheckEnabled else { return }
