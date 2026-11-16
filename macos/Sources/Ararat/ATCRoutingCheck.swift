@@ -156,7 +156,8 @@ final class ATCRoutingCheck {
                 next()
             case 10:
                 guard target("https://atc-space.test/second") != nil, process?.isRunning == false else { return }
-                conditions["second_launch"] = process?.terminationReason == .exit && process?.terminationStatus == 0
+                // A forwarded second launch exits with CHROME_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED (26), not 0.
+                conditions["second_launch"] = process?.terminationReason == .exit && process?.terminationStatus == 26
                 guard CommandLine.arguments.contains("--ararat-atc-launchservices") else { finish(); return }
                 let child = Process()
                 child.executableURL = URL(fileURLWithPath: "/usr/bin/open")
