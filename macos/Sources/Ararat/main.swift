@@ -2189,7 +2189,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
     keyBindings?.register(core)
-    if let tabs = menu.item(withTitle: "Tabs")?.submenu ?? menu.item(withTitle: "History")?.submenu,
+    // Why not History: HistoryMenuBridge::ShouldMenuItemBeVisible rejects unknown item tags.
+    if let tabs = menu.item(withTitle: "Tabs")?.submenu ?? menu.item(withTitle: "File")?.submenu,
        let binding = defaultKeyBindings().first(where: { $0.command == "reopen_closed_tab" }) {
       let item = tabs.items.first(where: { $0.title == "Reopen Closed Tab" })
         ?? tabs.addItem(withTitle: binding.title, action: nil, keyEquivalent: "")

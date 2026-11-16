@@ -128,3 +128,46 @@ func archiveActionsNeedANonemptyRegularArchive() throws {
     #expect(binding.key == KeyCombination(key: "t", command: true, control: false, option: false, shift: true))
     #expect(Runtime.coreMenuCommandIDs.contains("clear_archive"))
 }
+
+@Test @MainActor
+func installingArchiveMenuKeepsEveryHistoryTagKnownToChromium() throws {
+    _ = NSApplication.shared
+    let originalMenu = NSApp.mainMenu
+    defer { NSApp.mainMenu = originalMenu }
+    // Why not tag 0: Chromium 9a31f0acec1854d44e49a73fbf8017598151a583's
+    // chrome/browser/ui/cocoa/history_menu_bridge.mm:725–745 accepts only these tags;
+    // history_menu_bridge.h:123–131 and chrome/app/chrome_command_ids.h define their values.
+    let handledTags: Set<Int> = [33003, 33000, 33001, 400, 401, 440, 441, 480, 40010]
+    for hasTabsMenu in [false, true] {
+        let menu = NSMenu(title: "Main")
+        for title in ["File", "History"] + (hasTabsMenu ? ["Tabs"] : []) {
+            menu.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = NSMenu(title: title)
+        }
+        let history = try #require(menu.item(withTitle: "History")?.submenu)
+        for tag in handledTags.sorted() {
+            history.addItem(withTitle: "History \(tag)", action: nil, keyEquivalent: "").tag = tag
+        }
+        NSApp.mainMenu = menu
+        let runtime = Runtime(windowID: "archive-menu-\(hasTabsMenu)")
+        class_addProtocol(AddSplitViewHost.self, objc_getProtocol("ARWindowHostAPI")!)
+        let host = AddSplitViewHost()
+        runtime.host = host as? any ARWindowHostAPI
+        runtime.installCoreMenu()
+        #expect(history.items.count == handledTags.count)
+        for item in history.items {
+            #expect(handledTags.contains(item.tag), "Unknown History tag: \(item.tag) (\(item.title))")
+        }
+        let destination = try #require(menu.item(withTitle: hasTabsMenu ? "Tabs" : "File")?.submenu)
+        let reopen = try #require(destination.items.first { $0.representedObject as? String == "reopen_closed_tab" })
+        #expect(reopen.title == "Reopen Closed Tab")
+        #expect(reopen.target === runtime)
+        #expect(reopen.action == #selector(Runtime.coreMenuCommand(_:)))
+        #expect(reopen.keyEquivalent == "T")
+        #expect(reopen.keyEquivalentModifierMask == [.command])
+        #expect(!runtime.validateMenuItem(reopen))
+        runtime.snapshot = WorkspaceSnapshot(archive: [ArchiveEntry(id: "closed", title: "Closed", url: "https://closed.test", lifecycleChangedAt: 1)], shownSpaceId: nil, selectedId: nil, spaces: [])
+        #expect(runtime.validateMenuItem(reopen))
+        runtime.isPrivateWindow = true
+        #expect(!Runtime.archiveActionsEnabled(runtime))
+    }
+}
