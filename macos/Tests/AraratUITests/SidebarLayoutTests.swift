@@ -9,6 +9,24 @@ private func descendants(of view: NSView) -> [NSView] {
 }
 
 @Test @MainActor
+func dockCheckUsesTheOwningSidebarWithANestedPreview() {
+    let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+    let sidebar = SidebarView(snapshot: snapshot)
+    let rootDock = sidebar.dockCheckView
+    let preview = SidebarView(snapshot: snapshot)
+    let page = NSView()
+    page.addSubview(preview)
+    sidebar.addSubview(page, positioned: .below, relativeTo: sidebar.subviews.first)
+
+    #expect(sidebar.window == nil)
+    #expect(descendants(of: sidebar).compactMap { $0 as? SpaceDockView }.first === preview.dockCheckView)
+    #expect(sidebar.dockCheckView === rootDock)
+    #expect(sidebar.dockCheckView !== preview.dockCheckView)
+    page.removeFromSuperview()
+    #expect(sidebar.dockCheckView === rootDock)
+}
+
+@Test @MainActor
 func favoritesUseColumnsThatFit() {
     let favorites = (0..<5).map {
         Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)

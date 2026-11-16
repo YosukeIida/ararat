@@ -88,7 +88,7 @@ extension Runtime {
     func dockCheckDiagnostics(screen: Bool) -> [String: Any] {
         let check = dockCheck
         let result = DockScreenCheck.conditionResults(check?.conditions ?? [:], screen: screen)
-        let dock = sidebar.map { dockDescendants($0).compactMap { $0 as? SpaceDockView }.first } ?? nil
+        let dock = sidebar?.dockCheckView
         return ["conditions": result.values, "failed_conditions": result.failed, "phase": browserCheckPhase,
                 "details": check?.details ?? [:],
                 "cell_states": dock?.cellStates.map { ["state": String(describing: $0.state), "open": $0.openFraction, "refused": $0.refused] as [String: Any] } ?? [],
@@ -108,12 +108,10 @@ extension Runtime {
                 "mid_source": screen ? "wheel" : "trackpad_follow"]
     }
 
-    func dockDescendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { dockDescendants($0) } }
-
     func dockCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
         if dockCheck == nil { dockCheck = DockScreenCheck() }
-        guard let check = dockCheck, let sidebar, let container, let session = adapter?.session,
-              let dock = dockDescendants(sidebar).compactMap({ $0 as? SpaceDockView }).first else { return }
+        guard let check = dockCheck, let sidebar, let container, let session = adapter?.session else { return }
+        let dock = sidebar.dockCheckView
         let current = session.queue.sync { session.store?.snapshot(windowId: windowID) }
         guard let current else { return }
         let window = host.window()
@@ -143,8 +141,8 @@ extension Runtime {
                 check.midTrace.removeAll()
                 let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self, weak check] _ in
                     MainActor.assumeIsolated {
-                        guard let self, let check, let sidebar = self.sidebar,
-                              let dock = self.dockDescendants(sidebar).compactMap({ $0 as? SpaceDockView }).first else { return }
+                        guard let self, let check, let sidebar = self.sidebar else { return }
+                        let dock = sidebar.dockCheckView
                         let offset = sidebar.dockCheckSampleLook()
                         let scroll = sidebar.dockCheckScrollState
                         let values = dock.cellStates.map(\.openFraction)
