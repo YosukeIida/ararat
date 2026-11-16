@@ -306,8 +306,35 @@ public final class SettingsCheckProbe {
     }
     public func extensionRow(id: String) -> SettingsExtension? { model.extensionRow(id: id) }
 
-    // MARK: U27p, the Privacy pane
+    // MARK: P5b, the General pane
 
+    /// The pane's values and the same setters its menu, switch and Make Default call. The folder
+    /// chooser is driven by `setDownloadDirectory` (the panel's own answer path), so no check
+    /// shows a panel.
+    public var defaultBrowserIsDefault: Bool { model.defaultBrowserIsDefault }
+    public var generalLoaded: Bool { model.generalLoaded }
+    public var startup: StartupBehavior { model.startup }
+    public var startupLabel: String { model.startupLabel }
+    public var downloads: DownloadDevice { model.downloads }
+    public var downloadFolderName: String { model.downloadFolderName }
+    public func readGeneral() { model.readGeneral() }
+    public func makeDefaultBrowser() { model.makeDefaultBrowser() }
+    public func refreshDefaultBrowser() { model.refreshDefaultBrowser() }
+    public func setStartup(_ value: StartupBehavior) { model.setStartup(value) }
+    public func setDownloadDirectory(_ url: URL) { model.setDownloadDirectory(url) }
+    public func setAskWhereToSave(_ value: Bool) { model.setAskWhereToSave(value) }
+    /// F1's reset: the record back to Chromium's own defaults, the path Clear…-equivalent the check
+    /// needs to prove an empty folder clears the pref.
+    public func resetDownloadDevice() { model.setDownloads(.board) }
+    /// M4: puts a value the core does not hold in the model before a reopen, so the check's
+    /// `startup_reopen` can only pass on a read that really answered.
+    public func resetGeneralForRead() {
+        model.startup = .restoreWindows
+        model.downloads = .board
+    }
+    public func openGeneralPane() { model.navigate(.general) }
+
+    // MARK: U27p, the Privacy pane
     /// The record the pane draws, read from the core, and the same setters its menu and switch call.
     public var privacy: PrivacySettings { model.privacy }
     public var privacyProfile: String { model.privacyProfile }

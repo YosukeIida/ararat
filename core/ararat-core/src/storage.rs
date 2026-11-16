@@ -218,7 +218,7 @@ fn write_batch(conn: &mut Connection, ops: &[Op]) -> Result<(), StoreError> {
                 Some(body) => put.execute(params![kind.as_str(), id, body])?,
                 None => delete.execute(params![kind.as_str(), id])?,
             };
-            if !matches!(kind, Kind::Window | Kind::LittleWindow | Kind::LittleWindowDevice | Kind::LastSelected | Kind::FolderState | Kind::SectionState | Kind::HistoryPurge | Kind::HistoryProfile) {
+            if !matches!(kind, Kind::Window | Kind::LittleWindow | Kind::LittleWindowDevice | Kind::DownloadDevice | Kind::LastSelected | Kind::FolderState | Kind::SectionState | Kind::HistoryPurge | Kind::HistoryProfile) {
                 journal.execute(params![kind.as_str(), id, body])?;
             }
         }

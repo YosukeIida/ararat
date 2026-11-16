@@ -228,6 +228,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (int)checkInProgressDownloadCount;
 - (BOOL)prepareCheckDownload;
 - (NSString*)prepareDownloadsCheckDirectory:(NSString*)name;
+// Check-only: this profile's download prefs — "directory" (DownloadPrefs::DownloadPath, which
+// follows the pref and falls back to the default folder), "prompt" and "private". The downloads
+// checks read it, and so does `settings-general` (P5b): the pane's folder and switch are only
+// proved to reach Chromium by reading them back here.
 - (NSDictionary<NSString*, id>*)downloadsCheckSettings;
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
@@ -349,6 +353,15 @@ NSString* AraratCheckExtensionDialog(NSWindow* _Nullable parent, NSString* actio
 // universal_optout.enabled pref, which AraratMain adds to the process's feature list.
 __attribute__((visibility("default")))
 void AraratApplyPrivacySettings(NSDictionary<NSString*, id>* settings);
+// P5b: Settings › General's downloads rows. The app's core device record is the source of the
+// folder Chromium saves to and whether it asks where to save each file; applying it writes
+// prefs::kDownloadDefaultDirectory and prefs::kPromptForDownload into every regular profile now
+// and into one the engine creates later. An empty directory clears kDownloadDefaultDirectory, so
+// Chromium's own default (the account's Downloads folder) applies and a folder set elsewhere does
+// not outlive the pane. Private profiles keep their own rule: a private window saves to the
+// regular profile's folder without a prompt, so nothing is written to them.
+__attribute__((visibility("default")))
+void AraratApplyDownloadSettings(NSString* directory, BOOL prompt);
 // P4: clears the chosen types (1 history, 2 cookies and other site data, 4 cached images and
 // files) for the range in one profile, through one BrowsingDataRemover task. The begin is
 // seconds since 1970 (0 is the beginning of time) and the end is Chromium's Time::Max(), as its
