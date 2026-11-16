@@ -639,6 +639,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var archiveConfirmation: NSAlert?
   // p4checks: the Library phase's second archived row, its presses and their bounded waits.
   var keyboardLibraryDeleteItem = ""
+  var keyboardArchiveSiblingSpace = ""
   var keyboardRowWaited = 0
   var keyboardRestoreWaited = 0
   var keyboardFindOtherItem = ""
@@ -2282,7 +2283,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let alert = NSAlert()
     alert.messageText = "Clear Archive?"
     alert.informativeText = "All archived tabs in this profile will be permanently deleted. This cannot be undone."
-    alert.addButton(withTitle: "Clear Archive")
+    alert.addButton(withTitle: "Clear Archive").hasDestructiveAction = true
     alert.addButton(withTitle: "Cancel")
     archiveConfirmation = alert
     alert.beginSheetModal(for: window) { [weak self] response in
@@ -5187,11 +5188,21 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             snapshot.archive.contains(where: { $0.id == keyboardLibraryDeleteItem }),
             !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
             !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardLibraryDeleteItem }) else { return }
+      browserCheckPhase = 100
+      workspace?.createSpace(name: "Archive restore sibling") { [weak self] result in
+        guard let self, case .success(let current) = result, let sibling = current.shownSpaceId else { return }
+        self.keyboardArchiveSiblingSpace = sibling
+        self.showAndSelect(.success(current), expectedSpace: sibling)
+        self.browserCheckPhase = 3639
+      }
+    case 3639:
+      guard snapshot.shownSpaceId == keyboardArchiveSiblingSpace,
+            snapshot.shownSpaceId != "named", host.profileDirectory() == "Profile 1" else { return }
       if screen { send("reopen_closed_tab", "T", 17, [.command, .shift]) }
       else { performWorkspaceCommand("reopen_closed_tab") }
       browserCheckPhase = 3640
     case 3640:
-      guard snapshot.selectedId == keyboardRestoreItem, keyboardSelectionSettled(keyboardRestoreItem),
+      guard snapshot.shownSpaceId == "named", snapshot.selectedId == keyboardRestoreItem, keyboardSelectionSettled(keyboardRestoreItem),
             !snapshot.archive.contains(where: { $0.id == keyboardRestoreItem }) else { return }
       keyboardResults["reopen_closed_tab"] = true
       adapter?.close(id: keyboardRestoreItem, archive: true)
@@ -5199,7 +5210,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 3641:
       guard snapshot.shownSpaceId == "named", host.profileDirectory() == "Profile 1",
             snapshot.archive.contains(where: { $0.id == keyboardRestoreItem }) else { return }
-      guard let sidebar, !sidebar.libraryOpen else { return }
+      browserCheckPhase = 100
+      switchWorkspaceSpace(keyboardArchiveSiblingSpace) { [weak self] in self?.browserCheckPhase = 36411 }
+    case 36411:
+      guard snapshot.shownSpaceId == keyboardArchiveSiblingSpace, snapshot.shownSpaceId != "named",
+            host.profileDirectory() == "Profile 1", let sidebar, !sidebar.libraryOpen else { return }
       sidebar.setLibraryOpen(true)
       browserCheckPhase = 3642
     case 3642:
@@ -5283,7 +5298,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.checkPressClearArchive() else { return }
       browserCheckPhase = 3655
     case 3655:
-      guard let alert = archiveConfirmation, alert.window.sheetParent != nil else { return }
+      guard let alert = archiveConfirmation, alert.window.sheetParent != nil,
+            alert.buttons.first?.hasDestructiveAction == true else { return }
       alert.buttons.first?.performClick(nil)
       browserCheckPhase = 3656
     case 3656:
@@ -5291,9 +5307,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["clear_archive"] = true
       if screen { send("reopen_closed_tab", "T", 17, [.command, .shift]) }
       else { performWorkspaceCommand("reopen_closed_tab") }
-      browserCheckPhase = 3657
+      browserCheckPhase = 100
+      workspace?.snapshot { [weak self] result in
+        guard let self, case .success(let current) = result else { return }
+        self.showResult(.success(current))
+        self.browserCheckPhase = 3657
+      }
     case 3657:
-      keyboardResults["reopen_empty_archive"] = snapshot.archive.isEmpty
+      keyboardResults["reopen_empty_archive"] = !Self.archiveActionsEnabled(self) && snapshot.archive.isEmpty
         && !(host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }
       sidebar?.setLibraryOpen(false)
       showAndSelect(.success(snapshot), selectedItem: keyboardOtherItem)

@@ -527,7 +527,14 @@ extension Runtime {
             browserCheckPhase = 25
         case 25:
             guard littleWindows.isEmpty else { wait("placeholder closed"); return }
-            check.mark("placeholder_not_archived", snapshot.archive.count == check.archiveCountBeforePlaceholder)
+            browserCheckPhase = 26
+            workspace?.snapshot { [weak self] result in
+                guard let self, case .success(let current) = result else { return }
+                self.showResult(.success(current))
+                check.mark("placeholder_not_archived", current.archive.count == check.archiveCountBeforePlaceholder)
+                self.browserCheckPhase = 27
+            }
+        case 27:
             finish()
         default:
             break

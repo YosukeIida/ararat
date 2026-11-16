@@ -1833,3 +1833,56 @@ fn private_split_stay_restores_the_refused_pane_without_restoring_the_other() {
     assert_eq!(ws.selected("one"), Some(a.as_str()));
     ws.check_tree().unwrap();
 }
+
+#[test]
+fn archive_split_groups_live_members_and_restores_after_a_partial_refusal() {
+    use ararat_core::model::SplitSide;
+    for refused in [None, Some("a"), Some("b")] {
+        let mut ws = workspace();
+        let split = ws.make_split("a", "b", SplitSide::Right).unwrap().1.split;
+        let members = ws.children(&split).iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+        let kind = ws.items[&split].kind.clone();
+        let mut live = Live::new();
+        for id in ["a", "b"] {
+            let (_, command) = live.open(&mut ws, id, "https://example.test/").unwrap();
+            live.command_sent(&command);
+        }
+        live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+        let (_, targets) = live.archive_split(&mut ws, &split).unwrap();
+        assert_eq!(targets.len(), 2);
+        assert!(ws.archive().iter().any(|item| item.id == split));
+        assert!(!ws.archive().iter().any(|item| item.id == "a" || item.id == "b"));
+        for (_, command) in &targets {
+            if Some(command.item.as_str()) == refused {
+                assert!(live.cancel_close(&mut ws, &command.id).0);
+            } else {
+                assert!(live.settle_close(&command.id));
+            }
+        }
+        if let Some(refused) = refused {
+            let accepted = if refused == "a" { "b" } else { "a" };
+            assert_eq!(ws.items[&split].lifecycle, Lifecycle::Open);
+            assert!(ws.items[&split].archive.is_none());
+            assert_eq!(ws.items[refused].lifecycle, Lifecycle::Open);
+            assert!(ws.items[refused].archive.is_none());
+            assert_eq!(ws.items[accepted].lifecycle, Lifecycle::Archived);
+            assert_eq!(ws.items[accepted].archive.as_ref().unwrap().group.as_deref(), Some(split.as_str()));
+            assert!(ws.archive().iter().any(|item| item.id == accepted));
+            assert!(!ws.archive().iter().any(|item| item.id == split));
+            let (_, retried) = live.archive_split(&mut ws, &split).unwrap();
+            assert_eq!(retried.len(), 1);
+            assert_eq!(retried[0].1.item, refused);
+            assert!(live.settle_close(&retried[0].1.id));
+            assert!(ws.archive().iter().any(|item| item.id == split));
+            assert!(!ws.archive().iter().any(|item| item.id == accepted));
+        }
+        ws.restore_item("one", &split).unwrap();
+        assert_eq!(ws.items[&split].kind, kind);
+        assert_eq!(ws.children(&split).iter().map(|item| item.id.clone()).collect::<Vec<_>>(), members);
+        for id in [split.as_str(), "a", "b"] {
+            assert_eq!(ws.items[id].lifecycle, Lifecycle::Open);
+            assert!(ws.items[id].archive.is_none());
+        }
+        ws.check_tree().unwrap();
+    }
+}

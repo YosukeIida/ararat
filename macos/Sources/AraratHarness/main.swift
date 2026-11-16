@@ -400,7 +400,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let alert = NSAlert()
         alert.messageText = "Clear Archive?"
         alert.informativeText = "All archived tabs in this profile will be permanently deleted. This cannot be undone."
-        alert.addButton(withTitle: "Clear Archive")
+        alert.addButton(withTitle: "Clear Archive").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
