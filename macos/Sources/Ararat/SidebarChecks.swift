@@ -857,7 +857,17 @@ extension Runtime {
                 note("wait=clear-live-tab-removal live=\(host.tabs().count)")
                 return
             }
-            let archived = check.seen.allSatisfy { id in core.archive.contains { $0.id == id } }
+            let stored = captureCheckRows()
+            let archived = check.seen.allSatisfy { id in
+                if core.archive.contains(where: { $0.id == id }) { return true }
+                guard let row = stored?.first(where: { $0.count == 3 && $0[0] == "item" && $0[1] == id }),
+                      let data = row[2].data(using: .utf8),
+                      let item = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      ["Closed", "Archived"].contains(item["lifecycle"] as? String ?? ""),
+                      let archive = item["archive"] as? [String: Any],
+                      let group = archive["group"] as? String else { return false }
+                return core.archive.contains { $0.id == group }
+            }
             check.report("clear_archives", archived)
             check.report("clear_after_stay_without_close_motion", !check.clearRequestedClose)
             check.report("divider_hidden_without_today", sidebar.todayDividerForCheck == nil)

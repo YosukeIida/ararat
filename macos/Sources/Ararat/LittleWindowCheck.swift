@@ -13,7 +13,7 @@ final class LittleWindowCheckState {
                         "open_disabled", "profile_menu", "space_menu", "space_search",
                         "default_destination", "command_bar_key", "command_bar_width",
                         "command_bar_navigates", "origin_unchanged", "open_enabled", "copy_link", "extensions_button",
-                        "frame_saved", "frame_remembered", "open_key", "open_in", "handoff_live",
+                        "frame_saved", "frame_remembered", "close_archived", "placeholder_not_archived", "open_key", "open_in", "handoff_live",
                         "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
                         "profile_switch", "extension_fixture", "extension_row", "open_button"]
     static let screens = ["capture_bar", "capture_profile_menu", "capture_space_menu", "capture_command_bar"]
@@ -29,6 +29,7 @@ final class LittleWindowCheckState {
     var originURL = ""
     var originNavigation: UInt = 0
     var pageURL = ""
+    var archiveCountBeforePlaceholder = 0
     static func fixtureURL(port: UInt16) -> String { "http://127.0.0.1:\(port)/search?little-window" }
     var handoffLive = ""
     var handoffNavigation: UInt = 0
@@ -304,6 +305,8 @@ extension Runtime {
             }
         case 10:
             guard littleWindows.isEmpty else { wait("little window closed"); return }
+            guard snapshot.archive.contains(where: { $0.url == check.pageURL }) else { wait("Little Window archive entry"); return }
+            check.mark("close_archived")
             guard let adapter = workspace else { wait("adapter"); return }
             adapter.littleWindowFrame { [weak self] result in
                 guard let self, let check = self.littleWindowCheck else { return }
@@ -515,6 +518,23 @@ extension Runtime {
                                             "navigation": tab.map { Int($0.navigationCount) } ?? -1]
             check.mark("open_button", row(opened.item)?.url == check.pageURL && tab != nil
                        && tab?.navigationCount == 0)
+            check.archiveCountBeforePlaceholder = snapshot.archive.count
+            openLittleWindow()
+            browserCheckPhase = 24
+        case 24:
+            guard let controller = controller(), let tab = popupTab(), tab.url == "about:blank", !tab.isLoading else { wait("placeholder window"); return }
+            controller.close()
+            browserCheckPhase = 25
+        case 25:
+            guard littleWindows.isEmpty else { wait("placeholder closed"); return }
+            browserCheckPhase = 26
+            workspace?.snapshot { [weak self] result in
+                guard let self, case .success(let current) = result else { return }
+                self.showResult(.success(current))
+                check.mark("placeholder_not_archived", current.archive.count == check.archiveCountBeforePlaceholder)
+                self.browserCheckPhase = 27
+            }
+        case 27:
             finish()
         default:
             break

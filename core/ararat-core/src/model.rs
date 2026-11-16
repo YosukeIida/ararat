@@ -107,6 +107,13 @@ pub enum Lifecycle {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArchiveInfo {
+    pub profile: Profile,
+    pub source: String,
+    pub group: Option<Id>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: Id,
     pub membership: Membership,
@@ -114,6 +121,7 @@ pub struct Item {
     pub kind: ItemKind,
     pub lifecycle: Lifecycle,
     pub lifecycle_changed_at: u64,
+    pub archive: Option<ArchiveInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

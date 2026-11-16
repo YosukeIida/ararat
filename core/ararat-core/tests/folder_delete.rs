@@ -64,8 +64,9 @@ fn deletion_and_restore_persist_and_the_journal_replays_the_synced_state() {
     let rows: Vec<(String, String, Option<String>)> = conn.prepare("SELECT kind,id,body FROM journal ORDER BY seq").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
     for (kind, id, body) in rows { let kind = Kind::parse(&kind).unwrap(); replay.apply(&match body { Some(body) => Op::Put(Record::parse(kind, &id, &body).unwrap()), None => Op::Delete(kind, id) }); }
     assert_eq!(replay, synced(&ws)); assert!(!replay.items.values().any(|i| matches!(i.kind, ItemKind::Folder)));
-    store.write(ws.restore_item("one", "tab-a").unwrap()); store.flush().unwrap(); assert_eq!(Store::open(&path).unwrap().1, ws);
-    assert_eq!(ws.items["tab-a"].membership.parent.as_deref(), Some("today-work")); drop(conn); drop(store);
+    store.write(ws.restore_item("one", "split-1").unwrap()); store.flush().unwrap(); assert_eq!(Store::open(&path).unwrap().1, ws);
+    assert_eq!(ws.items["split-1"].membership.parent.as_deref(), Some("today-work"));
+    assert_eq!(ws.items["tab-a"].membership.parent.as_deref(), Some("split-1")); drop(conn); drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
