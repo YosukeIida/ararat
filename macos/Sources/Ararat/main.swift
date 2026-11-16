@@ -2189,17 +2189,17 @@ final class Runtime: NSObject, NSMenuItemValidation {
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
     keyBindings?.register(core)
-    // Why not History: HistoryMenuBridge::ShouldMenuItemBeVisible rejects unknown item tags.
-    if let tabs = menu.item(withTitle: "Tabs")?.submenu ?? menu.item(withTitle: "File")?.submenu,
+    // Why not Tab: reuse Chromium's File item so a second ⇧⌘T item cannot invoke its tab restore.
+    if let file = menu.item(withTitle: "File")?.submenu,
        let binding = defaultKeyBindings().first(where: { $0.command == "reopen_closed_tab" }) {
-      let item = tabs.items.first(where: { $0.title == "Reopen Closed Tab" })
-        ?? tabs.addItem(withTitle: binding.title, action: nil, keyEquivalent: "")
+      let item = file.items.first(where: { $0.title == "Reopen Closed Tab" })
+        ?? file.addItem(withTitle: binding.title, action: nil, keyEquivalent: "")
       item.target = self
       item.action = #selector(coreMenuCommand(_:))
       item.representedObject = binding.command
       item.identifier = NSUserInterfaceItemIdentifier(binding.command)
       KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
-      keyBindings?.register(tabs)
+      keyBindings?.register(file)
     }
     // U27h: the Little Window's menu entry. Its own block so the other U27 branches' command
     // additions merge without touching it.
