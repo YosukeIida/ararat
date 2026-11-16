@@ -49,10 +49,12 @@ final class PromptFixtureServer {
           connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in })
           return
         }
-        if path == "/slow-download" {
-          let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Length: 1048576\r\nCache-Control: no-store\r\n\r\n"
+        if path == "/slow-download" || path == "/pausable-download" {
+          let total = path == "/pausable-download" ? 32768 : 1048576
+          let name = path == "/pausable-download" ? "pausable-check.bin" : "fixture.bin"
+          let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\(name)\r\nContent-Length: \(total)\r\nCache-Control: no-store\r\n\r\n"
           connection.send(content: Data(header.utf8), completion: .contentProcessed { error in
-            if error == nil { Self.sendDownloadChunk(connection) } else { connection.cancel() }
+            if error == nil { Self.sendDownloadChunk(connection, remaining: total) } else { connection.cancel() }
           })
           return
         }
@@ -104,10 +106,11 @@ final class PromptFixtureServer {
     }
   }
 
-  private static func sendDownloadChunk(_ connection: NWConnection) {
+  private static func sendDownloadChunk(_ connection: NWConnection, remaining: Int) {
+    guard remaining > 0 else { connection.cancel(); return }
     connection.send(content: Data(repeating: 0, count: 1024), completion: .contentProcessed { error in
       guard error == nil else { connection.cancel(); return }
-      DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { sendDownloadChunk(connection) }
+      DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { sendDownloadChunk(connection, remaining: remaining - 1024) }
     })
   }
 

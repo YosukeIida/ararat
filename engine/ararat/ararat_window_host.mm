@@ -2603,8 +2603,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSString*)prepareDownloadsCheckDirectory:(NSString*)name {
   auto* args = base::CommandLine::ForCurrentProcess();
   if (!browser_ || browser_->GetProfile()->IsOffTheRecord() ||
-      (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads" && args->GetSwitchValueASCII("ararat-check") != "private-downloads") ||
-      (![name isEqualToString:@"standard"] && ![name isEqualToString:@"custom"])) return @"";
+      (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads" && args->GetSwitchValueASCII("ararat-check") != "private-downloads" && args->GetSwitchValueASCII("ararat-check") != "download-close") ||
+      (![name isEqualToString:@"standard"] && ![name isEqualToString:@"custom"] && ![name isEqualToString:@"regular-close"])) return @"";
   Profile* profile = browser_->GetProfile();
   auto* service = DownloadCoreServiceFactory::GetForBrowserContext(profile);
   if (!service || !service->GetDownloadManagerDelegate()) return @"";
@@ -3037,7 +3037,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
   const auto screen = args->GetSwitchValueASCII("ararat-screen");
-  if (check != "incognito" && check != "private-window" && check != "private-isolation" && screen != "private-window") return;
+  if (check != "download-close" && check != "incognito" && check != "private-window" && check != "private-isolation" && screen != "private-window") return;
   if (browser_) chrome::NewWindow(browser_);
 }
 

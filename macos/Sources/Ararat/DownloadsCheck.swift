@@ -15,10 +15,12 @@ final class DownloadsCheck {
   var resumeID = ""
   var rowIdentity: UInt?
   var received: Int64 = 0
+  var completedDirectory = ""
+  var pauseTime: TimeInterval = 0
   var hoverStart: TimeInterval = 0
   var privatePass = 0
   var privateBefore: Set<String> = []
-  static let common = ["seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "popover_cancel_button", "library_back_arrow", "popover_remove_button", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
+  static let common = ["pause", "paused_bytes_stopped", "paused_ring", "paused_resume", "paused_completion", "search_name", "search_url", "search_empty", "clear_keeps_running", "clear_files_intact", "private_clear_isolated", "drag_popover", "drag_page", "seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "popover_cancel_button", "library_back_arrow", "popover_remove_button", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
   static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "popover_rows_layout", "page_actions_fit", "page_rows_layout"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
@@ -205,7 +207,24 @@ extension Runtime {
       let item = find("complete-check")
       guard number(item, "state") == 1, !itemID(item).isEmpty else { wait("completed item"); return }
       check.completeID = itemID(item)
+      check.completedDirectory = check.directory
       check.mark("completion")
+      sidebar.downloadsCheckHover()
+      browserCheckPhase = 101
+    case 101:
+      guard state["list"] as? Bool == true else { wait("completed popover"); return }
+      let expected = URL(fileURLWithPath: (check.directory as NSString).appendingPathComponent("complete-check.txt"))
+      check.mark("drag_popover", sidebar.downloadsCheckDragURL(id: check.completeID, page: false).flatMap(URL.init(string:)) == expected)
+      sidebar.downloadsCheckOpenLibrary()
+      check.mark("drag_page", sidebar.downloadsCheckDragURL(id: check.completeID, page: true).flatMap(URL.init(string:)) == expected)
+      sidebar.downloadsCheckSearch("COMPLETE-CHECK")
+      check.mark("search_name", (sidebar.downloadsCheckState()["page_ids"] as? [String]) == [check.completeID])
+      sidebar.downloadsCheckSearch("/complete-download")
+      check.mark("search_url", (sidebar.downloadsCheckState()["page_ids"] as? [String]) == [check.completeID])
+      sidebar.downloadsCheckSearch("no-match-for-download")
+      check.mark("search_empty", (sidebar.downloadsCheckState()["page_ids"] as? [String])?.isEmpty == true)
+      sidebar.downloadsCheckSearch("")
+      sidebar.setLibraryOpen(false)
       check.mark("completion_ring_cleared", state["progress"] as? String == "none" && state["ring_visible"] as? Bool == false)
       start("resume-download")
       browserCheckPhase = 11
@@ -260,6 +279,17 @@ extension Runtime {
       let correct = (attrs?[.size] as? NSNumber)?.intValue == 8192 && popup.window().attachedSheet == nil
       check.mark(check.privatePass == 0 ? "private_standard" : "private_custom", correct)
       check.mark("private_list_live", !popup.downloads().isEmpty)
+      privateChild.sidebar?.downloadsCheckHover()
+      browserCheckPhase = 161
+    case 161:
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+            privateChild.sidebar?.downloadsCheckState()["list"] as? Bool == true else { wait("private downloads popover"); return }
+      privateChild.sidebar?.downloadsCheckClearAll()
+      browserCheckPhase = 162
+    case 162:
+      guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host,
+            popup.downloads().isEmpty else { wait("private Clear All"); return }
+      check.mark("private_clear_isolated", check.privateBefore == Set(items.map(itemID)))
       popup.close()
       browserCheckPhase = 17
     case 17:
@@ -272,8 +302,39 @@ extension Runtime {
         browserCheckPhase = 15
       } else {
         check.mark("private_close_regular_intact", check.privateBefore == Set(items.map(itemID)))
-        finish()
+        start("pausable-download")
+        browserCheckPhase = 18
       }
+    case 18:
+      guard let item = find("pausable-check"), number(item, "received") > 0, actions(item).contains("pause") else { wait("pausable download"); return }
+      check.slowID = itemID(item)
+      check.mark("pause", host.performDownloadAction("pause", identifier: check.slowID))
+      check.pauseTime = ProcessInfo.processInfo.systemUptime
+      browserCheckPhase = 19
+    case 19:
+      guard let item = find("pausable-check"), item["paused"] as? Bool == true,
+            ProcessInfo.processInfo.systemUptime - check.pauseTime > 1 else { wait("pause settling"); return }
+      check.received = number(item, "received")
+      check.pauseTime = ProcessInfo.processInfo.systemUptime
+      check.mark("paused_ring", state["progress"] as? String == "paused" && state["ring_visible"] as? Bool == true)
+      browserCheckPhase = 20
+    case 20:
+      guard ProcessInfo.processInfo.systemUptime - check.pauseTime > 1 else { return }
+      check.mark("paused_bytes_stopped", number(find("pausable-check"), "received") == check.received)
+      check.mark("paused_resume", host.performDownloadAction("resume", identifier: check.slowID))
+      sidebar.setLibraryOpen(true)
+      sidebar.downloadsCheckShowPage()
+      sidebar.downloadsCheckClearAll()
+      browserCheckPhase = 21
+    case 21:
+      guard !items.contains(where: { itemID($0) == check.completeID || itemID($0) == check.resumeID }) else { wait("Clear All"); return }
+      check.mark("clear_keeps_running", items.contains { itemID($0) == check.slowID && number($0, "state") == 0 })
+      check.mark("clear_files_intact", FileManager.default.fileExists(atPath: (check.completedDirectory as NSString).appendingPathComponent("complete-check.txt")))
+      browserCheckPhase = 22
+    case 22:
+      guard let item = find("pausable-check"), number(item, "state") == 1 else { wait("paused and resumed completion"); return }
+      check.mark("paused_completion")
+      finish()
     default: break
     }
   }

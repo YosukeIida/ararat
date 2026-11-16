@@ -213,7 +213,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         needsGrouping = true
         rebuild()
     }
-    func focusSearch() { if page == .downloads { downloadsPage.focusFirst() } else { window?.makeFirstResponder(search) } }
+    func focusSearch() { if page == .downloads { downloadsPage.focusSearch() } else { window?.makeFirstResponder(search) } }
     func setDownloadsModel(_ model: DownloadsModel) { downloadsPage.setModel(model) }
     func refreshDownloads() { downloadsPage.refresh() }
     func setSearchQuery(_ query: String) { search.stringValue = query; rebuild() }
@@ -462,7 +462,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     @objc func showDownloads() {
         page = .downloads; archiveContent.isHidden = true; downloadsPage.isHidden = false
         archiveButton.setAccessibilityValue(nil); downloadsButton.setAccessibilityValue("selected")
-        downloadsButton.nextKeyView = downloadsPage.table
+        downloadsButton.nextKeyView = downloadsPage.search
         downloadsPage.focusFirst()
     }
     @objc private func exitLibrary() { onExit?() }

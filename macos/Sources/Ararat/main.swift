@@ -3027,7 +3027,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "page": errorPageItem.flatMap { adapter?.checkFailureState(item: $0) } ?? [:]]) { _, new in new }
     }
     if mode == "download-close" {
-      let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed"]
+      let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed", "regular_download_pending", "regular_window_closed", "regular_download_continues"]
       timeoutValues.merge(["phase": browserCheckPhase, "conditions": downloadCloseConditions,
         "failed_conditions": names.filter { downloadCloseConditions[$0] != true },
         "dialog_fallback": downloadCloseFallback,

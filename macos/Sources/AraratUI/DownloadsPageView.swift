@@ -2,7 +2,9 @@ import AppKit
 import AraratKit
 
 @MainActor
-final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+    let search = NSSearchField()
+    let clear = NSButton(title: "Clear All", target: nil, action: nil)
     private let title = NSTextField(labelWithString: "Downloads")
     private let scroll = DownloadsScroll()
     let table = DownloadsTable()
@@ -47,6 +49,16 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         super.init(frame: frame)
         title.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
         title.setAccessibilityLabel("Downloads")
+        search.placeholderString = "Search Downloads"
+        search.setAccessibilityLabel("Search Downloads")
+        search.sendsSearchStringImmediately = true
+        search.delegate = self
+        search.target = self
+        search.action = #selector(searchChanged)
+        clear.target = self
+        clear.action = #selector(clearAll)
+        clear.bezelStyle = .inline
+        clear.setAccessibilityLabel("Clear All Downloads")
         empty.textColor = .secondaryLabelColor
         empty.alignment = .center
         scroll.drawsBackground = false
@@ -78,15 +90,21 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         back.setAccessibilityLabel("Exit Library")
         back.target = self
         back.action = #selector(exitLibrary)
-        for view in [title, scroll, empty, back] { addSubview(view); view.translatesAutoresizingMaskIntoConstraints = false }
+        for view in [title, search, clear, scroll, empty, back] { addSubview(view); view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: clear.leadingAnchor, constant: -8),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             title.heightAnchor.constraint(equalToConstant: 32),
+            clear.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            clear.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            search.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            search.heightAnchor.constraint(equalToConstant: 24),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 8),
             scroll.bottomAnchor.constraint(equalTo: back.topAnchor, constant: -8),
             empty.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             empty.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
@@ -110,7 +128,11 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
 
     func setModel(_ model: DownloadsModel) { self.model = model; refresh() }
     func refresh() {
-        guard let model, entries != model.items else { return }
+        guard let model else { return }
+        clear.isEnabled = !model.clearableItems.isEmpty
+        let newEntries = model.filteredItems(search.stringValue)
+        empty.stringValue = model.items.isEmpty ? "No downloads" : "No matching downloads"
+        guard entries != newEntries else { return }
         let focusedButton = window?.firstResponder as? DownloadActionButton
         let focusedRow = window?.firstResponder as? DownloadRowView
         let focusedID = focusedButton?.downloadID ?? focusedRow?.itemID
@@ -118,7 +140,6 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         let oldEntries = entries
         let oldIndex = focusedID.flatMap { id in oldEntries.firstIndex { $0.id == id } } ?? 0
         let oldIDs = oldEntries.map(\.id)
-        let newEntries = model.items
         let newIDs = newEntries.map(\.id)
         entries = newEntries
         empty.isHidden = !entries.isEmpty
@@ -138,6 +159,8 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
             if let index = entries.firstIndex(where: { $0.id == focusedID }) { focus(index, action: focusedAction) }
             else { focus(min(oldIndex, entries.count - 1)) }
         }
+        search.nextKeyView = clear
+        clear.nextKeyView = table
         back.nextKeyView = previousFocus
     }
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
@@ -163,6 +186,10 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
             button.nextKeyView = i + 1 < row.actionButtons.count ? row.actionButtons[i + 1] : table
         }
     }
+    func controlTextDidChange(_ notification: Notification) { refresh() }
+    @objc private func searchChanged() { refresh() }
+    @objc private func clearAll() { model?.clearAll() }
+    func focusSearch() { window?.makeFirstResponder(search) }
     func focusFirst() { focus(0) }
     private func focus(_ index: Int, action: String? = nil, last: Bool = false) {
         guard entries.indices.contains(index) else { window?.makeFirstResponder(back); return }
