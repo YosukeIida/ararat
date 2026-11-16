@@ -18,6 +18,8 @@ import Testing
     var pageURL = "https://example.test/"
     var opened: [String] = []
     var closing = true
+    var closeRequests = 0
+    @objc(close) func close() { closeRequests += 1 }
     @objc(window) func window() -> NSWindow { value }
     @objc(isClosing) func isClosing() -> Bool { closing }
     @objc(isClosingAll) func isClosingAll() -> Bool { false }
@@ -181,4 +183,35 @@ func littleWindowNavigatesItsOwnPopupWithoutAWorkspaceTarget() {
     defer { controller.close(); popup.littleWindow = nil }
     controller.navigate(to: "https://example.test/")
     #expect(host.navigated == ["https://example.test/"])
+}
+
+@Test @MainActor
+func littleWindowArchivesOnlyAfterTheWindowActuallyCloses() throws {
+    _ = NSApplication.shared
+    class_addProtocol(LittleWindowNavigationHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("db").path, windowID: "origin", card: NSView(), seedCheck: true, session: session)
+    let origin = Runtime(windowID: "origin")
+    origin.adapter = adapter
+    origin.workspace = WorkspaceAdapter(windowID: "origin", session: session)
+    let host = LittleWindowNavigationHost()
+    host.closing = false
+    let popup = PopupHost()
+    popup.rootView.addSubview(popup.card)
+    popup.host = host as? any ARWindowHostAPI
+    let controller = LittleWindowController(popup: popup, origin: origin, profile: "Default", frame: .zero, url: "https://closed.test", commandBarVisible: false)
+    defer { popup.littleWindow = nil }
+    let count = session.queue.sync { session.store!.snapshot(windowId: "origin").archive.count }
+    controller.close()
+    #expect(host.closeRequests == 1)
+    #expect(session.queue.sync { session.store!.snapshot(windowId: "origin").archive.count } == count)
+    NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: host.value)
+    let archive = session.queue.sync { session.store!.snapshot(windowId: "origin").archive }
+    #expect(archive.count == count + 1)
+    #expect(archive.first?.url == "https://closed.test")
+    NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: host.value)
+    #expect(session.queue.sync { session.store!.snapshot(windowId: "origin").archive.count } == count + 1)
 }

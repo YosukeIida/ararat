@@ -114,3 +114,17 @@ func theDispatcherRunsBothSiteCommandsThroughTheHost() {
     runtime.performWorkspaceCommand("clear_cookies_site")
     #expect(host.commands == ["clear_cache_site", "clear_cookies_site"])
 }
+
+@Test @MainActor
+func archiveActionsNeedANonemptyRegularArchive() throws {
+    let runtime = Runtime(windowID: "archive-actions")
+    #expect(!Runtime.archiveActionsEnabled(nil))
+    #expect(!Runtime.archiveActionsEnabled(runtime))
+    runtime.snapshot = WorkspaceSnapshot(archive: [ArchiveEntry(id: "closed", title: "Closed", url: "https://closed.test", lifecycleChangedAt: 1)], shownSpaceId: nil, selectedId: nil, spaces: [])
+    #expect(Runtime.archiveActionsEnabled(runtime))
+    runtime.isPrivateWindow = true
+    #expect(!Runtime.archiveActionsEnabled(runtime))
+    let binding = try #require(defaultKeyBindings().first { $0.command == "reopen_closed_tab" })
+    #expect(binding.key == KeyCombination(key: "t", command: true, control: false, option: false, shift: true))
+    #expect(Runtime.coreMenuCommandIDs.contains("clear_archive"))
+}

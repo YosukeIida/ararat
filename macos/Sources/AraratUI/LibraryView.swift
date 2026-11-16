@@ -6,6 +6,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     enum Page: String { case archive = "Archive", downloads = "Downloads" }
     private(set) var page = Page.archive
     var onRestore: ((String) -> Void)?
+    var onClearArchive: (() -> Void)?
     var onDelete: ((String) -> Void)?
     var onExit: (() -> Void)?
     var onScroll: ((NSEvent, NSScrollView?) -> Bool)?
@@ -39,6 +40,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     private let rail = NSView()
     private let search = ArchiveSearchField()
     private let back = SidebarDockButton()
+    let clearArchiveButton = SidebarDockButton(title: "Clear Archive…", target: nil, action: nil)
     private let archiveButton = NSButton(title: Page.archive.rawValue, target: nil, action: nil)
     let downloadsButton = NSButton(title: Page.downloads.rawValue, target: nil, action: nil)
     let downloadsPage = DownloadsPageView(frame: .zero)
@@ -55,6 +57,9 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         wantsLayer = true
         layer?.masksToBounds = true
         rail.wantsLayer = true
+        clearArchiveButton.target = self
+        clearArchiveButton.action = #selector(clearArchive)
+        clearArchiveButton.isEnabled = false
         archiveButton.target = self
         archiveButton.action = #selector(showArchive)
         archiveButton.isBordered = false
@@ -112,11 +117,20 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         table.navigate = { [weak self] event in self?.navigateTable(with: event) ?? false }
         table.didLayout = { [weak self] in self?.restoreVisibleFocus() }
         search.tabTarget = { [weak self] in self?.firstFocusTarget() }
-        back.previousTarget = { [weak self] in self?.lastFocusTarget() }
-        back.previousFocus = { [weak self] in
+        back.previousTarget = { [weak self] in
+            guard let self else { return nil }
+            return self.clearArchiveButton.isEnabled ? self.clearArchiveButton : self.lastFocusTarget()
+        }
+        clearArchiveButton.previousTarget = { [weak self] in self?.lastFocusTarget() }
+        clearArchiveButton.previousFocus = { [weak self] in
             guard let self else { return }
             if let entry = self.filteredEntries.last { self.focus(id: entry.id, part: 2) }
             else { self.window?.makeFirstResponder(self.search) }
+        }
+        back.previousFocus = { [weak self] in
+            guard let self else { return }
+            if self.clearArchiveButton.isEnabled { self.window?.makeFirstResponder(self.clearArchiveButton) }
+            else { self.clearArchiveButton.previousFocus?() }
         }
         table.autoresizingMask = [.width]
         scroll.documentView = table
@@ -134,15 +148,16 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         archiveButton.nextKeyView = downloadsButton
         downloadsButton.nextKeyView = search
         search.nextKeyView = table
-        table.nextKeyView = back
+        table.nextKeyView = clearArchiveButton
+        clearArchiveButton.nextKeyView = back
         back.nextKeyView = archiveButton
         downloadsPage.isHidden = true
         downloadsPage.onExit = { [weak self] in self?.onExit?() }
         downloadsPage.onScroll = { [weak self] event, scroll in self?.onScroll?(event, scroll) ?? false }
         downloadsPage.previousFocus = downloadsButton
         for view in [rail, divider, list, downloadsPage] { addSubview(view) }
-        for view in [search, scroll, back, emptyState] { list.addSubview(view) }
-        for view in [rail, divider, list, downloadsPage, archiveButton, downloadsButton, search, scroll, back, emptyState] { view.translatesAutoresizingMaskIntoConstraints = false }
+        for view in [search, scroll, back, emptyState, clearArchiveButton] { list.addSubview(view) }
+        for view in [rail, divider, list, downloadsPage, archiveButton, downloadsButton, search, scroll, back, emptyState, clearArchiveButton] { view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             rail.leadingAnchor.constraint(equalTo: leadingAnchor),
             rail.widthAnchor.constraint(equalToConstant: SidebarMetrics.archiveRailContentWidth),
@@ -171,6 +186,8 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             emptyState.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
             emptyState.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             emptyState.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
+            clearArchiveButton.trailingAnchor.constraint(equalTo: search.trailingAnchor),
+            clearArchiveButton.centerYAnchor.constraint(equalTo: back.centerYAnchor),
             back.leadingAnchor.constraint(equalTo: search.leadingAnchor),
             back.bottomAnchor.constraint(equalTo: list.bottomAnchor, constant: -SidebarMetrics.libraryContentInset),
             back.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveBackHeight),
@@ -210,9 +227,12 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     func update(archive: [ArchiveEntry]) {
         guard self.archive != archive || renderedDay != calendar.startOfDay(for: now()) else { return }
         self.archive = archive
+        clearArchiveButton.isEnabled = !archive.isEmpty
         needsGrouping = true
         rebuild()
     }
+    @objc private func clearArchive() { if clearArchiveButton.isEnabled { onClearArchive?() } }
+
     func focusSearch() { if page == .downloads { downloadsPage.focusSearch() } else { window?.makeFirstResponder(search) } }
     func setDownloadsModel(_ model: DownloadsModel) { downloadsPage.setModel(model) }
     func refreshDownloads() { downloadsPage.refresh() }
@@ -426,7 +446,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         guard let index = filteredEntries.firstIndex(where: { $0.id == id }) else { return nil }
         let next = index + (backwards ? -1 : 1)
         if filteredEntries.indices.contains(next) { return cell(id: filteredEntries[next].id)?.focusTarget(backwards ? 2 : 0) }
-        return backwards ? search : back
+        return backwards ? search : (clearArchiveButton.isEnabled ? clearArchiveButton : back)
     }
     private func navigateTable(with event: NSEvent) -> Bool {
         switch event.keyCode {

@@ -7,7 +7,7 @@ fn workspace() -> Workspace {
         let id = format!("y{i}");
         ws.items.insert(id.clone(), Item {
             id: id.clone(), membership: Membership { parent: Some("today-work".into()), order: format!("{i:03}"), hlc: Default::default(), previous_parent: None },
-            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+            title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None }, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
         });
     }
     ws
@@ -249,7 +249,7 @@ fn archive_pin_removes_open_and_unloaded_pins_and_replays() {
         assert_eq!(ws.selected("one"), Some("y0"));
         assert!(!ws.outline("pin-work").iter().any(|(_, item)| item.id == "tab-spec"));
         let before = ws.clone();
-        for id in ["missing", "folder-docs", "split-1", "tab-spec"] {
+        for id in ["missing", "folder-docs", "tab-spec"] {
             assert!(ws.archive_item(id).is_err());
             assert_eq!(ws, before);
         }

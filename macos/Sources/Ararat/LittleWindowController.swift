@@ -17,6 +17,10 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     private(set) var model = LittleWindowBarModel()
     private var defaultSpaceID: String?
     private var opening = false
+    private var pageTransferred = false
+    private var archivedOnClose = false
+    private var lastPageURL: String?
+    private var lastPageTitle = ""
     /// U27i D8/D9: the stored settings this window applies. The pair is synced; "Remember its
     /// size and place" is this device's. They arrive asynchronously before the bar's label and the
     /// window's Open-in action use them.
@@ -128,6 +132,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     /// Rebuilds the bar's model from the origin window's snapshot and the page's live tab.
     func refreshModel() {
         guard let origin, origin.hasUsableHost, popup.host != nil else { return }
+        lastPageURL = pageTab?.url ?? lastPageURL
+        lastPageTitle = pageTab?.title ?? lastPageTitle
         let snapshot = origin.snapshot
         var profiles: [String] = []
         for space in snapshot.spaces where !profiles.contains(space.profileName) { profiles.append(space.profileName) }
@@ -433,6 +439,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
         let live = tab.liveId
         if host.handoffTab(tab, activate: true) {
+            pageTransferred = true
             engine.awaitLittleWindowHandoff(item: row, live: live)
             checkOpenedIn = (space, row)
             checkActions["handoff", default: 0] += 1
@@ -561,6 +568,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.archivePageOnClose()
                 self.saveFrame()
                 self.removeKeyMonitor()
                 self.origin?.littleWindows.removeAll { $0 === self }
@@ -608,7 +616,20 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
 
     // MARK: - Closing
 
-    func close() {
+    private func archivePageOnClose() {
+        guard !archivedOnClose, !pageTransferred, let origin, !origin.isPrivateWindow else { return }
+        let url = pageTab?.url ?? lastPageURL ?? initialURL ?? ""
+        guard !url.isEmpty, url != "about:blank" else { return }
+        archivedOnClose = true
+        origin.workspace?.archiveLittleWindow(profile: profileName, url: url, title: pageTab?.title ?? lastPageTitle) { [weak origin] result in
+            origin?.showResult(result)
+        }
+    }
+
+    func close(archive: Bool = true) {
+        if !archive { pageTransferred = true }
+        lastPageURL = pageTab?.url ?? lastPageURL
+        lastPageTitle = pageTab?.title ?? lastPageTitle
         saveFrame()
         removeKeyMonitor()
         if let host = popup.host, !host.isClosing(), !host.isClosingAll() { host.close() }

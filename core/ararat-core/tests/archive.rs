@@ -163,3 +163,77 @@ fn restoring_in_a_collapsed_folder_expands_ancestors_in_the_replayed_transaction
     for op in &ops { replay.apply(op); }
     assert_eq!(replay, ws);
 }
+
+fn split_workspace() -> ararat_core::model::Workspace {
+    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    ws.move_item("split-1", "today-work", 0, false).unwrap();
+    ws
+}
+
+#[test]
+fn whole_split_archive_restores_members_order_orientation_and_factors() {
+    for action in ["archive", "close", "clear", "delete", "auto"] {
+        let mut ws = split_workspace();
+        ws.show_space("one", "space-work").unwrap();
+        let kind = ws.items["split-1"].kind.clone();
+        let members: Vec<_> = ws.children("split-1").iter().map(|item| (item.id.clone(), item.membership.order.clone())).collect();
+        match action {
+            "archive" => { ws.archive_item("split-1").unwrap(); }
+            "close" => { ws.close_item("split-1").unwrap(); }
+            "clear" => { ws.clear_today("space-work").unwrap(); }
+            "delete" => { ws.delete_space("space-work").unwrap(); }
+            _ => { ws.last_selected.insert("tab-a".into(), 1); ws.last_selected.insert("tab-b".into(), 1); ws.auto_archive(u64::MAX).unwrap(); }
+        }
+        assert!(ws.archive().iter().any(|item| item.id == "split-1"), "{action}");
+        assert!(!ws.archive().iter().any(|item| item.id == "tab-a" || item.id == "tab-b"), "{action}");
+        let ops = ws.restore_item("one", "split-1").unwrap();
+        assert_eq!(ws.items["split-1"].kind, kind);
+        for (id, order) in &members {
+            assert_eq!(ws.items[id].lifecycle, Lifecycle::Open);
+            assert_eq!(&ws.items[id].membership.order, order);
+        }
+        assert!(members.iter().any(|(id, _)| Some(id.as_str()) == ws.selected("one")));
+        assert!(!ops.is_empty());
+        ws.check_tree().unwrap();
+    }
+}
+
+#[test]
+fn a_single_archived_pane_is_an_independent_entry() {
+    let mut ws = split_workspace();
+    ws.archive_item("tab-a").unwrap();
+    assert!(ws.archive().iter().any(|item| item.id == "tab-a"));
+    assert!(!ws.archive().iter().any(|item| item.id == "split-1"));
+    ws.restore_item("one", "tab-a").unwrap();
+    assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Open);
+}
+
+#[test]
+fn clear_archive_deletes_whole_groups_only_in_the_requested_profile_and_replays() {
+    let mut ws = split_workspace();
+    ws.archive_item("split-1").unwrap();
+    ws.archive_item("tab-mail").unwrap();
+    let profile = ws.archive_profile("split-1").unwrap().clone();
+    ws.items.get_mut("tab-mail").unwrap().archive.as_mut().unwrap().profile = ararat_core::model::Profile::Named("other".into());
+    let mut replay = ws.clone();
+    let ops = ws.clear_archive(&profile).unwrap();
+    for op in &ops { replay.apply(op); }
+    assert_eq!(ws, replay);
+    for id in ["split-1", "tab-a", "tab-b"] { assert!(!ws.items.contains_key(id)); }
+    assert_eq!(ws.archive().iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["tab-mail"]);
+    assert!(ws.clear_archive(&profile).unwrap().is_empty());
+}
+
+#[test]
+fn little_window_archive_uses_recent_profile_space_and_skips_placeholder() {
+    let mut ws = split_workspace();
+    ws.show_space("one", "space-work").unwrap();
+    assert!(ws.archive_little_window("one", &Default::default(), "about:blank", "").unwrap().is_empty());
+    ws.archive_little_window("one", &Default::default(), "https://little.example", "Little").unwrap();
+    let entry = ws.archive()[0];
+    let id = entry.id.clone();
+    assert_eq!(entry.archive.as_ref().unwrap().source, "littleArc");
+    assert_eq!(entry.membership.parent.as_deref(), Some("today-work"));
+    ws.restore_item("one", &id).unwrap();
+    assert_eq!(ws.selected("one"), Some(id.as_str()));
+}

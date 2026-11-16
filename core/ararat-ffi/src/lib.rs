@@ -455,6 +455,27 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn clear_archive(&self, window_id: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let profile = workspace.shown_space(&window_id).and_then(|id| workspace.spaces.iter().find(|space| space.id == id))
+            .map(|space| space.profile.clone()).ok_or_else(|| CoreError::Edit { message: "no shown profile".into() })?;
+        let ops = workspace.clear_archive(&profile)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    pub fn archive_little_window(&self, window_id: String, profile: String, url: String, title: String) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let profile = if profile.is_empty() || profile == "Default" { ararat_core::model::Profile::Default } else { ararat_core::model::Profile::Named(profile) };
+        let ops = workspace.archive_little_window(&window_id, &profile, &url, &title)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn restore_item(&self, window_id: String, id: String) -> Result<WorkspaceSnapshot, CoreError> {
         self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
@@ -820,6 +841,16 @@ impl WorkspaceStore {
         let mut workspace = self.workspace.lock().unwrap();
         let mut live = self.live.lock().unwrap();
         let (ops, commands) = live.close_split(&mut workspace, &item)?;
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(commands.into_iter().map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect())
+    }
+
+    pub fn live_archive_split(&self, item: String) -> Result<Vec<LiveCloseTarget>, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
+        let (ops, commands) = live.archive_split(&mut workspace, &item)?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(commands.into_iter().map(|(live_id, command)| LiveCloseTarget { live_id, command: command.into() }).collect())
@@ -1776,9 +1807,15 @@ fn selection_view(workspace: &Workspace, window_id: &str) -> WorkspaceSnapshot {
 
 fn snapshot(mut view: Workspace, window_id: &str) -> WorkspaceSnapshot {
     view.repair_tree();
-    let archive = view.archive().into_iter().filter_map(|item| match &item.kind {
-        ItemKind::Tab { url, .. } => Some(ArchiveEntry { id: item.id.clone(), title: item.display_title().into(), url: url.clone(), lifecycle_changed_at: item.lifecycle_changed_at }),
-        _ => None,
+    let profile = view.shown_space(window_id).and_then(|id| view.spaces.iter().find(|space| space.id == id)).map(|space| &space.profile);
+    let archive = view.archive().into_iter().filter(|item| view.archive_profile(&item.id) == profile).map(|item| {
+        let members: Vec<_> = view.archived_members(&item.id).into_iter()
+            .filter_map(|member| match &member.kind { ItemKind::Tab { url, .. } => Some((member.display_title(), url.as_str())), _ => None }).collect();
+        let (title, url) = match &item.kind {
+            ItemKind::Tab { url, .. } => (item.display_title().to_string(), url.clone()),
+            _ => (members.iter().map(|(title, _)| *title).collect::<Vec<_>>().join(" / "), members.first().map(|(_, url)| url.to_string()).unwrap_or_default()),
+        };
+        ArchiveEntry { id: item.id.clone(), title, url, lifecycle_changed_at: item.lifecycle_changed_at }
     }).collect();
     // The window's current row, so a collapsed holder (folder or pinned section) keeps it
     // visible in this window's rows.

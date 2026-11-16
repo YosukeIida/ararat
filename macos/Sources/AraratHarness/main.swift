@@ -272,6 +272,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             }
         }
         actions.onRestore = { [weak self] id in self?.restore(id: id) { _ in } }
+        actions.onClearArchive = { [weak self] in self?.confirmClearArchive() }
         actions.onArchiveDelete = { [weak self] id in self?.deleteArchive(id: id) { _ in } }
         actions.onCreateSpace = { [weak self] name in self?.createSpace(name: name) { _ in } }
         actions.onCreatePageChanged = { [weak self] in self?.showSelection() }
@@ -297,6 +298,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         close.toolTip = "Close the selected tab in the browser window."
         menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
         let tabsMenu = NSMenu(title: "Tabs")
+        for binding in defaultKeyBindings().filter({ ["reopen_closed_tab", "clear_archive"].contains($0.command) }) {
+            let item = tabsMenu.addItem(withTitle: binding.title, action: #selector(archiveCommand(_:)), keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(binding.command)
+            item.representedObject = binding.command
+            item.target = self
+        }
         let newTab = tabsMenu.addItem(withTitle: "New Tab", action: #selector(newTabFromCommandBar(_:)), keyEquivalent: "")
         newTab.identifier = NSUserInterfaceItemIdentifier("new_tab")
         newTab.target = self
@@ -374,6 +381,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if menuItem.action == #selector(organize(_:)), menuItem.representedObject as? String == "delete_folder" {
             return sidebar?.canDeleteOrganizeFolder == true
         }
+        if menuItem.action == #selector(archiveCommand(_:)) { return !snapshot.archive.isEmpty }
         if menuItem.action == #selector(closeSelectedTab(_:)) { return canCloseTab(keyWindow: NSApp.keyWindow) }
         if menuItem.action == #selector(pinSelectedTab(_:)) {
             menuItem.title = sidebar?.selectedTabIsPinned == true ? "Unpin Tab" : "Pin Tab"
@@ -381,6 +389,23 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         if menuItem.action == WorkspaceCommands.showSpace { return snapshot.spaces.indices.contains(menuItem.tag) }
         return true
+    }
+
+    @objc func archiveCommand(_ item: NSMenuItem) {
+        if let command = item.representedObject as? String { perform(command: command) }
+    }
+
+    private func confirmClearArchive() {
+        guard !snapshot.archive.isEmpty, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Clear Archive?"
+        alert.informativeText = "All archived tabs in this profile will be permanently deleted. This cannot be undone."
+        alert.addButton(withTitle: "Clear Archive")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            self.adapter.clearArchive { [weak self] result in _ = self?.publish(result) }
+        }
     }
 
     @objc func closeSelectedTab(_ sender: Any?) {
@@ -751,6 +776,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         case "cycle_tabs_next": cycleTabs(backwards: false)
         case "cycle_tabs_previous": cycleTabs(backwards: true)
         case "quit": terminate()
+        case "reopen_closed_tab": if let entry = snapshot.archive.first { restore(id: entry.id) { _ in } }
+        case "clear_archive": confirmClearArchive()
         case "close_tab": closeSelectedTab(nil)
         case "new_tab": openCommandBar(.newTab)
         case "edit_url": openCommandBar(.editURL)

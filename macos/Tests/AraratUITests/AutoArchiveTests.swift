@@ -295,7 +295,7 @@ func workspaceBatchEditsPublishCommittedSnapshotsWhenLiveTabsAreMissing() async 
     let deletedID = try #require(created.selectedId)
     let deletedLive = try store.liveOpen(item: deletedID, url: "https://delete.test/")
     let deleted = try await archiveValue { adapter.deleteSpace(id: "space-work", completion: $0) }
-    #expect(deleted.archive.contains { $0.id == deletedID })
+    #expect(deleted.archive.isEmpty)
     #expect(deleted.shownSpaceId == "space-home")
     #expect(deleted.spaces.count == 1)
     #expect(store.liveTab(item: deletedID) == nil)

@@ -897,8 +897,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let row = rows.first { $0.id == item }
             let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
             let archive = isPrivate ? false : (archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false)
-            if !archive, row?.kind == .split {
-                let targets = try store.liveCloseSplit(item: item)
+            if row?.kind == .split {
+                let targets = try archive ? store.liveArchiveSplit(item: item) : store.liveCloseSplit(item: item)
                 let snapshot = store.snapshot(windowId: self.windowID)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }

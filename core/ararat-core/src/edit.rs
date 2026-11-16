@@ -96,7 +96,7 @@ impl Workspace {
         let tab = crate::model::Item {
             id: pane.clone(), title: None,
             kind: ItemKind::Tab { url: NEW_TAB_PAGE.into(), saved_title: None },
-            lifecycle: Lifecycle::Open, lifecycle_changed_at: now,
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: now, archive: None,
             membership: crate::model::Membership {
                 parent: None, previous_parent: None, hlc: Default::default(), order: String::new(),
             },
@@ -221,7 +221,7 @@ impl Workspace {
         let mut ops = vec![Op::Put(Record::Item(crate::model::Item {
             id: split.into(), title: None,
             kind: ItemKind::Split { orientation: crate::model::Orientation::Horizontal, width_factors: Vec::new() },
-            lifecycle: Lifecycle::Open, lifecycle_changed_at: now,
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: now, archive: None,
             membership: crate::model::Membership {
                 parent: Some(parent.clone()), previous_parent: Some(parent), hlc: Default::default(),
                 order: row.membership.order.clone(),
@@ -633,7 +633,7 @@ impl Workspace {
         let (order, mut ops) = self.item_order(container, index, &selected)?;
         let folder = crate::model::Item {
             id: id.into(), title: Some(name.into()), kind: ItemKind::Folder, lifecycle: Lifecycle::Open,
-            lifecycle_changed_at: self.lifecycle_time(), membership: crate::model::Membership {
+            lifecycle_changed_at: self.lifecycle_time(), archive: None, membership: crate::model::Membership {
                 parent: Some(container.into()), previous_parent: Some(root.into()), hlc: Default::default(),
                 order,
             },
@@ -688,7 +688,7 @@ impl Workspace {
             title: None,
             kind: ItemKind::Tab { url: url.into(), saved_title: None },
             lifecycle: Lifecycle::Open,
-            lifecycle_changed_at: now,
+            lifecycle_changed_at: now, archive: None,
         };
         self.check_destination(&item, &item.membership.parent.as_ref().map(String::as_str).unwrap_or_default())?;
         ops.extend(self.stamp_outgoing(window, Some(&id), now));
@@ -820,6 +820,8 @@ impl Workspace {
             let mut item = self.items[id].clone();
             item.lifecycle = Lifecycle::Archived;
             item.lifecycle_changed_at = changed_at;
+            let group = self.outermost_split(id);
+            item.archive = Some(crate::model::ArchiveInfo { profile: space.profile.clone(), source: "tabs".into(), group });
             Op::Put(Record::Item(item))
         }).collect();
         ops.extend(self.history_purge_ops(&ops));
@@ -854,7 +856,7 @@ impl Workspace {
         }
         let item = crate::model::Item {
             id: id.into(), membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
-            title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: self.lifecycle_time(),
+            title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: self.lifecycle_time(), archive: None,
         };
         Ok(self.commit_edit(vec![Op::Put(Record::Item(item)), Op::Put(Record::Favorites { profile, container: id.into() })]))
     }
@@ -883,7 +885,7 @@ impl Workspace {
         for id in [pinned, today] {
             ops.push(Op::Put(Record::Item(crate::model::Item {
                 id, membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
-                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at,
+                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at, archive: None,
             })));
         }
         state.changed_at = changed_at;
@@ -941,8 +943,11 @@ impl Workspace {
     }
 
     pub fn archive(&self) -> Vec<&crate::model::Item> {
-        let mut items: Vec<_> = self.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })
-            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).collect();
+        let mut items: Vec<_> = self.items.values().filter(|item|
+            matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)
+            && (matches!(item.kind, ItemKind::Tab { .. }) || item.archive.as_ref().is_some_and(|info| info.group.as_deref() == Some(item.id.as_str())))
+            && !item.archive.as_ref().and_then(|info| info.group.as_ref()).is_some_and(|group| group != &item.id
+                && self.items.get(group).is_some_and(|root| matches!(root.lifecycle, Lifecycle::Closed | Lifecycle::Archived)))).collect();
         items.sort_by(|a, b| b.lifecycle_changed_at.cmp(&a.lifecycle_changed_at).then_with(|| a.id.cmp(&b.id)));
         items
     }
@@ -955,24 +960,69 @@ impl Workspace {
         windows
     }
 
+    pub fn archive_little_window(&mut self, window: &str, profile: &Profile, url: &str, title: &str) -> Result<Vec<Op>, EditError> {
+        if self.is_private() || url.is_empty() || url == "about:blank" { return Ok(Vec::new()); }
+        let space = self.recent_space_for_profile(window, profile)
+            .and_then(|id| self.spaces.iter().find(|space| space.id == id))
+            .ok_or_else(|| EditError("no space for Little Window profile".into()))?;
+        let item = crate::model::Item {
+            id: self.fresh_id(), title: None,
+            membership: crate::model::Membership { parent: Some(space.today.clone()), previous_parent: None,
+                order: crate::order::key_between(None, self.children(&space.today).first().map(|item| item.membership.order.as_str())), hlc: Default::default() },
+            kind: ItemKind::Tab { url: url.into(), saved_title: (!title.is_empty()).then(|| title.into()) },
+            lifecycle: Lifecycle::Archived, lifecycle_changed_at: self.lifecycle_time(),
+            archive: Some(crate::model::ArchiveInfo { profile: profile.clone(), source: "littleArc".into(), group: None }),
+        };
+        Ok(self.commit_edit(vec![Op::Put(Record::Item(item))]))
+    }
+
+    pub fn archived_members(&self, id: &str) -> Vec<&crate::model::Item> {
+        self.outline_entries(id).into_iter().map(|(_, item, _)| item)
+            .filter(|item| item.archive.as_ref().is_some_and(|info| info.group.as_deref() == Some(id))).collect()
+    }
+
+    pub fn archive_profile(&self, id: &str) -> Option<&Profile> {
+        self.items.get(id)?.archive.as_ref().map(|info| &info.profile)
+            .or_else(|| self.item_profile(id)).or_else(|| self.history_profiles.get(id))
+    }
+
+    pub fn clear_archive(&mut self, profile: &Profile) -> Result<Vec<Op>, EditError> {
+        let ids: Vec<_> = self.archive().into_iter().filter(|item| self.archive_profile(&item.id) == Some(profile))
+            .map(|item| item.id.clone()).collect();
+        let mut ops = Vec::new();
+        for id in ids { ops.extend(self.delete_archive_item(&id)?); }
+        Ok(ops)
+    }
+
     pub fn delete_archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
-        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })
-            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)) {
-            return Err(EditError(format!("item {id} is not an archived tab")));
+        if !self.archive().iter().any(|item| item.id == id) {
+            return Err(EditError(format!("item {id} is not an archive entry")));
         }
-        let mut ops = vec![Op::Delete(crate::model::Kind::Item, id.into())];
+        let mut ids: Vec<_> = self.items.values().filter(|item| item.id == id
+            || item.archive.as_ref().is_some_and(|info| info.group.as_deref() == Some(id)))
+            .map(|item| item.id.clone()).collect();
+        ids.sort();
+        let mut ops: Vec<_> = ids.iter().map(|id| Op::Delete(Kind::Item, id.clone())).collect();
         ops.extend(self.history_purge_ops(&ops));
-        if self.history_profiles.contains_key(id) || ops.iter().any(|op| matches!(op, Op::Put(Record::HistoryProfile { .. }))) {
-            ops.push(Op::Delete(crate::model::Kind::HistoryProfile, id.into()));
+        for child in self.items.values().filter(|item| !ids.contains(&item.id)
+            && item.membership.parent.as_ref().is_some_and(|parent| ids.contains(parent))) {
+            let mut child = child.clone();
+            child.membership.previous_parent = child.membership.parent.clone();
+            child.membership.parent = self.items[id].membership.parent.clone();
+            ops.push(Op::Put(Record::Item(child)));
         }
-        if self.last_selected.contains_key(id) { ops.push(Op::Delete(crate::model::Kind::LastSelected, id.into())); }
+        for id in ids {
+            if self.history_profiles.contains_key(&id) || ops.iter().any(|op| matches!(op, Op::Put(Record::HistoryProfile { item, .. }) if item == &id)) {
+                ops.push(Op::Delete(Kind::HistoryProfile, id.clone()));
+            }
+            if self.last_selected.contains_key(&id) { ops.push(Op::Delete(Kind::LastSelected, id)); }
+        }
         for op in &ops { self.apply(op); }
         Ok(ops)
     }
 
     pub fn restore_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
-        let mut item = self.items.get(id).filter(|item| matches!(item.kind, ItemKind::Tab { .. })
-            && matches!(item.lifecycle, Lifecycle::Closed | Lifecycle::Archived)).cloned()
+        let mut item = self.archive().into_iter().find(|item| item.id == id).cloned()
             .ok_or_else(|| EditError(format!("item {id} is not an archived tab")))?;
         let root = self.list_for(id).map(|(root, _)| root);
         let space = self.spaces.iter().find(|space| root == Some(space.today.as_str()) || root == Some(space.pinned.as_str()))
@@ -991,6 +1041,7 @@ impl Workspace {
             item.membership.previous_parent = item.membership.parent.replace(space.today.clone());
         }
         item.lifecycle = Lifecycle::Open;
+        item.archive = None;
         item.lifecycle_changed_at = self.lifecycle_time();
         let space_id = space.id.clone();
         let mut ops = self.expand_ancestors(item.membership.parent.as_deref());
@@ -999,9 +1050,18 @@ impl Workspace {
         state.shown_space = Some(space_id);
         state.select(Some(id.into()));
         state.changed_at = item.lifecycle_changed_at;
+        for member in self.items.values().filter(|member| member.id != id
+            && member.archive.as_ref().is_some_and(|info| info.group.as_deref() == Some(id))) {
+            let mut member = member.clone();
+            member.lifecycle = Lifecycle::Open;
+            member.lifecycle_changed_at = item.lifecycle_changed_at;
+            member.archive = None;
+            ops.push(Op::Put(Record::Item(member)));
+        }
         ops.push(Op::Put(Record::Item(item)));
         ops.push(Op::Put(Record::Window(state)));
         for op in &ops { self.apply(op); }
+        if matches!(self.items[id].kind, ItemKind::Split { .. }) { ops.extend(self.select_item(window, id)?); }
         ops.extend(self.stamp_selection(id, self.items[id].lifecycle_changed_at));
         Ok(ops)
     }
@@ -1147,8 +1207,8 @@ impl Workspace {
     }
 
     pub fn archive_item(&mut self, id: &str) -> Result<Vec<Op>, EditError> {
-        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })) {
-            return Err(EditError(format!("item {id} is not a tab")));
+        if !self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. } | ItemKind::Split { .. })) {
+            return Err(EditError(format!("item {id} is not a tab or split")));
         }
         self.finish_item(id, true, self.lifecycle_time())
     }
@@ -1204,6 +1264,7 @@ impl Workspace {
             }
             let mut item = item.clone();
             item.lifecycle = Lifecycle::Unloaded;
+            item.archive = None;
             item.lifecycle_changed_at = now;
             ops.push(Op::Put(Record::Item(item)));
         }
@@ -1249,6 +1310,12 @@ impl Workspace {
                 let mut changed = (*item).clone();
                 changed.lifecycle = if archive { Lifecycle::Archived } else if today { Lifecycle::Closed } else { Lifecycle::Unloaded };
                 changed.lifecycle_changed_at = changed_at;
+                if today {
+                    changed.archive = Some(crate::model::ArchiveInfo {
+                        profile: self.item_profile(id).cloned().unwrap_or_default(), source: "tabs".into(),
+                        group: matches!(self.items[id].kind, ItemKind::Split { .. }).then(|| id.to_string()),
+                    });
+                }
                 Op::Put(Record::Item(changed))
             }).collect();
         ops.extend(self.history_purge_ops(&ops));
@@ -1492,7 +1559,15 @@ impl Workspace {
         if ops.is_empty() && expired.is_empty() { return Ok(ops); }
         let mut next = self.clone();
         for op in &ops { next.apply(op); }
-        for id in expired { ops.extend(next.finish_item(&id, true, next.lifecycle_time())?); }
+        let expired_set: HashSet<_> = expired.iter().cloned().collect();
+        let mut done = HashSet::new();
+        for id in expired {
+            let group = next.outermost_split(&id).filter(|split| next.outline_entries(split).iter()
+                .filter(|(_, item, _)| matches!(item.kind, ItemKind::Tab { .. }) && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
+                .all(|(_, item, _)| expired_set.contains(&item.id)));
+            let target = group.unwrap_or(id);
+            if done.insert(target.clone()) { ops.extend(next.finish_item(&target, true, next.lifecycle_time())?); }
+        }
         *self = next;
         Ok(ops)
     }

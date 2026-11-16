@@ -12,7 +12,7 @@ fn tab(ws: &mut Workspace, id: &str, parent: &str, url: &str) {
         title: None,
         kind: ItemKind::Tab { url: url.into(), saved_title: None },
         lifecycle: Lifecycle::Open,
-        lifecycle_changed_at: 0,
+        lifecycle_changed_at: 0, archive: None,
     });
 }
 

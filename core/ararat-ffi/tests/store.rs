@@ -659,7 +659,7 @@ fn space_edits_flush_complete_records_and_local_window_changes() {
     let view = store.move_space("one".into(), "space-home".into(), 0).unwrap(); assert_eq!(view.spaces[0].id, "space-home");
     for window in ["one", "two"] { store.show_space(window.into(), "space-work".into()).unwrap(); store.select_item(window.into(), "tab-spec".into()).unwrap(); }
     let deleted = store.live_delete_space("one".into(), "space-work".into()).unwrap().snapshot;
-    assert_eq!(deleted.shown_space_id.as_deref(), Some("space-home")); assert_eq!(deleted.selected_id, None); assert_eq!(deleted.archive.len(), 3);
+    assert_eq!(deleted.shown_space_id.as_deref(), Some("space-home")); assert_eq!(deleted.selected_id, None); assert!(deleted.archive.is_empty());
     assert_eq!(store.snapshot("two".into()).shown_space_id.as_deref(), Some("space-home"));
     let (_, disk) = Store::open(&path).unwrap(); disk.check_tree().unwrap();
     assert_eq!(disk.items["folder-docs"].lifecycle, ararat_core::model::Lifecycle::Archived);
@@ -849,7 +849,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 40);
+    assert_eq!(defaults.len(), 42);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     // U27b: the two site commands cross the boundary with no key, like every row.
     for id in ["clear_cache_site", "clear_cookies_site"] {
@@ -1606,4 +1606,37 @@ fn live_delete_shown_space_returns_only_its_loaded_rows_and_the_neighbour_snapsh
     for target in batch.targets { assert!(store.live_settle_close(target.command.id)); }
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()).spaces.len(), 1);
+}
+
+#[test]
+fn archive_groups_and_clear_are_profile_scoped_and_persist_in_one_edit() {
+    let path = fresh_db("archive-groups-clear");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    store.import_arc_sidebar("one".into(), FIXTURE.into(), None, None, None, None).unwrap();
+    store.move_item("one".into(), "split-1".into(), "today-work".into(), 0, false).unwrap();
+    let archived = store.archive_item("one".into(), "split-1".into()).unwrap();
+    assert_eq!(archived.archive.len(), 1);
+    assert_eq!(archived.archive[0].id, "split-1");
+    assert_eq!(archived.archive[0].title, "A / B");
+    let restored = store.restore_item("one".into(), "split-1".into()).unwrap();
+    assert!(restored.archive.is_empty());
+    let layout = store.split_layout("split-1".into()).unwrap();
+    assert_eq!(layout.children.iter().map(|pane| pane.id.as_str()).collect::<Vec<_>>(), ["tab-a", "tab-b"]);
+    store.archive_item("one".into(), "split-1".into()).unwrap();
+    store.archive_little_window("one".into(), "Profile 1".into(), "https://little.test".into(), "Little".into()).unwrap();
+    assert_eq!(store.snapshot("one".into()).archive.len(), 1);
+    store.show_space("two".into(), "space-home".into()).unwrap();
+    assert_eq!(store.snapshot("two".into()).archive[0].url, "https://little.test");
+    let conn = Connection::open(&path).unwrap();
+    let count = || conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap();
+    let before = count();
+    assert!(store.clear_archive("one".into()).unwrap().archive.is_empty());
+    assert_eq!(count(), before + 3);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.snapshot("one".into()).archive.is_empty());
+    assert_eq!(store.snapshot("two".into()).archive[0].url, "https://little.test");
+    let (_, disk) = Store::open(&path).unwrap();
+    for id in ["split-1", "tab-a", "tab-b"] { assert!(!disk.items.contains_key(id)); }
+    assert_eq!(disk.archive()[0].archive.as_ref().unwrap().source, "littleArc");
 }

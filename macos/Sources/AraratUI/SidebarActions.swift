@@ -17,6 +17,7 @@ public final class SidebarActions {
     public var onClearToday: (() -> Void)?
     public var onShowSpace: ((String) -> Void)?
     public var onRestore: ((String) -> Void)?
+    public var onClearArchive: (() -> Void)?
     public var onArchiveDelete: ((String) -> Void)?
     public var onCreateSpace: ((String) -> Void)?
     public var onRenameSpace: ((String, String, @escaping (Bool) -> Void) -> Void)?
@@ -109,6 +110,7 @@ public final class SidebarActions {
         sidebar.onShowSpace = onShowSpace
         sidebar.onRestore = onRestore
         sidebar.onArchiveDelete = onArchiveDelete
+        sidebar.onClearArchive = onClearArchive
         sidebar.onCreateSpace = onCreateSpace
         sidebar.onCreatePageChanged = onCreatePageChanged
     }

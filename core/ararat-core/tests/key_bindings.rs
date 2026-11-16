@@ -32,7 +32,7 @@ fn defaults_cover_existing_shortcuts_and_pin_tab_without_storing_defaults() {
     // P5d: Arc's Add Split View is ⇧⌃= (arc-dia-components.md records the menu's keys).
     let mut add_split_view = command("="); add_split_view.command = false; add_split_view.control = true; add_split_view.shift = true;
     assert_eq!(ws.key_binding("add_split_view").unwrap(), Some(add_split_view));
-    assert_eq!(commands().len(), 40);
+    assert_eq!(commands().len(), 42);
     for id in ["copy_link", "duplicate", "new_folder", "rename", "delete_folder", "clear_cache_site", "clear_cookies_site"].into_iter().map(String::from)
         .chain((1..=9).map(|n| format!("move_to_space_{n}"))) {
         assert_eq!(ws.key_binding(&id).unwrap(), None);

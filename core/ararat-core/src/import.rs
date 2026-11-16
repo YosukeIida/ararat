@@ -349,7 +349,7 @@ fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {
         },
         title: obj["title"].as_str().map(str::to_string),
         kind,
-        lifecycle: crate::model::Lifecycle::Open, lifecycle_changed_at: 0,
+        lifecycle: crate::model::Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
         id,
     }))
 }
