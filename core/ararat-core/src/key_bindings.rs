@@ -46,7 +46,7 @@ pub fn commands() -> Vec<Command> {
     let key = |key: &str, command, control, option, shift| Some(KeyCombination { key: key.into(), command, control, option, shift });
     let mut commands: Vec<_> = [
         ("settings", "Settings…", "Ararat", "Open settings for the shown space.", key(",", true, false, false, false)),
-        ("quit", "Quit Ararat Harness", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false, false)),
+        ("quit", "Quit Ararat", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false, false)),
         ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false, false)),
         ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false, false)),
         ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false, false)),
