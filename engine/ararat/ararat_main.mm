@@ -249,6 +249,7 @@ void CheckGuards(int argc, const char** argv) {
       if (std::string_view(arg + 16) == "split-commands") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "urlfield") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "space-wheel-motion") { valid_screen = true; g_check_slice = true; }
       // U27a's settings checks: one launch per pane, plus the frame and the search.
       if (std::string_view(arg + 16) == "settings-frame" ||
           std::string_view(arg + 16) == "settings-search" ||

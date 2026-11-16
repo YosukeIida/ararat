@@ -128,9 +128,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
     public var canPublishSnapshot: (@MainActor () -> Bool)?
+    public var onSnapshotTrace: (@MainActor (String) -> Void)?
     private var needsSnapshotPublish = false
     @MainActor public func publishDeferredSnapshot() {
         guard needsSnapshotPublish else { return }
+        onSnapshotTrace?("held-snapshot-release")
         publish()
     }
     public var onWorkspaceChange: (@MainActor () -> Void)?
@@ -1263,7 +1265,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
         guard current else { return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
-        guard canPublishSnapshot?() != false else { needsSnapshotPublish = true; return }
+        guard canPublishSnapshot?() != false else { needsSnapshotPublish = true; onSnapshotTrace?("snapshot-held"); return }
         needsSnapshotPublish = false
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {

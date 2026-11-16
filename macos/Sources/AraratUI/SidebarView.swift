@@ -100,6 +100,8 @@ public final class SidebarView: NSView {
     public var onShowSpace: ((String) -> Void)?
 
     var onLookChanged: ((Look?, Look?, Double) -> Void)?
+    var wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
+    var wheelDrawnRow = CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") ? SpaceWheelDrawnRow() : nil
     private(set) var lookSampling: CADisplayLink?
     private var libraryLookSpaceID: String?
     private var creationLookSpaceID: String?
@@ -250,6 +252,10 @@ public final class SidebarView: NSView {
     private var scrollAxis: ScrollAxis?
     private weak var gestureScroll: NSScrollView?
     private var scrollPreviews: [SidebarView] = []
+    private var preparedScrollPreviews: [Int: SidebarView] = [:]
+    private var scrollPrebuildScheduled = false
+    private var deferredScrollSnapshots: [(SidebarView) -> Void] = []
+    private var scrollSnapshotDrainScheduled = false
     private var showingScrollPages = false
     private var scrollGestureActive = false
     private var lastScrollEventAt: CFTimeInterval = 0
@@ -402,6 +408,7 @@ public final class SidebarView: NSView {
     }
 
     public func applyCreatedSpace(snapshot: WorkspaceSnapshot) {
+        if deferScrollSnapshot({ $0.applyCreatedSpace(snapshot: snapshot) }) { return }
         creation.finish(error: nil)
         applySelection(snapshot: snapshot)
         if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) { showSpace(at: index) }
@@ -564,6 +571,7 @@ public final class SidebarView: NSView {
     }
 
     public func applyRestore(snapshot: WorkspaceSnapshot) {
+        if deferScrollSnapshot({ $0.applyRestore(snapshot: snapshot) }) { return }
         applySelection(snapshot: snapshot)
         if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) { showSpace(at: index) }
         setLibraryOpen(false)
@@ -650,6 +658,8 @@ public final class SidebarView: NSView {
     }
 
     public func update(snapshot: WorkspaceSnapshot) {
+        traceSpaceWheelMotion("snapshot-update")
+        if deferScrollSnapshot({ $0.update(snapshot: snapshot) }) { return }
         defer { requestedCloses.removeAll() }
         if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
            let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
@@ -713,6 +723,8 @@ public final class SidebarView: NSView {
     }
 
     public func applySelection(snapshot: WorkspaceSnapshot) {
+        traceSpaceWheelMotion("snapshot-selection")
+        if deferScrollSnapshot({ $0.applySelection(snapshot: snapshot) }) { return }
         let snapshot = keepingLookPreview(snapshot)
         let selected = Self.sidebarSelection(snapshot)
         let selectionChanged = selectedID != selected
@@ -728,6 +740,8 @@ public final class SidebarView: NSView {
     }
 
     private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+        traceSpaceWheelMotion("snapshot-replace")
+        if deferScrollSnapshot({ $0.replaceSnapshot(snapshot) }) { return }
         let snapshot = keepingLookPreview(snapshot)
         layoutSubtreeIfNeeded()
         listScroll.stopReveal()
@@ -756,6 +770,7 @@ public final class SidebarView: NSView {
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
+        if deferScrollSnapshot({ $0.applyClose(id: id, snapshot: snapshot) }) { return }
         let selectionChanged = selectedID != Self.sidebarSelection(snapshot)
         clearScrollPresentation()
         layoutSubtreeIfNeeded()
@@ -864,18 +879,27 @@ public final class SidebarView: NSView {
         showSpace(at: index, animatedReveal: false, notify: false)
     }
 
-    public func showSpaceWithoutNotification(at index: Int) {
-        showSpace(at: index, animatedReveal: false, notify: false)
+    public func showSpaceWithoutNotification(id: String) {
+        if showingScrollPages && scrollPageIndex == spaceIndex && snapshotSpace?.id == id {
+            traceSpaceWheelMotion("space-reply-matched")
+            return
+        }
+        showSpace(id: id, animatedReveal: false, notify: false)
     }
 
     private func showSpace(at index: Int, animatedReveal: Bool, notify: Bool = true) {
         guard snapshot.spaces.indices.contains(index) else { return }
+        showSpace(id: snapshot.spaces[index].id, animatedReveal: animatedReveal, notify: notify)
+    }
+
+    private func showSpace(id spaceID: String, animatedReveal: Bool, notify: Bool) {
         if drag != nil { cancelDrag() }
-        if index != spaceIndex { spaceRenameField?.finish(commit: true) }
+        if snapshotSpace?.id != spaceID { spaceRenameField?.finish(commit: true) }
         listScroll.stopReveal()
         if !isScrollPreview, let id = snapshotSpace?.id { spaceListOrigins[id] = listScroll.contentView.bounds.minY }
         finishRowMotion()
         clearScrollPresentation()
+        guard let index = snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
         spaceScroll = SpaceScrollState()
         spaceIndex = index
         reload()
@@ -1243,6 +1267,9 @@ public final class SidebarView: NSView {
         if let clickMonitor { removeClickMonitor(clickMonitor); self.clickMonitor = nil }
         tooltip.dismiss()
         guard window != nil && !isScrollPreview else {
+            if !isScrollPreview { clearScrollPresentation() }
+            preparedScrollPreviews.removeAll()
+            wheelMotionTrace?.finish("window-detached")
             lookSampling?.invalidate()
             lookSampling = nil
             return
@@ -1288,6 +1315,7 @@ public final class SidebarView: NSView {
 
     override public func layout() {
         super.layout()
+        wheelDrawnRow?.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
         library.frame = bounds
         libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
         creation.frame = bounds
@@ -1296,7 +1324,7 @@ public final class SidebarView: NSView {
         if bounds.width != laidOutSidebarWidth {
             finishRowMotion()
             if showingScrollPages { spaceScroll.cancelGesture() }
-            clearScrollPresentation()
+            clearScrollPresentation(drainSnapshots: false)
             laidOutSidebarWidth = bounds.width
         }
         let columns = SidebarDragMetrics.favoriteColumns(width: bounds.width - 16, slots: 4)
@@ -1471,6 +1499,12 @@ public final class SidebarView: NSView {
     }
 
     private func reload() {
+        if let row = wheelDrawnRow {
+            row.space = spaceIndex
+            if row.superview == nil { spaceColumn.addSubview(row) }
+        }
+        traceSpaceWheelMotion("row-rebuild")
+        defer { traceSpaceWheelMotion("row-rebuild-end") }
         defer { refreshLook() }
         let space = snapshotSpace
         if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
@@ -1560,6 +1594,7 @@ public final class SidebarView: NSView {
     }
 
     private func reloadFavorites() {
+        traceSpaceWheelMotion("favorites-rebuild")
         if privateWindow {
             favoritesHeight.constant = 0
             spaceColumn.setCustomSpacing(0, after: favorites)
@@ -1814,7 +1849,11 @@ public final class SidebarView: NSView {
     }
 
     private func handleSpaceScroll(_ event: NSEvent, from source: NSScrollView? = nil) -> Bool {
+        if wheelMotionTrace != nil {
+            traceSpaceWheelMotion("wheel-received", detail: "t=\(event.timestamp) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)")
+        }
         let decision = decideSpaceScroll(event, from: source)
+        traceSpaceWheelMotion("wheel-action", detail: decision.action)
         SpaceScrollTrace.write(event, action: decision.action)
         return decision.handled
     }
@@ -1910,6 +1949,10 @@ public final class SidebarView: NSView {
         case .vertical: return (false, "vertical")
         case .ignored: return (true, "ignored")
         case .pull:
+            if wheelMotionTrace != nil {
+                beginWheelMotionTrace("pull")
+                traceSpaceWheelMotion("wheel-received", detail: "t=\(event.timestamp) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)")
+            }
             playWheelPull(from: Double(offset ?? 0))
             return (true, "pull")
         case .follow(let followed):
@@ -1918,7 +1961,7 @@ public final class SidebarView: NSView {
             listScroll.stopReveal()
             stopPullAnimation()
             scrollGeneration += 1
-            for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
+            for (view, _) in scrollPages { removeSpaceScrollAnimation(view) }
             prepareScrollPages(offset: followed)
             refreshLook(offset: followed)
             updateDockSelection(offset: followed)
@@ -1926,6 +1969,10 @@ public final class SidebarView: NSView {
             pullIndicator.update(excess: spaceScroll.followedExcess)
             return (true, String(format: "follow %.1f", followed))
         case .settle(let index, let offset, let switched):
+            if wheelMotionTrace != nil {
+                beginWheelMotionTrace("settle \(logicalIndex)->\(index) event=\(event.timestamp) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)")
+                traceSpaceWheelMotion("wheel-received", detail: "t=\(event.timestamp) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)")
+            }
             stopPullAnimation()
             if index == snapshot.spaces.count && switched {
                 openCreationAfterPull()
@@ -1938,10 +1985,125 @@ public final class SidebarView: NSView {
                 else { setLibraryOpen(false, scrolling: true); setCreateSpaceOpen(false, scrolling: true); scrollToSpace(at: index) }
             }
             prepareScrollPages(offset: from, departingIndex: logicalIndex)
-            settleScroll(from: from, switched: switched)
+            if input.kind == .wheel {
+                // Why not share the gesture transaction: page preparation must commit before the wheel spring starts.
+                refreshLook(offset: from)
+                updateDockSelection(offset: from)
+                for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + from, 0, 0) }
+                // Why not start after flush: it does not wait for an enclosing transaction's completion.
+                let generation = scrollGeneration
+                CATransaction.setCompletionBlock { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self, self.scrollGeneration == generation else { return }
+                        self.traceSpaceWheelMotion("wheel-preparation-completed")
+                        self.sampleWheelMotion(source: "preparation-completed")
+                        CATransaction.begin()
+                        CATransaction.setDisableActions(true)
+                        self.settleScroll(from: from, switched: switched, freshClock: true)
+                        CATransaction.commit()
+                    }
+                }
+                traceSpaceWheelMotion("wheel-preparation-commit")
+                CATransaction.commit()
+                window?.displayIfNeeded()
+                CATransaction.flush()
+                traceSpaceWheelMotion("wheel-preparation-committed")
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+            } else {
+                settleScroll(from: from, switched: switched)
+            }
             if excess > 0 { returnPullIndicator(excess: excess) }
             return (true, "settle \(logicalIndex)->\(index)\(switched ? " switched" : "")")
         }
+    }
+
+    public func traceSpaceWheelMotion(_ name: String, detail: String = "") {
+        wheelMotionTrace?.mark(name, detail: detail)
+    }
+
+    private func beginWheelMotionTrace(_ detail: String) {
+        guard let trace = wheelMotionTrace else { return }
+        trace.begin(detail)
+        sampleWheelMotion(source: "before-switch")
+        let switchNumber = trace.switches
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak trace] in
+            guard let trace, trace.switches == switchNumber else { return }
+            trace.finish("trace-deadline")
+        }
+        if window != nil {
+            trace.displayLink = displayLink(target: self, selector: #selector(sampleWheelMotionDisplay))
+            trace.displayLink?.add(to: .main, forMode: .common)
+        }
+    }
+
+    @objc private func sampleWheelMotionDisplay() { sampleWheelMotion(source: "display-link") }
+
+    private func sampleWheelMotion(source: String) {
+        guard let trace = wheelMotionTrace, trace.start != nil else { return }
+        let pages: [[String: Any]] = scrollPages.enumerated().map { index, page in
+            let (view, origin) = page
+            let name = index == 0 ? "space-column" : index == 1 ? "library" : index == 2 ? "creation" : "preview"
+            return ["page": name, "id": ObjectIdentifier(view).debugDescription, "origin": origin,
+                    "model": Double(view.layer?.transform.m41 ?? 0),
+                    "offset": view.layer?.presentation().map { Double($0.transform.m41) } as Any? ?? NSNull(),
+                    "animation": view.layer?.animation(forKey: "space.scroll") != nil,
+                    "has_presentation": view.layer?.presentation() != nil,
+                    "layer_attached": view.layer?.superlayer != nil,
+                    "active": view === pageView,
+                    "hidden": view.isHidden]
+        }
+        trace.sample(pages, source: source)
+    }
+
+    private func removeSpaceScrollAnimation(_ view: NSView) {
+        traceSpaceWheelMotion("removeAnimation", detail: ObjectIdentifier(view).debugDescription)
+        sampleWheelMotion(source: "before-remove")
+        view.layer?.removeAnimation(forKey: "space.scroll")
+    }
+
+    // Why a timer sample as well: VM displays may never deliver display-link callbacks.
+    public func checkSampleSpaceWheelMotion() {
+        guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") else { return }
+        sampleWheelMotion(source: "check-timer")
+    }
+
+    public func checkFinishSpaceWheelMotion() {
+        guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") else { return }
+        wheelMotionTrace?.finish("check-complete")
+    }
+
+    public var checkSpaceWheelMotionCounts: [String: Int] {
+        guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion"), let trace = wheelMotionTrace else { return [:] }
+        return trace.sampleCounts.merging(["switches": trace.switches]) { _, new in new }
+    }
+
+    public var checkSpaceWheelDrawnRect: NSRect {
+        guard let row = wheelDrawnRow else { return .zero }
+        row.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
+        return row.convert(row.bounds, to: nil)
+    }
+
+    public var checkSpaceWheelDrawnDiagnostics: [String: Any] {
+        guard let row = wheelDrawnRow else { return ["installed": false] }
+        func rect(_ value: CGRect) -> [String: Double] {
+            ["x": value.minX, "y": value.minY, "width": value.width, "height": value.height]
+        }
+        return ["installed": true, "space_index": spaceIndex, "pattern_space": row.space,
+                "window_attached": row.window != nil, "hidden": row.isHiddenOrHasHiddenAncestor,
+                "window_visible": row.window?.isVisible ?? false,
+                "window_occlusion_visible": row.window?.occlusionState.contains(.visible) ?? false,
+                "alpha": row.alphaValue, "layer_opacity": row.layer?.opacity ?? 1,
+                "frame_in_column": rect(row.frame), "bounds": rect(row.bounds), "visible_rect": rect(row.visibleRect),
+                "window_rect": rect(row.convert(row.bounds, to: nil)), "column_bounds": rect(spaceColumn.bounds),
+                "viewport_window_rect": rect(spaceViewport.convert(spaceViewport.bounds, to: nil)),
+                "layer_attached": row.layer?.superlayer != nil, "has_presentation": row.layer?.presentation() != nil,
+                "draw_count": row.drawCount, "last_drawn_space": row.lastDrawnSpace as Any? ?? NSNull()]
+    }
+
+    public var checkSpaceWheelMotionConditions: [String: Bool] {
+        guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion"), let trace = wheelMotionTrace else { return [:] }
+        return trace.conditions
     }
 
     private var libraryPageOrigin: Double { Double(-1 - scrollPageIndex) * spacePagePitch }
@@ -1959,7 +2121,61 @@ public final class SidebarView: NSView {
         spaceScroll = decision
     }
 
+    private func deferScrollSnapshot(_ apply: @escaping (SidebarView) -> Void) -> Bool {
+        guard showingScrollPages || scrollSnapshotDrainScheduled else { return false }
+        // Why not keep only the latest: creation, restore and close replies also carry UI side effects.
+        deferredScrollSnapshots.append(apply)
+        traceSpaceWheelMotion("snapshot-deferred")
+        return true
+    }
+
+    private func drainScrollSnapshots() {
+        scrollSnapshotDrainScheduled = false
+        let applies = deferredScrollSnapshots
+        deferredScrollSnapshots.removeAll()
+        for apply in applies { apply(self) }
+    }
+
+    private func scheduleScrollPrebuild() {
+        guard !isScrollPreview, !scrollPrebuildScheduled else { return }
+        scrollPrebuildScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scrollPrebuildScheduled = false
+            if self.prebuildScrollPages() { self.scheduleScrollPrebuild() }
+        }
+    }
+
+    @discardableResult
+    func prebuildScrollPages() -> Bool {
+        guard !isScrollPreview, window != nil, !showingScrollPages else { return false }
+        let indices = Set((spaceIndex - 1...spaceIndex + 1).filter { snapshot.spaces.indices.contains($0) })
+        preparedScrollPreviews = preparedScrollPreviews.filter { indices.contains($0.key) }
+        var prepared = false
+        let frame = spaceViewport.convert(bounds, from: self)
+        for index in indices.sorted() {
+            let cached = preparedScrollPreviews[index]
+            let reload = cached.map { $0.snapshot != snapshot || $0.spaceIndex != index || $0.selectedID != selectedID } ?? true
+            if reload || cached?.frame != frame {
+                if prepared { return true }
+                prepared = true
+            }
+            let preview = cached ?? SidebarView(snapshot: snapshot)
+            preview.isScrollPreview = true
+            preview.snapshot = snapshot
+            preview.selectedID = selectedID
+            preview.spaceListOrigins = spaceListOrigins
+            preview.frame = spaceViewport.convert(bounds, from: self)
+            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
+            preview.layoutSubtreeIfNeeded()
+            preparedScrollPreviews[index] = preview
+        }
+        return false
+    }
+
     private func prepareScrollPages(offset: Double, departingIndex: Int? = nil) {
+        traceSpaceWheelMotion("prepareScrollPages")
+        defer { traceSpaceWheelMotion("prepareScrollPages-end") }
         guard !spaceViewport.bounds.isEmpty, spacePagePitch > 0 else { return }
         let libraryX = libraryPageOrigin + offset
         if !libraryOpen && libraryX > -spacePagePitch && libraryX < spacePagePitch {
@@ -1979,11 +2195,16 @@ public final class SidebarView: NSView {
         scrollPreviews.removeAll { !indices.contains($0.spaceIndex) }
         for index in indices.sorted() {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
-            let preview = SidebarView(snapshot: snapshot)
+            traceSpaceWheelMotion("preview-row-rebuild", detail: "index=\(index)")
+            let prepared = preparedScrollPreviews.removeValue(forKey: index)
+            let preview = prepared ?? SidebarView(snapshot: snapshot)
+            traceSpaceWheelMotion("preview-source", detail: prepared == nil ? "cold" : "prepared")
+            let reload = prepared == nil || preview.snapshot != snapshot || preview.spaceIndex != index || preview.selectedID != selectedID
             preview.isScrollPreview = true
+            preview.snapshot = snapshot
             preview.spaceListOrigins = spaceListOrigins
             preview.selectedID = selectedID
-            preview.showSpace(at: index, animatedReveal: false)
+            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
@@ -2003,12 +2224,15 @@ public final class SidebarView: NSView {
                 descendants.append(contentsOf: view.subviews)
             }
             scrollPreviews.append(preview)
+            traceSpaceWheelMotion("preview-ready", detail: "index=\(index)")
         }
         // Don't translate fresh backing layers before AppKit synchronizes their view geometry.
         window?.displayIfNeeded()
     }
 
     func refreshLook(offset: Double = 0) {
+        traceSpaceWheelMotion("refreshLook")
+        defer { traceSpaceWheelMotion("refreshLook-end") }
         guard let onLookChanged else { return }
         // U26f: a private window is always dark, whatever its space's look (it has none).
         if privateWindow {
@@ -2074,9 +2298,12 @@ public final class SidebarView: NSView {
         return state
     }
 
-    private func settleScroll(from offset: Double, switched: Bool) {
-        refreshLook(offset: offset)
-        updateDockSelection(offset: offset)
+    private func settleScroll(from offset: Double, switched: Bool, freshClock: Bool = false) {
+        traceSpaceWheelMotion("settleScroll", detail: "from=\(offset) to=0 switched=\(switched)")
+        if !freshClock {
+            refreshLook(offset: offset)
+            updateDockSelection(offset: offset)
+        }
         lookSampling?.invalidate()
         if window != nil {
             lookSampling = displayLink(target: self, selector: #selector(sampleLook))
@@ -2091,9 +2318,12 @@ public final class SidebarView: NSView {
         CATransaction.setCompletionBlock { [weak self] in
             Task { @MainActor in
                 guard let self, self.scrollGeneration == generation else { return }
+                self.traceSpaceWheelMotion("spring-completed")
                 self.finishScrollPresentation()
             }
         }
+        let start = CACurrentMediaTime()
+        if freshClock { wheelMotionTrace?.animationStarted(from: offset, pitch: spacePagePitch, at: start) }
         for (view, origin) in scrollPages {
             let spring = CASpringAnimation(keyPath: "transform.translation.x")
             spring.mass = 1
@@ -2108,16 +2338,27 @@ public final class SidebarView: NSView {
             view.layer?.add(spring, forKey: "space.scroll")
         }
         CATransaction.commit()
+        traceSpaceWheelMotion("spring-committed")
+        sampleWheelMotion(source: "animation-added")
     }
 
     func finishScrollPresentation() {
+        traceSpaceWheelMotion("finishScrollPresentation")
+        if let trace = wheelMotionTrace {
+            let switchNumber = trace.switches
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak trace] in
+                guard let trace, trace.switches == switchNumber else { return }
+                trace.finish("presentation-finished")
+            }
+        }
         clearScrollPresentation()
         libraryDidLand()
         refreshPointer()
         notifyAutoArchiveReady()
     }
 
-    private func clearScrollPresentation() {
+    private func clearScrollPresentation(drainSnapshots: Bool = true) {
+        traceSpaceWheelMotion("clearScrollPresentation")
         lookSampling?.invalidate()
         lookSampling = nil
         refreshLook()
@@ -2126,10 +2367,14 @@ public final class SidebarView: NSView {
         pullIndicator.update(excess: 0)
         scrollGeneration += 1
         for (view, _) in scrollPages {
-            view.layer?.removeAnimation(forKey: "space.scroll")
+            removeSpaceScrollAnimation(view)
             view.layer?.transform = CATransform3DIdentity
         }
-        scrollPreviews.forEach { $0.superview?.removeFromSuperview() }
+        for preview in scrollPreviews {
+            preparedScrollPreviews[preview.spaceIndex] = preview
+            preview.superview?.removeFromSuperview()
+            preview.removeFromSuperview()
+        }
         scrollPreviews.removeAll()
         showingScrollPages = false
         library.isHidden = !libraryOpen
@@ -2139,6 +2384,19 @@ public final class SidebarView: NSView {
         creation.layer?.transform = CATransform3DIdentity
         mainColumn.isHidden = libraryOpen || createSpaceOpen
         library.layer?.transform = CATransform3DIdentity
+        sampleWheelMotion(source: "after-clear")
+        if drainSnapshots {
+            drainScrollSnapshots()
+        } else if !deferredScrollSnapshots.isEmpty && !scrollSnapshotDrainScheduled {
+            scrollSnapshotDrainScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.scrollSnapshotDrainScheduled = false
+                guard !self.showingScrollPages else { return }
+                self.drainScrollSnapshots()
+            }
+        }
+        scheduleScrollPrebuild()
     }
 
     private func stopPullAnimation() {
@@ -2191,7 +2449,7 @@ public final class SidebarView: NSView {
     private func playWheelPull(from offset: Double) {
         let spring = pullSpring(switched: true)
         scrollGeneration += 1
-        for (view, _) in scrollPages { view.layer?.removeAnimation(forKey: "space.scroll") }
+        for (view, _) in scrollPages { removeSpaceScrollAnimation(view) }
         prepareScrollPages(offset: offset)
         animatePull(duration: spring.settlingDuration, frame: { [weak self] time in
             guard let self else { return }

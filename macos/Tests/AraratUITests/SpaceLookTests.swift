@@ -224,7 +224,7 @@ func lookSwitchesEffectsAndAppearanceAtHalfPage() {
 }
 
 @Test @MainActor
-func lookSamplingStopsWhenTrackpadInterruptsSettle() throws {
+func lookSamplingStopsWhenTrackpadInterruptsSettle() async throws {
     _ = NSApplication.shared
     let spaces = (0..<2).map { index in
         SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "s\(index)", title: "Space", icon: nil,
@@ -244,6 +244,7 @@ func lookSamplingStopsWhenTrackpadInterruptsSettle() throws {
     }
     sidebar.scrollWheel(with: try event(-100, phase: nil, time: 100))
     #expect(sidebar.spaceShown == 1)
+    try await waitUntil { sidebar.lookSampling != nil }
     _ = try #require(sidebar.lookSampling)
     sidebar.scrollWheel(with: try event(20, phase: .began, time: 100.01))
     #expect(sidebar.lookSampling == nil)

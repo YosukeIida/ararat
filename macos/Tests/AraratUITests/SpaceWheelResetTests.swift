@@ -86,7 +86,7 @@ struct SpaceWheelRecordingResetTests {
                     switches += 1
                     let index = sidebar.spaceShown
                     sidebar.update(snapshot: snapshot(index))
-                    sidebar.showSpaceWithoutNotification(at: index)
+                    sidebar.showSpaceWithoutNotification(id: snapshot(index).spaces[index].id)
                 }
             }
             #expect(switches == 1)
@@ -103,7 +103,7 @@ struct SpaceWheelRecordingResetTests {
             #expect(sidebar.decideSpaceScroll(wheel(dx: 2, time: 100)).action == "settle 2->3 switched")
             switch reset {
             case 0: sidebar.update(snapshot: snapshot(3))
-            case 1: sidebar.showSpaceWithoutNotification(at: 3)
+            case 1: sidebar.showSpaceWithoutNotification(id: snapshot(3).spaces[3].id)
             case 2: sidebar.setLibraryOpen(true); sidebar.setLibraryOpen(false)
             case 3: sidebar.setCreateSpaceOpen(true); sidebar.setCreateSpaceOpen(false)
             default: sidebar.frame.size.width = 300; sidebar.layoutSubtreeIfNeeded()
