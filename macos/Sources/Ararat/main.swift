@@ -484,7 +484,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case .space(let target):
       let id: String?
       switch target {
-      case .mostRecent: id = snapshot.shownSpaceId ?? snapshot.spaces.first?.id
+      case .mostRecent: id = snapshot.shownSpaceId
       case .space(let value): id = value
       }
       return snapshot.spaces.first { $0.id == id }.map { .space($0.id, $0.profileName) }
@@ -516,8 +516,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let kept = session.queue.sync { session.store?.keptWindows() ?? [] }
       let recent = windows.first { $0.host?.window().isKeyWindow == true }
         ?? kept.compactMap { record in windows.first { $0.windowID == record.id } }.first ?? self
-      guard let current = session.queue.sync(execute: { session.store?.snapshot(windowId: recent.windowID) }),
-            let destination = Self.externalDestination(decision.destination, snapshot: current) else { done(); return }
+      guard var current = session.queue.sync(execute: { session.store?.snapshot(windowId: recent.windowID) }) else { done(); return }
+      if windows.isEmpty || current.shownSpaceId == nil {
+        current.shownSpaceId = session.queue.sync { session.store?.mostRecentSpace() }
+      }
+      guard let destination = Self.externalDestination(decision.destination, snapshot: current) else { done(); return }
       switch destination {
       case .space(let id, let profile):
         let target: Runtime
@@ -532,7 +535,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         let target: Runtime
         do { target = recent.hasUsableHost ? recent : try openExternalWindow(space: current.shownSpaceId) }
         catch { report(error); done(); return }
-        target.openLittleWindow(url: entry.url, profile: profile, untrusted: entry.untrusted, completion: done)
+        target.openLittleWindow(url: entry.url, profile: profile, external: true, untrusted: entry.untrusted, completion: done)
       }
     }
   }
@@ -2069,13 +2072,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
   /// create_host callback builds the bar. `replacing` is closed by that callback once the new
   /// window exists (a profile switch must not lose the page when the open is refused).
   func openLittleWindow(url: String? = nil, profile: String? = nil, frame: NSRect? = nil,
-                        replacing: LittleWindowController? = nil, untrusted: Bool = false,
+                        replacing: LittleWindowController? = nil, external: Bool = false, untrusted: Bool = false,
                         completion: @escaping () -> Void = {}) {
     guard !isPrivateWindow, let host, hasUsableHost, let adapter = workspace else { completion(); return }
     let name = profile ?? host.profileDirectory()
     func create(_ rect: NSRect) {
       attemptLittleWindow(url: url, profile: name, frame: LittleWindowController.clampedFrame(rect),
-                          replacing: replacing, untrusted: untrusted, deadline: .now() + 10, completion: completion)
+                          replacing: replacing, external: external, untrusted: untrusted, deadline: .now() + 10, completion: completion)
     }
     if let frame { create(frame); return }
     // D8: the remembered frame is used only while this device remembers it; off opens at the
@@ -2100,7 +2103,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   /// until the deadline. The origin window's own profile is never touched: the engine loads the
   /// profile's Browser into the host without switching what the window shows.
   private func attemptLittleWindow(url: String?, profile: String, frame: NSRect,
-                                   replacing: LittleWindowController?, untrusted: Bool, deadline: DispatchTime,
+                                   replacing: LittleWindowController?, external: Bool, untrusted: Bool, deadline: DispatchTime,
                                    completion: @escaping () -> Void) {
     guard let host, hasUsableHost else {
       Launcher.pendingLittleWindow = nil
@@ -2108,13 +2111,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
       return
     }
     Launcher.pendingLittleWindow = (self, frame, url, profile, replacing)
-    let accepted = host.openLittleWindow(url ?? "about:blank", profile: profile, frame: frame, untrusted: untrusted)
+    let accepted = host.openLittleWindow(url ?? "about:blank", profile: profile, frame: frame, external: external, untrusted: untrusted)
     if accepted, Launcher.pendingLittleWindow == nil { completion(); return }
     Launcher.pendingLittleWindow = nil
     guard DispatchTime.now() < deadline else { completion(); return }
     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
       self?.attemptLittleWindow(url: url, profile: profile, frame: frame,
-                                replacing: replacing, untrusted: untrusted, deadline: deadline, completion: completion)
+                                replacing: replacing, external: external, untrusted: untrusted, deadline: deadline, completion: completion)
     }
   }
 

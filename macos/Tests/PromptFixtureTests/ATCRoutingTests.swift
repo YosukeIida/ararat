@@ -28,11 +28,9 @@ func externalLittleWindowDecisionKeepsItsProfile() {
 }
 
 @Test @MainActor
-func externalMostRecentCanUseTheFirstSpaceBeforeAWindowHasSelection() {
+func externalMostRecentRequiresTheResolvedSpaceInsteadOfSidebarOrder() {
     var snapshot = atcSnapshot()
     snapshot.shownSpaceId = nil
-    #expect(Runtime.externalDestination(.space(.mostRecent), snapshot: snapshot) == .space("a", "Default"))
-    snapshot.spaces = []
     #expect(Runtime.externalDestination(.space(.mostRecent), snapshot: snapshot) == nil)
 }
 
@@ -64,10 +62,34 @@ func atcFixtureRoutesThroughTheCoreAndFallsBackAfterDeletion() throws {
         #expect(store.route(url: ATCRoutingCheck.coldURL).destination == .space(.space("named")))
         #expect(store.route(url: "https://atc-little.test/").destination == .littleWindow(.named("Profile 1")))
         #expect(store.route(url: "https://other.test/").destination == .littleWindow(.default))
+        try store.showSpace(windowId: "atc", spaceId: "default")
+        _ = try store.createTab(windowId: "atc", url: "https://default-key.test/")
+        #expect(store.route(url: "https://atc-rule-recent.test/").destination == .space(.space("named")))
         #expect(store.routing() == rules)
         _ = try store.liveDeleteSpace(windowId: "atc", spaceId: "named")
         #expect(store.route(url: ATCRoutingCheck.coldURL).destination == .littleWindow(.default))
         #expect(store.routing() == rules)
+    }
+}
+
+@Test @MainActor
+func externalMostRecentWithoutWindowsUsesCoreRecencyAcrossProfiles() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                                   windowID: "atc-closed", card: NSView(), seedProfiles: true)
+    defer { adapter.shutdown() }
+    try adapter.session.queue.sync {
+        let store = adapter.session.store!
+        try store.showSpace(windowId: "atc-closed", spaceId: "named")
+        _ = try store.createTab(windowId: "atc-closed", url: "https://latest.test/")
+        try store.closeWindow(windowId: "atc-closed", quitting: false)
+        #expect(store.keptWindows().isEmpty)
+        var snapshot = store.snapshot(windowId: "reopened")
+        #expect(snapshot.spaces.first?.id == "default")
+        snapshot.shownSpaceId = store.mostRecentSpace()
+        #expect(Runtime.externalDestination(.space(.mostRecent), snapshot: snapshot) == .space("named", "Profile 1"))
     }
 }
 

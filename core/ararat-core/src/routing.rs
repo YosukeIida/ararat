@@ -128,8 +128,13 @@ impl Routing {
     // inside its own profile, so a destination outside it can only be one whose space is
     // gone, while the default belongs to no rule and is judged on existence alone.
     fn answer(&self, rule_profile: Option<&Profile>, destination: Destination, spaces: &Spaces) -> Destination {
-        // Only a Space(id) destination can be lost; the Little window and the most recent
-        // space answer as they stand.
+        if destination == Destination::Space(SpaceTarget::MostRecent) {
+            if let Some(profile) = rule_profile {
+                return spaces.most_recent(profile)
+                    .map(|id| Destination::Space(SpaceTarget::Space(id)))
+                    .unwrap_or_else(|| self.answer(None, self.default.clone(), spaces));
+            }
+        }
         let lost = matches!(&destination, Destination::Space(SpaceTarget::Space(id)) if !spaces.usable(id, rule_profile));
         if !lost { return destination; }
         match rule_profile {
@@ -252,5 +257,22 @@ mod tests {
         });
         assert!(goes_to_work(&r, "https://example.com"));
         assert_eq!(r.route("https://other.org", &only_work_spaces()), Destination::LittleWindow(Profile::Default));
+    }
+
+    #[test]
+    fn most_recent_rule_stays_in_its_profile_and_uses_the_defaults_when_it_has_no_space() {
+        let mut r = routing(MatchStyle::Contains, "example.com");
+        r.rules[0].profile = Profile::Named("Work".into());
+        r.rules[0].destination = Destination::Space(SpaceTarget::MostRecent);
+        let spaces = Spaces {
+            entries: vec![("default".into(), Profile::Default),
+                          ("older-work".into(), Profile::Named("Work".into())),
+                          ("recent-work".into(), Profile::Named("Work".into()))],
+            recency: vec!["default".into(), "recent-work".into(), "older-work".into()],
+        };
+        assert_eq!(r.route("https://example.com", &spaces), Destination::Space(SpaceTarget::Space("recent-work".into())));
+        assert_eq!(r.route("https://example.com", &only_work_spaces()), r.default);
+        r.default = Destination::Space(SpaceTarget::MostRecent);
+        assert_eq!(r.route("https://example.com", &only_work_spaces()), r.default);
     }
 }

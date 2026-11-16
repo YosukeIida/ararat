@@ -97,3 +97,13 @@
      "//base",
      "//chrome/browser:file_select_helper",
      "//chrome/browser/infobars",
+--- a/chrome/browser/ui/startup/BUILD.gn
++++ b/chrome/browser/ui/startup/BUILD.gn
+@@ -131,6 +131,7 @@
+     "url_util.cc",
+   ]
+   deps = [
++    "//ararat/core:hooks",
+     ":startup",
+     "//base",
+     "//cc/base",
