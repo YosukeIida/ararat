@@ -786,6 +786,33 @@ impl Default for PrivacySettings {
     }
 }
 
+// P5b: what launching Ararat does with the windows it kept. Restore is the behaviour the app
+// had before the setting existed and the board's default: the launch adopts the newest kept
+// Window record. NewWindow starts one fresh window on the most recent space and leaves every
+// kept Window record where it is, for a later restore (P5c restores all of them).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartupBehavior { #[default] RestoreWindows, NewWindow }
+
+// P5b: Settings › General's downloads rows — the folder Chromium saves to and whether it asks
+// for each file. The record is the source; the app pushes it into Chromium's prefs, and an empty
+// directory means Chromium's own default (the account's Downloads folder), which the pane shows
+// as "Downloads" without pinning the path in a synced record.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadSettings {
+    pub directory: String,
+    pub ask_where_to_save: bool,
+}
+
+impl DownloadSettings {
+    /// A directory the engine can be given: empty (Chromium's default) or an absolute path. A
+    /// relative path names no folder a download can be saved in, so it never reaches a pref.
+    pub fn invalid(&self) -> Option<&'static str> {
+        (!self.directory.is_empty() && !self.directory.starts_with('/'))
+            .then_some("a download folder must be an absolute path")
+    }
+}
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
@@ -796,7 +823,8 @@ impl Default for PrivacySettings {
 // second Mac shows the same theme. U27w's seven site defaults (W1) ride here too: one record,
 // so a second Mac asks, allows and blocks the same seven kinds. U27p's privacy record (P2, P3)
 // rides here as well: the cookie choice, the GPC signal and the history retention travel with
-// the workspace.
+// the workspace. P5b's When Ararat opens rides here too: the choice is a preference of the
+// person, not of the Mac the windows were kept on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -809,13 +837,18 @@ pub struct Settings {
     pub site_defaults: SiteDefaults,
     /// U27p: the Privacy pane's cookies, GPC and history retention.
     pub privacy: PrivacySettings,
+    /// P5b: what the first window of a launch does (restore the kept windows or open a new one).
+    pub startup: StartupBehavior,
+    /// P5b: the download folder and whether Chromium asks for each file.
+    pub downloads: DownloadSettings,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
             little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System,
-            site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default() }
+            site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default(),
+            startup: StartupBehavior::RestoreWindows, downloads: DownloadSettings::default() }
     }
 }
 

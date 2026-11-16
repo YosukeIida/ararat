@@ -1421,6 +1421,26 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    // P5b: the General pane's When Ararat opens. Same synced record as the switches above; the
+    // app reads it at the launch site, and the core keeps no state of its own for it.
+    pub fn set_startup(&mut self, startup: crate::model::StartupBehavior) -> Vec<Op> {
+        if self.settings.startup == startup { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.startup = startup;
+        self.commit_settings(settings)
+    }
+
+    // P5b: the General pane's downloads pair, one write of the whole record. The app pushes it
+    // into Chromium's prefs on every change and at every window start, so the pane and the
+    // browser never disagree about where a download goes.
+    pub fn set_downloads(&mut self, downloads: crate::model::DownloadSettings) -> Vec<Op> {
+        debug_assert!(downloads.invalid().is_none(), "a download folder must be an absolute path");
+        if self.settings.downloads == downloads { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.downloads = downloads;
+        self.commit_settings(settings)
+    }
+
     fn commit_settings(&mut self, settings: Settings) -> Vec<Op> {
         let op = if settings == Settings::default() {
             Op::Delete(Kind::Settings, "workspace".into())

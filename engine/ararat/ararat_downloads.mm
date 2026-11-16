@@ -3,9 +3,15 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/check.h"
+#include "base/files/file_path.h"
+#include "base/no_destructor.h"
+#include "base/scoped_observation.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
@@ -13,6 +19,8 @@
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/download/bubble/download_bubble_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_manager_observer.h"
 #include "chrome/browser/ui/download/download_bubble_security_view_info.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -191,4 +199,73 @@ void AraratConfigurePrivateDownloads(Profile* profile) {
   if (!regular) return;
   profile->GetPrefs()->SetFilePath(prefs::kDownloadDefaultDirectory, regular->DownloadPath());
   profile->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+}
+
+namespace {
+
+// P5b: Settings › General's downloads rows. The app's core settings record is the source of the
+// folder Chromium saves to and whether it asks where to save each file; this entry pushes it into
+// every regular profile's download prefs, as AraratApplyPrivacySettings does for the cookie and
+// GPC prefs. Private profiles keep their own rule (AraratConfigurePrivateDownloads copies the
+// regular folder and never prompts), so nothing is written to them here.
+
+std::vector<Profile*> RegularProfiles() {
+  std::vector<Profile*> profiles;
+  auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr;
+  if (!manager) return profiles;
+  for (Profile* profile : manager->GetLoadedProfiles()) {
+    if (profile && profile->IsRegularProfile()) profiles.push_back(profile);
+  }
+  return profiles;
+}
+
+void ApplyDownloadSettingsToProfile(Profile* profile, const base::FilePath& directory, bool prompt) {
+  if (!profile || !profile->IsRegularProfile()) return;
+  PrefService* prefs = profile->GetPrefs();
+  if (!prefs) return;
+  // An empty directory is Chromium's own default (the account's Downloads folder), so the pref
+  // is left alone instead of being pinned to a folder the app guessed.
+  if (!directory.empty()) prefs->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  prefs->SetBoolean(prefs::kPromptForDownload, prompt);
+}
+
+// Remembers the last record and applies it to a profile created later, so a second profile gets
+// the record the app applied at startup without the app observing profiles itself.
+class DownloadSettingsWatcher : public ProfileManagerObserver {
+ public:
+  DownloadSettingsWatcher() {
+    if (auto* manager = g_browser_process ? g_browser_process->profile_manager() : nullptr) {
+      profiles_.Observe(manager);
+    }
+  }
+  static DownloadSettingsWatcher& Get() {
+    static base::NoDestructor<DownloadSettingsWatcher> watcher;
+    return *watcher;
+  }
+  void Set(base::FilePath directory, bool prompt) {
+    directory_ = std::move(directory);
+    prompt_ = prompt;
+  }
+  void OnProfileAdded(Profile* profile) override {
+    ApplyDownloadSettingsToProfile(profile, directory_, prompt_);
+  }
+  void OnProfileManagerDestroying() override { profiles_.Reset(); }
+
+ private:
+  base::FilePath directory_;
+  bool prompt_ = false;
+  base::ScopedObservation<ProfileManager, ProfileManagerObserver> profiles_{this};
+};
+
+}  // namespace
+
+void AraratApplyDownloadSettings(NSString* directory, BOOL prompt) {
+  if (![directory isKindOfClass:NSString.class]) return;
+  // The core refuses a relative folder (DownloadSettings::invalid), so this is the second
+  // statement of the same rule: only an absolute path is a folder a download can be saved in.
+  base::FilePath path(base::SysNSStringToUTF8(directory));
+  if (!path.empty() && !path.IsAbsolute()) return;
+  const bool ask = prompt != NO;
+  DownloadSettingsWatcher::Get().Set(path, ask);
+  for (Profile* profile : RegularProfiles()) ApplyDownloadSettingsToProfile(profile, path, ask);
 }

@@ -2622,7 +2622,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (NSDictionary*)downloadsCheckSettings {
   auto* args = base::CommandLine::ForCurrentProcess();
-  if (!browser_ || (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads" && args->GetSwitchValueASCII("ararat-check") != "private-downloads")) return @{};
+  if (!browser_ || (args->GetSwitchValueASCII("ararat-check") != "downloads" && args->GetSwitchValueASCII("ararat-screen") != "downloads" && args->GetSwitchValueASCII("ararat-check") != "private-downloads" && args->GetSwitchValueASCII("ararat-screen") != "settings-general")) return @{};
   Profile* profile = browser_->GetProfile();
   auto* prefs = DownloadPrefs::FromBrowserContext(profile);
   return prefs ? @{ @"directory": base::SysUTF8ToNSString(prefs->DownloadPath().value()),

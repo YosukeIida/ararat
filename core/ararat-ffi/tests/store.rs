@@ -1564,6 +1564,35 @@ fn the_privacy_record_reads_through_the_ffi_and_survives_reopen() {
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
 
+// P5b: When Ararat opens is the same synced workspace record, Restore until changed, and a
+// change survives a reopen as one row.
+#[test]
+fn the_startup_choice_reads_through_the_ffi_and_survives_reopen() {
+    use ararat_ffi::StartupBehavior;
+    let path = fresh_db("startup-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::RestoreWindows);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    store.set_startup("one".into(), StartupBehavior::NewWindow).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::NewWindow);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    // The same value again writes nothing.
+    store.set_startup("one".into(), StartupBehavior::NewWindow).unwrap();
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().startup, StartupBehavior::NewWindow);
+    // The fields that share the record keep their own values.
+    assert!(store.settings().new_tab_row_shown);
+    store.set_startup("one".into(), StartupBehavior::RestoreWindows).unwrap();
+    drop(store);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'settings'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 2);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
 #[test]
 fn live_auto_archive_returns_close_targets_and_the_committed_snapshot() {
     let path = fresh_db("live-auto-archive");
@@ -1606,4 +1635,27 @@ fn live_delete_shown_space_returns_only_its_loaded_rows_and_the_neighbour_snapsh
     for target in batch.targets { assert!(store.live_settle_close(target.command.id)); }
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()).spaces.len(), 1);
+}
+
+// P5b: the General pane's downloads pair reads through the FFI, survives a reopen, and a relative
+// folder is refused before anything is written.
+#[test]
+fn the_download_settings_read_through_the_ffi_and_refuse_a_relative_folder() {
+    use ararat_ffi::DownloadSettings;
+    let path = fresh_db("download-settings");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().downloads, DownloadSettings::default());
+    let refused = store.set_downloads("one".into(), DownloadSettings { directory: "Desktop".into(), ask_where_to_save: false });
+    assert!(refused.is_err());
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    let changed = DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    store.set_downloads("one".into(), changed.clone()).unwrap();
+    assert_eq!(store.settings().downloads, changed);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.settings().downloads, changed);
+    // The When Ararat opens choice shares the record and keeps its own value.
+    assert_eq!(store.settings().startup, ararat_ffi::StartupBehavior::RestoreWindows);
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

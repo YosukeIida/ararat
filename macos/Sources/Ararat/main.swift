@@ -57,7 +57,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-general", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -593,6 +593,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
   var settingsCheck: SettingsScreenCheck?
+  // P5b: the General check's fake default-browser pair (status and setter), so the row's Make
+  // Default is asserted without touching the host's handler.
+  var generalDefaultBrowser: GeneralCheckDefaultBrowser?
   // U27j: the onboarding window, the fake screen-4 setter the check injects, the import the
   // progress screen schedules (held while a check captures it), and the check's state.
   var onboardingWindow: OnboardingWindowController?
@@ -1076,6 +1079,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       purgeHistory(Unmanaged.passUnretained(profileObject).toOpaque(), Unmanaged.passUnretained(itemObject).toOpaque(), changedAt, completion)
     }
     var adoptedWindow = false
+    // P5b: When Ararat opens. Restore (the default and the behaviour before the setting) is
+    // design (c) below: the first window adopts the newest kept `Window` record. Open a new window
+    // starts a fresh one on the most recent space and leaves every kept record untouched, which is
+    // the record P5c restores from when the setting is Restore.
+    var newWindowSpace: String?
     if session == nil || reopening {
       // Design (c): the first window adopts the newest kept `Window` record, none kept
       // means a fresh UUID; reopen adopts the newest kept record no open window names.
@@ -1086,9 +1094,22 @@ final class Runtime: NSObject, NSMenuItemValidation {
         running.store = try? running.store ?? WorkspaceStore.open(path: path)
       }
       let kept = running.queue.sync { running.store?.keptWindows() ?? [] }
-      let adopted = kept.first { !openIDs.contains($0.id) }
+      // The setting is the launch's own: a reopen inside the session (⌘Q's return, the relaunch
+      // checks) keeps adopting as it always has.
+      let startup = session == nil && !reopening
+        ? running.queue.sync { running.store?.settings().startup } ?? .restoreWindows
+        : .restoreWindows
+      let newest = kept.first { !openIDs.contains($0.id) }
+      let adopted = startup == .restoreWindows ? newest : nil
       adoptedWindow = adopted != nil
       windowID = adopted?.id ?? UUID().uuidString
+      // The fresh window opens where the person last was: the newest kept record's own most recent
+      // space, which is what a second window opened from the File menu does today.
+      if adopted == nil, let newest {
+        newWindowSpace = running.queue.sync {
+          running.store?.recentSpaceForProfile(windowId: newest.id, profile: .default)
+        }
+      }
     }
     let card = NSView()
     promptPageCard = card
@@ -1124,8 +1145,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let name = browserCheckMode == "screen-dialogs" ? "dialogs" : "downloads"
       FileHandle.standardError.write(Data("ararat-trace: \(name) seed db=\(path) shown=\(seeded?.shownSpaceId ?? "nil") rows=\(rows)\n".utf8))
     }
-    if let shownSpace {
-      try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
+    if let shown = shownSpace ?? newWindowSpace {
+      try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shown) }
     }
     let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session, private: isPrivateWindow)
     // U27k D5: the Theme is one synced setting for the whole app, so it is applied before this
@@ -1145,6 +1166,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // the cookie mode, the GPC signal and the history retention are already in Chromium's profiles.
     if let privacy = themeSession.queue.sync(execute: { themeSession.store?.settings().privacy }) {
       EnginePrivacySettingsHost.apply(privacy)
+    }
+    // P5b: the General pane's download folder and ask-each-file switch are applied the same way,
+    // before this window's first download can be saved.
+    if let downloads = themeSession.queue.sync(execute: { themeSession.store?.settings().downloads }) {
+      EngineDownloadSettingsHost.apply(downloads)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.privateWindow = isPrivateWindow
@@ -2092,6 +2118,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // U27p: the Privacy pane writes the record through the core and pushes it into every regular
     // profile; Clear browsing data runs for the profile the sheet names.
     owner.settings?.setPrivacySettings(host: EnginePrivacySettingsHost.shared)
+    // P5b: the General pane. The default-browser status and setter are LaunchServices' in a
+    // shipping build; `settings-general` hands in a fake pair, so no check changes the host's
+    // handler. A written downloads record reaches every regular profile's download prefs.
+    if browserCheckMode == "screen-settings-general" {
+      let fake = GeneralCheckDefaultBrowser()
+      self.generalDefaultBrowser = fake
+      owner.settings?.setGeneralSettings(status: fake, setter: fake) { downloads in
+        EngineDownloadSettingsHost.apply(downloads)
+      }
+    } else {
+      owner.settings?.setGeneralSettings { downloads in
+        EngineDownloadSettingsHost.apply(downloads)
+      }
+    }
     // U27x: the Extensions pane reads and writes one profile's extensions through the same engine
     // bridge. Manage Extension opens the profile's own chrome://extensions page, showing that
     // profile's space first when Settings is on another one (the engine opens a tab in the shown

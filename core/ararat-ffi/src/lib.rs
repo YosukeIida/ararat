@@ -731,6 +731,34 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // P5b: the General pane's When Ararat opens, the same synced settings record. The app reads
+    // it at the launch site before the first window adopts a kept Window record or starts a fresh
+    // one; the core itself restores nothing yet (P5c).
+    pub fn set_startup(&self, window_id: String, startup: StartupBehavior) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_startup(startup.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // P5b: the General pane's download folder and ask-each-file switch, the same synced record.
+    // The app pushes the record into Chromium's prefs; a folder the engine cannot use (a relative
+    // path) is refused here rather than written.
+    pub fn set_downloads(&self, window_id: String, downloads: DownloadSettings) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let downloads: ararat_core::model::DownloadSettings = downloads.into();
+        if let Some(reason) = downloads.invalid() {
+            return Err(CoreError::Edit { message: reason.to_string() });
+        }
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_downloads(downloads);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     pub fn little_window_device(&self) -> LittleWindowDevice {
         self.workspace.lock().unwrap().little_window_device.clone().into()
     }
@@ -1062,6 +1090,10 @@ pub struct WorkspaceSettings {
     pub site_defaults: SiteDefaults,
     /// U27p: the Privacy pane's cookies, GPC and history retention.
     pub privacy: PrivacySettings,
+    /// P5b: what the first window of a launch does.
+    pub startup: StartupBehavior,
+    /// P5b: the download folder and whether Chromium asks for each file.
+    pub downloads: DownloadSettings,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1072,7 +1104,9 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             little_window_close_after: settings.little_window_close_after,
             theme: settings.theme.into(),
             site_defaults: settings.site_defaults.into(),
-            privacy: settings.privacy.into() }
+            privacy: settings.privacy.into(),
+            startup: settings.startup.into(),
+            downloads: settings.downloads.into() }
     }
 }
 
@@ -1223,8 +1257,7 @@ impl From<SpaceScrollDirection> for ararat_core::model::SpaceScrollDirection {
 
 /// U27k: the Appearance pane's Theme (D5). System follows the Mac, Light and Dark force one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum Theme { System, Light, Dark }
-impl From<ararat_core::model::Theme> for Theme {
+pub enum Theme { System, Light, Dark }impl From<ararat_core::model::Theme> for Theme {
     fn from(value: ararat_core::model::Theme) -> Self {
         use ararat_core::model::Theme as Core;
         match value { Core::System => Self::System, Core::Light => Self::Light, Core::Dark => Self::Dark }
@@ -1234,6 +1267,41 @@ impl From<Theme> for ararat_core::model::Theme {
     fn from(value: Theme) -> Self {
         use ararat_core::model::Theme as Core;
         match value { Theme::System => Core::System, Theme::Light => Core::Light, Theme::Dark => Core::Dark }
+    }
+}
+
+/// P5b: what launching Ararat does with the kept windows. RestoreWindows is the behaviour before
+/// the setting and the pane's default; NewWindow starts one fresh window on the most recent space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum StartupBehavior { RestoreWindows, NewWindow }
+impl From<ararat_core::model::StartupBehavior> for StartupBehavior {
+    fn from(value: ararat_core::model::StartupBehavior) -> Self {
+        use ararat_core::model::StartupBehavior as Core;
+        match value { Core::RestoreWindows => Self::RestoreWindows, Core::NewWindow => Self::NewWindow }
+    }
+}
+impl From<StartupBehavior> for ararat_core::model::StartupBehavior {
+    fn from(value: StartupBehavior) -> Self {
+        use ararat_core::model::StartupBehavior as Core;
+        match value { StartupBehavior::RestoreWindows => Core::RestoreWindows, StartupBehavior::NewWindow => Core::NewWindow }
+    }
+}
+
+/// P5b: Settings › General's downloads pair: the folder Chromium saves to (empty is Chromium's own
+/// Downloads default) and whether it asks where to save each file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct DownloadSettings {
+    pub directory: String,
+    pub ask_where_to_save: bool,
+}
+impl From<ararat_core::model::DownloadSettings> for DownloadSettings {
+    fn from(value: ararat_core::model::DownloadSettings) -> Self {
+        Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
+    }
+}
+impl From<DownloadSettings> for ararat_core::model::DownloadSettings {
+    fn from(value: DownloadSettings) -> Self {
+        Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
     }
 }
 

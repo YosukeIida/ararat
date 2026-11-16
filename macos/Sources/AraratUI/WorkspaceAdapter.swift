@@ -398,6 +398,26 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setPrivacy(windowId: self.windowID, privacy: value) }, completion: completion)
     }
 
+    // P5b: the General pane's When Ararat opens, the same synced settings record, read at the
+    // launch site (a window start) and on every open of the pane.
+    public func startupBehavior(completion: @escaping Completion<StartupBehavior>) {
+        enqueue({ try self.opened().settings().startup }, completion: completion)
+    }
+
+    public func setStartupBehavior(_ value: StartupBehavior, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setStartup(windowId: self.windowID, startup: value) }, completion: completion)
+    }
+
+    // P5b: the General pane's download folder and ask-each-file switch, again the synced record,
+    // read on every open and written once for every window and device.
+    public func downloadSettings(completion: @escaping Completion<DownloadSettings>) {
+        enqueue({ try self.opened().settings().downloads }, completion: completion)
+    }
+
+    public func setDownloadSettings(_ value: DownloadSettings, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setDownloads(windowId: self.windowID, downloads: value) }, completion: completion)
+    }
+
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

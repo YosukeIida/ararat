@@ -359,3 +359,74 @@ fn an_unknown_privacy_value_is_refused_and_missing_fields_take_the_built_in() {
     assert!(matches!(parsed, Ok(Record::Settings(Settings { privacy: PrivacySettings {
         history_retention: HistoryRetention::Year, .. }, .. }))));
 }
+
+// P5b: When Ararat opens is one synced record, Restore by default (the behaviour before the
+// setting), and a reset is a tombstone. A missing field takes the built-in value, so a record
+// written before the pane existed still reads.
+#[test]
+fn the_startup_choice_starts_at_restore_and_writes_one_synced_record() {
+    use ararat_core::model::StartupBehavior;
+    assert_eq!(Workspace::default().settings.startup, StartupBehavior::RestoreWindows);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let ops = ws.set_startup(StartupBehavior::NewWindow);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.startup == StartupBehavior::NewWindow));
+    assert_eq!(ws.settings.startup, StartupBehavior::NewWindow);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The other fields of the shared record keep their values.
+    assert!(ws.settings.new_tab_row_shown && ws.settings.theme == Theme::System);
+    // The same value again writes nothing; Restore again is a tombstone.
+    let before = ws.clone();
+    assert!(ws.set_startup(StartupBehavior::NewWindow).is_empty());
+    assert_eq!(ws, before);
+    let reset = ws.set_startup(StartupBehavior::RestoreWindows);
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"startup":"Later"}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"startup":"NewWindow"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { startup: StartupBehavior::NewWindow, .. }))));
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { startup: StartupBehavior::RestoreWindows, .. }))));
+}
+
+// P5b: the downloads pair is one synced record, Chromium's defaults until changed (no folder, no
+// prompt), and a reset is a tombstone. An empty folder means Chromium's own default; a relative
+// path is refused, because it names no folder a download can be saved in.
+#[test]
+fn the_download_settings_start_at_chromiums_defaults_and_write_one_synced_record() {
+    use ararat_core::model::DownloadSettings;
+    assert_eq!(Workspace::default().settings.downloads, DownloadSettings::default());
+    assert_eq!(DownloadSettings::default(), DownloadSettings { directory: String::new(), ask_where_to_save: false });
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let changed = DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    let ops = ws.set_downloads(changed.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.downloads == changed));
+    assert_eq!(ws.settings.downloads, changed);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The same record again writes nothing; the folder alone keeps the switch's value.
+    let before = ws.clone();
+    assert!(ws.set_downloads(changed.clone()).is_empty());
+    assert_eq!(ws, before);
+    let folder_only = DownloadSettings { directory: String::new(), ask_where_to_save: true };
+    let ops = ws.set_downloads(folder_only.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.downloads == folder_only));
+    // Back to Chromium's defaults: one tombstone, not a row restating them.
+    let reset = ws.set_downloads(DownloadSettings::default());
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    // A relative folder is refused; a record written before the pane existed reads the defaults.
+    assert!(DownloadSettings { directory: "Desktop".into(), ask_where_to_save: false }.invalid().is_some());
+    assert!(DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: false }.invalid().is_none());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"downloads":{"ask_where_to_save":true}}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { downloads: DownloadSettings { ref directory, ask_where_to_save: true }, .. })) if directory.is_empty()));
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { downloads: DownloadSettings { .. }, .. }))));
+}
