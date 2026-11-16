@@ -105,12 +105,16 @@ extension Runtime {
     case 8:
       guard !children.contains(where: { !$0.isPrivateWindow && $0.host != nil }) else { return }
       downloadCloseConditions["regular_window_closed"] = true
-      downloadCloseConditions["regular_download_continues"] = host.checkInProgressDownloadCount() == 1
-      for item in host.downloads() {
-        if let item = item as? [String: Any], item["state"] as? Int == 0, let id = item["id"] as? String {
-          _ = host.performDownloadAction("cancel", identifier: id)
-        }
-      }
+      guard let item = host.downloads().compactMap({ $0 as? [String: Any] }).first(where: { $0["state"] as? Int == 0 }),
+            let id = item["id"] as? String, let received = item["received"] as? Int64 else { return }
+      regularDownloadCloseSample = (id, received, ProcessInfo.processInfo.systemUptime)
+      browserCheckPhase = 9
+    case 9:
+      guard let sample = regularDownloadCloseSample, ProcessInfo.processInfo.systemUptime - sample.time >= 1 else { return }
+      let item = host.downloads().compactMap { $0 as? [String: Any] }.first { $0["id"] as? String == sample.id }
+      let state = item?["state"] as? Int
+      downloadCloseConditions["regular_download_continues"] = (state == 0 || state == 1) && (item?["received"] as? Int64 ?? 0) > sample.received
+      if state == 0 { _ = host.performDownloadAction("cancel", identifier: sample.id) }
       let names = ["private_window", "download_pending", "close_blocked", "dialog_action", "window_closed", "regular_download_pending", "regular_window_closed", "regular_download_continues"]
       let failed = names.filter { downloadCloseConditions[$0] != true }
       finishBrowserCheck(ok: failed.isEmpty, values: ["conditions": downloadCloseConditions, "failed_conditions": failed, "dialog_fallback": downloadCloseFallback])

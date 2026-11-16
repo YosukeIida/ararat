@@ -192,7 +192,10 @@ final class DownloadRowView: NSStackView, NSDraggingSource {
         guard let url = model.dragFileURL(id: itemID) else { return nil }
         return NSDraggingItem(pasteboardWriter: url as NSURL)
     }
-    override func mouseDown(with event: NSEvent) { dragStart = convert(event.locationInWindow, from: nil) }
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        dragStart = convert(event.locationInWindow, from: nil)
+    }
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart else { return }
         let point = convert(event.locationInWindow, from: nil)

@@ -252,6 +252,40 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect((window.firstResponder as? DownloadActionButton)?.downloadID == "first")
 }
 
+@Test @MainActor func downloadRowClickTakesFocusAndBacktabVisitsHeaderControls() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = page
+    defer { window.contentView = nil }
+    page.setModel(model)
+    #expect(page.search.nextKeyView === page.clear)
+    #expect(page.clear.previousKeyView === page.search)
+    #expect(page.clear.nextKeyView === page.table)
+    let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let backtab = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.shift], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+    for clearable in [true, false] {
+        model.update([download("first", actions: clearable ? ["remove"] : ["cancel"])])
+        page.refresh()
+        page.layoutSubtreeIfNeeded()
+        page.focusFirst()
+        let button = try #require(window.firstResponder as? DownloadActionButton)
+        button.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+        let row = try #require(page.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? DownloadRowView)
+        page.focusSearch()
+        row.mouseDown(with: click)
+        #expect(window.firstResponder === row)
+        row.mouseUp(with: click)
+        row.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+        window.makeFirstResponder(page.table)
+        page.table.keyDown(with: backtab)
+        #expect(clearable ? window.firstResponder === page.clear : window.firstResponder === page.search.currentEditor())
+    }
+}
+
 @Test @MainActor func downloadsPageKeepsLongHistoryInAVirtualTable() {
     _ = NSApplication.shared
     let model = DownloadsModel()

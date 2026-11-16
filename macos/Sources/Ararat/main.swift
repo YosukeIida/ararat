@@ -800,6 +800,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var promptFixturePort: UInt16?
   var promptFixtureError: String?
   var downloadCloseConditions: [String: Bool] = [:]
+  var regularDownloadCloseSample: (id: String, received: Int64, time: TimeInterval)?
   var downloadsCheck: DownloadsCheck?
   var toastsCheck: ToastsCheck?
   var splitFocusCheck: SplitFocusCheck?

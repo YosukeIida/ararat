@@ -130,6 +130,9 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     func refresh() {
         guard let model else { return }
         clear.isEnabled = !model.clearableItems.isEmpty
+        search.nextKeyView = clear
+        clear.nextKeyView = table
+        back.nextKeyView = previousFocus
         let newEntries = model.filteredItems(search.stringValue)
         empty.stringValue = model.items.isEmpty ? "No downloads" : "No matching downloads"
         guard entries != newEntries else { return }
@@ -159,9 +162,6 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
             if let index = entries.firstIndex(where: { $0.id == focusedID }) { focus(index, action: focusedAction) }
             else { focus(min(oldIndex, entries.count - 1)) }
         }
-        search.nextKeyView = clear
-        clear.nextKeyView = table
-        back.nextKeyView = previousFocus
     }
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -206,7 +206,7 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         }
         let nextRow = index + (backwards ? -1 : 1)
         if entries.indices.contains(nextRow) { focus(nextRow, last: backwards) }
-        else { window?.makeFirstResponder(backwards ? previousFocus : back) }
+        else { window?.makeFirstResponder(backwards ? (clear.isEnabled ? clear : search) : back) }
     }
     private func moveFocus(from id: String, delta: Int) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
@@ -216,7 +216,7 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         switch event.keyCode {
         case 125: focus(min(entries.count - 1, max(0, table.selectedRow + 1)))
         case 126: focus(max(0, table.selectedRow - 1))
-        case 48: if event.modifierFlags.contains(.shift) { window?.makeFirstResponder(previousFocus) } else { focusFirst() }
+        case 48: if event.modifierFlags.contains(.shift) { window?.makeFirstResponder(clear.isEnabled ? clear : search) } else { focusFirst() }
         default: return false
         }
         return true
