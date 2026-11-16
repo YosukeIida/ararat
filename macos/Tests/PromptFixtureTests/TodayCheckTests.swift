@@ -115,3 +115,53 @@ func todayCheckAnswersLeaveBeforeWaitingForTheCoreSnapshot() throws {
     #expect(waits == ["wait=clear-core-snapshot"])
     #expect(check.conditions.isEmpty)
 }
+
+@Test(arguments: [false, true]) @MainActor
+func todayCheckCountsTheRetainedPaneAsOneSplitArchiveEntry(screen: Bool) throws {
+    _ = NSApplication.shared
+    class_addProtocol(TodayCheckHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let runtime = Runtime(windowID: "today-check-split-archive")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    runtime.quitPath = directory.appendingPathComponent("today.sqlite").path
+    runtime.adapter = try EngineAdapter(path: directory.appendingPathComponent("today.sqlite").path,
+                                        windowID: runtime.windowID, card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: runtime.windowID, name: "Work", spaceId: "work")
+    let kept = try #require(store.createTab(windowId: runtime.windowID, url: "https://stay.test").selectedId)
+    let other = try #require(store.createTab(windowId: runtime.windowID, url: "https://leave.test").selectedId)
+    _ = try store.makeSplit(windowId: runtime.windowID, draggedId: other, targetId: kept, side: .right)
+    let split = try #require(store.splitLayout(itemId: kept)?.id)
+    let live = try store.liveOpen(item: kept, url: "https://stay.test")
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: runtime.windowID, tabs: [LiveTab(offTheRecord: false, profile: .default,
+            liveId: live.id, item: kept, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)]))
+    let first = try store.liveClearToday(windowId: runtime.windowID, spaceId: "work")
+    let close = try #require(first.targets.first { $0.liveId == live.id }?.command)
+    #expect(try store.liveCancelClose(commandId: close.id))
+    _ = try store.liveClearToday(windowId: runtime.windowID, spaceId: "work")
+    runtime.snapshot = store.snapshot(windowId: runtime.windowID)
+    #expect(Set(runtime.snapshot.archive.map(\.id)) == [split])
+    #expect(!runtime.snapshot.archive.contains { $0.id == kept })
+    runtime.sidebar = SidebarView(snapshot: runtime.snapshot)
+    let check = SidebarCheck()
+    check.mode = .today
+    check.phase = 5
+    check.seen = [kept, other]
+    check.commandWId = kept
+    check.clearSplitId = split
+    var steps: [Int] = []
+    runtime.todayTickPhase(TodayCheckHost() as! any ARWindowHostAPI, screen: screen, check: check,
+        note: { _ in }, trace: { _ in }, step: { steps.append($0) },
+        finish: { Issue.record("Finished before next phase") }, capture: { _ in false },
+        click: { _, _ in false }, row: { _ in nil }, answerDialog: { _ in false })
+    #expect(check.conditions["clear_archives"] == true)
+    #expect(steps == [6])
+    _ = try store.deleteArchiveItem(windowId: runtime.windowID, id: split)
+    runtime.todayTickPhase(TodayCheckHost() as! any ARWindowHostAPI, screen: screen, check: check,
+        note: { _ in }, trace: { _ in }, step: { _ in }, finish: {}, capture: { _ in false },
+        click: { _, _ in false }, row: { _ in nil }, answerDialog: { _ in false })
+    #expect(check.conditions["clear_archives"] == false)
+}

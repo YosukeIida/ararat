@@ -5480,8 +5480,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["reopen_empty_archive"] = !Self.archiveActionsEnabled(self) && snapshot.archive.isEmpty
         && !(host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }
       sidebar?.setLibraryOpen(false)
-      showAndSelect(.success(snapshot), selectedItem: keyboardOtherItem)
-      browserCheckPhase = 366
+      browserCheckPhase = 100
+      workspace?.deleteSpace(id: keyboardArchiveSiblingSpace) { [weak self] result in
+        guard let self else { return }
+        self.showAndSelect(result, selectedItem: self.keyboardOtherItem)
+        if case .success = result { self.browserCheckPhase = 366 }
+      }
     case 366:
       guard !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem }),
             host.activeItemId() == keyboardOtherItem else { return }

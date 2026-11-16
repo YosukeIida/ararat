@@ -15,6 +15,14 @@ final class LiveBatchCheck {
     var started = false
     var profileBeforeDelete: String?
 
+    static func deletedRowIsArchived(_ rows: [[String]]?) -> Bool {
+        guard let row = rows?.first(where: { $0.count == 3 && $0[0] == "item" && $0[1] == "selected" }),
+              let data = row[2].data(using: .utf8),
+              let item = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let archive = item["archive"] as? [String: Any] else { return false }
+        return item["lifecycle"] as? String == "Archived" && archive["profile"] as? String == "Default"
+    }
+
     func mark(_ mode: String, _ name: String, _ value: Bool) {
         conditions[name] = value
         FileHandle.standardError.write(Data("ararat-trace: \(mode) \(name)=\(value)\n".utf8))
@@ -110,7 +118,7 @@ extension Runtime {
         case 4:
             guard !snapshot.spaces.contains(where: { $0.id == "default" }), !tabs().contains(where: { $0.itemId == "selected" }) else { return }
             mark("shown_space_deleted")
-            mark("row_archived", snapshot.archive.contains { $0.id == "selected" })
+            mark("row_archived", LiveBatchCheck.deletedRowIsArchived(captureCheckRows()))
             mark("engine_tab_closed", !tabs().contains { ["selected", "expired", "pinned"].contains($0.itemId ?? "") })
             mark("neighbour_shown", snapshot.shownSpaceId == "named")
             mark("neighbour_profile", check.profileBeforeDelete != nil && check.profileBeforeDelete != "Profile 1" && host.profileDirectory() == "Profile 1")
