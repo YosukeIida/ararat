@@ -6,6 +6,54 @@ import Testing
 @testable import Ararat
 
 @Test @MainActor
+func chooserSettleRequiresStableOpaqueFrameAndANewOnscreenWindow() {
+    let frame = NSRect(x: 100, y: 200, width: 600, height: 400)
+    #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: nil, alpha: 1, window: 42, previousWindow: 42))
+    #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: frame.offsetBy(dx: 1, dy: 0), alpha: 1, window: 42, previousWindow: 42))
+    #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: frame, alpha: 0.99, window: 42, previousWindow: 42))
+    #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: frame, alpha: 1, window: nil, previousWindow: nil))
+    #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: frame, alpha: 1, window: 42, previousWindow: nil))
+    #expect(FolderUploadCheckState.chooserSettled(frame: frame, previous: frame, alpha: 1, window: 42, previousWindow: 42))
+    var row: [String: Any] = [kCGWindowIsOnscreen as String: true, kCGWindowLayer as String: 0,
+        kCGWindowNumber as String: 42, kCGWindowOwnerName as String: "Open and Save Panel Service", kCGWindowAlpha as String: 1.0,
+        kCGWindowBounds as String: ["X": 100.0, "Y": 480.0, "Width": 600.0, "Height": 400.0]]
+    #expect(FolderUploadCheckState.chooserWindow(frame: frame, screenTop: 1080, windows: [row], excluding: []) != nil)
+    #expect(FolderUploadCheckState.chooserWindow(frame: frame, screenTop: 1080, windows: [row], excluding: [42]) == nil)
+    row[kCGWindowIsOnscreen as String] = false
+    #expect(FolderUploadCheckState.chooserWindow(frame: frame, screenTop: 1080, windows: [row], excluding: []) == nil)
+    row[kCGWindowIsOnscreen as String] = true
+    row[kCGWindowLayer as String] = 1
+    #expect(FolderUploadCheckState.chooserWindow(frame: frame, screenTop: 1080, windows: [row], excluding: []) == nil)
+    row[kCGWindowLayer as String] = 0
+    row[kCGWindowAlpha as String] = 0.5
+    #expect(FolderUploadCheckState.chooserWindow(frame: frame, screenTop: 1080, windows: [row], excluding: []) == nil)
+}
+
+@Test @MainActor
+func chooserImageEvidenceRejectsUnchangedAndTinyPixelDifferences() throws {
+    func image(patch: Int) throws -> CGImage {
+        let context = try #require(CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 400,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: patch, height: patch))
+        return try #require(context.makeImage())
+    }
+    let before = try image(patch: 0)
+    let identical = try #require(FolderUploadCheckState.chooserDifference(before, before))
+    #expect(identical.value == 0 && !identical.changed)
+    let noise = try #require(FolderUploadCheckState.chooserDifference(before, image(patch: 1)))
+    #expect(noise.value > 0 && !noise.changed)
+    let panel = try #require(FolderUploadCheckState.chooserDifference(before, image(patch: 100)))
+    #expect(panel.value == 1 && panel.changed)
+    let source = NSRect(x: -100, y: 0, width: 100, height: 100)
+    let crop = try #require(FolderUploadCheckState.cropBefore(before, source: source, region: source))
+    #expect(crop.width == 100 && crop.height == 100)
+    #expect(FolderUploadCheckState.cropBefore(before, source: source, region: source.offsetBy(dx: 1, dy: 0)) == nil)
+}
+
+@Test @MainActor
 func chooserCaptureUsesThePanelRegionInGlobalTopDownPoints() {
     #expect(FolderUploadCheckState.chooserCaptureArguments(frame: NSRect(x: 100, y: 200, width: 600, height: 400), screenTop: 1080, path: "chooser.png")
         == ["-x", "-R100,480,600,400", "chooser.png"])
