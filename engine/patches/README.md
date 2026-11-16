@@ -68,6 +68,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/history-deletion-hook.patch` | ours |
 | `ararat/crash-lock-abandon.patch` | ours |
 | `ararat/history-retention.patch` | ours |
+| `ararat/command-line-urls-hook.patch` | ours |
 
 ## Why these upstream patches
 
@@ -85,6 +86,8 @@ The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. 
 
 `ararat/crash-lock-abandon.patch` lets the host release a crash lock without acknowledging the crash when its profile is destroyed before workspace recovery completes.
 
+`ararat/command-line-urls-hook.patch` forwards a second launch's URL arguments, after Chromium loads its startup profile, to the app's external-open entry before `--no-startup-window` suppresses the stock launch. An unset hook keeps Chromium's path.
+
 `ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
 
 `ararat/devtools-hook.patch` adapts `mantrakp04/ardia`'s `engine/patches/chromium-window-docked-devtools.patch` (GPL-3.0). It reports `DevtoolsUIController::UpdateDevtools` through an optional hook; unset leaves Chrome's behavior intact. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the DevTools build target.
@@ -97,7 +100,7 @@ The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. 
 
 `ararat/find-close-command.patch` refreshes command state after ending a find session, when the find UI is no longer active.
 
-`ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset.
+`ararat/app-controller-hooks.patch` routes Dock reopen and menu actions, external URLs and the shown Browser through our hooks, leaving stock behavior when the hooks are unset. Native openURLs and Handoff normalize the last profile to its original regular profile, preserving forced-incognito policy, so an active private window does not divert external links away from Air Traffic Control.
 
 `ararat/remove-screenai-sandbox-parameter.patch` deletes the ScreenAI branch of
 the sandbox parameters in `chrome/browser/chrome_content_browser_client.cc`:

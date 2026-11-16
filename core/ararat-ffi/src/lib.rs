@@ -251,6 +251,10 @@ impl WorkspaceStore {
         RoutingDecision { rule_id, destination: routing.route(&url, &spaces).into() }
     }
 
+    pub fn most_recent_space(&self) -> Option<String> {
+        self.workspace.lock().unwrap().routing_spaces().recency.first().cloned()
+    }
+
     // The pane's "Deleted space" menus read the core's one answer, not a Swift-side compare.
     pub fn deleted_space_destinations(&self) -> Vec<DeletedDestination> {
         self.workspace.lock().unwrap().deleted_space_destinations().into_iter()

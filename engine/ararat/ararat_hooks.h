@@ -13,6 +13,9 @@
 
 namespace content { class WebContents; }
 namespace history { class HistoryService; }
+namespace base { class CommandLine; class FilePath; }
+class Profile;
+extern bool (*g_ararat_command_line_urls)(const base::CommandLine&, const base::FilePath&, Profile*);
 extern void (*g_ararat_history_deleting)(history::HistoryService*);
 extern void (*g_ararat_devtools_changed)(content::WebContents*,
                                          content::WebContents*);
@@ -25,7 +28,6 @@ extern std::unique_ptr<permissions::PermissionPrompt> (*g_ararat_create_permissi
 @class NSArray<ObjectType>;
 @class NSWindow;
 class BrowserWindowInterface;
-class Profile;
 extern bool (*g_ararat_reopen)(bool has_visible_windows);
 extern NSMenu* (*g_ararat_dock_menu)();
 extern void (*g_ararat_open_urls)(NSArray* urls, Profile* profile);

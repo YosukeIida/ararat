@@ -56,7 +56,7 @@
  
    // Bring all browser windows to the front. Specifically, this brings them in
    // front of any app windows. FocusWindowSet will also unminimize the most
-@@ -2079,6 +2094,18 @@
+@@ -2079,6 +2094,19 @@
    }
  
    if (!startupTabs.empty()) {
@@ -68,6 +68,7 @@
 +      }
 +      app_controller_mac::RunInLastProfileSafely(
 +          base::BindOnce(^(Profile* profile) {
++            if (profile) profile = ProfileManager::MaybeForceOffTheRecordMode(profile->GetOriginalProfile());
 +            if (profile && g_ararat_open_urls) g_ararat_open_urls(accepted, profile);
 +          }), app_controller_mac::kShowProfilePickerOnFailure);
 +      return;
@@ -75,7 +76,7 @@
      [self openStartupTabsReplacingNTP:std::move(startupTabs)];
    }
  }
-@@ -2142,6 +2169,8 @@
+@@ -2142,6 +2170,8 @@
  }
  
  - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
@@ -84,13 +85,14 @@
    NSMenu* dockMenu = [[NSMenu alloc] initWithTitle:@""];
  
    BOOL profilesAdded = [_profileMenuController insertItemsIntoMenu:dockMenu
-@@ -2492,6 +2521,14 @@
+@@ -2492,6 +2522,15 @@
      return NO;
  
    GURL gurl(base::SysNSStringToUTF8([url absoluteString]));
 +  if (g_ararat_open_urls) {
 +    app_controller_mac::RunInLastProfileSafely(
 +        base::BindOnce(^(Profile* profile) {
++          if (profile) profile = ProfileManager::MaybeForceOffTheRecordMode(profile->GetOriginalProfile());
 +          if (profile && g_ararat_open_urls)
 +            g_ararat_open_urls(@[@{ @"url": url, @"untrusted": @YES }], profile);
 +        }), app_controller_mac::kShowProfilePickerOnFailure);
