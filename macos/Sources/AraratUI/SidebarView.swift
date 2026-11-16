@@ -608,6 +608,7 @@ public final class SidebarView: NSView {
         dragReduceMotion = { false }
     }
     public var organizeCheckSettleDuration: CFTimeInterval? { dragCopyView?.layer?.animation(forKey: "drag.settle")?.duration }
+    public var dragCheckPoint: CGPoint { organizeCheckPoint }
     public var organizeCheckDragging: Bool { drag?.active == true }
     public var organizeCheckIdle: Bool { drag == nil && !dragSettling }
     public var organizeCheckDropLine: Bool { dropIndicator.superlayer != nil }
@@ -1425,6 +1426,37 @@ public final class SidebarView: NSView {
         openExtension(item, from: button)
     }
 
+    // MARK: p4checks — the row menu, the Library page and the downloads popover through their controls
+
+    /// The menu a row's right click builds: the same closure the row view and the favourite tile run.
+    public func checkRowMenu(id: String) -> NSMenu? {
+        if let view = rowViews[id] { return view.menuProvider?(nil) }
+        return favoriteTiles[id]?.menuProvider?()
+    }
+    public func checkRowMenuTitles(id: String) -> [String] {
+        checkRowMenu(id: id)?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? []
+    }
+    /// Runs a row menu item's own action, the target the pointer's menu click runs.
+    public func checkPerformRowMenuCommand(id: String, title: String) -> Bool {
+        guard let menu = checkRowMenu(id: id), let item = menu.items.first(where: { $0.title == title }),
+              item.isEnabled, let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+    /// The Library's archive row buttons (restore and delete), pressed through the row.
+    public func checkPressArchiveRowButton(id: String, restore: Bool) -> Bool {
+        library.checkPressEntryButton(id: id, restore: restore)
+    }
+    /// The Library or Downloads page's back arrow.
+    public func checkPressLibraryBack() -> Bool { library.checkPressBack() }
+    /// The downloads popover's row button for an action (`open`, `cancel`, `remove`, …).
+    public func checkPressDownloadsRowButton(action: String, id: String) -> Bool {
+        guard downloadsCheckEnabled else { return false }
+        return downloadsPopover?.checkPress(action: action, id: id) ?? false
+    }
+    /// Whether a Library row is on the page; the row leaves it after a delete.
+    public func checkLibraryRowPresent(id: String) -> Bool {
+        library.filteredEntries.contains { $0.id == id }
+    }
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateDockSelection()
@@ -2973,6 +3005,23 @@ extension SidebarView {
     public var newTabRowForCheck: NSRect? {
         guard newTabRow.superview != nil, !newTabRow.isHidden else { return nil }
         return convert(newTabRow.bounds, from: newTabRow)
+    }
+
+    /// p4checks: the New Tab row's own press (the pointer's down and up on it).
+    public func pressNewTabRowForCheck() -> Bool {
+        guard newTabRow.superview != nil, !newTabRow.isHidden, newTabRow.window != nil else { return false }
+        let point = newTabRow.convert(NSPoint(x: newTabRow.bounds.midX, y: newTabRow.bounds.midY), to: nil)
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: newTabRow.window?.windowNumber ?? 0, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: newTabRow.window?.windowNumber ?? 0, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 0) else { return false }
+        newTabRow.mouseDown(with: down)
+        newTabRow.mouseUp(with: up)
+        return true
     }
 
     /// One Today row's frame in the sidebar's own coordinates, so `settings-appearance` can see

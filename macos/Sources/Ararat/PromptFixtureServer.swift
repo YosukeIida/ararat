@@ -86,6 +86,8 @@ final class PromptFixtureServer {
           status = "200 OK"; headers = ""; body = Self.autofillPage
         case "/webauthn":
           status = "200 OK"; headers = ""; body = Self.webauthnPage
+        case "/folder-upload":
+          status = "200 OK"; headers = ""; body = Self.folderUploadPage
         case "/auth":
           status = "401 Unauthorized"; headers = "WWW-Authenticate: Basic realm=\"Ararat fixture\"\r\n"; body = "<!doctype html><title>Unauthorized</title><p>401 body</p><script>document.documentElement.dataset.auth = 'body';</script>"
         default:
@@ -171,6 +173,21 @@ final class PromptFixtureServer {
       const form = document.getElementById('card');
       for (const [key, value] of Object.entries({name:'John Smith', number:'5454545454545454', month:'12', year:String(new Date().getFullYear()+2)})) form.elements[key].value = value;
     };
+    </script>
+    """
+
+  // p4checks (design, p4yab): the folder-upload row. The label fills the page view's top-left
+  // so a real click at (70, 70) lands on it and gives the picker its user activation.
+  private static let folderUploadPage = """
+    <!doctype html><title>Folder upload fixture</title>
+    <style>html,body{margin:0;height:100%}label{position:absolute;left:0;top:0;width:220px;height:160px;display:block}</style>
+    <label id="pick">Upload a folder
+      <input id="folder" type="file" webkitdirectory multiple style="display:none">
+    </label>
+    <script>
+    const result = document.documentElement.dataset;
+    document.getElementById('folder').addEventListener('change', e => { result.files = String(e.target.files.length); });
+    document.getElementById('folder').addEventListener('cancel', () => { result.cancelled = 'yes'; });
     </script>
     """
 

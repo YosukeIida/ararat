@@ -5,7 +5,7 @@ import AraratUI
 
 @MainActor
 final class ToastsCheck {
-  static let common = ["seed", "url_copy", "row_copy", "command_copy", "pasteboard", "replacement", "expiry", "geometry", "window_isolation", "failure_two_windows", "profile_isolation", "retry_clears", "dismiss", "dismiss_tracks", "dismiss_retry_silent", "new_failure", "toast_announcement", "banner_announcement", "clear_undo", "clear_replacement", "link_click_through", "clear_click_through", "undo_hit", "split_undo"]
+  static let common = ["seed", "url_copy", "row_copy", "command_copy", "pasteboard", "replacement", "expiry", "geometry", "window_isolation", "failure_two_windows", "profile_isolation", "retry_clears", "dismiss", "dismiss_tracks", "dismiss_retry_silent", "new_failure", "toast_announcement", "banner_announcement", "clear_undo", "clear_undo_menu", "clear_replacement", "link_click_through", "clear_click_through", "undo_hit", "split_undo"]
   static let screens = ["capture_toast", "capture_banner"]
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
@@ -237,11 +237,35 @@ extension Runtime {
       let hits = container.checkToastHits()
       check.mark("clear_click_through", hits.labelPasses)
       check.mark("undo_hit", hits.undoReceives)
-      container.checkUndoToast(); browserCheckPhase = 17
+      // p4checks: the Edit menu's Undo Clear Tabs item — the app's own undo path (it carries no
+      // ⌘Z on purpose: a page's editable first responder keeps its own undo) — rather than the
+      // toast's button, so dismissTabsCleared and the rows' return are driven by the menu. A
+      // missing or disabled item fails the condition outright: the toast's button would make it
+      // pass without the menu path.
+      guard let edit = NSApp.mainMenu?.item(withTitle: "Edit")?.submenu,
+            let item = edit.items.first(where: { $0.action == #selector(Runtime.undoClearTabs(_:)) }) else {
+        check.mark("clear_undo_menu", false)
+        let result = check.diagnostics(screen: screen)
+        finishBrowserCheck(ok: false, values: result)
+        return
+      }
+      edit.update()
+      guard item.isEnabled else {
+        check.mark("clear_undo_menu", false)
+        FileHandle.standardError.write(Data("ararat-trace: toasts the Edit menu's Undo Clear Tabs item is disabled\n".utf8))
+        let result = check.diagnostics(screen: screen)
+        finishBrowserCheck(ok: false, values: result)
+        return
+      }
+      FileHandle.standardError.write(Data("ararat-trace: toasts run the Edit menu's \(item.title)\n".utf8))
+      NSApp.sendAction(item.action!, to: item.target, from: item)
+      browserCheckPhase = 17
     case 17:
       guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
             space.today.map(\.id) == check.clearOrder, snapshot.selectedId == check.clearSelected,
             host.activeItemId() == check.clearSelected else { wait("undo restored"); return }
+      // The menu path ran and restored the rows; the toast it dismissed must be gone too.
+      check.mark("clear_undo_menu", check.conditions["clear_undo_menu"] != false && !container.checkToastState.visible)
       check.mark("clear_undo", space.today.filter { $0.id != check.clearSelected }.allSatisfy(\.unloaded))
       clearToday(); browserCheckPhase = 18
     case 18:

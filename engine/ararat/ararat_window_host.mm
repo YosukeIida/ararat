@@ -2483,7 +2483,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"urlfield"] ||
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
-      [screen isEqualToString:@"little-window"] ||
+      [screen isEqualToString:@"little-window"] || [screen isEqualToString:@"folder-upload"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
   // A check that navigates after its last native tab closed has no browser to receive the

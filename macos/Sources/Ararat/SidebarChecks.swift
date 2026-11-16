@@ -28,6 +28,23 @@ func noTabsTextVerdict(_ marker: NoTabsMarker, depth: UInt32, secondarySize: CGF
     return (ok, detail)
 }
 
+// p4checks: an NSAlert sheet's own button, pressed through the control a person clicks. The
+// sheets the app shows (folder and space deletion) carry the alert's buttons in its content view.
+@MainActor
+func pressSheetButton(_ sheet: NSWindow, title: String) -> Bool {
+    func candidates(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(candidates) }
+    let roots = [sheet.contentView, (sheet.contentViewController?.view)].compactMap { $0 }
+    for root in roots {
+        if let button = candidates(root).compactMap({ $0 as? NSButton }).first(where: {
+            $0.title == title && !$0.isHidden && $0.isEnabled
+        }) {
+            button.performClick(nil)
+            return true
+        }
+    }
+    return false
+}
+
 // U25b part 2's checks: rows, folders, Today and the space name row. One class holds the
 // phase, the named conditions and the images; each mode is a small phase machine driven from
 // the app's check tick. The VM has an empty accessibility tree, so every condition reads the
@@ -47,6 +64,8 @@ final class SidebarCheck {
     var phase = 0
     var conditions: [String: Bool] = [:]
     var images: [String: String] = [:]
+    /// p4checks: readings that are not conditions (the create page's selection precondition).
+    var details: [String: Any] = [:]
     // Set around a screenshot: screencapture waits by spinning the run loop, so a tick would
     // otherwise re-enter while the capture is in flight.
     var capturing = false
@@ -67,6 +86,15 @@ final class SidebarCheck {
     var unreadId = ""
     var statusId = ""
     var statusNavigationCount: UInt = 0
+    // folder-empty's delete: the folder and the tab inside it, read before they leave.
+    var deletedFolder = ""
+    var deletedFolderTab = ""
+    // space-name's create and rename: the count before, the new space, the rename title, and
+    // whether a row was selected before the create page opened.
+    var spacesBefore = 0
+    var newSpaceID = ""
+    var renamedTitle = ""
+    var selectionReady = false
     var cancelDialogCount: UInt = 0
     var clearRequestedClose = false
     var stayRowOrder: [String] = []
@@ -78,14 +106,19 @@ final class SidebarCheck {
             base = ["rows_present", "loaded_pin_close", "unloaded_pin_archive", "today_archive",
                     "command_w_current", "close_caps_current", "empty_folder_line", "crashed_glyph", "unread_dot", "loading_spinner", "mute_round_trip"]
         case .folderEmpty:
-            base = ["line_frame", "line_absent_with_tabs", "line_absent_collapsed", "line_drop"]
+            base = ["line_frame", "line_absent_with_tabs", "line_absent_collapsed", "line_drop",
+                    "delete_row_menu", "delete_sheet", "delete_accept", "delete_removed"]
         case .today:
             base = ["divider_visible", "divider_frame", "clear_present", "new_tab_row",
                     "clear_archives", "divider_hidden_without_today", "new_tab_setting_hides",
-                    "name_drop_pins", "beforeunload_stay_keeps_row", "clear_today_stay_keeps_only_refused_row", "divider_back_after_stay", "clear_after_stay_without_close_motion"]
+                    "name_drop_pins", "new_tab_row_press", "beforeunload_stay_keeps_row",
+                    "clear_today_stay_keeps_only_refused_row", "divider_back_after_stay",
+                    "clear_after_stay_without_close_motion"]
         case .spaceName:
             base = ["name_x", "chevron_hover", "name_x_hover", "name_x_collapsed", "click_toggles",
-                    "menu_items", "menu_dock_same", "rename_menu_only", "rename_field_height", "look_anchor"]
+                    "menu_items", "menu_dock_same", "rename_menu_only", "rename_field_height", "look_anchor",
+                    "create_page", "create_page_selection", "create_landed", "create_page_closed",
+                    "create_space_shown", "create_dock_cell", "rename_commits"]
         }
         return base + (screen ? ["capture"] : [])
     }
@@ -141,6 +174,7 @@ extension Runtime {
         let space = sidebarCheckShownSpace()
         return ["check": mode.rawValue, "conditions": result.values, "failed_conditions": result.failed,
                 "phase": check.phase, "capturing": check.capturing, "images": check.images,
+                "details": check.details,
                 "attempts": browserCheckAttempts, "last_wait": check.lastWait,
                 "rows": sidebar?.rowCheckIds.sorted() ?? [],
                 "selected": snapshot.selectedId as Any? ?? NSNull(),
@@ -585,7 +619,48 @@ extension Runtime {
                   let drop = sidebar.resolveDropForCheck(position: NSPoint(x: marker.frame.midX, y: marker.frame.midY), draggedID: dragged.id) else { return }
             check.report("line_drop", drop.kind == "folder" && drop.container == empty.id)
             _ = capture("drop")
-            trace("done")
+            // p4checks: a folder that holds tabs is deleted from its row menu, and the sheet the
+            // app asks first is answered with its own Delete Folder button.
+            guard let folder = row("folder"), folder.kind == .folder else {
+                check.report("delete_row_menu", false); finish(); return
+            }
+            check.deletedFolder = folder.id
+            let children = (sidebarCheckShownSpace()?.pinned ?? []).filter { $0.parentId == folder.id }
+            // The row is "delete a folder with tabs": without a tab inside, nothing proves the
+            // sheet's archive rule and the condition is reported false rather than skipped.
+            guard let tab = children.first(where: { $0.kind == .tab }) else {
+                check.report("delete_row_menu", false); finish(); return
+            }
+            check.deletedFolderTab = tab.id
+            let titles = sidebar.checkRowMenuTitles(id: folder.id)
+            check.report("delete_row_menu", titles.contains("Delete"))
+            trace("folder menu \(titles); delete \(folder.id) with \(children.count) children")
+            guard sidebar.checkPerformRowMenuCommand(id: folder.id, title: "Delete") else {
+                check.report("delete_sheet", false); finish(); return
+            }
+            step(4)
+        case 4:
+            guard let sheet = sidebar.window?.attachedSheet, sheet.isVisible else {
+                note("the delete folder sheet has not opened"); return
+            }
+            check.report("delete_sheet", true)
+            _ = capture("delete-sheet")
+            trace("accept the delete sheet \(sheet.title)")
+            guard pressSheetButton(sheet, title: "Delete Folder") else {
+                note("the sheet has no Delete Folder button"); check.report("delete_accept", false); finish(); return
+            }
+            check.report("delete_accept", true)
+            step(5)
+        case 5:
+            guard sidebar.window?.attachedSheet == nil else { note("the delete sheet has not closed"); return }
+            guard let core = sidebarCheckCore() else { return }
+            let gone = !core.spaces.flatMap(\.pinned).contains { $0.id == check.deletedFolder }
+            let archived = core.archive.contains { $0.id == check.deletedFolderTab }
+            let visible = !sidebar.rowCheckIds.contains(check.deletedFolder)
+            check.report("delete_removed", gone && archived && visible)
+            // p4checks: one screen image per phase that asserts something a person sees.
+            _ = capture("deleted")
+            trace("folder deleted gone=\(gone) archived=\(archived) visible=\(visible)")
             finish()
         default: break
         }
@@ -767,7 +842,26 @@ extension Runtime {
             check.report("clear_after_stay_without_close_motion", !check.clearRequestedClose)
             check.report("divider_hidden_without_today", sidebar.todayDividerForCheck == nil)
             _ = capture("cleared")
-            trace("done")
+            trace("clear done; press the New Tab row")
+            step(6)
+        case 6:
+            // p4checks (T4): the New Tab row's own press runs the app's onNewTab, which opens the
+            // new-tab command bar the way the row, the menu and the key all do.
+            guard commandPresenter == nil else { note("a command bar is already open"); return }
+            guard sidebar.newTabRowForCheck != nil else { note("the New Tab row is missing"); return }
+            trace("press the New Tab row")
+            guard sidebar.pressNewTabRowForCheck() else {
+                check.report("new_tab_row_press", false); finish(); return
+            }
+            step(7)
+        case 7:
+            guard let controller = commandPresenter?.controller, controller.isOpen else {
+                note("the New Tab row did not open a command bar"); return
+            }
+            check.report("new_tab_row_press", controller.mode == .newTab)
+            _ = capture("new-tab-row")
+            trace("new tab row press mode=\(controller.mode)")
+            commandPresenter?.close()
             finish()
         default: break
         }
@@ -855,6 +949,75 @@ extension Runtime {
             sharedLookProbe = nil
             sharedLookFrame = nil
             probe.closePopover()
+            step(61)
+        case 61:
+            guard let selected = row("today-a") else { note("today-a is missing"); return }
+            if sidebar.selectedRowID != selected.id { sidebar.selectRow(id: selected.id) }
+            guard container?.sidebarHasSelection == true else {
+                note("waiting for selection before create: row=\(sidebar.selectedRowID ?? "nil") core=\(snapshot.selectedId ?? "nil") hasSelection=\(container?.sidebarHasSelection == true)"); return
+            }
+            check.selectionReady = true
+            check.details["selection_before_create"] = true
+            check.spacesBefore = snapshot.spaces.count
+            trace("open the create space page with a row selected")
+            sidebar.showCreateSpace(nil)
+            step(7)
+        case 7:
+            guard sidebar.createSpaceOpen else { note("the create page did not open"); return }
+            // onCreatePageChanged reaches the container's selection rule: a create page has none.
+            check.report("create_page", sidebar.checkCreateSpace.open)
+            check.report("create_page_selection", check.selectionReady && container?.sidebarHasSelection == false)
+            _ = capture("create-page")
+            sidebar.checkTypeSpaceName("Research")
+            guard sidebar.checkCreateSpace.name == "Research", sidebar.checkCreateSpace.buttonEnabled else {
+                note("the create field did not take the name"); return
+            }
+            guard sidebar.checkSubmitSpaceName() else {
+                check.report("create_landed", false); finish(); return
+            }
+            trace("submitted Research")
+            step(8)
+        case 8:
+            guard snapshot.spaces.count == check.spacesBefore + 1, let created = snapshot.spaces.last,
+                  !sidebar.createSpaceOpen else {
+                note("created space not landed: spaces=\(snapshot.spaces.count)/\(check.spacesBefore + 1) page=\(sidebar.createSpaceOpen)")
+                return
+            }
+            check.newSpaceID = created.id
+            check.report("create_landed", created.title == "Research")
+            check.report("create_page_closed", !sidebar.createSpaceOpen && !sidebar.checkCreateSpace.open)
+            check.report("create_space_shown", snapshot.shownSpaceId == created.id
+                         && sidebar.spaceShown == snapshot.spaces.count - 1)
+            check.report("create_dock_cell", sidebar.checkDockShowsSpace(created.id))
+            _ = capture("created")
+            sidebar.layoutSubtreeIfNeeded()
+            let event = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                           windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            guard let event, let menu = name.menu(for: event),
+                  let rename = menu.items.first(where: { $0.title == "Rename Space…" }), let action = rename.action else {
+                check.report("rename_commits", false); finish(); return
+            }
+            NSApp.sendAction(action, to: rename.target, from: rename)
+            step(9)
+        case 9:
+            guard name.checkRenameFieldFrame != nil else { note("the rename field did not open"); return }
+            check.renamedTitle = "Research Lab"
+            name.checkTypeRename(check.renamedTitle)
+            trace("commit the rename \(check.renamedTitle)")
+            name.finishRenameForCheck(true)
+            step(10)
+        case 10:
+            guard let core = sidebarCheckCore(),
+                  let space = core.spaces.first(where: { $0.id == check.newSpaceID }) else {
+                note("the created space is gone from the core"); return
+            }
+            let rowTitle = sidebar.spaceNameRow.checkName
+            guard space.title == check.renamedTitle, rowTitle == check.renamedTitle else {
+                note("title core=\(space.title) row=\(rowTitle) want=\(check.renamedTitle)")
+                return
+            }
+            check.report("rename_commits", true)
+            _ = capture("renamed")
             trace("done")
             finish()
         default: break

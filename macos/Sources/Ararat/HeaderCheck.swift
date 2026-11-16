@@ -5,7 +5,7 @@ import AraratUI
 
 @MainActor
 final class HeaderCheck {
-  static let names = ["seed", "widths", "menu", "tooltip_caps", "pressed", "initial_state", "loading_stop", "stopped", "back", "forward", "find", "zoom", "clear", "force_reload", "internal_schemes"]
+  static let names = ["seed", "widths", "menu", "tooltip_caps", "pressed", "initial_state", "loading_stop", "stopped", "back", "forward", "find", "zoom", "clear", "force_reload", "internal_schemes", "button_toggle", "button_reload_stop", "menu_find", "menu_zoom", "clear_via_menu"]
   var capturing = false
   var id = ""
   var live = ""
@@ -14,6 +14,8 @@ final class HeaderCheck {
   var images: [String: String] = [:]
   var details: [String: Any] = [:]
   var lastWait = ""
+  /// p4checks: the sidebar state before the header's toggle button, and what it pressed through.
+  var sidebarBefore = ""
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = Self.names + (screen ? ["capture"] : [])
     return ["conditions": conditions, "failed_conditions": names.filter { conditions[$0] != true }, "images": images, "details": details, "item": id, "live": live, "wait": lastWait, "unverified": ["Print preview and cancellation", "Force Reload network cache bypass", "Clear Cache and Cookies data isolation"]]
@@ -173,25 +175,32 @@ extension Runtime {
       browserCheckPhase = 6
     case 6:
       guard snapshot.selectedId == check.id, host.activeItemId() == check.id, !header.loading else { wait("forward stop"); return }
-      guard host.runCommand("find") else { check.conditions["find"] = false; finish(); return }
+      // p4checks: the … menu's own Find in Page… item, the path the menu runs.
+      guard header.checkPerformMenuItem("Find in Page…") else { check.conditions["find"] = false; finish(); return }
       browserCheckPhase = 7
     case 7:
       guard !container.findBar.isHidden,
             let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }) else { wait("find bar"); return }
       check.conditions["find"] = true
+      check.conditions["menu_find"] = true
       host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: check.live, profile: host.profileDirectory())
+      // p4checks: Zoom In and Zoom Out are the … menu's own items.
       let zoom = host.checkZoomLevel()
-      let zoomIn = host.runCommand("zoom_in") && host.checkZoomLevel() > zoom
-      let zoomOut = host.runCommand("zoom_out") && abs(host.checkZoomLevel() - zoom) < 0.001
+      let zoomIn = header.checkPerformMenuItem("Zoom In") && host.checkZoomLevel() > zoom
+      let zoomOut = header.checkPerformMenuItem("Zoom Out") && abs(host.checkZoomLevel() - zoom) < 0.001
       check.conditions["zoom"] = zoomIn && zoomOut
+      check.conditions["menu_zoom"] = zoomIn && zoomOut
       let menu = header.makeMenu().items.filter { !$0.isSeparatorItem }
       let domain = host.currentSiteDomain()
       let enabled = domain == "127.0.0.1" && menu[3].isEnabled && menu[4].isEnabled && menu[4].toolTip == "Clears cookies for 127.0.0.1"
-      let cache = host.runCommand("clear_cache_site")
-      let cookies = host.runCommand("clear_cookies_site")
+      // B3: the header's two site commands go through the menu item, the path the app header
+      // really uses (onHeaderCommand → performWorkspaceCommand), not host.runCommand.
+      let cache = header.checkPerformMenuItem("Clear Cache")
+      let cookies = header.checkPerformMenuItem("Clear Cookies")
       check.conditions["clear"] = enabled && cache && cookies
+      check.conditions["clear_via_menu"] = enabled && cache && cookies
       check.navigation = tab.navigationCount
-      check.conditions["force_reload"] = host.runCommand("force_reload")
+      check.conditions["force_reload"] = header.checkPerformMenuItem("Force Reload")
       browserCheckPhase = 8
     case 8:
       let results = host.checkSiteClearResults()
@@ -217,6 +226,51 @@ extension Runtime {
             tab.navigationCount > check.navigation, tab.url == "about:blank" else { wait("about blank"); return }
       let menu = header.makeMenu().items.filter { !$0.isSeparatorItem }
       check.conditions["internal_schemes"] = check.conditions["internal_schemes"] == true && host.currentSiteDomain() == nil && !menu[3].isEnabled && !menu[4].isEnabled
+      // p4checks: the header's own buttons. The fixture's /pending never finishes, so the reload
+      // button is Stop while it loads and Reload once it is stopped.
+      guard let port = promptFixturePort else { wait("fixture port"); return }
+      host.checkNavigate("http://127.0.0.1:\(port)/pending", disposition: "current")
+      browserCheckPhase = 11
+    case 11:
+      guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }),
+            tab.url.hasSuffix("/pending"), header.loading else { wait("pending for the reload button"); return }
+      check.navigation = tab.navigationCount
+      FileHandle.standardError.write(Data("ararat-trace: header press the reload button while loading\n".utf8))
+      guard header.checkPress("reload") else { check.conditions["button_reload_stop"] = false; finish(); return }
+      browserCheckPhase = 12
+    case 12:
+      guard !header.loading, let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }) else { wait("the reload button stopped the page"); return }
+      check.conditions["button_reload_stop"] = header.checkReloadLabel == "Reload"
+      check.navigation = tab.navigationCount
+      FileHandle.standardError.write(Data("ararat-trace: header press the reload button again\n".utf8))
+      guard header.checkPress("reload") else { check.conditions["button_reload_stop"] = false; finish(); return }
+      browserCheckPhase = 13
+    case 13:
+      guard let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }),
+            header.loading, tab.navigationCount > check.navigation else { wait("reload from the button"); return }
+      guard header.checkPress("reload") else { check.conditions["button_reload_stop"] = false; finish(); return }
+      browserCheckPhase = 14
+    case 14:
+      guard !header.loading else { wait("second stop from the button"); return }
+      check.sidebarBefore = container.sidebarState
+      FileHandle.standardError.write(Data("ararat-trace: header press toggle_sidebar \(check.sidebarBefore)\n".utf8))
+      guard header.checkPress("toggle_sidebar") else { check.conditions["button_toggle"] = false; finish(); return }
+      browserCheckPhase = 15
+    case 15:
+      guard container.sidebarState != check.sidebarBefore else { wait("the toggle_sidebar button"); return }
+      FileHandle.standardError.write(Data("ararat-trace: header press toggle_sidebar again \(container.sidebarState)\n".utf8))
+      guard header.checkPress("toggle_sidebar") else { check.conditions["button_toggle"] = false; finish(); return }
+      browserCheckPhase = 16
+    case 16:
+      guard container.sidebarState == check.sidebarBefore else { wait("the toggled-back sidebar"); return }
+      check.conditions["button_toggle"] = true
+      if screen {
+        check.capturing = true
+        let image = promptScreenScreenshot(host.window(), name: "header-buttons", withoutShadow: true)
+        check.capturing = false
+        check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+        if let image { check.images["buttons"] = image }
+      }
       finish()
     default: finish()
     }

@@ -140,6 +140,8 @@ public final class SidebarSpaceNameRow: NSView {
     public var checkChevronVisible: Bool { !chevron.isHidden }
     public var checkRenameFieldFrame: NSRect? { renameField?.frame }
     public func finishRenameForCheck(_ commit: Bool) { renameField?.finish(commit: commit) }
+    /// p4checks: the field's text, before the same commit path Return runs.
+    public func checkTypeRename(_ text: String) { renameField?.stringValue = text }
 
     func beginRename(save: @escaping (String, @escaping (Bool) -> Void) -> Void) {
         guard renameField == nil else { return }

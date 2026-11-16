@@ -17,9 +17,19 @@ final class DockScreenCheck {
     var otherWindow: NSWindow?
     var folderCount = 0
     var selectedSpace = ""
+    // p4checks: the space the dock menu deletes, its neighbour (the space the sidebar and the
+    // host must move to), and the page Space Settings… should show.
+    var deletedSpaceID = ""
+    var neighbourSpaceID = ""
+    var deletedSpaceCount = 0
+    var deletedProfile = ""
+    var neighbourProfile = ""
+    var settingsSpaceID = ""
+    var settingsWaited = 0
+    var details: [String: Any] = [:]
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused"] : ["follow_mid"])
+        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -80,6 +90,7 @@ extension Runtime {
         let result = DockScreenCheck.conditionResults(check?.conditions ?? [:], screen: screen)
         let dock = sidebar.map { dockDescendants($0).compactMap { $0 as? SpaceDockView }.first } ?? nil
         return ["conditions": result.values, "failed_conditions": result.failed, "phase": browserCheckPhase,
+                "details": check?.details ?? [:],
                 "cell_states": dock?.cellStates.map { ["state": String(describing: $0.state), "open": $0.openFraction, "refused": $0.refused] as [String: Any] } ?? [],
                 "cell_widths": dock?.subviews.map { $0.frame.width } ?? [],
                 "cell_alphas": dock?.subviews.map { $0.alphaValue } ?? [], "mid_fractions": check?.mid ?? [],
@@ -111,10 +122,10 @@ extension Runtime {
             if !ok { check.stop(); finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen)) }
             else { browserCheckPhase += 1 }
         }
-        func capture(_ name: String) -> Bool {
+        func capture(_ name: String, window target: NSWindow? = nil) -> Bool {
             guard screen else { return true }
             FileHandle.standardError.write(Data("ararat-trace: dock capturing \(name)\n".utf8))
-            guard let path = promptScreenScreenshot(window, name: "dock-\(name)", withoutShadow: true) else { return false }
+            guard let path = promptScreenScreenshot(target ?? window, name: "dock-\(name)", withoutShadow: true) else { return false }
             check.images[name] = path
             return true
         }
@@ -312,7 +323,101 @@ extension Runtime {
             FileHandle.standardError.write(Data("ararat-trace: dock toggle sidebar\n".utf8))
             container.toggleSidebar()
             container.layoutSubtreeIfNeeded()
-            end("minimum_hidden", abs(window.contentMinSize.width - 260) < 0.01)
+            check.report("minimum_hidden", abs(window.contentMinSize.width - 260) < 0.01)
+            // p4checks: Delete Space… through the dock menu and the alert's own button; then
+            // Space Settings… opens the shown space's page. The space deleted is the one whose
+            // neighbour has the other profile (the seeded `named`, Profile 1), so the sidebar's
+            // move and the host's profile can disagree; with two Default neighbours the profile
+            // half of B4 would pass without the fix.
+            guard current.spaces.count >= 2 else {
+                check.report("delete_space_sheet", false); browserCheckPhase = 9; return
+            }
+            let target = current.spaces[current.spaces.count - 2]
+            let neighbour = current.spaces[current.spaces.count - 1]
+            check.deletedSpaceID = target.id
+            check.neighbourSpaceID = neighbour.id
+            check.deletedSpaceCount = current.spaces.count
+            check.deletedProfile = target.profileName
+            check.neighbourProfile = neighbour.profileName
+            check.details["delete_space"] = ["deleted": target.id, "deleted_profile": target.profileName,
+                                             "neighbour": neighbour.id, "neighbour_profile": neighbour.profileName]
+            guard target.profileKey != neighbour.profileKey else {
+                // Without different profiles the condition cannot fail: say so instead of passing.
+                check.report("delete_space_profile", false)
+                browserCheckPhase = 9
+                return
+            }
+            guard current.shownSpaceId == target.id else {
+                switchWorkspaceSpace(target.id)
+                browserCheckPhase = 121
+                return
+            }
+            browserCheckPhase = 122
+        case 121:
+            guard current.shownSpaceId == check.deletedSpaceID,
+                  host.profileDirectory() == check.deletedProfile,
+                  !screen || window.isKeyWindow else { return }
+            browserCheckPhase = 122
+        case 122:
+            let items = sidebar.dockMenuItems(for: check.deletedSpaceID)
+            guard let item = items.first(where: { $0.title == "Delete Space…" }), item.isEnabled, let action = item.action else {
+                check.report("delete_space_sheet", false); browserCheckPhase = 9; return
+            }
+            FileHandle.standardError.write(Data("ararat-trace: dock invoke Delete Space… \(check.deletedSpaceID)\n".utf8))
+            NSApp.sendAction(action, to: item.target, from: item)
+            browserCheckPhase = 13
+        case 13:
+            guard let sheet = window.attachedSheet, sheet.isVisible else { return }
+            check.report("delete_space_sheet", true)
+            FileHandle.standardError.write(Data("ararat-trace: dock accept \(sheet.title) with its Delete Space button\n".utf8))
+            guard pressSheetButton(sheet, title: "Delete Space") else {
+                // No fallback: the alert's own button is the path this condition is about.
+                check.report("delete_space_count", false)
+                browserCheckPhase = 9
+                return
+            }
+            browserCheckPhase = 14
+        case 14:
+            guard window.attachedSheet == nil else { return }
+            guard current.spaces.count == check.deletedSpaceCount - 1,
+                  !current.spaces.contains(where: { $0.id == check.deletedSpaceID }) else { return }
+            check.report("delete_space_count", true)
+            guard let index = current.spaces.firstIndex(where: { $0.id == check.neighbourSpaceID }) else {
+                check.report("delete_space_shown", false); browserCheckPhase = 9; return
+            }
+            // B4: the sidebar's neighbour move and the host's profile follow the same space.
+            check.report("delete_space_shown", current.shownSpaceId == check.neighbourSpaceID && sidebar.spaceShown == index)
+            let neighbour = current.spaces[index]
+            check.report("delete_space_profile", check.neighbourProfile != check.deletedProfile
+                         && host.profileDirectory() == neighbour.profileName
+                         && neighbour.profileName == check.neighbourProfile)
+            if screen { check.report("capture_delete_space", capture("deleted-space")) }
+            check.settingsSpaceID = neighbour.id
+            check.settingsWaited = 0
+            guard let item = sidebar.dockMenuItems(for: neighbour.id).first(where: { $0.title == "Space Settings…" }),
+                  item.isEnabled, let action = item.action else {
+                check.report("space_settings_page", false); browserCheckPhase = 9; return
+            }
+            FileHandle.standardError.write(Data("ararat-trace: dock invoke Space Settings… \(neighbour.id)\n".utf8))
+            NSApp.sendAction(action, to: item.target, from: item)
+            browserCheckPhase = 15
+        case 15:
+            let settings = (root ?? self).settings
+            guard let probe = settings?.checkProbe(), probe.pageID == "space-\(check.settingsSpaceID)" else {
+                if check.settingsWaited < 60 {
+                    check.settingsWaited += 1
+                    FileHandle.standardError.write(Data("ararat-trace: dock space settings waiting page=\(settings?.checkProbe()?.pageID ?? "nil") want=space-\(check.settingsSpaceID)\n".utf8))
+                    return
+                }
+                check.report("space_settings_page", false); browserCheckPhase = 9; return
+            }
+            FileHandle.standardError.write(Data("ararat-trace: dock space settings page=\(probe.pageID) visible=\(probe.isVisible)\n".utf8))
+            check.report("space_settings_page", probe.isVisible)
+            if screen, let target = settings?.window {
+                check.report("capture_space_settings", capture("space-settings", window: target))
+            }
+            settings?.window?.performClose(nil)
+            browserCheckPhase = 9
         case 9:
             let result = DockScreenCheck.conditionResults(check.conditions, screen: screen)
             let values = dockCheckDiagnostics(screen: screen)
