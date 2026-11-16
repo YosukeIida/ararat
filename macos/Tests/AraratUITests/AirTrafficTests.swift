@@ -132,7 +132,7 @@ func thePaneModelWritesItsWayThroughTheCoreAndSurvivesAReopen() async throws {
     #expect(model.testAnswer?.url == "https://www.meet.google.com/x")
     #expect(model.testAnswer?.decision == storeAnswer)
     #expect(model.testAnswer?.decision.ruleId == a)
-    #expect(model.testAnswer?.decision.destination == Destination.space(.mostRecent))
+    #expect(model.testAnswer?.decision.destination == Destination.space(.space("space-work")))
 
     // The default destination is the pane's Little Window choice until a space is picked.
     try await atcValue { model.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }

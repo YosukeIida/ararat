@@ -25,6 +25,7 @@
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/global_features.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/startup/startup_tab_provider.h"
@@ -67,16 +68,18 @@ void TraceAttemptExit() {
   chrome::AttemptExit();
 }
 
-void DispatchCommandLineURLs(Profile* profile) {
+void DispatchCommandLineURLs(const base::CommandLine& command_line,
+                             const base::FilePath& directory, Profile* profile) {
   if (!profile || !g_ararat_open_urls) return;
   StartupTabProviderImpl provider;
-  auto tabs = provider.GetCommandLineTabs(*base::CommandLine::ForCurrentProcess(),
-                                          base::FilePath(), profile);
+  auto tabs = provider.GetCommandLineTabs(command_line, directory, profile);
   NSMutableArray* urls = [NSMutableArray array];
   for (const auto& tab : tabs) {
     NSURL* url = [NSURL URLWithString:[NSString stringWithUTF8String:tab.url.spec().c_str()]];
     if (url) [urls addObject:@{ @"url": url, @"untrusted": @(tab.is_untrusted_launch) }];
   }
+  if (IncognitoModePrefs::ShouldLaunchIncognito(command_line, profile))
+    profile = profile->GetPrimaryOTRProfile(true);
   if (urls.count) g_ararat_open_urls(urls, ProfileManager::MaybeForceOffTheRecordMode(profile));
 }
 
@@ -115,11 +118,11 @@ class AraratBrowserMainExtraParts : public ChromeBrowserMainExtraParts {
     }
     if (!base::CommandLine::ForCurrentProcess()->GetArgs().empty()) {
       if (Profile* profile = ProfileManager::GetLastUsedProfileIfLoaded()) {
-        DispatchCommandLineURLs(profile);
+        DispatchCommandLineURLs(*base::CommandLine::ForCurrentProcess(), base::FilePath(), profile);
       } else {
         g_browser_process->profile_manager()->LoadProfile(
             ProfileManager::GetLastUsedProfileBaseName(), false,
-            base::BindOnce(&DispatchCommandLineURLs));
+            base::BindOnce(&DispatchCommandLineURLs, *base::CommandLine::ForCurrentProcess(), base::FilePath()));
       }
     }
     RunCheck();
@@ -295,7 +298,7 @@ void CheckGuards(int argc, const char** argv) {
       check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify" || name == "little-window" || name == "window-drag" || name == "create-space" || name == "folder-upload";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify" || name == "little-window" || name == "window-drag" || name == "create-space" || name == "folder-upload" || name == "atc-routing";
       browser_check = browser_check || name == "errorpages";
       // U27j's onboarding flow; the scratch database is required below, as for the slice checks.
       browser_check = browser_check || name == "onboarding";
@@ -434,12 +437,21 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   };
   g_ararat_dock_menu = []() -> NSMenu* { return nil; };
   g_ararat_open_urls = [](NSArray* urls, Profile* profile) {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch("ararat-check"))
+      std::fprintf(stderr, "ararat-trace: engine-external-open count=%lu otr=%d\n",
+                   static_cast<unsigned long>(urls.count), profile && profile->IsOffTheRecord());
     if (profile && profile->IsOffTheRecord()) {
       AraratOpenOffTheRecordURLs(profile, urls);
       return;
     }
     if (g_ararat_callbacks.open_urls)
       g_ararat_callbacks.open_urls(g_ararat_callbacks.ctx, (__bridge void*)urls);
+  };
+  g_ararat_command_line_urls = [](const base::CommandLine& command_line,
+                                  const base::FilePath& directory, Profile* profile) {
+    if (!profile || command_line.GetArgs().empty()) return false;
+    DispatchCommandLineURLs(command_line, directory, profile);
+    return true;
   };
   // The hook is what the browser process adds; from here Chrome runs its own
   // path and our extra parts ride the stock client.
