@@ -199,10 +199,11 @@ func firstFavoriteDropCreatesContainerAndSettles() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let session = WorkspaceSession()
-    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "first-favorite", card: NSView(), session: session)
-    let initial = try session.queue.sync { try #require(session.store).createTab(windowId: "first-favorite", url: "about:blank?favorite") }
-    let space = try #require(initial.spaces.first)
-    let id = try #require(initial.selectedId)
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "first-favorite", card: NSView(), seedOrganize: true, session: session)
+    let store = try #require(session.store)
+    let space = try #require(store.snapshot(windowId: "first-favorite").spaces.first { $0.id == "organize-first" })
+    let id = try #require(space.today.first?.id)
+    let initial = try store.showSpaceSelectingTab(windowId: "first-favorite", spaceId: space.id, itemId: id)
     #expect(space.favoritesId == nil)
     let sidebar = SidebarView(snapshot: initial)
     let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 700), styleMask: [], backing: .buffered, defer: false)
@@ -222,8 +223,9 @@ func firstFavoriteDropCreatesContainerAndSettles() async throws {
     #expect(sidebar.organizeCheckEnd())
     try await waitUntil { sidebar.drag == nil && sidebar.dragCopyView == nil }
     let result = try session.queue.sync { try #require(session.store).snapshot(windowId: "first-favorite") }
-    let updated = try #require(result.spaces.first)
+    let updated = try #require(result.spaces.first { $0.id == space.id })
     #expect(updated.favoritesId != nil && updated.favorites.first?.id == id)
+    #expect(updated.favoritesId != result.spaces.first { $0.id == "organize-work" }?.favoritesId)
     #expect(dragDescendants(sidebar).compactMap { $0 as? FavoriteTile }.contains { $0.row.id == id })
 }
 

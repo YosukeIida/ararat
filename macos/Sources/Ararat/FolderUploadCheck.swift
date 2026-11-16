@@ -92,8 +92,9 @@ extension Runtime {
         case 0:
             guard let port = promptFixturePort,
                   let row = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.today.first,
-                  row.url != nil, window.isVisible else { wait("seed row"); return }
+                  row.url != nil else { wait("seed row"); return }
             check.details["seed"] = ["item": row.id, "url": row.url ?? "", "fixture": port]
+            FileHandle.standardError.write(Data("ararat-trace: folder-upload seed-select item=\(row.id) url=\(row.url ?? "nil") visible=\(window.isVisible)\n".utf8))
             browserCheckSeedID = row.id
             selectCheckSeed(row)
             browserCheckPhase = 1

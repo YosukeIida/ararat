@@ -8150,26 +8150,24 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["escape_cancel"] = organizeCancelStarted && row("cancel")?.parentId == space.pinnedId
-      // p4checks: the Other space was seeded with no favourites container, so a tab dropped into
-      // its empty favourites area runs onFirstFavorite (the board's first-tile path). The drag
-      // has to happen in the shown space, so the check shows Other first.
-      if current.shownSpaceId != "organize-other" {
-        switchWorkspaceSpace("organize-other")
+      // Why not Other: it shares Work's profile and therefore its existing favourites container.
+      if current.shownSpaceId != "organize-first" {
+        switchWorkspaceSpace("organize-first")
         browserCheckPhase = 81
         return
       }
       browserCheckPhase = 81
     case 81:
-      guard current.shownSpaceId == "organize-other", sidebar.organizeCheckIdle,
-            let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
-      guard begin("dock", "favorites") else { return }
+      guard current.shownSpaceId == "organize-first", sidebar.organizeCheckIdle,
+            let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
+      guard begin("first", "favorites") else { return }
       let point = sidebar.dragCheckPoint
-      let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("dock")?.id ?? "")
+      let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("first")?.id ?? "")
       // No container yet: the resolver answers `.favorites(nil, index)`, the first-favourite path.
       // The result is kept aside; the condition is scored only after the drop lands (phase 82), so
       // a stall here leaves it unset rather than true.
-      organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && other.favoritesId == nil
-      FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(other.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
+      organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && first.favoritesId == nil
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(first.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
       if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
         organizeImage = image
       }
@@ -8177,10 +8175,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 82
     case 82:
       guard sidebar.organizeCheckIdle,
-            let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
-      let landed = other.favorites.contains { $0.url == "about:blank?organize-dock" }
-      organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && other.favoritesId != nil
-      FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(other.favoritesId ?? "nil") parent=\(row("dock")?.parentId ?? "nil")\n".utf8))
+            let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
+      let landed = first.favorites.contains { $0.url == "about:blank?organize-first" }
+      organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && first.favoritesId != nil
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(first.favoritesId ?? "nil") parent=\(row("first")?.parentId ?? "nil")\n".utf8))
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
     case 83:
