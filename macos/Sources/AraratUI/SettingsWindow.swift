@@ -235,26 +235,101 @@ public final class SettingsWindowController: NSWindowController {
 }
 
 extension SettingsWindowController: NSToolbarDelegate {
-    public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.init("navigation"), .flexibleSpace] }
-    public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.init("navigation"), .flexibleSpace] }
+    /// p4checks: the navigation item holds only the back/forward pair, at the board's own
+    /// 76 × 36; the title is its own item. On macOS 26 the system draws one glass capsule around
+    /// a custom-view item, so the pair draws its own capsule only where the system draws none.
+    static let navigationItem = NSToolbarItem.Identifier("navigation")
+    static let titleItem = NSToolbarItem.Identifier("title")
+    static let navigationSize = NSSize(width: 76, height: 36)
+    static let titleSize = NSSize(width: 220, height: 20)
+
+    public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.navigationItem, Self.titleItem, .flexibleSpace] }
+    public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.navigationItem, Self.titleItem, .flexibleSpace] }
     public func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar: Bool) -> NSToolbarItem? {
         let item = NSToolbarItem(itemIdentifier: identifier)
-        item.view = NSHostingView(rootView: SettingsToolbar(model: model))
-        return item
+        switch identifier {
+        case Self.navigationItem:
+            item.label = "Navigation"
+            item.paletteLabel = "Navigation"
+            let view = NSHostingView(rootView: SettingsToolbarNavigation(model: model))
+            view.frame = NSRect(origin: .zero, size: Self.navigationSize)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalToConstant: Self.navigationSize.width).isActive = true
+            view.heightAnchor.constraint(equalToConstant: Self.navigationSize.height).isActive = true
+            item.view = view
+            item.visibilityPriority = .high
+            return item
+        case Self.titleItem:
+            item.label = "Title"
+            item.paletteLabel = "Title"
+            let view = NSHostingView(rootView: SettingsToolbarTitle(model: model))
+            view.frame = NSRect(origin: .zero, size: Self.titleSize)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalToConstant: Self.titleSize.width).isActive = true
+            view.heightAnchor.constraint(equalToConstant: Self.titleSize.height).isActive = true
+            item.view = view
+            item.visibilityPriority = .high
+            return item
+        default:
+            return nil
+        }
+    }
+
+    // MARK: p4checks — what the Settings toolbar screen check reads
+
+    /// The two items' frames in their window: the pair's capsule size and the title's own place.
+    public var toolbarCheckItems: [String: NSRect] {
+        guard let toolbar = window?.toolbar else { return [:] }
+        var frames: [String: NSRect] = [:]
+        for item in toolbar.items {
+            guard let view = item.view else { continue }
+            let frame = view.convert(view.bounds, to: nil)
+            switch item.itemIdentifier {
+            case Self.navigationItem: frames["navigation"] = frame
+            case Self.titleItem: frames["title"] = frame
+            default: break
+            }
+        }
+        return frames
+    }
+    /// The navigation view's own capsule fill: false on macOS 26, where the system's glass is
+    /// the pair's one capsule.
+    public var toolbarCheckOwnCapsule: Bool { SettingsToolbarNavigation.drawsOwnCapsule }
+}
+
+private struct SettingsToolbarNavigation: View {
+    @ObservedObject var model: SettingsModel
+    /// False on macOS 26: the system's own glass is the one capsule around the pair.
+    static var drawsOwnCapsule: Bool {
+        if #available(macOS 26.0, *) { return false }
+        return true
+    }
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { model.go(-1) } label: { Image(systemName: "chevron.left").frame(width: 38, height: 36) }.disabled(model.historyIndex == 0).help("Back")
+            Divider().frame(height: 16)
+            Button { model.go(1) } label: { Image(systemName: "chevron.right").frame(width: 38, height: 36) }.disabled(model.historyIndex + 1 == model.history.count).help("Forward")
+        }
+        .buttonStyle(.plain)
+        .frame(width: 76, height: 36)
+        .background {
+            if Self.drawsOwnCapsule { Capsule().fill(SettingsColor.capsule) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Back and forward")
     }
 }
 
-private struct SettingsToolbar: View {
+private struct SettingsToolbarTitle: View {
     @ObservedObject var model: SettingsModel
     var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 0) {
-                Button { model.go(-1) } label: { Image(systemName: "chevron.left").frame(width: 38, height: 36) }.disabled(model.historyIndex == 0).help("Back")
-                Divider().frame(height: 16)
-                Button { model.go(1) } label: { Image(systemName: "chevron.right").frame(width: 38, height: 36) }.disabled(model.historyIndex + 1 == model.history.count).help("Forward")
-            }.buttonStyle(.plain).background(SettingsColor.capsule, in: Capsule())
-            Text(model.title).font(.headline).opacity(model.headerProgress)
-        }.frame(height: 52)
+        Text(model.title)
+            .font(.headline)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .opacity(model.headerProgress)
+            .frame(width: 220, height: 20, alignment: .leading)
+            .accessibilityLabel("Settings page")
     }
 }
 

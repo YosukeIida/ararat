@@ -164,6 +164,11 @@ final class DownloadsPopover: NSObject {
     func row(_ item: DownloadEntry) -> NSView {
         DownloadRowView(item: item, model: model)
     }
+    /// p4checks: the popover row's own action button (Open, Cancel, Remove, …), pressed through it.
+    func checkPress(action: String, id: String) -> Bool {
+        guard let row = rows[id] else { return false }
+        return row.checkPress(action: action)
+    }
 }
 
 @MainActor
@@ -183,6 +188,12 @@ final class DownloadRowView: NSStackView {
     }
     func statusFrame(in view: NSView) -> NSRect { view.convert(status.bounds, from: status) }
     var statusTruncates: Bool { status.maximumNumberOfLines == 1 && status.lineBreakMode == .byTruncatingTail && status.cell?.isScrollable == false && status.cell?.usesSingleLineMode == true }
+    /// p4checks: presses the row's own button for an action and answers whether one was there.
+    func checkPress(action: String) -> Bool {
+        guard let button = actionButtons.first(where: { $0.downloadAction == action }), button.isEnabled else { return false }
+        button.performClick(nil)
+        return true
+    }
     var moveRow: ((Int) -> Void)?
     var tabRow: ((Bool) -> Void)?
     override var acceptsFirstResponder: Bool { true }

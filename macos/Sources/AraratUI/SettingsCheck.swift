@@ -115,6 +115,139 @@ public final class SettingsCheckProbe {
     /// The keycaps the row shows, for the check's recorder condition.
     public var littleWindowHotKeyCaps: [String] { LittleWindowHotKeyRecorder.caps(model.littleWindowHotKey) }
 
+    // MARK: p4checks, the Shortcuts pane's recorder
+
+    /// Presses a Shortcut row's record button through the UI, the way a person does: the Settings
+    /// window's own in-process accessibility tree first (an in-process AX client needs no TCC
+    /// grant), then a synthesized mouse click on the row's record face. Answers how it went, and
+    /// the AX tree it walked when the accessibility pass found no button, so a report can say why.
+    public func pressShortcutRecordButton(_ command: String) -> (pressed: Bool, way: String, tree: [String]) {
+        let title = model.shortcuts.first { $0.command == command }?.title ?? command
+        let label = "Record shortcut for \(title)"
+        var tree: [String] = []
+        if let root = window.contentView {
+            if let button = accessibilityButton(label: label, under: root), button.accessibilityPerformPress() {
+                return (true, "accessibility", [])
+            }
+            tree = accessibilityDump()
+        }
+        // The row's record face is a SwiftUI view with a layout marker; scroll it into the pane
+        // and send it a real click, the way LookScreenCheck drives SwiftUI controls.
+        let markerID = "content-shortcut-\(command)"
+        if let scroll = detailScrollView, let content, let rect = marker(markerID) {
+            let visible = topDown(scroll.convert(scroll.bounds, to: content), in: content)
+            if rect.midY < visible.minY + 8 || rect.midY > visible.maxY - 8 {
+                let target = scroll.contentView.bounds.minY + (rect.midY - visible.minY) - 100
+                _ = scrollDetail(to: max(0, target))
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+        }
+        guard let rect = marker(markerID), let point = windowPoint(topDown: rect) else {
+            return (false, "none", tree)
+        }
+        let hit = window.contentView.flatMap { $0.hitTest($0.convert(point, from: nil)) }
+        tree.append("click marker=\(markerID) rect=\(rect) point=\(point) hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil") key=\(window.isKeyWindow) visible=\(window.isVisible)")
+        guard clickWindowPoint(point) else { return (false, "none", tree) }
+        return (true, "click-sent", tree)
+    }
+
+    /// The fallback only: `model.toggleRecording`, the action the row's button runs, for the case
+    /// where neither the accessibility pass nor the synthesized click reached the button.
+    public func beginShortcutRecording(_ command: String) { model.keyBindings.toggleRecording(command) }
+    public func resetShortcut(_ command: String) { model.resetShortcut(command) }
+    public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
+    @discardableResult
+    public func recordShortcutKey(_ event: NSEvent) -> Bool {
+        // The pane's own recorder view takes the event while a row records (it is the first
+        // responder); the model's handler is the fallback when the view is not in the tree.
+        guard let recorder = recorderView() else { return model.keyBindings.handle(event) }
+        recorder.keyDown(with: event)
+        return true
+    }
+    public var shortcutRecorderPresent: Bool { recorderView() != nil }
+    public var shortcutRecorderIsFirstResponder: Bool {
+        guard let recorder = recorderView() else { return false }
+        return window.firstResponder === recorder
+    }
+    private func recorderView() -> ShortcutsRecorderView? {
+        func find(_ view: NSView) -> ShortcutsRecorderView? {
+            if let recorder = view as? ShortcutsRecorderView { return recorder }
+            for sub in view.subviews { if let recorder = find(sub) { return recorder } }
+            return nil
+        }
+        return window.contentView.flatMap(find)
+    }
+
+    // MARK: p4checks, the UI paths behind the recorder button
+
+    /// The first accessibility button with this label under `element`, walking the window's own
+    /// tree the way DownloadCloseCheck walks a sheet's.
+    private func accessibilityButton(label: String, under element: any NSAccessibilityProtocol) -> (any NSAccessibilityProtocol)? {
+        let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? [])
+            .compactMap { $0 as? any NSAccessibilityProtocol }
+        if let button = children.first(where: { $0.accessibilityRole() == .button && $0.accessibilityLabel() == label }) {
+            return button
+        }
+        for child in children {
+            if let found = accessibilityButton(label: label, under: child) { return found }
+        }
+        return nil
+    }
+
+    /// Roles and labels, four levels deep, for the report when the AX pass finds no button.
+    private func accessibilityDump() -> [String] {
+        guard let root = window.contentView else { return [] }
+        var rows: [String] = []
+        func walk(_ element: any NSAccessibilityProtocol, depth: Int) {
+            guard rows.count < 80 else { return }
+            let role = element.accessibilityRole()?.rawValue ?? "?"
+            let label = element.accessibilityLabel() ?? ""
+            rows.append(String(repeating: "  ", count: depth) + role + (label.isEmpty ? "" : " \"\(label)\""))
+            guard depth < 4 else { return }
+            let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? [])
+                .compactMap { $0 as? any NSAccessibilityProtocol }
+            for child in children { walk(child, depth: depth + 1) }
+        }
+        walk(root, depth: 0)
+        return rows
+    }
+
+    /// A frame reported top-down in the content view as a window point.
+    private func windowPoint(topDown rect: NSRect) -> NSPoint? {
+        guard let content else { return nil }
+        let y = content.isFlipped ? rect.midY : content.bounds.height - rect.midY
+        return content.convert(NSPoint(x: rect.midX, y: y), to: nil)
+    }
+
+    /// A real mouse down and up through the window, the SwiftUI click LookScreenCheck sends.
+    private func clickWindowPoint(_ point: NSPoint) -> Bool {
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: window.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: window.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 0) else { return false }
+        window.sendEvent(down)
+        window.sendEvent(up)
+        return true
+    }
+    public func shortcutKey(_ command: String) -> KeyCombination? { model.keyBindings.binding(command: command)?.key }
+    /// The key the app menu's Ararat Commands item carries for a command, which a recorded key
+    /// changes through `KeyBindingsModel.receive` and its registered menu.
+    public func menuKeyEquivalent(_ command: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+        guard let item = NSApp.mainMenu?.items.compactMap({ $0.submenu }).compactMap({ menu in
+            menu.items.first { $0.identifier?.rawValue == command }
+        }).first else { return nil }
+        return (item.keyEquivalent, item.keyEquivalentModifierMask)
+    }
+
+    // MARK: p4checks, the toolbar
+
+    public var toolbarItems: [String: NSRect] { controller.toolbarCheckItems }
+    public var toolbarOwnCapsule: Bool { controller.toolbarCheckOwnCapsule }
+
     // MARK: U27w, the Websites pane
 
     /// The seven defaults the pane draws, read from the core, and the same setter its menus call.

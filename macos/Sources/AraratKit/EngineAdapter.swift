@@ -265,6 +265,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
                     if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
                 }
+                let firstFavorite = """
+                {"sidebar":{"containers":[{"global":{}},{"spaces":["organize-first",{"id":"organize-first","title":"First Favorite","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","first-pinned","unpinned","first-today"]}],"topAppsContainerIDs":[],"items":["first-pinned",{"id":"first-pinned","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"organize-first"}}}}},"first-today",{"id":"first-today","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"organize-first"}}}}}]}]}}
+                """
+                _ = try opened.importArcSidebar(windowId: windowID, json: firstFavorite, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+                try opened.showSpace(windowId: windowID, spaceId: "organize-first")
+                _ = try opened.createTab(windowId: windowID, url: "about:blank?organize-first")
+                try opened.showSpace(windowId: windowID, spaceId: "organize-work")
             } else if seedSidebar {
                 _ = try opened.createSpace(windowId: windowID, name: "Sidebar", spaceId: "sidebar-work")
                 try opened.showSpace(windowId: windowID, spaceId: "sidebar-work")

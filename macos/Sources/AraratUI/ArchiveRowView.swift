@@ -119,6 +119,13 @@ final class ArchiveRowView: NSView {
         refreshHover()
     }
     func focusTarget(_ part: Int) -> NSView { part == 1 ? deleteButton : part == 2 ? restoreButton : self }
+    /// p4checks: the row's own restore and delete controls, pressed through their buttons.
+    func checkPressButton(restore: Bool) -> Bool {
+        let button = restore ? restoreButton : deleteButton
+        guard button.isEnabled, !button.isHidden else { return false }
+        button.performClick(nil)
+        return true
+    }
     private func navigate(with event: NSEvent) -> Bool {
         switch event.keyCode {
         case 48:

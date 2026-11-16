@@ -195,6 +195,12 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         return true
     }
     @objc private func exitLibrary() { onExit?() }
+    /// p4checks: the page's back arrow, pressed through its button.
+    func checkPressBack() -> Bool {
+        guard !back.isHidden else { return false }
+        back.performClick(nil)
+        return true
+    }
 }
 
 @MainActor

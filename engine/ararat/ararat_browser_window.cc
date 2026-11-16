@@ -266,7 +266,9 @@ AraratBrowserWindow::AraratBrowserWindow(BrowserWindowInterface* browser,
       autofill_handler_(std::make_unique<AraratAutofillBubbleHandler>()),
       autofill_registration_(std::make_unique<ui::ScopedUnownedUserData<autofill::AutofillBubbleHandler>>(
           browser->GetUnownedUserDataHost(), *autofill_handler_)) {
-  if (browser->GetType() == BrowserWindowInterface::TYPE_NORMAL && !browser->GetProfile()->IsOffTheRecord()) {
+  if ((browser->GetType() == BrowserWindowInterface::TYPE_NORMAL ||
+       browser->GetType() == BrowserWindowInterface::TYPE_POPUP) &&
+      !browser->GetProfile()->IsOffTheRecord()) {
     extensions_ = std::make_unique<ararat::AraratExtensionsContainer>(
         browser, nullptr, base::BindRepeating([](AraratWindowHostCore* host) {
           return views::BubbleAnchor(host->extension_anchor());

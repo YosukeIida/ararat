@@ -33,7 +33,7 @@ private func splitValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Comple
 }
 
 @Test @MainActor
-func organizeSeedHasTwoSpacesAndExpectedRows() throws {
+func organizeSeedKeepsTheFirstFavoriteInASeparateProfile() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -42,7 +42,12 @@ func organizeSeedHasTwoSpacesAndExpectedRows() throws {
     let snapshot = try session.queue.sync { try #require(session.store).snapshot(windowId: "organize") }
     let work = try #require(snapshot.spaces.first { $0.id == "organize-work" })
     let other = try #require(snapshot.spaces.first { $0.id == "organize-other" })
+    let first = try #require(snapshot.spaces.first { $0.id == "organize-first" })
+    #expect(snapshot.spaces.count == 3)
     #expect(work.profileKey == other.profileKey && snapshot.shownSpaceId == work.id)
+    #expect(other.favoritesId == work.favoritesId && work.favoritesId != nil)
+    #expect(first.profileKey != work.profileKey && first.favoritesId == nil && first.favorites.isEmpty)
+    #expect(first.today.count == 1 && first.today.first?.url == "about:blank?organize-first")
     #expect(work.favorites.count == 2 && work.today.count == 1 && work.pinnedCount == 5)
     #expect(work.pinned.first { $0.id == "organize-inner" }?.collapsed == true)
 }

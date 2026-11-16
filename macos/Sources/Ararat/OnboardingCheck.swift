@@ -25,7 +25,7 @@ final class OnboardingCheckState {
         "no_signin_rows", "default_browser", "setter_called", "real_default_unchanged",
         "progress_steps", "report_numbers", "report_lines", "no_signin_line",
         "fixture_store_only", "error_screen", "error_message", "copy_details",
-        "sibling_screen", "sibling_message", "sibling_continue",
+        "sibling_screen", "sibling_message", "sibling_continue", "done_continue", "spaces_imported",
     ]
     /// Every screen the check captures. `capture` is set once at the end from this list (L8).
     static let screens = ["welcome", "source", "what-to-import", "default-browser", "progress", "done", "error", "sibling-file"]
@@ -307,6 +307,22 @@ extension Runtime {
             guard probe.stage == .done else { wait("sibling continue stage"); return }
             mark("sibling_continue", model.summary?.spaces == OnboardingFixtures.expected.spaces
                  && probe.summaryLine == OnboardingFixtureLine(OnboardingFixtures.expected).line)
+            // p4checks: the done screen's own Continue ends the flow (startFresh → onFinish →
+            // the window closes) and the imported spaces are what the store now holds.
+            probe.click("onboarding-continue")
+            browserCheckPhase = 11
+        case 11:
+            let window = owner.onboardingWindow?.window
+            guard window == nil || !window!.isVisible else { wait("the Continue closed the onboarding window"); return }
+            mark("done_continue", true)
+            var titles = Set<String>()
+            if let path = quitPath, let store = try? WorkspaceStore.open(path: path) {
+                titles = Set(store.snapshot(windowId: "onboarding-done").spaces.map(\.title))
+            }
+            mark("spaces_imported", Set(["Work", "Personal", "Reading"]).isSubset(of: titles))
+            check.details["done"] = ["store_titles": titles.sorted(),
+                                     "window_titles": snapshot.spaces.map(\.title),
+                                     "window_shown": snapshot.shownSpaceId ?? ""]
             finish()
         default:
             break

@@ -24,11 +24,12 @@ final class SettingsScreenCheck {
         case websites = "settings-websites"
         case privacy = "settings-privacy"
         case extensions = "settings-extensions"
+        case toolbar = "settings-toolbar"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
-            case .frame, .search, .tabs: "tabs"
+            case .frame, .search, .tabs, .toolbar: "tabs"
             case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .privacy: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
             case .extensions: "extensions"
@@ -53,7 +54,9 @@ final class SettingsScreenCheck {
             switch self {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
-            case .tabs, .shortcuts, .airTraffic: ["rows"]
+            case .tabs, .airTraffic: ["rows"]
+            case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
+                              "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
             case .appearance: ["rows", "theme_dark", "theme_light", "theme_page", "theme_reopen", "theme_system",
                                "new_tab_hidden", "new_tab_reopen", "tooltips_off", "look_to_space"]
             case .spaces: ["rows", "space_page", "scroll_card", "scroll_write_reopen", "scroll_wheel_natural", "scroll_wheel_reversed"]
@@ -69,6 +72,7 @@ final class SettingsScreenCheck {
             case .extensions: ["rows", "profile_switch", "site_access_write", "pin_action",
                                "disable_hides_action", "enable_brings_action", "review_prompt",
                                "review_enables", "remove_cancel_keeps", "reopen_state"]
+            case .toolbar: ["navigation_size", "title_item", "items_order"]
             }
         }
     }
@@ -181,6 +185,12 @@ final class SettingsScreenCheck {
     var privacyCookieTitle = ""
     var privacyGPCTitle = ""
     var privacyClearCookieTitle = ""
+    // p4checks, the Shortcuts pane: the binding and the sidebar state before the recording, so
+    // the recorded key's effect and the reset can be told apart.
+    var shortcutKeyBefore: KeyCombination?
+    var shortcutSidebarBefore = ""
+    var shortcutNewKey = KeyCombination(key: "k", command: false, control: true, option: true, shift: false)
+    var panePhaseStart = -1
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -309,7 +319,7 @@ extension Runtime {
         func finish() {
             let failed = SettingsScreenCheck.conditionNames(mode).filter { check.conditions[$0] != true }
             finishBrowserCheck(ok: failed.isEmpty,
-                               values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images])
+                               values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images, "details": check.details])
         }
         func note(_ text: String) {
             if check.lastWait != text || browserCheckAttempts % 30 == 0 {
@@ -390,7 +400,7 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .privacy, .extensions:
+        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .privacy, .extensions, .toolbar:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
@@ -629,7 +639,30 @@ extension Runtime {
                 let rows = probe.markers(prefix: "row-shortcut-")
                 note("shortcut rows: \(rows.count)")
                 guard rows.count >= 20 else { return }
-                check.report("rows", rows.allSatisfy { $0.frame.height >= 54 })
+                if check.conditions["rows"] != true {
+                    check.report("rows", rows.allSatisfy { $0.frame.height >= 54 })
+                }
+                // p4checks: record a key in Settings, then press it in the browser window. The
+                // record button is pressed through the UI: the window's AX tree first, else a
+                // real click on the row's record face; the direct model call is the last resort.
+                check.shortcutKeyBefore = probe.shortcutKey("toggle_sidebar")
+                check.shortcutSidebarBefore = (root ?? self).container?.sidebarState ?? ""
+                check.panePhaseStart = browserCheckAttempts
+                let press = probe.pressShortcutRecordButton("toggle_sidebar")
+                check.details["shortcut_press"] = ["pressed": press.pressed, "way": press.way]
+                if !press.tree.isEmpty { check.details["shortcut_ax_tree"] = press.tree }
+                if let click = press.tree.last, click.hasPrefix("click ") { trace(click) }
+                if press.pressed {
+                    trace("record button UI attempt through \(press.way) for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
+                } else {
+                    check.report("record_button_pressed", false)
+                    check.details["shortcut_press_fallback"] = true
+                    check.details["shortcut_press_fallback_reason"] = "no_ui_path"
+                    trace("neither the AX tree nor a click reached the record button; calling the model")
+                    probe.beginShortcutRecording("toggle_sidebar")
+                }
+                step(20)
+                return
             case .spaces:
                 let markers = probe.spaceIDs.map { SettingsModel.rowMarker("space-\($0)") }
                 let found = markers.map { probe.marker($0) }
@@ -654,18 +687,36 @@ extension Runtime {
                 guard pushSpace(0) else { note("no space to push"); return }
                 step(3)
                 return
-            case .tabs:
-                let markers = ["width", "archive-after"].map(SettingsModel.rowMarker)
+            case .tabs, .airTraffic:
+                let markers: [String]
+                switch mode {
+                case .tabs: markers = ["width", "archive-after"].map(SettingsModel.rowMarker)
+                default: markers = [SettingsModel.airTrafficCardId, "atc-test"].map(SettingsModel.rowMarker)
+                }
                 guard markers.allSatisfy({ probe.marker($0) != nil }) else {
                     note("rows missing: \(markers.filter { probe.marker($0) == nil })"); return
                 }
                 check.report("rows", true)
-            case .airTraffic:
-                let markers = [SettingsModel.airTrafficCardId, "atc-test"].map(SettingsModel.rowMarker)
-                guard markers.allSatisfy({ probe.marker($0) != nil }) else {
-                    note("rows missing: \(markers.filter { probe.marker($0) == nil })"); return
+            case .toolbar:
+                // p4checks: the pair's own 76 × 36 and the title in its own item; exactly one
+                // capsule is drawn (the system's glass on macOS 26, ours before it). The images
+                // are the measurement of the capsule: one at the top and one scrolled, where the
+                // toolbar carries the title.
+                let items = probe.toolbarItems
+                guard let navigation = items["navigation"], let title = items["title"] else {
+                    note("toolbar items: \(items.keys.sorted())"); return
                 }
-                check.report("rows", true)
+                check.report("navigation_size", abs(navigation.width - 76) <= 1 && abs(navigation.height - 36) <= 1)
+                check.report("title_item", title.width > 0 && title.height > 0)
+                check.report("items_order", navigation.minX <= title.minX)
+                check.details["toolbar"] = ["navigation": rectFields(navigation), "title": rectFields(title),
+                                            "own_capsule": probe.toolbarOwnCapsule,
+                                            "capsule_owner": probe.toolbarOwnCapsule ? "own" : "system"]
+                guard capture("toolbar-top") else { end("capture", false); return }
+                check.panePhaseStart = browserCheckAttempts
+                probe.scrollDetail(to: 200)
+                step(20)
+                return
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
             case .frame, .search, .appearance, .littleWindow, .websites, .privacy, .extensions:
@@ -686,6 +737,142 @@ extension Runtime {
             guard capture("space-page") else { end("capture", false); return }
             // U27c keeps going on the Spaces pane; the other panes are done here.
             if mode == .spaces { probe.openSpacesPane(); step(4); return }
+            finish()
+        // MARK: p4checks, the Shortcuts pane's recorder and the key it records
+        case 20:
+            if mode == .toolbar {
+                // The second toolbar image: the header has scrolled away and the toolbar carries
+                // the title, which is where design judges the capsule.
+                guard probe.headerProgress > 0.95 else {
+                    if browserCheckAttempts - check.panePhaseStart > 120 {
+                        check.report("capture", false); finish()
+                        return
+                    }
+                    note("the detail is not scrolled: \(probe.headerProgress)"); return
+                }
+                guard capture("toolbar-scrolled") else { end("capture", false); return }
+                probe.scrollDetail(to: 0)
+                finish()
+                return
+            }
+            guard mode == .shortcuts else { finish(); return }
+            if check.details["shortcut_press_fallback"] == nil,
+               check.conditions["record_button_pressed"] == nil,
+               probe.shortcutRecordingCommand == "toggle_sidebar" {
+                check.report("record_button_pressed", true)
+            }
+            let ready = probe.shortcutRecordingCommand == "toggle_sidebar"
+                && probe.shortcutRecorderPresent && probe.shortcutRecorderIsFirstResponder
+            guard ready else {
+                // shortcut: the UI press may start no recording; keep downstream checks running until the VM press path is fixed.
+                if probe.shortcutRecordingCommand == nil,
+                   browserCheckAttempts - check.panePhaseStart > 20,
+                   check.details["shortcut_press_fallback"] == nil {
+                    check.details["shortcut_press_fallback"] = true
+                    check.details["shortcut_press_fallback_reason"] = "no_recording_after_press"
+                    check.report("record_button_pressed", false)
+                    FileHandle.standardError.write(Data("ararat-trace: shortcuts the UI press did not start the recording; calling the model\n".utf8))
+                    probe.beginShortcutRecording("toggle_sidebar")
+                }
+                if browserCheckAttempts - check.panePhaseStart > 120 {
+                    check.report("recorder_opened", false); finish()
+                    return
+                }
+                note("the recorder is not ready: recording=\(probe.shortcutRecordingCommand ?? "nil") present=\(probe.shortcutRecorderPresent) first=\(probe.shortcutRecorderIsFirstResponder)")
+                return
+            }
+            check.report("recorder_opened", true)
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                                               context: nil, characters: "k", charactersIgnoringModifiers: "k",
+                                               isARepeat: false, keyCode: 40) else {
+                check.report("key_recorded", false); finish(); return
+            }
+            check.panePhaseStart = browserCheckAttempts
+            probe.recordShortcutKey(event)
+            step(21)
+        case 21:
+            guard mode == .shortcuts else { finish(); return }
+            let key = probe.shortcutKey("toggle_sidebar")
+            guard key == check.shortcutNewKey, probe.shortcutRecordingCommand == nil else {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
+                    check.report("key_recorded", false); finish()
+                    return
+                }
+                note("recorded key \(key.map { "\($0.key) c=\($0.command) ctl=\($0.control) opt=\($0.option)" } ?? "nil")"); return
+            }
+            check.report("key_recorded", true)
+            let menu = probe.menuKeyEquivalent("toggle_sidebar")
+            check.report("menu_updated", menu?.key == "k" && menu?.modifiers.contains(.control) == true
+                         && menu?.modifiers.contains(.option) == true && menu?.modifiers.contains(.command) == false)
+            let binding = (root ?? self).sidebar?.keyBindings.first { $0.command == "toggle_sidebar" }
+            check.report("sidebar_updated", binding?.key == check.shortcutNewKey)
+            check.details["shortcut"] = ["key": "k", "control": true, "option": true,
+                                         "menu_key": menu?.key ?? "",
+                                         "menu_modifiers": menu?.modifiers.rawValue ?? 0,
+                                         "sidebar_key": binding?.key.map { "\($0.key)" } ?? "nil"]
+            // Press it in the browser window: the window's own key-equivalent path to the menu.
+            guard let host = host, let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
+                                                                timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                windowNumber: host.window().windowNumber, context: nil,
+                                                                characters: "k", charactersIgnoringModifiers: "k",
+                                                                isARepeat: false, keyCode: 40) else {
+                check.report("keyboard_pressed", false); finish(); return
+            }
+            host.window().makeKeyAndOrderFront(nil)
+            trace("press ⌃⌥K in the browser window")
+            check.shortcutSidebarBefore = (root ?? self).container?.sidebarState ?? ""
+            check.panePhaseStart = browserCheckAttempts
+            NSApp.sendEvent(event)
+            step(22)
+        case 22:
+            guard mode == .shortcuts else { finish(); return }
+            guard let container = (root ?? self).container,
+                  container.sidebarState != check.shortcutSidebarBefore else {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
+                    check.report("keyboard_pressed", false); finish()
+                    return
+                }
+                note("the recorded key did not toggle the sidebar"); return
+            }
+            check.report("keyboard_pressed", true)
+            // The same key again puts the sidebar back.
+            guard let host = host, let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
+                                                                timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                windowNumber: host.window().windowNumber, context: nil,
+                                                                characters: "k", charactersIgnoringModifiers: "k",
+                                                                isARepeat: false, keyCode: 40) else {
+                check.report("keyboard_toggled", false); finish(); return
+            }
+            check.panePhaseStart = browserCheckAttempts
+            NSApp.sendEvent(event)
+            step(23)
+        case 23:
+            guard mode == .shortcuts else { finish(); return }
+            guard let container = (root ?? self).container,
+                  container.sidebarState == check.shortcutSidebarBefore else {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
+                    check.report("keyboard_toggled", false); finish()
+                    return
+                }
+                note("the recorded key did not toggle the sidebar back"); return
+            }
+            check.report("keyboard_toggled", true)
+            // Leave the pane as it was found: reset the row to its default binding.
+            probe.resetShortcut("toggle_sidebar")
+            check.panePhaseStart = browserCheckAttempts
+            step(24)
+        case 24:
+            guard mode == .shortcuts else { finish(); return }
+            guard probe.shortcutKey("toggle_sidebar") == check.shortcutKeyBefore else {
+                if browserCheckAttempts - check.panePhaseStart > 120 {
+                    check.report("recorder_restored", false); finish()
+                    return
+                }
+                note("the binding has not been reset"); return
+            }
+            check.report("recorder_restored", true)
+            guard capture("shortcuts") else { end("capture", false); return }
             finish()
         default: break
         }
