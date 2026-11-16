@@ -27,6 +27,7 @@ final class FolderUploadCheckState {
     var panelParent = ""
     var previousPanelFrame: NSRect?
     var previousPanelWindow: Int?
+    var chooserSettleTicks = 0
     var beforeFrame = NSRect.zero
     var cgWindowsBefore = Set<Int>()
 
@@ -66,6 +67,17 @@ final class FolderUploadCheckState {
 
     static func chooserSettled(frame: NSRect, previous: NSRect?, alpha: CGFloat, window: Int?, previousWindow: Int?) -> Bool {
         !frame.isEmpty && frame == previous && alpha == 1 && window != nil && window == previousWindow
+    }
+
+    func shouldWaitForChooser(settled: Bool) -> Bool {
+        guard !settled else { return false }
+        chooserSettleTicks += 1
+        guard chooserSettleTicks >= 120 else { return true }
+        details["capture_error"] = "chooser_settle_timeout"
+        details["chooser_settle_ticks"] = chooserSettleTicks
+        FileHandle.standardError.write(Data("ararat-trace: folder-upload capture way=region error=chooser_settle_timeout ticks=\(chooserSettleTicks)\n".utf8))
+        mark("capture_chooser", false)
+        return false
     }
 
     static func cropBefore(_ image: CGImage, source: NSRect, region: NSRect) -> CGImage? {
@@ -256,31 +268,33 @@ extension Runtime {
                     alpha: panel.alphaValue, window: number, previousWindow: check.previousPanelWindow)
                 check.previousPanelFrame = frame
                 check.previousPanelWindow = number
-                guard settled else {
+                if check.shouldWaitForChooser(settled: settled) {
                     FileHandle.standardError.write(Data("ararat-trace: folder-upload wait=chooser-settle frame=\(frame) alpha=\(panel.alphaValue) cg_window=\(cgWindow?[kCGWindowNumber as String] ?? "nil")\n".utf8))
                     return
                 }
-                let captured = capture("chooser", frame: frame)
-                let stillOnScreen = chooserWindow(frame)?[kCGWindowNumber as String] as? Int == cgWindow?[kCGWindowNumber as String] as? Int
-                    && panel.frame == frame && panel.alphaValue == 1
-                var changed = false
-                if captured, let before = image("before-screen"), let after = image("chooser"),
-                   let crop = FolderUploadCheckState.cropBefore(before, source: check.beforeFrame, region: frame),
-                   let data = NSBitmapImageRep(cgImage: crop).representation(using: .png, properties: [:]),
-                   let difference = FolderUploadCheckState.chooserDifference(crop, after) {
-                    let path = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-folder-upload-before-\(UUID().uuidString).png")
-                    do {
-                        try data.write(to: path)
-                        check.images["before-chooser"] = path.path
-                        check.details["image_difference"] = difference.value
-                        check.details["image_difference_threshold"] = 0.01
-                        changed = difference.changed
-                    } catch { FileHandle.standardError.write(Data("ararat-trace: folder-upload capture baseline-crop error=\(error)\n".utf8)) }
+                if settled {
+                    let captured = capture("chooser", frame: frame)
+                    let stillOnScreen = chooserWindow(frame)?[kCGWindowNumber as String] as? Int == cgWindow?[kCGWindowNumber as String] as? Int
+                        && panel.frame == frame && panel.alphaValue == 1
+                    var changed = false
+                    if captured, let before = image("before-screen"), let after = image("chooser"),
+                       let crop = FolderUploadCheckState.cropBefore(before, source: check.beforeFrame, region: frame),
+                       let data = NSBitmapImageRep(cgImage: crop).representation(using: .png, properties: [:]),
+                       let difference = FolderUploadCheckState.chooserDifference(crop, after) {
+                        let path = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-folder-upload-before-\(UUID().uuidString).png")
+                        do {
+                            try data.write(to: path)
+                            check.images["before-chooser"] = path.path
+                            check.details["image_difference"] = difference.value
+                            check.details["image_difference_threshold"] = 0.01
+                            changed = difference.changed
+                        } catch { FileHandle.standardError.write(Data("ararat-trace: folder-upload capture baseline-crop error=\(error)\n".utf8)) }
+                    }
+                    check.details["chooser_cg_window"] = cgWindow
+                    check.details["chooser_on_screen_at_capture"] = stillOnScreen
+                    FileHandle.standardError.write(Data("ararat-trace: folder-upload capture evidence on_screen=\(stillOnScreen) changed=\(changed) difference=\(check.details["image_difference"] ?? "nil") before=\(check.images["before-chooser"] ?? "nil") after=\(check.images["chooser"] ?? "nil")\n".utf8))
+                    check.mark("capture_chooser", captured && stillOnScreen && changed)
                 }
-                check.details["chooser_cg_window"] = cgWindow
-                check.details["chooser_on_screen_at_capture"] = stillOnScreen
-                FileHandle.standardError.write(Data("ararat-trace: folder-upload capture evidence on_screen=\(stillOnScreen) changed=\(changed) difference=\(check.details["image_difference"] ?? "nil") before=\(check.images["before-chooser"] ?? "nil") after=\(check.images["chooser"] ?? "nil")\n".utf8))
-                check.mark("capture_chooser", captured && stillOnScreen && changed)
             }
             // Cancel through the panel's own action (its Cancel button's selector), the answer
             // a person's click sends, whether it is a sheet or a free panel.

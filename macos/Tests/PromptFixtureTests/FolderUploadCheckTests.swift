@@ -6,6 +6,20 @@ import Testing
 @testable import Ararat
 
 @Test @MainActor
+func chooserSettleTimeoutStopsWaitingAndFailsOnlyTheCapture() {
+    let check = FolderUploadCheckState()
+    for _ in 0..<119 { #expect(check.shouldWaitForChooser(settled: false)) }
+    #expect(check.conditions["capture_chooser"] == nil)
+    #expect(!check.shouldWaitForChooser(settled: false))
+    #expect(check.chooserSettleTicks == 120)
+    #expect(check.conditions == ["capture_chooser": false])
+    #expect(check.details["capture_error"] as? String == "chooser_settle_timeout")
+    let settled = FolderUploadCheckState()
+    #expect(!settled.shouldWaitForChooser(settled: true))
+    #expect(settled.chooserSettleTicks == 0 && settled.conditions.isEmpty)
+}
+
+@Test @MainActor
 func chooserSettleRequiresStableOpaqueFrameAndANewOnscreenWindow() {
     let frame = NSRect(x: 100, y: 200, width: 600, height: 400)
     #expect(!FolderUploadCheckState.chooserSettled(frame: frame, previous: nil, alpha: 1, window: 42, previousWindow: 42))
