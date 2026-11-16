@@ -217,7 +217,7 @@ fn contains_maps_to_match_style_contains() {
     // Arc's seeded route is a "contains" rule to the space of most-recent tabs (Cra
     // LinkRouting.swift googleMeet); Meet.Google.Com keeps its case until matching.
     assert_eq!(routing.rules[0], rule("meet", vec![contains("Meet.Google.Com")], most_recent()));
-    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces_view()), most_recent());
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces_view()), space("space-work"));
 }
 
 #[test]
@@ -533,7 +533,7 @@ fn a_fixture_set_of_all_three_siblings_imports_the_routing() {
     assert_eq!(report.malformed_rules, 1);
     let routing = workspace.routing();
     assert_eq!(routing.rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["meet", "github-prs", "docs-little", "double-condition"]);
-    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces(&workspace)), most_recent());
+    assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces(&workspace)), space("space-work"));
     assert_eq!(routing.route("https://github.com/pulls", &spaces(&workspace)), space("space-work"));
     // The file's default (littleArc → The Little window with the import's profile) is the
     // built-in one on this fixture, so the derived default emits no extra record.

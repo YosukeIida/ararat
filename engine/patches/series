@@ -42,3 +42,4 @@ ararat/hidden-dialog-containment.patch
 ararat/history-deletion-hook.patch
 ararat/crash-lock-abandon.patch
 ararat/history-retention.patch
+ararat/command-line-urls-hook.patch
