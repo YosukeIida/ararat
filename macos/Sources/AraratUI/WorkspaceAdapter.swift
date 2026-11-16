@@ -418,12 +418,6 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setDownloadDevice(device: value) }, completion: completion)
     }
 
-    // P5b: a launch that opens a new window discards the kept Window records, as closing each
-    // window did; nothing piles up for a later restore.
-    public func discardKeptWindows(completion: @escaping Completion<Void>) {
-        enqueue({ try self.opened().discardKeptWindows() }, completion: completion)
-    }
-
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings
     // record the New Tab row switch rides in. The pane writes it once; every window reads it back.
     public func spaceScrollDirection(completion: @escaping Completion<SpaceScrollDirection>) {

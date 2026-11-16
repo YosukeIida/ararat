@@ -1102,7 +1102,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
         : .restoreWindows
       let plan = LaunchPlan.forLaunch(startup: startup, kept: kept, openIDs: openIDs)
       if plan.discardsKept {
-        running.queue.sync { try? running.store?.discardKeptWindows() }
+        // G2: a refused discard would leave the records for a later Restore to bring back
+        // unannounced, so the failure is reported like the other core failures and the launch
+        // still opens its fresh window.
+        do {
+          try running.queue.sync { try running.store?.discardKeptWindows() }
+        } catch {
+          report(error)
+        }
       }
       adoptedWindow = plan.adopted != nil
       windowID = plan.adopted?.id ?? UUID().uuidString
