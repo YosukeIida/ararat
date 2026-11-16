@@ -2373,7 +2373,9 @@ public final class SidebarView: NSView {
         } else if !deferredScrollSnapshots.isEmpty && !scrollSnapshotDrainScheduled {
             scrollSnapshotDrainScheduled = true
             DispatchQueue.main.async { [weak self] in
-                guard let self, !self.showingScrollPages else { return }
+                guard let self else { return }
+                self.scrollSnapshotDrainScheduled = false
+                guard !self.showingScrollPages else { return }
                 self.drainScrollSnapshots()
             }
         }

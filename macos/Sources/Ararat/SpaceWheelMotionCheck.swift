@@ -175,7 +175,7 @@ extension Runtime {
                             guard let event = input.event(at: start + input.time - first.time) else { check.failed = true; return }
                             sidebar.traceSpaceWheelMotion("replay", detail: "recorded=\(input.time) scheduled=\(start + input.time - first.time) actual=\(now)")
                             let source = sidebar.spaceShown
-                            let received = CACurrentMediaTime()
+                            let received = SpaceWheelDrawnCapture.hostTime()
                             sidebar.scrollWheel(with: event)
                             if sidebar.spaceShown != source {
                                 check.switches.append(.init(time: received, source: source, target: sidebar.spaceShown, pitch: Int(sidebar.bounds.width)))

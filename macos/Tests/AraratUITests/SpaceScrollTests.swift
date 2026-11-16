@@ -792,6 +792,31 @@ func widthChangeDrainsSnapshotsAfterLayoutAndKeepsLaterRepliesOrdered() async th
 }
 
 @Test @MainActor
+func aDrainPausedByAnotherGestureDoesNotBlockTheNextWidthChange() async throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.contentView = nil }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    var reply = scrollTestSnapshot()
+    reply.spaces[1].pinned[0].title = "First width reply"
+    sidebar.update(snapshot: reply)
+    sidebar.frame.size.width += 20
+    sidebar.layoutSubtreeIfNeeded()
+    sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100.3))
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+    sidebar.frame.size.width += 20
+    sidebar.layoutSubtreeIfNeeded()
+    reply.spaces[1].pinned[0].title = "Second width reply"
+    sidebar.update(snapshot: reply)
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+    #expect(scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.title == "Second width reply" })
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
 func zeroDeltaGestureBeginsTakeOverAtTheFirstHorizontalMotion() {
     var statePause = -Double.infinity
     var state = SpaceScrollState()

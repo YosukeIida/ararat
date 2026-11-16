@@ -4,6 +4,7 @@ import ScreenCaptureKit
 import CoreMedia
 
 final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendable {
+    static let firstMotionLimit = 0.120
     struct Frame {
         let time: Double
         let pixels: [UInt8]
@@ -20,6 +21,8 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendabl
     let width: Int
 
     init(width: Int) { self.width = width }
+
+    static func hostTime() -> Double { CMClockGetTime(CMClockGetHostTimeClock()).seconds }
 
     func samples() -> [Frame] {
         lock.lock()
@@ -60,8 +63,16 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendabl
     func stop() async { try? await stream?.stopCapture(); stream = nil }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, let buffer = sample.imageBuffer, CVPixelBufferGetWidth(buffer) == width else { return }
-        let time = CACurrentMediaTime()
+        guard type == .screen, let clock = stream.synchronizationClock else { return }
+        record(sample, clock: clock)
+    }
+
+    func record(_ sample: CMSampleBuffer, clock: CMClock) {
+        guard let buffer = sample.imageBuffer, CVPixelBufferGetWidth(buffer) == width else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+        guard pts.isNumeric else { return }
+        let time = CMSyncConvertTime(pts, from: clock, to: CMClockGetHostTimeClock()).seconds
+        guard time.isFinite else { return }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
@@ -86,10 +97,14 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendabl
                 frames.append(.init(t: sample.time - step.time, offset: offset))
             }
             var verdict = SpaceWheelMotionCurve.conditions(frames: frames, from: from, pitch: Double(step.pitch))
+            verdict["first_motion_within_120ms"] = frames.first.map { $0.t <= firstMotionLimit } ?? false
             if index + 1 < switches.count { verdict.removeValue(forKey: "landed") }
             conditions.merge(verdict) { $0 && $1 }
             let value: [String: Any] = ["trace": "space-wheel-drawn", "switch": index + 1,
-                "start": step.time, "pitch": step.pitch, "clock": "capture-callback-uptime",
+                "start": step.time, "pitch": step.pitch, "clock": "sample-pts-in-host-clock",
+                "first_drawn_change": frames.first.map { step.time + $0.t } as Any? ?? NSNull(),
+                "event_to_first_motion_ms": frames.first.map { $0.t * 1000 } as Any? ?? NSNull(),
+                "first_motion_limit_ms": firstMotionLimit * 1000,
                 "source": step.source, "target": step.target, "conditions": verdict,
                 "samples": frames.map { ["t": $0.t, "offset": $0.offset] }]
             if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {

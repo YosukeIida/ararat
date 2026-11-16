@@ -24,10 +24,10 @@ func wheelMotionTraceKeepsSamplesAndMarksOnTheSameSwitchClock() throws {
 }
 
 @Test @MainActor
-func wheelMotionConditionsRejectTheMeasuredMissingStartAndRestarts() {
+func wheelMotionConditionsRejectPartialStartsAndRestarts() {
     typealias Frame = SpaceWheelMotionCurve.Frame
-    let old = [Frame(t: 0.15, offset: 112), Frame(t: 0.18, offset: 60), Frame(t: 0.25, offset: 0)]
-    #expect(SpaceWheelMotionCurve.conditions(frames: old, from: 260, pitch: 260)["first_frame_full_offset"] == false)
+    let partial = [Frame(t: 0.1, offset: 100), Frame(t: 0.18, offset: 60), Frame(t: 0.25, offset: 0)]
+    #expect(SpaceWheelMotionCurve.conditions(frames: partial, from: 260, pitch: 260)["first_frame_full_offset"] == false)
     let jump = [Frame(t: 0.01, offset: 260), Frame(t: 0.065, offset: 190), Frame(t: 0.1, offset: 0)]
     #expect(SpaceWheelMotionCurve.conditions(frames: jump, from: 260, pitch: 260)["no_late_jump"] == false)
     let restart = [Frame(t: 0.01, offset: 260), Frame(t: 0.03, offset: 200), Frame(t: 0.05, offset: 250), Frame(t: 0.3, offset: 0)]
