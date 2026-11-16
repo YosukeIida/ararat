@@ -1990,6 +1990,19 @@ public final class SidebarView: NSView {
                 refreshLook(offset: from)
                 updateDockSelection(offset: from)
                 for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + from, 0, 0) }
+                // Why not start after flush: it does not wait for an enclosing transaction's completion.
+                let generation = scrollGeneration
+                CATransaction.setCompletionBlock { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self, self.scrollGeneration == generation else { return }
+                        self.traceSpaceWheelMotion("wheel-preparation-completed")
+                        self.sampleWheelMotion(source: "preparation-completed")
+                        CATransaction.begin()
+                        CATransaction.setDisableActions(true)
+                        self.settleScroll(from: from, switched: switched, freshClock: true)
+                        CATransaction.commit()
+                    }
+                }
                 traceSpaceWheelMotion("wheel-preparation-commit")
                 CATransaction.commit()
                 window?.displayIfNeeded()
@@ -1997,8 +2010,9 @@ public final class SidebarView: NSView {
                 traceSpaceWheelMotion("wheel-preparation-committed")
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
+            } else {
+                settleScroll(from: from, switched: switched)
             }
-            settleScroll(from: from, switched: switched, freshClock: input.kind == .wheel)
             if excess > 0 { returnPullIndicator(excess: excess) }
             return (true, "settle \(logicalIndex)->\(index)\(switched ? " switched" : "")")
         }
@@ -2034,6 +2048,8 @@ public final class SidebarView: NSView {
                     "model": Double(view.layer?.transform.m41 ?? 0),
                     "offset": view.layer?.presentation().map { Double($0.transform.m41) } as Any? ?? NSNull(),
                     "animation": view.layer?.animation(forKey: "space.scroll") != nil,
+                    "has_presentation": view.layer?.presentation() != nil,
+                    "layer_attached": view.layer?.superlayer != nil,
                     "active": view === pageView,
                     "hidden": view.isHidden]
         }
@@ -2285,6 +2301,7 @@ public final class SidebarView: NSView {
         CATransaction.setCompletionBlock { [weak self] in
             Task { @MainActor in
                 guard let self, self.scrollGeneration == generation else { return }
+                self.traceSpaceWheelMotion("spring-completed")
                 self.finishScrollPresentation()
             }
         }
@@ -2304,6 +2321,7 @@ public final class SidebarView: NSView {
             view.layer?.add(spring, forKey: "space.scroll")
         }
         CATransaction.commit()
+        traceSpaceWheelMotion("spring-committed")
         sampleWheelMotion(source: "animation-added")
     }
 

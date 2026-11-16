@@ -585,6 +585,7 @@ func wheelViewSlidesAndChainsFromPresentationRatherThanModel() async throws {
     sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
     #expect(sidebar.spaceShown == 1)
     let current = try currentScrollColumn(sidebar)
+    try await waitUntil { current.layer?.animation(forKey: "space.scroll") != nil }
     let first = try #require(current.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
     #expect(first.fromValue as? Double == 240)
     #expect(first.toValue as? Double == 0)
@@ -592,6 +593,7 @@ func wheelViewSlidesAndChainsFromPresentationRatherThanModel() async throws {
     try await installPresentedOffset(64, on: current)
     sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100.250))
     #expect(sidebar.spaceShown == 2)
+    try await waitUntil { current.layer?.animation(forKey: "space.scroll") != nil }
     let chained = try #require(try currentScrollColumn(sidebar).layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
     #expect(chained.fromValue as? Double == 304)
     #expect(chained.toValue as? Double == 0)
@@ -603,6 +605,7 @@ func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
     defer { window.orderOut(nil); window.contentView = nil }
     sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
     let current = try currentScrollColumn(sidebar)
+    try await waitUntil { current.layer?.animation(forKey: "space.scroll") != nil }
     window.displayIfNeeded()
     try await installPresentedOffset(64, on: current)
     sidebar.scrollWheel(with: trackpadEvent(dx: -20, phase: .began, time: 100.050))
@@ -616,7 +619,7 @@ func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
 }
 
 @Test(arguments: [0.0, 0.08]) @MainActor
-func wheelSpringStartsAfterPreparedTransactionAndLookWork(lookDelay: Double) throws {
+func wheelSpringStartsAfterPreparedTransactionAndLookWork(lookDelay: Double) async throws {
     let (window, sidebar) = scrollTestWindow()
     defer { window.contentView = nil }
     sidebar.showSpaceWithoutNotification(id: "space-2")
@@ -632,12 +635,15 @@ func wheelSpringStartsAfterPreparedTransactionAndLookWork(lookDelay: Double) thr
     sidebar.scrollWheel(with: trackpadEvent(dx: 2, phase: nil, time: 100))
     let current = try currentScrollColumn(sidebar)
     let layer = try #require(current.layer)
+    #expect(layer.animation(forKey: "space.scroll") == nil)
+    try await waitUntil { layer.animation(forKey: "space.scroll") != nil }
     let spring = try #require(layer.animation(forKey: "space.scroll") as? CASpringAnimation)
     #expect(delayed)
     #expect(spring.fromValue as? Double == -240)
     let committed = try #require(trace.marks.first { $0["name"] as? String == "wheel-preparation-committed" }?["t"] as? Double)
     let started = try #require(trace.marks.first { $0["name"] as? String == "animation-start" }?["t"] as? Double)
-    #expect(started >= committed)
+    let completed = try #require(trace.marks.first { $0["name"] as? String == "wheel-preparation-completed" }?["t"] as? Double)
+    #expect(completed >= committed && started >= completed)
     #expect(!window.isVisible)
     trace.finish("offscreen-clock-test")
 }
@@ -654,6 +660,7 @@ func storeRepliesKeepTheSpaceSpringAndApplyLatestRowsAfterLanding(route: String)
             sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
         }
         let column = try currentScrollColumn(sidebar)
+        try await waitUntil { column.layer?.animation(forKey: "space.scroll") != nil }
         let spring = try #require(column.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
         var reply = scrollTestSnapshot()
         reply.shownSpaceId = "space-1"
@@ -681,7 +688,7 @@ func storeRepliesKeepTheSpaceSpringAndApplyLatestRowsAfterLanding(route: String)
 }
 
 @Test(arguments: [false, true]) @MainActor
-func idlePrebuildKeepsPreviewConstructionOffTheWheelSwitch(prebuild: Bool) throws {
+func idlePrebuildKeepsPreviewConstructionOffTheWheelSwitch(prebuild: Bool) async throws {
     let (window, sidebar) = scrollTestWindow(spaces: 4)
     defer { window.contentView = nil }
     sidebar.showSpaceWithoutNotification(id: "space-2")
@@ -693,6 +700,7 @@ func idlePrebuildKeepsPreviewConstructionOffTheWheelSwitch(prebuild: Bool) throw
         .compactMap { $0["detail"] as? String }
     #expect(sources == Array(repeating: prebuild ? "prepared" : "cold", count: 2))
     #expect(!window.isVisible)
+    try await waitUntil { sidebar.lookSampling != nil }
     trace.finish(prebuild ? "offscreen-prebuilt-switch" : "offscreen-cold-switch")
 }
 
@@ -712,11 +720,12 @@ func interruptingASpringAppliesThePendingSnapshotBeforeResolvingTheTargetSpace()
 }
 
 @Test @MainActor
-func aReindexedSpaceAcknowledgementKeepsTheSpringOnTheSameSpaceID() throws {
+func aReindexedSpaceAcknowledgementKeepsTheSpringOnTheSameSpaceID() async throws {
     let (window, sidebar) = scrollTestWindow()
     defer { window.contentView = nil }
     sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
     let column = try currentScrollColumn(sidebar)
+    try await waitUntil { column.layer?.animation(forKey: "space.scroll") != nil }
     var reply = scrollTestSnapshot()
     reply.spaces.removeFirst()
     reply.shownSpaceId = "space-1"

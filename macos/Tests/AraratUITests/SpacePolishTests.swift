@@ -148,6 +148,10 @@ private func polishCounts(_ sidebar: SidebarView) -> [Int] {
 private func finishPolishScroll(_ sidebar: SidebarView, switching: () -> Void = {}) async throws {
     CATransaction.begin()
     switching()
+    CATransaction.commit()
+    CATransaction.flush()
+    try await waitUntil { sidebar.lookSampling != nil || !polishViews(sidebar).contains { $0 is SidebarView && $0 !== sidebar } }
+    CATransaction.begin()
     CATransaction.setDisableActions(true)
     for view in polishViews(sidebar) { view.layer?.removeAnimation(forKey: "space.scroll") }
     CATransaction.commit()
@@ -256,6 +260,7 @@ func sampledSpaceFramesKeepEachPagesHeadingPinsAndRowsTogether() async throws {
             sidebar.layer?.speed = 0
             sidebar.layer?.timeOffset = 1
             sidebar.scrollWheel(with: polishScroll(-5, nil, eventTime))
+            try await waitUntil { current.layer?.animation(forKey: "space.scroll") != nil }
             let animation = CABasicAnimation(keyPath: "transform.translation.x")
             animation.fromValue = 64
             animation.toValue = 64
