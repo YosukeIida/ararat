@@ -13,6 +13,9 @@ public final class SettingsWindowController: NSWindowController {
     /// U27i N1: a recording left open when the window closes would keep the Carbon hot key
     /// unregistered until Settings reopens, so the close ends it.
     private var littleWindowRecordingCloseObserver: NSObjectProtocol?
+    /// P5b: the default-browser row's status is LaunchServices', and the user may change it in
+    /// System Settings while Settings is open, so the app's activation reads it again.
+    private var activationObserver: NSObjectProtocol?
     /// U27x (design decision B): the pane's Remove… is our AppKit sheet, and this window owns it.
     private var removeSheet: NSAlert?
     private var removeSheetMonitor: Any?
@@ -49,6 +52,10 @@ public final class SettingsWindowController: NSWindowController {
                 self?.dismissRemoveSheet()
             }
         }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.refreshDefaultBrowser() }
+        }
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -73,6 +80,7 @@ public final class SettingsWindowController: NSWindowController {
         model.cancelLittleWindowHotKeyRecording()
         model.readShortcuts()
         model.airTraffic.load()
+        model.readGeneral()
         model.readSpaceScrollDirection()
         model.readAppearance()
         model.readLittleWindow()
@@ -128,6 +136,38 @@ public final class SettingsWindowController: NSWindowController {
     /// through the host, and Clear browsing data runs for the profile the sheet names.
     public func setPrivacySettings(host: PrivacySettingsHost) {
         model.privacyHost = host
+    }
+
+    /// P5b: the General pane's seams. The app hands in LaunchServices' status and setter (a check
+    /// hands in fakes, so no check changes the host's handler) and the handler that pushes a
+    /// written downloads record into Chromium's prefs. The folder row's panel is this window's,
+    /// because a sheet needs a window; the check injects the URL into the model instead.
+    public func setGeneralSettings(status: DefaultBrowserStatus = LaunchServicesDefaultBrowserStatus(),
+                                   setter: DefaultBrowserSetter = LaunchServicesDefaultBrowser(),
+                                   downloadsApplied: @escaping (DownloadDevice) -> Void) {
+        model.defaultBrowserStatus = status
+        model.defaultBrowserSetter = setter
+        model.downloadsApplied = downloadsApplied
+        model.chooseDownloadFolder = { [weak self] in self?.chooseDownloadFolder() }
+    }
+
+    /// P5b: the folder row's Choose… — the system's own panel over the settings window. A
+    /// cancelled panel writes nothing, so the stored folder stays what the pane shows.
+    public func chooseDownloadFolder() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.directoryURL = URL(fileURLWithPath: model.downloads.directory.isEmpty
+            ? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
+            : model.downloads.directory)
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.model.setDownloadDirectory(url)
+        }
     }
 
     /// U27x: the engine side of the Extensions pane. The app hands in the AraratHostAPI bridge,
@@ -423,6 +463,8 @@ private struct SettingsDetail: View {
                 VStack(spacing: 10) {
                     header
                     switch model.page {
+                    case .general:
+                        SettingsGeneralSection(model: model)
                     case .tabs:
                         card("width", title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt.") { Button("Reset to default", action: model.resetWidth) }
                         card("archive-after", title: "Archive Today's tabs after", subtitle: model.archiveSubtitle) {

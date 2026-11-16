@@ -10,7 +10,7 @@ final class RelaunchWindowsCheck {
   private var finished = false
   init(runtime: Runtime) { self.runtime = runtime }
 
-  func tick(seeding: Bool) {
+  func tick(seeding: Bool, newWindow: Bool) {
     guard !finished, let runtime, let session = runtime.adapter?.session else { return }
     do {
       if seeding && !seeded {
@@ -18,6 +18,7 @@ final class RelaunchWindowsCheck {
         let ids = [runtime.windowID, UUID().uuidString, UUID().uuidString]
         let kept: [KeptWindow] = try session.queue.sync {
           guard let store = session.store else { throw NSError(domain: "relaunch-windows.store", code: 1) }
+          if newWindow { _ = try store.setStartup(windowId: runtime.windowID, startup: .newWindow) }
           for (index, id) in ids.enumerated() {
             _ = try store.createSpace(windowId: id, name: "Restore \(index)", spaceId: "restore-\(index)")
             let first = try store.createTab(windowId: id, url: "data:text/html,<title>Restore \(index) A</title>")
@@ -42,6 +43,10 @@ final class RelaunchWindowsCheck {
           window.container?.resizeHandle.sidebarWidth = CGFloat(220 + index * 30)
           if index == 1 { window.performWorkspaceCommand("toggle_sidebar") }
         }
+      }
+      if newWindow && !seeding {
+        try verifyNewWindow(runtime: runtime, session: session)
+        return
       }
       let windows = [runtime] + runtime.children
       guard windows.count == 3, session.restoringWindows.isEmpty else { return }
@@ -73,7 +78,7 @@ final class RelaunchWindowsCheck {
       states.sort { ($0["id"] as! String) < ($1["id"] as! String) }
       if seeding {
         try session.queue.sync { try session.store?.flush() }
-        let ready: [String: Any] = ["ready": true, "windows": states]
+        let ready: [String: Any] = ["ready": true, "windows": states, "newest_space": records.first?.shownSpace ?? ""]
         let data = try JSONSerialization.data(withJSONObject: ready, options: [.sortedKeys])
         print(String(decoding: data, as: UTF8.self)); fflush(stdout)
         finished = true
@@ -94,4 +99,41 @@ final class RelaunchWindowsCheck {
       runtime.finishBrowserCheck(ok: false, values: ["error": String(describing: error)])
     }
   }
+
+  private func verifyNewWindow(runtime: Runtime, session: WorkspaceSession) throws {
+    guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-relaunch-expected=") }),
+          let data = Data(base64Encoded: String(argument.dropFirst("--ararat-relaunch-expected=".count))),
+          let expected = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let oldWindows = expected["windows"] as? [[String: Any]], oldWindows.count == 3,
+          let newestSpace = expected["newest_space"] as? String, !newestSpace.isEmpty,
+          let symbol = dlsym(Launcher.handle, "AraratCheckCrashState") else {
+      throw NSError(domain: "relaunch-windows-new.expected", code: 1)
+    }
+    let check = unsafeBitCast(symbol, to: (@convention(c) (UnsafeRawPointer) -> UnsafeRawPointer?).self)
+    let profile = "Default" as NSString
+    guard let pointer = check(Unmanaged.passUnretained(profile).toOpaque()),
+          let crash = Unmanaged<NSDictionary>.fromOpaque(pointer).takeUnretainedValue() as? [String: Bool],
+          let waiting = crash["waiting_for_ack"] else {
+      throw NSError(domain: "relaunch-windows-new.crash-state", code: 1)
+    }
+    let (records, shown) = session.queue.sync {
+      (session.store?.keptWindows() ?? [], session.store?.snapshot(windowId: runtime.windowID).shownSpaceId)
+    }
+    let windows = [runtime] + runtime.children
+    let conditions = [
+      "one_fresh_window": windows.count == 1 && windows.allSatisfy { $0.hasUsableHost }
+        && !oldWindows.contains { $0["id"] as? String == runtime.windowID },
+      "newest_space": shown == newestSpace,
+      "only_new_record": records.map(\.id) == [runtime.windowID],
+      "no_pending_restores": session.restoringWindows.isEmpty && runtime.launchRestoreWindows.isEmpty,
+      "crash_acknowledged": runtime.crashRecoveryAcknowledged && !waiting,
+    ]
+    finished = true
+    runtime.finishBrowserCheck(ok: conditions.values.allSatisfy { $0 },
+                               values: ["conditions": conditions, "window": runtime.windowID,
+                                        "space": shown ?? "", "expected_space": newestSpace,
+                                        "kept_windows": records.map(\.id), "waiting_for_ack": waiting,
+                                        "crash_acknowledged": runtime.crashRecoveryAcknowledged])
+  }
+
 }

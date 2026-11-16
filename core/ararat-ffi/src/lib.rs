@@ -251,6 +251,10 @@ impl WorkspaceStore {
         RoutingDecision { rule_id, destination: routing.route(&url, &spaces).into() }
     }
 
+    pub fn most_recent_space(&self) -> Option<String> {
+        self.workspace.lock().unwrap().routing_spaces().recency.first().cloned()
+    }
+
     // The pane's "Deleted space" menus read the core's one answer, not a Swift-side compare.
     pub fn deleted_space_destinations(&self) -> Vec<DeletedDestination> {
         self.workspace.lock().unwrap().deleted_space_destinations().into_iter()
@@ -393,7 +397,19 @@ impl WorkspaceStore {
     pub fn kept_windows(&self) -> Vec<KeptWindow> {
         let workspace = self.workspace.lock().unwrap();
         workspace.kept_windows().into_iter().filter(|_| !self.private)
-            .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at, presentation: WindowPresentation { frame: window.frame.map(Into::into), sidebar_width: window.sidebar_width, sidebar_hidden: window.sidebar_hidden } }).collect()
+            .map(|window| KeptWindow { shown_space: workspace.shown_space(&window.id).map(str::to_owned),
+                                       id: window.id, changed_at: window.changed_at,
+                                       presentation: WindowPresentation { frame: window.frame.map(Into::into), sidebar_width: window.sidebar_width, sidebar_hidden: window.sidebar_hidden } }).collect()
+    }
+
+    // P5b: When Ararat opens is Open a new window, so the launch throws the kept records away as
+    // closing each window did; nothing piles up for a later restore.
+    pub fn discard_kept_windows(&self) -> Result<(), CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.discard_kept_windows();
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
     }
 
     pub fn pending_history_purges(&self) -> Result<Vec<HistoryPurge>, CoreError> {
@@ -741,6 +757,38 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    // P5b: the General pane's When Ararat opens, the same synced settings record. The app reads
+    // it at the launch site before the first window adopts a kept Window record or starts a fresh
+    // one; the core itself restores nothing yet (P5c).
+    pub fn set_startup(&self, window_id: String, startup: StartupBehavior) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_startup(startup.into());
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
+    // P5b: the General pane's download folder and ask-each-file switch, a device record (F3: the
+    // folder is a path of this Mac, so it is not in the synced Settings and never enters the sync
+    // journal). The app pushes it into Chromium's prefs at the launch's first window and after
+    // every write; a folder the engine cannot use (a relative path) is refused here.
+    pub fn download_device(&self) -> DownloadDevice {
+        self.workspace.lock().unwrap().download_device.clone().into()
+    }
+
+    pub fn set_download_device(&self, device: DownloadDevice) -> Result<(), CoreError> {
+        self.admit(true)?;
+        let device: ararat_core::model::DownloadDevice = device.into();
+        if let Some(reason) = device.invalid() {
+            return Err(CoreError::Edit { message: reason.to_string() });
+        }
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_download_device(device);
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
+    }
+
     pub fn little_window_device(&self) -> LittleWindowDevice {
         self.workspace.lock().unwrap().little_window_device.clone().into()
     }
@@ -1072,6 +1120,8 @@ pub struct WorkspaceSettings {
     pub site_defaults: SiteDefaults,
     /// U27p: the Privacy pane's cookies, GPC and history retention.
     pub privacy: PrivacySettings,
+    /// P5b: what the first window of a launch does.
+    pub startup: StartupBehavior,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1082,7 +1132,8 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             little_window_close_after: settings.little_window_close_after,
             theme: settings.theme.into(),
             site_defaults: settings.site_defaults.into(),
-            privacy: settings.privacy.into() }
+            privacy: settings.privacy.into(),
+            startup: settings.startup.into() }
     }
 }
 
@@ -1247,6 +1298,43 @@ impl From<Theme> for ararat_core::model::Theme {
     }
 }
 
+/// P5b: what launching Ararat does with the kept windows. RestoreWindows is the behaviour before
+/// the setting and the pane's default; NewWindow starts one fresh window on the most recent space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum StartupBehavior { RestoreWindows, NewWindow }
+impl From<ararat_core::model::StartupBehavior> for StartupBehavior {
+    fn from(value: ararat_core::model::StartupBehavior) -> Self {
+        use ararat_core::model::StartupBehavior as Core;
+        match value { Core::RestoreWindows => Self::RestoreWindows, Core::NewWindow => Self::NewWindow }
+    }
+}
+impl From<StartupBehavior> for ararat_core::model::StartupBehavior {
+    fn from(value: StartupBehavior) -> Self {
+        use ararat_core::model::StartupBehavior as Core;
+        match value { StartupBehavior::RestoreWindows => Core::RestoreWindows, StartupBehavior::NewWindow => Core::NewWindow }
+    }
+}
+
+/// P5b: Settings › General's downloads rows as the pane reads and writes them: the folder Chromium
+/// saves to (empty is Chromium's own Downloads default) and whether it asks where to save each
+/// file. A device record in the core (DownloadDevice), so the folder of this Mac never enters the
+/// sync journal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct DownloadDevice {
+    pub directory: String,
+    pub ask_where_to_save: bool,
+}
+impl From<ararat_core::model::DownloadDevice> for DownloadDevice {
+    fn from(value: ararat_core::model::DownloadDevice) -> Self {
+        Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
+    }
+}
+impl From<DownloadDevice> for ararat_core::model::DownloadDevice {
+    fn from(value: DownloadDevice) -> Self {
+        Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
+    }
+}
+
 // U27h D8: the Little Window's frame on this device.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct LittleWindowFrame {
@@ -1361,6 +1449,9 @@ pub struct KeptWindow {
     pub id: String,
     pub changed_at: u64,
     pub presentation: WindowPresentation,
+    /// P5b: where this record's window last was — the same space a launch that adopts it would
+    /// show, so Open a new window opens there too (review 1 F9).
+    pub shown_space: Option<String>,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]

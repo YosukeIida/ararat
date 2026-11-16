@@ -202,6 +202,9 @@ pub struct Workspace {
     // The Little Window's per-device switches (U27i D8): whether this Mac remembers the frame
     // and which global shortcut it registers.
     pub little_window_device: LittleWindowDevice,
+    // Settings › General's downloads rows (P5b), per device: the folder this Mac saves to and
+    // whether it asks for each file.
+    pub download_device: DownloadDevice,
     pub history_purges: HashMap<Id, (Profile, Id, u64)>,
     pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
@@ -223,6 +226,7 @@ pub enum Kind {
     Window,
     LittleWindow,
     LittleWindowDevice,
+    DownloadDevice,
     ArchiveAfter,
     LastSelected,
     FolderState,
@@ -244,6 +248,7 @@ impl Kind {
             Kind::Window => "window",
             Kind::LittleWindow => "little_window",
             Kind::LittleWindowDevice => "little_window_device",
+            Kind::DownloadDevice => "download_device",
             Kind::ArchiveAfter => "archive_after",
             Kind::LastSelected => "last_selected",
             Kind::FolderState => "folder_state",
@@ -257,7 +262,7 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::LittleWindowDevice, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::LittleWindowDevice, Kind::DownloadDevice, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -274,6 +279,7 @@ pub enum Record {
     Window(WindowState),
     LittleWindow(LittleWindowFrame),
     LittleWindowDevice(LittleWindowDevice),
+    DownloadDevice(DownloadDevice),
     Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
@@ -294,6 +300,7 @@ impl Record {
             Record::Window(_) => Kind::Window,
             Record::LittleWindow(_) => Kind::LittleWindow,
             Record::LittleWindowDevice(_) => Kind::LittleWindowDevice,
+            Record::DownloadDevice(_) => Kind::DownloadDevice,
             Record::Item(_) => Kind::Item,
             Record::Favorites { .. } => Kind::Favorites,
             Record::RoutingRule { .. } => Kind::RoutingRule,
@@ -315,6 +322,7 @@ impl Record {
             Record::Window(window) => window.id.clone(),
             Record::LittleWindow(_) => "workspace".into(),
             Record::LittleWindowDevice(_) => "workspace".into(),
+            Record::DownloadDevice(_) => "workspace".into(),
             Record::Item(i) => i.id.clone(),
             Record::Favorites { profile, .. } => profile_id(profile),
             Record::RoutingRule { rule, .. } => rule.id.clone(),
@@ -336,6 +344,7 @@ impl Record {
             Record::Window(window) => serde_json::to_string(window),
             Record::LittleWindow(frame) => serde_json::to_string(frame),
             Record::LittleWindowDevice(device) => serde_json::to_string(device),
+            Record::DownloadDevice(device) => serde_json::to_string(device),
             Record::Item(i) => serde_json::to_string(i),
             Record::Favorites { container, .. } => serde_json::to_string(container),
             Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
@@ -360,6 +369,7 @@ impl Record {
             Kind::Window => Record::Window(serde_json::from_str(body)?),
             Kind::LittleWindow => Record::LittleWindow(serde_json::from_str(body)?),
             Kind::LittleWindowDevice => Record::LittleWindowDevice(serde_json::from_str(body)?),
+            Kind::DownloadDevice => Record::DownloadDevice(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
             Kind::Favorites => Record::Favorites {
                 profile: serde_json::from_str(id)?,
@@ -526,6 +536,8 @@ impl Workspace {
             Op::Delete(Kind::LittleWindow, _) => { self.little_window_frame = None; },
             Op::Put(Record::LittleWindowDevice(device)) => { self.little_window_device = device.clone(); },
             Op::Delete(Kind::LittleWindowDevice, _) => { self.little_window_device = LittleWindowDevice::default(); },
+            Op::Put(Record::DownloadDevice(device)) => { self.download_device = device.clone(); },
+            Op::Delete(Kind::DownloadDevice, _) => { self.download_device = DownloadDevice::default(); },
             Op::Put(Record::Space(space)) => {
                 self.spaces.retain(|s| s.id != space.id);
                 self.spaces.push(space.clone());
@@ -571,7 +583,7 @@ impl Workspace {
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain((self.little_window_device != LittleWindowDevice::default()).then(|| Record::LittleWindowDevice(self.little_window_device.clone()))).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
+        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain((self.little_window_device != LittleWindowDevice::default()).then(|| Record::LittleWindowDevice(self.little_window_device.clone()))).chain((self.download_device != DownloadDevice::default()).then(|| Record::DownloadDevice(self.download_device.clone()))).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 
@@ -792,6 +804,36 @@ impl Default for PrivacySettings {
     }
 }
 
+// P5b: what launching Ararat does with the windows it kept. Restore is the behaviour the app
+// had before the setting existed and the board's default: the launch adopts the newest kept
+// Window record. NewWindow starts one fresh window on the most recent space and leaves every
+// kept Window record where it is, for a later restore (P5c restores all of them).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartupBehavior { #[default] RestoreWindows, NewWindow }
+
+// P5b: Settings › General's downloads rows — the folder Chromium saves to and whether it asks
+// for each file. The values stay on this device (design's call, review 1 F3): the folder is an
+// absolute path of one Mac, so a second Mac receiving it through the sync journal would save into
+// a folder it may not have, and the ask switch is this Mac's own way of working. The record is the
+// source for the engine, which pushes it into Chromium's prefs; an empty directory is Chromium's
+// own default (the account's Downloads folder), which the pane shows as "Downloads". Like the
+// Little Window's device record this one is new in this unit and always written whole, so it
+// carries no serde defaults.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DownloadDevice {
+    pub directory: String,
+    pub ask_where_to_save: bool,
+}
+
+impl DownloadDevice {
+    /// A directory the engine can be given: empty (Chromium's default) or an absolute path. A
+    /// relative path names no folder a download can be saved in, so it never reaches a pref.
+    pub fn invalid(&self) -> Option<&'static str> {
+        (!self.directory.is_empty() && !self.directory.starts_with('/'))
+            .then_some("a download folder must be an absolute path")
+    }
+}
+
 // The workspace's own preferences, one synced record (D5). The built-in value is derived
 // rather than stored: to_ops writes a record only for a change from it, so a workspace that
 // never touched a setting emits nothing and a reset is a delete (like the routing default).
@@ -802,7 +844,9 @@ impl Default for PrivacySettings {
 // second Mac shows the same theme. U27w's seven site defaults (W1) ride here too: one record,
 // so a second Mac asks, allows and blocks the same seven kinds. U27p's privacy record (P2, P3)
 // rides here as well: the cookie choice, the GPC signal and the history retention travel with
-// the workspace.
+// the workspace. P5b's When Ararat opens rides here too: the choice is a preference of the
+// person, not of the Mac the windows were kept on. P5b's downloads pair does not: it is a device
+// record (DownloadDevice), because its folder is a path of this Mac.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -815,13 +859,16 @@ pub struct Settings {
     pub site_defaults: SiteDefaults,
     /// U27p: the Privacy pane's cookies, GPC and history retention.
     pub privacy: PrivacySettings,
+    /// P5b: what the first window of a launch does (restore the kept windows or open a new one).
+    pub startup: StartupBehavior,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
             little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System,
-            site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default() }
+            site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default(),
+            startup: StartupBehavior::RestoreWindows }
     }
 }
 

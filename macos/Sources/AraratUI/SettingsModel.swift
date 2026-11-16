@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, space(String), site(String, String) }
+    enum Page: Hashable { case general, websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -82,6 +82,26 @@ public final class SettingsModel: ObservableObject {
     @Published private(set) var siteProfiles: [String] = []
     var siteHost: SiteSettingsHost?
     var siteDefaultsApplied: (SiteDefaults) -> Void = { _ in }
+    /// P5b: the General pane. The default-browser status is read through LaunchServices and
+    /// refreshed when the app becomes active (the user may change it in System Settings), Make
+    /// Default asks the same setter onboarding's screen 4 uses, and When Ararat opens and the
+    /// downloads pair are the synced core record — the app pushes the downloads record into
+    /// Chromium's prefs on every write and at every window start. The folder panel is the
+    /// window's, so no model test opens one.
+    @Published private(set) var defaultBrowserIsDefault = false
+    @Published var startup: StartupBehavior = .restoreWindows
+    @Published var downloads: DownloadDevice = .board
+    /// Whether the last `readGeneral` answered both core reads. The check waits for it before
+    /// comparing the rows, so its conditions cannot pass on the model's initial values.
+    @Published private(set) var generalLoaded = false
+    var defaultBrowserStatus: DefaultBrowserStatus = LaunchServicesDefaultBrowserStatus()
+    var defaultBrowserSetter: DefaultBrowserSetter = LaunchServicesDefaultBrowser()
+    var downloadsApplied: (DownloadDevice) -> Void = { _ in }
+    /// The window's folder chooser: it presents the panel and calls `setDownloadDirectory` with
+    /// the answer. A check injects the URL instead, so no panel is shown under a check.
+    var chooseDownloadFolder: (() -> Void)?
+    private var startupRead = false
+    private var downloadsRead = false
     /// U27p P2/P3: the Privacy pane. The cookie choice, GPC signal and history retention are the
     /// synced core record, read on every open; a write goes to the core and then to every regular
     /// profile through the engine. `privacyProfile` is the profile of the window that opened
@@ -265,6 +285,19 @@ public final class SettingsModel: ObservableObject {
     public static func extensionSwitchMarker(_ id: String) -> String { "extension-switch-" + id }
     public static func extensionReviewMarker(_ id: String) -> String { "extension-review-" + id }
     public static func extensionMenuMarker(_ id: String) -> String { "extension-menu-" + id }
+    /// P5b's General pane: the default-browser row and its two faces, When Ararat opens and its
+    /// menu, then the download folder row, its Choose… button and the ask-each-file switch. A
+    /// search result and its row share the row id, as the other panes' do.
+    public static let defaultBrowserRowID = "default-browser"
+    public static let defaultBrowserStatusMarker = "default-browser-status"
+    public static let makeDefaultButtonMarker = "make-default-button"
+    public static let startupRowID = "startup"
+    public static let startupMenuMarker = "startup-menu"
+    public static let downloadsFolderRowID = "downloads-folder"
+    public static let downloadsFolderMarker = "downloads-folder-name"
+    public static let downloadsChooseButtonMarker = "downloads-choose-button"
+    public static let downloadsAskRowID = "downloads-ask"
+    public static let downloadsAskSwitchMarker = "downloads-ask-switch"
     /// U27p's Privacy pane: the Clear row and its button, the cookie menu, the GPC switch and the
     /// history menu, then the clear sheet's title, range, profile, type rows and two buttons.
     public static let privacyClearRowID = "privacy-clear"
@@ -980,6 +1013,102 @@ public final class SettingsModel: ObservableObject {
         guard !extensionProfile.isEmpty else { return }
         extensionManage(extensionProfile, id)
     }
+
+    // MARK: P5b, the General pane
+
+    /// Reads the pane on every open: the LaunchServices status now, then the two core records.
+    /// The pane counts as loaded only once both have answered, so the check cannot read the
+    /// model's initial values as the stored ones.
+    func readGeneral() {
+        generalLoaded = false
+        startupRead = false
+        downloadsRead = false
+        defaultBrowserIsDefault = defaultBrowserStatus.isDefaultBrowser()
+        let generation = contextGeneration
+        adapter.startupBehavior { [weak self] result in
+            guard let self, self.contextGeneration == generation else { return }
+            guard case .success(let value) = result else { return }
+            self.startup = value
+            self.startupRead = true
+            self.generalLoaded = self.startupRead && self.downloadsRead
+        }
+        adapter.downloadDevice { [weak self] result in
+            guard let self, self.contextGeneration == generation else { return }
+            guard case .success(let value) = result else { return }
+            self.downloads = value
+            self.downloadsRead = true
+            self.generalLoaded = self.startupRead && self.downloadsRead
+        }
+    }
+
+    /// Reads the status again. The window calls this when the app becomes active, because the
+    /// user may have changed the default browser in System Settings while Ararat was away.
+    func refreshDefaultBrowser() {
+        defaultBrowserIsDefault = defaultBrowserStatus.isDefaultBrowser()
+    }
+
+    /// Make Default asks the system. macOS shows its own confirmation, and the answer arrives when
+    /// the app becomes active next, so the row reads the status again then rather than guessing.
+    func makeDefaultBrowser() {
+        defaultBrowserSetter.requestDefaultBrowser()
+    }
+
+    /// When Ararat opens: the synced record. The launch site reads it at the next window start.
+    func setStartup(_ value: StartupBehavior) {
+        guard startup != value else { return }
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setStartupBehavior(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.startup = value
+        }
+    }
+
+    /// Save downloads to: the folder the chooser answered, as the whole device record. The app
+    /// pushes the record into Chromium's prefs for every regular profile.
+    func setDownloadDirectory(_ url: URL) {
+        var value = downloads
+        value.directory = url.path
+        setDownloads(value)
+    }
+
+    /// Ask where to save each file: the same record, so the folder and the switch never disagree.
+    func setAskWhereToSave(_ value: Bool) {
+        var settings = downloads
+        settings.askWhereToSave = value
+        setDownloads(settings)
+    }
+
+    /// F3: the pair is a device record, so a write does not produce a workspace snapshot; a refusal
+    /// (a relative folder) leaves the pane where it was and shows the reason.
+    func setDownloads(_ value: DownloadDevice) {
+        guard downloads != value else { return }
+        let generation = contextGeneration
+        adapter.setDownloadDevice(value) { [weak self] result in
+            guard let self else { return }
+            guard case .success = result else {
+                if case .failure(let error) = result { self.report(error) }
+                return
+            }
+            guard self.contextGeneration == generation else { return }
+            self.downloads = value
+            self.downloadsApplied(value)
+        }
+    }
+
+    /// The folder the row names, with Chromium's own default standing in for an empty record.
+    var downloadFolderName: String { downloads.folderName }
+
+    /// The board's two startup choices (E-General), in the pane's words.
+    static func startupLabel(_ value: StartupBehavior) -> String {
+        switch value {
+        case .restoreWindows: "Restore windows and tabs"
+        case .newWindow: "Open a new window"
+        }
+    }
+
+    var startupLabel: String { Self.startupLabel(startup) }
 
     // MARK: U27p, the Privacy pane
 

@@ -1,0 +1,30 @@
+--- a/chrome/browser/ui/startup/startup_browser_creator.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator.cc
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/browser/ui/startup/startup_browser_creator.h"
++
++#include "ararat/core/ararat_hooks.h"
+ 
+ #include <stddef.h>
+ 
+@@ -155,6 +157,8 @@
+ using content::BrowserThread;
+ using content::ChildProcessSecurityPolicy;
+ 
++bool (*g_ararat_command_line_urls)(const base::CommandLine&, const base::FilePath&, Profile*) = nullptr;
++
+ namespace {
+ 
+ // Dumps the current set of the browser process's histograms to |output_file|.
+@@ -1553,6 +1557,9 @@
+     return;
+   }
+ 
++  if (g_ararat_command_line_urls &&
++      g_ararat_command_line_urls(command_line, cur_dir, profile)) return;
++
+   // Trigger immediate policy refresh when Chrome is already running.
+   // Useful for testing or forcing policy updates without waiting for
+   // the next scheduled refresh.

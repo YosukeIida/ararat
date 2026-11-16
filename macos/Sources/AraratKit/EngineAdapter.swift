@@ -753,10 +753,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return (leaves(split).count, true, dragBaseline != nil)
     }
 
-    public func openExternalURLs(_ urls: [(url: String, untrusted: Bool)]) {
+    public func openExternalURLs(_ urls: [(url: String, untrusted: Bool)], completion: @escaping () -> Void = {}) {
         queue.async {
             do {
-                guard let store = self.store else { return }
+                guard let store = self.store else { DispatchQueue.main.async(execute: completion); return }
                 var commands: [(LiveCommand, Bool)] = []
                 var snapshot: WorkspaceSnapshot?
                 for entry in urls {
@@ -772,8 +772,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 DispatchQueue.main.async {
                     for (command, untrusted) in commands { self.execute(command, external: untrusted) }
                     if let snapshot { self.deliverIfCurrent(snapshot) }
+                    completion()
                 }
-            } catch { self.report(error) }
+            } catch { self.report(error); DispatchQueue.main.async(execute: completion) }
         }
     }
 

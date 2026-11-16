@@ -47,7 +47,9 @@ extension SettingsPane {
 @MainActor
 enum SettingsRegistry {
     static let panes: [SettingsPane] = [
-        SettingsPane(id: .general, title: "General", icon: "gearshape", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .general, title: "General", icon: "gearshape",
+                     subtitle: "The browser, what opens at launch, and downloads.",
+                     page: .general, rows: generalRows),
         SettingsPane(id: .appearance, title: "Appearance", icon: "paintpalette", subtitle: "How the window looks.",
                      page: .appearance, rows: appearanceRows),
         SettingsPane(id: .websites, title: "Websites", icon: "globe",
@@ -84,6 +86,26 @@ enum SettingsRegistry {
 
     /// The search index: every built pane's rows, in the rail's order.
     static func rows(_ model: SettingsModel) -> [SettingsModel.Row] { built.flatMap { $0.rows(model) } }
+
+    /// P5b: the three E-General rows Phase 5 brings in, in the board's order. The rest of the pane
+    /// (Warn before quitting, Search engine, Show search suggestions, Check spelling) stays phase 7
+    /// and is not drawn, so no row here is a dead control.
+    static func generalRows(_ model: SettingsModel) -> [SettingsModel.Row] {
+        [SettingsModel.Row(id: SettingsModel.defaultBrowserRowID, pane: .general,
+                           title: "Default browser",
+                           subtitle: model.defaultBrowserIsDefault
+                               ? "Ararat is your default browser"
+                               : "Ararat opens links from other apps"),
+         SettingsModel.Row(id: SettingsModel.startupRowID, pane: .general,
+                           title: "When Ararat opens",
+                           subtitle: model.startupLabel),
+         SettingsModel.Row(id: SettingsModel.downloadsFolderRowID, pane: .general,
+                           title: "Save downloads to",
+                           subtitle: model.downloadFolderName),
+         SettingsModel.Row(id: SettingsModel.downloadsAskRowID, pane: .general,
+                           title: "Ask where to save each file",
+                           subtitle: model.downloads.askWhereToSave ? "On" : "Off")]
+    }
 
     static func tabsRows(_ model: SettingsModel) -> [SettingsModel.Row] {
         [SettingsModel.Row(id: "width", pane: .tabs, title: "Sidebar width",
@@ -211,6 +233,7 @@ enum SettingsRegistry {
 extension SettingsModel.Page {
     var paneID: SettingsPaneID {
         switch self {
+        case .general: .general
         case .websites, .site: .websites
         case .tabs: .tabs
         case .shortcuts: .shortcuts

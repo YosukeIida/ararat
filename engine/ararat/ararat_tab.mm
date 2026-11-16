@@ -19,6 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "ui/base/page_transition_types.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
@@ -213,12 +214,15 @@ class TabContentsObserver : public content::WebContentsObserver {
 - (NSDictionary<NSString*, id>*)checkNavigationState {
   auto* args = base::CommandLine::ForCurrentProcess();
   if (!contents_ || (args->GetSwitchValueASCII("ararat-check") != "keyboard" &&
-                     args->GetSwitchValueASCII("ararat-screen") != "keyboard")) return @{};
+                     args->GetSwitchValueASCII("ararat-screen") != "keyboard" &&
+                     args->GetSwitchValueASCII("ararat-check") != "atc-routing")) return @{};
   auto* pending = contents_->GetController().GetPendingEntry();
+  auto* entry = pending ? pending : contents_->GetController().GetLastCommittedEntry();
   return @{ @"committed_url": base::SysUTF8ToNSString(contents_->GetLastCommittedURL().spec()),
             @"visible_url": base::SysUTF8ToNSString(contents_->GetVisibleURL().spec()),
             @"pending_url": pending ? base::SysUTF8ToNSString(pending->GetVirtualURL().spec()) : (id)[NSNull null],
-            @"loading": @(contents_->IsLoading()) };
+            @"loading": @(contents_->IsLoading()),
+            @"auto_toplevel": @(entry && ui::PageTransitionCoreTypeIs(entry->GetTransitionType(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL)) };
 }
 
 - (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion {

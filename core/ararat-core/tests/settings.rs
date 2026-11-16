@@ -359,3 +359,82 @@ fn an_unknown_privacy_value_is_refused_and_missing_fields_take_the_built_in() {
     assert!(matches!(parsed, Ok(Record::Settings(Settings { privacy: PrivacySettings {
         history_retention: HistoryRetention::Year, .. }, .. }))));
 }
+
+// P5b: When Ararat opens is one synced record, Restore by default (the behaviour before the
+// setting), and a reset is a tombstone. A missing field takes the built-in value, so a record
+// written before the pane existed still reads.
+#[test]
+fn the_startup_choice_starts_at_restore_and_writes_one_synced_record() {
+    use ararat_core::model::StartupBehavior;
+    assert_eq!(Workspace::default().settings.startup, StartupBehavior::RestoreWindows);
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let ops = ws.set_startup(StartupBehavior::NewWindow);
+    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))]
+        if settings.startup == StartupBehavior::NewWindow));
+    assert_eq!(ws.settings.startup, StartupBehavior::NewWindow);
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The other fields of the shared record keep their values.
+    assert!(ws.settings.new_tab_row_shown && ws.settings.theme == Theme::System);
+    // The same value again writes nothing; Restore again is a tombstone.
+    let before = ws.clone();
+    assert!(ws.set_startup(StartupBehavior::NewWindow).is_empty());
+    assert_eq!(ws, before);
+    let reset = ws.set_startup(StartupBehavior::RestoreWindows);
+    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
+    assert_eq!(ws.settings, Settings::default());
+    assert!(Record::parse(Kind::Settings, "workspace", r#"{"startup":"Later"}"#).is_err());
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"startup":"NewWindow"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { startup: StartupBehavior::NewWindow, .. }))));
+    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
+    assert!(matches!(parsed, Ok(Record::Settings(Settings { startup: StartupBehavior::RestoreWindows, .. }))));
+}
+
+// P5b (review 1 F3): the downloads pair is a device record, not part of the synced Settings, so
+// the folder of one Mac never enters the sync journal and a changed pair writes no settings row.
+// Chromium's defaults until changed (no folder, no prompt), and a reset is a tombstone.
+#[test]
+fn the_download_device_starts_at_chromiums_defaults_and_stays_out_of_the_synced_settings() {
+    use ararat_core::model::DownloadDevice;
+    assert_eq!(Workspace::default().download_device, DownloadDevice::default());
+    assert_eq!(DownloadDevice::default(), DownloadDevice { directory: String::new(), ask_where_to_save: false });
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::DownloadDevice(_)) | Op::Put(Record::Settings(_)))));
+
+    let mut ws = Workspace::default();
+    let changed = DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    let ops = ws.set_download_device(changed.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::DownloadDevice(device))] if *device == changed));
+    assert_eq!(ws.download_device, changed);
+    // Not the synced record: nothing about the downloads pair rides in Settings, so to_ops has no
+    // settings row and the pair keeps its own kind.
+    assert_eq!(ws.settings, Settings::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+    let mut peer = Workspace::default();
+    for op in &ops { peer.apply(op); }
+    assert_eq!(peer, ws);
+    // The same record again writes nothing; the folder alone keeps the switch's value.
+    let before = ws.clone();
+    assert!(ws.set_download_device(changed.clone()).is_empty());
+    assert_eq!(ws, before);
+    let folder_only = DownloadDevice { directory: String::new(), ask_where_to_save: true };
+    let ops = ws.set_download_device(folder_only.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::DownloadDevice(device))] if *device == folder_only));
+    // Back to Chromium's defaults: one tombstone of its own kind, not a settings row.
+    let reset = ws.set_download_device(DownloadDevice::default());
+    assert!(matches!(&reset[..], [Op::Delete(Kind::DownloadDevice, id)] if id == "workspace"));
+    assert_eq!(ws.download_device, DownloadDevice::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::DownloadDevice(_)))));
+    // A relative folder is refused; the record is written whole, like the Little Window's device
+    // record, so a partial body is refused rather than gaining a built-in value.
+    assert!(DownloadDevice { directory: "Desktop".into(), ask_where_to_save: false }.invalid().is_some());
+    assert!(DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: false }.invalid().is_none());
+    let parsed = Record::parse(Kind::DownloadDevice, "workspace", r#"{"ask_where_to_save":true}"#);
+    assert!(parsed.is_err());
+    let parsed = Record::parse(Kind::DownloadDevice, "workspace",
+        r#"{"directory":"/Users/someone/Desktop","ask_where_to_save":true}"#);
+    assert!(matches!(parsed, Ok(Record::DownloadDevice(DownloadDevice { ref directory, ask_where_to_save: true }))
+        if directory == "/Users/someone/Desktop"));
+}

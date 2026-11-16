@@ -21,11 +21,12 @@
      "//chrome/browser/accessibility",
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -29,5 +29,44 @@
+@@ -29,5 +29,45 @@
  # Entry point for the web app shortcut copier.
  _ChromeWebAppShortcutCopierMain
  
 +# Ararat
++_AraratApplyDownloadSettings
 +_AraratApplyPrivacySettings
 +_AraratApplySiteDefaults
 +_AraratBrowserCount
@@ -97,3 +98,13 @@
      "//base",
      "//chrome/browser:file_select_helper",
      "//chrome/browser/infobars",
+--- a/chrome/browser/ui/startup/BUILD.gn
++++ b/chrome/browser/ui/startup/BUILD.gn
+@@ -131,6 +131,7 @@
+     "url_util.cc",
+   ]
+   deps = [
++    "//ararat/core:hooks",
+     ":startup",
+     "//base",
+     "//cc/base",

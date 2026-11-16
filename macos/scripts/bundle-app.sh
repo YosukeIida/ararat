@@ -54,6 +54,8 @@ cp -- "$exe" "$app/Contents/MacOS/Ararat"
 
 plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Ararat" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName Ararat" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ararat" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier net.iodine2.ararat" "$plist"
 
 # Team-bound entitlements fail ad-hoc signing (their values carry a team
