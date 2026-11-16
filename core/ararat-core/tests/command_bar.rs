@@ -1,4 +1,4 @@
-use ararat_core::{command_bar::{self, Index, Source, Suggestion, Target}, import::arc_sidebar, model::{ItemKind, Lifecycle, Op, Record}};
+use ararat_core::{command_bar::{self, Index, Source, Suggestion, Target}, import::arc_sidebar, key_bindings::commands, model::{ItemKind, Lifecycle, Op, Record}};
 
 macro_rules! score_test {
     ($name:ident, $query:expr, $title:expr, $url:expr, $score:expr) => {
@@ -636,9 +636,13 @@ fn only_one_command_is_promoted_so_short_queries_keep_their_tabs() {
         let rows = index.query(query, &[]).rows;
         assert_eq!(rows.len(), 5, "{query}: the five rows are full");
         assert!(matches!(&rows[0].target, Target::Search { .. }), "{query}: the typed row leads");
-        // Exactly one promoted command: the highest score, then the command table's order. Every
-        // Show Space and Move to Space row scores alike, so Show Space 1 leads.
-        assert!(matches!(&rows[1].target, Target::Command { id } if id == "show_space_1"), "{query}: one command at row 2");
+        // Exactly one promoted command: the earliest row of the command table whose title holds a
+        // word starting with the query. Every Show Space and Move to Space row scores alike and so
+        // does Add Split View ("Sp" of "Split", P5d), so the table's order decides, as before.
+        let earliest = commands().into_iter()
+            .find(|command| command.title.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|word| word.starts_with(query)))
+            .expect("a command starts at a word start");
+        assert!(matches!(&rows[1].target, Target::Command { id } if id == &earliest.id), "{query}: one command at row 2: {:?}", earliest.id);
         assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1, "{query}: no second command");
         assert_eq!(rows[2..].iter().filter(|row| matches!(row.target, Target::Tab { .. })).count(), tabs, "{query}: the tabs show after it");
     }
@@ -691,6 +695,9 @@ fn a_private_command_bar_offers_only_the_commands_a_private_space_has() {
     // window keeps them; the recorded key would otherwise be silently dead there.
     assert!(ids("Clear Cache", true).contains(&"clear_cache_site".to_string()), "the site commands keep working in a private space");
     assert!(ids("Clear Cookies", true).contains(&"clear_cookies_site".to_string()));
+    // P5d: every row of a private window is in Today, which its segment menu already splits, so
+    // Add Split View is a command the private bar offers.
+    assert!(ids("Add Split View", true).contains(&"add_split_view".to_string()), "a private space can split a Today row");
 }
 
 #[test]

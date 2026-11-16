@@ -16,7 +16,12 @@ final class SplitCommandsCheck {
                       "convert_engine", "convert_top", "menu_vertical", "menu_vertical_moves", "add_left_order",
                       "separate_row", "separate_one_pane", "close_pane", "drag_indicator", "drag_left_joins",
                       "focus_after_drop", "drag_right_joins", "drop_refused", "lone_member", "lone_engine",
-                      "lone_source_split", "lone_stays", "lone_row_select", "move_leaves_split"]
+                      "lone_source_split", "lone_stays", "lone_row_select", "move_leaves_split",
+                      // P5d: the three entry points of Add Split View, from a lone tab each, and the
+                      // key on a split's member.
+                      "key_split", "key_focus", "key_new_page", "command_split", "command_focus",
+                      "command_new_page", "menu_split", "menu_focus", "menu_new_page", "split_third",
+                      "split_third_focus"]
   static let screenNames = ["capture_menu", "capture_vertical", "capture_split"]
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
@@ -32,6 +37,13 @@ final class SplitCommandsCheck {
   var draggedRight = ""
   var refusedRow = ""
   var loneMember = ""
+  // P5d: the three lone tabs its entry points act on, and the split each made.
+  var keyTab = ""
+  var commandTab = ""
+  var menuTab = ""
+  var keySplit = ""
+  var commandSplit = ""
+  var menuSplit = ""
   var frames: [String: NSRect] = [:]
   var points: [String: NSPoint] = [:]
   var parentPanes = 0
@@ -51,7 +63,9 @@ final class SplitCommandsCheck {
     let required = Self.names + (screen ? Self.screenNames : [])
     return ["conditions": Dictionary(uniqueKeysWithValues: required.map { ($0, conditions[$0] == true) }),
             "failed_conditions": required.filter { conditions[$0] != true }, "wait": waitName,
-            "images": images, "split": split, "member": loneMember, "phase": conditions.count]
+            "images": images, "split": split, "member": loneMember,
+            "add_split": ["key": keySplit, "command": commandSplit, "menu": menuSplit],
+            "phase": conditions.count]
   }
 }
 
@@ -134,6 +148,12 @@ extension Runtime {
     }
     func menuTitles(_ pane: String) -> [String]? {
       sidebar.paneMenuForCheck(paneID: pane)?.items.filter { !$0.isSeparatorItem }.map(\.title)
+    }
+    // P5d: the split that holds a row, found in the delivered snapshot (the split row names it)
+    // and confirmed by the core's own members.
+    func splitHolding(_ pane: String) -> String? {
+      guard let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) else { return nil }
+      return space.today.filter { $0.kind == .split }.first { adapter.checkSplitMembers($0.id).contains(pane) }?.id
     }
     // The pane that became a member: the one id that was not there before.
     func newMember(in members: [String], known: Set<String>) -> String? {
@@ -483,10 +503,123 @@ extension Runtime {
           check.mark("move_leaves_split", !adapter.checkSplitMembers(check.split).contains(check.loneMember)
                       && after.spaces.first { $0.id == other.id }?.today.contains { $0.id == check.loneMember } == true)
           self.show(after)
-          let result = check.diagnostics(screen: screen)
-          self.finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
+          // P5d: the three Add Split View entry points (the space the move made is the one the
+          // check keeps using, so each case starts from a lone Today tab in it).
+          self.browserCheckPhase = 27
         }
       }
+    case 27:
+      workspace.createTab(url: "https://split-commands-add-key.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("add split key tab", screen: screen); return
+        }
+        check.keyTab = id
+        self.browserCheckPhase = 28
+      }
+    case 28:
+      guard ready("add split key tab", snapshot.selectedId == check.keyTab && rowInSnapshot(check.keyTab)) else { return }
+      // The key goes to the key window; the second window took the key in phase 25, so A takes it
+      // back first (its menu item then answers, as it would for a user in A).
+      guard ready("add split key window", window.isKeyWindow) else { window.makeKeyAndOrderFront(nil); return }
+      // The key itself: Arc's ⇧⌃= as a native event through NSApp, so the menu's key equivalent
+      // is what fires (the menu item is the key's one home, as with ⌘S).
+      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .shift],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                         context: nil, characters: "+", charactersIgnoringModifiers: "=",
+                                         isARepeat: false, keyCode: 24) else { fail("no add split key event"); return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 29
+    case 29:
+      // A lone row is wrapped in a split at its place: the row first, the new pane after it.
+      let split = splitHolding(check.keyTab)
+      let members = split.map { adapter.checkSplitMembers($0) } ?? []
+      guard ready("add split key", split != nil && members.count == 2 && members.first == check.keyTab
+                  && state.panes == 2 && awaitTab(members.last ?? "")) else { return }
+      let pane = members.last
+      check.keySplit = split ?? ""
+      check.mark("key_split")
+      guard ready("add split key focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      check.mark("key_focus")
+      check.mark("key_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
+      workspace.createTab(url: "https://split-commands-add-command.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("add split command tab", screen: screen); return
+        }
+        check.commandTab = id
+        self.browserCheckPhase = 30
+      }
+    case 30:
+      guard ready("add split command tab", snapshot.selectedId == check.commandTab && rowInSnapshot(check.commandTab)) else { return }
+      // The command-bar row: the core's own list, typed the way a user reaches it. The rows land
+      // when the per-open session arrives, so the wait is on the row itself.
+      openCommandBar(.newTab)
+      browserCheckPhase = 31
+    case 31:
+      guard let bar = commandPresenter?.controller else {
+        check.wait("add split command bar", "no command bar")
+        if check.waitCount > 60 { fail("the command bar never opened") }
+        return
+      }
+      if bar.query != "Add Split View" { bar.update(query: "Add Split View") }
+      let row = { bar.result.rows.firstIndex { if case .command(let id) = $0.target { return id == "add_split_view" }; return false } }
+      guard ready("add split command row", row() != nil) else { return }
+      guard let index = row() else { return }
+      bar.moveSelection(by: index - bar.selectedIndex)
+      bar.commit(forceNewTab: false)
+      browserCheckPhase = 32
+    case 32:
+      let split = splitHolding(check.commandTab)
+      let members = split.map { adapter.checkSplitMembers($0) } ?? []
+      guard ready("add split command", split != nil && members.count == 2 && members.first == check.commandTab
+                  && state.panes == 2 && awaitTab(members.last ?? "")) else { return }
+      let pane = members.last
+      check.commandSplit = split ?? ""
+      check.mark("command_split")
+      guard ready("add split command focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      check.mark("command_focus")
+      check.mark("command_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
+      workspace.createTab(url: "https://split-commands-add-menu.example/") { [weak self] result in
+        guard let self, case .success(let next) = result, let id = next.selectedId else {
+          self?.splitCommandsFail("add split menu tab", screen: screen); return
+        }
+        check.menuTab = id
+        self.browserCheckPhase = 33
+      }
+    case 33:
+      guard ready("add split menu tab", snapshot.selectedId == check.menuTab && rowInSnapshot(check.menuTab)) else { return }
+      // The row menu's item, after Duplicate, run through the item's own action.
+      guard sidebar.runTabMenuItemForCheck(id: check.menuTab, titled: "Add Split View") else {
+        fail("no enabled Add Split View item on the tab row"); return
+      }
+      browserCheckPhase = 34
+    case 34:
+      let split = splitHolding(check.menuTab)
+      let members = split.map { adapter.checkSplitMembers($0) } ?? []
+      guard ready("add split menu", split != nil && members.count == 2 && members.first == check.menuTab
+                  && state.panes == 2 && awaitTab(members.last ?? "")) else { return }
+      let pane = members.last
+      check.menuSplit = split ?? ""
+      check.mark("menu_split")
+      guard ready("add split menu focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      check.mark("menu_focus")
+      check.mark("menu_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
+      // Already a split: the selection is the new pane, a member, so the same key adds a pane to
+      // its right (the segment menu's Add Right Split on that pane).
+      guard ready("add split third window", window.isKeyWindow) else { window.makeKeyAndOrderFront(nil); return }
+      guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .shift],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                         context: nil, characters: "+", charactersIgnoringModifiers: "=",
+                                         isARepeat: false, keyCode: 24) else { fail("no add split third key event"); return }
+      NSApp.sendEvent(event)
+      browserCheckPhase = 35
+    case 35:
+      let members = adapter.checkSplitMembers(check.menuSplit)
+      guard ready("add split third", members.count == 3 && state.panes == 3) else { return }
+      check.mark("split_third")
+      guard ready("add split third focus", members.last.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      check.mark("split_third_focus")
+      let result = check.diagnostics(screen: screen)
+      finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
     default: break
     }
   }

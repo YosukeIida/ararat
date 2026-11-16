@@ -87,7 +87,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     let favorite = try f.row("tab-mail")
     let folder = try f.row("folder-docs")
     let menus = [f.sidebar.todayMenu(row: pin), f.sidebar.pinnedMenu(row: pin), f.sidebar.favoriteMenu(row: favorite), f.sidebar.folderMenu(row: folder)]
-    let titles = [["Copy Link", "Rename…", "Duplicate", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
+    let titles = [["Copy Link", "Rename…", "Duplicate", "Add Split View", "Move to", "Archive Tab"], ["Copy Link", "Rename…", "Duplicate", "Add Split View", "Move to", "Close Tab", "Remove Pin"], ["Copy Link", "Rename…", "Move to", "Close Tab", "Remove Favorite"], ["New Nested Folder…", "Rename…", "Duplicate", "Move to", "Delete"]]
     for (menu, expected) in zip(menus, titles) {
         #expect(menu.items.map(\.title) == expected)
         #expect(menu.items.allSatisfy { $0.isEnabled })
@@ -97,7 +97,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     }
     #expect(menus[2].items[3].keyEquivalent == "w")
     #expect(menus[2].items[2].keyEquivalentModifierMask == .command)
-    #expect(menus[0].items[3].submenu?.items.map(\.title) == ["Other"])
+    #expect(menus[0].items[4].submenu?.items.map(\.title) == ["Other"])
     #expect(f.sidebar.emptyAreaMenu().items.map(\.title) == ["New Folder"])
     #expect(f.sidebar.newSpaceMenu.items.map(\.title) == ["New Space", "New Folder"])
     let pasteboard = NSPasteboard(name: NSPasteboard.Name("Ararat-menu-test-\(UUID().uuidString)"))
@@ -117,7 +117,7 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
     #expect(f.sidebar.todayMenu(row: invalid).items[0].isEnabled == false)
     var noTargets = f.snapshot; noTargets.spaces.removeAll { $0.id == "other" }
     f.sidebar.update(snapshot: noTargets)
-    #expect(!f.sidebar.pinnedMenu(row: pin).items[3].isEnabled)
+    #expect(!f.sidebar.pinnedMenu(row: pin).items[4].isEnabled)
     #expect(!f.window.isVisible && !f.window.isKeyWindow)
 }
 
@@ -403,7 +403,7 @@ func rowMenusParticipateInTooltipTrackingWithoutShowingMenus() throws {
     #expect(!f.sidebar.tooltip.menuTracking)
     let row = try f.view("tab-spec")
     let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Move to", "Close Tab", "Remove Pin"])
+    #expect(row.menu(for: event)?.items.map(\.title) == ["Copy Link", "Rename…", "Duplicate", "Add Split View", "Move to", "Close Tab", "Remove Pin"])
 }
 
 @Test @MainActor

@@ -142,6 +142,9 @@ fn private_command_allowed(target: &Target) -> bool {
         "settings", "quit", "close_tab", "new_tab", "edit_url", "copy_link",
         "cycle_tabs_next", "cycle_tabs_previous", "rename", "toggle_sidebar",
         "force_reload", "clear_cache_site", "clear_cookies_site", "reset_sidebar_width",
+        // P5d: a private window's rows are all Today, and the segment menu splits them there
+        // (admit_today admits every Today row), so Add Split View is a private command too.
+        "add_split_view",
     ];
     match target {
         Target::Tab { .. } => true,

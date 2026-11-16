@@ -55,6 +55,9 @@ pub fn commands() -> Vec<Command> {
         ("cycle_tabs_previous", "Previous Recent Tab", "Tabs", "Switch to the previous recent tab.", key("\t", false, true, false, true)),
         ("focus_next_pane", "Focus Next Pane", "Tabs", "Focus the next split pane.", key("\u{f703}", true, false, true, false)),
         ("focus_previous_pane", "Focus Previous Pane", "Tabs", "Focus the previous split pane.", key("\u{f702}", true, false, true, false)),
+        // P5d: Arc's Add Split View (⌃⇧=, arc-dia-components.md). The core op is add_split_pane,
+        // which wraps a lone row or joins the focused pane's split; the new pane opens New Tab.
+        ("add_split_view", "Add Split View", "Tabs", "Add a pane to the right of the selected tab.", key("=", false, true, false, true)),
         ("pin_tab", "Pin Tab", "Tabs", "Pin or unpin the selected tab.", key("d", true, false, false, false)),
         ("duplicate", "Duplicate", "Tabs", "Duplicate the selected row.", None),
         ("new_folder", "New Folder", "Tabs", "Create a folder in pinned.", None),
