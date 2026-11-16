@@ -2608,6 +2608,18 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  func setPageOnlyBaseline(_ rows: [[String]]) -> Bool {
+    guard windowTree.allSatisfy({ runtime in
+      guard let tabs = runtime.host?.tabs() as? [any ARTabAPI], !tabs.isEmpty else { return false }
+      return tabs.allSatisfy { tab in
+        !tab.isLoading && tab.navigationCount > 0
+          && tab.itemId.map { checkStoredTabMetadata(rows, item: $0, url: tab.url, title: tab.title) } == true
+      }
+    }) else { return false }
+    quitBefore = rows
+    return true
+  }
+
   func sendQuitKey(_ host: any ARWindowHostAPI) {
     (host.tabs() as? [any ARTabAPI])?.first?.focusCheckPage()
     guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
@@ -3521,7 +3533,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let placed = screen.contains(frame)
       if CommandLine.arguments.contains("--ararat-page-only-menu-check") {
         guard placed, let rows = captureCheckRows() else { return }
-        quitBefore = rows
+        guard setPageOnlyBaseline(rows) else {
+          let trace: [String: Any] = ["tick": browserCheckAttempts, "tabs": pageOnlyTabTrace(rows)]
+          if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
+             let line = String(data: data, encoding: .utf8) {
+            FileHandle.standardError.write(Data("ararat-trace: page-only wait=baseline-metadata \(line)\n".utf8))
+          }
+          return
+        }
         let trace: [String: Any] = ["tick": browserCheckAttempts, "capture": "before", "rows": pageOnlyTraceRows(rows) ?? [], "tabs": pageOnlyTabTrace(rows)]
         if let data = try? JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]),
            let line = String(data: data, encoding: .utf8) {
