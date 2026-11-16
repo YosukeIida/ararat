@@ -3,7 +3,7 @@ use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Orientation, Pro
 use ararat_core::storage::Store;
 
 fn set_selection(ws: &mut Workspace, id: &str) {
-    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], space_history: vec![], changed_at: 0 });
+    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, sidebar_floating: false, changed_at: 0 });
 }
 
 fn workspace() -> Workspace {

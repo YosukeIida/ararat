@@ -380,10 +380,20 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn set_window_presentation(&self, window_id: String, presentation: WindowPresentation) -> Result<(), CoreError> {
+        self.admit(false)?;
+        if self.private { return Ok(()); }
+        let mut workspace = self.workspace.lock().unwrap();
+        let width = presentation.sidebar_width.ok_or_else(|| CoreError::Edit { message: "missing sidebar width".into() })?;
+        let ops = workspace.set_window_presentation(&window_id, presentation.frame.map(Into::into), width, presentation.sidebar_hidden, presentation.sidebar_floating)?;
+        self.store.write(ops);
+        Ok(())
+    }
+
     pub fn kept_windows(&self) -> Vec<KeptWindow> {
         let workspace = self.workspace.lock().unwrap();
         workspace.kept_windows().into_iter().filter(|_| !self.private)
-            .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at }).collect()
+            .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at, presentation: WindowPresentation { frame: window.frame.map(Into::into), sidebar_width: window.sidebar_width, sidebar_hidden: window.sidebar_hidden, sidebar_floating: window.sidebar_floating } }).collect()
     }
 
     pub fn pending_history_purges(&self) -> Result<Vec<HistoryPurge>, CoreError> {
@@ -1339,10 +1349,19 @@ pub struct WorkspaceSnapshot {
     pub spaces: Vec<SpaceSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct WindowPresentation {
+    pub frame: Option<LittleWindowFrame>,
+    pub sidebar_width: Option<f64>,
+    pub sidebar_hidden: bool,
+    pub sidebar_floating: bool,
+}
+
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct KeptWindow {
     pub id: String,
     pub changed_at: u64,
+    pub presentation: WindowPresentation,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]

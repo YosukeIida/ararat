@@ -76,7 +76,7 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=organize", "--ararat
   }
 }
 
-if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" || $0 == "--ararat-check=private-durability" }) {
+if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" || $0 == "--ararat-check=relaunch-windows" || $0 == "--ararat-check=private-durability" }) {
   if check == "--ararat-check=private-durability" { exit(runPrivateDurabilityDriver()) }
   exit(runRelaunchDriver(check == "--ararat-check=relaunch-pins" ? "pins" : String(check.dropFirst(15))))
 }
@@ -947,7 +947,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     ])
   }
 
-  func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil) throws {
+  func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil, restoringWindow: KeptWindow? = nil) throws {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
@@ -1077,17 +1077,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
       purgeHistory(Unmanaged.passUnretained(profileObject).toOpaque(), Unmanaged.passUnretained(itemObject).toOpaque(), changedAt, completion)
     }
     var adoptedWindow = false
-    if session == nil || reopening {
-      // Design (c): the first window adopts the newest kept `Window` record, none kept
-      // means a fresh UUID; reopen adopts the newest kept record no open window names.
-      // The store opened here is handed to the adapter below, so nothing opens twice.
+    var presentation: WindowPresentation?
+    if session == nil || reopening || restoringWindow != nil {
       let owner = root ?? self
       let openIDs = Set(([owner] + owner.children).filter { $0.hasUsableHost }.map(\.windowID))
       running.queue.sync {
         running.store = try? running.store ?? WorkspaceStore.open(path: path)
       }
       let kept = running.queue.sync { running.store?.keptWindows() ?? [] }
-      let adopted = kept.first { !openIDs.contains($0.id) }
+      if session == nil {
+        launchRestoreWindows = Array(kept.reversed())
+        running.restoringWindows = Set(kept.map(\.id))
+      }
+      let adopted = restoringWindow ?? (session == nil ? launchRestoreWindows.first : kept.first { !openIDs.contains($0.id) })
+      presentation = adopted?.presentation
       adoptedWindow = adopted != nil
       windowID = adopted?.id ?? UUID().uuidString
     }
@@ -1154,6 +1157,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.setDownloadsModel(downloads)
     let container = SidebarContainerView(sidebar: sidebar, page: card)
     container.privateWindow = isPrivateWindow
+    if let presentation { container.restorePresentation(presentation) }
     typealias Factory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> UnsafeMutableRawPointer?
     let factory = unsafeBitCast(createSymbol, to: Factory.self)
     let hostID = windowID as NSString
@@ -1162,6 +1166,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
       throw NSError(domain: "Ararat", code: 3)
     }
     self.host = host
+    if let frame = presentation?.frame {
+      host.window().setFrame(WindowPlacement.clamped(NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height),
+                                                    screens: NSScreen.screens.map(\.visibleFrame), main: NSScreen.main?.visibleFrame), display: false)
+    }
+    if WindowPlacement.valid(host.window().frame) { lastWindowFrame = host.window().frame }
     if isPrivateWindow { host.window().appearance = NSAppearance(named: .darkAqua) }
     downloads.onAction = { [weak host] action, identifier in
       host?.performDownloadAction(action, identifier: identifier) ?? false
@@ -1185,6 +1194,15 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
     self.sidebar = sidebar
     self.container = container
+    if !isPrivateWindow {
+      container.onPresentationChanged = { [weak self] in self?.saveWindowPresentation() }
+      for observer in windowPlacementObservers { NotificationCenter.default.removeObserver(observer) }
+      windowPlacementObservers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
+        NotificationCenter.default.addObserver(forName: name, object: host.window(), queue: .main) { [weak self] _ in
+          MainActor.assumeIsolated { self?.saveWindowPresentation() }
+        }
+      }
+    }
     adapter.onPageFullscreenChanged = { [weak container] in container?.pageFullscreen = $0 }
     adapter.onWindowFullscreenChanged = { [weak container] in container?.windowFullscreen = $0 }
     adapter.onWorkspaceCommand = { [weak self] command in self?.performWorkspaceCommand(command) }
@@ -1425,7 +1443,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     adapter.attach(host)
     refreshSiteState()
     refreshExtensionActions()
-    if session == nil && adoptedWindow { adapter.restoreSelection() }
+    if adoptedWindow { adapter.restoreSelection() }
     if session == nil && !adoptedWindow { running.finishCrashRecovery?() }
     if session == nil && !arguments.contains(where: { $0.hasPrefix("--ararat-screen=") }) &&
        (browserCheckMode == "profiles" || browserCheckMode == "keyboard" || browserCheckMode == "today" || quitMode == "quit-cancel" || quitMode == "close") {
@@ -1495,6 +1513,38 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  var launchRestoreWindows: [KeptWindow] = []
+  var relaunchWindowsCheck: RelaunchWindowsCheck?
+  var windowPlacementObservers: [NSObjectProtocol] = []
+  var lastWindowFrame: NSRect?
+
+  func restoreRemainingWindows() throws {
+    guard let session = adapter?.session else { return }
+    for kept in launchRestoreWindows.dropFirst() {
+      let child = Runtime(windowID: kept.id)
+      child.root = self
+      try child.start(session: session, restoringWindow: kept)
+      children.append(child)
+      if browserCheckMode == nil && quitMode == nil { child.host?.window().makeKeyAndOrderFront(nil) }
+    }
+    launchRestoreWindows.removeAll()
+  }
+
+  func saveWindowPresentation() {
+    guard !isPrivateWindow, let host, let container, let session = adapter?.session else { return }
+    let current = host.window().frame
+    if !host.window().styleMask.contains(.fullScreen), WindowPlacement.valid(current) { lastWindowFrame = current }
+    var presentation = container.savedPresentation
+    if let frame = lastWindowFrame {
+      presentation.frame = LittleWindowFrame(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+    }
+    let id = windowID
+    session.queue.async {
+      do { try session.store?.setWindowPresentation(windowId: id, presentation: presentation) }
+      catch { DispatchQueue.main.async { [weak self] in self?.report(error) } }
+    }
+  }
+
   func observeClose(_ host: any ARWindowHostAPI) {
     if let windowCloseObserver { NotificationCenter.default.removeObserver(windowCloseObserver) }
     hostClosing = false
@@ -1507,6 +1557,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         self?.sidebar?.onAutoArchiveReady = nil
         self?.commandPresenter?.close(restoreFocus: false)
         if let host = weakHost as? any ARWindowHostAPI {
+          self?.saveWindowPresentation()
           self?.captureCheckState(host)
           self?.adapter?.closeWindow(quitting: host.isClosingAll())
         }
@@ -2906,6 +2957,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "relaunch-seed", relaunchMode == "pins" { pinsSeedTick(host); return }
     if mode == "relaunch-verify", relaunchMode == "pins" || relaunchMode == "pins-isolated" {
       pinsVerifyTick(host, expected: relaunchMode == "pins")
+      return
+    }
+    if relaunchMode == "relaunch-windows" {
+      if relaunchWindowsCheck == nil { relaunchWindowsCheck = RelaunchWindowsCheck(runtime: self) }
+      relaunchWindowsCheck?.tick(seeding: mode == "relaunch-seed")
       return
     }
     let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
@@ -9334,6 +9390,7 @@ var callbacks = AraratCallbacks(
       let value = Runtime()
       do {
         try value.start()
+        try value.restoreRemainingWindows()
         Launcher.runtime = value
         LittleWindowGlobalShortcut.install(value)
         value.openURLs(Launcher.pendingURLs)

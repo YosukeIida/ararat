@@ -206,8 +206,7 @@ func runRelaunchDriver(_ mode: String) -> Int32 {
     firstStatus = status
     close(first.output)
     child = nil
-    if mode == "relaunch" && status != 0 { return failure("run 1 did not quit cleanly") }
-    if mode == "pins" && status != 0 { return failure("run 1 did not quit cleanly") }
+    if mode != "crash" && status != 0 { return failure("run 1 did not quit cleanly") }
     if mode == "crash" && (status & 0x7f) != SIGKILL { return failure("run 1 was not killed") }
     kill(-first.pid, SIGKILL)
     let deadline = Date().addingTimeInterval(30)

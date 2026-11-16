@@ -262,11 +262,21 @@ fn selection_time_and_window_selection_stay_local() {
     let journal_count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = journal_count();
     for id in ["tab-spec", "tab-a", "split-1"] { store.write(ws.select_item("test", id).unwrap()); }
+    let frame = ararat_core::model::LittleWindowFrame { x: -120.0, y: 80.0, width: 1000.0, height: 700.0 };
+    store.write(ws.set_window_presentation("test", Some(frame), 260.0, true, false).unwrap());
+    assert!(ws.set_window_presentation("test", None, 260.0, true, false).unwrap().is_empty());
+    for width in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(ws.set_window_presentation("test", None, width, false, false).is_err());
+    }
+    assert!(ws.set_window_presentation("test", Some(ararat_core::model::LittleWindowFrame { width: 0.0, ..frame }), 260.0, false, false).is_err());
     store.flush().unwrap();
     assert_eq!(journal_count(), before);
     assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'window'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     drop(store);
-    assert_eq!(Store::open(&path).unwrap().1.selected("test"), Some("tab-a"));
+    let reopened = Store::open(&path).unwrap().1;
+    assert_eq!(reopened.selected("test"), Some("tab-a"));
+    assert_eq!(reopened.windows["test"], ws.windows["test"]);
+    assert_eq!(reopened.windows["test"].frame, Some(frame));
 }
 
 #[test]

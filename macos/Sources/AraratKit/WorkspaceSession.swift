@@ -10,6 +10,14 @@ public final class WorkspaceSession: @unchecked Sendable {
     public var store: WorkspaceStore?
     public var purgeHistory: ((String, String, UInt64, @escaping (Bool) -> Void) -> Void)?
     public var finishCrashRecovery: (() -> Void)?
+    public var restoringWindows: Set<String> = []
+
+    public func finishedRestoring(window: String) {
+        precondition(Thread.isMainThread)
+        guard restoringWindows.remove(window) != nil, restoringWindows.isEmpty else { return }
+        finishCrashRecovery?()
+    }
+
     private var inFlight: Set<String> = []
     private var retryScheduled = false
     private var failedPurges: [String: Set<String>] = [:]
