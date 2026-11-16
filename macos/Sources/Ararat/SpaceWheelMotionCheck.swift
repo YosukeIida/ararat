@@ -110,7 +110,7 @@ extension Runtime {
             guard check.done, !check.finishing else { return }
             check.finishing = true
             check.timer?.invalidate()
-            Task { @MainActor [self] in
+            Task { @MainActor [self, sidebar, check] in
                 await check.capture?.stop()
                 sidebar.checkFinishSpaceWheelMotion()
                 let counts = sidebar.checkSpaceWheelMotionCounts
@@ -141,7 +141,7 @@ extension Runtime {
             spaceWheelMotionCheck = check
             sidebar.spaceScrollDirection = .natural
             sidebar.showSpace(at: min(4, snapshot.spaces.count - 2))
-            Task { @MainActor [self] in
+            Task { @MainActor [self, sidebar, check] in
                 do {
                     sidebar.layoutSubtreeIfNeeded()
                     let rect = sidebar.checkSpaceWheelDrawnRect

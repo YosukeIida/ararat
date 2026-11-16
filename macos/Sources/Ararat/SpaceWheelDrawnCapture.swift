@@ -33,14 +33,19 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendabl
         guard let selected = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else {
             throw SpaceWheelMotionCheck.Failure(description: "drawn_capture_window missing id=\(window.windowNumber)")
         }
+        let center = CGPoint(x: selected.frame.midX, y: selected.frame.midY)
+        guard let display = content.displays.first(where: { $0.frame.contains(center) }) else {
+            throw SpaceWheelMotionCheck.Failure(description: "drawn_capture_display missing window=\(selected.frame)")
+        }
         let configuration = SCStreamConfiguration()
-        configuration.sourceRect = CGRect(x: row.minX, y: window.frame.height - row.maxY, width: row.width, height: row.height)
+        configuration.sourceRect = CGRect(x: selected.frame.minX + row.minX - display.frame.minX,
+            y: selected.frame.minY + window.frame.height - row.maxY - display.frame.minY, width: row.width, height: row.height)
         configuration.width = width
         configuration.height = 1
         configuration.showsCursor = false
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 240)
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
-        let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: selected), configuration: configuration, delegate: nil)
+        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: configuration, delegate: nil)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "ararat.wheel-drawn-frames"))
         self.stream = stream
         try await stream.startCapture()
@@ -84,6 +89,7 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, @unchecked Sendabl
             if index + 1 < switches.count { verdict.removeValue(forKey: "landed") }
             conditions.merge(verdict) { $0 && $1 }
             let value: [String: Any] = ["trace": "space-wheel-drawn", "switch": index + 1,
+                "start": step.time, "pitch": step.pitch, "clock": "capture-callback-uptime",
                 "source": step.source, "target": step.target, "conditions": verdict,
                 "samples": frames.map { ["t": $0.t, "offset": $0.offset] }]
             if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
