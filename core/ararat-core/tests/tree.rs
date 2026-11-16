@@ -134,7 +134,7 @@ fn random_damage_always_repairs_to_a_valid_tree() {
                 previous_parent: None,
             },
             title: None,
-            lifecycle: ararat_core::model::Lifecycle::Open, lifecycle_changed_at: 0,
+            lifecycle: ararat_core::model::Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
             kind: if i % 4 == 0 { ItemKind::Folder } else { ItemKind::Tab { url: id.clone(), saved_title: None } },
         };
         base.apply(&Op::Put(Record::Item(tab)));

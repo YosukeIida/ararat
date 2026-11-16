@@ -352,6 +352,14 @@ impl Live {
     }
 
     pub fn close_split(&mut self, workspace: &mut Workspace, split: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+        self.finish_split(workspace, split, false)
+    }
+
+    pub fn archive_split(&mut self, workspace: &mut Workspace, split: &str) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
+        self.finish_split(workspace, split, true)
+    }
+
+    fn finish_split(&mut self, workspace: &mut Workspace, split: &str, archive: bool) -> Result<(Vec<Op>, Vec<(Id, Command)>), LiveError> {
         workspace.check_tree().map_err(LiveError)?;
         if !workspace.items.get(split).is_some_and(|item| matches!(item.kind, ItemKind::Split { .. })) {
             return Err(LiveError(format!("item {split} is not a split")));
@@ -360,7 +368,7 @@ impl Live {
         let items = workspace.outline_entries(split).into_iter()
             .filter(|(_, child, _)| matches!(child.kind, ItemKind::Tab { .. }))
             .map(|(_, child, _)| child.id.clone()).collect();
-        let ops = workspace.close_item(split)?;
+        let ops = if archive { workspace.archive_item(split)? } else { workspace.close_item(split)? };
         let commands = self.close_targets(workspace, &before, &ops, items);
         Ok((ops, commands))
     }
@@ -872,7 +880,7 @@ impl Live {
             title: None,
             kind: ItemKind::Tab { url: String::new(), saved_title: None },
             lifecycle: Lifecycle::Open,
-            lifecycle_changed_at: workspace.lifecycle_time(),
+            lifecycle_changed_at: workspace.lifecycle_time(), archive: None,
         };
         let op = Op::Put(Record::Item(item));
         workspace.apply(&op);

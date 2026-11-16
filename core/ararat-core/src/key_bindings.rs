@@ -48,6 +48,8 @@ pub fn commands() -> Vec<Command> {
         ("settings", "Settings…", "Ararat", "Open settings for the shown space.", key(",", true, false, false, false)),
         ("quit", "Quit Ararat", "Ararat", "Close all windows and quit Ararat.", key("q", true, false, false, false)),
         ("close_tab", "Close Tab", "File", "Close the selected tab in the browser window.", key("w", true, false, false, false)),
+        ("reopen_closed_tab", "Reopen Closed Tab", "Tabs", "Restore the newest entry in this profile’s Archive.", key("t", true, false, false, true)),
+        ("clear_archive", "Clear Archive…", "Tabs", "Delete every entry in this profile’s Archive.", None),
         ("new_tab", "New Tab", "Tabs", "Open a new tab from the command bar.", key("t", true, false, false, false)),
         ("edit_url", "Edit URL", "Tabs", "Edit the current tab's URL in the command bar.", key("l", true, false, false, false)),
         ("copy_link", "Copy Link", "Tabs", "Copy the selected tab's URL.", None),

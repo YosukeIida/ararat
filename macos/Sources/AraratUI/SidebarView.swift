@@ -81,6 +81,7 @@ public final class SidebarView: NSView {
     private var clickMonitor: Any?
     var removeClickMonitor: (Any) -> Void = NSEvent.removeMonitor
     public var onRestore: ((String) -> Void)?
+    public var onClearArchive: (() -> Void)?
     public var onArchiveDelete: ((String) -> Void)?
     var onLibraryChanged: ((Bool, Bool) -> Void)?
     private(set) public var libraryOpen = false
@@ -1215,6 +1216,7 @@ public final class SidebarView: NSView {
         tooltip.capture(in: library)
         library.autoresizingMask = [.width, .height]
         library.onRestore = { [weak self] id in self?.onRestore?(id) }
+        library.onClearArchive = { [weak self] in self?.onClearArchive?() }
         library.onDelete = { [weak self] id in self?.onArchiveDelete?(id) }
         library.onExit = { [weak self] in self?.setLibraryOpen(false) }
         libraryButton.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: "Library")?.withSymbolConfiguration(.init(pointSize: SidebarMetrics.libraryIconSize, weight: .regular))
@@ -1500,6 +1502,11 @@ public final class SidebarView: NSView {
         return NSApp.sendAction(action, to: item.target, from: item)
     }
     /// The Library's archive row buttons (restore and delete), pressed through the row.
+    public func checkPressClearArchive() -> Bool {
+        guard libraryOpen, library.clearArchiveButton.isEnabled else { return false }
+        library.clearArchiveButton.performClick(nil)
+        return true
+    }
     public func checkPressArchiveRowButton(id: String, restore: Bool) -> Bool {
         library.checkPressEntryButton(id: id, restore: restore)
     }

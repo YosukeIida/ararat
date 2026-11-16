@@ -767,7 +767,7 @@ fn put_profiled_spaces(workspace: &mut Workspace) {
         for root in [format!("pin-{id}"), format!("today-{id}")] {
             workspace.apply(&Op::Put(Record::Item(Item {
                 id: root, membership: Membership { parent: None, order: "a".into(), hlc: Default::default(), previous_parent: None },
-                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
             })));
         }
     }
@@ -775,7 +775,7 @@ fn put_profiled_spaces(workspace: &mut Workspace) {
         workspace.apply(&Op::Put(Record::Item(Item {
             id: id.into(), membership: Membership { parent: Some(parent.into()), order: "a".into(), hlc: Default::default(), previous_parent: None },
             title: None, kind: ItemKind::Tab { url: format!("https://{id}.example"), saved_title: None },
-            lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+            lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
         })));
     }
     workspace.last_selected.insert("tab-p1a".into(), 1_000);

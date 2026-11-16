@@ -107,3 +107,18 @@ func sidebarScrollOpensLibraryStaysOpenAndScrollsBackToFirstSpace() async throws
     #expect(!sidebar.libraryOpen && sidebar.spaceShown == 0)
     #expect(container.resizeHandle.sidebarWidth == SidebarMetrics.defaultWidth)
 }
+
+@Test @MainActor
+func clearArchiveButtonTracksTheWholeArchiveRatherThanSearchResults() {
+    let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+    #expect(!library.clearArchiveButton.isEnabled)
+    library.update(archive: [ArchiveEntry(id: "closed", title: "Closed", url: "https://closed.test", lifecycleChangedAt: 1)])
+    library.setSearchQuery("missing")
+    #expect(library.clearArchiveButton.isEnabled)
+    var clears = 0
+    library.onClearArchive = { clears += 1 }
+    library.clearArchiveButton.performClick(nil)
+    #expect(clears == 1)
+    library.update(archive: [])
+    #expect(!library.clearArchiveButton.isEnabled)
+}

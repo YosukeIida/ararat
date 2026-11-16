@@ -38,3 +38,22 @@ func liveBatchChecksRequireEveryNamedCondition(mode: String) throws {
     for name in LiveBatchCheck.names(mode) { check.mark(mode, name, true) }
     #expect((check.diagnostics(mode)["failed_conditions"] as? [String])?.isEmpty == true)
 }
+
+@Test @MainActor
+func deletedSpaceCheckReadsTheArchivedRowOutsideTheNeighboursProfile() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let path = directory.appendingPathComponent("delete.sqlite").path
+    try LiveBatchCheck.seed(session, path: path, window: "one")
+    let store = try #require(session.store)
+    #expect(!LiveBatchCheck.deletedRowIsArchived(checkRecords(path)))
+    let deleted = try store.liveDeleteSpace(windowId: "one", spaceId: "default")
+    #expect(deleted.snapshot.shownSpaceId == "named")
+    #expect(deleted.snapshot.archive.isEmpty)
+    #expect(LiveBatchCheck.deletedRowIsArchived(checkRecords(path)))
+    #expect(!LiveBatchCheck.deletedRowIsArchived(nil))
+    _ = try store.restoreItem(windowId: "one", id: "selected")
+    #expect(!LiveBatchCheck.deletedRowIsArchived(checkRecords(path)))
+}

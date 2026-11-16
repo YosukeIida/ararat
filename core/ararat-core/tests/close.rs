@@ -35,7 +35,7 @@ fn quit_keeps_window_until_cancel_commits_the_hidden_profiles_space() {
 fn add(ws: &mut Workspace, id: &str, parent: &str, order: &str, kind: ItemKind) {
     ws.items.insert(id.into(), Item {
         id: id.into(), membership: Membership { parent: Some(parent.into()), order: order.into(), hlc: Default::default(), previous_parent: None },
-        title: None, kind, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0,
+        title: None, kind, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
     });
 }
 
