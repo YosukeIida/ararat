@@ -310,6 +310,20 @@ func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: A
   }
 }
 
+func quitRowsUnchanged(_ before: [[String]]?, _ after: [[String]]?) -> Bool {
+  guard let before, let after, before.count == after.count else { return false }
+  let presentation: Set<String> = ["frame", "sidebar_width", "sidebar_hidden"]
+  return zip(before, after).allSatisfy { old, new in
+    guard old.count == 3, new.count == 3 else { return false }
+    if old == new { return true }
+    guard old[0] == "window", new[0] == "window", old[1] == new[1],
+          let fields = checkRecordDiff([old], [new]).first?["fields"] as? [String] else { return false }
+    let changed = Set(fields)
+    // A timestamp alone may hide a selection write; only presentation saves may advance it here.
+    return !changed.isDisjoint(with: presentation) && changed.isSubset(of: presentation.union(["changed_at"]))
+  }
+}
+
 func pageOnlyTraceDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
   func tab(_ rows: [[String]]?, id: String) -> [String: Any]? {
     guard let row = rows?.first(where: { $0.count == 3 && $0[0] == "item" && $0[1] == id }),
@@ -9263,7 +9277,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     Launcher.startupWatchdog = nil
     let after = quitPath.flatMap(checkRecords)
     func workspaceRows(_ rows: [[String]]?) -> [[String]]? { rows?.filter { $0.first != "window" } }
-    let unchanged = quitBefore != nil && after != nil && (mode == "close" ? workspaceRows(quitBefore) == workspaceRows(after) : quitBefore == after)
+    let unchanged = quitBefore != nil && after != nil && (mode == "close" ? workspaceRows(quitBefore) == workspaceRows(after) : quitRowsUnchanged(quitBefore, after))
     let closedRowsUnchanged = quitBefore != nil && quitClosedRows != nil && workspaceRows(quitBefore) == workspaceRows(quitClosedRows)
     let windowRemoved = quitBefore?.contains(where: { $0.first == "window" }) == true && quitClosedRows?.contains(where: { $0.first == "window" }) == false
     let dialogSeen = mode == "screen-quit" ? screenDialogs : Int(quitDialogCount)
