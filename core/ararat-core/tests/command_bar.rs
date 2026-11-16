@@ -1,4 +1,4 @@
-use ararat_core::{command_bar::{self, Index, Source, Suggestion, Target}, import::arc_sidebar, key_bindings::commands, model::{ItemKind, Lifecycle, Op, Record}};
+use ararat_core::{command_bar::{self, Index, Source, Suggestion, Target}, import::arc_sidebar, model::{ItemKind, Lifecycle, Op, Record}};
 
 macro_rules! score_test {
     ($name:ident, $query:expr, $title:expr, $url:expr, $score:expr) => {
@@ -632,17 +632,14 @@ fn only_one_command_is_promoted_so_short_queries_keep_their_tabs() {
         ws.items.insert(id.into(), item);
     }
     let index = Index::new(&ws, "one", 1000);
-    for (query, tabs) in [("sh", 3), ("sp", 3)] {
+    // The expected promoted command per query, in the book's literals: "sh" finds Show Space 1
+    // first, and "sp" finds Add Split View ("Sp" of "Split", P5d) because every Show Space, Move
+    // to Space and Add Split View row scores alike and the table's order breaks the tie.
+    for (query, tabs, promoted) in [("sh", 3, "show_space_1"), ("sp", 3, "add_split_view")] {
         let rows = index.query(query, &[]).rows;
         assert_eq!(rows.len(), 5, "{query}: the five rows are full");
         assert!(matches!(&rows[0].target, Target::Search { .. }), "{query}: the typed row leads");
-        // Exactly one promoted command: the earliest row of the command table whose title holds a
-        // word starting with the query. Every Show Space and Move to Space row scores alike and so
-        // does Add Split View ("Sp" of "Split", P5d), so the table's order decides, as before.
-        let earliest = commands().into_iter()
-            .find(|command| command.title.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|word| word.starts_with(query)))
-            .expect("a command starts at a word start");
-        assert!(matches!(&rows[1].target, Target::Command { id } if id == &earliest.id), "{query}: one command at row 2: {:?}", earliest.id);
+        assert!(matches!(&rows[1].target, Target::Command { id } if id == promoted), "{query}: one command at row 2");
         assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1, "{query}: no second command");
         assert_eq!(rows[2..].iter().filter(|row| matches!(row.target, Target::Tab { .. })).count(), tabs, "{query}: the tabs show after it");
     }
