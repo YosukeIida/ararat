@@ -100,7 +100,7 @@ public final class SidebarView: NSView {
     public var onShowSpace: ((String) -> Void)?
 
     var onLookChanged: ((Look?, Look?, Double) -> Void)?
-    private let wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
+    var wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
     private(set) var lookSampling: CADisplayLink?
     private var libraryLookSpaceID: String?
     private var creationLookSpaceID: String?
@@ -1954,7 +1954,20 @@ public final class SidebarView: NSView {
                 else { setLibraryOpen(false, scrolling: true); setCreateSpaceOpen(false, scrolling: true); scrollToSpace(at: index) }
             }
             prepareScrollPages(offset: from, departingIndex: logicalIndex)
-            settleScroll(from: from, switched: switched)
+            if input.kind == .wheel {
+                // Why not share the gesture transaction: page preparation must commit before the wheel spring starts.
+                refreshLook(offset: from)
+                updateDockSelection(offset: from)
+                for (view, origin) in scrollPages { view.layer?.transform = CATransform3DMakeTranslation(origin + from, 0, 0) }
+                traceSpaceWheelMotion("wheel-preparation-commit")
+                CATransaction.commit()
+                window?.displayIfNeeded()
+                CATransaction.flush()
+                traceSpaceWheelMotion("wheel-preparation-committed")
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+            }
+            settleScroll(from: from, switched: switched, freshClock: input.kind == .wheel)
             if excess > 0 { returnPullIndicator(excess: excess) }
             return (true, "settle \(logicalIndex)->\(index)\(switched ? " switched" : "")")
         }
@@ -1990,6 +2003,7 @@ public final class SidebarView: NSView {
                     "model": Double(view.layer?.transform.m41 ?? 0),
                     "offset": view.layer?.presentation().map { Double($0.transform.m41) } as Any? ?? NSNull(),
                     "animation": view.layer?.animation(forKey: "space.scroll") != nil,
+                    "active": view === pageView,
                     "hidden": view.isHidden]
         }
         trace.sample(pages, source: source)
@@ -2015,6 +2029,11 @@ public final class SidebarView: NSView {
     public var checkSpaceWheelMotionCounts: [String: Int] {
         guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion"), let trace = wheelMotionTrace else { return [:] }
         return trace.sampleCounts.merging(["switches": trace.switches]) { _, new in new }
+    }
+
+    public var checkSpaceWheelMotionConditions: [String: Bool] {
+        guard CommandLine.arguments.contains("--ararat-screen=space-wheel-motion"), let trace = wheelMotionTrace else { return [:] }
+        return trace.conditions
     }
 
     private var libraryPageOrigin: Double { Double(-1 - scrollPageIndex) * spacePagePitch }
@@ -2086,6 +2105,8 @@ public final class SidebarView: NSView {
     }
 
     func refreshLook(offset: Double = 0) {
+        traceSpaceWheelMotion("refreshLook")
+        defer { traceSpaceWheelMotion("refreshLook-end") }
         guard let onLookChanged else { return }
         // U26f: a private window is always dark, whatever its space's look (it has none).
         if privateWindow {
@@ -2151,7 +2172,7 @@ public final class SidebarView: NSView {
         return state
     }
 
-    private func settleScroll(from offset: Double, switched: Bool) {
+    private func settleScroll(from offset: Double, switched: Bool, freshClock: Bool = false) {
         traceSpaceWheelMotion("settleScroll", detail: "from=\(offset) to=0 switched=\(switched)")
         refreshLook(offset: offset)
         updateDockSelection(offset: offset)
@@ -2172,6 +2193,8 @@ public final class SidebarView: NSView {
                 self.finishScrollPresentation()
             }
         }
+        let start = CACurrentMediaTime()
+        if freshClock { wheelMotionTrace?.animationStarted(from: offset, pitch: spacePagePitch, at: start) }
         for (view, origin) in scrollPages {
             let spring = CASpringAnimation(keyPath: "transform.translation.x")
             spring.mass = 1
@@ -2182,6 +2205,8 @@ public final class SidebarView: NSView {
             spring.isRemovedOnCompletion = false
             spring.fromValue = origin + offset
             spring.toValue = origin
+            // Why not beginTime=0: the wheel clock must start after preparation has committed.
+            if freshClock { spring.beginTime = view.layer?.convertTime(start, from: nil) ?? start }
             view.layer?.transform = CATransform3DMakeTranslation(origin, 0, 0)
             view.layer?.add(spring, forKey: "space.scroll")
         }

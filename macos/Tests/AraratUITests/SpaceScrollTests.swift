@@ -611,6 +611,35 @@ func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
     #expect(scrollDescendants(sidebar).contains { $0 is SidebarView })
 }
 
+@Test(arguments: [0.0, 0.08]) @MainActor
+func wheelSpringClockStartsAfterPreparedTransactionAndLookWork(lookDelay: Double) throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.contentView = nil }
+    sidebar.showSpaceWithoutNotification(at: 2)
+    let trace = SpaceWheelMotionTrace()
+    sidebar.wheelMotionTrace = trace
+    var delayed = false
+    var lookFinished = CACurrentMediaTime()
+    sidebar.onLookChanged = { _, _, _ in
+        if !delayed {
+            delayed = true
+            Thread.sleep(forTimeInterval: lookDelay)
+            lookFinished = CACurrentMediaTime()
+        }
+    }
+    sidebar.scrollWheel(with: trackpadEvent(dx: 2, phase: nil, time: 100))
+    let current = try currentScrollColumn(sidebar)
+    let layer = try #require(current.layer)
+    let spring = try #require(layer.animation(forKey: "space.scroll") as? CASpringAnimation)
+    #expect(spring.beginTime >= layer.convertTime(lookFinished, from: nil))
+    #expect(spring.fromValue as? Double == -240)
+    let committed = try #require(trace.marks.first { $0["name"] as? String == "wheel-preparation-committed" }?["t"] as? Double)
+    let started = try #require(trace.marks.first { $0["name"] as? String == "animation-start" }?["t"] as? Double)
+    #expect(started >= committed)
+    #expect(!window.isVisible)
+    trace.finish("offscreen-clock-test")
+}
+
 @Test @MainActor
 func zeroDeltaGestureBeginsTakeOverAtTheFirstHorizontalMotion() {
     var statePause = -Double.infinity

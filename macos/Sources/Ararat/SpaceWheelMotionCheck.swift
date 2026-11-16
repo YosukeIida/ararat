@@ -1,25 +1,55 @@
 import AppKit
 import AraratUI
+import AraratKit
 
 @MainActor
 final class SpaceWheelMotionCheck {
     static let enabled = CommandLine.arguments.contains("--ararat-trace-space-scroll")
         || CommandLine.arguments.contains("--ararat-screen=space-wheel-motion")
 
+    struct Failure: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    static func recording(_ text: String) throws -> [Input] {
+        let inputs = try Input.parse(text)
+        guard let first = inputs.first, let last = inputs.last else { throw Failure(description: "recording_empty count=0") }
+        guard inputs.count <= 10000 else { throw Failure(description: "recording_count value=\(inputs.count) limit=10000") }
+        let span = last.time - first.time
+        guard span <= 20 else { throw Failure(description: "recording_span_seconds value=\(span) limit=20") }
+        guard zip(inputs, inputs.dropFirst()).allSatisfy({ $0.time <= $1.time }) else {
+            throw Failure(description: "recording_order times=\(inputs.map(\.time))")
+        }
+        return inputs
+    }
+
+    static func seed(_ session: WorkspaceSession, windowID: String) throws -> WorkspaceSnapshot {
+        try session.queue.sync {
+            guard let store = session.store else { throw Failure(description: "seed_store missing") }
+            var snapshot = store.snapshot(windowId: windowID)
+            while snapshot.spaces.count < 6 {
+                let id = "wheel-\(UUID().uuidString)"
+                snapshot = try store.createSpace(windowId: windowID, name: "Wheel \(snapshot.spaces.count + 1)", spaceId: id)
+            }
+            guard snapshot.spaces.count >= 6 else { throw Failure(description: "seed_spaces count=\(snapshot.spaces.count) minimum=6") }
+            return snapshot
+        }
+    }
+
     struct Input {
         let time: Double
         let fields: [CGEventField: Double]
 
         static func parse(_ text: String) throws -> [Input] {
-            try text.split(separator: "\n").map { line in
+            try text.split(separator: "\n").enumerated().map { lineIndex, line in
                 let tokens = line.split(separator: " ")
                 guard let first = tokens.first, let stamp = Double(first), stamp.isFinite, stamp >= 0 else {
-                    throw CocoaError(.fileReadCorruptFile)
+                    throw Failure(description: "recording_timestamp line=\(lineIndex + 1) value=\(tokens.first.map(String.init) ?? "missing")")
                 }
                 var values: [String: String] = [:]
                 for token in tokens.dropFirst() {
                     let pair = token.split(separator: "=", maxSplits: 1)
-                    guard pair.count == 2, values[String(pair[0])] == nil else { throw CocoaError(.fileReadCorruptFile) }
+                    guard pair.count == 2, values[String(pair[0])] == nil else { throw Failure(description: "recording_field line=\(lineIndex + 1) token=\(token)") }
                     values[String(pair[0])] = String(pair[1])
                 }
                 var fields: [CGEventField: Double] = [:]
@@ -27,16 +57,16 @@ final class SpaceWheelMotionCheck {
                                     ("pt", [.scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2]),
                                     ("fix", [.scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2])] {
                     let pair = (values[key] ?? "").split(separator: ",")
-                    guard pair.count == 2 else { throw CocoaError(.fileReadCorruptFile) }
+                    guard pair.count == 2 else { throw Failure(description: "recording_pair line=\(lineIndex + 1) field=\(key) value=\(values[key] ?? "missing")") }
                     for (axis, text) in zip(axes, pair) {
-                        guard let value = Double(text), value.isFinite, abs(value) <= 32767 else { throw CocoaError(.fileReadCorruptFile) }
+                        guard let value = Double(text), value.isFinite, abs(value) <= 32767 else { throw Failure(description: "recording_delta line=\(lineIndex + 1) field=\(key) value=\(text)") }
                         fields[axis] = value
                     }
                 }
                 for (key, field) in [("cont", CGEventField.scrollWheelEventIsContinuous),
                                      ("phase", .scrollWheelEventScrollPhase), ("mom", .scrollWheelEventMomentumPhase),
                                      ("inv", CGEventField(rawValue: 137)!)] {
-                    guard let value = Int(values[key] ?? ""), (0...255).contains(value) else { throw CocoaError(.fileReadCorruptFile) }
+                    guard let value = Int(values[key] ?? ""), (0...255).contains(value) else { throw Failure(description: "recording_flag line=\(lineIndex + 1) field=\(key) value=\(values[key] ?? "missing")") }
                     fields[field] = Double(value)
                 }
                 return Input(time: stamp / 1000, fields: fields)
@@ -66,6 +96,11 @@ final class SpaceWheelMotionCheck {
 }
 
 extension Runtime {
+    private func requireWheelSession() throws -> WorkspaceSession {
+        guard let session = adapter?.session else { throw SpaceWheelMotionCheck.Failure(description: "seed_session missing") }
+        return session
+    }
+
     func spaceWheelMotionTick() {
         guard let sidebar else { return }
         if let check = spaceWheelMotionCheck {
@@ -73,23 +108,24 @@ extension Runtime {
             check.timer?.invalidate()
             sidebar.checkFinishSpaceWheelMotion()
             let counts = sidebar.checkSpaceWheelMotionCounts
+            let conditions = sidebar.checkSpaceWheelMotionConditions
             finishBrowserCheck(ok: !check.failed && check.sent == check.expected && (counts["switches"] ?? 0) > 0
-                && (counts["check-timer"] ?? 0) > 0, values: ["check": "space-wheel-motion", "samples": counts,
+                && (counts["check-timer"] ?? 0) > 0 && !conditions.isEmpty && conditions.values.allSatisfy { $0 },
+                values: ["check": "space-wheel-motion", "samples": counts, "conditions": conditions,
+                "failed_conditions": conditions.filter { !$0.value }.keys.sorted(),
                 "events_sent": check.sent, "input_failed": check.failed, "motion_trace": "stderr JSON lines",
-                "curve_verdict": "diagnostic-only"])
+                "curve_verdict": "full-offset-and-continuous-spring"])
             return
         }
         do {
             guard let path = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-wheel-recording=") })
                 .map({ String($0.dropFirst("--ararat-wheel-recording=".count)) }) else {
-                throw CocoaError(.fileNoSuchFile)
+                throw SpaceWheelMotionCheck.Failure(description: "recording_path missing --ararat-wheel-recording")
             }
-            let inputs = try SpaceWheelMotionCheck.Input.parse(String(contentsOfFile: path, encoding: .utf8))
-            guard let first = inputs.first, let last = inputs.last, inputs.count <= 10000,
-                  last.time - first.time <= 20,
-                  zip(inputs, inputs.dropFirst()).allSatisfy({ $0.time <= $1.time }), snapshot.spaces.count >= 3 else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
+            let inputs = try SpaceWheelMotionCheck.recording(String(contentsOfFile: path, encoding: .utf8))
+            let seeded = try SpaceWheelMotionCheck.seed(try requireWheelSession(), windowID: windowID)
+            show(seeded)
+            guard let first = inputs.first, let last = inputs.last else { throw SpaceWheelMotionCheck.Failure(description: "recording_empty count=0") }
             let check = SpaceWheelMotionCheck()
             check.expected = inputs.count
             spaceWheelMotionCheck = check
