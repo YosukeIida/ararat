@@ -17,6 +17,12 @@ final class ATCRoutingCheck {
     var privateRows: [String: [String]] = [:]
     var littleBeforePrivate: Set<ObjectIdentifier> = []
 
+    static func privateBaselineReady(_ snapshot: WorkspaceSnapshot, activeItem: String?) -> Bool {
+        let rows = snapshot.spaces.flatMap(\.today)
+        guard rows.count == 1, let selected = snapshot.selectedId else { return false }
+        return rows[0].id == selected && activeItem == selected
+    }
+
     func privateLittleWindow(in little: [LittleWindowController]) -> LittleWindowController? {
         let added = little.filter { !littleBeforePrivate.contains(ObjectIdentifier($0)) }
         return added.count == 1 ? added[0] : nil
@@ -133,9 +139,12 @@ final class ATCRoutingCheck {
                 next()
             case 6:
                 guard let privateWindow = owner.windowTree.first(where: { $0.isPrivateWindow && $0.hasUsableHost }) else { return }
+                // Why not capture at host creation: its initial private tab may not be adopted yet.
+                guard Self.privateBaselineReady(privateWindow.snapshot, activeItem: privateWindow.host?.activeItemId()) else { return }
                 privateWindow.host?.window().makeKeyAndOrderFront(nil)
                 guard privateWindow.host?.window().isKeyWindow == true else { return }
                 privateRows = privateState
+                FileHandle.standardError.write(Data("ararat-trace: atc-private-baseline rows=\(privateRows) urls=\(privateWindow.snapshot.spaces.flatMap(\.today).compactMap(\.url)) active=\(privateWindow.host?.activeItemId() ?? "nil")\n".utf8))
                 littleBeforePrivate = Set(little.map(ObjectIdentifier.init))
                 deliver(["https://atc-private-key.test/", "https://atc-little.test/"])
                 next()

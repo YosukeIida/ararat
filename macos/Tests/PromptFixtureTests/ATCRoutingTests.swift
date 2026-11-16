@@ -17,6 +17,21 @@ func atcProgressReportsItsOwnPhaseBeforeTheWorkspaceIsReady() {
 }
 
 @Test @MainActor
+func privateRoutingWaitsForTheInitialTabToBeAdoptedAndActive() throws {
+    let store = WorkspaceStore.openPrivate(profile: .default)
+    let empty = store.snapshot(windowId: "private-baseline")
+    #expect(!ATCRoutingCheck.privateBaselineReady(empty, activeItem: nil))
+    let adopted = try store.createTab(windowId: "private-baseline", url: "about:blank")
+    let item = try #require(adopted.selectedId)
+    #expect(!ATCRoutingCheck.privateBaselineReady(empty, activeItem: item))
+    #expect(!ATCRoutingCheck.privateBaselineReady(adopted, activeItem: nil))
+    #expect(!ATCRoutingCheck.privateBaselineReady(adopted, activeItem: "other"))
+    #expect(ATCRoutingCheck.privateBaselineReady(adopted, activeItem: item))
+    let extra = try store.createTab(windowId: "private-baseline", url: "https://unexpected.test/")
+    #expect(!ATCRoutingCheck.privateBaselineReady(extra, activeItem: extra.selectedId))
+}
+
+@Test @MainActor
 func privateRoutingIdentifiesTheNewLittleWindowAcrossOrigins() {
     let owner = Runtime()
     let child = Runtime()
