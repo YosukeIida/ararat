@@ -122,6 +122,29 @@ func menusExposeOnlySupportedItemsInMeasuredOrderAndUsePrivatePasteboard() throw
 }
 
 @Test @MainActor
+func addSplitViewRowItemReadsTheSpaceTheSidebarShows() throws {
+    // P5d, from the VM's screen-split-commands run: the check made a space through the adapter
+    // (the app's create-space path also ends in the sidebar's own showSpace, applyCreatedSpace)
+    // and moved the window there, so the sidebar still showed the old space and the tab row menu
+    // found no row. The seam is right — a row menu opens only on a row the sidebar shows — so the
+    // sidebar has to follow the window before a row of the new space can be right-clicked.
+    let f = try MenuFixture(); defer { f.dispose() }
+    try f.store.showSpace(windowId: "menus", spaceId: "other")
+    let shown = try f.store.createTab(windowId: "menus", url: "https://other-space.example/")
+    let tab = try #require(shown.selectedId)
+    #expect(shown.shownSpaceId == "other")
+    f.sidebar.update(snapshot: shown)
+    // The sidebar keeps the space it was showing, as a user's scroll position survives an update.
+    #expect(f.sidebar.tabMenuForCheck(id: tab) == nil)
+    // Told to show the window's space, the row's menu carries the item, enabled, with its action.
+    f.sidebar.showSpaceWithoutNotification(id: "other")
+    let item = try #require(f.sidebar.tabMenuForCheck(id: tab)?.items.first { $0.title == "Add Split View" })
+    #expect(item.isEnabled)
+    #expect(item.action != nil && item.target != nil)
+    #expect(item.identifier?.rawValue == "add_split_view")
+}
+
+@Test @MainActor
 func menuActionsMoveArchiveAndCloseExactlyOnce() throws {
     for action in ["Remove Pin", "Move pinned", "Move today", "Move folder", "Move favorite", "Archive Tab", "Close Tab", "Remove Favorite"] {
         let f = try MenuFixture(); defer { f.dispose() }

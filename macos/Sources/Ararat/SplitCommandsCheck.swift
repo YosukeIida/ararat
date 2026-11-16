@@ -503,6 +503,10 @@ extension Runtime {
           check.mark("move_leaves_split", !adapter.checkSplitMembers(check.split).contains(check.loneMember)
                       && after.spaces.first { $0.id == other.id }?.today.contains { $0.id == check.loneMember } == true)
           self.show(after)
+          // P5d: the space was made through the adapter, so the app's create-space path (which
+          // ends in the sidebar's own showSpace, applyCreatedSpace) did not run. A row menu opens
+          // only on a row the sidebar shows, so the sidebar follows the window here.
+          if let shown = after.shownSpaceId { sidebar.showSpaceWithoutNotification(id: shown) }
           // P5d: the three Add Split View entry points (the space the move made is the one the
           // check keeps using, so each case starts from a lone Today tab in it).
           self.browserCheckPhase = 27
@@ -589,7 +593,10 @@ extension Runtime {
       guard ready("add split menu tab", snapshot.selectedId == check.menuTab && rowInSnapshot(check.menuTab)) else { return }
       // The row menu's item, after Duplicate, run through the item's own action.
       guard sidebar.runTabMenuItemForCheck(id: check.menuTab, titled: "Add Split View") else {
-        fail("no enabled Add Split View item on the tab row"); return
+        let menu = sidebar.tabMenuForCheck(id: check.menuTab)
+        fail("no enabled Add Split View item on the tab row: menu=\(menu.map { $0.items.map { "\($0.title)=\($0.isEnabled)" }.joined(separator: ",") } ?? "nil") "
+             + "sidebar_space=\(sidebar.spaceShown) window_space=\(snapshot.shownSpaceId ?? "nil")")
+        return
       }
       browserCheckPhase = 34
     case 34:
