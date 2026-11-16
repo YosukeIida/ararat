@@ -1274,6 +1274,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     observeClose(host)
     self.adapter = adapter
     if session == nil && browserCheckMode == "atc-routing" { try ATCRoutingCheck.seed(adapter.session, window: windowID) }
+    if session == nil && browserCheckMode == "menu" {
+      try adapter.session.queue.sync {
+        _ = try adapter.session.store?.setDefaultDestination(windowId: windowID, destination: .space(.mostRecent))
+      }
+    }
     self.workspace = workspace
     self.airTraffic = AirTrafficModel(adapter: workspace)
     let bindings = KeyBindingsModel(adapter: workspace)
@@ -9482,6 +9487,9 @@ var callbacks = AraratCallbacks(
         return (url.absoluteString, untrusted)
       }
     MainActor.assumeIsolated {
+      if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
+        FileHandle.standardError.write(Data("ararat-trace: external-open ready=\(Launcher.runtime != nil) urls=\(urls.map { "\($0.url) untrusted=\($0.untrusted)" })\n".utf8))
+      }
       if let runtime = Launcher.runtime { runtime.openURLs(urls) }
       else { Launcher.pendingURLs.append(contentsOf: urls) }
     }

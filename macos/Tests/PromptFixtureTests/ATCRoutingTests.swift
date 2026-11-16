@@ -5,6 +5,17 @@ import ObjectiveC.runtime
 import Testing
 @testable import Ararat
 
+@Test @MainActor
+func atcProgressReportsItsOwnPhaseBeforeTheWorkspaceIsReady() {
+    let owner = Runtime()
+    let check = ATCRoutingCheck()
+    check.phase = 3
+    check.tick(owner)
+    #expect(owner.browserCheckPhase == 3)
+    #expect(owner.browserCheckAttempts == 1)
+    #expect(check.phase == 3)
+}
+
 @MainActor
 private func atcSnapshot() -> WorkspaceSnapshot {
     let spaces = [("a", "Default", Profile.default), ("b", "Profile 1", Profile.named("Profile 1"))].map { id, name, profile in

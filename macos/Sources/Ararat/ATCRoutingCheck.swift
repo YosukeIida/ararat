@@ -10,6 +10,7 @@ final class ATCRoutingCheck {
     static let coldURL = "https://atc-space.test/cold"
     var conditions: [String: Bool] = [:]
     var phase = 0
+    var lastTrace = ""
     var started = Date()
     var targetID = ""
     var process: Process?
@@ -25,6 +26,8 @@ final class ATCRoutingCheck {
     }
 
     func tick(_ owner: Runtime) {
+        owner.browserCheckPhase = phase
+        owner.browserCheckAttempts += 1
         func finish(_ error: String? = nil) {
             let names = Self.names + (CommandLine.arguments.contains("--ararat-atc-launchservices") ? ["launchservices"] : [])
             var values: [String: Any] = ["conditions": conditions, "failed_conditions": names.filter { conditions[$0] != true }, "phase": phase]
@@ -38,7 +41,20 @@ final class ATCRoutingCheck {
             session.queue.sync { session.store?.snapshot(windowId: window.windowID) }
         }
         let windows = owner.windowTree.filter { !$0.isPrivateWindow && $0.hasUsableHost }
+        // Relying on Chromium's Show would leave exit-check popups hidden.
+        for controller in owner.windowTree.flatMap(\.littleWindows) {
+            if let window = controller.window, !window.isVisible { window.makeKeyAndOrderFront(nil) }
+        }
         let little = owner.windowTree.flatMap(\.littleWindows).filter { $0.popup.host?.window().isVisible == true }
+        let windowStates = windows.map { window in
+            let snapshot = current(window)
+            return "\(window.windowID):space=\(snapshot?.shownSpaceId ?? "nil"):selected=\(snapshot?.selectedId ?? "nil"):active=\(window.host?.activeItemId() ?? "nil"):top=\(snapshot?.spaces.first { $0.id == snapshot?.shownSpaceId }?.today.first?.url ?? "nil")"
+        }
+        let state = "phase=\(phase) queue=\(owner.externalURLs.map(\.url)) opening=\(owner.openingExternalURL) little=\(little.count) windows=\(windowStates)"
+        if state != lastTrace {
+            lastTrace = state
+            FileHandle.standardError.write(Data("ararat-trace: atc-routing \(state)\n".utf8))
+        }
         func target(_ url: String, space: String = "named") -> Runtime? {
             windows.first { window in
                 guard let snapshot = current(window), snapshot.shownSpaceId == space,
