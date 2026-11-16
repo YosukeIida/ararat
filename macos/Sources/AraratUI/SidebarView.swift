@@ -608,12 +608,6 @@ public final class SidebarView: NSView {
         dragReduceMotion = { false }
     }
     public var organizeCheckSettleDuration: CFTimeInterval? { dragCopyView?.layer?.animation(forKey: "drag.settle")?.duration }
-    /// p4checks: the empty favourites area's drop point and the held drag's current point, in the
-    /// geometry's own coordinates, so the check can read the target the drag resolves to.
-    public var dragCheckFavoritesPoint: CGPoint? {
-        guard let geometry = dragGeometry() else { return nil }
-        return CGPoint(x: geometry.favorites.midX, y: geometry.favorites.midY)
-    }
     public var dragCheckPoint: CGPoint { organizeCheckPoint }
     public var organizeCheckDragging: Bool { drag?.active == true }
     public var organizeCheckIdle: Bool { drag == nil && !dragSettling }

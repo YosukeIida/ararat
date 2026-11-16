@@ -411,6 +411,7 @@ extension Runtime {
                 }
                 check.report("space_settings_page", false); browserCheckPhase = 9; return
             }
+            FileHandle.standardError.write(Data("ararat-trace: dock space settings page=\(probe.pageID) visible=\(probe.isVisible)\n".utf8))
             check.report("space_settings_page", probe.isVisible)
             if screen, let target = settings?.window {
                 check.report("capture_space_settings", capture("space-settings", window: target))

@@ -133,7 +133,7 @@ public final class SettingsCheckProbe {
         }
         // The row's record face is a SwiftUI view with a layout marker; scroll it into the pane
         // and send it a real click, the way LookScreenCheck drives SwiftUI controls.
-        let markerID = "column-shortcut-\(command)"
+        let markerID = "content-shortcut-\(command)"
         if let scroll = detailScrollView, let content, let rect = marker(markerID) {
             let visible = topDown(scroll.convert(scroll.bounds, to: content), in: content)
             if rect.midY < visible.minY + 8 || rect.midY > visible.maxY - 8 {
@@ -142,9 +142,12 @@ public final class SettingsCheckProbe {
                 window.contentView?.layoutSubtreeIfNeeded()
             }
         }
-        guard let rect = marker(markerID), let point = windowPoint(topDown: rect), clickWindowPoint(point) else {
+        guard let rect = marker(markerID), let point = windowPoint(topDown: rect) else {
             return (false, "none", tree)
         }
+        let hit = window.contentView.flatMap { $0.hitTest($0.convert(point, from: nil)) }
+        tree.append("click marker=\(markerID) rect=\(rect) point=\(point) hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil") key=\(window.isKeyWindow) visible=\(window.isVisible)")
+        guard clickWindowPoint(point) else { return (false, "none", tree) }
         return (true, "click-sent", tree)
     }
 

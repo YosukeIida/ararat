@@ -5,6 +5,45 @@ import Testing
 @testable import AraratUI
 
 @Test @MainActor
+func spaceNameCheckCanWaitForSelectionAfterClosingTheLookPopover() throws {
+    _ = NSApplication.shared
+    let runtime = Runtime(windowID: "space-name-check")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+        windowID: runtime.windowID, card: NSView(), seedSidebar: true, session: session)
+    runtime.adapter = adapter
+    var snapshot = try #require(session.store).snapshot(windowId: runtime.windowID)
+    snapshot.selectedId = nil
+    runtime.snapshot = snapshot
+    let sidebar = SidebarView(snapshot: snapshot)
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    sidebar.onCreatePageChanged = { [weak container] in container?.selectionChanged() }
+    runtime.sidebar = sidebar
+    runtime.container = container
+    let check = SidebarCheck()
+    check.phase = 61
+    var steps: [Int] = []
+    func tick() {
+        runtime.spaceNameTickPhase(screen: false, check: check, note: { _ in }, trace: { _ in },
+            step: { check.phase = $0; steps.append($0) }, finish: { Issue.record("finished before create") },
+            capture: { _ in true }, click: { _, _ in false },
+            row: { runtime.sidebarCheckRow(snapshot.spaces.first, $0) })
+    }
+    tick()
+    #expect(sidebar.selectedRowID != nil)
+    #expect(!sidebar.createSpaceOpen && steps.isEmpty)
+    container.selectionChanged()
+    tick()
+    #expect(steps == [7] && sidebar.createSpaceOpen)
+    #expect(check.selectionReady && runtime.sharedLookProbe == nil)
+    tick()
+    #expect(check.conditions["create_page_selection"] == true)
+}
+
+@Test @MainActor
 func shortcutFallbackCannotPassWithOnlyDownstreamConditions() {
     var conditions = Dictionary(uniqueKeysWithValues: SettingsScreenCheck.conditionNames(.shortcuts).map { ($0, true) })
     for pressed in [nil, false, true] as [Bool?] {

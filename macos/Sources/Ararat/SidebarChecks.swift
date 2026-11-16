@@ -949,12 +949,12 @@ extension Runtime {
             sharedLookProbe = nil
             sharedLookFrame = nil
             probe.closePopover()
-            // p4checks: Create a Space through the page's own field and submit, then rename it
-            // through the space name row's menu and the real commit. The selection conditions
-            // need a real selection first: with no row selected `hasSelection` is false before
-            // the page opens too, and create_page_selection would pass without its action.
+            step(61)
+        case 61:
+            guard let selected = row("today-a") else { note("today-a is missing"); return }
+            if sidebar.selectedRowID != selected.id { sidebar.selectRow(id: selected.id) }
             guard container?.sidebarHasSelection == true else {
-                note("waiting for a selected row before the create page"); return
+                note("waiting for selection before create: row=\(sidebar.selectedRowID ?? "nil") core=\(snapshot.selectedId ?? "nil") hasSelection=\(container?.sidebarHasSelection == true)"); return
             }
             check.selectionReady = true
             check.details["selection_before_create"] = true

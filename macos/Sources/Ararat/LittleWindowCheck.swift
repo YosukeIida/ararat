@@ -278,10 +278,9 @@ extension Runtime {
             }
             check.mark("extensions_button")
             check.details["extension_items"] = panel.checkItems
-            // p4checks: an extension row's own click runs the Little Window's onOpen, which
-            // anchors the button and runs the action. The run loads the windows fixture
-            // (`--load-extension`), so an empty popover is a fixture failure, not a pass.
+            // Why not accept an empty list: this run loads the windows fixture and must exercise its action.
             let items = panel.checkItems
+            FileHandle.standardError.write(Data("ararat-trace: little-window extension fixture=engine/ararat/test_extensions/windows profile=\(controller.popup.host?.profileDirectory() ?? "nil") popup_actions=\(items) origin_actions=\(host.extensionActions(withIconSize: 16).count)\n".utf8))
             check.mark("extension_fixture", !items.isEmpty)
             if let first = items.first {
                 let before = controller.checkActions["extension_action"] ?? 0

@@ -2072,7 +2072,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // and the command bar change together; System hands each window back to the Mac.
       NSApp.appearance = theme.appearance
     })
-    if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) {
+    if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") && $0 != "--ararat-check=dock" }) {
       owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
     } else {
       owner.settings?.open(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
@@ -8163,12 +8163,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard current.shownSpaceId == "organize-other", sidebar.organizeCheckIdle,
             let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
       guard begin("dock", "favorites") else { return }
-      let point = sidebar.dragCheckFavoritesPoint
-      let drop = point.flatMap { sidebar.resolveDropForCheck(position: $0, draggedID: row("dock")?.id ?? "") }
+      let point = sidebar.dragCheckPoint
+      let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("dock")?.id ?? "")
       // No container yet: the resolver answers `.favorites(nil, index)`, the first-favourite path.
       // The result is kept aside; the condition is scored only after the drop lands (phase 82), so
       // a stall here leaves it unset rather than true.
       organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && other.favoritesId == nil
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(other.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
       if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
         organizeImage = image
       }
@@ -8179,6 +8180,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
       let landed = other.favorites.contains { $0.url == "about:blank?organize-dock" }
       organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && other.favoritesId != nil
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(other.favoritesId ?? "nil") parent=\(row("dock")?.parentId ?? "nil")\n".utf8))
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
     case 83:
@@ -8197,7 +8199,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       // The drag timer's own folderHoverDelay opens the folder while the drag is still held.
       let innerOpen = space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false
       let target = sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: row("today")?.id ?? "")
-      if innerOpen && target?.kind == "insert" && target?.container == "organize-inner" {
+      if innerOpen && (target?.kind == "folder" || target?.kind == "insert") && target?.container == "organize-inner" {
+        FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover opened target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop)\n".utf8))
         organizeConditions["folder_hover_opens"] = true
         if screen { organizeImage = promptScreenScreenshot(host.window(), name: "organize-hover-open", withoutShadow: true) ?? organizeImage }
         guard sidebar.organizeCheckEnd() else { return }
@@ -8206,6 +8209,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       // A held drag that never opens is a named failure, not a stall: 3 s is the VM's budget.
       if ProcessInfo.processInfo.systemUptime - organizeHoverStarted > 3 {
+        FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover timeout open=\(innerOpen) target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
         organizeConditions["folder_hover_opens"] = false
         _ = sidebar.organizeCheckEnd()
         browserCheckPhase = 87

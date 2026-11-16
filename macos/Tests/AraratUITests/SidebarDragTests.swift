@@ -146,6 +146,21 @@ func organizeCheckDrivesSeedThroughCore() throws {
     let result = store.snapshot(windowId: "organize")
     #expect(result.shownSpaceId == "organize-work")
     #expect(result.spaces.first { $0.id == "organize-other" }?.pinned.contains { $0.url == "about:blank?organize-dock" } == true)
+    var now = 10.0
+    sidebar.dragClock = { now }
+    sidebar.onOpenFolder = { id, completion in
+        do { completion(try store.setFolderCollapsed(windowId: "organize", id: id, collapsed: false)) }
+        catch { Issue.record("open folder: \(error)"); completion(nil) }
+    }
+    sidebar.update(snapshot: try store.setFolderCollapsed(windowId: "organize", id: "organize-inner", collapsed: true))
+    #expect(sidebar.organizeCheckBegin(id: today.id, destination: "organize-inner"))
+    now += 0.601
+    sidebar.stepDrag()
+    #expect(space().pinned.first { $0.id == "organize-inner" }?.collapsed == false)
+    let target = try #require(sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: today.id))
+    #expect(target.kind == "folder" && target.container == "organize-inner")
+    #expect(sidebar.organizeCheckEnd())
+    #expect(try row("today").parentId == "organize-inner")
 }
 
 @MainActor
@@ -199,14 +214,12 @@ func firstFavoriteDropCreatesContainerAndSettles() async throws {
     actions.configureEditing(adapter: adapter, isActive: { true }, window: { window }, show: { _ in }, record: { _ in })
     actions.bind(to: sidebar)
     sidebar.layoutSubtreeIfNeeded()
-    let row = try startDrag(sidebar, id: id)
     let zone = try #require(sidebar.dragGeometry()?.favorites)
     #expect(zone.height > 0 && zone.height <= 8.5)
-    let point = CGPoint(x: zone.midX, y: zone.midY)
-    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+    #expect(sidebar.organizeCheckBegin(id: id, destination: "favorites"))
     sidebar.stepDrag()
     #expect(sidebar.dropTarget == .favorites(container: nil, index: 0))
-    row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
+    #expect(sidebar.organizeCheckEnd())
     try await waitUntil { sidebar.drag == nil && sidebar.dragCopyView == nil }
     let result = try session.queue.sync { try #require(session.store).snapshot(windowId: "first-favorite") }
     let updated = try #require(result.spaces.first)

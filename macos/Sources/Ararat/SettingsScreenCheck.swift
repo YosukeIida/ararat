@@ -319,7 +319,7 @@ extension Runtime {
         func finish() {
             let failed = SettingsScreenCheck.conditionNames(mode).filter { check.conditions[$0] != true }
             finishBrowserCheck(ok: failed.isEmpty,
-                               values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images])
+                               values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images, "details": check.details])
         }
         func note(_ text: String) {
             if check.lastWait != text || browserCheckAttempts % 30 == 0 {
@@ -651,6 +651,7 @@ extension Runtime {
                 let press = probe.pressShortcutRecordButton("toggle_sidebar")
                 check.details["shortcut_press"] = ["pressed": press.pressed, "way": press.way]
                 if !press.tree.isEmpty { check.details["shortcut_ax_tree"] = press.tree }
+                if let click = press.tree.last, click.hasPrefix("click ") { trace(click) }
                 if press.pressed {
                     trace("record button UI attempt through \(press.way) for toggle_sidebar (before \(check.shortcutKeyBefore.map { "\($0.key)" } ?? "nil"))")
                 } else {
@@ -756,6 +757,7 @@ extension Runtime {
             }
             guard mode == .shortcuts else { finish(); return }
             if check.details["shortcut_press_fallback"] == nil,
+               check.conditions["record_button_pressed"] == nil,
                probe.shortcutRecordingCommand == "toggle_sidebar" {
                 check.report("record_button_pressed", true)
             }
