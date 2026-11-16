@@ -894,7 +894,7 @@ impl Workspace {
 
     fn window_state(&self, window: &str) -> WindowState {
         self.windows.get(window).cloned().unwrap_or_else(|| WindowState {
-            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(), space_history: Vec::new(), changed_at: 0, frame: None, sidebar_width: None, sidebar_hidden: false, sidebar_floating: false,
+            id: window.into(), shown_space: self.spaces.first().map(|space| space.id.clone()), selected: None, history: Vec::new(), space_history: Vec::new(), changed_at: 0, frame: None, sidebar_width: None, sidebar_hidden: false,
         })
     }
 
@@ -915,16 +915,15 @@ impl Workspace {
         Ok(ops)
     }
 
-    pub fn set_window_presentation(&mut self, window: &str, frame: Option<crate::model::LittleWindowFrame>, sidebar_width: f64, sidebar_hidden: bool, sidebar_floating: bool) -> Result<Vec<Op>, EditError> {
+    pub fn set_window_presentation(&mut self, window: &str, frame: Option<crate::model::LittleWindowFrame>, sidebar_width: f64, sidebar_hidden: bool) -> Result<Vec<Op>, EditError> {
         if !sidebar_width.is_finite() || sidebar_width <= 0.0 || frame.is_some_and(|f|
             ![f.x, f.y, f.width, f.height].iter().all(|n| n.is_finite()) || f.width <= 0.0 || f.height <= 0.0) {
             return Err(EditError("invalid window presentation".into()));
         }
-        let mut state = self.window_state(window);
+        let Some(mut state) = self.windows.get(window).cloned() else { return Ok(Vec::new()); };
         if let Some(frame) = frame { state.frame = Some(frame); }
         state.sidebar_width = Some(sidebar_width);
         state.sidebar_hidden = sidebar_hidden;
-        state.sidebar_floating = sidebar_floating;
         if self.windows.get(window) == Some(&state) { return Ok(Vec::new()); }
         state.changed_at = self.lifecycle_time();
         let op = Op::Put(Record::Window(state));

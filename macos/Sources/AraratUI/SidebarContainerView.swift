@@ -193,13 +193,13 @@ public final class SidebarContainerView: NSView {
     public var savedPresentation: WindowPresentation {
         let saved = stateBeforeFullscreen ?? state
         return WindowPresentation(frame: nil, sidebarWidth: Double(resizeHandle.sidebarWidth),
-                                  sidebarHidden: saved.mode == .hidden, sidebarFloating: saved.mode == .floating)
+                                  sidebarHidden: saved.mode != .docked)
     }
     public func restorePresentation(_ presentation: WindowPresentation) {
         if let width = presentation.sidebarWidth, width.isFinite {
             resizeHandle.sidebarWidth = min(max(width, SidebarMetrics.minimumWidth), SidebarMetrics.maximumWidth)
         }
-        state.restore(hidden: presentation.sidebarHidden, floating: presentation.sidebarFloating)
+        state.restore(hidden: presentation.sidebarHidden)
         needsLayout = true
         layoutSubtreeIfNeeded()
     }

@@ -1128,8 +1128,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let name = browserCheckMode == "screen-dialogs" ? "dialogs" : "downloads"
       FileHandle.standardError.write(Data("ararat-trace: \(name) seed db=\(path) shown=\(seeded?.shownSpaceId ?? "nil") rows=\(rows)\n".utf8))
     }
-    if let shownSpace {
-      try adapter.session.queue.sync { try adapter.session.store?.showSpace(windowId: windowID, spaceId: shownSpace) }
+    try adapter.session.queue.sync {
+      if let space = shownSpace ?? (adoptedWindow ? nil : adapter.session.store?.snapshot(windowId: windowID).shownSpaceId) {
+        try adapter.session.store?.showSpace(windowId: windowID, spaceId: space)
+      }
     }
     let workspace = WorkspaceAdapter(windowID: windowID, session: adapter.session, private: isPrivateWindow)
     // U27k D5: the Theme is one synced setting for the whole app, so it is applied before this
@@ -1518,14 +1520,19 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var windowPlacementObservers: [NSObjectProtocol] = []
   var lastWindowFrame: NSRect?
 
-  func restoreRemainingWindows() throws {
+  func restoreRemainingWindows() {
     guard let session = adapter?.session else { return }
     for kept in launchRestoreWindows.dropFirst() {
       let child = Runtime(windowID: kept.id)
       child.root = self
-      try child.start(session: session, restoringWindow: kept)
-      children.append(child)
-      if browserCheckMode == nil && quitMode == nil { child.host?.window().makeKeyAndOrderFront(nil) }
+      do {
+        try child.start(session: session, restoringWindow: kept)
+        children.append(child)
+        if browserCheckMode == nil && quitMode == nil { child.host?.window().makeKeyAndOrderFront(nil) }
+      } catch {
+        session.finishedRestoring(window: kept.id)
+        report(error)
+      }
     }
     launchRestoreWindows.removeAll()
   }
@@ -1558,6 +1565,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
         self?.commandPresenter?.close(restoreFocus: false)
         if let host = weakHost as? any ARWindowHostAPI {
           self?.saveWindowPresentation()
+          for observer in self?.windowPlacementObservers ?? [] { NotificationCenter.default.removeObserver(observer) }
+          self?.windowPlacementObservers.removeAll()
+          self?.container?.onPresentationChanged = nil
           self?.captureCheckState(host)
           self?.adapter?.closeWindow(quitting: host.isClosingAll())
         }
@@ -9390,7 +9400,7 @@ var callbacks = AraratCallbacks(
       let value = Runtime()
       do {
         try value.start()
-        try value.restoreRemainingWindows()
+        value.restoreRemainingWindows()
         Launcher.runtime = value
         LittleWindowGlobalShortcut.install(value)
         value.openURLs(Launcher.pendingURLs)

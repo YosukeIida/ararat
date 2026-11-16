@@ -39,8 +39,8 @@ final class RelaunchWindowsCheck {
           let frame = WindowPlacement.clamped(NSRect(x: 70 + index * 45, y: 100 + index * 35, width: 900 + index * 30, height: 650),
                                               screens: NSScreen.screens.map(\.visibleFrame), main: NSScreen.main?.visibleFrame)
           window.host?.window().setFrame(frame, display: false)
-          window.container?.restorePresentation(WindowPresentation(frame: nil, sidebarWidth: Double(220 + index * 30), sidebarHidden: index == 1, sidebarFloating: false))
-          window.saveWindowPresentation()
+          window.container?.resizeHandle.sidebarWidth = CGFloat(220 + index * 30)
+          if index == 1 { window.performWorkspaceCommand("toggle_sidebar") }
         }
       }
       let windows = [runtime] + runtime.children
@@ -48,7 +48,7 @@ final class RelaunchWindowsCheck {
       let records = session.queue.sync { session.store?.keptWindows() ?? [] }
       guard records.count == 3 else { return }
       var states: [[String: Any]] = []
-      for window in windows {
+      for (index, window) in windows.enumerated() {
         guard let host = window.host, let adapter = window.adapter, let container = window.container,
               let record = records.first(where: { $0.id == window.windowID }), let frame = record.presentation.frame,
               let width = record.presentation.sidebarWidth else { return }
@@ -60,12 +60,14 @@ final class RelaunchWindowsCheck {
         if space == "restore-2" && (!split.split || split.panes != 2 || host.tabs().count != 2) { return }
         let actual = host.window().frame
         let presentation = container.savedPresentation
+        if seeding {
+          guard width == Double(220 + index * 30), record.presentation.sidebarHidden == (index == 1) else { return }
+        }
         guard presentation.sidebarWidth == width, presentation.sidebarHidden == record.presentation.sidebarHidden,
-              presentation.sidebarFloating == record.presentation.sidebarFloating,
               actual == NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height) else { return }
         states.append(["id": window.windowID, "space": space, "selected": selected,
                        "frame": [frame.x, frame.y, frame.width, frame.height], "width": width,
-                       "hidden": presentation.sidebarHidden, "floating": presentation.sidebarFloating,
+                       "hidden": presentation.sidebarHidden,
                        "panes": split.panes])
       }
       states.sort { ($0["id"] as! String) < ($1["id"] as! String) }

@@ -3,7 +3,7 @@ use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Orientation, Pro
 use ararat_core::storage::Store;
 
 fn set_selection(ws: &mut Workspace, id: &str) {
-    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, sidebar_floating: false, changed_at: 0 });
+    ws.windows.insert("test".into(), WindowState { id: "test".into(), shown_space: ws.spaces.first().map(|space| space.id.clone()), selected: Some(id.into()), history: vec![], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, changed_at: 0 });
 }
 
 fn workspace() -> Workspace {
@@ -202,4 +202,16 @@ fn a_split_with_an_unloaded_member_stays_open_until_that_member_closes() {
     ws.close_item("c").unwrap();
     assert_eq!(ws.items["split"].lifecycle, Lifecycle::Closed);
     assert_eq!(ws.selected("test"), Some("d"));
+}
+
+#[test]
+fn presentation_after_close_does_not_recreate_the_window() {
+    let mut ws = workspace();
+    let space = ws.spaces[0].id.clone();
+    assert!(ws.set_window_presentation("fresh", None, 260.0, true).unwrap().is_empty());
+    ws.show_space("fresh", &space).unwrap();
+    assert!(!ws.set_window_presentation("fresh", None, 260.0, true).unwrap().is_empty());
+    assert!(!ws.close_window("fresh", false).is_empty());
+    assert!(ws.set_window_presentation("fresh", None, 280.0, false).unwrap().is_empty());
+    assert!(!ws.windows.contains_key("fresh"));
 }

@@ -135,8 +135,6 @@ pub struct WindowState {
     pub sidebar_width: Option<f64>,
     #[serde(default)]
     pub sidebar_hidden: bool,
-    #[serde(default)]
-    pub sidebar_floating: bool,
 }
 
 /// The Little Window's frame on this device (U27h D8). The Open-in default and close-after

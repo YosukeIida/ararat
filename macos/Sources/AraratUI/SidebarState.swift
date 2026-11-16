@@ -110,8 +110,8 @@ struct SidebarState {
     var hasSelection = false
     private(set) var dwellStartedAt: TimeInterval?
 
-    mutating func restore(hidden: Bool, floating: Bool) {
-        mode = floating ? .floating : hidden ? .hidden : .docked
+    mutating func restore(hidden: Bool) {
+        mode = hidden ? .hidden : .docked
         dwellStartedAt = nil
     }
 

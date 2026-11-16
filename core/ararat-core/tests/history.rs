@@ -61,7 +61,7 @@ fn successor_skips_collapsed_unloaded_and_closed_history_entries() {
 #[test]
 fn fallback_with_no_history_uses_below_then_above() {
     let mut ws = workspace();
-    ws.windows.insert("one".into(), ararat_core::model::WindowState { id: "one".into(), shown_space: Some("space-work".into()), selected: Some("y30".into()), history: vec![], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, sidebar_floating: false, changed_at: 0 });
+    ws.windows.insert("one".into(), ararat_core::model::WindowState { id: "one".into(), shown_space: Some("space-work".into()), selected: Some("y30".into()), history: vec![], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, changed_at: 0 });
     ws.close_item("y30").unwrap();
     assert_eq!(ws.selected("one"), Some("y31"));
     ws.windows.get_mut("one").unwrap().history.clear();
