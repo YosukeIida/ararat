@@ -148,6 +148,10 @@ private func polishCounts(_ sidebar: SidebarView) -> [Int] {
 private func finishPolishScroll(_ sidebar: SidebarView, switching: () -> Void = {}) async throws {
     CATransaction.begin()
     switching()
+    CATransaction.commit()
+    CATransaction.flush()
+    try await waitUntil { sidebar.lookSampling != nil || !polishViews(sidebar).contains { $0 is SidebarView && $0 !== sidebar } }
+    CATransaction.begin()
     CATransaction.setDisableActions(true)
     for view in polishViews(sidebar) { view.layer?.removeAnimation(forKey: "space.scroll") }
     CATransaction.commit()
@@ -165,6 +169,7 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
         var now = 250.0
         sidebar.pullClock = { now }
         var baseline: [Int] = []
+        let retainedPreviews = NSHashTable<SidebarView>.weakObjects()
         for iteration in 0..<50 {
             let direction: Int32 = iteration.isMultiple(of: 2) ? -5 : 5
             weak var preview: SidebarView?
@@ -172,9 +177,11 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
             try await finishPolishScroll(sidebar) {
                 sidebar.scrollWheel(with: polishScroll(direction, nil, 100 + Double(iteration)))
                 preview = polishViews(sidebar).compactMap { $0 as? SidebarView }.first { $0 !== sidebar }
+                if let preview { retainedPreviews.add(preview) }
                 previewList = preview.flatMap { polishViews($0).compactMap { $0 as? SidebarScrollView }.first }
             }
-            #expect(preview == nil && previewList == nil)
+            #expect(preview?.window == nil && previewList?.window == nil)
+            #expect(retainedPreviews.allObjects.count <= 2)
             for row in polishViews(sidebar).compactMap({ $0 as? SidebarRowView }) { row.updateTrackingAreas() }
             let counts = polishCounts(sidebar)
             if iteration == 0 { baseline = counts } else { #expect(counts == baseline) }
@@ -189,6 +196,8 @@ func fiftySwitchesKeepResourcesBoundedAndFloatingInputWorking() async throws {
         for row in polishViews(sidebar).compactMap({ $0 as? SidebarRowView }) { row.updateTrackingAreas() }
         #expect(polishCounts(sidebar) == baseline)
         #expect(!window.isVisible)
+        window.contentView = nil
+        #expect(retainedPreviews.allObjects.isEmpty)
     }
 }
 
@@ -251,6 +260,7 @@ func sampledSpaceFramesKeepEachPagesHeadingPinsAndRowsTogether() async throws {
             sidebar.layer?.speed = 0
             sidebar.layer?.timeOffset = 1
             sidebar.scrollWheel(with: polishScroll(-5, nil, eventTime))
+            try await waitUntil { current.layer?.animation(forKey: "space.scroll") != nil }
             let animation = CABasicAnimation(keyPath: "transform.translation.x")
             animation.fromValue = 64
             animation.toValue = 64

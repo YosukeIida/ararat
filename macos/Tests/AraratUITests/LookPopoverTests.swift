@@ -716,6 +716,7 @@ func lookOnlyPreviewKeepsRowsAndScrollPresentationAndSurvivesCommittedPublishes(
     let event = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: -100, wheel3: 0))
     event.timestamp = 100_000_000_000
     sidebar.scrollWheel(with: try #require(NSEvent(cgEvent: event)))
+    try await waitUntil { sidebar.lookSampling != nil }
     let sampling = try #require(sidebar.lookSampling)
     #expect(sidebar.spaceShown == 1)
     func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }

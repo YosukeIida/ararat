@@ -681,7 +681,7 @@ func otherDockCellRenamesItsOwnSpaceAfterTheSwitchCompletes() throws {
     try invoke(menu, "Rename Space…")
     #expect(f.sidebar.spaceShown == index)
     let field = try #require(descendants(f.sidebar).compactMap { $0 as? SidebarRenameField }.first)
-    f.sidebar.showSpaceWithoutNotification(at: index)
+    f.sidebar.showSpaceWithoutNotification(id: f.snapshot.spaces[index].id)
     #expect(descendants(f.sidebar).contains { $0 === field })
     field.stringValue = "Renamed other"
     field.finish(commit: true)
@@ -689,8 +689,7 @@ func otherDockCellRenamesItsOwnSpaceAfterTheSwitchCompletes() throws {
     try invoke(menu, "Rename Space…")
     let nextField = try #require(descendants(f.sidebar).compactMap { $0 as? SidebarRenameField }.first)
     nextField.stringValue = "Saved on switch"
-    let previous = try #require(f.snapshot.spaces.firstIndex { $0.id == "space-work" })
-    f.sidebar.showSpaceWithoutNotification(at: previous)
+    f.sidebar.showSpaceWithoutNotification(id: "space-work")
     #expect(saved?.0 == "other" && saved?.1 == "Saved on switch")
     #expect(!descendants(f.sidebar).contains { $0 === nextField })
 }

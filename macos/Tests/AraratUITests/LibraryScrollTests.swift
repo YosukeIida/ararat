@@ -144,7 +144,7 @@ func overlayWheelTargetsAreInwardOnlyAndRespectInversionAndPause() {
 }
 
 @Test @MainActor
-func libraryRailWheelReturnsToSpaceZeroThroughTheHitTarget() throws {
+func libraryRailWheelReturnsToSpaceZeroThroughTheHitTarget() async throws {
     for populated in [false, true] {
         let (window, sidebar, container) = fixture(populated: populated)
         defer { window.contentView = nil }
@@ -156,7 +156,7 @@ func libraryRailWheelReturnsToSpaceZeroThroughTheHitTarget() throws {
         #expect(sidebar.libraryOpen && library.layer?.transform.m41 == 0)
         try send(window, sidebar: sidebar, x: 20, dx: -5, time: 101)
         #expect(!sidebar.libraryOpen && sidebar.spaceShown == 0)
-        #expect(library.layer?.animation(forKey: "space.scroll") is CASpringAnimation)
+        try await waitUntil { library.layer?.animation(forKey: "space.scroll") is CASpringAnimation }
     }
 }
 
@@ -221,7 +221,7 @@ func wheelOpensLibraryLikeTrackpadAndPausesBeforeRailReturn() async throws {
         try send(window, sidebar: sidebar, x: 150, dx: 5, time: 100)
         #expect(sidebar.libraryOpen)
         let library = try #require(descendants(sidebar).compactMap { $0 as? LibraryView }.first)
-        #expect(library.layer?.animation(forKey: "space.scroll") is CASpringAnimation)
+        try await waitUntil { library.layer?.animation(forKey: "space.scroll") is CASpringAnimation }
         try send(window, sidebar: sidebar, x: 20, dx: -5, time: 100.100)
         #expect(sidebar.libraryOpen && sidebar.spaceShown == 0)
         try send(window, sidebar: sidebar, x: 20, dx: -5, time: 100.249)
@@ -237,7 +237,7 @@ func wheelOpensLibraryLikeTrackpadAndPausesBeforeRailReturn() async throws {
         #expect(sidebar.libraryOpen)
         try send(window, sidebar: sidebar, x: 20, dx: -5, time: 100.251)
         #expect(!sidebar.libraryOpen && sidebar.spaceShown == 0)
-        #expect(library.layer?.animation(forKey: "space.scroll") is CASpringAnimation)
+        try await waitUntil { library.layer?.animation(forKey: "space.scroll") is CASpringAnimation }
         #expect(!window.isVisible)
     }
 }
