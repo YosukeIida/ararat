@@ -817,6 +817,35 @@ func aDrainPausedByAnotherGestureDoesNotBlockTheNextWidthChange() async throws {
 }
 
 @Test @MainActor
+func drawnMeasurementRowIsVisibleInsideTheActualSpaceColumnAndRendersItsPattern() throws {
+    let (window, sidebar) = scrollTestWindow(spaces: 6)
+    defer { window.contentView = nil }
+    let row = SpaceWheelDrawnRow()
+    sidebar.wheelDrawnRow = row
+    sidebar.update(snapshot: scrollTestSnapshot(spaces: 6))
+    sidebar.showSpaceWithoutNotification(id: "space-4")
+    sidebar.layoutSubtreeIfNeeded()
+    let rect = sidebar.checkSpaceWheelDrawnRect
+    #expect(rect.width == 224 && rect.height == 4)
+    #expect(row.window === window && !row.isHiddenOrHasHiddenAncestor)
+    #expect(row.visibleRect.contains(row.bounds))
+    let column = try #require(row.superview)
+    let bitmap = try #require(column.bitmapImageRepForCachingDisplay(in: row.frame))
+    column.cacheDisplay(in: row.frame, to: bitmap)
+    for x in 0..<Int(row.bounds.width) {
+        let pixel = Int((Double(x) + 0.5) * Double(bitmap.pixelsWide) / row.bounds.width)
+        let color = try #require(bitmap.colorAt(x: pixel, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        #expect((color.blueComponent >= 0.5) == SpaceWheelDrawnPattern.white(space: 4, x: x))
+    }
+    #expect(row.drawCount > 0 && row.lastDrawnSpace == 4)
+    let diagnostics = sidebar.checkSpaceWheelDrawnDiagnostics
+    #expect(diagnostics["hidden"] as? Bool == false)
+    #expect(diagnostics["last_drawn_space"] as? Int == 4)
+    #expect(diagnostics["window_visible"] as? Bool == false)
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
 func zeroDeltaGestureBeginsTakeOverAtTheFirstHorizontalMotion() {
     var statePause = -Double.infinity
     var state = SpaceScrollState()

@@ -116,7 +116,7 @@ extension Runtime {
                 let counts = sidebar.checkSpaceWheelMotionCounts
                 let frames = check.capture?.samples() ?? []
                 let conditions = SpaceWheelDrawnCapture.conditions(frames, switches: check.switches)
-                let path = try? check.capture?.save(relativeTo: check.switches.first?.time ?? 0)
+                let path = try? check.capture?.save(relativeTo: check.switches.first?.time ?? 0, directory: SpaceWheelDrawnCapture.resultDirectory())
                 finishBrowserCheck(ok: !check.failed && check.sent == check.expected && !conditions.isEmpty
                     && conditions.values.allSatisfy { $0 }, values: ["check": "space-wheel-motion", "samples": counts,
                     "conditions": conditions, "presentation_conditions": sidebar.checkSpaceWheelMotionConditions,
@@ -186,7 +186,12 @@ extension Runtime {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 + last.time - first.time) { [weak check] in check?.done = true }
                 } catch {
                     await check.capture?.stop()
-                    finishBrowserCheck(ok: false, values: ["check": "space-wheel-motion", "error": "drawn capture: \(error)"])
+                    var values = check.capture?.diagnostics(source: sidebar.spaceShown, pitch: Int(sidebar.bounds.width),
+                        directory: SpaceWheelDrawnCapture.resultDirectory()) ?? ["drawn_sample_count": 0]
+                    values["drawn_marker"] = sidebar.checkSpaceWheelDrawnDiagnostics
+                    values["check"] = "space-wheel-motion"
+                    values["error"] = "drawn capture: \(error)"
+                    finishBrowserCheck(ok: false, values: values)
                 }
             }
         } catch {

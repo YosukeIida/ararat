@@ -15,6 +15,10 @@ private func drawnPixels(source: Int, target: Int, pitch: Int, width: Int, offse
     }
 }
 
+private func drawnFrame(time: Double, pixels: [UInt8]) -> SpaceWheelDrawnCapture.Frame {
+    SpaceWheelDrawnCapture.Frame(time: time, bgra: pixels.flatMap { [$0, $0, $0, 255] })
+}
+
 @Test
 func capturedRowDecodesBothDirectionsAndRejectsUnrecognizedPixels() {
     for (source, target) in [(4, 3), (3, 4)] {
@@ -32,7 +36,7 @@ func capturedRowDecodesBothDirectionsAndRejectsUnrecognizedPixels() {
 func drawnFrameGateRejectsPartialStartsAndAcceptsContinuousMotion() {
     let step = SpaceWheelDrawnCapture.Switch(time: 0, source: 4, target: 3, pitch: 260)
     let partial = [(0.0, -260), (0.09, -260), (0.11, -100), (0.15, -60), (0.2, -20), (0.3, 0)].map { time, offset in
-        SpaceWheelDrawnCapture.Frame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
+        drawnFrame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
     }
     let verdict = SpaceWheelDrawnCapture.conditions(partial, switches: [step])
     #expect(verdict["first_frame_full_offset"] == false)
@@ -40,7 +44,7 @@ func drawnFrameGateRejectsPartialStartsAndAcceptsContinuousMotion() {
     let complete = [(0.0, -260), (0.09, -260), (0.1, -250), (0.1167, -220), (0.1334, -190),
                     (0.15, -150), (0.1667, -110), (0.1834, -80), (0.2, -55), (0.2167, -30),
                     (0.2334, -15), (0.25, -5), (0.3, 0)].map { time, offset in
-        SpaceWheelDrawnCapture.Frame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
+        drawnFrame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
     }
     #expect(SpaceWheelDrawnCapture.conditions(complete, switches: [step]).values.allSatisfy { $0 })
 }
@@ -51,9 +55,9 @@ func drawnFrameLatencyRejectsALateContinuousStartIncludingItsStillFrames() {
     let step = SpaceWheelDrawnCapture.Switch(time: 0, source: 4, target: 3, pitch: 260)
     func curve(firstMotion: Double) -> [SpaceWheelDrawnCapture.Frame] {
         let offsets = [-250, -220, -190, -150, -110, -80, -55, -30, -15, -5, 0]
-        let still = SpaceWheelDrawnCapture.Frame(time: 0, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: -260))
+        let still = drawnFrame(time: 0, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: -260))
         return [still] + offsets.enumerated().map { index, offset in
-            SpaceWheelDrawnCapture.Frame(time: firstMotion + Double(index) / 60,
+            drawnFrame(time: firstMotion + Double(index) / 60,
                 pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
         }
     }
@@ -65,26 +69,78 @@ func drawnFrameLatencyRejectsALateContinuousStartIncludingItsStillFrames() {
     #expect(SpaceWheelDrawnCapture.conditions(curve(firstMotion: 0.100), switches: [step]).values.allSatisfy { $0 })
 }
 
-@Test
-func drawnFrameTimesUseTheSamplesPresentationTimeInTheHostClock() throws {
+private func captureSample(bgra: [UInt8], time: CMTime) throws -> CMSampleBuffer {
     var buffer: CVPixelBuffer?
-    #expect(CVPixelBufferCreate(nil, 8, 1, kCVPixelFormatType_32BGRA, nil, &buffer) == kCVReturnSuccess)
+    #expect(CVPixelBufferCreate(nil, bgra.count / 4, 1, kCVPixelFormatType_32BGRA, nil, &buffer) == kCVReturnSuccess)
     let pixels = try #require(buffer)
     CVPixelBufferLockBaseAddress(pixels, [])
     if let base = CVPixelBufferGetBaseAddress(pixels) {
-        base.initializeMemory(as: UInt8.self, repeating: 0, count: CVPixelBufferGetBytesPerRow(pixels))
+        bgra.withUnsafeBytes { bytes in
+            base.copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
+        }
     }
     CVPixelBufferUnlockBaseAddress(pixels, [])
     var description: CMVideoFormatDescription?
     #expect(CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixels, formatDescriptionOut: &description) == noErr)
     var timing = CMSampleTimingInfo(duration: .invalid,
-        presentationTimeStamp: CMTime(value: 123456789, timescale: 1000000), decodeTimeStamp: .invalid)
+        presentationTimeStamp: time, decodeTimeStamp: .invalid)
     var sample: CMSampleBuffer?
     #expect(CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pixels,
         formatDescription: try #require(description), sampleTiming: &timing, sampleBufferOut: &sample) == noErr)
+    return try #require(sample)
+}
+
+@Test
+func drawnFrameTimesUseTheSamplesPresentationTimeInTheHostClock() throws {
+    let sample = try captureSample(bgra: Array(repeating: 0, count: 32), time: CMTime(value: 123456789, timescale: 1000000))
     let capture = SpaceWheelDrawnCapture(width: 8)
-    capture.record(try #require(sample), clock: CMClockGetHostTimeClock())
+    capture.record(sample, clock: CMClockGetHostTimeClock())
     let frame = try #require(capture.samples().first)
     #expect(abs(frame.time - 123.456789) < 0.000001)
     #expect(abs(frame.time - SpaceWheelDrawnCapture.hostTime()) > 1)
+}
+
+
+@Test
+func onePixelOutputKeepsTheWholeFourPointPatternStripWidth() {
+    let source = CGRect(x: 10, y: 20, width: 224, height: 4)
+    let configuration = SpaceWheelDrawnCapture.configuration(width: 224, sourceRect: source)
+    #expect(configuration.sourceRect == source)
+    #expect(configuration.width == 224 && configuration.height == 1)
+    #expect(!configuration.preservesAspectRatio)
+}
+
+@Test
+func captureRectUsesWindowBaseCoordinatesAndDisplayLogicalPoints() {
+    let rect = SpaceWheelDrawnCapture.sourceRect(windowFrame: CGRect(x: 2100, y: 100, width: 800, height: 600),
+        windowHeight: 600, row: CGRect(x: 8, y: 200, width: 224, height: 4),
+        displayFrame: CGRect(x: 1920, y: 0, width: 1920, height: 1080))
+    #expect(rect == CGRect(x: 188, y: 496, width: 224, height: 4))
+}
+
+@Test @MainActor
+func baselineFailurePreservesRealChannelStatisticsExpectedPatternAndRawRows() throws {
+    let capture = SpaceWheelDrawnCapture(width: 2)
+    let sample = try captureSample(bgra: [10, 20, 30, 255, 50, 60, 70, 255], time: CMTime(value: 5, timescale: 1))
+    capture.record(sample, clock: CMClockGetHostTimeClock())
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let diagnostics = capture.diagnostics(source: 4, pitch: 16, directory: directory)
+    #expect(diagnostics["drawn_sample_count"] as? Int == 1)
+    let rows = try #require(diagnostics["drawn_rows"] as? [[String: Any]])
+    let channels = try #require(rows.first?["channels"] as? [String: [String: Double]])
+    #expect(channels["b"] == ["min": 10, "max": 50, "mean": 30])
+    #expect(channels["g"] == ["min": 20, "max": 60, "mean": 40])
+    #expect(channels["r"] == ["min": 30, "max": 70, "mean": 50])
+    #expect(channels["a"] == ["min": 255, "max": 255, "mean": 255])
+    #expect(diagnostics["drawn_expected_pattern"] as? [Int] == (0..<2).map { SpaceWheelDrawnPattern.white(space: 4, x: $0) ? 255 : 0 })
+    let path = try #require(diagnostics["drawn_raw_path"] as? String)
+    #expect(URL(fileURLWithPath: path).deletingLastPathComponent().path == directory.path)
+    let raw = try Data(contentsOf: URL(fileURLWithPath: path))
+    #expect(Array(raw.dropFirst(8)) == [30, 20, 10, 70, 60, 50])
+    _ = try JSONSerialization.data(withJSONObject: diagnostics)
+    let empty = SpaceWheelDrawnCapture(width: 2).diagnostics(source: 4, pitch: 16, directory: directory)
+    #expect(empty["drawn_sample_count"] as? Int == 0)
+    #expect((empty["drawn_rows"] as? [[String: Any]])?.isEmpty == true)
 }

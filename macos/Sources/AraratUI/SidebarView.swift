@@ -101,7 +101,7 @@ public final class SidebarView: NSView {
 
     var onLookChanged: ((Look?, Look?, Double) -> Void)?
     var wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
-    private let wheelDrawnRow = CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") ? SpaceWheelDrawnRow() : nil
+    var wheelDrawnRow = CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") ? SpaceWheelDrawnRow() : nil
     private(set) var lookSampling: CADisplayLink?
     private var libraryLookSpaceID: String?
     private var creationLookSpaceID: String?
@@ -2082,6 +2082,23 @@ public final class SidebarView: NSView {
         guard let row = wheelDrawnRow else { return .zero }
         row.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
         return row.convert(row.bounds, to: nil)
+    }
+
+    public var checkSpaceWheelDrawnDiagnostics: [String: Any] {
+        guard let row = wheelDrawnRow else { return ["installed": false] }
+        func rect(_ value: CGRect) -> [String: Double] {
+            ["x": value.minX, "y": value.minY, "width": value.width, "height": value.height]
+        }
+        return ["installed": true, "space_index": spaceIndex, "pattern_space": row.space,
+                "window_attached": row.window != nil, "hidden": row.isHiddenOrHasHiddenAncestor,
+                "window_visible": row.window?.isVisible ?? false,
+                "window_occlusion_visible": row.window?.occlusionState.contains(.visible) ?? false,
+                "alpha": row.alphaValue, "layer_opacity": row.layer?.opacity ?? 1,
+                "frame_in_column": rect(row.frame), "bounds": rect(row.bounds), "visible_rect": rect(row.visibleRect),
+                "window_rect": rect(row.convert(row.bounds, to: nil)), "column_bounds": rect(spaceColumn.bounds),
+                "viewport_window_rect": rect(spaceViewport.convert(spaceViewport.bounds, to: nil)),
+                "layer_attached": row.layer?.superlayer != nil, "has_presentation": row.layer?.presentation() != nil,
+                "draw_count": row.drawCount, "last_drawn_space": row.lastDrawnSpace as Any? ?? NSNull()]
     }
 
     public var checkSpaceWheelMotionConditions: [String: Bool] {

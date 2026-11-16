@@ -37,8 +37,12 @@ public enum SpaceWheelDrawnPattern {
 @MainActor
 final class SpaceWheelDrawnRow: NSView {
     var space = 0 { didSet { needsDisplay = true } }
+    private(set) var drawCount = 0
+    private(set) var lastDrawnSpace: Int?
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
+        drawCount += 1
+        lastDrawnSpace = space
         for x in stride(from: 0, to: Int(bounds.width), by: 2) {
             (SpaceWheelDrawnPattern.white(space: space, x: x) ? NSColor.white : NSColor.black).setFill()
             NSRect(x: CGFloat(x), y: 0, width: 2, height: bounds.height).fill()
