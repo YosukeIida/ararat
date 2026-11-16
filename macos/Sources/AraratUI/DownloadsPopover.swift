@@ -49,6 +49,9 @@ final class DownloadsButton: SidebarDockButton {
         switch progress {
         case .none:
             ring.removeAnimation(forKey: "spin"); ring.isHidden = true; setAccessibilityValue(libraryOpen ? 1 : 0)
+        case .paused(let fraction):
+            ring.removeAnimation(forKey: "spin"); ring.isHidden = false; ring.strokeEnd = max(0.12, fraction)
+            setAccessibilityValue("Paused, \(Int((fraction * 100).rounded())) %")
         case .fraction(let fraction):
             ring.removeAnimation(forKey: "spin"); ring.isHidden = false; ring.strokeEnd = max(0.12, fraction)
             setAccessibilityValue("Downloading, \(Int((fraction * 100).rounded())) %")
@@ -74,8 +77,8 @@ final class DownloadsPopover: NSObject {
     private let anchor: NSView
     private let stack = NSStackView()
     let library = NSButton(title: "Open Library", target: nil, action: nil)
-    // U26f: a private workspace has no Library page, so its download list hides this row.
-    var showsLibrary = true { didSet { library.isHidden = !showsLibrary } }
+    let clear = NSButton(title: "Clear All", target: nil, action: nil)
+    var showsLibrary = true { didSet { library.isHidden = !showsLibrary; clear.isHidden = showsLibrary } }
     private(set) var rows: [String: DownloadRowView] = [:]
     var openLibrary: (() -> Void)?
     init(model: DownloadsModel, anchor: NSView) {
@@ -87,10 +90,19 @@ final class DownloadsPopover: NSObject {
         library.target = self; library.action = #selector(open)
         library.bezelStyle = .inline; library.isBordered = false; library.alignment = .left; library.setAccessibilityLabel("Open Library")
         library.font = .systemFont(ofSize: 13)
-        stack.addArrangedSubview(library)
+        clear.target = self; clear.action = #selector(clearAll)
+        clear.bezelStyle = .inline; clear.isBordered = false; clear.alignment = .left
+        clear.setAccessibilityLabel("Clear All Downloads"); clear.font = .systemFont(ofSize: 13)
+        clear.isHidden = true
+        let header = NSStackView(views: [library, clear])
+        header.orientation = .vertical; header.alignment = .width; header.spacing = 0
+        stack.addArrangedSubview(header)
         library.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        library.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
-        library.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+        clear.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        library.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
+        clear.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
+        header.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+        header.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
         let controller = NSViewController()
         let content = NSView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
         content.addSubview(stack)
@@ -136,9 +148,10 @@ final class DownloadsPopover: NSObject {
             let frame = panel.frame
             panel.setFrameOrigin(NSPoint(x: min(max(frame.minX, window.frame.minX), window.frame.maxX - frame.width), y: frame.minY))
         }
-        if focus { popover.contentViewController?.view.window?.makeFirstResponder(library) }
+        if focus { popover.contentViewController?.view.window?.makeFirstResponder(showsLibrary ? library : clear) }
     }
     func refresh(limit: Int) {
+        clear.isEnabled = !model.clearableItems.isEmpty
         let items = Array(model.items.prefix(limit))
         let ids = items.map(\.id)
         for id in Array(rows.keys) where !ids.contains(id) {
@@ -161,6 +174,7 @@ final class DownloadsPopover: NSObject {
         }
     }
     @objc private func open() { close(); openLibrary?() }
+    @objc private func clearAll() { model.clearAll() }
     func row(_ item: DownloadEntry) -> NSView {
         DownloadRowView(item: item, model: model)
     }
@@ -172,7 +186,27 @@ final class DownloadsPopover: NSObject {
 }
 
 @MainActor
-final class DownloadRowView: NSStackView {
+final class DownloadRowView: NSStackView, NSDraggingSource {
+    private var dragStart: NSPoint?
+    func draggingItem() -> NSDraggingItem? {
+        guard let url = model.dragFileURL(id: itemID) else { return nil }
+        return NSDraggingItem(pasteboardWriter: url as NSURL)
+    }
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        dragStart = convert(event.locationInWindow, from: nil)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - start.x, point.y - start.y) >= 4, let item = draggingItem() else { return }
+        dragStart = nil
+        item.setDraggingFrame(icon.convert(icon.bounds, to: self), contents: icon.image)
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+    override func mouseUp(with event: NSEvent) { dragStart = nil }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+
     private(set) var itemID: String
     private let model: DownloadsModel
     private(set) var actionButtons: [DownloadActionButton] = []
@@ -237,8 +271,8 @@ final class DownloadRowView: NSStackView {
         actionButtons.forEach { actions.removeArrangedSubview($0); $0.removeFromSuperview() }
         actionButtons.removeAll()
         for action in item.actions {
-            let titles = ["open": "Open", "show": "Show in Finder", "cancel": "Cancel", "resume": "Resume", "remove": "Remove", "keep": "Keep", "discard": "Discard"]
-            let symbols = ["open": "arrow.up.forward.app", "show": "folder", "cancel": "xmark", "resume": "arrow.clockwise", "remove": "trash", "keep": "checkmark", "discard": "trash"]
+            let titles = ["open": "Open", "show": "Show in Finder", "cancel": "Cancel", "pause": "Pause", "resume": "Resume", "remove": "Remove", "keep": "Keep", "discard": "Discard"]
+            let symbols = ["open": "arrow.up.forward.app", "show": "folder", "cancel": "xmark", "pause": "pause", "resume": "arrow.clockwise", "remove": "trash", "keep": "checkmark", "discard": "trash"]
             guard let title = titles[action], let symbol = symbols[action] else { continue }
             let button = DownloadActionButton(title: title, target: self, action: #selector(performDownload(_:)))
             button.downloadID = item.id; button.downloadAction = action; button.bezelStyle = .inline

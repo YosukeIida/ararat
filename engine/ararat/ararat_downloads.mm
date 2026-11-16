@@ -49,11 +49,13 @@ NSArray* Actions(Item* item, DownloadItemModel& model) {
       if (offered && commands.IsCommandEnabled(command) && ![actions containsObject:action])
         [actions addObject:action];
     }
+    if (item->GetState() != Item::IN_PROGRESS) [actions addObject:@"remove"];
     return actions;
   }
   if (item->GetState() == Item::COMPLETE && commands.IsCommandEnabled(DownloadCommands::OPEN_WHEN_COMPLETE)) [actions addObject:@"open"];
   if (commands.IsCommandEnabled(DownloadCommands::CANCEL)) [actions addObject:@"cancel"];
-  if (item->GetState() == Item::INTERRUPTED && commands.IsCommandEnabled(DownloadCommands::RESUME)) [actions addObject:@"resume"];
+  if (item->GetState() == Item::IN_PROGRESS && !item->IsPaused() && commands.IsCommandEnabled(DownloadCommands::PAUSE)) [actions addObject:@"pause"];
+  if ((item->IsPaused() || item->GetState() == Item::INTERRUPTED) && commands.IsCommandEnabled(DownloadCommands::RESUME)) [actions addObject:@"resume"];
   if (item->GetState() != Item::IN_PROGRESS) [actions addObject:@"remove"];
   return actions;
 }
@@ -132,6 +134,8 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
         @"id": base::SysUTF8ToNSString(guid),
         @"restored": @(item->GetDownloadCreationType() == Item::TYPE_HISTORY_IMPORT),
         @"name": base::SysUTF16ToNSString(item->GetFileNameToReportUser().LossyDisplayName()),
+        @"url": base::SysUTF8ToNSString(item->GetURL().spec()),
+        @"path": base::SysUTF8ToNSString(item->GetTargetFilePath().value()),
         @"state": @(item->GetState()), @"danger": @(item->GetDangerType()),
         @"start": @(item->GetStartTime().InSecondsFSinceUnixEpoch()),
         @"received": @(item->GetReceivedBytes()), @"total": @(item->GetTotalBytes()),
@@ -157,6 +161,7 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
     if ([action isEqualToString:@"show"]) command = DownloadCommands::SHOW_IN_FOLDER;
     else if ([action isEqualToString:@"open"]) command = DownloadCommands::OPEN_WHEN_COMPLETE;
     else if ([action isEqualToString:@"cancel"]) command = DownloadCommands::CANCEL;
+    else if ([action isEqualToString:@"pause"]) command = DownloadCommands::PAUSE;
     else if ([action isEqualToString:@"resume"]) command = DownloadCommands::RESUME;
     else if ([action isEqualToString:@"keep"]) {
       DownloadBubbleSecurityViewInfo info;
