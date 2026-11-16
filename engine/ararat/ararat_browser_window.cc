@@ -475,7 +475,7 @@ ShowTranslateBubbleResult AraratBrowserWindow::ShowTranslateBubble(
 
 DownloadBubbleUIController*
 AraratBrowserWindow::GetDownloadBubbleUIController() {
-  // Why not now: download scanning crashes on null; download UI is pending.
+  // Why not now: Ararat's own downloads UI replaces Chromium's bubble - the toolbar popover and Library > Downloads drive Chromium's DownloadCommands through ararat_downloads.mm; whether a deep-scan prompt on a null controller crashes is unverified.
   return nullptr;
 }
 
