@@ -4,6 +4,7 @@ import AppKit
 class SidebarScrollView: NSScrollView {
     var onScroll: ((NSEvent) -> Bool)?
     var onBoundsChanged: (() -> Void)?
+    var onRevealEnd: (() -> Void)?
     private let topHairline = CALayer()
     private let bottomHairline = CALayer()
     var clock: () -> CFTimeInterval = CACurrentMediaTime
@@ -116,9 +117,11 @@ class SidebarScrollView: NSScrollView {
     func stepReveal() { revealStep?() }
 
     func stopReveal() {
+        guard revealTimer != nil else { return }
         revealTimer?.invalidate()
         revealTimer = nil
         revealStep = nil
+        onRevealEnd?()
     }
 
     override func scrollWheel(with event: NSEvent) {

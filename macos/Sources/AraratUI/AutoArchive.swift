@@ -7,6 +7,7 @@ public final class AutoArchive {
     private let now: () -> UInt64
     private let canPublish: () -> Bool
     private let receive: WorkspaceAdapter.Completion<WorkspaceSnapshot>
+    public var onPublishReady: (() -> Void)?
     private var needsPublish = false
     private(set) var timer: Timer?
 
@@ -36,13 +37,16 @@ public final class AutoArchive {
         }
     }
     public func publishDeferred() {
-        guard needsPublish && canPublish() else { return }
+        guard canPublish() else { return }
+        onPublishReady?()
+        guard needsPublish else { return }
         needsPublish = false
         adapter.snapshot { [weak self] result in self?.deliver(result) }
     }
     private func deliver(_ result: Result<WorkspaceSnapshot, Error>) {
         guard canPublish() else { needsPublish = true; return }
         needsPublish = false
+        onPublishReady?()
         receive(result)
     }
     public func stop() { timer?.invalidate(); timer = nil }

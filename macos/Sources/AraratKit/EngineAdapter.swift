@@ -127,6 +127,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
+    public var canPublishSnapshot: (@MainActor () -> Bool)?
+    private var needsSnapshotPublish = false
+    @MainActor public func publishDeferredSnapshot() {
+        guard needsSnapshotPublish else { return }
+        publish()
+    }
     public var onWorkspaceChange: (@MainActor () -> Void)?
     public var onQuitProfileSwitch: (@MainActor () -> Void)?
     public var onCloseStarted: (@MainActor () -> Void)?
@@ -895,18 +901,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
-                    for target in targets {
-                        if let tab = self.session.tab(target.liveId) { tab.close(withCommandId: target.command.id) }
-                        else if self.session.cancelPendingOpen(target.liveId) {
-                            self.queue.async {
-                                _ = self.store?.liveCancel(commandId: target.liveId)
-                                _ = self.store?.liveSettleClose(commandId: target.command.id)
-                                self.session.drainHistoryPurges()
-                            }
-                        } else {
-                            self.report(CoreError.Live(message: "Cannot find split member \(target.command.item) to close"))
-                        }
-                    }
+                    self.session.closeLiveTargets(targets, report: self.report)
                     self.deliverIfCurrent(snapshot)
                     self.onWorkspaceChange?()
                 }
@@ -1268,6 +1263,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
         guard current else { return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
+        guard canPublishSnapshot?() != false else { needsSnapshotPublish = true; return }
+        needsSnapshotPublish = false
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
             displayedSplit = snapshot.selectedId.flatMap { id in

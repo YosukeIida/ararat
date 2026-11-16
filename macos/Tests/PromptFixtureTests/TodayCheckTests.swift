@@ -16,8 +16,8 @@ import Testing
     init(_ item: String) { itemId = item }
 }
 
-@Test @MainActor
-func todayCheckWaitsForTheRestoredSidebarBeforePressingClearAgain() throws {
+@Test(arguments: [false, true]) @MainActor
+func todayCheckWaitsForTheRestoredSidebarBeforePressingClearAgain(inSplit: Bool) throws {
     _ = NSApplication.shared
     class_addProtocol(TodayCheckHost.self, objc_getProtocol("ARWindowHostAPI")!)
     class_addProtocol(TodayCheckTab.self, objc_getProtocol("ARTabAPI")!)
@@ -35,6 +35,10 @@ func todayCheckWaitsForTheRestoredSidebarBeforePressingClearAgain() throws {
     _ = try store.createSpace(windowId: runtime.windowID, name: "Work", spaceId: "work")
     let kept = try #require(store.createTab(windowId: runtime.windowID, url: "https://stay.example/").selectedId)
     let other = try #require(store.createTab(windowId: runtime.windowID, url: "https://leave.example/").selectedId)
+    if inSplit {
+        _ = try store.makeSplit(windowId: runtime.windowID, draggedId: other, targetId: kept, side: .right)
+    }
+    let splitId = store.splitLayout(itemId: kept)?.id
     let live = try store.liveOpen(item: kept, url: "https://stay.example/")
     _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
         strips: [LiveStrip(window: runtime.windowID, tabs: [LiveTab(offTheRecord: false, profile: .default,
@@ -49,6 +53,7 @@ func todayCheckWaitsForTheRestoredSidebarBeforePressingClearAgain() throws {
     check.mode = .today
     check.phase = 43
     check.commandWId = kept
+    check.clearSplitId = splitId ?? ""
     check.seen = [kept, other]
     var presses = 0
     var answers = 0
@@ -75,11 +80,16 @@ func todayCheckWaitsForTheRestoredSidebarBeforePressingClearAgain() throws {
     let restored = session.queue.sync { store.snapshot(windowId: runtime.windowID) }
     runtime.snapshot = restored
     sidebar.update(snapshot: restored)
+    if let splitId {
+        #expect(sidebar.rowCheckInfo(id: kept) == nil)
+        #expect(sidebar.rowCheckInfo(id: splitId) != nil)
+    }
     tick()
     #expect(presses == 1)
     #expect(steps == [5])
     #expect(check.conditions["divider_back_after_stay"] == true)
     #expect(check.conditions["clear_today_stay_keeps_only_refused_row"] == true)
+    if inSplit { #expect(check.conditions["clear_today_stay_keeps_one_pane_split"] == true) }
 }
 
 @Test @MainActor

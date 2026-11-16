@@ -1749,13 +1749,13 @@ fn private_live_batches_do_not_auto_archive_or_delete_spaces() {
 #[test]
 fn bulk_close_stay_restores_only_the_refused_row_and_keeps_its_live_identity() {
     use ararat_core::model::{ArchiveAfter, SplitSide};
-    for operation in ["split", "clear", "auto", "delete"] {
+    for operation in ["split", "clear", "clear-split", "auto", "delete"] {
         for refused in ["a", "b"] {
             let mut ws = workspace();
             ws.create_space("two", "Home", "home").unwrap();
             ws.create_space("three", "Other", "other").unwrap();
             ws.show_space("one", "space-work").unwrap();
-            let split = if operation == "split" {
+            let split = if operation == "split" || operation == "clear-split" {
                 Some(ws.make_split("a", "b", SplitSide::Right).unwrap().1.split)
             } else { None };
             let mut live = Live::new();
@@ -1769,7 +1769,7 @@ fn bulk_close_stay_restores_only_the_refused_row_and_keeps_its_live_identity() {
             let history_profile = ws.history_profiles.get(refused).cloned();
             let targets = match operation {
                 "split" => live.close_split(&mut ws, split.as_ref().unwrap()).unwrap().1,
-                "clear" => live.clear_today(&mut ws, "space-work").unwrap().1,
+                "clear" | "clear-split" => live.clear_today(&mut ws, "space-work").unwrap().1,
                 "auto" => live.auto_archive(&mut ws, ArchiveAfter::Hours12.millis() + 1).unwrap().1,
                 "delete" => live.delete_space(&mut ws, "space-work").unwrap().1,
                 _ => unreachable!(),
