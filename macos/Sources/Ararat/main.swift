@@ -5536,6 +5536,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard snapshot.archive.contains(where: { $0.id == keyboardArchiveSplitID }), let sidebar,
             !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }) else { return }
       sidebar.setLibraryOpen(true)
+      if !screen {
+        // Why not present the sheet here: hidden checks must never order a window on screen.
+        browserCheckPhase = 100
+        workspace?.clearArchive { [weak self] result in
+          guard let self else { return }
+          self.showResult(result)
+          if case .success = result { self.browserCheckPhase = 3656 }
+        }
+        return
+      }
       guard sidebar.checkPressClearArchive() else { return }
       browserCheckPhase = 3655
     case 3655:
