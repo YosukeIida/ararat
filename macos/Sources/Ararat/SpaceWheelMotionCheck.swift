@@ -96,6 +96,23 @@ final class SpaceWheelMotionCheck {
     var capture: SpaceWheelDrawnCapture?
     var finishing = false
     var switches: [SpaceWheelDrawnCapture.Switch] = []
+    var captureError: String?
+
+    func prepareCapture(_ operation: () async throws -> Void) async {
+        do { try await operation() }
+        catch { captureError = String(describing: error) }
+    }
+
+    func result(presentation: [String: Bool], drawnReport: [String: Any]) -> (ok: Bool, values: [String: Any]) {
+        var conditions = Dictionary(uniqueKeysWithValues:
+            ["first_frame_full_offset", "monotone_approach", "no_late_jump", "landed"].map { ($0, presentation[$0] ?? false) })
+        conditions["events_sent"] = !failed && sent == expected
+        conditions["space_switched"] = !switches.isEmpty
+        return (conditions.values.allSatisfy { $0 }, ["check": "space-wheel-motion", "conditions": conditions,
+            "failed_conditions": conditions.filter { !$0.value }.keys.sorted(),
+            "events_sent": sent, "input_failed": failed, "switches": switches.count,
+            "drawn_report_only": drawnReport, "motion_trace": "stderr JSON lines"])
+    }
 }
 
 extension Runtime {
@@ -114,25 +131,17 @@ extension Runtime {
                 await check.capture?.stop()
                 sidebar.checkFinishSpaceWheelMotion()
                 let counts = sidebar.checkSpaceWheelMotionCounts
-                let frames = check.capture?.samples() ?? []
-                let conditions = SpaceWheelDrawnCapture.conditions(frames, switches: check.switches)
-                let ok = !check.failed && check.sent == check.expected && !conditions.isEmpty
-                    && conditions.values.allSatisfy { $0 }
-                var values: [String: Any] = ["check": "space-wheel-motion", "samples": counts,
-                    "conditions": conditions, "presentation_conditions": sidebar.checkSpaceWheelMotionConditions,
-                    "failed_conditions": conditions.filter { !$0.value }.keys.sorted(),
-                    "events_sent": check.sent, "input_failed": check.failed,
-                    "drawn_frames": frames.count, "drawn_width": check.capture?.width ?? 0,
-                    "drawn_filter": check.capture?.filterMode.rawValue ?? "display",
-                    "motion_trace": "stderr JSON lines"]
-                if ok {
-                    let path = try? check.capture?.save(relativeTo: check.switches.first?.time ?? 0, directory: SpaceWheelDrawnCapture.resultDirectory())
-                    values["drawn_raw_path"] = path as Any? ?? NSNull()
-                } else {
-                    values.merge(check.capture?.diagnostics(source: check.switches.first?.source ?? sidebar.spaceShown, pitch: Int(sidebar.bounds.width),
-                        directory: SpaceWheelDrawnCapture.resultDirectory()) ?? [:]) { _, diagnostic in diagnostic }
-                }
-                finishBrowserCheck(ok: ok, values: values)
+                let drawn = SpaceWheelDrawnCapture.report(check.capture?.samples() ?? [], switches: check.switches)
+                var report = check.capture?.diagnostics(source: check.switches.first?.source ?? sidebar.spaceShown,
+                    pitch: Int(sidebar.bounds.width), directory: SpaceWheelDrawnCapture.resultDirectory()) ?? [:]
+                report["conditions"] = drawn.conditions
+                report["switches"] = drawn.switches
+                report["capture_error"] = check.captureError as Any? ?? NSNull()
+                report["drawn_marker"] = sidebar.checkSpaceWheelDrawnDiagnostics
+                let result = check.result(presentation: sidebar.checkSpaceWheelMotionConditions, drawnReport: report)
+                var values = result.values
+                values["samples"] = counts
+                finishBrowserCheck(ok: result.ok, values: values)
             }
             return
         }
@@ -151,7 +160,7 @@ extension Runtime {
             sidebar.spaceScrollDirection = .natural
             sidebar.showSpace(at: min(4, snapshot.spaces.count - 2))
             Task { @MainActor [self, sidebar, check] in
-                do {
+                await check.prepareCapture {
                     sidebar.layoutSubtreeIfNeeded()
                     let rect = sidebar.checkSpaceWheelDrawnRect
                     guard let window = sidebar.window, rect.width > 0, rect.height > 0 else {
@@ -171,37 +180,29 @@ extension Runtime {
                               target: sidebar.spaceShown, pitch: Int(sidebar.bounds.width)) != nil else {
                         throw SpaceWheelMotionCheck.Failure(description: "drawn_pattern_baseline source=\(sidebar.spaceShown) width=\(capture.width)")
                     }
-                    let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in
-                        MainActor.assumeIsolated { self?.sidebar?.checkSampleSpaceWheelMotion() }
-                    }
-                    check.timer = timer
-                    RunLoop.main.add(timer, forMode: .common)
-                    let start = ProcessInfo.processInfo.systemUptime + 0.2
-                    for input in inputs {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2 + input.time - first.time) { [weak sidebar, weak check] in
-                            guard let sidebar, let check else { return }
-                            let now = ProcessInfo.processInfo.systemUptime
-                            guard let event = input.event(at: start + input.time - first.time) else { check.failed = true; return }
-                            sidebar.traceSpaceWheelMotion("replay", detail: "recorded=\(input.time) scheduled=\(start + input.time - first.time) actual=\(now)")
-                            let source = sidebar.spaceShown
-                            let received = SpaceWheelDrawnCapture.hostTime()
-                            sidebar.scrollWheel(with: event)
-                            if sidebar.spaceShown != source {
-                                check.switches.append(.init(time: received, source: source, target: sidebar.spaceShown, pitch: Int(sidebar.bounds.width)))
-                            }
-                            check.sent += 1
-                        }
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 + last.time - first.time) { [weak check] in check?.done = true }
-                } catch {
-                    await check.capture?.stop()
-                    var values = check.capture?.diagnostics(source: sidebar.spaceShown, pitch: Int(sidebar.bounds.width),
-                        directory: SpaceWheelDrawnCapture.resultDirectory()) ?? ["drawn_sample_count": 0]
-                    values["drawn_marker"] = sidebar.checkSpaceWheelDrawnDiagnostics
-                    values["check"] = "space-wheel-motion"
-                    values["error"] = "drawn capture: \(error)"
-                    finishBrowserCheck(ok: false, values: values)
                 }
+                let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.sidebar?.checkSampleSpaceWheelMotion() }
+                }
+                check.timer = timer
+                RunLoop.main.add(timer, forMode: .common)
+                let start = ProcessInfo.processInfo.systemUptime + 0.2
+                for input in inputs {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2 + input.time - first.time) { [weak sidebar, weak check] in
+                        guard let sidebar, let check else { return }
+                        let now = ProcessInfo.processInfo.systemUptime
+                        guard let event = input.event(at: start + input.time - first.time) else { check.failed = true; return }
+                        sidebar.traceSpaceWheelMotion("replay", detail: "recorded=\(input.time) scheduled=\(start + input.time - first.time) actual=\(now)")
+                        let source = sidebar.spaceShown
+                        let received = SpaceWheelDrawnCapture.hostTime()
+                        sidebar.scrollWheel(with: event)
+                        if sidebar.spaceShown != source {
+                            check.switches.append(.init(time: received, source: source, target: sidebar.spaceShown, pitch: Int(sidebar.bounds.width)))
+                        }
+                        check.sent += 1
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 + last.time - first.time) { [weak check] in check?.done = true }
             }
         } catch {
             finishBrowserCheck(ok: false, values: ["check": "space-wheel-motion", "error": "wheel recording: \(error)"])

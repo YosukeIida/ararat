@@ -198,9 +198,15 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
         row["accepted"] = true
     }
 
+    struct Report {
+        let conditions: [String: Bool]
+        let switches: [[String: Any]]
+    }
+
     @MainActor
-    static func conditions(_ samples: [Frame], switches: [Switch]) -> [String: Bool] {
+    static func report(_ samples: [Frame], switches: [Switch]) -> Report {
         var conditions: [String: Bool] = [:]
+        var reports: [[String: Any]] = []
         for (index, step) in switches.enumerated() {
             let end = switches.indices.contains(index + 1) ? switches[index + 1].time : .infinity
             let from = Double((step.target - step.source) * step.pitch)
@@ -221,11 +227,12 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
                 "first_motion_limit_ms": firstMotionLimit * 1000,
                 "source": step.source, "target": step.target, "conditions": verdict,
                 "samples": frames.map { ["t": $0.t, "offset": $0.offset] }]
+            reports.append(value)
             if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
                 FileHandle.standardError.write(data); FileHandle.standardError.write(Data([10]))
             }
         }
-        return conditions
+        return Report(conditions: conditions, switches: reports)
     }
 
     static func rect(_ value: CGRect) -> [String: Double] {

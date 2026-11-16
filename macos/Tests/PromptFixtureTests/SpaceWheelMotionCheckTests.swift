@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 import AraratKit
+import AraratUI
 @testable import Ararat
 
 @Test @MainActor
@@ -66,4 +67,52 @@ func wheelMotionReplayRejectsMalformedFields() {
     for text in ["nan cont=0", "1 cont=0", "1 cont=0 cont=1", "-1 cont=0"] {
         #expect(throws: (any Error).self) { try SpaceWheelMotionCheck.Input.parse(text) }
     }
+}
+
+@Test @MainActor
+func wheelMotionCheckContinuesAfterDrawnFailuresAndGatesOnlyPresentationAndReplay() async throws {
+    let check = SpaceWheelMotionCheck()
+    let presentation = ["first_frame_full_offset": true, "monotone_approach": true, "no_late_jump": true, "landed": true]
+    for message in ["drawn_pattern_baseline", "drawn_capture_frames count=0", "capture start denied"] {
+        await check.prepareCapture { throw SpaceWheelMotionCheck.Failure(description: message) }
+        #expect(check.captureError == message)
+        check.sent = 26
+        check.expected = 26
+        check.switches = [.init(time: 1, source: 4, target: 3, pitch: 260)]
+        let report: [String: Any] = ["capture_error": check.captureError!, "conditions": ["first_frame_full_offset": false]]
+        let result = check.result(presentation: presentation, drawnReport: report)
+        #expect(result.ok)
+        #expect((result.values["failed_conditions"] as? [String])?.isEmpty == true)
+        #expect((result.values["drawn_report_only"] as? [String: Any])?["capture_error"] as? String == message)
+        _ = try JSONSerialization.data(withJSONObject: result.values)
+        for name in presentation.keys {
+            var failed = presentation
+            failed[name] = false
+            let result = check.result(presentation: failed, drawnReport: [:])
+            #expect(!result.ok)
+            #expect(result.values["failed_conditions"] as? [String] == [name])
+        }
+    }
+    check.sent -= 1
+    #expect(!check.result(presentation: presentation, drawnReport: [:]).ok)
+    check.sent = check.expected
+    check.failed = true
+    #expect(!check.result(presentation: presentation, drawnReport: [:]).ok)
+    check.failed = false
+    check.switches = []
+    #expect(!check.result(presentation: presentation, drawnReport: [:]).ok)
+    #expect(!check.result(presentation: [:], drawnReport: [:]).ok)
+}
+
+@Test @MainActor
+func presentationGateRejectsTheEarlyStartCurveEvenWhenDrawnResultsAreAbsent() {
+    let check = SpaceWheelMotionCheck()
+    check.sent = 1
+    check.expected = 1
+    check.switches = [.init(time: 0, source: 4, target: 3, pitch: 260)]
+    let partial = [(0.1, 100.0), (0.18, 60.0), (0.25, 0.0)].map { SpaceWheelMotionCurve.Frame(t: $0, offset: $1) }
+    let conditions = SpaceWheelMotionCurve.conditions(frames: partial, from: 260, pitch: 260)
+    let result = check.result(presentation: conditions, drawnReport: [:])
+    #expect(!result.ok)
+    #expect((result.values["failed_conditions"] as? [String])?.contains("first_frame_full_offset") == true)
 }

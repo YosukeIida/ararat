@@ -34,12 +34,12 @@ func capturedRowDecodesBothDirectionsAndRejectsUnrecognizedPixels() {
 }
 
 @Test @MainActor
-func drawnFrameGateRejectsPartialStartsAndAcceptsContinuousMotion() {
+func drawnFrameReportRejectsPartialStartsAndAcceptsContinuousMotion() {
     let step = SpaceWheelDrawnCapture.Switch(time: 0, source: 4, target: 3, pitch: 260)
     let partial = [(0.0, -260), (0.09, -260), (0.11, -100), (0.15, -60), (0.2, -20), (0.3, 0)].map { time, offset in
         drawnFrame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
     }
-    let verdict = SpaceWheelDrawnCapture.conditions(partial, switches: [step])
+    let verdict = SpaceWheelDrawnCapture.report(partial, switches: [step]).conditions
     #expect(verdict["first_frame_full_offset"] == false)
     #expect(verdict["landed"] == true)
     let complete = [(0.0, -260), (0.09, -260), (0.1, -250), (0.1167, -220), (0.1334, -190),
@@ -47,7 +47,7 @@ func drawnFrameGateRejectsPartialStartsAndAcceptsContinuousMotion() {
                     (0.2334, -15), (0.25, -5), (0.3, 0)].map { time, offset in
         drawnFrame(time: time, pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
     }
-    #expect(SpaceWheelDrawnCapture.conditions(complete, switches: [step]).values.allSatisfy { $0 })
+    #expect(SpaceWheelDrawnCapture.report(complete, switches: [step]).conditions.values.allSatisfy { $0 })
 }
 
 
@@ -62,12 +62,12 @@ func drawnFrameLatencyRejectsALateContinuousStartIncludingItsStillFrames() {
                 pixels: drawnPixels(source: 4, target: 3, pitch: 260, width: 244, offset: offset))
         }
     }
-    let late = SpaceWheelDrawnCapture.conditions(curve(firstMotion: 0.1275), switches: [step])
+    let late = SpaceWheelDrawnCapture.report(curve(firstMotion: 0.1275), switches: [step]).conditions
     #expect(late.values.contains(false))
     #expect(late["first_motion_within_120ms"] == false)
     #expect(late.filter { $0.key != "first_motion_within_120ms" }.values.allSatisfy { $0 })
-    #expect(SpaceWheelDrawnCapture.conditions(curve(firstMotion: 0.120), switches: [step]).values.allSatisfy { $0 })
-    #expect(SpaceWheelDrawnCapture.conditions(curve(firstMotion: 0.100), switches: [step]).values.allSatisfy { $0 })
+    #expect(SpaceWheelDrawnCapture.report(curve(firstMotion: 0.120), switches: [step]).conditions.values.allSatisfy { $0 })
+    #expect(SpaceWheelDrawnCapture.report(curve(firstMotion: 0.100), switches: [step]).conditions.values.allSatisfy { $0 })
 }
 
 private func captureSample(bgra: [UInt8], time: CMTime, status: SCFrameStatus = .complete) throws -> CMSampleBuffer {
