@@ -196,7 +196,7 @@ host は表示したプロファイルごとに Browser と profile keep-alive �
 | 終了、ログアウト、ダウンロードの確認 | Chrome の AppController（`app_controller_mac.mm:937–987, 1483–1507`）。host は終了中の transaction を抑止する。表示中のプロファイルが切り替わった終了をキャンセルしたときは、通常のプロファイル切り替えと同様に、表示中の space とアクティブな選択を、ウィンドウの履歴および切り替え前後の選択時刻とともに記録する（我々の規則） |
 | ウィンドウの close | host が Browser の close を要求し、破棄を待つ。workspace のタブの行は維持する。ユーザーの close はそのウィンドウの `Window` レコードを削除し、終了では残す（§4.5）（我々の規則） |
 | Dock からの再オープンと Dock メニュー | アプリの callback と AppController の hook（`app_controller_mac.mm:1853–1930, 2144–2197`）。Dock メニューは空とする（我々の規則） |
-| openURLs、Handoff、コマンドラインの URL | Chrome がプロファイルを検証し、通常 URL は表示中の space に、off-the-record URL はプライベートウィンドウに開く。off-the-record の Browser が無くなった後のプライベートの host は、どの URL も拒否する（我々の規則） |
+| openURLs、Handoff、コマンドラインの URL | Chrome がプロファイルを検証し、通常 URL は Air Traffic Control の `route()` を通る。space 宛てはその space の Today にタブを作り、Little Window 宛ては Little Window を開く。rule が無いときは既定の宛先（Little Window、Arc の値）に従う。off-the-record URL はプライベートウィンドウに開く。off-the-record の Browser が無くなった後のプライベートの host は、どの URL も拒否する（我々の規則、§4.5） |
 | ウィンドウの command handler | host が表示中の Browser に Chrome のコマンドを送り、workspace の New Tab、Edit URL、Search、Close Tab、Settings を横取りする。Browser が空の host も扱う（U16、我々の規則。エンジンでの検証は未了） |
 | 新規タブ、target blank、features の無い window.open、修飾キー付きクリック | workspace の New Tab は command bar を開き、確定時に Today の行を作る。Chrome が作ったタブはコアが採用する（U16、我々の規則。エンジンでの検証は未了） |
 | 新規ウィンドウ、shift クリック、復元、ブックマーク、拡張の通常ウィンドウ | Browser のコンストラクタの hook が表示中の space の profile の app host を作る（U10、我々の規則） |
