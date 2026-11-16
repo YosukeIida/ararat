@@ -384,11 +384,22 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn set_window_presentation(&self, window_id: String, presentation: WindowPresentation) -> Result<(), CoreError> {
+        self.admit(false)?;
+        if self.private { return Ok(()); }
+        let mut workspace = self.workspace.lock().unwrap();
+        let width = presentation.sidebar_width.ok_or_else(|| CoreError::Edit { message: "missing sidebar width".into() })?;
+        let ops = workspace.set_window_presentation(&window_id, presentation.frame.map(Into::into), width, presentation.sidebar_hidden)?;
+        self.store.write(ops);
+        Ok(())
+    }
+
     pub fn kept_windows(&self) -> Vec<KeptWindow> {
         let workspace = self.workspace.lock().unwrap();
         workspace.kept_windows().into_iter().filter(|_| !self.private)
             .map(|window| KeptWindow { shown_space: workspace.shown_space(&window.id).map(str::to_owned),
-                                       id: window.id, changed_at: window.changed_at }).collect()
+                                       id: window.id, changed_at: window.changed_at,
+                                       presentation: WindowPresentation { frame: window.frame.map(Into::into), sidebar_width: window.sidebar_width, sidebar_hidden: window.sidebar_hidden } }).collect()
     }
 
     // P5b: When Ararat opens is Open a new window, so the launch throws the kept records away as
@@ -1457,10 +1468,18 @@ pub struct WorkspaceSnapshot {
     pub spaces: Vec<SpaceSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct WindowPresentation {
+    pub frame: Option<LittleWindowFrame>,
+    pub sidebar_width: Option<f64>,
+    pub sidebar_hidden: bool,
+}
+
 #[derive(Debug, PartialEq, uniffi::Record)]
 pub struct KeptWindow {
     pub id: String,
     pub changed_at: u64,
+    pub presentation: WindowPresentation,
     /// P5b: where this record's window last was — the same space a launch that adopts it would
     /// show, so Open a new window opens there too (review 1 F9).
     pub shown_space: Option<String>,

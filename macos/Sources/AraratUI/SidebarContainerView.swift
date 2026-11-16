@@ -189,6 +189,21 @@ public final class SidebarContainerView: NSView {
         windowMain = { main }
         if let window { NotificationCenter.default.post(name: main ? NSWindow.didBecomeMainNotification : NSWindow.didResignMainNotification, object: window) }
     }
+    public var onPresentationChanged: (() -> Void)?
+    public var savedPresentation: WindowPresentation {
+        let saved = stateBeforeFullscreen ?? state
+        return WindowPresentation(frame: nil, sidebarWidth: Double(resizeHandle.sidebarWidth),
+                                  sidebarHidden: saved.mode != .docked)
+    }
+    public func restorePresentation(_ presentation: WindowPresentation) {
+        if let width = presentation.sidebarWidth, width.isFinite {
+            resizeHandle.sidebarWidth = min(max(width, SidebarMetrics.minimumWidth), SidebarMetrics.maximumWidth)
+        }
+        state.restore(hidden: presentation.sidebarHidden)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
     public var sidebarState: String { state.mode.rawValue }
     /// p4checks: the state `selectionChanged` keeps, so the create page's own notify can be read.
     public var sidebarHasSelection: Bool { state.hasSelection }
@@ -303,6 +318,7 @@ public final class SidebarContainerView: NSView {
         resizeHandle.onWidthChanged = { [weak self] in
             self?.needsLayout = true
             self?.layoutSubtreeIfNeeded()
+            self?.onPresentationChanged?()
         }
         resizeHandle.onDrag = { [weak self] x in
             guard let self else { return false }
@@ -595,6 +611,7 @@ public final class SidebarContainerView: NSView {
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     private func render(_ motion: Motion, changes: () -> Void = {}) {
+        defer { onPresentationChanged?() }
         moving = true
         motionGeneration += 1
         let generation = motionGeneration

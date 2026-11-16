@@ -18,7 +18,7 @@ fn workspace() -> Workspace {
     ws.items.get_mut("b").unwrap().lifecycle = Lifecycle::Unloaded;
     ws.windows.insert("one".into(), WindowState {
         id: "one".into(), shown_space: Some("space-work".into()), selected: Some("b".into()),
-        history: vec!["b".into()], space_history: vec![], changed_at: 0,
+        history: vec!["b".into()], space_history: vec![], frame: None, sidebar_width: None, sidebar_hidden: false, changed_at: 0,
     });
     ws
 }
