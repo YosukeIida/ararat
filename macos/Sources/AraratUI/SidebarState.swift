@@ -110,6 +110,11 @@ struct SidebarState {
     var hasSelection = false
     private(set) var dwellStartedAt: TimeInterval?
 
+    mutating func restore(hidden: Bool) {
+        mode = hidden ? .hidden : .docked
+        dwellStartedAt = nil
+    }
+
     mutating func hideForFullscreen() {
         mode = .hidden
         dwellStartedAt = nil

@@ -505,6 +505,7 @@ func splitRestorationFinishesAfterAllMembersHaveOpened() async throws {
     }
     fake.shownProfile = "Profile 1"
     var completed = 0
+    session.restoringWindows = ["restore-split"]
     session.finishCrashRecovery = { completed += 1 }
     engine.restoreSelection()
     try await matrixWait { fake.opened.count == 1 }
@@ -1103,6 +1104,7 @@ func recoveryDoesNotAcknowledgeTheInitialTransactionBeforeSelectionDispatch() as
     let (fake, host) = matrixFake()
     var acknowledgements = 0
     var observedInitial = false
+    session.restoringWindows = ["recovery-order"]
     session.finishCrashRecovery = { acknowledgements += 1 }
     engine.onTransaction = { transaction, applied in
         if transaction.rev == 0 && applied {

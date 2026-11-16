@@ -54,30 +54,32 @@ func theGeneralRecordsStartAtTheBoardsValues() {
     #expect(SettingsModel.startupLabel(.newWindow) == "Open a new window")
 }
 
-// P5b review 1, F6 and F9: the launch plan. Restore adopts the newest record not open and keeps
-// the others; Open a new window adopts nothing, discards every kept record (as closing each window
-// did), and opens on the newest record's own space whatever profile it belongs to.
 @Test @MainActor
 func theLaunchPlanAdoptsOrDiscardsTheKeptRecords() {
+    let presentation = WindowPresentation(frame: nil, sidebarWidth: nil, sidebarHidden: false)
     let kept = [
-        KeptWindow(id: "newest", changedAt: 300, shownSpace: "space-personal"),
-        KeptWindow(id: "older", changedAt: 200, shownSpace: "space-work"),
-        KeptWindow(id: "open", changedAt: 100, shownSpace: "space-work"),
+        KeptWindow(id: "newest", changedAt: 300, presentation: presentation, shownSpace: "space-personal"),
+        KeptWindow(id: "older", changedAt: 200, presentation: presentation, shownSpace: "space-work"),
+        KeptWindow(id: "oldest", changedAt: 100, presentation: presentation, shownSpace: "space-work"),
     ]
-    let restore = LaunchPlan.forLaunch(startup: .restoreWindows, kept: kept, openIDs: ["open"])
-    #expect(restore.adopted?.id == "newest")
+    let restore = LaunchPlan.forLaunch(startup: .restoreWindows, kept: kept, openIDs: [], reopening: false)
+    #expect(restore.adopted?.id == "oldest")
+    #expect(restore.restores == Array(kept.reversed()))
     #expect(!restore.discardsKept && restore.shownSpace == nil)
 
-    let fresh = LaunchPlan.forLaunch(startup: .newWindow, kept: kept, openIDs: ["open"])
-    #expect(fresh.adopted == nil)
-    #expect(fresh.discardsKept)
-    // F9: the newest record's own space — a space of another profile here — not a fallback to the
-    // Default profile, so a new window opens where Restore would have.
-    #expect(fresh.shownSpace == "space-personal")
+    let reopen = LaunchPlan.forLaunch(startup: .newWindow, kept: kept, openIDs: ["newest"], reopening: true)
+    #expect(reopen.adopted?.id == "older")
+    #expect(reopen.restores.isEmpty && !reopen.discardsKept)
+    let allOpen = LaunchPlan.forLaunch(startup: .restoreWindows, kept: kept, openIDs: Set(kept.map(\.id)), reopening: true)
+    #expect(allOpen.adopted == nil && allOpen.restores.isEmpty)
 
-    // No records: a fresh window with nothing to discard and the core's own first space.
-    let none = LaunchPlan.forLaunch(startup: .newWindow, kept: [], openIDs: [])
-    #expect(none.adopted == nil && none.discardsKept && none.shownSpace == nil)
+    let fresh = LaunchPlan.forLaunch(startup: .newWindow, kept: kept, openIDs: [], reopening: false)
+    #expect(fresh.adopted == nil && fresh.discardsKept && fresh.restores.isEmpty)
+    #expect(fresh.shownSpace == "space-personal")
+    let none = LaunchPlan.forLaunch(startup: .newWindow, kept: [], openIDs: [], reopening: false)
+    #expect(none.adopted == nil && none.discardsKept && none.shownSpace == nil && none.restores.isEmpty)
+    let emptyRestore = LaunchPlan.forLaunch(startup: .restoreWindows, kept: [], openIDs: [], reopening: false)
+    #expect(emptyRestore.adopted == nil && !emptyRestore.discardsKept && emptyRestore.restores.isEmpty)
 }
 
 // The row's two faces and the status refresh: Make Default asks the setter and never the system,

@@ -1447,6 +1447,9 @@ fn private_workspace_is_volatile_isolated_and_rejects_persistent_operations() {
     let closed = one.archive_item("w".into(), id).unwrap();
     assert!(closed.archive.is_empty() && closed.spaces[0].today.is_empty());
     assert!(one.pending_history_purges().unwrap().is_empty());
+    one.set_window_presentation("w".into(), ararat_ffi::WindowPresentation {
+        frame: None, sidebar_width: Some(280.0), sidebar_hidden: true,
+    }).unwrap();
     assert!(one.kept_windows().is_empty());
     assert!(one.restoration_candidate("w".into()).is_none());
     one.create_tab("w".into(), "https://private.example/b".into()).unwrap();
@@ -1645,7 +1648,12 @@ fn the_launch_discard_removes_the_kept_window_records_through_the_ffi() {
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
     store.show_space("two".into(), "work".into()).unwrap();
+    store.set_window_presentation("two".into(), ararat_ffi::WindowPresentation {
+        frame: None, sidebar_width: Some(260.0), sidebar_hidden: true,
+    }).unwrap();
     let kept = store.kept_windows();
+    assert_eq!(kept.first().unwrap().presentation.sidebar_width, Some(260.0));
+    assert!(kept.first().unwrap().presentation.sidebar_hidden);
     assert_eq!(kept.first().map(|w| w.id.as_str()), Some("two"));
     // F9: each record carries the space a launch adopting it would show.
     assert_eq!(kept.first().and_then(|w| w.shown_space.as_deref()), Some("work"));

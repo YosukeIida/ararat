@@ -315,10 +315,10 @@ void CheckGuards(int argc, const char** argv) {
       g_check_transfer = name == "transfer" || name == "transfer-ext";
       check_slice = name == "slice";
       g_check_slice = check_slice;
-      check_started = name == "started" || name == "window" || name == "tabs" || name == "split" || g_check_transfer || name == "relaunch-pins" ||
+      check_started = name == "started" || name == "window" || name == "tabs" || name == "split" || g_check_transfer || name == "relaunch-pins" || name == "relaunch-windows" || name == "relaunch-windows-new" ||
                       name == "slice" || name == "quit" || name == "quit-cancel" ||
                       name == "close" || browser_check;
-      check_slice = check_slice || name == "quit" || name == "quit-cancel" || name == "relaunch-pins" ||
+      check_slice = check_slice || name == "quit" || name == "quit-cancel" || name == "relaunch-pins" || name == "relaunch-windows" || name == "relaunch-windows-new" ||
                     name == "close" || browser_check;
       // Why not require g_slice_passed: DevTools validates after ChromeMain returns.
       g_check_slice = g_check_slice || (browser_check && !check_devtools);

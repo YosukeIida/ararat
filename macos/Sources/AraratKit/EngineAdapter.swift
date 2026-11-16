@@ -462,7 +462,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public func restoreSelection() {
         precondition(Thread.isMainThread)
         let generation = selectionGeneration
-        guard let host else { session.finishCrashRecovery?(); return }
+        guard let host else { session.finishedRestoring(window: windowID); return }
         restoringSelection = true
         queue.async {
             guard let candidate = self.store?.restorationCandidate(windowId: self.windowID) else {
@@ -488,7 +488,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         restoringSplitMoves.removeAll()
         restoringTargetCommand = nil
         restoringSplitPreparing = false
-        session.finishCrashRecovery?()
+        session.finishedRestoring(window: windowID)
     }
 
     public func select(id: String, url: String, restoring: RestorationCandidate? = nil, wholeSplit: Bool = true, source: String = #fileID, line: UInt = #line) {
