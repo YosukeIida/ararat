@@ -616,6 +616,8 @@ public final class SidebarView: NSView {
         return true
     }
 
+    public var dockCheckView: SpaceDockView { dock }
+
     public func dockCheckEnableDragAnimation() {
         guard CommandLine.arguments.contains(where: { $0 == "--ararat-check=dock" || $0 == "--ararat-screen=dock" }) else { return }
         dragReduceMotion = { false }
