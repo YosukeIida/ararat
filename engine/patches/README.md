@@ -68,6 +68,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/history-deletion-hook.patch` | ours |
 | `ararat/crash-lock-abandon.patch` | ours |
 | `ararat/history-retention.patch` | ours |
+| `ararat/command-line-urls-hook.patch` | ours |
 
 ## Why these upstream patches
 
@@ -84,6 +85,8 @@ The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. 
 `ararat/history-retention.patch` adds an atomic retention in days to `ExpireHistoryBackend::GetCurrentExpirationTime()`, so the app's Privacy pane replaces Chromium's fixed 90-day threshold on every expiry pass; a value of 0 (the pane's Forever and the state before the first apply) makes `DoExpireIteration()` return before any reader or the segment cleanup and restarts the queue at the five-minute cadence, so nothing expires, no deletion runs on a null `Time`'s `LocalMidnight`, and a retention set later takes effect within about five minutes.
 
 `ararat/crash-lock-abandon.patch` lets the host release a crash lock without acknowledging the crash when its profile is destroyed before workspace recovery completes.
+
+`ararat/command-line-urls-hook.patch` forwards a second launch's URL arguments, after Chromium loads its startup profile, to the app's external-open entry before `--no-startup-window` suppresses the stock launch. An unset hook keeps Chromium's path.
 
 `ararat/permission-prompt-hook.patch` calls our hook from `ChromePermissionsClient::CreatePrompt`; an unset hook or a null result keeps Chrome's prompt. `link-ararat-layer.patch` adds `//ararat/core:hooks` to the permissions build target.
 

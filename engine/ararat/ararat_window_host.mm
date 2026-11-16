@@ -3045,7 +3045,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   auto* args = base::CommandLine::ForCurrentProcess();
   const auto check = args->GetSwitchValueASCII("ararat-check");
   const auto screen = args->GetSwitchValueASCII("ararat-screen");
-  if (check != "popup" && check != "incognito" && check != "private-window" && screen != "private-window") return;
+  if (check != "popup" && check != "incognito" && check != "private-window" && check != "atc-routing" && screen != "private-window") return;
   if (browser_) chrome::NewIncognitoWindow(browser_->GetProfile());
 }
 
@@ -3280,7 +3280,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 // U27h: the Little Window is a popup Browser in the shown profile, so it takes Chrome's
 // page-only window path (no toolbar, no sidebar) and our create_host callback supplies its bar.
-- (BOOL)openLittleWindow:(NSString*)url profile:(NSString*)profile frame:(NSRect)frame {
+- (BOOL)openLittleWindow:(NSString*)url profile:(NSString*)profile frame:(NSRect)frame untrusted:(BOOL)untrusted {
   if (!g_epoch || !url.length || !profile.length || core_->popup() || core_->closing() ||
       core_->closed() || closing_all_ || closing_window_) return NO;
   auto* window = core_->windowForProfile(profile.UTF8String);
@@ -3298,6 +3298,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NavigateParams params(browser, parsed, ui::PAGE_TRANSITION_TYPED);
   params.disposition = WindowOpenDisposition::NEW_POPUP;
   params.user_gesture = true;
+  if (untrusted) params.initiator_origin = url::Origin();
   // The frame arrives in AppKit screen coordinates (origin bottom left); the window factory
   // reads a top-left origin, which PopupHost converts back.
   NSArray<NSScreen*>* screens = [NSScreen screens];

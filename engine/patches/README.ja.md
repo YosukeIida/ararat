@@ -58,6 +58,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/history-deletion-hook.patch` | 独自 |
 | `ararat/crash-lock-abandon.patch` | 独自 |
 | `ararat/history-retention.patch` | 独自 |
+| `ararat/command-line-urls-hook.patch` | 独自 |
 
 ## 取り込んだパッチを選んだ理由
 
@@ -100,3 +101,5 @@ mode 1 の検査は `DeleteURLs` を要求し、ファイル用シーケンス�
 
 factory hook の設定時、このパッチは `BrowserInitState` がフラグを取り込む前に Chrome のセッション復元を無効にする。標準ウィンドウを使う Browser も対象である。Ararat 自身の workspace の復元は U17 で core から行う。
 U14 の拡張 action container と popup anchor は独自レイヤーにあり、Chromium のパッチを追加しない。外部インストールのエラーダイアログは `BrowserView` を前提としているため、外部インストールをサポートするにはガードまたはパッチが必要である（我々の規則）。
+
+`ararat/command-line-urls-hook.patch` は、二重起動時の URL 引数を、Chromium が起動用プロファイルを読み込んだ後、`--no-startup-window` によって標準の起動処理が抑制される前に、アプリの外部 URL の共通入口へ転送する。hook が未設定なら Chromium の経路を使う。
