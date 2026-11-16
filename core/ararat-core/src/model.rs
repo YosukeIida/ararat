@@ -805,9 +805,10 @@ impl Default for PrivacySettings {
 }
 
 // P5b: what launching Ararat does with the windows it kept. Restore is the behaviour the app
-// had before the setting existed and the board's default: the launch adopts the newest kept
-// Window record. NewWindow starts one fresh window on the most recent space and leaves every
-// kept Window record where it is, for a later restore (P5c restores all of them).
+// had before the setting existed and the board's default: the launch restores every kept
+// Window record (P5c). NewWindow starts one fresh window on the newest kept record's space and
+// discards the kept Window records, as closing each window did, so a later Restore finds
+// nothing to bring back.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StartupBehavior { #[default] RestoreWindows, NewWindow }
 
