@@ -1,24 +1,18 @@
 import Foundation
 
-/// P5b: Settings › General's two engine-backed records in the words the pane, the check and the
-/// engine entry share. `StartupBehavior`'s labels are the pane's copy and live in SettingsModel,
-/// next to the other panes' labels.
-extension DownloadSettings {
+/// P5b: Settings › General's downloads record in the words the pane and the engine entry share.
+/// `StartupBehavior`'s labels are the pane's copy and live in SettingsModel, next to the other
+/// panes' labels.
+extension DownloadDevice {
     /// Chromium's built-in state: no folder of the app's own (the account's Downloads folder) and
     /// no prompt. A workspace that never touched the rows stores nothing and shows these.
-    public static var board: DownloadSettings {
-        DownloadSettings(directory: "", askWhereToSave: false)
-    }
-
-    /// The record as `AraratApplyDownloadSettings` reads it: the folder (an empty string leaves
-    /// Chromium's own default alone) and the ask-each-file pref.
-    public var engineRequest: [String: Any] {
-        ["directory": directory, "prompt": askWhereToSave]
+    public static var board: DownloadDevice {
+        DownloadDevice(directory: "", askWhereToSave: false)
     }
 
     /// The folder the row names: the chosen folder's own name, or Chromium's default. A record
-    /// written by another Mac may hold a folder this Mac does not have, and the row still names it
-    /// as the stored path rather than pretending the default.
+    /// written on another Mac may hold a folder this Mac does not have — the record is per
+    /// device, so it does not travel — and a chosen folder still reads by its own name.
     public var folderName: String {
         guard !directory.isEmpty else { return "Downloads" }
         let name = (directory as NSString).lastPathComponent

@@ -408,14 +408,20 @@ extension WorkspaceAdapter {
         enqueue({ try self.opened().setStartup(windowId: self.windowID, startup: value) }, completion: completion)
     }
 
-    // P5b: the General pane's download folder and ask-each-file switch, again the synced record,
-    // read on every open and written once for every window and device.
-    public func downloadSettings(completion: @escaping Completion<DownloadSettings>) {
-        enqueue({ try self.opened().settings().downloads }, completion: completion)
+    // P5b: the General pane's download folder and ask-each-file switch, a device record (the
+    // folder is a path of this Mac, so it is not synced), read on every open and written once.
+    public func downloadDevice(completion: @escaping Completion<DownloadDevice>) {
+        enqueue({ try self.opened().downloadDevice() }, completion: completion)
     }
 
-    public func setDownloadSettings(_ value: DownloadSettings, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().setDownloads(windowId: self.windowID, downloads: value) }, completion: completion)
+    public func setDownloadDevice(_ value: DownloadDevice, completion: @escaping Completion<Void>) {
+        enqueue({ try self.opened().setDownloadDevice(device: value) }, completion: completion)
+    }
+
+    // P5b: a launch that opens a new window discards the kept Window records, as closing each
+    // window did; nothing piles up for a later restore.
+    public func discardKeptWindows(completion: @escaping Completion<Void>) {
+        enqueue({ try self.opened().discardKeptWindows() }, completion: completion)
     }
 
     // U27c: the Spaces pane's Natural / Reversed scroll direction, the same workspace settings

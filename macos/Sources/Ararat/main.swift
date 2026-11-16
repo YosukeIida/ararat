@@ -1082,8 +1082,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     var adoptedWindow = false
     // P5b: When Ararat opens. Restore (the default and the behaviour before the setting) is
     // design (c) below: the first window adopts the newest kept `Window` record. Open a new window
-    // starts a fresh one on the most recent space and leaves every kept record untouched, which is
-    // the record P5c restores from when the setting is Restore.
+    // starts a fresh one on the newest record's own space and discards the kept records, as
+    // closing each window did, so nothing piles up for P5c's restore.
     var newWindowSpace: String?
     if session == nil || reopening {
       // Design (c): the first window adopts the newest kept `Window` record, none kept
@@ -1100,17 +1100,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let startup = session == nil && !reopening
         ? running.queue.sync { running.store?.settings().startup } ?? .restoreWindows
         : .restoreWindows
-      let newest = kept.first { !openIDs.contains($0.id) }
-      let adopted = startup == .restoreWindows ? newest : nil
-      adoptedWindow = adopted != nil
-      windowID = adopted?.id ?? UUID().uuidString
-      // The fresh window opens where the person last was: the newest kept record's own most recent
-      // space, which is what a second window opened from the File menu does today.
-      if adopted == nil, let newest {
-        newWindowSpace = running.queue.sync {
-          running.store?.recentSpaceForProfile(windowId: newest.id, profile: .default)
-        }
+      let plan = LaunchPlan.forLaunch(startup: startup, kept: kept, openIDs: openIDs)
+      if plan.discardsKept {
+        running.queue.sync { try? running.store?.discardKeptWindows() }
       }
+      adoptedWindow = plan.adopted != nil
+      windowID = plan.adopted?.id ?? UUID().uuidString
+      if plan.adopted == nil { newWindowSpace = plan.shownSpace }
     }
     let card = NSView()
     promptPageCard = card
@@ -1168,10 +1164,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if let privacy = themeSession.queue.sync(execute: { themeSession.store?.settings().privacy }) {
       EnginePrivacySettingsHost.apply(privacy)
     }
-    // P5b: the General pane's download folder and ask-each-file switch are applied the same way,
-    // before this window's first download can be saved.
-    if let downloads = themeSession.queue.sync(execute: { themeSession.store?.settings().downloads }) {
-      EngineDownloadSettingsHost.apply(downloads)
+    // P5b: the General pane's downloads record is this device's and is applied once at the
+    // launch's first window, before its first download can be saved (F1: not at every window
+    // start, which would clear the folder a private window inherited); the pane applies every
+    // later write, and the engine applies the record to a profile it creates later.
+    if session == nil, let device = themeSession.queue.sync(execute: { themeSession.store?.downloadDevice() }) {
+      EngineDownloadSettingsHost.apply(device)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.privateWindow = isPrivateWindow

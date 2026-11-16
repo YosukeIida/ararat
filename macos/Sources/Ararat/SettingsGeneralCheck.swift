@@ -75,6 +75,9 @@ extension Runtime {
                              && (controls[0]?.width ?? 0) > 0)
             }
             check.panePhaseStart = browserCheckAttempts
+            // The profile's own Downloads folder now, before the pane writes anything: the reset
+            // phase compares against it, so a stale folder cannot pass as the default (F1).
+            check.downloadsDefaultDirectory = engineSettings()["directory"] as? String
             trace("pressing Make Default through the fake setter")
             probe.makeDefaultBrowser()
             // The app reads the status again when it becomes active; the check posts the same
@@ -161,6 +164,29 @@ extension Runtime {
             check.report("ask_where_writes_pref", true)
             check.details["downloads_pref_after"] = ["directory": check.folderPath ?? "",
                                                      "prompt": settings["prompt"] as? Bool == true]
+            trace("resetting the downloads record to Chromium's default")
+            check.panePhaseStart = browserCheckAttempts
+            probe.resetDownloadDevice()
+            step(9)
+        case 9:
+            guard probe.downloads == .board else {
+                if timedOut(100) { check.report("folder_clear_restores_default", false); finish(); return }
+                note("downloads record: \(probe.downloads.directory) \(probe.downloads.askWhereToSave)"); return
+            }
+            // F1: an empty record clears Chromium's pref, so the folder a moment ago set is gone and
+            // the profile's own Downloads folder applies again (+ the prompt is off).
+            let settings = engineSettings()
+            let directory = settings["directory"] as? String ?? ""
+            check.details["downloads_pref_reset"] = ["directory": directory,
+                                                     "prompt": settings["prompt"] as Any? ?? "nil",
+                                                     "default": check.downloadsDefaultDirectory ?? "nil"]
+            guard !directory.isEmpty, directory != check.folderPath,
+                  settings["prompt"] as? Bool == false else {
+                if timedOut(120) { check.report("folder_clear_restores_default", false); finish(); return }
+                note("chromium download prefs after the reset: \(settings)"); return
+            }
+            check.report("folder_clear_restores_default",
+                         directory == check.downloadsDefaultDirectory)
             guard capture("general") else { end("capture", false); return }
             finish()
         default: break

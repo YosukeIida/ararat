@@ -383,7 +383,18 @@ impl WorkspaceStore {
     pub fn kept_windows(&self) -> Vec<KeptWindow> {
         let workspace = self.workspace.lock().unwrap();
         workspace.kept_windows().into_iter().filter(|_| !self.private)
-            .map(|window| KeptWindow { id: window.id, changed_at: window.changed_at }).collect()
+            .map(|window| KeptWindow { shown_space: workspace.shown_space(&window.id).map(str::to_owned),
+                                       id: window.id, changed_at: window.changed_at }).collect()
+    }
+
+    // P5b: When Ararat opens is Open a new window, so the launch throws the kept records away as
+    // closing each window did; nothing piles up for a later restore.
+    pub fn discard_kept_windows(&self) -> Result<(), CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.discard_kept_windows();
+        self.store.write(ops);
+        self.store.flush().map_err(Into::into)
     }
 
     pub fn pending_history_purges(&self) -> Result<Vec<HistoryPurge>, CoreError> {
@@ -743,20 +754,24 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
-    // P5b: the General pane's download folder and ask-each-file switch, the same synced record.
-    // The app pushes the record into Chromium's prefs; a folder the engine cannot use (a relative
-    // path) is refused here rather than written.
-    pub fn set_downloads(&self, window_id: String, downloads: DownloadSettings) -> Result<WorkspaceSnapshot, CoreError> {
+    // P5b: the General pane's download folder and ask-each-file switch, a device record (F3: the
+    // folder is a path of this Mac, so it is not in the synced Settings and never enters the sync
+    // journal). The app pushes it into Chromium's prefs at the launch's first window and after
+    // every write; a folder the engine cannot use (a relative path) is refused here.
+    pub fn download_device(&self) -> DownloadDevice {
+        self.workspace.lock().unwrap().download_device.clone().into()
+    }
+
+    pub fn set_download_device(&self, device: DownloadDevice) -> Result<(), CoreError> {
         self.admit(true)?;
-        let downloads: ararat_core::model::DownloadSettings = downloads.into();
-        if let Some(reason) = downloads.invalid() {
+        let device: ararat_core::model::DownloadDevice = device.into();
+        if let Some(reason) = device.invalid() {
             return Err(CoreError::Edit { message: reason.to_string() });
         }
         let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.set_downloads(downloads);
+        let ops = workspace.set_download_device(device);
         self.store.write(ops);
-        self.store.flush()?;
-        Ok(snapshot(workspace.clone(), &window_id))
+        self.store.flush().map_err(Into::into)
     }
 
     pub fn little_window_device(&self) -> LittleWindowDevice {
@@ -1092,8 +1107,6 @@ pub struct WorkspaceSettings {
     pub privacy: PrivacySettings,
     /// P5b: what the first window of a launch does.
     pub startup: StartupBehavior,
-    /// P5b: the download folder and whether Chromium asks for each file.
-    pub downloads: DownloadSettings,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1105,8 +1118,7 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             theme: settings.theme.into(),
             site_defaults: settings.site_defaults.into(),
             privacy: settings.privacy.into(),
-            startup: settings.startup.into(),
-            downloads: settings.downloads.into() }
+            startup: settings.startup.into() }
     }
 }
 
@@ -1257,7 +1269,8 @@ impl From<SpaceScrollDirection> for ararat_core::model::SpaceScrollDirection {
 
 /// U27k: the Appearance pane's Theme (D5). System follows the Mac, Light and Dark force one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum Theme { System, Light, Dark }impl From<ararat_core::model::Theme> for Theme {
+pub enum Theme { System, Light, Dark }
+impl From<ararat_core::model::Theme> for Theme {
     fn from(value: ararat_core::model::Theme) -> Self {
         use ararat_core::model::Theme as Core;
         match value { Core::System => Self::System, Core::Light => Self::Light, Core::Dark => Self::Dark }
@@ -1287,20 +1300,22 @@ impl From<StartupBehavior> for ararat_core::model::StartupBehavior {
     }
 }
 
-/// P5b: Settings › General's downloads pair: the folder Chromium saves to (empty is Chromium's own
-/// Downloads default) and whether it asks where to save each file.
+/// P5b: Settings › General's downloads rows as the pane reads and writes them: the folder Chromium
+/// saves to (empty is Chromium's own Downloads default) and whether it asks where to save each
+/// file. A device record in the core (DownloadDevice), so the folder of this Mac never enters the
+/// sync journal.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
-pub struct DownloadSettings {
+pub struct DownloadDevice {
     pub directory: String,
     pub ask_where_to_save: bool,
 }
-impl From<ararat_core::model::DownloadSettings> for DownloadSettings {
-    fn from(value: ararat_core::model::DownloadSettings) -> Self {
+impl From<ararat_core::model::DownloadDevice> for DownloadDevice {
+    fn from(value: ararat_core::model::DownloadDevice) -> Self {
         Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
     }
 }
-impl From<DownloadSettings> for ararat_core::model::DownloadSettings {
-    fn from(value: DownloadSettings) -> Self {
+impl From<DownloadDevice> for ararat_core::model::DownloadDevice {
+    fn from(value: DownloadDevice) -> Self {
         Self { directory: value.directory, ask_where_to_save: value.ask_where_to_save }
     }
 }
@@ -1411,6 +1426,9 @@ pub struct WorkspaceSnapshot {
 pub struct KeptWindow {
     pub id: String,
     pub changed_at: u64,
+    /// P5b: where this record's window last was — the same space a launch that adopts it would
+    /// show, so Open a new window opens there too (review 1 F9).
+    pub shown_space: Option<String>,
 }
 
 #[derive(Debug, PartialEq, uniffi::Record)]

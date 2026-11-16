@@ -1637,25 +1637,53 @@ fn live_delete_shown_space_returns_only_its_loaded_rows_and_the_neighbour_snapsh
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("one".into()).spaces.len(), 1);
 }
 
-// P5b: the General pane's downloads pair reads through the FFI, survives a reopen, and a relative
-// folder is refused before anything is written.
+// P5b: When Ararat opens is Open a new window, so the launch discards the kept Window records
+// through the FFI, as a user's close does one at a time. The spaces and their rows stay.
 #[test]
-fn the_download_settings_read_through_the_ffi_and_refuse_a_relative_folder() {
-    use ararat_ffi::DownloadSettings;
-    let path = fresh_db("download-settings");
+fn the_launch_discard_removes_the_kept_window_records_through_the_ffi() {
+    let path = fresh_db("discard-windows");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    assert_eq!(store.settings().downloads, DownloadSettings::default());
-    let refused = store.set_downloads("one".into(), DownloadSettings { directory: "Desktop".into(), ask_where_to_save: false });
-    assert!(refused.is_err());
-    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
-    let changed = DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
-    store.set_downloads("one".into(), changed.clone()).unwrap();
-    assert_eq!(store.settings().downloads, changed);
-    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 1);
+    store.create_space("one".into(), "Work".into(), "work".into()).unwrap();
+    store.show_space("two".into(), "work".into()).unwrap();
+    let kept = store.kept_windows();
+    assert_eq!(kept.first().map(|w| w.id.as_str()), Some("two"));
+    // F9: each record carries the space a launch adopting it would show.
+    assert_eq!(kept.first().and_then(|w| w.shown_space.as_deref()), Some("work"));
+    store.discard_kept_windows().unwrap();
+    assert!(store.kept_windows().is_empty());
     drop(store);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    assert_eq!(store.settings().downloads, changed);
-    // The When Ararat opens choice shares the record and keeps its own value.
-    assert_eq!(store.settings().startup, ararat_ffi::StartupBehavior::RestoreWindows);
+    assert!(store.kept_windows().is_empty());
+    assert!(store.snapshot("fresh".into()).spaces.iter().any(|space| space.id == "work"));
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}
+
+// folder is refused before anything is written.
+#[test]
+fn the_download_device_reads_through_the_ffi_refuses_a_relative_folder_and_stays_out_of_the_journal() {
+    use ararat_ffi::DownloadDevice;
+    let path = fresh_db("download-device");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.download_device(), DownloadDevice::default());
+    let refused = store.set_download_device(DownloadDevice { directory: "Desktop".into(), ask_where_to_save: false });
+    assert!(refused.is_err());
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "download_device"));
+    let changed = DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    store.set_download_device(changed.clone()).unwrap();
+    assert_eq!(store.download_device(), changed);
+    // F3: the pair is a device record, so its row exists but never enters the sync journal.
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "download_device").count(), 1);
+    assert_eq!(records(&path).iter().filter(|(kind, _, _)| kind == "settings").count(), 0);
+    drop(store);
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert_eq!(store.download_device(), changed);
+    let conn = Connection::open(&path).unwrap();
+    let journalled: i64 = conn.query_row("SELECT count(*) FROM journal WHERE kind = 'download_device'", [], |row| row.get(0)).unwrap();
+    assert_eq!(journalled, 0);
+    // The startup choice is the synced one and keeps its own value beside it.
+    store.set_startup("one".into(), ararat_ffi::StartupBehavior::NewWindow).unwrap();
+    assert_eq!(store.settings().startup, ararat_ffi::StartupBehavior::NewWindow);
+    assert_eq!(store.download_device(), changed);
+    drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }

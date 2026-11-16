@@ -208,7 +208,7 @@ void AraratConfigurePrivateDownloads(Profile* profile) {
 
 namespace {
 
-// P5b: Settings › General's downloads rows. The app's core settings record is the source of the
+// P5b: Settings › General's downloads rows. The app's core device record is the source of the
 // folder Chromium saves to and whether it asks where to save each file; this entry pushes it into
 // every regular profile's download prefs, as AraratApplyPrivacySettings does for the cookie and
 // GPC prefs. Private profiles keep their own rule (AraratConfigurePrivateDownloads copies the
@@ -228,9 +228,14 @@ void ApplyDownloadSettingsToProfile(Profile* profile, const base::FilePath& dire
   if (!profile || !profile->IsRegularProfile()) return;
   PrefService* prefs = profile->GetPrefs();
   if (!prefs) return;
-  // An empty directory is Chromium's own default (the account's Downloads folder), so the pref
-  // is left alone instead of being pinned to a folder the app guessed.
-  if (!directory.empty()) prefs->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  // An empty directory is Chromium's own default (the account's Downloads folder). The pref is
+  // cleared rather than left alone: a folder set before the record existed (chrome://settings,
+  // an older profile) would otherwise keep winning while the pane shows "Downloads" (F1).
+  if (directory.empty()) {
+    prefs->ClearPref(prefs::kDownloadDefaultDirectory);
+  } else {
+    prefs->SetFilePath(prefs::kDownloadDefaultDirectory, directory);
+  }
   prefs->SetBoolean(prefs::kPromptForDownload, prompt);
 }
 
@@ -266,7 +271,7 @@ class DownloadSettingsWatcher : public ProfileManagerObserver {
 
 void AraratApplyDownloadSettings(NSString* directory, BOOL prompt) {
   if (![directory isKindOfClass:NSString.class]) return;
-  // The core refuses a relative folder (DownloadSettings::invalid), so this is the second
+  // The core refuses a relative folder (DownloadDevice::invalid), so this is the second
   // statement of the same rule: only an absolute path is a folder a download can be saved in.
   base::FilePath path(base::SysNSStringToUTF8(directory));
   if (!path.empty() && !path.IsAbsolute()) return;

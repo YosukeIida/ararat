@@ -40,22 +40,44 @@ private func generalModel(_ snapshot: WorkspaceSnapshot, _ adapter: WorkspaceAda
                   keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
 }
 
-// The built-in record: Restore, Chromium's Downloads folder, no prompt; the pane's words and the
-// engine request the downloads entry reads.
+// The built-in record: Restore, Chromium's Downloads folder, no prompt; the folder's own name.
 @Test @MainActor
-func theGeneralRecordsStartAtTheBoardsValuesAndNameTheirEngineRequest() {
-    #expect(DownloadSettings.board == DownloadSettings(directory: "", askWhereToSave: false))
-    #expect(DownloadSettings.board.folderName == "Downloads")
-    #expect(DownloadSettings(directory: "/Users/someone/Desktop", askWhereToSave: true).folderName == "Desktop")
+func theGeneralRecordsStartAtTheBoardsValues() {
+    #expect(DownloadDevice.board == DownloadDevice(directory: "", askWhereToSave: false))
+    #expect(DownloadDevice.board.folderName == "Downloads")
+    #expect(DownloadDevice(directory: "/Users/someone/Desktop", askWhereToSave: true).folderName == "Desktop")
     // A folder with a trailing slash still names the folder, and a path with no last component
     // keeps the path rather than reading as the default.
-    #expect(DownloadSettings(directory: "/Users/someone/Desktop/", askWhereToSave: false).folderName == "Desktop")
-    let request = DownloadSettings(directory: "/Users/someone/Desktop", askWhereToSave: true).engineRequest
-    #expect(request["directory"] as? String == "/Users/someone/Desktop")
-    #expect(request["prompt"] as? Bool == true)
+    #expect(DownloadDevice(directory: "/Users/someone/Desktop/", askWhereToSave: false).folderName == "Desktop")
     // The board's two startup choices, in the pane's order and words.
     #expect(SettingsModel.startupLabel(.restoreWindows) == "Restore windows and tabs")
     #expect(SettingsModel.startupLabel(.newWindow) == "Open a new window")
+}
+
+// P5b review 1, F6 and F9: the launch plan. Restore adopts the newest record not open and keeps
+// the others; Open a new window adopts nothing, discards every kept record (as closing each window
+// did), and opens on the newest record's own space whatever profile it belongs to.
+@Test @MainActor
+func theLaunchPlanAdoptsOrDiscardsTheKeptRecords() {
+    let kept = [
+        KeptWindow(id: "newest", changedAt: 300, shownSpace: "space-personal"),
+        KeptWindow(id: "older", changedAt: 200, shownSpace: "space-work"),
+        KeptWindow(id: "open", changedAt: 100, shownSpace: "space-work"),
+    ]
+    let restore = LaunchPlan.forLaunch(startup: .restoreWindows, kept: kept, openIDs: ["open"])
+    #expect(restore.adopted?.id == "newest")
+    #expect(!restore.discardsKept && restore.shownSpace == nil)
+
+    let fresh = LaunchPlan.forLaunch(startup: .newWindow, kept: kept, openIDs: ["open"])
+    #expect(fresh.adopted == nil)
+    #expect(fresh.discardsKept)
+    // F9: the newest record's own space — a space of another profile here — not a fallback to the
+    // Default profile, so a new window opens where Restore would have.
+    #expect(fresh.shownSpace == "space-personal")
+
+    // No records: a fresh window with nothing to discard and the core's own first space.
+    let none = LaunchPlan.forLaunch(startup: .newWindow, kept: [], openIDs: [])
+    #expect(none.adopted == nil && none.discardsKept && none.shownSpace == nil)
 }
 
 // The row's two faces and the status refresh: Make Default asks the setter and never the system,
@@ -97,7 +119,7 @@ func theGeneralRowsWriteTheCoreRecordAndReachTheEngineHandler() async throws {
     let fake = FakeDefaultBrowser()
     model.defaultBrowserStatus = fake
     model.defaultBrowserSetter = fake
-    var applied: [DownloadSettings] = []
+    var applied: [DownloadDevice] = []
     model.downloadsApplied = { applied.append($0) }
     model.readGeneral()
     try await waitUntil { model.generalLoaded }
@@ -117,12 +139,12 @@ func theGeneralRowsWriteTheCoreRecordAndReachTheEngineHandler() async throws {
 
     model.setDownloadDirectory(URL(fileURLWithPath: "/Users/someone/Desktop"))
     try await waitUntil { applied.count == 1 }
-    #expect(applied.last == DownloadSettings(directory: "/Users/someone/Desktop", askWhereToSave: false))
+    #expect(applied.last == DownloadDevice(directory: "/Users/someone/Desktop", askWhereToSave: false))
     #expect(model.downloadFolderName == "Desktop")
     model.setAskWhereToSave(true)
     try await waitUntil { applied.count == 2 }
-    #expect(applied.last == DownloadSettings(directory: "/Users/someone/Desktop", askWhereToSave: true))
-    let stored: DownloadSettings = try await generalValue { adapter.downloadSettings(completion: $0) }
+    #expect(applied.last == DownloadDevice(directory: "/Users/someone/Desktop", askWhereToSave: true))
+    let stored: DownloadDevice = try await generalValue { adapter.downloadDevice(completion: $0) }
     #expect(stored == applied.last)
 
     // A second window reads both records back from the core, as reopening Settings does.
@@ -135,7 +157,7 @@ func theGeneralRowsWriteTheCoreRecordAndReachTheEngineHandler() async throws {
     // Chromium could not save into.
     reopened.setDownloadDirectory(try #require(URL(string: "Desktop")))
     try await waitUntil { reopened.error != nil }
-    let unchanged: DownloadSettings = try await generalValue { adapter.downloadSettings(completion: $0) }
+    let unchanged: DownloadDevice = try await generalValue { adapter.downloadDevice(completion: $0) }
     #expect(unchanged == stored)
 }
 

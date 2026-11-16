@@ -90,13 +90,13 @@ public final class SettingsModel: ObservableObject {
     /// window's, so no model test opens one.
     @Published private(set) var defaultBrowserIsDefault = false
     @Published var startup: StartupBehavior = .restoreWindows
-    @Published var downloads: DownloadSettings = .board
+    @Published var downloads: DownloadDevice = .board
     /// Whether the last `readGeneral` answered both core reads. The check waits for it before
     /// comparing the rows, so its conditions cannot pass on the model's initial values.
     @Published private(set) var generalLoaded = false
     var defaultBrowserStatus: DefaultBrowserStatus = LaunchServicesDefaultBrowserStatus()
     var defaultBrowserSetter: DefaultBrowserSetter = LaunchServicesDefaultBrowser()
-    var downloadsApplied: (DownloadSettings) -> Void = { _ in }
+    var downloadsApplied: (DownloadDevice) -> Void = { _ in }
     /// The window's folder chooser: it presents the panel and calls `setDownloadDirectory` with
     /// the answer. A check injects the URL instead, so no panel is shown under a check.
     var chooseDownloadFolder: (() -> Void)?
@@ -1032,7 +1032,7 @@ public final class SettingsModel: ObservableObject {
             self.startupRead = true
             self.generalLoaded = self.startupRead && self.downloadsRead
         }
-        adapter.downloadSettings { [weak self] result in
+        adapter.downloadDevice { [weak self] result in
             guard let self, self.contextGeneration == generation else { return }
             guard case .success(let value) = result else { return }
             self.downloads = value
@@ -1065,8 +1065,8 @@ public final class SettingsModel: ObservableObject {
         }
     }
 
-    /// Save downloads to: the folder the chooser answered, as the whole record. The app pushes the
-    /// record into Chromium's prefs for every regular profile.
+    /// Save downloads to: the folder the chooser answered, as the whole device record. The app
+    /// pushes the record into Chromium's prefs for every regular profile.
     func setDownloadDirectory(_ url: URL) {
         var value = downloads
         value.directory = url.path
@@ -1080,13 +1080,18 @@ public final class SettingsModel: ObservableObject {
         setDownloads(settings)
     }
 
-    func setDownloads(_ value: DownloadSettings) {
+    /// F3: the pair is a device record, so a write does not produce a workspace snapshot; a refusal
+    /// (a relative folder) leaves the pane where it was and shows the reason.
+    func setDownloads(_ value: DownloadDevice) {
         guard downloads != value else { return }
         let generation = contextGeneration
-        let completion = editCompletion()
-        adapter.setDownloadSettings(value) { [weak self] result in
-            completion(result)
-            guard let self, self.contextGeneration == generation, case .success = result else { return }
+        adapter.setDownloadDevice(value) { [weak self] result in
+            guard let self else { return }
+            guard case .success = result else {
+                if case .failure(let error) = result { self.report(error) }
+                return
+            }
+            guard self.contextGeneration == generation else { return }
             self.downloads = value
             self.downloadsApplied(value)
         }

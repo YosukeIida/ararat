@@ -353,12 +353,13 @@ NSString* AraratCheckExtensionDialog(NSWindow* _Nullable parent, NSString* actio
 // universal_optout.enabled pref, which AraratMain adds to the process's feature list.
 __attribute__((visibility("default")))
 void AraratApplyPrivacySettings(NSDictionary<NSString*, id>* settings);
-// P5b: Settings › General's downloads rows. The app's synced core record is the source of the
+// P5b: Settings › General's downloads rows. The app's core device record is the source of the
 // folder Chromium saves to and whether it asks where to save each file; applying it writes
 // prefs::kDownloadDefaultDirectory and prefs::kPromptForDownload into every regular profile now
-// and into one the engine creates later. An empty directory leaves Chromium's own default (the
-// account's Downloads folder) alone. Private profiles keep their own rule: a private window saves
-// to the regular profile's folder without a prompt, so nothing is written to them.
+// and into one the engine creates later. An empty directory clears kDownloadDefaultDirectory, so
+// Chromium's own default (the account's Downloads folder) applies and a folder set elsewhere does
+// not outlive the pane. Private profiles keep their own rule: a private window saves to the
+// regular profile's folder without a prompt, so nothing is written to them.
 __attribute__((visibility("default")))
 void AraratApplyDownloadSettings(NSString* directory, BOOL prompt);
 // P4: clears the chosen types (1 history, 2 cookies and other site data, 4 cached images and

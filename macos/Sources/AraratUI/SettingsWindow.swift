@@ -144,7 +144,7 @@ public final class SettingsWindowController: NSWindowController {
     /// because a sheet needs a window; the check injects the URL into the model instead.
     public func setGeneralSettings(status: DefaultBrowserStatus = LaunchServicesDefaultBrowserStatus(),
                                    setter: DefaultBrowserSetter = LaunchServicesDefaultBrowser(),
-                                   downloadsApplied: @escaping (DownloadSettings) -> Void) {
+                                   downloadsApplied: @escaping (DownloadDevice) -> Void) {
         model.defaultBrowserStatus = status
         model.defaultBrowserSetter = setter
         model.downloadsApplied = downloadsApplied

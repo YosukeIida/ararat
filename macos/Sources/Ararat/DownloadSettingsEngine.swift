@@ -19,10 +19,11 @@ enum EngineDownloadSettingsHost {
 
     private static let applySettings: Apply? = symbol("AraratApplyDownloadSettings")
 
-    /// The app applies the record at every window start and after every write, so a profile loaded
-    /// later and one already loaded both hold it; the engine remembers it for a profile it creates
-    /// later. An empty folder leaves Chromium's own default alone.
-    static func apply(_ settings: DownloadSettings) {
+    /// P5b: the app applies the device record at the launch's first window and after every write
+    /// (F1: not at every window start, which would clear a private window's inherited folder). The
+    /// engine remembers it for a profile it creates later; an empty folder clears Chromium's pref,
+    /// so the account's own Downloads folder applies.
+    static func apply(_ settings: DownloadDevice) {
         guard let applySettings else { return }
         let directory = settings.directory as NSString
         applySettings(Unmanaged.passUnretained(directory).toOpaque(), settings.askWhereToSave)

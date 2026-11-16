@@ -393,40 +393,48 @@ fn the_startup_choice_starts_at_restore_and_writes_one_synced_record() {
     assert!(matches!(parsed, Ok(Record::Settings(Settings { startup: StartupBehavior::RestoreWindows, .. }))));
 }
 
-// P5b: the downloads pair is one synced record, Chromium's defaults until changed (no folder, no
-// prompt), and a reset is a tombstone. An empty folder means Chromium's own default; a relative
-// path is refused, because it names no folder a download can be saved in.
+// P5b (review 1 F3): the downloads pair is a device record, not part of the synced Settings, so
+// the folder of one Mac never enters the sync journal and a changed pair writes no settings row.
+// Chromium's defaults until changed (no folder, no prompt), and a reset is a tombstone.
 #[test]
-fn the_download_settings_start_at_chromiums_defaults_and_write_one_synced_record() {
-    use ararat_core::model::DownloadSettings;
-    assert_eq!(Workspace::default().settings.downloads, DownloadSettings::default());
-    assert_eq!(DownloadSettings::default(), DownloadSettings { directory: String::new(), ask_where_to_save: false });
-    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
+fn the_download_device_starts_at_chromiums_defaults_and_stays_out_of_the_synced_settings() {
+    use ararat_core::model::DownloadDevice;
+    assert_eq!(Workspace::default().download_device, DownloadDevice::default());
+    assert_eq!(DownloadDevice::default(), DownloadDevice { directory: String::new(), ask_where_to_save: false });
+    assert!(!Workspace::default().to_ops().iter().any(|op| matches!(op, Op::Put(Record::DownloadDevice(_)) | Op::Put(Record::Settings(_)))));
 
     let mut ws = Workspace::default();
-    let changed = DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
-    let ops = ws.set_downloads(changed.clone());
-    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.downloads == changed));
-    assert_eq!(ws.settings.downloads, changed);
+    let changed = DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: true };
+    let ops = ws.set_download_device(changed.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::DownloadDevice(device))] if *device == changed));
+    assert_eq!(ws.download_device, changed);
+    // Not the synced record: nothing about the downloads pair rides in Settings, so to_ops has no
+    // settings row and the pair keeps its own kind.
+    assert_eq!(ws.settings, Settings::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::Settings(_)))));
     let mut peer = Workspace::default();
     for op in &ops { peer.apply(op); }
     assert_eq!(peer, ws);
     // The same record again writes nothing; the folder alone keeps the switch's value.
     let before = ws.clone();
-    assert!(ws.set_downloads(changed.clone()).is_empty());
+    assert!(ws.set_download_device(changed.clone()).is_empty());
     assert_eq!(ws, before);
-    let folder_only = DownloadSettings { directory: String::new(), ask_where_to_save: true };
-    let ops = ws.set_downloads(folder_only.clone());
-    assert!(matches!(&ops[..], [Op::Put(Record::Settings(settings))] if settings.downloads == folder_only));
-    // Back to Chromium's defaults: one tombstone, not a row restating them.
-    let reset = ws.set_downloads(DownloadSettings::default());
-    assert!(matches!(&reset[..], [Op::Delete(Kind::Settings, id)] if id == "workspace"));
-    assert_eq!(ws.settings, Settings::default());
-    // A relative folder is refused; a record written before the pane existed reads the defaults.
-    assert!(DownloadSettings { directory: "Desktop".into(), ask_where_to_save: false }.invalid().is_some());
-    assert!(DownloadSettings { directory: "/Users/someone/Desktop".into(), ask_where_to_save: false }.invalid().is_none());
-    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"downloads":{"ask_where_to_save":true}}"#);
-    assert!(matches!(parsed, Ok(Record::Settings(Settings { downloads: DownloadSettings { ref directory, ask_where_to_save: true }, .. })) if directory.is_empty()));
-    let parsed = Record::parse(Kind::Settings, "workspace", r#"{"theme":"Dark"}"#);
-    assert!(matches!(parsed, Ok(Record::Settings(Settings { downloads: DownloadSettings { .. }, .. }))));
+    let folder_only = DownloadDevice { directory: String::new(), ask_where_to_save: true };
+    let ops = ws.set_download_device(folder_only.clone());
+    assert!(matches!(&ops[..], [Op::Put(Record::DownloadDevice(device))] if *device == folder_only));
+    // Back to Chromium's defaults: one tombstone of its own kind, not a settings row.
+    let reset = ws.set_download_device(DownloadDevice::default());
+    assert!(matches!(&reset[..], [Op::Delete(Kind::DownloadDevice, id)] if id == "workspace"));
+    assert_eq!(ws.download_device, DownloadDevice::default());
+    assert!(!ws.to_ops().iter().any(|op| matches!(op, Op::Put(Record::DownloadDevice(_)))));
+    // A relative folder is refused; the record is written whole, like the Little Window's device
+    // record, so a partial body is refused rather than gaining a built-in value.
+    assert!(DownloadDevice { directory: "Desktop".into(), ask_where_to_save: false }.invalid().is_some());
+    assert!(DownloadDevice { directory: "/Users/someone/Desktop".into(), ask_where_to_save: false }.invalid().is_none());
+    let parsed = Record::parse(Kind::DownloadDevice, "workspace", r#"{"ask_where_to_save":true}"#);
+    assert!(parsed.is_err());
+    let parsed = Record::parse(Kind::DownloadDevice, "workspace",
+        r#"{"directory":"/Users/someone/Desktop","ask_where_to_save":true}"#);
+    assert!(matches!(parsed, Ok(Record::DownloadDevice(DownloadDevice { ref directory, ask_where_to_save: true }))
+        if directory == "/Users/someone/Desktop"));
 }

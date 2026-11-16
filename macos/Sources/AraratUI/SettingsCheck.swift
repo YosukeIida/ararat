@@ -315,7 +315,7 @@ public final class SettingsCheckProbe {
     public var generalLoaded: Bool { model.generalLoaded }
     public var startup: StartupBehavior { model.startup }
     public var startupLabel: String { model.startupLabel }
-    public var downloads: DownloadSettings { model.downloads }
+    public var downloads: DownloadDevice { model.downloads }
     public var downloadFolderName: String { model.downloadFolderName }
     public func readGeneral() { model.readGeneral() }
     public func makeDefaultBrowser() { model.makeDefaultBrowser() }
@@ -323,6 +323,9 @@ public final class SettingsCheckProbe {
     public func setStartup(_ value: StartupBehavior) { model.setStartup(value) }
     public func setDownloadDirectory(_ url: URL) { model.setDownloadDirectory(url) }
     public func setAskWhereToSave(_ value: Bool) { model.setAskWhereToSave(value) }
+    /// F1's reset: the record back to Chromium's own defaults, the path Clear…-equivalent the check
+    /// needs to prove an empty folder clears the pref.
+    public func resetDownloadDevice() { model.setDownloads(.board) }
     /// M4: puts a value the core does not hold in the model before a reopen, so the check's
     /// `startup_reopen` can only pass on a read that really answered.
     public func resetGeneralForRead() {

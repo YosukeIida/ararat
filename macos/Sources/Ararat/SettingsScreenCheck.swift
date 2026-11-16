@@ -67,7 +67,8 @@ final class SettingsScreenCheck {
                              "popover_exception", "pane_site_row", "all_site_settings", "site_page_rows",
                              "clear_site_data", "other_origin_kept", "reset_removes"]
             case .general: ["rows", "make_default_called", "startup_write", "startup_reopen",
-                            "folder_choose_writes_pref", "ask_where_writes_pref"]
+                            "folder_choose_writes_pref", "ask_where_writes_pref",
+                            "folder_clear_restores_default"]
             case .privacy: ["rows", "cookies_allowed", "cookies_blocked", "gpc_on", "gpc_off",
                             "retention_write", "retention_removes", "retention_keeps",
                             "sheet_rows", "sheet_range", "sheet_clears_history",
@@ -191,6 +192,9 @@ final class SettingsScreenCheck {
     /// The fixture folder the General check "chose" through the panel's answer path, so a later
     /// phase can compare the downloads pref against it.
     var folderPath: String?
+    /// The profile's own Downloads folder, read before the pane writes anything; the reset phase
+    /// proves an empty record returns to it (F1).
+    var downloadsDefaultDirectory: String?
     // p4checks, the Shortcuts pane: the binding and the sidebar state before the recording, so
     // the recorded key's effect and the reset can be told apart.
     var shortcutKeyBefore: KeyCombination?

@@ -9,8 +9,9 @@ public protocol DefaultBrowserStatus {
 }
 
 /// The shipping status: the application LaunchServices opens https with, compared with this app.
-/// Resolved through symlinks and standardized, so a bundle started from a different path (a build
-/// tree, a copy in /Applications) still reads as itself.
+/// Resolved through symlinks and standardized, so the path compare is between the same files; a
+/// second copy of the app at another path (a build tree beside /Applications) reads as not default,
+/// which is what LaunchServices would say.
 public struct LaunchServicesDefaultBrowserStatus: DefaultBrowserStatus {
     public init() {}
 
