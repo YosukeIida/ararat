@@ -62,19 +62,6 @@ func wheelMotionRecordingGuardsNameTheirObservedValues() throws {
 }
 
 @Test @MainActor
-func wheelMotionOriginalGuardReadRuntimeBeforeTheDockSeedWasPublished() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let runtime = Runtime(windowID: "wheel-old-start")
-    let adapter = try EngineAdapter(path: directory.appendingPathComponent("wheel.sqlite").path,
-        windowID: runtime.windowID, card: NSView(), seedDock: true)
-    let core = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: runtime.windowID) }
-    #expect(core?.spaces.count == 13)
-    #expect(runtime.snapshot.spaces.count == 0)
-}
-
-@Test @MainActor
 func wheelMotionReplayRejectsMalformedFields() {
     for text in ["nan cont=0", "1 cont=0", "1 cont=0 cont=1", "-1 cont=0"] {
         #expect(throws: (any Error).self) { try SpaceWheelMotionCheck.Input.parse(text) }

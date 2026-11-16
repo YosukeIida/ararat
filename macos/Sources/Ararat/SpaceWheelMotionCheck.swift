@@ -113,8 +113,7 @@ extension Runtime {
                 && (counts["check-timer"] ?? 0) > 0 && !conditions.isEmpty && conditions.values.allSatisfy { $0 },
                 values: ["check": "space-wheel-motion", "samples": counts, "conditions": conditions,
                 "failed_conditions": conditions.filter { !$0.value }.keys.sorted(),
-                "events_sent": check.sent, "input_failed": check.failed, "motion_trace": "stderr JSON lines",
-                "curve_verdict": "full-offset-and-continuous-spring"])
+                "events_sent": check.sent, "input_failed": check.failed, "motion_trace": "stderr JSON lines"])
             return
         }
         do {

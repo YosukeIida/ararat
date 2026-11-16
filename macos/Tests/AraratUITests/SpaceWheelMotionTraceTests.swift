@@ -42,3 +42,19 @@ func wheelMotionConditionsRejectTheMeasuredMissingStartAndRestarts() {
     }
     #expect(SpaceWheelMotionTrace.conditions(frames: frames, from: 260, pitch: 260).values.allSatisfy { $0 })
 }
+
+@Test @MainActor
+func interruptedSwitchesDoNotHaveToLandButCompletedSwitchesDo() throws {
+    let trace = SpaceWheelMotionTrace()
+    trace.begin("first")
+    trace.animationStarted(from: 240, pitch: 240, at: try #require(trace.start))
+    trace.sample([["active": true, "animation": true, "offset": 240.0]], source: "check-timer")
+    trace.finish("interrupted-by-next-switch")
+    #expect(trace.conditions["first_frame_full_offset"] == true)
+    #expect(trace.conditions["landed"] == nil)
+    trace.begin("second")
+    trace.animationStarted(from: 240, pitch: 240, at: try #require(trace.start))
+    trace.sample([["active": true, "animation": true, "offset": 240.0]], source: "check-timer")
+    trace.finish("check-complete")
+    #expect(trace.conditions["landed"] == false)
+}

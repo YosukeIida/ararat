@@ -69,6 +69,7 @@ final class SpaceWheelMotionTrace {
                 return Frame(t: t - animation.time, offset: offset)
             }
             verdict = Self.conditions(frames: frames, from: animation.from, pitch: animation.pitch)
+            if !["presentation-finished", "check-complete"].contains(reason) { verdict.removeValue(forKey: "landed") }
             conditions.merge(verdict) { $0 && $1 }
         }
         let value: [String: Any] = ["trace": "space-wheel-motion", "switch": switches, "conditions": verdict,
