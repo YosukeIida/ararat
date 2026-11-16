@@ -16,6 +16,24 @@ func atcProgressReportsItsOwnPhaseBeforeTheWorkspaceIsReady() {
     #expect(check.phase == 3)
 }
 
+@Test @MainActor
+func privateRoutingIdentifiesTheNewLittleWindowAcrossOrigins() {
+    let owner = Runtime()
+    let child = Runtime()
+    func little(_ origin: Runtime) -> LittleWindowController {
+        LittleWindowController(popup: PopupHost(), origin: origin, profile: "Profile 1",
+                               frame: .zero, url: "https://atc-little.test/")
+    }
+    let old = little(child)
+    let opened = little(owner)
+    let extra = little(owner)
+    let check = ATCRoutingCheck()
+    check.littleBeforePrivate = [ObjectIdentifier(old)]
+    #expect(check.privateLittleWindow(in: [opened, old]) === opened)
+    #expect(check.privateLittleWindow(in: [old]) == nil)
+    #expect(check.privateLittleWindow(in: [opened, extra, old]) == nil)
+}
+
 @MainActor
 private func atcSnapshot() -> WorkspaceSnapshot {
     let spaces = [("a", "Default", Profile.default), ("b", "Profile 1", Profile.named("Profile 1"))].map { id, name, profile in

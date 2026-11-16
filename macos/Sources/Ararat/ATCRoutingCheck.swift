@@ -15,6 +15,12 @@ final class ATCRoutingCheck {
     var targetID = ""
     var process: Process?
     var privateRows: [String: [String]] = [:]
+    var littleBeforePrivate: Set<ObjectIdentifier> = []
+
+    func privateLittleWindow(in little: [LittleWindowController]) -> LittleWindowController? {
+        let added = little.filter { !littleBeforePrivate.contains(ObjectIdentifier($0)) }
+        return added.count == 1 ? added[0] : nil
+    }
 
     static func seed(_ session: WorkspaceSession, window: String) throws {
         try session.queue.sync {
@@ -51,8 +57,10 @@ final class ATCRoutingCheck {
             return "\(window.windowID):space=\(snapshot?.shownSpaceId ?? "nil"):selected=\(snapshot?.selectedId ?? "nil"):active=\(window.host?.activeItemId() ?? "nil"):top=\(snapshot?.spaces.first { $0.id == snapshot?.shownSpaceId }?.today.first?.url ?? "nil")"
         }
         let hosts = owner.windowTree.map { "\($0.windowID):private=\($0.isPrivateWindow):host=\($0.host != nil):closing=\($0.hostClosing)" }
+        let privateState = Dictionary(uniqueKeysWithValues: owner.windowTree.filter(\.isPrivateWindow).map { ($0.windowID, $0.snapshot.spaces.flatMap(\.today).map(\.id)) })
+        let littleState = little.map { "\(ObjectIdentifier($0)):origin=\($0.origin?.windowID ?? "nil"):url=\($0.initialURL ?? "nil"):profile=\($0.profileName):key=\($0.window?.isKeyWindow == true)" }
         let forward = process.map { $0.isRunning ? "running" : "exit=\($0.terminationStatus):reason=\($0.terminationReason.rawValue)" } ?? "none"
-        let state = "phase=\(phase) queue=\(owner.externalURLs.map(\.url)) opening=\(owner.openingExternalURL) little=\(little.count) windows=\(windowStates) hosts=\(hosts) forward=\(forward)"
+        let state = "phase=\(phase) queue=\(owner.externalURLs.map(\.url)) opening=\(owner.openingExternalURL) little=\(little.count) windows=\(windowStates) hosts=\(hosts) private_rows=\(privateState) little_windows=\(littleState) forward=\(forward)"
         if state != lastTrace {
             lastTrace = state
             FileHandle.standardError.write(Data("ararat-trace: atc-routing \(state)\n".utf8))
@@ -127,14 +135,15 @@ final class ATCRoutingCheck {
                 guard let privateWindow = owner.windowTree.first(where: { $0.isPrivateWindow && $0.hasUsableHost }) else { return }
                 privateWindow.host?.window().makeKeyAndOrderFront(nil)
                 guard privateWindow.host?.window().isKeyWindow == true else { return }
-                privateRows = Dictionary(uniqueKeysWithValues: owner.windowTree.filter(\.isPrivateWindow).map { ($0.windowID, $0.snapshot.spaces.flatMap(\.today).map(\.id)) })
+                privateRows = privateState
+                littleBeforePrivate = Set(little.map(ObjectIdentifier.init))
                 deliver(["https://atc-private-key.test/", "https://atc-little.test/"])
                 next()
             case 7:
                 guard target("https://atc-private-key.test/") != nil, little.count == 4, !owner.openingExternalURL else { return }
-                let after = Dictionary(uniqueKeysWithValues: owner.windowTree.filter(\.isPrivateWindow).map { ($0.windowID, $0.snapshot.spaces.flatMap(\.today).map(\.id)) })
-                conditions["private_ignored"] = !privateRows.isEmpty && privateRows == after
-                    && little.last?.profileName == "Profile 1" && little.last?.popup.host?.window().isKeyWindow == true
+                let opened = privateLittleWindow(in: little)
+                conditions["private_ignored"] = !privateRows.isEmpty && privateRows == privateState
+                    && opened?.profileName == "Profile 1" && opened?.window?.isKeyWindow == true
                 for controller in little { controller.close() }
                 for window in owner.windowTree { window.host?.close() }
                 next()
@@ -149,6 +158,7 @@ final class ATCRoutingCheck {
                 let child = Process()
                 child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
                 child.arguments = CommandLine.arguments.filter { $0.hasPrefix("--user-data-dir=") || $0 == "--use-mock-keychain" } + ["https://atc-space.test/second"]
+                FileHandle.standardError.write(Data("ararat-trace: atc-second-launch executable=\(child.executableURL!.path) argv=\(child.arguments!)\n".utf8))
                 child.standardOutput = FileHandle.nullDevice
                 child.standardError = FileHandle.standardError
                 try child.run()
@@ -156,8 +166,8 @@ final class ATCRoutingCheck {
                 next()
             case 10:
                 guard target("https://atc-space.test/second") != nil, process?.isRunning == false else { return }
-                // A forwarded second launch exits with CHROME_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED (26), not 0.
-                conditions["second_launch"] = process?.terminationReason == .exit && process?.terminationStatus == 26
+                // Requiring PROCESS_NOTIFIED (26) would ignore ChromeMain's normalization to exit 0.
+                conditions["second_launch"] = process?.terminationReason == .exit && process?.terminationStatus == 0
                 guard CommandLine.arguments.contains("--ararat-atc-launchservices") else { finish(); return }
                 let child = Process()
                 child.executableURL = URL(fileURLWithPath: "/usr/bin/open")
