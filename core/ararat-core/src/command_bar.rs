@@ -364,18 +364,60 @@ fn fuzzy(q: &str, title: &str) -> f64 {
 }
 
 pub fn looks_like_url(input: &str) -> bool {
-    let s = input.trim();
-    if s.is_empty() || s.chars().any(char::is_whitespace) { return false; }
-    if s.starts_with("about:") || s.starts_with("file:") { return true; }
-    if let Some((scheme, _)) = s.split_once("://") {
-        let mut chars = scheme.chars();
-        return chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    address_url(input.trim()).is_some()
+}
+
+fn address_url(s: &str) -> Option<String> {
+    if s.chars().any(is_line_break) { return None; }
+    if s.starts_with('/') || s.starts_with("~/") {
+        let path = if let Some(relative) = s.strip_prefix("~/") {
+            std::path::PathBuf::from(std::env::var_os("HOME")?).join(relative)
+        } else { s.into() };
+        return url::Url::from_file_path(path).ok().map(Into::into);
     }
-    let host_port = s.split('/').next().unwrap_or("");
-    let (host, port) = host_port.split_once(':').map_or((host_port, None), |(h,p)| (h, Some(p)));
-    if port.is_some_and(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_digit())) { return false; }
-    if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { return true; }
-    host.contains('.') && host.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'))
+    if s.is_empty() || s.chars().any(char::is_whitespace) { return None; }
+    let scheme = s.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase());
+    if s.contains("://") || matches!(scheme.as_deref(), Some("about" | "file" | "mailto" | "tel")) {
+        return url::Url::parse(s).ok().map(|_| s.to_owned());
+    }
+    let authority = s.split(['/', '?', '#']).next()?;
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        authority[1..end].parse::<std::net::Ipv6Addr>().ok()?;
+        let tail = &authority[end + 1..];
+        (&authority[..=end], if tail.is_empty() { None } else { Some(tail.strip_prefix(':')?) })
+    } else {
+        authority.split_once(':').map_or((authority, None), |(h, p)| (h, Some(p)))
+    };
+    if let Some(port) = port {
+        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) { return None; }
+        port.parse::<u16>().ok()?;
+    }
+    let ip = host.starts_with('[') || host.parse::<std::net::Ipv4Addr>().is_ok();
+    if !ip {
+        if !host.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')) { return None; }
+        if host.contains('.') {
+            let tld = host.rsplit('.').next()?;
+            // A punycode TLD (`example.xn--p1ai`) is an address: its label carries digits and
+            // hyphens, which the letters-only rule below would otherwise refuse. Hosts are
+            // case-insensitive, so the punycode marker is compared on the lowercased label.
+            let tld_is_punycode = tld.to_ascii_lowercase().starts_with("xn--");
+            if !(tld.chars().all(char::is_alphabetic) || tld_is_punycode) { return None; }
+        } else if host != "localhost" && port.is_none() { return None; }
+    }
+    let scheme = if ip || host == "localhost" || !host.contains('.') { "http" } else { "https" };
+    let address = format!("{scheme}://{s}");
+    url::Url::parse(&address).ok()?;
+    Some(address)
+}
+
+pub fn pasted_text(input: &str) -> String {
+    let cleaned = text_without_other_controls(input);
+    if cleaned.trim().split(is_line_break).any(|line| line.starts_with(char::is_whitespace) || line.ends_with(char::is_whitespace)) {
+        return cleaned;
+    }
+    let joined = address_text(&cleaned);
+    if looks_like_url(&joined) { joined } else { cleaned }
 }
 
 /// The bar shows at most five rows, the typed row included (D1).
@@ -470,19 +512,11 @@ fn starts_with_at_word_start(title: &str, query: &str) -> bool {
 }
 
 fn typed_row(query: &str) -> Suggestion {
-    // Why the classification reads the text with its line breaks kept and every other control
-    // dropped: `looks_like_url` refuses whitespace, so a line break between non-space characters
-    // keeps the whole text a search (`a.com\nb.com` searches `a.com b.com` and never opens
-    // `https://a.comb.com`), while a stray control (the VM's 0x10 around the typed word) cannot
-    // turn a typed address into a search. Each builder then handles the line breaks its own way:
-    // one space in a search, dropped in an address (design, 2026-11-16).
     let typed = text_without_other_controls(query);
-    let url_like = looks_like_url(&typed);
-    let (title, target) = if url_like {
-        let text = address_text(&typed);
-        let host = text.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
-        let url = if text.contains("://") || text.starts_with("about:") || text.starts_with("file:") { text.clone() } else if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() { format!("http://{text}") } else { format!("https://{text}") };
-        (text, Target::OpenUrl { url })
+    let address = address_url(typed.trim());
+    let url_like = address.is_some();
+    let (title, target) = if let Some(url) = address {
+        (address_text(&typed), Target::OpenUrl { url })
     } else {
         let text = search_text(&typed);
         let url = encode_search(&text);

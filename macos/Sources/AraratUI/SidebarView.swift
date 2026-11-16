@@ -3037,10 +3037,18 @@ extension SidebarView {
         return dragRect(view)
     }
 
-    public func pressClearToday() -> Bool {
+    public func pressClearToday(trace: (String) -> Void) -> Bool {
         guard todayDivider.superview != nil,
-              let button = SidebarNoTabsRowSelf.find(todayDivider, SidebarClearButton.self) else { return false }
+              let button = SidebarNoTabsRowSelf.find(todayDivider, SidebarClearButton.self) else {
+            trace("clear-press target=missing dividerAttached=\(todayDivider.superview != nil)")
+            return false
+        }
+        func state(_ stage: String) {
+            trace("clear-press stage=\(stage) target=\(ObjectIdentifier(button)) enabled=\(button.isEnabled) hidden=\(button.isHiddenOrHasHiddenAncestor) frame=\(button.convert(button.bounds, to: nil)) visible=\(button.visibleRect) window=\(button.window?.windowNumber ?? -1) key=\(NSApp.keyWindow?.windowNumber ?? -1) sheet=\(button.window?.attachedSheet?.windowNumber ?? -1) modal=\(NSApp.modalWindow?.windowNumber ?? -1) action=\(button.action.map(NSStringFromSelector) ?? "nil") callback=\(button.onPress != nil) handler=\(onClearToday != nil) presses=\(button.checkPressCount)")
+        }
+        state("before")
         button.performClick(nil)
+        state("after")
         return true
     }
 

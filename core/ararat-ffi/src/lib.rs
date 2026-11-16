@@ -9,6 +9,11 @@ use std::sync::{Arc, Mutex};
 
 uniffi::setup_scaffolding!();
 
+#[uniffi::export]
+pub fn command_bar_pasted_text(text: String) -> String {
+    ararat_core::command_bar::pasted_text(&text)
+}
+
 #[derive(Debug, uniffi::Error)]
 pub enum CoreError {
     Import { message: String },
@@ -385,7 +390,8 @@ impl WorkspaceStore {
         let workspace = self.workspace.lock().unwrap();
         if workspace.history_purges.is_empty() { return Ok(Vec::new()); }
         self.store.flush()?;
-        let mut purges: Vec<_> = workspace.history_purges.iter().map(|(id, (profile, item, changed_at))|
+        let live = self.live.lock().unwrap();
+        let mut purges: Vec<_> = workspace.history_purges.iter().filter(|(id, _)| !live.pending_close_purge(id)).map(|(id, (profile, item, changed_at))|
             HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone(), changed_at: *changed_at }).collect();
         purges.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(purges)
@@ -394,7 +400,8 @@ impl WorkspaceStore {
     pub fn history_admission(&self, item: String) -> HistoryAdmission {
         let workspace = self.workspace.lock().unwrap();
         let stamp = workspace.items.get(&item).map_or(0, |i| i.lifecycle_changed_at);
-        let purges = workspace.history_purges.iter().filter(|(_, (_, id, _))| id == &item)
+        let live = self.live.lock().unwrap();
+        let purges = workspace.history_purges.iter().filter(|(purge, (_, id, _))| id == &item && !live.pending_close_purge(purge))
             .map(|(id, (profile, item, changed_at))| HistoryPurge { id: id.clone(), profile: profile.clone().into(), item: item.clone(), changed_at: *changed_at }).collect();
         HistoryAdmission { stamp, purges }
     }
@@ -786,6 +793,15 @@ impl WorkspaceStore {
 
     pub fn live_settle_close(&self, command_id: String) -> bool {
         self.live.lock().unwrap().settle_close(&command_id)
+    }
+
+    pub fn live_cancel_close(&self, command_id: String) -> Result<bool, CoreError> {
+        self.admit(false)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let (cancelled, ops) = self.live.lock().unwrap().cancel_close(&mut workspace, &command_id);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(cancelled)
     }
 
     pub fn live_close(&self, item: String) -> Result<LiveCommand, CoreError> {

@@ -104,6 +104,50 @@ func anOpenEmptyFoldersLineSitsAtTheChildIndent() throws {
 }
 
 @Test @MainActor
+func clearTodayPressDiagnosticsDistinguishDisabledButtonsFromDispatchedActions() throws {
+    _ = NSApplication.shared
+    let space = u25Space(today: [u25Row("a")])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
+    let button = try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarClearButton }.first)
+    var cleared = 0
+    var traces: [String] = []
+    sidebar.onClearToday = { cleared += 1 }
+    for _ in 0..<2 { #expect(sidebar.pressClearToday { traces.append($0) }) }
+    #expect(cleared == 2)
+    #expect(traces.count == 4)
+    #expect(traces[0].contains("stage=before"))
+    #expect(traces[0].contains("presses=0"))
+    #expect(traces[3].contains("stage=after"))
+    #expect(traces[3].contains("presses=2"))
+    button.isEnabled = false
+    #expect(sidebar.pressClearToday { traces.append($0) })
+    #expect(cleared == 2)
+    #expect(traces.last?.contains("enabled=false") == true)
+    #expect(traces.last?.contains("presses=2") == true)
+}
+
+@Test @MainActor
+func todayDividerReturnsAfterClearTodayIsCancelled() throws {
+    _ = NSApplication.shared
+    let space = u25Space(today: [u25Row("a"), u25Row("b")])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
+    var cleared = 0
+    sidebar.onClearToday = { cleared += 1 }
+    #expect(sidebar.pressClearToday { _ in })
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil,
+                                             spaces: [u25Space()]))
+    #expect(sidebar.todayDividerForCheck == nil)
+    #expect(!sidebar.pressClearToday { _ in })
+    sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: "b",
+                                             spaces: [u25Space(today: [u25Row("b")])]))
+    #expect(sidebar.todayDividerForCheck != nil)
+    #expect(u25Descendants(sidebar).compactMap { $0 as? SidebarTodayDivider }.count == 1)
+    #expect(sidebar.rowCheckIds == ["b"])
+    #expect(sidebar.pressClearToday { _ in })
+    #expect(cleared == 2)
+}
+
+@Test @MainActor
 func todayDividerClearAndNewTabFollowTodayAndTheSetting() throws {
     let space = u25Space(today: [u25Row("a")])
     let (window, sidebar) = u25Sidebar(space)
@@ -420,7 +464,7 @@ func aRefusedCloseDoesNotAnimateALaterRemoval(removal: String) async throws {
     #expect(closed.isEmpty)
     delivered = nil
     if removal == "cancel" {
-        engine.tabCloseCancelled(id)
+        engine.tabCloseCancelled(id, commandId: "unknown")
         _ = try store.archiveItem(windowId: "cancel", id: id)
         engine.refresh()
     } else {
@@ -429,4 +473,63 @@ func aRefusedCloseDoesNotAnimateALaterRemoval(removal: String) async throws {
     }
     try await waitUntil { delivered?.archive.contains { $0.id == id } == true }
     #expect(closed == (removal == "close" ? [id] : []))
+}
+
+@Test @MainActor
+func aCancelledLiveClosePublishesTheRestoredRow() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("stay.sqlite").path,
+                                   windowID: "stay", card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: "stay", name: "Work", spaceId: "work")
+    let created = try store.createTab(windowId: "stay", url: "https://stay.example/")
+    let id = try #require(created.selectedId)
+    let live = try store.liveOpen(item: id, url: "https://stay.example/")
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: "stay", tabs: [LiveTab(offTheRecord: false, profile: .default, liveId: live.id,
+            item: id, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)]))
+    let before = store.snapshot(windowId: "stay")
+    let close = try store.liveArchive(item: id)
+    var delivered: WorkspaceSnapshot?
+    var closed: [String] = []
+    engine.onSnapshot = { delivered = $0 }
+    engine.onRowClose = { closed.append($0) }
+    engine.tabCloseCancelled(id, commandId: close.id)
+    try await waitUntil { delivered == before }
+    #expect(store.liveTab(item: id) == live.id)
+    #expect(try store.pendingHistoryPurges().isEmpty)
+    #expect(closed.isEmpty)
+    #expect(try store.liveCancelClose(commandId: close.id) == false)
+}
+
+@Test @MainActor
+func clearTodayStayPublishesOnlyTheRefusedRowWithoutCloseMotion() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: directory.appendingPathComponent("clear-stay.sqlite").path,
+                                   windowID: "stay", card: NSView(), session: session)
+    let store = try #require(session.store)
+    _ = try store.createSpace(windowId: "stay", name: "Work", spaceId: "work")
+    let kept = try #require(store.createTab(windowId: "stay", url: "https://stay.example/").selectedId)
+    let other = try #require(store.createTab(windowId: "stay", url: "https://leave.example/").selectedId)
+    let live = try store.liveOpen(item: kept, url: "https://stay.example/")
+    _ = try store.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine,
+        strips: [LiveStrip(window: "stay", tabs: [LiveTab(offTheRecord: false, profile: .default, liveId: live.id,
+            item: kept, opener: nil, navigated: false, url: nil, title: nil)], active: live.id)]))
+    let clear = try store.liveClearToday(windowId: "stay", spaceId: "work")
+    let command = try #require(clear.targets.first { $0.command.item == kept }?.command)
+    var delivered: WorkspaceSnapshot?
+    var closed: [String] = []
+    engine.onSnapshot = { delivered = $0 }
+    engine.onRowClose = { closed.append($0) }
+    engine.tabCloseCancelled(kept, commandId: command.id)
+    try await waitUntil { delivered?.spaces.first { $0.id == "work" }?.today.map(\.id) == [kept] }
+    #expect(delivered?.archive.contains { $0.id == other } == true)
+    #expect(delivered?.spaces.first { $0.id == "work" }?.today.first?.unloaded == false)
+    #expect(store.liveTab(item: kept) == live.id)
+    #expect(try store.pendingHistoryPurges().allSatisfy { $0.item != kept })
+    #expect(closed.isEmpty)
 }

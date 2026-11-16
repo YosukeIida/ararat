@@ -20,6 +20,68 @@ fn url_detection_and_typed_rows() {
     assert!(matches!(&command_bar::rank("localhost:3000", &[])[0].target, Target::OpenUrl { url } if url == "http://localhost:3000"));
     assert!(matches!(&command_bar::rank("hello world", &[])[0].target, Target::Search { url } if url.ends_with("hello+world")));
 }
+// Test inputs only: `nas:`, `nas:70000`, `1.2`, `v1.2.3`, `user@example.com` and `hello world`
+// in address_classification_and_destinations below also appear in Yab's
+// `Tests/FastTests/AddressTests.swift` (Copyright the Yab contributors, Apache-2.0,
+// https://github.com/yetanotherbrowser/yab). No Yab code was copied; the classifier and its
+// expected destinations are ours.
+#[test]
+fn address_classification_and_destinations() {
+    for (input, expected) in [
+        ("[::1]", Some("http://[::1]")),
+        ("[::1]:8080", Some("http://[::1]:8080")),
+        ("http://[fe80::1]/", Some("http://[fe80::1]/")),
+        ("nas:5000", Some("http://nas:5000")),
+        ("localhost:3000", Some("http://localhost:3000")),
+        ("127.0.0.1", Some("http://127.0.0.1")),
+        ("8.8.8.8", Some("http://8.8.8.8")),
+        ("example.com:65535", Some("https://example.com:65535")),
+        ("my_host.example", Some("https://my_host.example")),
+        ("example.xn--p1ai", Some("https://example.xn--p1ai")),
+        ("example.XN--P1AI", Some("https://example.XN--P1AI")),
+        ("/Users/x.html", Some("file:///Users/x.html")),
+        ("/Users/a b#c.html", Some("file:///Users/a%20b%23c.html")),
+        ("mailto:x@example.com", Some("mailto:x@example.com")),
+        ("tel:+123456789", Some("tel:+123456789")),
+        ("v1.2.3", None), ("1.2.3", None), ("1.2", None), ("999.1.2.3", None),
+        ("example.com:70000", None), ("https://example.com:70000", None),
+        ("nas:70000", None), ("nas:", None), ("nas:abc", None), ("nas:+80", None),
+        ("[::1]:70000", None), ("[::invalid]", None), ("[::1]garbage", None),
+        ("user@example.com", None), ("hello world", None),
+    ] {
+        assert_eq!(command_bar::looks_like_url(input), expected.is_some(), "{input}");
+        let rows = command_bar::rank(input, &[]);
+        match expected {
+            Some(expected) => assert_eq!(rows[0].target, Target::OpenUrl { url: expected.into() }, "{input}"),
+            None => assert!(matches!(rows[0].target, Target::Search { .. }), "{input}"),
+        }
+    }
+    let home = std::env::var_os("HOME").unwrap();
+    let expected = url::Url::from_file_path(std::path::PathBuf::from(home).join("x.html")).unwrap();
+    assert_eq!(command_bar::rank("~/x.html", &[])[0].target, Target::OpenUrl { url: expected.into() });
+}
+
+#[test]
+fn pasted_wraps_rejoin_only_for_addresses_after_controls_are_removed() {
+    for (input, expected) in [
+        ("https://exa\nmple.com/path", "https://example.com/path"),
+        ("\u{10}https://exa\r\nmple.com/\u{7}", "https://example.com/"),
+        ("example.\u{2028}com", "example.com"),
+        ("[::1]:\n8080", "[::1]:8080"),
+        ("/Users/\nx.html", "/Users/x.html"),
+        ("/Users/ \nx.html", "/Users/ \nx.html"),
+        ("/Users/\n x.html", "/Users/\n x.html"),
+        ("foo\nbar", "foo\nbar"),
+        ("hello \nworld", "hello \nworld"),
+        ("example.com \nwords", "example.com \nwords"),
+        ("https://example.com/\n", "https://example.com/"),
+    ] {
+        assert_eq!(command_bar::pasted_text(input), expected, "{input:?}");
+    }
+    assert!(matches!(command_bar::rank("https://exa\nmple.com/path", &[])[0].target, Target::Search { .. }));
+    assert!(matches!(command_bar::rank("/Users/\nx.html", &[])[0].target, Target::Search { .. }));
+}
+
 #[test]
 fn search_url_encodes_url_like_and_unicode_input() {
     assert_eq!(command_bar::search_url("example.com & 日本"), "https://www.google.com/search?q=example.com+%26+%E6%97%A5%E6%9C%AC");

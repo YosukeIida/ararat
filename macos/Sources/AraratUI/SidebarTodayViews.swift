@@ -54,6 +54,7 @@ final class SidebarClearButton: NSButton {
     private var hovered = false { didSet { updateFill() } }
     private(set) var pressed = false { didSet { updateFill() } }
     var onPress: (() -> Void)?
+    private(set) var checkPressCount = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -106,7 +107,10 @@ final class SidebarClearButton: NSButton {
         pressed = false
     }
 
-    @objc private func press() { onPress?() }
+    @objc private func press() {
+        checkPressCount += 1
+        onPress?()
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
