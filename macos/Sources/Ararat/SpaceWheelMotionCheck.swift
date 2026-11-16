@@ -116,14 +116,23 @@ extension Runtime {
                 let counts = sidebar.checkSpaceWheelMotionCounts
                 let frames = check.capture?.samples() ?? []
                 let conditions = SpaceWheelDrawnCapture.conditions(frames, switches: check.switches)
-                let path = try? check.capture?.save(relativeTo: check.switches.first?.time ?? 0, directory: SpaceWheelDrawnCapture.resultDirectory())
-                finishBrowserCheck(ok: !check.failed && check.sent == check.expected && !conditions.isEmpty
-                    && conditions.values.allSatisfy { $0 }, values: ["check": "space-wheel-motion", "samples": counts,
+                let ok = !check.failed && check.sent == check.expected && !conditions.isEmpty
+                    && conditions.values.allSatisfy { $0 }
+                var values: [String: Any] = ["check": "space-wheel-motion", "samples": counts,
                     "conditions": conditions, "presentation_conditions": sidebar.checkSpaceWheelMotionConditions,
                     "failed_conditions": conditions.filter { !$0.value }.keys.sorted(),
                     "events_sent": check.sent, "input_failed": check.failed,
                     "drawn_frames": frames.count, "drawn_width": check.capture?.width ?? 0,
-                    "drawn_raw_path": path as Any? ?? NSNull(), "motion_trace": "stderr JSON lines"])
+                    "drawn_filter": check.capture?.filterMode.rawValue ?? "display",
+                    "motion_trace": "stderr JSON lines"]
+                if ok {
+                    let path = try? check.capture?.save(relativeTo: check.switches.first?.time ?? 0, directory: SpaceWheelDrawnCapture.resultDirectory())
+                    values["drawn_raw_path"] = path as Any? ?? NSNull()
+                } else {
+                    values.merge(check.capture?.diagnostics(source: check.switches.first?.source ?? sidebar.spaceShown, pitch: Int(sidebar.bounds.width),
+                        directory: SpaceWheelDrawnCapture.resultDirectory()) ?? [:]) { _, diagnostic in diagnostic }
+                }
+                finishBrowserCheck(ok: ok, values: values)
             }
             return
         }
@@ -148,7 +157,7 @@ extension Runtime {
                     guard let window = sidebar.window, rect.width > 0, rect.height > 0 else {
                         throw SpaceWheelMotionCheck.Failure(description: "drawn_capture_rect value=\(rect)")
                     }
-                    let capture = SpaceWheelDrawnCapture(width: Int(rect.width))
+                    let capture = SpaceWheelDrawnCapture(width: Int(rect.width), filter: try SpaceWheelDrawnCapture.Filter.selected(arguments: CommandLine.arguments))
                     check.capture = capture
                     try await capture.start(window: window, row: rect)
                     for _ in 0..<100 {

@@ -2,6 +2,7 @@ import AraratUI
 import Testing
 import CoreMedia
 import CoreVideo
+import ScreenCaptureKit
 @testable import Ararat
 
 private func drawnPixels(source: Int, target: Int, pitch: Int, width: Int, offset: Int) -> [UInt8] {
@@ -69,7 +70,7 @@ func drawnFrameLatencyRejectsALateContinuousStartIncludingItsStillFrames() {
     #expect(SpaceWheelDrawnCapture.conditions(curve(firstMotion: 0.100), switches: [step]).values.allSatisfy { $0 })
 }
 
-private func captureSample(bgra: [UInt8], time: CMTime) throws -> CMSampleBuffer {
+private func captureSample(bgra: [UInt8], time: CMTime, status: SCFrameStatus = .complete) throws -> CMSampleBuffer {
     var buffer: CVPixelBuffer?
     #expect(CVPixelBufferCreate(nil, bgra.count / 4, 1, kCVPixelFormatType_32BGRA, nil, &buffer) == kCVReturnSuccess)
     let pixels = try #require(buffer)
@@ -87,7 +88,17 @@ private func captureSample(bgra: [UInt8], time: CMTime) throws -> CMSampleBuffer
     var sample: CMSampleBuffer?
     #expect(CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pixels,
         formatDescription: try #require(description), sampleTiming: &timing, sampleBufferOut: &sample) == noErr)
-    return try #require(sample)
+    let result = try #require(sample)
+    let attachments = try #require(CMSampleBufferGetSampleAttachmentsArray(result, createIfNecessary: true))
+    let info = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+    let values: [SCStreamFrameInfo: Any] = [.status: status.rawValue,
+        .contentRect: CGRect(x: 1, y: 2, width: bgra.count / 4, height: 1).dictionaryRepresentation,
+        .scaleFactor: 1.0, .contentScale: 1.0]
+    for (key, value) in values {
+        CFDictionarySetValue(info, Unmanaged.passUnretained(key.rawValue as NSString).toOpaque(),
+            Unmanaged.passUnretained(value as AnyObject).toOpaque())
+    }
+    return result
 }
 
 @Test
@@ -143,4 +154,55 @@ func baselineFailurePreservesRealChannelStatisticsExpectedPatternAndRawRows() th
     let empty = SpaceWheelDrawnCapture(width: 2).diagnostics(source: 4, pitch: 16, directory: directory)
     #expect(empty["drawn_sample_count"] as? Int == 0)
     #expect((empty["drawn_rows"] as? [[String: Any]])?.isEmpty == true)
+}
+
+
+@Test @MainActor
+func captureStatusKeepsIdlePixelsOnlyAfterACompleteFrameAndRejectsBlankOrSuspendedFrames() throws {
+    let capture = SpaceWheelDrawnCapture(width: 2)
+    let pixels: [UInt8] = [10, 20, 30, 255, 50, 60, 70, 255]
+    for (index, status) in [SCFrameStatus.idle, .complete, .idle, .blank, .idle, .suspended, .started, .stopped].enumerated() {
+        let sample = try captureSample(bgra: status == .idle ? Array(repeating: 0, count: 8) : pixels,
+            time: CMTime(value: Int64(index + 1), timescale: 1), status: status)
+        capture.record(sample, clock: CMClockGetHostTimeClock())
+    }
+    #expect(capture.samples().map(\.time) == [2, 3, 7])
+    #expect(capture.samples().allSatisfy { $0.bgra == pixels })
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let diagnostics = capture.diagnostics(source: 0, pitch: 16, directory: directory)
+    #expect(diagnostics["drawn_delivered_count"] as? Int == 8)
+    #expect(diagnostics["drawn_status_counts"] as? [String: Int] == ["idle": 3, "complete": 1, "blank": 1, "suspended": 1, "started": 1, "stopped": 1])
+    let deliveries = try #require(diagnostics["drawn_deliveries"] as? [[String: Any]])
+    #expect(deliveries[0]["drop_reason"] as? String == "idle-without-reference")
+    #expect(deliveries[4]["drop_reason"] as? String == "idle-without-reference")
+    #expect(deliveries[1]["scale_factor"] as? Double == 1)
+    #expect((deliveries[1]["content_rect"] as? [String: Any])?.isEmpty == false)
+    _ = try JSONSerialization.data(withJSONObject: diagnostics)
+}
+
+@Test @MainActor
+func captureDiagnosticsCountDeliveredBuffersEvenWithoutASynchronizationClock() throws {
+    let capture = SpaceWheelDrawnCapture(width: 2, filter: .window)
+    capture.record(try captureSample(bgra: Array(repeating: 0, count: 8), time: CMTime(value: 1, timescale: 1)), clock: nil)
+    #expect(capture.samples().isEmpty)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let diagnostics = capture.diagnostics(source: 0, pitch: 16, directory: directory)
+    #expect(diagnostics["drawn_delivered_count"] as? Int == 1)
+    #expect(diagnostics["drawn_filter"] as? String == "window")
+    let deliveries = try #require(diagnostics["drawn_deliveries"] as? [[String: Any]])
+    #expect(deliveries[0]["clock_available"] as? Bool == false)
+    let process = try #require(diagnostics["drawn_process"] as? [String: Any])
+    #expect((process["parent"] as? [String: Any])?["pid"] as? Int32 == getppid())
+}
+
+@Test
+func drawnFilterRequiresAnExplicitValidChoiceAndDefaultsToDisplay() throws {
+    #expect(try SpaceWheelDrawnCapture.Filter.selected(arguments: []) == .display)
+    #expect(try SpaceWheelDrawnCapture.Filter.selected(arguments: ["--ararat-drawn-filter=window"]) == .window)
+    #expect(try SpaceWheelDrawnCapture.Filter.selected(arguments: ["--ararat-drawn-filter=display"]) == .display)
+    #expect(throws: (any Error).self) { try SpaceWheelDrawnCapture.Filter.selected(arguments: ["--ararat-drawn-filter=other"]) }
 }
