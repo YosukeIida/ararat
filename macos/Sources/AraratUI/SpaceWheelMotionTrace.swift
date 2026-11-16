@@ -1,5 +1,23 @@
 import AppKit
 
+public enum SpaceWheelMotionCurve {
+    public struct Frame {
+        public let t: Double
+        public let offset: Double
+        public init(t: Double, offset: Double) { self.t = t; self.offset = offset }
+    }
+
+    public static func conditions(frames: [Frame], from: Double, pitch: Double) -> [String: Bool] {
+        let pairs = Array(zip(frames, frames.dropFirst()))
+        return ["first_frame_full_offset": frames.first.map { abs($0.offset - from) <= abs(from) * 0.15 } ?? false,
+                "monotone_approach": !frames.isEmpty && pairs.allSatisfy { abs($1.offset) <= abs($0.offset) + 2 },
+                "no_late_jump": !frames.isEmpty && pairs.filter { $0.1.t >= 0.06 }
+                    .allSatisfy { abs($1.offset - $0.offset) <= pitch * 0.25 },
+                "landed": frames.last.map { abs($0.offset) <= 2 } ?? false]
+    }
+
+}
+
 @MainActor
 final class SpaceWheelMotionTrace {
     static let enabled = CommandLine.arguments.contains("--ararat-trace-space-scroll")
@@ -13,20 +31,6 @@ final class SpaceWheelMotionTrace {
     var displayLink: CADisplayLink?
     private var animation: (from: Double, pitch: Double, time: Double)?
     private(set) var conditions: [String: Bool] = [:]
-
-    struct Frame {
-        let t: Double
-        let offset: Double
-    }
-
-    static func conditions(frames: [Frame], from: Double, pitch: Double) -> [String: Bool] {
-        let pairs = Array(zip(frames, frames.dropFirst()))
-        return ["first_frame_full_offset": frames.first.map { abs($0.offset - from) <= abs(from) * 0.15 } ?? false,
-                "monotone_approach": !frames.isEmpty && pairs.allSatisfy { abs($1.offset) <= abs($0.offset) + 2 },
-                "no_late_jump": !frames.isEmpty && pairs.filter { $0.1.t >= 0.06 }
-                    .allSatisfy { abs($1.offset - $0.offset) <= pitch * 0.25 },
-                "landed": frames.last.map { abs($0.offset) <= 2 } ?? false]
-    }
 
     func animationStarted(from: Double, pitch: Double, at time: Double) {
         guard let start else { return }
@@ -60,15 +64,15 @@ final class SpaceWheelMotionTrace {
         mark("trace-end", detail: reason)
         var verdict: [String: Bool] = [:]
         if let animation {
-            let frames: [Frame] = samples.compactMap { sample in
+            let frames: [SpaceWheelMotionCurve.Frame] = samples.compactMap { sample in
                 guard ["display-link", "check-timer"].contains(sample["source"] as? String ?? ""),
                       let t = sample["t"] as? Double, t >= animation.time,
                       let pages = sample["pages"] as? [[String: Any]],
                       let active = pages.first(where: { $0["active"] as? Bool == true && $0["animation"] as? Bool == true }),
                       let offset = active["offset"] as? Double else { return nil }
-                return Frame(t: t - animation.time, offset: offset)
+                return SpaceWheelMotionCurve.Frame(t: t - animation.time, offset: offset)
             }
-            verdict = Self.conditions(frames: frames, from: animation.from, pitch: animation.pitch)
+            verdict = SpaceWheelMotionCurve.conditions(frames: frames, from: animation.from, pitch: animation.pitch)
             if !["presentation-finished", "check-complete"].contains(reason) { verdict.removeValue(forKey: "landed") }
             conditions.merge(verdict) { $0 && $1 }
         }

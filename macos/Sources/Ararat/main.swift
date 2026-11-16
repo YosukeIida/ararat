@@ -1765,8 +1765,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if case .success = result { self.adapter?.invalidateSelection() }
       self.showAndSelect(result)
       if case .success(let snapshot) = result {
-        if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) {
-          self.sidebar?.showSpaceWithoutNotification(at: index)
+        if let id = snapshot.shownSpaceId {
+          self.sidebar?.showSpaceWithoutNotification(id: id)
         }
         self.sidebar?.setLibraryOpen(false)
       }
@@ -1786,8 +1786,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
         self.workspace?.snapshot { [weak self] latest in
           guard let self, self.selectionGeneration == generation, case .success(let snapshot) = latest else { return }
           self.showAndSelect(.success(snapshot))
-          if let index = snapshot.spaces.firstIndex(where: { $0.id == snapshot.shownSpaceId }) {
-            self.sidebar?.showSpaceWithoutNotification(at: index)
+          if let id = snapshot.shownSpaceId {
+            self.sidebar?.showSpaceWithoutNotification(id: id)
           }
         }
         self.report(error)
@@ -1798,9 +1798,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
                 current.shownSpaceId == id else { return }
           self.adapter?.invalidateSelection()
           self.showAndSelect(.success(current), expectedSpace: id)
-          if let index = current.spaces.firstIndex(where: { $0.id == id }) {
-            self.sidebar?.showSpaceWithoutNotification(at: index)
-          }
+          self.sidebar?.showSpaceWithoutNotification(id: id)
           completion?()
         }
       }
@@ -2525,9 +2523,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
                     current.shownSpaceId == space, current.selectedId == id else { return }
               adapter.invalidateSelection()
               self.showAndSelect(.success(current), expectedSpace: space, selectedItem: id)
-              if let index = current.spaces.firstIndex(where: { $0.id == space }) {
-                self.sidebar?.showSpaceWithoutNotification(at: index)
-              }
+              self.sidebar?.showSpaceWithoutNotification(id: space)
             }
           }
         } else if let url = row.url { adapter.select(id: id, url: url) }
@@ -5363,9 +5359,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
                 current.selectedId == target.item else { return }
           adapter.invalidateSelection()
           self.showAndSelect(.success(current), expectedSpace: target.space, selectedItem: target.item)
-          if let index = current.spaces.firstIndex(where: { $0.id == target.space }) {
-            self.sidebar?.showSpaceWithoutNotification(at: index)
-          }
+          self.sidebar?.showSpaceWithoutNotification(id: target.space)
         }
       }
     } else if spaceMatrixPhase == 10 {

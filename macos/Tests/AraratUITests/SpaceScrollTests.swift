@@ -619,7 +619,7 @@ func trackpadViewTakesOverAWheelSlideAtItsPresentedOffset() async throws {
 func wheelSpringStartsAfterPreparedTransactionAndLookWork(lookDelay: Double) throws {
     let (window, sidebar) = scrollTestWindow()
     defer { window.contentView = nil }
-    sidebar.showSpaceWithoutNotification(at: 2)
+    sidebar.showSpaceWithoutNotification(id: "space-2")
     let trace = SpaceWheelMotionTrace()
     sidebar.wheelMotionTrace = trace
     var delayed = false
@@ -663,7 +663,7 @@ func storeRepliesKeepTheSpaceSpringAndApplyLatestRowsAfterLanding(route: String)
         case "close": sidebar.applyClose(id: "tab-0", snapshot: reply)
         default: sidebar.update(snapshot: reply)
         }
-        sidebar.showSpaceWithoutNotification(at: 1)
+        sidebar.showSpaceWithoutNotification(id: "space-1")
         let retained = try #require(column.layer?.animation(forKey: "space.scroll") as? CASpringAnimation)
         #expect(retained.fromValue as? Double == spring.fromValue as? Double)
         #expect(retained.duration == spring.duration)
@@ -684,8 +684,8 @@ func storeRepliesKeepTheSpaceSpringAndApplyLatestRowsAfterLanding(route: String)
 func idlePrebuildKeepsPreviewConstructionOffTheWheelSwitch(prebuild: Bool) throws {
     let (window, sidebar) = scrollTestWindow(spaces: 4)
     defer { window.contentView = nil }
-    sidebar.showSpaceWithoutNotification(at: 2)
-    if prebuild { sidebar.prebuildScrollPages() }
+    sidebar.showSpaceWithoutNotification(id: "space-2")
+    if prebuild { while sidebar.prebuildScrollPages() {} }
     let trace = SpaceWheelMotionTrace()
     sidebar.wheelMotionTrace = trace
     sidebar.scrollWheel(with: trackpadEvent(dx: 2, phase: nil, time: 100))
@@ -705,9 +705,80 @@ func interruptingASpringAppliesThePendingSnapshotBeforeResolvingTheTargetSpace()
     reply.spaces.removeFirst()
     reply.shownSpaceId = "space-1"
     sidebar.update(snapshot: reply)
-    sidebar.showSpaceWithoutNotification(at: 2)
+    sidebar.showSpaceWithoutNotification(id: "space-2")
     #expect(sidebar.spaceShown == 1)
     #expect(scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.id == "tab-2" })
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
+func aReindexedSpaceAcknowledgementKeepsTheSpringOnTheSameSpaceID() throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.contentView = nil }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    let column = try currentScrollColumn(sidebar)
+    var reply = scrollTestSnapshot()
+    reply.spaces.removeFirst()
+    reply.shownSpaceId = "space-1"
+    sidebar.update(snapshot: reply)
+    sidebar.showSpaceWithoutNotification(id: reply.shownSpaceId!)
+    #expect(column.layer?.animation(forKey: "space.scroll") != nil)
+    sidebar.finishScrollPresentation()
+    #expect(sidebar.spaceShown == 0)
+    #expect(scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.id == "tab-1" })
+    #expect(!window.isVisible)
+}
+
+@Test(arguments: ["created", "restore"]) @MainActor
+func laterSnapshotsDoNotDiscardHeldReplySideEffects(reply: String) throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.contentView = nil }
+    if reply == "created" {
+        sidebar.setCreateSpaceOpen(true)
+        sidebar.checkTypeSpaceName("New space")
+        #expect(sidebar.checkSubmitSpaceName())
+        #expect(sidebar.checkCreateSpace.submitting)
+        sidebar.setCreateSpaceOpen(false)
+    }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    var next = scrollTestSnapshot()
+    next.shownSpaceId = "space-2"
+    if reply == "created" { sidebar.applyCreatedSpace(snapshot: next) }
+    else { sidebar.applyRestore(snapshot: next) }
+    sidebar.update(snapshot: next)
+    sidebar.finishScrollPresentation()
+    #expect(!sidebar.checkCreateSpace.submitting)
+    #expect(sidebar.spaceShown == 2)
+    #expect(!sidebar.libraryOpen)
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
+func detachingTheWindowAppliesHeldRowsWithoutWaitingForAnimationCompletion() throws {
+    let (window, sidebar) = scrollTestWindow()
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    var next = scrollTestSnapshot()
+    next.spaces[1].pinned[0].title = "Closed window reply"
+    sidebar.update(snapshot: next)
+    window.contentView = nil
+    #expect(scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.title == "Closed window reply" })
+    #expect(!window.isVisible)
+}
+
+@Test @MainActor
+func widthChangeDrainsSnapshotsAfterLayoutAndKeepsLaterRepliesOrdered() async throws {
+    let (window, sidebar) = scrollTestWindow()
+    defer { window.contentView = nil }
+    sidebar.scrollWheel(with: trackpadEvent(dx: -2, phase: nil, time: 100))
+    var next = scrollTestSnapshot()
+    next.spaces[1].pinned[0].title = "First held reply"
+    sidebar.update(snapshot: next)
+    sidebar.frame.size.width += 20
+    sidebar.layoutSubtreeIfNeeded()
+    next.spaces[1].pinned[0].title = "Last held reply"
+    sidebar.update(snapshot: next)
+    #expect(!scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.title == "Last held reply" })
+    try await waitUntil { scrollDescendants(sidebar).compactMap { $0 as? SidebarRowView }.contains { $0.row.title == "Last held reply" } }
     #expect(!window.isVisible)
 }
 
