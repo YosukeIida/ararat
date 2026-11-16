@@ -41,6 +41,11 @@ final class FolderUploadCheckState {
 
     static func conditionNames(screen: Bool) -> [String] { names + (screen ? screens : []) }
 
+    static func chooserCaptureArguments(frame: NSRect, screenTop: CGFloat, path: String) -> [String] {
+        let region = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height).integral
+        return ["-x", "-R\(Int(region.minX)),\(Int(region.minY)),\(Int(region.width)),\(Int(region.height))", path]
+    }
+
     func diagnostics(screen: Bool) -> [String: Any] {
         let names = Self.conditionNames(screen: screen)
         return ["conditions": Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
@@ -84,7 +89,28 @@ extension Runtime {
         func capture(_ name: String, window target: NSWindow) -> Bool {
             guard screen else { return true }
             check.capturing = true; defer { check.capturing = false }
-            guard let path = promptScreenScreenshot(target, name: "folder-upload-\(name)", withoutShadow: true) else { return false }
+            guard let screenTop = NSScreen.screens.first?.frame.maxY, !target.frame.isEmpty else {
+                FileHandle.standardError.write(Data("ararat-trace: folder-upload capture way=region error=missing-screen-or-frame frame=\(target.frame)\n".utf8))
+                return false
+            }
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-folder-upload-\(name)-\(UUID().uuidString).png").path
+            let task = Process()
+            let error = Pipe()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            task.arguments = FolderUploadCheckState.chooserCaptureArguments(frame: target.frame, screenTop: screenTop, path: path)
+            task.standardError = error
+            check.details["capture"] = ["way": "region", "frame": NSStringFromRect(target.frame), "arguments": task.arguments ?? []]
+            do { try task.run(); task.waitUntilExit() } catch {
+                FileHandle.standardError.write(Data("ararat-trace: folder-upload capture way=region error=\(error)\n".utf8))
+                return false
+            }
+            let message = String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            let image = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { NSBitmapImageRep(data: $0) }
+            let written = task.terminationStatus == 0 && image != nil
+            FileHandle.standardError.write(Data("ararat-trace: folder-upload capture way=region frame=\(target.frame) screen_top=\(screenTop) status=\(task.terminationStatus) written=\(written) error=\(message)\n".utf8))
+            check.details["capture_status"] = task.terminationStatus
+            check.details["capture_error"] = message
+            guard written else { return false }
             check.images[name] = path
             return true
         }
