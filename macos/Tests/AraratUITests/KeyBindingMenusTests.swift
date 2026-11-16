@@ -54,6 +54,34 @@ func shiftedCoreMenuShortcutMatchesTheNativeKeyEvent() throws {
     #expect(target.calls == 1)
 }
 
+@Test @MainActor
+func addSplitViewCarriesArcsShiftControlEqualsAndMatchesTheNativeKeyEvent() throws {
+    // P5d: Arc's Add Split View is ⌃⇧= (arc-dia-components.md). The key is punctuation with
+    // Shift, which AppKit spells as "+" in the event's characters while the menu matches the
+    // unmodified "="; this pins both the table's row and the menu item's match.
+    _ = NSApplication.shared
+    let binding = try #require(defaultKeyBindings().first { $0.command == "add_split_view" })
+    #expect(binding.title == "Add Split View" && binding.menu == "Tabs")
+    #expect(binding.defaultKey == KeyCombination(key: "=", command: false, control: true, option: false, shift: true))
+    #expect(binding.key == binding.defaultKey && !binding.customized)
+    let target = ShortcutTarget()
+    let menu = NSMenu()
+    let item = menu.addItem(withTitle: "Add Split View", action: #selector(ShortcutTarget.toggle(_:)), keyEquivalent: "")
+    item.target = target
+    KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
+    let shifted = try routingEvent(keyCode: 24, characters: "+", charactersIgnoringModifiers: "=", flags: [.control, .shift])
+    #expect(menu.performKeyEquivalent(with: shifted))
+    #expect(target.calls == 1)
+    let plain = try routingEvent(keyCode: 24, characters: "=", charactersIgnoringModifiers: "=", flags: [])
+    #expect(!menu.performKeyEquivalent(with: plain) && target.calls == 1)
+    // AppKit matches a punctuation key equivalent by its unshifted character and ignores the
+    // item's Shift mask, so ⌃= answers the same item (a letter would need ⇧⌘L's uppercase form to
+    // differ). The keycaps stay ⇧⌃= — the Shortcuts pane and the command bar read the core's
+    // table — but this platform rule is recorded here so a change in it shows up.
+    let unshiftedControl = try routingEvent(keyCode: 24, characters: "=", charactersIgnoringModifiers: "=", flags: [.control])
+    #expect(menu.performKeyEquivalent(with: unshiftedControl) && target.calls == 2)
+}
+
 @MainActor
 private func openBindings(_ directory: URL) async throws -> (WorkspaceAdapter, WorkspaceSnapshot) {
     let adapter = WorkspaceAdapter(windowID: "bindings")

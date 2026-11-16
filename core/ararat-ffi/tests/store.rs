@@ -849,7 +849,7 @@ fn key_bindings_ffi_reads_sets_clears_resets_and_reopens() {
     let store = WorkspaceStore::open(path.clone()).unwrap();
     let defaults = store.key_bindings();
     assert_eq!(defaults, ararat_ffi::default_key_bindings());
-    assert_eq!(defaults.len(), 39);
+    assert_eq!(defaults.len(), 40);
     let binding = |rows: Vec<ararat_ffi::KeyBinding>, id: &str| rows.into_iter().find(|row| row.command == id).unwrap();
     // U27b: the two site commands cross the boundary with no key, like every row.
     for id in ["clear_cache_site", "clear_cookies_site"] {

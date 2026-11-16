@@ -2858,6 +2858,17 @@ extension SidebarView: NSMenuDelegate {
         SidebarMenuItem("Duplicate") { [weak self] in self?.performEdit(.duplicate(id: row.id)) }
     }
 
+    // P5d: Arc's Add Split View on a lone tab. It runs the segment menu's Add Right Split on the
+    // row, so a lone row is wrapped in a new split by the same core op (the new pane opens the New
+    // Tab page and takes the focus); the identifier carries the table's ⌃⇧= onto the menu item.
+    private func addSplitViewItem(_ row: Row) -> NSMenuItem {
+        let item = SidebarMenuItem("Add Split View", enabled: !privateWindow || isInToday(row.id)) { [weak self] in
+            self?.onPaneCommand?(.addRight, row.id)
+        }
+        item.identifier = NSUserInterfaceItemIdentifier("add_split_view")
+        return item
+    }
+
     private func moveItem(_ row: Row) -> NSMenuItem {
         let item = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
         let targets = snapshot.spaces.filter { $0.profileKey == snapshotSpace?.profileKey && $0.id != snapshotSpace?.id }
@@ -2880,11 +2891,12 @@ extension SidebarView: NSMenuDelegate {
     func todayMenu(row: Row) -> NSMenu {
         if privateWindow {
             // A private Today row closes (removal, no archive entry) and has no duplicate,
-            // folder or other-space move.
-            return itemMenu([copyItem(row), renameItem(row),
+            // folder or other-space move. P5d: it splits like any Today row, since the core
+            // admits every private row to Today and the segment menu already splits it there.
+            return itemMenu([copyItem(row), renameItem(row), addSplitViewItem(row),
                              SidebarMenuItem("Close Tab") { [weak self] in self?.onClose?(row.id) }])
         }
-        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row),
+        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), addSplitViewItem(row), moveItem(row),
                   SidebarMenuItem("Archive Tab") { [weak self] in self?.onArchive?(row.id) }])
     }
 
@@ -2898,7 +2910,7 @@ extension SidebarView: NSMenuDelegate {
             if archives { self.onArchive?(id) } else { self.onClose?(id) }
         }
         close.identifier = NSUserInterfaceItemIdentifier("close_tab")
-        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), moveItem(row), close,
+        return itemMenu([copyItem(row), renameItem(row), duplicateItem(row), addSplitViewItem(row), moveItem(row), close,
                          SidebarMenuItem("Remove Pin") { [weak self] in
                              guard let self, let container = self.snapshotSpace?.todayId else { return }
                              self.menuMove(row.id, container: container, index: 0)
@@ -2921,8 +2933,9 @@ extension SidebarView: NSMenuDelegate {
                   SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
     }
 
-    // The split row's panes, in row order: a nested split contributes its own leaves.
-    func paneRows(of split: String) -> [Row] {
+    // The split row's panes, in row order: a nested split contributes its own leaves. P5d's key
+    // and command bar read it too, so they pick the same pane the segment menu does.
+    public func paneRows(of split: String) -> [Row] {
         let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
         func leaves(_ id: String) -> [Row] {
             all.filter { $0.parentId == id }.flatMap { $0.kind == .split ? leaves($0.id) : ($0.kind == .tab ? [$0] : []) }
@@ -3358,6 +3371,22 @@ extension SidebarView {
     @discardableResult
     public func runPaneMenuItemForCheck(paneID: String, titled title: String) -> Bool {
         guard let menu = paneMenuForCheck(paneID: paneID),
+              let item = menu.items.first(where: { $0.title == title }), item.isEnabled,
+              let action = item.action else { return false }
+        return NSApp.sendAction(action, to: item.target, from: item)
+    }
+
+    // P5d: the menu a right-click on a tab row shows — the same today/pinned menus the row's own
+    // menuProvider builds, so the check reads the item the pointer would.
+    public func tabMenuForCheck(id: String) -> NSMenu? {
+        guard let space = snapshotSpace,
+              let row = (space.today + space.pinned).first(where: { $0.id == id && $0.kind == .tab }) else { return nil }
+        return space.pinned.contains { $0.id == id } ? pinnedMenu(row: row) : todayMenu(row: row)
+    }
+
+    @discardableResult
+    public func runTabMenuItemForCheck(id: String, titled title: String) -> Bool {
+        guard let menu = tabMenuForCheck(id: id),
               let item = menu.items.first(where: { $0.title == title }), item.isEnabled,
               let action = item.action else { return false }
         return NSApp.sendAction(action, to: item.target, from: item)

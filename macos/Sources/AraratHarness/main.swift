@@ -316,6 +316,12 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             item.representedObject = binding.command
             item.target = self
         }
+        // P5d: Add Split View is a table row; the harness has no browser window to split, so the
+        // item carries the id and ⌃⇧= for the Shortcuts pane's and the menu tests' sake.
+        let addSplit = tabsMenu.addItem(withTitle: "Add Split View", action: #selector(addSplitViewFromCommand(_:)), keyEquivalent: "")
+        addSplit.identifier = NSUserInterfaceItemIdentifier("add_split_view")
+        addSplit.target = self
+        addSplit.toolTip = "Add a pane to the right of the selected tab."
         menu.addItem(withTitle: "Tabs", action: nil, keyEquivalent: "").submenu = tabsMenu
         let viewMenu = NSMenu(title: "View")
         let toggle = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(toggleSidebar(_:)), keyEquivalent: "")
@@ -795,6 +801,11 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
     @objc func forceReload(_ sender: Any?) {
         // The harness has no pages; the item carries the key for the Shortcuts pane's tests.
+    }
+
+    @objc func addSplitViewFromCommand(_ sender: Any?) {
+        // The harness has no browser window or split pane; as with Force Reload, the item carries
+        // the id and ⌃⇧= for the Shortcuts pane and CoreMenuTests. The app's own menu item runs it.
     }
 
     @objc func clearSite(_ sender: NSMenuItem) {

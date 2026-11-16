@@ -632,13 +632,14 @@ fn only_one_command_is_promoted_so_short_queries_keep_their_tabs() {
         ws.items.insert(id.into(), item);
     }
     let index = Index::new(&ws, "one", 1000);
-    for (query, tabs) in [("sh", 3), ("sp", 3)] {
+    // The expected promoted command per query, in the book's literals: "sh" finds Show Space 1
+    // first, and "sp" finds Add Split View ("Sp" of "Split", P5d) because every Show Space, Move
+    // to Space and Add Split View row scores alike and the table's order breaks the tie.
+    for (query, tabs, promoted) in [("sh", 3, "show_space_1"), ("sp", 3, "add_split_view")] {
         let rows = index.query(query, &[]).rows;
         assert_eq!(rows.len(), 5, "{query}: the five rows are full");
         assert!(matches!(&rows[0].target, Target::Search { .. }), "{query}: the typed row leads");
-        // Exactly one promoted command: the highest score, then the command table's order. Every
-        // Show Space and Move to Space row scores alike, so Show Space 1 leads.
-        assert!(matches!(&rows[1].target, Target::Command { id } if id == "show_space_1"), "{query}: one command at row 2");
+        assert!(matches!(&rows[1].target, Target::Command { id } if id == promoted), "{query}: one command at row 2");
         assert_eq!(rows.iter().filter(|row| matches!(row.target, Target::Command { .. })).count(), 1, "{query}: no second command");
         assert_eq!(rows[2..].iter().filter(|row| matches!(row.target, Target::Tab { .. })).count(), tabs, "{query}: the tabs show after it");
     }
@@ -691,6 +692,9 @@ fn a_private_command_bar_offers_only_the_commands_a_private_space_has() {
     // window keeps them; the recorded key would otherwise be silently dead there.
     assert!(ids("Clear Cache", true).contains(&"clear_cache_site".to_string()), "the site commands keep working in a private space");
     assert!(ids("Clear Cookies", true).contains(&"clear_cookies_site".to_string()));
+    // P5d: every row of a private window is in Today, which its segment menu already splits, so
+    // Add Split View is a command the private bar offers.
+    assert!(ids("Add Split View", true).contains(&"add_split_view".to_string()), "a private space can split a Today row");
 }
 
 #[test]
