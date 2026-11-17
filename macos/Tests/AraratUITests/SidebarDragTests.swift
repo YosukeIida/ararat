@@ -691,6 +691,74 @@ func onlySuccessfulSameSpaceTodayDragShowsRenameHint() throws {
     }
 }
 
+@MainActor
+private func dropPinBeforeSelection() throws -> (SidebarView, WorkspaceSnapshot) {
+    _ = NSApplication.shared
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil, spaces: [dragFixture(), dragSpace("other")]))
+    sidebar.frame = CGRect(x: 0, y: 0, width: 240, height: 700)
+    sidebar.layoutSubtreeIfNeeded()
+    sidebar.layoutSubtreeIfNeeded()
+    sidebar.dragReduceMotion = { true }
+    sidebar.renameHintClock = { 100 }
+    let row = try startDrag(sidebar, id: "a")
+    let geometry = try #require(sidebar.dragGeometry())
+    let dropped = WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil,
+        spaces: [dragSpace(pinned: [dragRow("a", "ps")], today: [dragRow("b", "ts")]), dragSpace("other")])
+    sidebar.onMove = { _, _, _, _, done in done(dropped) }
+    let point = CGPoint(x: 30, y: geometry.rows[0].frame.minY)
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
+    row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
+    #expect(sidebar.selectedRowID == nil)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+    #expect(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "a" }?.pinned == true)
+    return (sidebar, dropped)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func pinHintWaitsForTheSelectionSnapshot(replace: Bool) throws {
+    let (sidebar, dropped) = try dropPinBeforeSelection()
+    var selected = dropped
+    selected.selectedId = "a"
+    if replace { sidebar.update(snapshot: selected) }
+    else { sidebar.applySelection(snapshot: selected) }
+    #expect(sidebar.organizeCheckHint(id: "a"))
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "a" })
+    sidebar.renameHintClock = { 104 }
+    row.refreshRenameHint()
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+    sidebar.update(snapshot: selected)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+}
+
+@Test @MainActor
+func pinHintIsDiscardedWhenAnotherRowIsSelectedFirst() throws {
+    let (sidebar, dropped) = try dropPinBeforeSelection()
+    var selected = dropped
+    selected.selectedId = "b"
+    sidebar.applySelection(snapshot: selected)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+    selected.selectedId = "a"
+    sidebar.applySelection(snapshot: selected)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+}
+
+@Test(arguments: [false, true]) @MainActor
+func pendingPinHintIsClearedBySpaceChangeOrRename(rename: Bool) throws {
+    let (sidebar, dropped) = try dropPinBeforeSelection()
+    if rename {
+        sidebar.beginRename(id: "a")
+        let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "a" })
+        row.finishRename(commit: false)
+    } else {
+        sidebar.showSpace(at: 1)
+        sidebar.showSpace(at: 0)
+    }
+    var selected = dropped
+    selected.selectedId = "a"
+    sidebar.applySelection(snapshot: selected)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
+}
+
 @Test
 func folderEndBoundaryLevelsFollowThePointerX() throws {
     let dragged = dragRow("a", "ts")
