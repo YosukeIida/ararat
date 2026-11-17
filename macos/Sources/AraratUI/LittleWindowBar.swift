@@ -341,6 +341,7 @@ public final class LittleWindowBarView: NSView {
     private let extensionsButton = LittleWindowBarButton(style: .icon, symbol: "square.grid.2x2", title: "Extensions")
     private let openButton = LittleWindowBarButton(style: .text, symbol: nil, title: "Open in", caps: "⌘O")
     private let chevronButton = LittleWindowBarButton(style: .chevron, symbol: "chevron.down", title: "Choose a space")
+    private var windowDrag: WindowDrag.Held?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -422,6 +423,29 @@ public final class LittleWindowBarView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let target = super.hitTest(point)
+        return target === address || target === glyph ? self : target
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        windowDrag = WindowDrag.Held(in: self, with: event)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // AppKit's title-strip drag must not run beside WindowDrag's stored-press drag.
+    public override var mouseDownCanMoveWindow: Bool { false }
+
     public var checkBarFrame: NSRect { frame }
     public var checkProfileTitle: String { model.profileName }
     public var checkAddressText: String { address.stringValue }
@@ -432,7 +456,7 @@ public final class LittleWindowBarView: NSView {
     public var checkExtensionsEnabled: Bool { extensionsButton.isEnabled }
     public var checkButtonFrames: [String: NSRect] {
         ["profile": profileButton.frame, "copy": copyButton.frame, "extensions": extensionsButton.frame,
-         "open": openButton.frame, "chevron": chevronButton.frame, "address": address.frame]
+         "open": openButton.frame, "chevron": chevronButton.frame, "address": address.frame, "glyph": glyph.frame]
     }
     public var checkOpenFrame: NSRect { openButton.frame }
     public var checkChevronFrame: NSRect { chevronButton.frame }

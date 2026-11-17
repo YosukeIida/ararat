@@ -15,7 +15,9 @@ final class LittleWindowCheckState {
                         "command_bar_navigates", "origin_unchanged", "open_enabled", "copy_link", "extensions_button",
                         "frame_saved", "frame_remembered", "close_archived", "placeholder_not_archived", "open_key", "open_in", "handoff_live",
                         "handoff_no_reload", "window_closed", "menu_destination", "menu_handoff",
-                        "profile_switch", "extension_fixture", "extension_row", "open_button"]
+                        "profile_switch", "extension_fixture", "extension_row", "open_button",
+                        "drag_post_permission", "drag_regions", "drag_points_inside_screen",
+                        "bar_gap_drag", "bar_address_drag", "copy_drag_keeps_frame"]
     static let screens = ["capture_bar", "capture_profile_menu", "capture_space_menu", "capture_command_bar"]
 
     var conditions: [String: Bool] = [:]
@@ -41,6 +43,13 @@ final class LittleWindowCheckState {
     var commandBarViaKey = false
     var openViaKey = false
     var details: [String: Any] = [:]
+    var dragIndex = 0
+    var dragFrame = NSRect.zero
+    var dragDeadline: TimeInterval = 0
+    var dragMoved = false
+    let dragDelta = NSPoint(x: 40, y: -30)
+    let dragHandover = NSPoint(x: 4, y: -3)
+    static let dragNames = ["bar_gap_drag", "bar_address_drag", "copy_drag_keeps_frame"]
 
     func mark(_ name: String, _ value: Bool = true) {
         conditions[name] = value
@@ -267,6 +276,66 @@ extension Runtime {
             guard let controller = controller() else { wait("little window"); return }
             controller.update()
             check.mark("open_enabled", controller.bar.checkOpenEnabled)
+            browserCheckPhase = 28
+        case 28:
+            guard let controller = controller(), let popup = popupWindow(), popup.isKeyWindow else {
+                wait("key little window for drag"); return
+            }
+            let canPost = CGPreflightPostEventAccess()
+            check.mark("drag_post_permission", canPost)
+            guard canPost else { finish(); return }
+            let bar = controller.bar
+            controller.popup.rootView.layoutSubtreeIfNeeded()
+            let frames = bar.checkButtonFrames
+            guard let address = frames["address"], let copy = frames["copy"] else { finish(); return }
+            let points = [NSPoint(x: bar.bounds.midX, y: bar.bounds.maxY - 8),
+                          NSPoint(x: address.midX, y: address.midY),
+                          NSPoint(x: copy.midX, y: copy.midY)]
+            let targets = points.map { bar.hitTest(bar.convert($0, to: bar.superview)) }
+            check.mark("drag_regions", targets[0] === bar && targets[1] === bar && targets[2] is NSControl
+                       && check.conditions["drag_regions"] != false)
+            check.dragFrame = popup.frame
+            let start = popup.convertPoint(toScreen: bar.convert(points[check.dragIndex], to: nil))
+            let midway = NSPoint(x: start.x + check.dragHandover.x, y: start.y + check.dragHandover.y)
+            let end = NSPoint(x: start.x + check.dragDelta.x, y: start.y + check.dragDelta.y)
+            let neutral = popup.convertPoint(toScreen: NSPoint(x: popup.frame.width / 2, y: 60))
+            let visible = popup.screen?.visibleFrame ?? .zero
+            let inside = [start, midway, end, neutral].allSatisfy { visible.contains($0) }
+            check.mark("drag_points_inside_screen", inside && check.conditions["drag_points_inside_screen"] != false)
+            guard inside else { finish(); return }
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            func cg(_ point: NSPoint) -> CGPoint { CGPoint(x: point.x, y: screenHeight - point.y) }
+            let startCG = cg(start), midwayCG = cg(midway), endCG = cg(end), neutralCG = cg(neutral)
+            func post(_ type: CGEventType, _ point: CGPoint, from previous: CGPoint? = nil) {
+                WindowDragCheckState.mouseEvent(type, at: point, from: previous)?.post(tap: .cghidEventTap)
+            }
+            let gap = max(0.9, NSEvent.doubleClickInterval + 0.3)
+            post(.mouseMoved, neutralCG)
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap) { post(.leftMouseDown, startCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.15) { post(.leftMouseDragged, midwayCG, from: startCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.30) { post(.leftMouseDragged, endCG, from: midwayCG) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap + 0.45) { post(.leftMouseUp, endCG) }
+            check.dragDeadline = ProcessInfo.processInfo.systemUptime + gap + 0.9
+            browserCheckPhase = 29
+        case 29:
+            guard ProcessInfo.processInfo.systemUptime >= check.dragDeadline else { wait("posted drag"); return }
+            guard let popup = popupWindow() else { wait("drag window"); return }
+            let after = popup.frame
+            let full = NSPoint(x: check.dragFrame.minX + check.dragDelta.x, y: check.dragFrame.minY + check.dragDelta.y)
+            let handed = NSPoint(x: full.x - check.dragHandover.x, y: full.y - check.dragHandover.y)
+            let moved = after.size == check.dragFrame.size &&
+                ((abs(after.minX - full.x) <= 2 && abs(after.minY - full.y) <= 2) ||
+                 (abs(after.minX - handed.x) <= 3 && abs(after.minY - handed.y) <= 3))
+            let name = LittleWindowCheckState.dragNames[check.dragIndex]
+            check.mark(name, check.dragIndex < 2 ? moved : check.dragMoved && after == check.dragFrame)
+            if check.dragIndex < 2 { check.dragMoved = check.dragMoved || moved }
+            check.details[name] = ["before": NSStringFromRect(check.dragFrame), "after": NSStringFromRect(after),
+                                   "expected": NSStringFromPoint(full), "expected_from_hand_over": NSStringFromPoint(handed)]
+            popup.setFrame(check.dragFrame, display: false)
+            check.dragIndex += 1
+            browserCheckPhase = check.dragIndex < LittleWindowCheckState.dragNames.count ? 28 : 30
+        case 30:
+            guard let controller = controller() else { wait("little window"); return }
             controller.bar.checkClickCopy()
             check.mark("copy_link", NSPasteboard.general.string(forType: .string) == check.pageURL
                        && controller.checkToastVisible && controller.checkToastMessage == "Link copied")
