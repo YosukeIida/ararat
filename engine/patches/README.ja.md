@@ -59,12 +59,15 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/crash-lock-abandon.patch` | 独自 |
 | `ararat/history-retention.patch` | 独自 |
 | `ararat/command-line-urls-hook.patch` | 独自 |
+| `ararat/native-editor-ime.patch` | 独自 |
 
 ## 取り込んだパッチを選んだ理由
 
 パッチごとの維持・スキップ・対抗パッチの判断と、セキュリティ上の帰結は `docs/research/ungoogled-inventory.md` §8 にある。
 
 ## 独自パッチに関する注記
+
+`ararat/native-editor-ime.patch` は、英数・かなキーを key window へ直接配送する Chromium の処理を `RenderWidgetHostViewCocoa` に限定し、ネイティブの編集フィールドでは通常の application の経路で入力メソッドへ渡す。
 
 `ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。Ardia（`mantrakp04/ardia`、GPL-3.0）の `engine/ardiacore/apply.sh` にも同じガードがある。このパッチは Chromium のソースに対して独自に記述した。
 

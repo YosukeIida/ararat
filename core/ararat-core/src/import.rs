@@ -527,7 +527,9 @@ fn url_condition(component: &Value) -> std::result::Result<UrlCondition, Skip> {
     let Some(text) = url_match.get("_1").and_then(Value::as_str) else {
         return Err(Skip::Malformed);
     };
-    Ok(UrlCondition { style, text: text.to_string() })
+    let mut condition = UrlCondition { style, text: text.to_string() };
+    condition.strip_controls();
+    Ok(condition)
 }
 
 enum DestinationOr { Keep(Destination), SkipProfile, SkipUnknown, Absent }

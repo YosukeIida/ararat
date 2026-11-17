@@ -66,6 +66,28 @@ fn import_json(json: &str) -> (Routing, LinkRoutingReport) {
     arc_link_routing(json, None, &imported_spaces()).unwrap()
 }
 
+#[test]
+fn routing_edits_strip_c0_controls_from_every_condition() {
+    let mut workspace = Workspace::default();
+    with_spaces(&mut workspace, &["space-work"]);
+    let controls: String = (0..32).map(char::from).collect();
+    workspace.add_rule(rule("clean", vec![contains(&format!("example.{controls}com")), equals("a\u{10}.test")], most_recent())).unwrap();
+    let stored = workspace.routing().rules.remove(0);
+    assert_eq!(stored.conditions, vec![contains("example.com"), equals("a.test")]);
+    workspace.edit_rule(rule("clean", vec![contains("new\r\n.example"), equals("b\0.test")], most_recent())).unwrap();
+    assert_eq!(workspace.routing().rules[0].conditions, vec![contains("new.example"), equals("b.test")]);
+}
+
+#[test]
+fn arc_routing_import_strips_controls_without_dropping_the_rule() {
+    let mut json: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+    json["rules"][0]["sourceComponents"][0]["componentType"]["urlMatch"]["_1"] =
+        serde_json::json!("Meet.\u{10}Google\r\n.Com");
+    let (routing, report) = import_json(&json.to_string());
+    assert_eq!(routing.rules.iter().find(|r| r.id == "meet").unwrap().conditions[0].text, "Meet.Google.Com");
+    assert_eq!(report, imported().1);
+}
+
 fn fresh_db(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.sqlite"));
     for suffix in ["", "-wal", "-shm"] {

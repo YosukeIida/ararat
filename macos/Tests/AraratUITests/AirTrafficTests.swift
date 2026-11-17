@@ -113,6 +113,7 @@ func thePaneModelWritesItsWayThroughTheCoreAndSurvivesAReopen() async throws {
 
     // Edit: the condition text and destination are what the core stores back.
     try await atcValue { model.editCondition(a, style: .contains, text: "meet.google.com", completion: $0) }
+    try await atcValue { model.editCondition(b, style: .contains, text: "unmatched.example", completion: $0) }
     try await atcValue { model.editDestination(a, choice: .mostRecent, completion: $0) }
     rules = try #require(model.routing?.rules)
     #expect(rules[0].id == a && rules[0].conditions == [UrlCondition(style: .contains, text: "meet.google.com")])
@@ -259,6 +260,8 @@ func theModelNamesTheLostSpaceAndAPickReplacesTheDeletedDestination() async thro
     // A rule at one space and the default at the other: nothing is lost yet after the edits.
     try await atcValue { model.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
     try await atcValue { model.setDefault(.space("space-home"), littleWindowProfile: nil, completion: $0) }
+    let persistedID = try #require(model.routing?.rules.first?.id)
+    try await atcValue { model.editCondition(persistedID, style: .contains, text: "example.com", completion: $0) }
     #expect(model.deletedSpaces.isEmpty)
     // The space the rule points at is deleted; the rule keeps its destination and the core
     // answers the lost one (the default still names a living space).
@@ -381,25 +384,70 @@ func ruleUrlFieldWritesOnlyAtCommit() async throws {
     airTraffic.load()
     try await waitUntil { airTraffic.routing != nil }
     try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: .`default`, completion: $0) }
-    let id = try #require(airTraffic.routing?.rules.first?.id)
     // The row's URL field is the one the URL placeholder tags (the bridge shows placeholders,
     // not accessibility overrides).
     let rowField = { airTrafficDescendants(window.contentView!).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "URL" } }
     try await waitUntil { window.contentView?.layoutSubtreeIfNeeded(); return rowField() != nil }
     let field = try #require(rowField())
-    // Two keystrokes: the store learns nothing until the commit (what Return fires).
-    field.stringValue = "meet.google"
-    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
-    field.stringValue = "meet.google.com"
-    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+    #expect(window.makeFirstResponder(field))
+    let editor = try #require(field.currentEditor() as? NSTextView)
+    editor.insertText("meet.google.com", replacementRange: editor.selectedRange())
     let afterTyping = try await atcValue { adapter.routing(completion: $0) }
-    #expect(afterTyping.rules.first?.conditions == [UrlCondition(style: .contains, text: "")])
-    // The commit lets the field's text through exactly once and is what the pane reads back.
-    try await atcValue { airTraffic.editCondition(id, style: .contains, text: "meet.google.com", completion: $0) }
+    #expect(afterTyping.rules.isEmpty)
+    let enter = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+        timestamp: 0, windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+        isARepeat: false, keyCode: 36))
+    editor.keyDown(with: enter)
+    try await waitUntil { airTraffic.routing?.rules.first?.conditions.first?.text == "meet.google.com" }
     let afterCommit = try await atcValue { adapter.routing(completion: $0) }
     #expect(afterCommit.rules.first?.conditions == [UrlCondition(style: .contains, text: "meet.google.com")])
     #expect(!window.isVisible)
     window.contentView = nil
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func routeDraftsStayLocalAndOverlappingRowEditsKeepEveryChange() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-overlap")
+    let sidebar = fixture("arc-sidebar-synthetic.json")
+    let snapshot = try await atcValue {
+        adapter.open(path: directory.appendingPathComponent("overlap.sqlite").path, json: { sidebar },
+            windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
+    }
+    let airTraffic = AirTrafficModel(adapter: adapter)
+    try await atcValue { airTraffic.load(completion: $0) }
+    try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: .default, completion: $0) }
+    let id = try #require(airTraffic.routing?.rules.first?.id)
+    airTraffic.editStyle(id, style: .equals)
+    airTraffic.editText(id, text: " \u{10}\t ")
+    airTraffic.editDestination(id, choice: .mostRecent)
+    var stored = try await atcValue { adapter.routing(completion: $0) }
+    #expect(stored.rules.isEmpty)
+    try await atcValue { airTraffic.load(completion: $0) }
+    #expect(airTraffic.routing?.rules.first?.id == id)
+    airTraffic.editText(id, text: "example.com")
+    airTraffic.editDestination(id, choice: .space("space-work"))
+    airTraffic.editStyle(id, style: .contains)
+    #expect(airTraffic.routing?.rules.first?.conditions == [UrlCondition(style: .contains, text: "example.com")])
+    stored = try await atcValue { adapter.routing(completion: $0) }
+    #expect(stored.rules.first?.conditions == [UrlCondition(style: .contains, text: "example.com")])
+    #expect(stored.rules.first?.destination == .space(.space("space-work")))
+    airTraffic.editText(id, text: "")
+    airTraffic.editDestination(id, choice: .mostRecent)
+    stored = try await atcValue { adapter.routing(completion: $0) }
+    #expect(stored.rules.first?.conditions.first?.text == "example.com")
+    #expect(stored.rules.first?.destination == .space(.mostRecent))
+
+    let model = SettingsModel(snapshot: snapshot, adapter: adapter, publish: { _ in }, resetWidth: {},
+        keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: airTraffic)
+    let section = SettingsAirTrafficSection(model: model, airTraffic: airTraffic)
+    section.defaultSelection.wrappedValue = .mostRecent
+    try await waitUntil { airTraffic.routing?.default == .space(.mostRecent) }
+    let reopened = try WorkspaceStore.open(path: directory.appendingPathComponent("overlap.sqlite").path)
+    #expect(reopened.routing().default == .space(.mostRecent))
+    #expect(section.defaultSelection.wrappedValue == .mostRecent)
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 
@@ -608,6 +656,7 @@ func aCrossProfileDestinationEditRefusalShowsItsReasonInThePane() async throws {
     try await atcValue { airTraffic.add(destination: .space(.space("space-work")), profile: model.airTrafficLittleWindowProfile, completion: $0) }
     let id = try #require(airTraffic.routing?.rules.first?.id)
     // space-home rides in the named "Profile 1": the pick is refused and the banner says so.
+    try await atcValue { airTraffic.editCondition(id, style: .contains, text: "example.com", completion: $0) }
     let refused = try? await atcValue { airTraffic.editDestination(id, choice: .space("space-home"), completion: $0) }
     #expect(refused == nil)
     let reason = try #require(airTraffic.error)

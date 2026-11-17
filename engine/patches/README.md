@@ -69,6 +69,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/crash-lock-abandon.patch` | ours |
 | `ararat/history-retention.patch` | ours |
 | `ararat/command-line-urls-hook.patch` | ours |
+| `ararat/native-editor-ime.patch` | ours |
 
 ## Why these upstream patches
 
@@ -76,6 +77,8 @@ Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
+
+`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery only for `RenderWidgetHostViewCocoa`; native field editors use the normal application input-method path.
 
 `ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. Ardia (`mantrakp04/ardia`, GPL-3.0) has the same guard in `engine/ardiacore/apply.sh`. This patch was written independently against Chromium's source.
 

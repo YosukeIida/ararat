@@ -14,13 +14,15 @@ public struct SettingsRailPaneInfo: Sendable {
 /// identifiers `SettingsMarker` sets and reports frames, the model's state and pixels; the check
 /// in the app drives it through the same functions the window's own controls call.
 @MainActor
-public final class SettingsCheckProbe {
+public final class SettingsCheckProbe: NSObject {
     private let controller: SettingsWindowController
     private let window: NSWindow
+    private var airTrafficMenu: NSMenu?
 
     init(controller: SettingsWindowController, window: NSWindow) {
         self.controller = controller
         self.window = window
+        super.init()
     }
 
     public var model: SettingsModel { controller.model }
@@ -54,6 +56,48 @@ public final class SettingsCheckProbe {
     public var highlightedRowID: String? { model.highlighted }
     public var highlightedMarker: String? { model.highlighted.map { SettingsModel.rowMarker($0) } }
     public var historyIndex: Int { model.historyIndex }
+    public var airTrafficRules: [Rule] { model.airTraffic.routing?.rules ?? [] }
+    public var airTrafficAccessibilityTree: [String] { accessibilityDump() }
+
+    public func focusAirTrafficURL() -> Bool {
+        guard let content, let field = views(content).compactMap({ $0 as? NSTextField }).last(where: { $0.placeholderString == "URL" }) else { return false }
+        return window.makeFirstResponder(field)
+    }
+
+    public var airTrafficURLText: String? {
+        guard let content else { return nil }
+        return views(content).compactMap { $0 as? NSTextField }.last { $0.placeholderString == "URL" }?.stringValue
+    }
+
+    public func pressAirTrafficElement(role: NSAccessibility.Role, label: String) -> Bool {
+        func find(_ element: any NSAccessibilityProtocol, depth: Int) -> (any NSAccessibilityProtocol)? {
+            guard depth < 20 else { return nil }
+            if element.accessibilityRole() == role,
+               element.accessibilityLabel() == label || element.accessibilityTitle() == label {
+                return element
+            }
+            for child in NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? []).compactMap({ $0 as? any NSAccessibilityProtocol }) {
+                if let found = find(child, depth: depth + 1) { return found }
+            }
+            return nil
+        }
+        if role == .menuItem, let airTrafficMenu {
+            return find(airTrafficMenu, depth: 0)?.accessibilityPerformPress() ?? false
+        }
+        guard let element = find(window, depth: 0) ?? find(NSApp, depth: 0) else { return false }
+        guard role == .popUpButton else { return element.accessibilityPerformPress() }
+        NotificationCenter.default.addObserver(self, selector: #selector(airTrafficMenuOpened(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
+        defer {
+            NotificationCenter.default.removeObserver(self, name: NSMenu.didBeginTrackingNotification, object: nil)
+            airTrafficMenu = nil
+        }
+        return element.accessibilityPerformPress()
+    }
+
+    @objc private func airTrafficMenuOpened(_ notification: Notification) {
+        airTrafficMenu = notification.object as? NSMenu
+    }
     public var canGoBack: Bool { model.historyIndex > 0 }
     public var spaceIDs: [String] { model.snapshot.spaces.map(\.id) }
     public func searchKey(_ key: SettingsSearchKey) -> Bool { model.handleSearchKey(key) }

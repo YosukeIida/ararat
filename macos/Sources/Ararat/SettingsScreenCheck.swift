@@ -6,7 +6,7 @@ import AraratUI
 // U27a's settings screen checks: `--ararat-screen=settings-<pane>` opens the settings window on
 // that pane and reads it through marker views and the model (the VM's accessibility tree is empty
 // in process, as `SidebarChecks.swift` and `SiteControlsCheck.swift` say). One launch per pane
-// keeps a failure attributable: the five built panes name their own rows, and `settings-frame` and
+// keeps a failure attributable: the panes name their own rows, and `settings-frame` and
 // `settings-search` cover the frame and the search's keyboard model.
 @MainActor
 final class SettingsScreenCheck {
@@ -55,7 +55,8 @@ final class SettingsScreenCheck {
             switch self {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
-            case .tabs, .airTraffic: ["rows"]
+            case .tabs: ["rows"]
+            case .airTraffic: ["rows"] + SettingsATCInput.conditions
             case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
             case .appearance: ["rows", "theme_dark", "theme_light", "theme_page", "theme_reopen", "theme_system",
@@ -417,11 +418,13 @@ extension Runtime {
         }
 
         switch mode {
+        case .airTraffic:
+            settingsAirTrafficTick(probe, check: check, note: note, step: step, end: end, finish: finish, capture: capture)
         case .frame:
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .airTraffic, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar:
+        case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)

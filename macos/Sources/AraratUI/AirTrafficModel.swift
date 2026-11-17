@@ -2,14 +2,14 @@ import AppKit
 import AraratKit
 
 /// The Air Traffic Control pane's model: the rules in match order, the default
-/// destination, and the test field's answer. Everything the user changes goes through the core
+/// destination, and the test field's answer. Persisted changes go through the core
 /// (the same ops the App's other edits write), so a reopen reads the pane's own state back; the
 /// matcher, order semantics and persistence all live in Rust. The row editing flow (one
 /// two-line route per row, the destination menu with a Little Window entry, New Route) is
 /// reused from Cra's MIT `Sources/Cra/UI/Settings/AirTrafficControlView.swift`.
 @MainActor
 public final class AirTrafficModel: ObservableObject {
-    /// The store's routing (rules in order plus the default), nil until it has answered once.
+    /// Why not expose only store snapshots: local drafts and pending edits must stay visible.
     @Published public private(set) var routing: Routing?
     @Published public private(set) var error: String?
     /// The space ids the core answers as gone for this pane's destinations (rules and the
@@ -28,6 +28,9 @@ public final class AirTrafficModel: ObservableObject {
     }
 
     private let adapter: WorkspaceAdapter
+    private var storedRouting: Routing?
+    private var drafts: [Rule] = []
+    private var pendingRules: [String: (rule: Rule, token: UUID, adding: Bool)] = [:]
 
     public init(adapter: WorkspaceAdapter) { self.adapter = adapter }
 
@@ -35,16 +38,15 @@ public final class AirTrafficModel: ObservableObject {
         adapter.routing { [weak self] in self?.receive($0, completion: completion) }
     }
 
-    /// Adds an empty rule: `contains` with no text yet (an empty condition matches nothing,
-    /// the same way Arc's fresh route behaves), the destination reached on the pane, and the
-    /// rule's own profile it lands inside. The profile is the pane's context (the shown
-    /// space's).
     public func add(destination: Destination, profile: Profile?, completion: @escaping WorkspaceAdapter.Completion<Void> = { _ in }) {
         let rule = Rule(id: UUID().uuidString,
                         conditions: [UrlCondition(style: .contains, text: "")],
                         destination: destination,
                         profile: profile ?? .`default`)
-        adapter.addRule(rule) { [weak self] in self?.receive($0, completion: completion) }
+        drafts.append(rule)
+        error = nil
+        publishRouting()
+        completion(.success(()))
     }
 
     /// Rewrites one rule's first condition (the style and text a row edits) and keeps the rest
@@ -58,9 +60,17 @@ public final class AirTrafficModel: ObservableObject {
         var conditions = rule.conditions
         let condition = UrlCondition(style: style, text: text)
         if conditions.isEmpty { conditions = [condition] } else { conditions[0] = condition }
-        adapter.editRule(Rule(id: id, conditions: conditions, destination: rule.destination, profile: rule.profile)) { [weak self] in
-            self?.receive($0, completion: completion)
-        }
+        save(Rule(id: id, conditions: conditions, destination: rule.destination, profile: rule.profile), completion: completion)
+    }
+
+    func editStyle(_ id: String, style: MatchStyle) {
+        guard let rule = routing?.rules.first(where: { $0.id == id }) else { return }
+        editCondition(id, style: style, text: rule.conditions.first?.text ?? "")
+    }
+
+    func editText(_ id: String, text: String) {
+        guard let rule = routing?.rules.first(where: { $0.id == id }) else { return }
+        editCondition(id, style: rule.conditions.first?.style ?? .contains, text: text)
     }
 
     /// Moves one rule to another destination and keeps every condition and the rule's own
@@ -74,9 +84,48 @@ public final class AirTrafficModel: ObservableObject {
         guard let destination = Self.destination(for: choice, from: rule.destination, littleWindowProfile: rule.profile) else {
             return completion(.failure(CoreError.Edit(message: "the destination menu answered nothing")))
         }
-        adapter.editRule(Rule(id: id, conditions: rule.conditions, destination: destination, profile: rule.profile)) { [weak self] in
-            self?.receive($0, completion: completion)
+        save(Rule(id: id, conditions: rule.conditions, destination: destination, profile: rule.profile), completion: completion)
+    }
+
+    private func save(_ rule: Rule, completion: @escaping WorkspaceAdapter.Completion<Void>) {
+        let draftIndex = drafts.firstIndex { $0.id == rule.id }
+        let empty = rule.conditions.first?.text.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)).isEmpty ?? true
+        if let draftIndex {
+            drafts[draftIndex] = rule
+            if empty {
+                error = nil
+                publishRouting()
+                return completion(.success(()))
+            }
+            drafts.remove(at: draftIndex)
+        } else if empty {
+            return completion(.success(()))
         }
+        let token = UUID()
+        let adding = draftIndex != nil || pendingRules[rule.id]?.adding == true
+        pendingRules[rule.id] = (rule, token, adding)
+        publishRouting()
+        let reply: WorkspaceAdapter.Completion<Routing> = { [weak self] result in
+            guard let self else { return }
+            if self.pendingRules[rule.id]?.token == token {
+                if case .failure = result, adding,
+                   self.storedRouting?.rules.contains(where: { $0.id == rule.id }) != true { self.drafts.append(rule) }
+                self.pendingRules.removeValue(forKey: rule.id)
+            }
+            self.receive(result, completion: completion)
+        }
+        if draftIndex != nil { adapter.addRule(rule, completion: reply) }
+        else { adapter.editRule(rule, completion: reply) }
+    }
+
+    private func publishRouting() {
+        var next = storedRouting ?? Routing(rules: [], default: .littleWindow(.default))
+        next.rules = next.rules.map { pendingRules[$0.id]?.rule ?? $0 }
+        let storedIDs = Set(next.rules.map(\.id))
+        // Why not drop pending additions: an older reply may arrive before their add completes.
+        next.rules += routing?.rules.compactMap { storedIDs.contains($0.id) ? nil : pendingRules[$0.id]?.rule } ?? []
+        next.rules += drafts
+        routing = next
     }
 
     /// The destination a pick writes: a fresh Little-window pick pairs the profile handed
@@ -89,6 +138,11 @@ public final class AirTrafficModel: ObservableObject {
     }
 
     public func delete(_ id: String, completion: @escaping WorkspaceAdapter.Completion<Void> = { _ in }) {
+        if drafts.contains(where: { $0.id == id }) {
+            drafts.removeAll { $0.id == id }
+            publishRouting()
+            return completion(.success(()))
+        }
         adapter.deleteRule(id: id) { [weak self] in self?.receive($0, completion: completion) }
     }
 
@@ -103,7 +157,11 @@ public final class AirTrafficModel: ObservableObject {
             return completion(.failure(CoreError.Edit(message: "rule \(id) is not among the current rules")))
         }
         if current == target { return completion(.success(())) }
-        adapter.moveRule(id: id, to: target) { [weak self] in self?.receive($0, completion: completion) }
+        guard !drafts.contains(where: { $0.id == id }) else {
+            return completion(.failure(CoreError.Edit(message: "enter a URL before moving this route")))
+        }
+        let position = min(target, max(0, routing.rules.count - drafts.count - 1))
+        adapter.moveRule(id: id, to: position) { [weak self] in self?.receive($0, completion: completion) }
     }
 
     /// Picking the built-in default (the Little window) back reaches the core as a reset: the
@@ -143,10 +201,12 @@ public final class AirTrafficModel: ObservableObject {
         switch result {
         case .success(let routing):
             error = nil
-            self.routing = routing
+            storedRouting = routing
+            publishRouting()
             reloadDeletedSpaces(completion: completion)
         case .failure(let failure):
             error = Self.errorText(failure)
+            publishRouting()
             completion(.failure(failure))
         }
     }

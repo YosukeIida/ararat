@@ -5,6 +5,18 @@ import ObjectiveC.runtime
 import Testing
 @testable import Ararat
 
+@Test
+func settingsATCKeysKeepTheirPhysicalKeyAndUnicodeTextWithoutPosting() throws {
+    let eisu = try #require(SettingsATCInput.events(code: 102, text: "\u{10}"))
+    #expect(eisu.map(\.type) == [.keyDown, .keyUp])
+    #expect(eisu.allSatisfy { $0.getIntegerValueField(.keyboardEventKeycode) == 102 })
+    let text = try #require(SettingsATCInput.events(code: 0, text: "abc"))
+    var length = 0
+    var buffer = [UniChar](repeating: 0, count: 8)
+    text[0].keyboardGetUnicodeString(maxStringLength: buffer.count, actualStringLength: &length, unicodeString: &buffer)
+    #expect(String(utf16CodeUnits: buffer, count: length) == "abc")
+}
+
 @Test @MainActor
 func atcProgressReportsItsOwnPhaseBeforeTheWorkspaceIsReady() {
     let owner = Runtime()
