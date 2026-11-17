@@ -1,6 +1,6 @@
 --- a/chrome/browser/chrome_browser_application_mac.mm
 +++ b/chrome/browser/chrome_browser_application_mac.mm
-@@ -365,6 +365,16 @@
+@@ -365,6 +365,24 @@
      BOOL sendEventToKeyWindow = NO;
      if (event.type == NSEventTypeKeyDown &&
          (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana)) {
@@ -8,9 +8,17 @@
 +      // Why not import the view: its Cocoa implementation is private to content.
 +      if (![responder
 +              isKindOfClass:NSClassFromString(@"RenderWidgetHostViewCocoa")]) {
-+        if ([responder isKindOfClass:[NSView class]])
++        TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
++        bool is_input_method =
++            source &&
++            CFEqual(TISGetInputSourceProperty(source,
++                                              kTISPropertyInputSourceType),
++                    kTISTypeKeyboardInputMode);
++        if (source)
++          CFRelease(source);
++        if (is_input_method && [responder isKindOfClass:[NSView class]])
 +          [[(NSView*)responder inputContext] handleEvent:event];
-+        // Why not forward unhandled keys: a US-only input source can insert C0.
++        // Why not offer layout keys: a US-only input context can insert C0.
 +        return;
 +      }
 +
