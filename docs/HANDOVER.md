@@ -5,15 +5,6 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
-- ATC field check follow-up: both destination popups arm an `NSMenu.didBeginTrackingNotification`
-  observer before the window-server click, then perform the enabled, visible title match and
-  cancel tracking on the `.eventTracking` run loop. Store-state assertions still gate the next
-  phases; the old menu AXPress path is removed. The browser-check timer already uses `.common`.
-  The ATC check has no later style-selection step. Full `swift test --no-parallel` passed:
-  151 PromptFixture tests and 653 UI tests, including two new menu tests; log:
-  `/tmp/atcfield-9-swift.log`. Host-app and VM checks were not run, as
-  requested; the real popup action still needs VM validation by design.
-
 - Phase 3 U17a done: relaunch selects the adopted window's selected row, other rows stay
   Unloaded; a cancelled, withdrawn or rejected Open rolls the row back; the core keeps a
   durable outbox of history purges (written, not yet consumed); a crashed renderer keeps its
