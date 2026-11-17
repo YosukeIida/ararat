@@ -28,6 +28,22 @@ private final class ATCMenuTarget: NSObject {
 }
 
 @Test @MainActor
+func settingsATCRowMenuTrackingEndsOnlyForTheObservedMenu() {
+    let check = SettingsScreenCheck()
+    let menu = NSMenu()
+    check.watchAirTrafficRowMenuEnd(menu)
+    #expect(check.airTrafficRowMenuTracking == true)
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: NSMenu())
+    #expect(check.airTrafficRowMenuTracking == true)
+    check.phase = 8
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+    #expect(check.airTrafficRowMenuTracking == false)
+    #expect(check.airTrafficRowMenuEndObserver == nil)
+    let entries = check.details["atc_menu_trace"] as? [[String: Any]]
+    #expect(entries?.first?["event"] as? String == "row menu tracking ended")
+}
+
+@Test @MainActor
 func settingsATCMenuTraceCoversTrackingAndObserverDecisionsOnlyInDiagnosticPhases() throws {
     let check = SettingsScreenCheck()
     check.startAirTrafficMenuTrace()

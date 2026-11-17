@@ -4,6 +4,36 @@ import SwiftUI
 import Testing
 @testable import AraratUI
 
+@Test @MainActor
+func airTrafficPressGeometryDistinguishesPopupDescendantsFromAnOverlay() throws {
+    _ = NSApplication.shared
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    defer { window.contentView = nil }
+    let content = try #require(window.contentView)
+    let scroll = NSScrollView(frame: content.bounds)
+    content.addSubview(scroll)
+    let document = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 800))
+    scroll.documentView = document
+    let popup = NSPopUpButton(frame: NSRect(x: 60, y: 360, width: 190, height: 24))
+    popup.addItem(withTitle: "Little Window")
+    document.addSubview(popup)
+    let marker = SettingsMarkerView(frame: popup.frame)
+    document.addSubview(marker)
+    scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
+    let point = marker.convert(NSPoint(x: marker.bounds.midX, y: marker.bounds.midY), to: nil)
+    let hit = SettingsCheckProbe.airTrafficHitDiagnostics(content: content, marker: marker, windowPoint: point)
+    #expect(hit["hit_is_popup_or_descendant"] as? Bool == true)
+    #expect((hit["scroll_offset"] as? [String: CGFloat])?["y"] == 300)
+    let overlay = NSView(frame: popup.frame)
+    document.addSubview(overlay)
+    let covered = SettingsCheckProbe.airTrafficHitDiagnostics(content: content, marker: marker, windowPoint: point)
+    #expect(covered["hit_is_popup_or_descendant"] as? Bool == false)
+    #expect(covered["hit_class"] as? String == NSStringFromClass(NSView.self))
+    #expect(JSONSerialization.isValidJSONObject(covered))
+    #expect(!window.isVisible)
+}
+
 @MainActor
 private func atcValue<T: Sendable>(_ start: (@escaping WorkspaceAdapter.Completion<T>) -> Void) async throws -> T {
     try await withCheckedThrowingContinuation { done in start { done.resume(with: $0) } }

@@ -102,10 +102,13 @@ final class SettingsScreenCheck {
     var details: [String: Any] = [:]
     var airTrafficMenuObserver: NSObjectProtocol?
     var airTrafficMenuTraceObserver: NSObjectProtocol?
+    var airTrafficRowMenuEndObserver: NSObjectProtocol?
+    var airTrafficRowMenuTracking: Bool?
 
     deinit {
         if let airTrafficMenuObserver { NotificationCenter.default.removeObserver(airTrafficMenuObserver) }
         if let airTrafficMenuTraceObserver { NotificationCenter.default.removeObserver(airTrafficMenuTraceObserver) }
+        if let airTrafficRowMenuEndObserver { NotificationCenter.default.removeObserver(airTrafficRowMenuEndObserver) }
     }
     // A screenshot spins the run loop, so a tick that re-enters while one is in flight would
     // read a half-updated phase.

@@ -27,6 +27,24 @@ enum SettingsATCInput {
 }
 
 extension SettingsScreenCheck {
+    func watchAirTrafficRowMenuEnd(_ menu: NSMenu) {
+        if let airTrafficRowMenuEndObserver { NotificationCenter.default.removeObserver(airTrafficRowMenuEndObserver) }
+        airTrafficRowMenuTracking = true
+        airTrafficRowMenuEndObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: menu, queue: nil
+        ) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.airTrafficRowMenuTracking = false
+                self.traceAirTrafficMenu("row menu tracking ended", menu: notification.object as? NSMenu)
+                if let observer = self.airTrafficRowMenuEndObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    self.airTrafficRowMenuEndObserver = nil
+                }
+            }
+        }
+    }
+
     func traceAirTrafficMenu(_ event: String, menu: NSMenu? = nil, values: [String: Any] = [:]) {
         guard (8...10).contains(phase) else { return }
         var entry = values
@@ -85,6 +103,7 @@ extension SettingsScreenCheck {
                 }
                 self.traceAirTrafficMenu("observer matched", menu: menu,
                     values: ["reason": "exact visible enabled item", "selected_index": index, "expected_title": title])
+                if waitingPhase == 7 { self.watchAirTrafficRowMenuEnd(menu) }
                 self.stopWatchingAirTrafficMenu()
                 // Why not act in the notification: tracking has not entered its run loop yet.
                 RunLoop.main.perform(inModes: [.eventTracking]) { [weak self, weak menu] in
@@ -126,7 +145,11 @@ extension Runtime {
         }
         func press(_ role: NSAccessibility.Role, _ label: String) -> Bool {
             check.details["atc_control_input"] = "window-server clicks at NSView markers; NSMenu action during tracking"
-            let pressed = probe.pressAirTrafficElement(role: role, label: label)
+            let pressed = probe.pressAirTrafficElement(role: role, label: label) { values in
+                var values = values
+                values["row_menu_tracking"] = check.airTrafficRowMenuTracking as Any? ?? NSNull()
+                check.traceAirTrafficMenu("control press geometry", values: values)
+            }
             if !pressed {
                 check.details["atc_ax_tree"] = probe.airTrafficAccessibilityTree
                 note("control input missing role=\(role.rawValue) label=\(label)")
@@ -180,6 +203,7 @@ extension Runtime {
             check.report("rule_clean", rule.conditions.first?.text == "example.com")
             check.report("row_destination", true)
             step(9)
+            guard capture("settings-air-traffic-default-before-press") else { end("capture", false); return }
             check.watchAirTrafficMenu(title: "Most Recent Space")
             let pressed = press(.popUpButton, "Default destination")
             check.traceAirTrafficMenu("default popup press", values: ["pressed": pressed])
