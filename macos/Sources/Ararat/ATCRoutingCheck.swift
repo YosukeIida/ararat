@@ -79,6 +79,8 @@ final class ATCRoutingCheck {
             }
         }
         func deliver(_ strings: [String]) {
+            let kept = session.queue.sync { session.store?.keptWindows() ?? [] }
+            FileHandle.standardError.write(Data("ararat-trace: atc-deliver-kept phase=\(phase) windows=\(kept.map { "\($0.id):shown_space=\($0.shownSpace ?? "nil"):changed_at=\($0.changedAt)" })\n".utf8))
             FileHandle.standardError.write(Data("ararat-trace: atc-deliver phase=\(phase) delegate=\(String(describing: NSApp.delegate)) urls=\(strings)\n".utf8))
             NSApp.delegate?.application?(NSApp, open: strings.compactMap(URL.init(string:)))
         }
@@ -143,6 +145,8 @@ final class ATCRoutingCheck {
                 guard Self.privateBaselineReady(privateWindow.snapshot, activeItem: privateWindow.host?.activeItemId()) else { return }
                 privateWindow.host?.window().makeKeyAndOrderFront(nil)
                 guard privateWindow.host?.window().isKeyWindow == true else { return }
+                // Why not Most Recent: presentation saves can change the newest kept regular window.
+                _ = try session.queue.sync { try session.store!.setDefaultDestination(windowId: owner.windowID, destination: .space(.space("named"))) }
                 privateRows = privateState
                 FileHandle.standardError.write(Data("ararat-trace: atc-private-baseline rows=\(privateRows) urls=\(privateWindow.snapshot.spaces.flatMap(\.today).compactMap(\.url)) active=\(privateWindow.host?.activeItemId() ?? "nil")\n".utf8))
                 littleBeforePrivate = Set(little.map(ObjectIdentifier.init))

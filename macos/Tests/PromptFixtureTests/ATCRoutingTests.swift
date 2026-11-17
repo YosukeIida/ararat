@@ -141,20 +141,65 @@ func externalMostRecentWithoutWindowsUsesCoreRecencyAcrossProfiles() throws {
 private final class ATCTestWindow: NSWindow {
     var key = false
     override var isKeyWindow: Bool { key }
+    override func makeKeyAndOrderFront(_ sender: Any?) {}
 }
 
 @MainActor
 private final class ATCTestHost: NSObject {
     let value = ATCTestWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
     var profile = "Profile 1"
+    var activeItem: String?
     override init() {
         super.init()
         value.isReleasedWhenClosed = false
     }
     @objc func window() -> NSWindow { value }
     @objc func profileDirectory() -> String { profile }
+    @objc func activeItemId() -> String? { activeItem }
     @objc func isClosing() -> Bool { false }
     @objc func isClosingAll() -> Bool { false }
+}
+
+@Test @MainActor
+func privateRoutingPhaseTargetsNamedRegardlessOfTheNewestKeptWindow() throws {
+    _ = NSApplication.shared
+    class_addProtocol(ATCTestHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let owner = Runtime(windowID: "atc-private-target")
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                                   windowID: owner.windowID, card: NSView(), seedProfiles: true)
+    defer { adapter.shutdown() }
+    owner.adapter = adapter
+    let privateWindow = Runtime()
+    privateWindow.isPrivateWindow = true
+    let privateStore = WorkspaceStore.openPrivate(profile: .default)
+    privateWindow.snapshot = try privateStore.createTab(windowId: privateWindow.windowID, url: "about:blank")
+    let host = ATCTestHost()
+    host.value.key = true
+    host.activeItem = privateWindow.snapshot.selectedId
+    privateWindow.host = host as AnyObject as? any ARWindowHostAPI
+    owner.children = [privateWindow]
+    defer { host.value.close() }
+
+    for space in ["default", "named"] {
+        try adapter.session.queue.sync {
+            let store = adapter.session.store!
+            _ = try store.setDefaultDestination(windowId: owner.windowID, destination: .space(.mostRecent))
+            try store.showSpace(windowId: space, spaceId: space)
+            _ = try store.createTab(windowId: space, url: "https://newest.test/\(space)")
+            #expect(store.keptWindows().first?.shownSpace == space)
+        }
+        let check = ATCRoutingCheck()
+        check.phase = 6
+        check.tick(owner)
+        #expect(check.phase == 7)
+        adapter.session.queue.sync {
+            #expect(adapter.session.store!.route(url: "https://atc-private-key.test/").destination == .space(.space("named")))
+            #expect(adapter.session.store!.route(url: "https://atc-no-window.test/reopen").destination == .space(.space("named")))
+        }
+    }
 }
 
 @Test @MainActor
