@@ -23,7 +23,11 @@ public final class SettingsCheckProbe: NSObject {
         self.controller = controller
         self.window = window
         super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(airTrafficMenuOpened(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
     }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     public var model: SettingsModel { controller.model }
     public var windowFrame: NSRect { window.frame }
@@ -84,15 +88,27 @@ public final class SettingsCheckProbe: NSObject {
         if role == .menuItem, let airTrafficMenu {
             return find(airTrafficMenu, depth: 0)?.accessibilityPerformPress() ?? false
         }
-        guard let element = find(window, depth: 0) ?? find(NSApp, depth: 0) else { return false }
-        guard role == .popUpButton else { return element.accessibilityPerformPress() }
-        NotificationCenter.default.addObserver(self, selector: #selector(airTrafficMenuOpened(_:)),
-            name: NSMenu.didBeginTrackingNotification, object: nil)
-        defer {
-            NotificationCenter.default.removeObserver(self, name: NSMenu.didBeginTrackingNotification, object: nil)
-            airTrafficMenu = nil
+        let markerID: String
+        switch (role, label) {
+        case (.button, "New Route"): markerID = "atc-new-route"
+        case (.popUpButton, "Route 1 destination"): markerID = "atc-route-1-destination"
+        case (.popUpButton, "Default destination"): markerID = "atc-default-destination"
+        default: return false
         }
-        return element.accessibilityPerformPress()
+        // Why not AXPress: SwiftUI's in-process accessibility children are empty in the VM.
+        guard let rect = marker(markerID), rect.width > 0, rect.height > 0,
+              let point = windowPoint(topDown: rect),
+              let screen = window.screen else { return false }
+        let screenPoint = window.convertPoint(toScreen: point)
+        let location = CGPoint(x: screenPoint.x, y: (NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY) - screenPoint.y)
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: location, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: location, mouseButton: .left) else { return false }
+        airTrafficMenu = nil
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
     }
 
     @objc private func airTrafficMenuOpened(_ notification: Notification) {

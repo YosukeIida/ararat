@@ -388,6 +388,11 @@ func ruleUrlFieldWritesOnlyAtCommit() async throws {
     // not accessibility overrides).
     let rowField = { airTrafficDescendants(window.contentView!).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "URL" } }
     try await waitUntil { window.contentView?.layoutSubtreeIfNeeded(); return rowField() != nil }
+    let probe = try #require(controller.checkProbe())
+    for id in ["atc-new-route", "atc-route-1-destination", "atc-default-destination"] {
+        let frame = try #require(probe.marker(id))
+        #expect(frame.width > 0 && frame.height > 0)
+    }
     let field = try #require(rowField())
     #expect(window.makeFirstResponder(field))
     let editor = try #require(field.currentEditor() as? NSTextView)
@@ -403,6 +408,58 @@ func ruleUrlFieldWritesOnlyAtCommit() async throws {
     #expect(afterCommit.rules.first?.conditions == [UrlCondition(style: .contains, text: "meet.google.com")])
     #expect(!window.isVisible)
     window.contentView = nil
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func storedEmptyRoutesAcceptDestinationAndStyleEdits() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-stored-empty")
+    _ = try await atcValue {
+        adapter.open(path: directory.appendingPathComponent("empty.sqlite").path,
+            json: { fixture("arc-sidebar-synthetic.json") }, windowsJSON: { nil },
+            keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
+    }
+    let rule = Rule(id: "empty", conditions: [UrlCondition(style: .contains, text: "")],
+        destination: .space(.space("space-work")), profile: .default)
+    _ = try await atcValue { adapter.addRule(rule, completion: $0) }
+    let model = AirTrafficModel(adapter: adapter)
+    try await atcValue { model.load(completion: $0) }
+    try await atcValue { model.editDestination(rule.id, choice: .mostRecent, completion: $0) }
+    model.editStyle(rule.id, style: .equals)
+    let stored = try await atcValue { adapter.routing(completion: $0) }
+    #expect(stored.rules.first?.destination == .space(.mostRecent))
+    #expect(stored.rules.first?.conditions == [UrlCondition(style: .equals, text: "")])
+    _ = try await atcValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func refusedFirstRouteAddKeepsItsDraftAndText() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = WorkspaceAdapter(windowID: "atc-refused-add")
+    _ = try await atcValue {
+        adapter.open(path: directory.appendingPathComponent("refused.sqlite").path,
+            json: { fixture("arc-sidebar-synthetic.json") }, windowsJSON: { nil },
+            keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0)
+    }
+    let model = AirTrafficModel(adapter: adapter)
+    try await atcValue { model.load(completion: $0) }
+    try await atcValue { model.add(destination: .space(.space("space-home")), profile: .default, completion: $0) }
+    let id = try #require(model.routing?.rules.first?.id)
+    let refused = try? await atcValue { model.editCondition(id, style: .contains, text: "example.com", completion: $0) }
+    #expect(refused == nil)
+    #expect(model.error?.contains("another profile") == true)
+    let stored = try await atcValue { adapter.routing(completion: $0) }
+    #expect(stored.rules.isEmpty)
+    try await atcValue { model.load(completion: $0) }
+    #expect(model.routing?.rules.first?.id == id)
+    #expect(model.routing?.rules.first?.conditions.first?.text == "example.com")
+    try await atcValue { model.editDestination(id, choice: .mostRecent, completion: $0) }
+    let retried = try await atcValue { adapter.routing(completion: $0) }
+    #expect(retried.rules.first?.id == id)
+    #expect(retried.rules.first?.conditions.first?.text == "example.com")
     _ = try await atcValue { adapter.shutdown(completion: $0) }
 }
 

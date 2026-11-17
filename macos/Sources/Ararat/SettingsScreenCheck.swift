@@ -100,6 +100,7 @@ final class SettingsScreenCheck {
     var images: [String: String] = [:]
     /// Readings a phase records for the diagnostics (frames, statuses), never asserted by name.
     var details: [String: Any] = [:]
+    var airTrafficProbe: SettingsCheckProbe?
     // A screenshot spins the run loop, so a tick that re-enters while one is in flight would
     // read a half-updated phase.
     var capturing = false

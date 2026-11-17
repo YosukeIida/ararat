@@ -98,7 +98,7 @@ public final class AirTrafficModel: ObservableObject {
                 return completion(.success(()))
             }
             drafts.remove(at: draftIndex)
-        } else if empty {
+        } else if empty, routing?.rules.first(where: { $0.id == rule.id })?.conditions.first?.text != rule.conditions.first?.text {
             return completion(.success(()))
         }
         let token = UUID()

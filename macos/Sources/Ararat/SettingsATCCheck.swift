@@ -27,16 +27,20 @@ extension Runtime {
                                finish: () -> Void, capture: (String) -> Bool) {
         guard let session = adapter?.session, let settings = (root ?? self).settings,
               let window = settings.window else { return }
+        // Why not a fresh probe each tick: menu tracking begins after the posted click returns.
+        if check.airTrafficProbe == nil { check.airTrafficProbe = probe }
+        guard let probe = check.airTrafficProbe else { return }
         func post(_ code: CGKeyCode, _ text: String? = nil) -> Bool {
             guard let events = SettingsATCInput.events(code: code, text: text) else { return false }
             for event in events { event.post(tap: .cghidEventTap) }
             return true
         }
         func press(_ role: NSAccessibility.Role, _ label: String) -> Bool {
+            check.details["atc_control_input"] = "window-server clicks at NSView markers; native menu item AXPress"
             let pressed = probe.pressAirTrafficElement(role: role, label: label)
             if !pressed {
                 check.details["atc_ax_tree"] = probe.airTrafficAccessibilityTree
-                note("AXPress missing role=\(role.rawValue) label=\(label)")
+                note("control input missing role=\(role.rawValue) label=\(label)")
             }
             return pressed
         }

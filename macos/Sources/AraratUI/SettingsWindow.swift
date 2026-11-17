@@ -1015,6 +1015,7 @@ struct SettingsAirTrafficSection: View {
                 Button("New Route") {
                     airTraffic.add(destination: model.newRouteDestination(), profile: model.airTrafficLittleWindowProfile)
                 }
+                .background(SettingsMarker(id: "atc-new-route"))
             }
             .padding(.vertical, 2)
             ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
@@ -1083,6 +1084,7 @@ struct SettingsAirTrafficSection: View {
         .labelsHidden()
         .frame(width: 190)
         .accessibilityLabel("Route \(position) destination")
+        .background(SettingsMarker(id: "atc-route-\(position)-destination"))
     }
 
     @ViewBuilder private var pickerContext: some View {
@@ -1120,6 +1122,7 @@ struct SettingsAirTrafficSection: View {
             .labelsHidden()
             .frame(width: 190)
             .accessibilityLabel("Default destination")
+            .background(SettingsMarker(id: "atc-default-destination"))
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
