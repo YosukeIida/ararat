@@ -8602,7 +8602,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 2
     case 2:
-      guard let today = row("today"), today.parentId == space.pinnedId, sidebar.organizeCheckIdle else { return }
+      guard let today = row("today"), today.parentId == space.pinnedId, sidebar.organizeCheckIdle,
+            current.selectedId == today.id, sidebar.selectedRowID == today.id else { return }
       organizeConditions["today_to_pinned"] = true
       organizeConditions["pin_hint"] = sidebar.organizeCheckHint(id: today.id)
       guard begin("folder", "organize-inner") else { return }
