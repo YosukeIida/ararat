@@ -40,6 +40,15 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
+    private func enqueueEdit(_ operation: @escaping @Sendable () throws -> WorkspaceSnapshot, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue(operation) { result in
+            // Why not return the edit's snapshot: a newer selection can publish before its run-loop reply.
+            completion(result.flatMap { _ in
+                Result { try self.queue.sync { try self.opened().snapshot(windowId: self.windowID) } }
+            })
+        }
+    }
+
     public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, linkRoutingJSON: @escaping @Sendable () -> String?, ownerProfile: Profile? = nil, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
@@ -149,23 +158,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func move(id: String, container: String, index: Int, openFolder: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({
+        enqueueEdit({
             let store = try self.opened()
             return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: openFolder)
-        }) { result in
-            if CommandLine.arguments.contains(where: { $0 == "--ararat-check=organize" || $0 == "--ararat-screen=organize" }),
-               case .success(let captured) = result {
-                let selection = self.queue.sync {
-                    "current_selected=\(self.store?.snapshot(windowId: self.windowID).selectedId ?? "nil") stored_selected=\(self.store?.selectedItem(windowId: self.windowID) ?? "nil")"
-                }
-                FileHandle.standardError.write(Data("ararat-trace: organize move-reply window=\(self.windowID) item=\(id) container=\(container) captured_selected=\(captured.selectedId ?? "nil") \(selection)\n".utf8))
-            }
-            completion(result)
-        }
+        }, completion: completion)
     }
 
     public func firstFavorite(id: String, space: String, index: Int, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({
+        enqueueEdit({
             let store = try self.opened()
             let snapshot = try store.ensureFavorites(windowId: self.windowID, spaceId: space, containerId: UUID().uuidString)
             guard let container = snapshot.spaces.first(where: { $0.id == space })?.favoritesId else { throw CoreError.Edit(message: "favorites container missing") }
@@ -182,7 +182,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func openFolder(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().setFolderCollapsed(windowId: self.windowID, id: id, collapsed: false) }, completion: completion)
+        enqueueEdit({ try self.opened().setFolderCollapsed(windowId: self.windowID, id: id, collapsed: false) }, completion: completion)
     }
 
     public func select(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
@@ -343,7 +343,7 @@ public enum SidebarItemEdit: Sendable {
 
 extension WorkspaceAdapter {
     public func edit(_ edit: SidebarItemEdit, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({
+        enqueueEdit({
             let store = try self.opened()
             switch edit {
             case let .duplicate(id):
