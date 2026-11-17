@@ -13,6 +13,7 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var isLoading = false
     @objc dynamic var crashed = false
     @objc dynamic var networkError = 0
+    @objc dynamic var url = "about:blank"
     weak var owner: MatrixFakeHost?
     var profile: String
     init(item: String, live: String, profile: String, owner: MatrixFakeHost) {
@@ -130,6 +131,50 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
     class_addProtocol(MatrixFakeTab.self, objc_getProtocol("ARTabAPI")!)
     let fake = MatrixFakeHost()
     return (fake, fake as! any ARWindowHostAPI)
+}
+
+@Test @MainActor
+func synchronousSplitSelectionUpdatesURLAndCopyBeforeActivation() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "focus", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let snapshot = try session.queue.sync {
+        try session.store!.showSpace(windowId: "focus", spaceId: "named")
+        return try session.store!.selectItem(windowId: "focus", id: "close-split-a")
+    }
+    let runtime = Runtime(windowID: "focus")
+    let (fake, host) = matrixFake()
+    let tab = MatrixFakeTab(item: "close-split-a", live: "live-a", profile: "Profile 1", owner: fake)
+    tab.url = "http://127.0.0.1:1234/search"
+    fake.entries = [tab]
+    fake.active = "close-split-b"
+    runtime.host = host
+    let sidebar = SidebarView(snapshot: snapshot)
+    runtime.sidebar = sidebar
+    let pasteboard = NSPasteboard(name: .init("split-sync-\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    sidebar.pasteboard = pasteboard
+    sidebar.focusedPane = ("close-split-b", "http://localhost:1234/search")
+    runtime.showAndSelect(.success(snapshot))
+    #expect(fake.active == "close-split-b")
+    #expect(sidebar.focusedPane?.id == "close-split-a")
+    #expect(sidebar.focusedPane?.url == tab.url)
+    #expect(sidebar.urlHostForCheck == "127.0.0.1")
+    sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == tab.url)
+    fake.entries = []
+    runtime.showAndSelect(.success(snapshot))
+    #expect(sidebar.focusedPane?.id == "close-split-a")
+    #expect(sidebar.focusedPane?.url == "about:blank")
+    sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == "about:blank")
+    var empty = snapshot
+    empty.selectedId = nil
+    runtime.show(empty)
+    #expect(sidebar.focusedPane == nil)
+    withExtendedLifetime(engine) {}
 }
 
 @MainActor

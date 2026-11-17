@@ -1791,6 +1791,11 @@ final class Runtime: NSObject, NSMenuItemValidation {
     self.snapshot = snapshot
     updatePageVisibility(snapshot)
     if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
+    if let id = snapshot.selectedId, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+       let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
+       let url = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.url ?? row.url {
+      sidebar?.focusedPane = (id, url)
+    } else { sidebar?.focusedPane = nil }
     sidebar?.update(snapshot: snapshot)
     refreshSidebarRowState(snapshot)
     container?.selectionChanged()
