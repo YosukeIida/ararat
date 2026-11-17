@@ -125,6 +125,7 @@ final class LittleWindowProfileChip: NSButton {
 
     init() {
         super.init(frame: .zero)
+        title = ""
         isBordered = false
         bezelStyle = .inline
         wantsLayer = true
@@ -218,6 +219,7 @@ final class LittleWindowBarButton: NSButton {
     init(style: Style, symbol: String?, title: String = "", caps: String? = nil) {
         self.style = style
         super.init(frame: .zero)
+        self.title = ""
         isBordered = false
         bezelStyle = .inline
         wantsLayer = true
@@ -231,7 +233,7 @@ final class LittleWindowBarButton: NSButton {
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
             imagePosition = .imageOnly
         }
-        if style != .icon {
+        if style == .text {
             label.stringValue = title
             label.font = .systemFont(ofSize: 12, weight: .medium)
             label.textColor = LittleWindowMetrics.barText
@@ -257,9 +259,8 @@ final class LittleWindowBarButton: NSButton {
             }
             trailing.isActive = true
         } else {
-            widthAnchor.constraint(equalToConstant: LittleWindowMetrics.buttonSize).isActive = true
+            widthAnchor.constraint(equalToConstant: style == .chevron ? 24 : LittleWindowMetrics.buttonSize).isActive = true
         }
-        if style == .chevron { widthAnchor.constraint(equalToConstant: 24).isActive = true }
         updateFill()
     }
 
@@ -341,6 +342,7 @@ public final class LittleWindowBarView: NSView {
     private let extensionsButton = LittleWindowBarButton(style: .icon, symbol: "square.grid.2x2", title: "Extensions")
     private let openButton = LittleWindowBarButton(style: .text, symbol: nil, title: "Open in", caps: "⌘O")
     private let chevronButton = LittleWindowBarButton(style: .chevron, symbol: "chevron.down", title: "Choose a space")
+    private var windowDrag: WindowDrag.Held?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -387,6 +389,7 @@ public final class LittleWindowBarView: NSView {
         chevronButton.target = self
         chevronButton.action = #selector(spaceClicked(_:))
         chevronButton.setAccessibilityLabel("Choose a space")
+        chevronButton.toolTip = "Choose a space"
         addSubview(chevronButton)
 
         NSLayoutConstraint.activate([
@@ -422,6 +425,29 @@ public final class LittleWindowBarView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let target = super.hitTest(point)
+        return target === address || target === glyph ? self : target
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        windowDrag = WindowDrag.Held(in: self, with: event)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        windowDrag?.dragged(to: WindowDrag.screenPoint(of: event, in: self))
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        windowDrag?.released(at: WindowDrag.screenPoint(of: event, in: self))
+        windowDrag = nil
+    }
+
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // AppKit's title-strip drag must not run beside WindowDrag's stored-press drag.
+    public override var mouseDownCanMoveWindow: Bool { false }
+
     public var checkBarFrame: NSRect { frame }
     public var checkProfileTitle: String { model.profileName }
     public var checkAddressText: String { address.stringValue }
@@ -432,7 +458,7 @@ public final class LittleWindowBarView: NSView {
     public var checkExtensionsEnabled: Bool { extensionsButton.isEnabled }
     public var checkButtonFrames: [String: NSRect] {
         ["profile": profileButton.frame, "copy": copyButton.frame, "extensions": extensionsButton.frame,
-         "open": openButton.frame, "chevron": chevronButton.frame, "address": address.frame]
+         "open": openButton.frame, "chevron": chevronButton.frame, "address": address.frame, "glyph": glyph.frame]
     }
     public var checkOpenFrame: NSRect { openButton.frame }
     public var checkChevronFrame: NSRect { chevronButton.frame }
@@ -469,6 +495,17 @@ public final class LittleWindowBarView: NSView {
     @objc private func spaceClicked(_ sender: Any?) { onChooseSpace?() }
 }
 
+@MainActor
+private final class LittleWindowSearchField: NSSearchField {
+    override var searchTextBounds: NSRect {
+        var rect = super.searchTextBounds
+        let trailing = rect.maxX
+        rect.origin.x = max(rect.minX, searchButtonBounds.maxX + 4)
+        rect.size.width = max(0, trailing - rect.minX)
+        return rect
+    }
+}
+
 /// One row of the profile or space menu: the board's 24 pt item, 5 pt radius, the accent fill
 /// on hover, a check mark on the current profile.
 @MainActor
@@ -490,7 +527,7 @@ public final class LittleWindowMenuPanel: NSView {
     public var onSearch: (String) -> Void = { _ in }
     public private(set) var searchText = ""
     private let stack = NSStackView()
-    private let searchField = NSSearchField()
+    private let searchField = LittleWindowSearchField()
     private var rowViews: [NSButton] = []
 
     public init(width: CGFloat, rows: [Row], showsSearch: Bool) {

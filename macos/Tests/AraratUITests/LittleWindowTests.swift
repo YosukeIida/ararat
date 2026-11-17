@@ -106,6 +106,71 @@ func littleWindowBarLaysOutTheBoardsBand() {
     #expect(abs((colour?.blueComponent ?? 0) - 0x27 / 255) < 0.01)
 }
 
+@Test @MainActor
+func littleWindowBarRoutesOnlyItsDragAreasToTheBar() throws {
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let bar = LittleWindowBarView(frame: NSRect(x: 30, y: 500, width: 720, height: 48))
+    root.addSubview(bar)
+    NSLayoutConstraint.activate([
+        bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 30),
+        bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 52),
+        bar.widthAnchor.constraint(equalToConstant: 720),
+        bar.heightAnchor.constraint(equalToConstant: 48),
+    ])
+    var model = LittleWindowBarModel()
+    model.profileName = "Default"
+    model.spaces = [.init(id: "work", title: "Work")]
+    model.defaultSpaceID = "work"
+    model.pageURL = "https://example.com/page"
+    bar.model = model
+    root.layoutSubtreeIfNeeded()
+    for name in ["address", "glyph", "profile", "copy", "extensions", "open", "chevron"] {
+        let frame = try #require(bar.checkButtonFrames[name])
+        #expect(!frame.isEmpty)
+        let point = bar.convert(NSPoint(x: frame.midX, y: frame.midY), to: root)
+        let target = try #require(root.hitTest(point))
+        if name == "address" || name == "glyph" {
+            #expect(target === bar)
+        } else {
+            #expect(target is NSControl)
+            #expect(target !== bar)
+        }
+    }
+    #expect(root.hitTest(bar.convert(NSPoint(x: 360, y: 40), to: root)) === bar)
+    #expect(root.hitTest(NSPoint(x: 360, y: 499)) === root)
+    #expect(bar.acceptsFirstMouse(for: nil))
+    #expect(!bar.mouseDownCanMoveWindow)
+}
+
+@Test @MainActor
+func littleWindowBarButtonsDrawOnlyTheirIntendedText() {
+    let profile = LittleWindowProfileChip()
+    #expect(profile.title.isEmpty)
+    let open = LittleWindowBarButton(style: .text, symbol: nil, title: "Open in Work", caps: "⌘O")
+    #expect(open.title.isEmpty)
+    #expect(open.subviews.compactMap { ($0 as? NSTextField)?.stringValue } == ["Open in Work", "⌘O"])
+    for style: LittleWindowBarButton.Style in [.icon, .chevron] {
+        let button = LittleWindowBarButton(style: style, symbol: "chevron.down", title: "Choose a space")
+        #expect(button.title.isEmpty)
+        #expect(button.image != nil)
+        #expect(button.imagePosition == .imageOnly)
+        #expect(button.subviews.allSatisfy { !($0 is NSTextField) })
+    }
+}
+
+@Test @MainActor
+func littleWindowSpaceSearchKeepsTextAfterItsSearchButton() {
+    let panel = LittleWindowMenuPanel(width: LittleWindowMetrics.menuWidth, rows: [], showsSearch: true)
+    let field = panel.checkSearchField
+    #expect(field.placeholderString == "Search spaces")
+    for text in ["", "per"] {
+        field.stringValue = text
+        #expect(field.searchTextBounds.minX >= field.searchButtonBounds.maxX + 4)
+        #expect(field.searchTextBounds.width > 0)
+        #expect(field.bounds.contains(field.searchTextBounds))
+    }
+}
+
 /// The space menu's panel: a search field and the rows it filters, at the board's width.
 @Test @MainActor
 func littleWindowMenuPanelFiltersItsRows() {
