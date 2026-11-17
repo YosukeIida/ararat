@@ -468,7 +468,7 @@ private struct SettingsDetail: View {
                     case .tabs:
                         card("width", title: "Sidebar width", subtitle: "Reset the sidebar to its default width of 240 pt.") { Button("Reset to default", action: model.resetWidth) }
                         card("archive-after", title: "Archive Today's tabs after", subtitle: model.archiveSubtitle) {
-                            Picker("Archive Today's tabs after", selection: Binding(get: { model.archiveAfter }, set: model.setArchiveAfter)) {
+                            Picker("Archive Today's tabs after", selection: Binding<ArchiveAfter>(get: { model.archiveAfter }, set: model.setArchiveAfter)) {
                                 Text("12 hours").tag(ArchiveAfter.hours12)
                                 Text("24 hours").tag(ArchiveAfter.hours24)
                                 Text("7 days").tag(ArchiveAfter.days7)
@@ -526,7 +526,7 @@ private struct SettingsDetail: View {
                                             .font(.caption).foregroundStyle(.secondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading)
                                     Picker("Scroll sideways to switch spaces",
-                                           selection: Binding(get: { model.spaceScrollDirection }, set: model.setSpaceScrollDirection)) {
+                                           selection: Binding<SpaceScrollDirection>(get: { model.spaceScrollDirection }, set: model.setSpaceScrollDirection)) {
                                         Text("Natural").tag(SpaceScrollDirection.natural)
                                         Text("Reversed").tag(SpaceScrollDirection.reversed)
                                     }.pickerStyle(.segmented).labelsHidden().fixedSize()
@@ -653,7 +653,7 @@ private struct SettingsAppearanceSection: View {
                                 marker: SettingsModel.rowMarker(SettingsModel.themeRowId)) {
                     SettingsRowLabel(title: "Theme",
                                      subtitle: "Pages and settings follow it; a space’s Look can override the sidebar")
-                    Picker("Theme", selection: Binding(get: { model.theme }, set: model.setTheme)) {
+                    Picker("Theme", selection: Binding<Theme>(get: { model.theme }, set: model.setTheme)) {
                         ForEach([Theme.system, .light, .dark], id: \.self) { Text($0.label).tag($0) }
                     }.pickerStyle(.segmented).labelsHidden().fixedSize()
                         .background(SettingsMarker(id: SettingsModel.themeControlMarker))
@@ -756,7 +756,7 @@ private struct SettingsLittleWindowSection: View {
                     SettingsRowLabel(title: "“Open in” button sends the page to",
                                      subtitle: "Most Recent Space, or one space by name")
                     Picker("“Open in” button sends the page to",
-                           selection: Binding(get: { model.littleWindowOpenIn },
+                           selection: Binding<LittleWindowOpenIn>(get: { model.littleWindowOpenIn },
                                               set: model.setLittleWindowOpenIn)) {
                         // A space deleted on another device keeps its value until the user picks
                         // again. The item takes the row's own label, so a space of another profile
@@ -990,7 +990,7 @@ private final class ShortcutMarkerView: NSView {
 /// (Most Recent Space, the spaces, then Little Arc after a separator) are reused from Cra's
 /// MIT `Sources/Cra/UI/Settings/AirTrafficControlView.swift`; pane shell, card look and drag
 /// behaviour are ours (the Spaces pane's).
-private struct SettingsAirTrafficSection: View {
+struct SettingsAirTrafficSection: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var airTraffic: AirTrafficModel
     @State private var probe = ""
@@ -1015,6 +1015,7 @@ private struct SettingsAirTrafficSection: View {
                 Button("New Route") {
                     airTraffic.add(destination: model.newRouteDestination(), profile: model.airTrafficLittleWindowProfile)
                 }
+                .background(SettingsMarker(id: "atc-new-route"))
             }
             .padding(.vertical, 2)
             ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
@@ -1042,7 +1043,7 @@ private struct SettingsAirTrafficSection: View {
             }
             HStack(spacing: 8) {
                 Text("Open in").foregroundStyle(.secondary)
-                destinationPicker(rule)
+                destinationPicker(rule, position: position)
             }
         }
         .padding(.horizontal, 12)
@@ -1057,9 +1058,9 @@ private struct SettingsAirTrafficSection: View {
     }
 
     private func matchPicker(_ rule: Rule) -> some View {
-        Picker("Match", selection: Binding(
+        Picker("Match", selection: Binding<MatchStyle>(
             get: { rule.conditions.first?.style ?? .contains },
-            set: { airTraffic.editCondition(rule.id, style: $0, text: rule.conditions.first?.text ?? "") })) {
+            set: { airTraffic.editStyle(rule.id, style: $0) })) {
             Text("Contains").tag(MatchStyle.contains)
             Text("Is equal to").tag(MatchStyle.equals)
         }
@@ -1068,20 +1069,22 @@ private struct SettingsAirTrafficSection: View {
     }
 
     private func urlField(_ rule: Rule, position: Int) -> some View {
-        SettingsField(value: rule.conditions.first?.text ?? "", label: "URL",
+        SettingsField(value: rule.conditions.first?.text ?? "", label: "URL", allowsEmpty: false,
             accessibility: SettingsModel.routeUrlAccessibilityLabel(position)) {
-            airTraffic.editCondition(rule.id, style: rule.conditions.first?.style ?? .contains, text: $0)
+            airTraffic.editText(rule.id, text: $0)
         }
     }
 
-    private func destinationPicker(_ rule: Rule) -> some View {
-        Picker("Open in", selection: Binding(
+    private func destinationPicker(_ rule: Rule, position: Int) -> some View {
+        Picker("Open in", selection: Binding<DestinationChoice>(
             get: { DestinationChoice(rule.destination, deletedSpaces: airTraffic.deletedSpaces) },
             set: { airTraffic.editDestination(rule.id, choice: $0) })) {
             pickerContext
         }
         .labelsHidden()
         .frame(width: 190)
+        .accessibilityLabel("Route \(position) destination")
+        .background(SettingsMarker(id: "atc-route-\(position)-destination"))
     }
 
     @ViewBuilder private var pickerContext: some View {
@@ -1113,13 +1116,13 @@ private struct SettingsAirTrafficSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
-            Picker("Default destination", selection: Binding(
-                get: { model.defaultChoice },
-                set: { airTraffic.setDefault($0, littleWindowProfile: model.airTrafficLittleWindowProfile) })) {
+            Picker("Default destination", selection: defaultSelection) {
                 pickerContext
             }
             .labelsHidden()
             .frame(width: 190)
+            .accessibilityLabel("Default destination")
+            .background(SettingsMarker(id: "atc-default-destination"))
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 54)
@@ -1131,6 +1134,11 @@ private struct SettingsAirTrafficSection: View {
         }
         .background(SettingsMarker(id: SettingsModel.rowMarker(SettingsModel.airTrafficCardId)))
         .id(SettingsModel.airTrafficCardId)
+    }
+
+    var defaultSelection: Binding<DestinationChoice> {
+        Binding<DestinationChoice>(get: { model.defaultChoice },
+            set: { airTraffic.setDefault($0, littleWindowProfile: model.airTrafficLittleWindowProfile) })
     }
 
     private var testCard: some View {
@@ -1175,6 +1183,7 @@ struct SettingsField: View {
     let value: String
     let label: String
     var characterPalette = false
+    var allowsEmpty = true
     var accessibility: String? = nil
     let commit: (String) -> Void
     @State private var draft = ""
@@ -1189,8 +1198,16 @@ struct SettingsField: View {
                 if next != icon { draft = icon }
                 commit(icon)
             }
-            .onSubmit { if !characterPalette { commit(draft) } }.onChange(of: focused) { old, new in if !characterPalette && old && !new && draft != value { commit(draft) } }
+            .onSubmit { if !characterPalette { submit() } }.onChange(of: focused) { old, new in if !characterPalette && old && !new && draft != value { submit() } }
             if characterPalette { Button("Choose…") { focused = true; NSApp.orderFrontCharacterPalette(nil) } }
+        }
+    }
+
+    private func submit() {
+        if !allowsEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)).isEmpty {
+            draft = value
+        } else {
+            commit(draft)
         }
     }
 }

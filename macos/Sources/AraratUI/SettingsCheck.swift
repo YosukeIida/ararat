@@ -14,13 +14,14 @@ public struct SettingsRailPaneInfo: Sendable {
 /// identifiers `SettingsMarker` sets and reports frames, the model's state and pixels; the check
 /// in the app drives it through the same functions the window's own controls call.
 @MainActor
-public final class SettingsCheckProbe {
+public final class SettingsCheckProbe: NSObject {
     private let controller: SettingsWindowController
     private let window: NSWindow
 
     init(controller: SettingsWindowController, window: NSWindow) {
         self.controller = controller
         self.window = window
+        super.init()
     }
 
     public var model: SettingsModel { controller.model }
@@ -54,6 +55,78 @@ public final class SettingsCheckProbe {
     public var highlightedRowID: String? { model.highlighted }
     public var highlightedMarker: String? { model.highlighted.map { SettingsModel.rowMarker($0) } }
     public var historyIndex: Int { model.historyIndex }
+    public var airTrafficRules: [Rule] { model.airTraffic.routing?.rules ?? [] }
+    public var airTrafficAccessibilityTree: [String] { accessibilityDump() }
+
+    public func focusAirTrafficURL() -> Bool {
+        guard let content, let field = views(content).compactMap({ $0 as? NSTextField }).last(where: { $0.placeholderString == "URL" }) else { return false }
+        return window.makeFirstResponder(field)
+    }
+
+    public var airTrafficURLText: String? {
+        guard let content else { return nil }
+        return views(content).compactMap { $0 as? NSTextField }.last { $0.placeholderString == "URL" }?.stringValue
+    }
+
+    static func airTrafficHitDiagnostics(content: NSView, marker: NSView, windowPoint: NSPoint) -> [String: Any] {
+        let hitPoint = content.superview?.convert(windowPoint, from: nil) ?? windowPoint
+        let hit = content.hitTest(hitPoint)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let popups = descendants(content).filter {
+            ($0 is NSPopUpButton || $0.accessibilityRole() == .popUpButton) &&
+                $0.convert($0.bounds, to: content).intersects(marker.convert(marker.bounds, to: content))
+        }
+        let scroll = marker.enclosingScrollView
+        var ancestors: [String] = []
+        var ancestor = hit
+        while let view = ancestor {
+            ancestors.append(NSStringFromClass(type(of: view)))
+            ancestor = view.superview
+        }
+        return [
+            "window_point": ["x": windowPoint.x, "y": windowPoint.y],
+            "hit_class": hit.map { NSStringFromClass(type(of: $0)) } ?? "nil",
+            "hit_ancestors": ancestors,
+            "popup_classes": popups.map { NSStringFromClass(type(of: $0)) },
+            "hit_is_popup_or_descendant": popups.isEmpty ? NSNull() : popups.contains { popup in
+                hit.map { $0 === popup || $0.isDescendant(of: popup) } ?? false
+            } as Any,
+            "scroll_offset": scroll.map { ["x": $0.contentView.bounds.minX, "y": $0.contentView.bounds.minY] } as Any? ?? NSNull()
+        ]
+    }
+
+    public func pressAirTrafficElement(role: NSAccessibility.Role, label: String,
+                                      trace: ([String: Any]) -> Void) -> Bool {
+        let markerID: String
+        switch (role, label) {
+        case (.button, "New Route"): markerID = "atc-new-route"
+        case (.popUpButton, "Route 1 destination"): markerID = "atc-route-1-destination"
+        case (.popUpButton, "Default destination"): markerID = "atc-default-destination"
+        default: return false
+        }
+        // Why not AXPress: SwiftUI's in-process accessibility children are empty in the VM.
+        guard let content, let markerView = views(content).first(where: { $0.identifier?.rawValue == markerID }),
+              let rect = marker(markerID), rect.width > 0, rect.height > 0,
+              let point = windowPoint(topDown: rect),
+              let screen = window.screen else { return false }
+        let screenPoint = window.convertPoint(toScreen: point)
+        let location = CGPoint(x: screenPoint.x, y: (NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY) - screenPoint.y)
+        var diagnostics = Self.airTrafficHitDiagnostics(content: content, marker: markerView, windowPoint: point)
+        diagnostics["marker"] = markerID
+        diagnostics["marker_frame"] = ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+        diagnostics["screen_point"] = ["x": screenPoint.x, "y": screenPoint.y]
+        diagnostics["posted_point"] = ["x": location.x, "y": location.y]
+        diagnostics["detail_scroll_offset"] = detailScrollOffset as Any? ?? NSNull()
+        trace(diagnostics)
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: location, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: location, mouseButton: .left) else { return false }
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
     public var canGoBack: Bool { model.historyIndex > 0 }
     public var spaceIDs: [String] { model.snapshot.spaces.map(\.id) }
     public func searchKey(_ key: SettingsSearchKey) -> Bool { model.handleSearchKey(key) }

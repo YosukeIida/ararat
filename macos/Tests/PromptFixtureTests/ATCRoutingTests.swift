@@ -6,6 +6,128 @@ import Testing
 @testable import Ararat
 
 @Test @MainActor
+func settingsATCMenuLookupRequiresAnExactVisibleEnabledItem() {
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    menu.addItem(withTitle: "Most Recent Space extra", action: nil, keyEquivalent: "")
+    let hidden = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    hidden.isHidden = true
+    let disabled = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    disabled.isEnabled = false
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Most Recent Space") == nil)
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Most Recent Space") == 4)
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Missing") == nil)
+}
+
+@MainActor
+private final class ATCMenuTarget: NSObject {
+    var calls = 0
+    @objc func selectDestination(_ sender: NSMenuItem) { calls += 1 }
+}
+
+@Test @MainActor
+func settingsATCRowMenuTrackingEndsOnlyForTheObservedMenu() {
+    let check = SettingsScreenCheck()
+    let menu = NSMenu()
+    check.watchAirTrafficRowMenuEnd(menu)
+    #expect(check.airTrafficRowMenuTracking == true)
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: NSMenu())
+    #expect(check.airTrafficRowMenuTracking == true)
+    check.phase = 8
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+    #expect(check.airTrafficRowMenuTracking == false)
+    #expect(check.airTrafficRowMenuEndObserver == nil)
+    let entries = check.details["atc_menu_trace"] as? [[String: Any]]
+    #expect(entries?.first?["event"] as? String == "row menu tracking ended")
+}
+
+@Test @MainActor
+func settingsATCMenuTraceCoversTrackingAndObserverDecisionsOnlyInDiagnosticPhases() throws {
+    let check = SettingsScreenCheck()
+    check.startAirTrafficMenuTrace()
+    check.startAirTrafficMenuTrace()
+    let menu = NSMenu(title: "Default destination")
+    menu.autoenablesItems = false
+    let selected = menu.addItem(withTitle: "Little Window", action: nil, keyEquivalent: "")
+    selected.state = .on
+    let disabled = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    disabled.isEnabled = false
+    disabled.isHidden = true
+    for phase in [7, 8, 9, 10, 11] {
+        check.phase = phase
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    }
+    var entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+    #expect(entries.compactMap { $0["phase"] as? Int } == [8, 9, 10])
+    let items = try #require(entries[0]["items"] as? [[String: Any]])
+    #expect(items[0]["title"] as? String == "Little Window")
+    #expect(items[0]["selected"] as? Bool == true)
+    #expect(items[1]["enabled"] as? Bool == false)
+    #expect(items[1]["hidden"] as? Bool == true)
+    check.phase = 9
+    check.watchAirTrafficMenu(title: disabled.title)
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    #expect(check.airTrafficMenuObserver != nil)
+    entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+    let decisions = entries.filter { $0["event"] as? String == "observer not matched" }
+    #expect(decisions.compactMap { $0["reason"] as? String } == [
+        "no exact title", "exact title exists but is disabled, hidden, or a separator"
+    ])
+    #expect(JSONSerialization.isValidJSONObject(check.details))
+    check.stopWatchingAirTrafficMenu()
+}
+
+@Test @MainActor
+func settingsATCMenuActsOnceDuringTrackingForBothDestinations() throws {
+    _ = NSApplication.shared
+    for phase in [7, 9] {
+        let check = SettingsScreenCheck()
+        check.phase = phase
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let target = ATCMenuTarget()
+        let item = menu.addItem(withTitle: "Most Recent Space", action: #selector(ATCMenuTarget.selectDestination(_:)), keyEquivalent: "")
+        item.target = target
+        check.watchAirTrafficMenu(title: item.title)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+        #expect(check.airTrafficMenuObserver != nil)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        #expect(check.airTrafficMenuObserver == nil)
+        #expect(check.phase == phase && target.calls == 0)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        let deadline = Date(timeIntervalSinceNow: 1)
+        while check.phase == phase && Date() < deadline {
+            RunLoop.main.run(mode: .eventTracking, before: deadline)
+        }
+        #expect(target.calls == 1)
+        #expect(check.phase == phase + 1)
+        #expect(check.conditions["row_destination"] == nil && check.conditions["default_stored"] == nil)
+        if phase == 9 {
+            let entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+            #expect(entries.compactMap { $0["event"] as? String } == [
+                "observer not matched", "observer matched", "perform action", "action returned"
+            ])
+            #expect(entries.last?["selected_index"] as? Int == 0)
+        }
+    }
+}
+
+@Test
+func settingsATCKeysKeepTheirPhysicalKeyAndUnicodeTextWithoutPosting() throws {
+    let eisu = try #require(SettingsATCInput.events(code: 102, text: "\u{10}"))
+    #expect(eisu.map(\.type) == [.keyDown, .keyUp])
+    #expect(eisu.allSatisfy { $0.getIntegerValueField(.keyboardEventKeycode) == 102 })
+    let text = try #require(SettingsATCInput.events(code: 0, text: "abc"))
+    var length = 0
+    var buffer = [UniChar](repeating: 0, count: 8)
+    text[0].keyboardGetUnicodeString(maxStringLength: buffer.count, actualStringLength: &length, unicodeString: &buffer)
+    #expect(String(utf16CodeUnits: buffer, count: length) == "abc")
+}
+
+@Test @MainActor
 func atcProgressReportsItsOwnPhaseBeforeTheWorkspaceIsReady() {
     let owner = Runtime()
     let check = ATCRoutingCheck()

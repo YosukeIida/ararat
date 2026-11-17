@@ -1667,12 +1667,13 @@ impl Workspace {
         (key, ops)
     }
 
-    pub fn add_rule(&mut self, rule: crate::routing::Rule) -> Result<Vec<Op>, EditError> {
+    pub fn add_rule(&mut self, mut rule: crate::routing::Rule) -> Result<Vec<Op>, EditError> {
         if rule.id.trim().is_empty() { return Err(EditError("rule id is empty".into())); }
         if self.routing_rules.contains_key(&rule.id) {
             return Err(EditError(format!("rule {} already exists", rule.id)));
         }
         self.check_routing_destination(&rule.destination, Some(&rule.profile))?;
+        for condition in &mut rule.conditions { condition.strip_controls(); }
         // New rules join at the end: one key after the last rule in the order now has (the
         // key is independent of how the tied run after it scores, ties fall back to the id).
         let last = self.routing_rules.values().map(|s| s.order.as_str()).max();
@@ -1690,6 +1691,7 @@ impl Workspace {
         // rule into another profile by rewriting it whole.
         let mut rule = rule;
         rule.profile = stored.rule.profile.clone();
+        for condition in &mut rule.conditions { condition.strip_controls(); }
         // An edit that changes nothing writes nothing.
         if stored.rule == rule { return Ok(Vec::new()); }
         // Only a destination the edit changes to is checked: one keeping the rule's current

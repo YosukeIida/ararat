@@ -69,6 +69,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/crash-lock-abandon.patch` | ours |
 | `ararat/history-retention.patch` | ours |
 | `ararat/command-line-urls-hook.patch` | ours |
+| `ararat/native-editor-ime.patch` | ours |
 
 ## Why these upstream patches
 
@@ -76,6 +77,8 @@ Every per-patch keep/skip/counter-patch decision and its security consequence
 is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
+
+`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery only for `RenderWidgetHostViewCocoa`; for other first responders, it offers the keyDown to a view responder’s input context only when `TISCreateInputSourceList` finds at least one enabled `kTISTypeKeyboardInputMode` (filtered by type with `includeAllInstalled = false`), including while ABC is selected, then returns regardless of whether it handled the event. Otherwise it drops the key without calling the input context. Neither path forwards to keyDown or the window. This preserves the IME path while preventing a U.S.-only input context from inserting a raw control character.
 
 `ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. Ardia (`mantrakp04/ardia`, GPL-3.0) has the same guard in `engine/ardiacore/apply.sh`. This patch was written independently against Chromium's source.
 

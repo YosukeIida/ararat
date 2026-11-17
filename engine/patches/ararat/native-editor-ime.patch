@@ -1,0 +1,29 @@
+--- a/chrome/browser/chrome_browser_application_mac.mm
++++ b/chrome/browser/chrome_browser_application_mac.mm
+@@ -365,6 +365,26 @@
+     BOOL sendEventToKeyWindow = NO;
+     if (event.type == NSEventTypeKeyDown &&
+         (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana)) {
++      NSResponder* responder = NSApp.keyWindow.firstResponder;
++      // Why not import the view: its Cocoa implementation is private to content.
++      if (![responder
++              isKindOfClass:NSClassFromString(@"RenderWidgetHostViewCocoa")]) {
++        const void* keys[] = {kTISPropertyInputSourceType};
++        const void* values[] = {kTISTypeKeyboardInputMode};
++        CFDictionaryRef filter = CFDictionaryCreate(
++            kCFAllocatorDefault, keys, values, 1,
++            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++        CFArrayRef sources = TISCreateInputSourceList(filter, false);
++        CFRelease(filter);
++        bool has_input_mode = sources && CFArrayGetCount(sources) > 0;
++        if (sources)
++          CFRelease(sources);
++        if (has_input_mode && [responder isKindOfClass:[NSView class]])
++          [[(NSView*)responder inputContext] handleEvent:event];
++        // Why not always offer the key: a US-only input context can insert C0.
++        return;
++      }
++
+       // Mac Eisu and Kana keydown events are by default swallowed by sendEvent
+       // and sent directly to IME, which prevents ui keydown events from firing.
+       // These events need to be sent to [NSApp keyWindow] for handling.

@@ -157,6 +157,10 @@ impl Routing {
 }
 
 impl UrlCondition {
+    pub(crate) fn strip_controls(&mut self) {
+        self.text.retain(|c| c >= '\u{20}');
+    }
+
     fn matches(&self, url: &str) -> bool {
         let text = normalize(&self.text);
         // Why not match an empty condition: `contains("")` would match every URL; an empty
