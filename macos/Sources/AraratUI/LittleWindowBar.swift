@@ -125,6 +125,7 @@ final class LittleWindowProfileChip: NSButton {
 
     init() {
         super.init(frame: .zero)
+        title = ""
         isBordered = false
         bezelStyle = .inline
         wantsLayer = true
@@ -218,6 +219,7 @@ final class LittleWindowBarButton: NSButton {
     init(style: Style, symbol: String?, title: String = "", caps: String? = nil) {
         self.style = style
         super.init(frame: .zero)
+        self.title = ""
         isBordered = false
         bezelStyle = .inline
         wantsLayer = true
@@ -231,7 +233,7 @@ final class LittleWindowBarButton: NSButton {
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
             imagePosition = .imageOnly
         }
-        if style != .icon {
+        if style == .text {
             label.stringValue = title
             label.font = .systemFont(ofSize: 12, weight: .medium)
             label.textColor = LittleWindowMetrics.barText
@@ -257,9 +259,8 @@ final class LittleWindowBarButton: NSButton {
             }
             trailing.isActive = true
         } else {
-            widthAnchor.constraint(equalToConstant: LittleWindowMetrics.buttonSize).isActive = true
+            widthAnchor.constraint(equalToConstant: style == .chevron ? 24 : LittleWindowMetrics.buttonSize).isActive = true
         }
-        if style == .chevron { widthAnchor.constraint(equalToConstant: 24).isActive = true }
         updateFill()
     }
 
@@ -388,6 +389,7 @@ public final class LittleWindowBarView: NSView {
         chevronButton.target = self
         chevronButton.action = #selector(spaceClicked(_:))
         chevronButton.setAccessibilityLabel("Choose a space")
+        chevronButton.toolTip = "Choose a space"
         addSubview(chevronButton)
 
         NSLayoutConstraint.activate([
@@ -493,6 +495,17 @@ public final class LittleWindowBarView: NSView {
     @objc private func spaceClicked(_ sender: Any?) { onChooseSpace?() }
 }
 
+@MainActor
+private final class LittleWindowSearchField: NSSearchField {
+    override var searchTextBounds: NSRect {
+        var rect = super.searchTextBounds
+        let trailing = rect.maxX
+        rect.origin.x = max(rect.minX, searchButtonBounds.maxX + 4)
+        rect.size.width = max(0, trailing - rect.minX)
+        return rect
+    }
+}
+
 /// One row of the profile or space menu: the board's 24 pt item, 5 pt radius, the accent fill
 /// on hover, a check mark on the current profile.
 @MainActor
@@ -514,7 +527,7 @@ public final class LittleWindowMenuPanel: NSView {
     public var onSearch: (String) -> Void = { _ in }
     public private(set) var searchText = ""
     private let stack = NSStackView()
-    private let searchField = NSSearchField()
+    private let searchField = LittleWindowSearchField()
     private var rowViews: [NSButton] = []
 
     public init(width: CGFloat, rows: [Row], showsSearch: Bool) {

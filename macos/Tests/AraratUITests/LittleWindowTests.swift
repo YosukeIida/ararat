@@ -142,6 +142,35 @@ func littleWindowBarRoutesOnlyItsDragAreasToTheBar() throws {
     #expect(!bar.mouseDownCanMoveWindow)
 }
 
+@Test @MainActor
+func littleWindowBarButtonsDrawOnlyTheirIntendedText() {
+    let profile = LittleWindowProfileChip()
+    #expect(profile.title.isEmpty)
+    let open = LittleWindowBarButton(style: .text, symbol: nil, title: "Open in Work", caps: "⌘O")
+    #expect(open.title.isEmpty)
+    #expect(open.subviews.compactMap { ($0 as? NSTextField)?.stringValue } == ["Open in Work", "⌘O"])
+    for style: LittleWindowBarButton.Style in [.icon, .chevron] {
+        let button = LittleWindowBarButton(style: style, symbol: "chevron.down", title: "Choose a space")
+        #expect(button.title.isEmpty)
+        #expect(button.image != nil)
+        #expect(button.imagePosition == .imageOnly)
+        #expect(button.subviews.allSatisfy { !($0 is NSTextField) })
+    }
+}
+
+@Test @MainActor
+func littleWindowSpaceSearchKeepsTextAfterItsSearchButton() {
+    let panel = LittleWindowMenuPanel(width: LittleWindowMetrics.menuWidth, rows: [], showsSearch: true)
+    let field = panel.checkSearchField
+    #expect(field.placeholderString == "Search spaces")
+    for text in ["", "per"] {
+        field.stringValue = text
+        #expect(field.searchTextBounds.minX >= field.searchButtonBounds.maxX + 4)
+        #expect(field.searchTextBounds.width > 0)
+        #expect(field.bounds.contains(field.searchTextBounds))
+    }
+}
+
 /// The space menu's panel: a search field and the rows it filters, at the board's width.
 @Test @MainActor
 func littleWindowMenuPanelFiltersItsRows() {
