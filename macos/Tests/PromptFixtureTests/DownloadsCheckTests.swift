@@ -1,6 +1,17 @@
 import Testing
 @testable import Ararat
 
+@Test @MainActor func downloadsCheckWaitsOnlyForUnavailablePrivateSettings() {
+    let check = DownloadsCheck()
+    check.directory = "/downloads/custom"
+    #expect(check.privateSettingsMatch([:]) == nil)
+    #expect(check.privateSettingsMatch(["directory": check.directory, "prompt": false]) == true)
+    #expect(check.privateSettingsMatch(["directory": "/downloads/standard", "prompt": false]) == false)
+    #expect(check.privateSettingsMatch(["directory": check.directory, "prompt": true]) == false)
+    #expect(check.privateSettingsMatch(["directory": check.directory]) == false)
+    #expect(check.privateSettingsMatch(["prompt": false]) == false)
+}
+
 @Test @MainActor func downloadsCheckReportsEveryMissingConditionAndUnverifiedPath() {
     let check = DownloadsCheck()
     check.mark("seed")

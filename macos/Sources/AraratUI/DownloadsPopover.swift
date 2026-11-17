@@ -68,31 +68,47 @@ final class DownloadsButton: SidebarDockButton {
     }
 }
 
+/// The download row's metrics, shared with the popover header so the two line up. The action
+/// buttons follow the Little Window bar's icon buttons (28 pt squares, 13 pt symbols, the same
+/// hover and pressed states).
+enum DownloadRowMetrics {
+    static let inset: CGFloat = 8
+    static let iconSize: CGFloat = 16
+    static let gap: CGFloat = 4
+    static let actionSize: CGFloat = 28
+    static let actionSymbolSize: CGFloat = 13
+    /// The file name's leading inset from the row's leading edge (the header's titles use it).
+    static let textLeading: CGFloat = inset + iconSize + gap
+}
+
 @MainActor
-final class DownloadsPopover: NSObject {
+final class DownloadsPopover: NSObject, NSPopoverDelegate {
     static let rowHeight: CGFloat = 56
     static let headerHeight: CGFloat = 40
     private let popover = NSPopover()
     private let model: DownloadsModel
     private let anchor: NSView
     private let stack = NSStackView()
-    let library = NSButton(title: "Open Library", target: nil, action: nil)
-    let clear = NSButton(title: "Clear All", target: nil, action: nil)
+    let library = DownloadsHeaderButton(title: "Open Library")
+    let clear = DownloadsHeaderButton(title: "Clear All")
     var showsLibrary = true { didSet { library.isHidden = !showsLibrary; clear.isHidden = showsLibrary } }
     private(set) var rows: [String: DownloadRowView] = [:]
+    /// True between the popover's did-show and did-close, which covers a transient dismissal.
+    private(set) var isOpen = false
+    /// The sidebar owns the anchor's tooltip: it dismisses or hides its own bubble while open.
+    var onShow: (() -> Void)?
     var openLibrary: (() -> Void)?
     init(model: DownloadsModel, anchor: NSView) {
         self.model = model; self.anchor = anchor
         super.init()
         popover.behavior = .transient
         popover.animates = false
+        popover.delegate = self
         stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 0
         library.target = self; library.action = #selector(open)
-        library.bezelStyle = .inline; library.isBordered = false; library.alignment = .left; library.setAccessibilityLabel("Open Library")
-        library.font = .systemFont(ofSize: 13)
+        library.setAccessibilityLabel("Open Library")
         clear.target = self; clear.action = #selector(clearAll)
-        clear.bezelStyle = .inline; clear.isBordered = false; clear.alignment = .left
-        clear.setAccessibilityLabel("Clear All Downloads"); clear.font = .systemFont(ofSize: 13)
+        clear.setAccessibilityLabel("Clear All Downloads")
         clear.isHidden = true
         let header = NSStackView(views: [library, clear])
         header.orientation = .vertical; header.alignment = .width; header.spacing = 0
@@ -129,7 +145,18 @@ final class DownloadsPopover: NSObject {
                     return abs(frame.minX - stack.bounds.minX) <= 16 && frame.width >= stack.bounds.width - 1 && row.statusFits
                 },
                 "library_fills": abs(stack.convert(library.bounds, from: library).minX - stack.bounds.minX) <= 1 && library.bounds.width >= stack.bounds.width - 1,
+                "library_title_inset": library.titleInset,
                 "title_font": rows.values.first?.titleFontSize ?? 0, "title_height": rows.values.first?.titleHeight ?? 0]
+    }
+    /// The popover covers the anchor, so the anchor's tooltip must not show while it is open.
+    func popoverDidShow(_ notification: Notification) {
+        guard !isOpen else { return }
+        isOpen = true
+        onShow?()
+    }
+    /// Every close path lands here, a transient dismissal included.
+    func popoverDidClose(_ notification: Notification) {
+        isOpen = false
     }
     func close() { popover.performClose(nil) }
     static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
@@ -185,8 +212,38 @@ final class DownloadsPopover: NSObject {
     }
 }
 
+/// The header's borderless button. It spans the header so the whole strip opens the Library, and
+/// its title starts at the rows' file-name leading instead of at the popover's edge.
 @MainActor
-final class DownloadRowView: NSStackView, NSDraggingSource {
+final class DownloadsHeaderButton: NSButton {
+    init(title: String) {
+        super.init(frame: .zero)
+        cell = DownloadsHeaderCell(textCell: "")
+        self.title = title
+        bezelStyle = .inline
+        isBordered = false
+        alignment = .left
+        font = .systemFont(ofSize: 13)
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    /// Where the title is drawn inside the button: the buttons' own leading space plus the inset.
+    var titleRect: NSRect { (cell as? NSButtonCell)?.titleRect(forBounds: bounds) ?? bounds }
+    var titleInset: CGFloat { titleRect.minX }
+}
+
+private final class DownloadsHeaderCell: NSButtonCell {
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var frame = super.titleRect(forBounds: rect)
+        let inset = min(DownloadRowMetrics.textLeading, frame.width)
+        frame.origin.x += inset
+        frame.size.width -= inset
+        return frame
+    }
+}
+
+@MainActor
+final class DownloadRowView: NSView, NSDraggingSource {
     private var dragStart: NSPoint?
     func draggingItem() -> NSDraggingItem? {
         guard let url = model.dragFileURL(id: itemID) else { return nil }
@@ -213,7 +270,6 @@ final class DownloadRowView: NSStackView, NSDraggingSource {
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
     private let status = NSTextField(labelWithString: "")
-    private let actions = NSStackView()
     var titleFontSize: CGFloat { name.font?.pointSize ?? 0 }
     var titleHeight: CGFloat { name.bounds.height }
     var statusFits: Bool {
@@ -247,19 +303,31 @@ final class DownloadRowView: NSStackView, NSDraggingSource {
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
         status.maximumNumberOfLines = 1; status.lineBreakMode = .byTruncatingTail
         status.cell?.usesSingleLineMode = true; status.cell?.isScrollable = false; status.cell?.wraps = false; status.cell?.lineBreakMode = .byTruncatingTail
-        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        actions.orientation = .horizontal; actions.spacing = 4
-        let text = NSStackView(views: [name, status, actions]); text.orientation = .vertical; text.alignment = .width; text.spacing = 0
-        orientation = .horizontal; alignment = .centerY; spacing = 4
-        addArrangedSubview(icon); addArrangedSubview(text)
-        edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
-        text.widthAnchor.constraint(equalTo: widthAnchor, constant: -36).isActive = true
-        name.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
-        status.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
+        for view in [icon, name, status] { addSubview(view) }
         heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true
-        icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
         update(item: item)
+    }
+    /// The name and status take the width left of the action buttons; the buttons hug the row's
+    /// trailing edge, centred on the row.
+    override func layout() {
+        super.layout()
+        let inset = DownloadRowMetrics.inset
+        let gap = DownloadRowMetrics.gap
+        let size = DownloadRowMetrics.actionSize
+        icon.frame = NSRect(x: inset, y: (bounds.height - DownloadRowMetrics.iconSize) / 2,
+                            width: DownloadRowMetrics.iconSize, height: DownloadRowMetrics.iconSize)
+        var trailing = bounds.width - inset
+        for button in actionButtons.reversed() {
+            button.frame = NSRect(x: trailing - size, y: (bounds.height - size) / 2, width: size, height: size)
+            trailing -= size + gap
+        }
+        let leading = DownloadRowMetrics.textLeading
+        let width = max(0, (actionButtons.isEmpty ? bounds.width - inset : trailing) - leading)
+        let nameHeight = name.intrinsicContentSize.height
+        let statusHeight = status.intrinsicContentSize.height
+        let top = ((bounds.height - nameHeight - statusHeight) / 2).rounded()
+        name.frame = NSRect(x: leading, y: top + statusHeight, width: width, height: nameHeight)
+        status.frame = NSRect(x: leading, y: top, width: width, height: statusHeight)
     }
     func update(item: DownloadEntry) {
         itemID = item.id
@@ -267,22 +335,26 @@ final class DownloadRowView: NSStackView, NSDraggingSource {
         name.stringValue = item.name
         status.stringValue = item.status
         for button in actionButtons { button.setAccessibilityLabel("\(button.title) \(item.name)") }
-        guard actionButtons.map(\.downloadAction) != item.actions || actionButtons.contains(where: { $0.downloadID != item.id }) else { return }
-        actionButtons.forEach { actions.removeArrangedSubview($0); $0.removeFromSuperview() }
+        guard actionButtons.map(\.downloadAction) != item.actions || actionButtons.contains(where: { $0.downloadID != item.id }) else {
+            needsLayout = true
+            return
+        }
+        actionButtons.forEach { $0.removeFromSuperview() }
         actionButtons.removeAll()
         for action in item.actions {
             let titles = ["open": "Open", "show": "Show in Finder", "cancel": "Cancel", "pause": "Pause", "resume": "Resume", "remove": "Remove", "keep": "Keep", "discard": "Discard"]
             let symbols = ["open": "arrow.up.forward.app", "show": "folder", "cancel": "xmark", "pause": "pause", "resume": "arrow.clockwise", "remove": "trash", "keep": "checkmark", "discard": "trash"]
             guard let title = titles[action], let symbol = symbols[action] else { continue }
             let button = DownloadActionButton(title: title, target: self, action: #selector(performDownload(_:)))
-            button.downloadID = item.id; button.downloadAction = action; button.bezelStyle = .inline
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            button.downloadID = item.id; button.downloadAction = action
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: DownloadRowMetrics.actionSymbolSize, weight: .regular))
             button.imagePosition = .imageOnly; button.toolTip = title
-            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.setAccessibilityLabel("\(title) \(item.name)")
             actionButtons.append(button)
-            actions.addArrangedSubview(button)
+            addSubview(button)
         }
+        needsLayout = true
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func performDownload(_ sender: DownloadActionButton) { model.perform(sender.downloadAction, id: sender.downloadID) }
@@ -294,11 +366,59 @@ func downloadIcon(_ name: String) -> NSImage {
     return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
 }
 
+/// A row's action button: the Little Window bar's icon button (a borderless 28 pt square with a
+/// 13 pt SF Symbol) with the light UI's hover and pressed fills.
+@MainActor
 final class DownloadActionButton: NSButton {
     var downloadID = ""
     var downloadAction = ""
     var moveRow: ((Int) -> Void)?
     var tabRow: ((Bool) -> Void)?
+    private var hovering = false
+    private(set) var pressed = false
+    private var tracking: NSTrackingArea?
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        bezelStyle = .inline
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        updateFill()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    /// The fill under the symbol: 0 at rest, the hover fill, and the pressed fill.
+    var fillAlpha: CGFloat { pressed ? 0.18 : hovering ? 0.08 : 0 }
+    var isHovering: Bool { hovering }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        // A hover-opened popover is not key, so the fill must track in any window state.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        updateFill()
+    }
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        updateFill()
+    }
+    override func mouseDown(with event: NSEvent) {
+        pressed = true
+        updateFill()
+        super.mouseDown(with: event)
+        pressed = false
+        updateFill()
+    }
+    override var isEnabled: Bool { didSet { updateFill() } }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
+    private func updateFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(fillAlpha).cgColor
+        }
+    }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 125, let moveRow { moveRow(1) }
         else if event.keyCode == 126, let moveRow { moveRow(-1) }

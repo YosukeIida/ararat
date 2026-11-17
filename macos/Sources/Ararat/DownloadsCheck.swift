@@ -20,8 +20,12 @@ final class DownloadsCheck {
   var hoverStart: TimeInterval = 0
   var privatePass = 0
   var privateBefore: Set<String> = []
+  func privateSettingsMatch(_ settings: [String: Any]) -> Bool? {
+    guard !settings.isEmpty else { return nil }
+    return settings["directory"] as? String == directory && settings["prompt"] as? Bool == false
+  }
   static let common = ["pause", "paused_bytes_stopped", "paused_ring", "paused_resume", "paused_completion", "search_name", "search_url", "search_empty", "clear_keeps_running", "clear_files_intact", "private_clear_isolated", "drag_popover", "drag_page", "seed", "empty_click_archive", "started", "ring_running", "running_actions_safe", "click_list", "popover_first", "popover_row_stable", "hover_list", "library_downloads_page", "popover_cancel_button", "library_back_arrow", "popover_remove_button", "cancel", "remove_done", "completion", "completion_ring_cleared", "resume_available", "resume", "profile_isolation", "profile_return", "private_standard", "private_custom", "private_list_live", "private_close_regular_intact"]
-  static let screenNames = ["capture_ring", "capture_popover", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "popover_rows_layout", "page_actions_fit", "page_rows_layout"]
+  static let screenNames = ["capture_ring", "capture_popover", "capture_complete", "capture_library", "capture_flight", "popover_inside_above", "popover_readable", "popover_content", "popover_rows_layout", "page_actions_fit", "page_rows_layout"]
   func names(screen: Bool) -> [String] { Self.common + (screen ? Self.screenNames : []) }
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = names(screen: screen)
@@ -213,6 +217,10 @@ extension Runtime {
       browserCheckPhase = 101
     case 101:
       guard state["list"] as? Bool == true else { wait("completed popover"); return }
+      // The image design reads for the header's inset and a finished row's action buttons.
+      if screen && check.conditions["capture_complete"] == nil {
+        check.mark("capture_complete", sidebar.downloadsCheckPopoverWindow.map { capture("popover-complete", window: $0) } ?? false)
+      }
       let expected = URL(fileURLWithPath: (check.directory as NSString).appendingPathComponent("complete-check.txt"))
       check.mark("drag_popover", sidebar.downloadsCheckDragURL(id: check.completeID, page: false).flatMap(URL.init(string:)) == expected)
       sidebar.downloadsCheckOpenLibrary()
@@ -266,7 +274,8 @@ extension Runtime {
     case 15:
       guard let privateChild = children.first(where: { $0.isPrivateWindow && $0.host != nil }), let popup = privateChild.host, popup.isPrivateWindow(), popup.hasBrowser() else { wait("private window"); return }
       let settings = popup.downloadsCheckSettings()
-      guard settings["directory"] as? String == check.directory, settings["prompt"] as? Bool == false else { fail("private profile did not inherit scratch directory without prompt"); return }
+      guard let matches = check.privateSettingsMatch(settings) else { wait("private download settings snapshot"); return }
+      guard matches else { fail("private profile did not inherit scratch directory without prompt"); return }
       guard let port = promptFixturePort else { wait("fixture port"); return }
       popup.window().makeKeyAndOrderFront(nil)
       popup.checkNavigate("http://127.0.0.1:\(port)/private-download?pass=\(check.privatePass)", disposition: "current")
