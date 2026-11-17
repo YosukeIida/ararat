@@ -33,6 +33,22 @@ final class FakeSetter: DefaultBrowserSetter {
     func requestDefaultBrowser() { calls += 1 }
 }
 
+@Test @MainActor
+func theDefaultBrowserSetterRequestsHTTPExactlyOnce() {
+    var apps: [URL] = []
+    var schemes: [String] = []
+    let setter = LaunchServicesDefaultBrowser(setDefaultApplication: { app, scheme, completion in
+        apps.append(app)
+        schemes.append(scheme)
+        completion(nil)
+    })
+
+    setter.requestDefaultBrowser()
+
+    #expect(apps == [Bundle.main.bundleURL])
+    #expect(schemes == ["http"])
+}
+
 /// F-Import screen 6's numbers are the fixture's: the report counts what the import produced, not
 /// the store's totals. The summary text is the board's line.
 @Test @MainActor

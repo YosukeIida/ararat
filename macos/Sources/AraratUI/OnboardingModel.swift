@@ -69,13 +69,21 @@ public protocol DefaultBrowserSetter {
 }
 
 public struct LaunchServicesDefaultBrowser: DefaultBrowserSetter {
-    public init() {}
+    private let setDefaultApplication: (URL, String, @escaping (Error?) -> Void) -> Void
+
+    public init() {
+        self.init(setDefaultApplication: { app, scheme, completion in
+            NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: scheme) { completion($0) }
+        })
+    }
+
+    init(setDefaultApplication: @escaping (URL, String, @escaping (Error?) -> Void) -> Void) {
+        self.setDefaultApplication = setDefaultApplication
+    }
+
     public func requestDefaultBrowser() {
-        // macOS shows its own confirmation; the request is the only thing Ararat does here.
-        let app = Bundle.main.bundleURL
-        for scheme in ["http", "https"] {
-            NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: scheme) { _ in }
-        }
+        // Why not request https too: macOS changes both handlers with one http confirmation.
+        setDefaultApplication(Bundle.main.bundleURL, "http") { _ in }
     }
 }
 
