@@ -80,8 +80,14 @@ final class HistoryPurgeCheck {
     guard let runtime, let workspace = runtime.workspace else { fail("workspace missing"); return }
     workspace.select(id: pinned) { result in
       guard case .success = result else { self.fail("pinned selection failed"); return }
-      runtime.showAndSelect(result)
+      guard let session = runtime.adapter?.session else { self.fail("session missing"); return }
+      let selected = Self.selectedPinnedItem(session: session, windowID: runtime.windowID, pinned: self.pinned)
+      runtime.showAndSelect(result, selectedItem: selected)
     }
+  }
+
+  static func selectedPinnedItem(session: WorkspaceSession, windowID: String, pinned: String) -> String? {
+    session.queue.sync { session.store?.selectedItem(windowId: windowID) == pinned ? pinned : nil }
   }
 
   func tick(_ host: any ARWindowHostAPI) {
