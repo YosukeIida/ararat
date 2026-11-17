@@ -13,7 +13,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         FileHandle.standardError.write(Data("ararat-trace: matrix window=\(windowID) \(message())\n".utf8))
     }
     private func tracePrivate(_ message: @autoclosure () -> String) {
-        guard CommandLine.arguments.contains("--ararat-check=private-window") || CommandLine.arguments.contains("--ararat-screen=private-window") else { return }
+        guard CommandLine.arguments.contains(where: { ["--ararat-check=private-window", "--ararat-screen=private-window", "--ararat-check=split-commands", "--ararat-screen=split-commands"].contains($0) }) else { return }
         FileHandle.standardError.write(Data("ararat-trace: private-selection window=\(windowID) \(message())\n".utf8))
     }
     private func traceLittleWindow(_ message: @autoclosure () -> String) {
@@ -764,6 +764,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public var checkWindowID: String { windowID }
 
+    public func checkSplitSelectionTrace(items: [String]) -> String {
+        precondition(Thread.isMainThread)
+        let stored = queue.sync { () -> String in
+            let snapshot = store?.snapshot(windowId: windowID)
+            return "storedSelected=\(store?.selectedItem(windowId: windowID) ?? "nil") storeSnapshotSelected=\(snapshot?.selectedId ?? "nil") storeShownSpace=\(snapshot?.shownSpaceId ?? "nil") owners=\(items.map { "\($0):\(store?.liveWindow(item: $0) ?? "nil")" })"
+        }
+        return "window=\(windowID) \(stored) request=\(String(describing: selectionRequest)) generation=\(selectionGeneration)"
+    }
+
     // What the split-commands check reads: the panes this window lays out as a split (0: a plain
     // page, which is what a member taken alone from another window must show).
     public func checkSplitLayout() -> (panes: Int, split: Bool, frozen: Bool) {
@@ -1133,7 +1142,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     self.pendingSelectionCommands.insert(command.id)
                 }
                 let snapshot = store.snapshot(windowId: self.windowID)
-                self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
+                self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) strips=\(transaction.strips.map { "\($0.window):active=\($0.active ?? "nil")" }) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
                 let movedLives = transaction.strips.flatMap { strip in strip.tabs.compactMap { tab -> (String, String)? in
                     guard let item = tab.item, let before = previousOwners[tab.liveId],
                           let after = store.liveWindow(item: item), before != after else { return nil }
@@ -1278,15 +1287,16 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let current = queue.sync { () -> Bool in
             guard let store else { return false }
             let latest = store.snapshot(windowId: windowID)
+            tracePrivate("snapshot compare selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") latestSelected=\(latest.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: windowID) ?? "nil") latestShownSpace=\(latest.shownSpaceId ?? "nil") equal=\(latest == snapshot) allowUnloadedSelection=\(allowUnloadedSelection)")
             if latest == snapshot { return true }
             return allowUnloadedSelection && latest.selectedId == nil &&
                 store.selectedItem(windowId: windowID) == snapshot.selectedId &&
                 latest.shownSpaceId == snapshot.shownSpaceId && latest.spaces == snapshot.spaces && latest.archive == snapshot.archive
         }
         tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
-        guard current else { return }
-        guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { return }
-        guard canPublishSnapshot?() != false else { needsSnapshotPublish = true; onSnapshotTrace?("snapshot-held"); return }
+        guard current else { tracePrivate("snapshot dropped reason=stale"); return }
+        guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { tracePrivate("snapshot dropped reason=closing"); return }
+        guard canPublishSnapshot?() != false else { tracePrivate("snapshot held"); needsSnapshotPublish = true; onSnapshotTrace?("snapshot-held"); return }
         needsSnapshotPublish = false
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
@@ -1303,6 +1313,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         for id in closingRows where !remaining.contains(id) { onRowClose?(id) }
         closingRows.formIntersection(rows.filter { !$0.unloaded }.map(\.id))
         onSnapshot?(snapshot)
+        tracePrivate("snapshot published selected=\(snapshot.selectedId ?? "nil") active=\(host?.activeItemId() ?? "nil")")
     }
 
     private func layoutFailures(snapshot supplied: WorkspaceSnapshot? = nil) {

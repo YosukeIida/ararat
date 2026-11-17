@@ -133,6 +133,124 @@ fn remote_selection_survives_detach_until_explicit_local_activation() {
 }
 
 #[test]
+fn split_open_completion_selects_only_the_new_active_pane() {
+    for foreground in [false, true] {
+        let mut ws = workspace();
+        let mut live = Live::new();
+        for item in ["a", "b"] {
+            let (_, command) = live.open(&mut ws, item, "u").unwrap();
+            live.command_sent(&command);
+        }
+        live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+        let (_, change) = ws.add_split_pane("a", ararat_core::model::SplitSide::Right).unwrap();
+        let pane = change.pane.as_str();
+        let (_, open) = live.open(&mut ws, pane, "chrome://newtab/").unwrap();
+        live.command_sent(&open);
+
+        let mut remote = strip(&live, &["a"], Some("a"));
+        remote.window = "two".into();
+        let (_, moved) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1,
+            cause: Cause::Chrome, strips: vec![strip(&live, &["b"], Some("b")), remote] });
+        assert!(moved.applied);
+        assert_eq!(live.live_window("a").as_deref(), Some("two"));
+        assert_eq!(ws.selected("one"), Some("a"));
+
+        let active = if foreground { pane } else { "b" };
+        let (_, opened) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2,
+            cause: Cause::Command(open.id), strips: vec![strip(&live, &["b", pane], Some(active))] });
+        assert!(opened.applied);
+        let selected = if foreground { pane } else { "a" };
+        assert_eq!(ws.selected("one"), Some(selected), "foreground={foreground}");
+        assert_eq!(live.live_window(pane).as_deref(), Some("one"));
+
+        let (_, metadata) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 3,
+            cause: Cause::Engine, strips: vec![strip(&live, &["b", pane], Some(active))] });
+        assert!(metadata.applied);
+        assert_eq!(ws.selected("one"), Some(selected));
+
+        let (_, sibling) = live.open(&mut ws, "c", "u").unwrap();
+        live.command_sent(&sibling);
+        let (_, background) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 4,
+            cause: Cause::Command(sibling.id), strips: vec![strip(&live, &["b", pane, "c"], Some(active))] });
+        assert!(background.applied);
+        assert_eq!(ws.selected("one"), Some(selected));
+    }
+}
+
+#[test]
+fn split_open_completion_outside_the_shown_space_preserves_a_remote_selection() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let (_, change) = ws.add_split_pane("a", ararat_core::model::SplitSide::Right).unwrap();
+    let pane = change.pane.as_str();
+    let (_, open) = live.open(&mut ws, pane, "chrome://newtab/").unwrap();
+    live.command_sent(&open);
+
+    ws.create_space("one", "Other", "other").unwrap();
+    ws.items.get_mut("b").unwrap().membership.parent = Some("other:today".into());
+    ws.select_item("one", "b").unwrap();
+    let mut remote = strip(&live, &["b"], Some("b"));
+    remote.window = "two".into();
+    let (_, moved) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1,
+        cause: Cause::Chrome, strips: vec![strip(&live, &["a"], Some("a")), remote] });
+    assert!(moved.applied);
+    assert_eq!(ws.shown_space("one"), Some("other"));
+    assert_eq!(ws.selected("one"), Some("b"));
+    assert_eq!(live.live_window("b").as_deref(), Some("two"));
+
+    let (_, opened) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 2,
+        cause: Cause::Command(open.id), strips: vec![strip(&live, &["a", pane], Some(pane))] });
+    assert!(opened.applied);
+    assert_eq!(live.live_window(pane).as_deref(), Some("one"));
+    assert_eq!(ws.shown_space("one"), Some("other"));
+    assert_eq!(ws.selected("one"), Some("b"));
+}
+
+#[test]
+fn split_open_completion_cannot_take_selection_back_after_an_explicit_activation() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    for item in ["a", "b"] {
+        let (_, command) = live.open(&mut ws, item, "u").unwrap();
+        live.command_sent(&command);
+    }
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a", "b"], Some("a"))]));
+    let (_, change) = ws.add_split_pane("a", ararat_core::model::SplitSide::Right).unwrap();
+    let pane = change.pane.as_str();
+    let (_, open) = live.open(&mut ws, pane, "chrome://newtab/").unwrap();
+    live.command_sent(&open);
+    let mut remote = strip(&live, &["a"], Some("a"));
+    remote.window = "two".into();
+    let (_, moved) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1,
+        cause: Cause::Chrome, strips: vec![strip(&live, &["b"], Some("b")), remote] });
+    assert!(moved.applied);
+    assert_eq!(ws.selected("one"), Some("a"));
+    assert_eq!(live.live_window("a").as_deref(), Some("two"));
+
+    let activate = live.activate(&ws, "b").unwrap();
+    live.command_sent(&activate);
+    assert!(live.selection_intent(&activate.id, "one"));
+    let completion = Transaction { off_the_record: false, epoch: 1, rev: 2,
+        cause: Cause::Command(open.id), strips: vec![strip(&live, &["b", pane], Some(pane))] };
+    let (_, opened) = live.apply(&mut ws, completion.clone());
+    assert!(opened.applied);
+    assert_eq!(ws.selected("one"), Some(pane));
+    let (_, activated) = live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 3,
+        cause: Cause::Command(activate.id), strips: vec![strip(&live, &["b", pane], Some("b"))] });
+    assert!(activated.applied);
+    assert_eq!(ws.selected("one"), Some("b"));
+
+    let (_, replayed) = live.apply(&mut ws, completion);
+    assert!(!replayed.applied);
+    assert_eq!(ws.selected("one"), Some("b"));
+}
+
+#[test]
 fn a_remote_selection_does_not_reactivate_an_off_space_strip() {
     let mut ws = workspace();
     ws.create_space("one", "Other", "other").unwrap();

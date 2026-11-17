@@ -784,7 +784,9 @@ impl Live {
             if matches!(transaction.cause, Cause::Engine) || changed_windows.contains(&strip.window) { continue; }
             if let Some(active) = &strip.active {
                 if let Some(item) = next_reverse.get(active).cloned() {
-                    let explicit = intent.as_ref().is_some_and(|(window, target)| window == &strip.window && target == &item);
+                    let opened_active = matches!(&transaction.cause, Cause::Command(id) if id == active
+                        && self.pending.get(id).is_some_and(|(kind, _)| *kind == CommandKind::Open));
+                    let explicit = opened_active || intent.as_ref().is_some_and(|(window, target)| window == &strip.window && target == &item);
                     if !Self::selection_allowed(&next, &next_map, &next_windows, &strip.window, explicit) { continue; }
                     // A strip can arrive after the window showed another space: a selection
                     // made before the switch completes late, and its active tab belongs to
