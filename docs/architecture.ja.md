@@ -39,7 +39,7 @@ Ararat は、Arc のワークフロー（space、ピン留めタブと Today タ
 | コア | Rust の crate `ararat-core`、SQLite のストレージ、Swift 向けの UniFFI バインディング、C++ 向けの C ABI | macOS、Windows、Linux、iPhone で同一のコアを使用する | 6 |
 | macOS の UI | 動きのある部分はすべて AppKit、設定とオンボーディングは SwiftUI | Cra は SwiftUI から AppKit へ移行した後、space のスワイプ時のメインスレッドの処理時間が 1900 → 440 ms になったことを計測した（Cra ledger 12） | 7 |
 | 同期 | エンドツーエンド暗号化とし、アカウントを必要としない。独自サーバーは、認証済みで追記のみの blob を中継するブラインドリレーとする。デバイスはリカバリーフレーズ、または PAKE（パスワード認証鍵交換）で認証したペアリングコードで参加する | 「独自サーバー、ログインなし」の条件を満たす。Chromium の同期エンジンや共有フォルダが存在しない環境（iPhone、Windows）でも動作する | 8 |
-| プロセス | スコープ（Opus 5.5）→ 2 席で並列実装（Codex `gpt-6.1-terra`、high、personal アカウントと、OpenCode Go の GLM-5.3-Flash。Go の上限時は無料モデル）→ レビュー（Opus 5.5）。オーナーの選択、2026-11-08。際どいエッジケースのバグは Codex から始める | オーナーの規則（`AGENTS.md`） | 13 |
+| プロセス | スコープ（Opus 5.5）→ 2 席で並列実装（Codex `gpt-6.2-sol`、medium、personal アカウントと、OpenCode Go の GLM-5.3-Flash。Go の上限時は無料モデル）→ レビュー（Opus 5.5）。Codex のモデルと effort は 2026-11-18 に更新。際どいエッジケースのバグは Codex から始める | オーナーの規則（`AGENTS.md`） | 13 |
 
 ## 3. レイヤーとリポジトリの構成
 
@@ -465,7 +465,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 13. 開発プロセス
 
-各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.1-terra`（effort high、personal アカウント）と OpenCode Go の GLM-5.3-Flash が 2 席で並列に実装し、Go の残量がないときは無料モデルを使い → Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。personal アカウントは 2026-11-08 のオーナーの選択であり、ararat では labteam を使わない。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
+各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.2-sol`（effort medium、personal アカウント）と OpenCode Go の GLM-5.3-Flash が 2 席で並列に実装し、Go の残量がないときは無料モデルを使い → Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。personal アカウントは 2026-11-08 のオーナーの選択であり、ararat では labteam を使わない。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。
 
 ## 14. オーナーが決める未決の事項
 
