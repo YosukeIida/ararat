@@ -101,9 +101,11 @@ final class SettingsScreenCheck {
     /// Readings a phase records for the diagnostics (frames, statuses), never asserted by name.
     var details: [String: Any] = [:]
     var airTrafficMenuObserver: NSObjectProtocol?
+    var airTrafficMenuTraceObserver: NSObjectProtocol?
 
     deinit {
         if let airTrafficMenuObserver { NotificationCenter.default.removeObserver(airTrafficMenuObserver) }
+        if let airTrafficMenuTraceObserver { NotificationCenter.default.removeObserver(airTrafficMenuTraceObserver) }
     }
     // A screenshot spins the run loop, so a tick that re-enters while one is in flight would
     // read a half-updated phase.

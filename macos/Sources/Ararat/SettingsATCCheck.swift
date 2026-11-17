@@ -27,6 +27,41 @@ enum SettingsATCInput {
 }
 
 extension SettingsScreenCheck {
+    func traceAirTrafficMenu(_ event: String, menu: NSMenu? = nil, values: [String: Any] = [:]) {
+        guard (8...10).contains(phase) else { return }
+        var entry = values
+        entry["phase"] = phase
+        entry["event"] = event
+        if let menu {
+            entry["menu_title"] = menu.title
+            entry["items"] = menu.items.enumerated().map { index, item in
+                ["index": index, "title": item.title, "enabled": item.isEnabled,
+                 "hidden": item.isHidden, "separator": item.isSeparatorItem,
+                 "selected": item.state == .on, "state": item.state.rawValue,
+                 "highlighted": menu.highlightedItem === item] as [String: Any]
+            }
+        }
+        var entries = details["atc_menu_trace"] as? [[String: Any]] ?? []
+        entries.append(entry)
+        details["atc_menu_trace"] = entries
+        if let data = try? JSONSerialization.data(withJSONObject: ["atc_menu_trace": entry], options: [.sortedKeys]) {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data([10]))
+        }
+    }
+
+    func startAirTrafficMenuTrace() {
+        guard airTrafficMenuTraceObserver == nil else { return }
+        airTrafficMenuTraceObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let menu = notification.object as? NSMenu else { return }
+            MainActor.assumeIsolated {
+                self?.traceAirTrafficMenu("tracking began", menu: menu)
+            }
+        }
+    }
+
     func watchAirTrafficMenu(title: String) {
         stopWatchingAirTrafficMenu()
         let waitingPhase = phase
@@ -35,14 +70,33 @@ extension SettingsScreenCheck {
         ) { [weak self] notification in
             guard let menu = notification.object as? NSMenu else { return }
             MainActor.assumeIsolated {
-                guard let self, self.phase == waitingPhase,
-                      let index = SettingsATCInput.menuItemIndex(in: menu, title: title) else { return }
+                guard let self else { return }
+                guard self.phase == waitingPhase else {
+                    self.traceAirTrafficMenu("observer not matched", menu: menu,
+                        values: ["reason": "phase changed", "waiting_phase": waitingPhase, "expected_title": title])
+                    return
+                }
+                guard let index = SettingsATCInput.menuItemIndex(in: menu, title: title) else {
+                    self.traceAirTrafficMenu("observer not matched", menu: menu,
+                        values: ["reason": menu.items.contains { $0.title == title }
+                            ? "exact title exists but is disabled, hidden, or a separator" : "no exact title",
+                            "expected_title": title])
+                    return
+                }
+                self.traceAirTrafficMenu("observer matched", menu: menu,
+                    values: ["reason": "exact visible enabled item", "selected_index": index, "expected_title": title])
                 self.stopWatchingAirTrafficMenu()
                 // Why not act in the notification: tracking has not entered its run loop yet.
                 RunLoop.main.perform(inModes: [.eventTracking]) { [weak self, weak menu] in
                     MainActor.assumeIsolated {
-                        guard let self, let menu, self.phase == waitingPhase else { return }
+                        guard let self, let menu else { return }
+                        guard self.phase == waitingPhase else {
+                            self.traceAirTrafficMenu("action skipped", menu: menu, values: ["reason": "phase changed"])
+                            return
+                        }
+                        self.traceAirTrafficMenu("perform action", menu: menu, values: ["selected_index": index])
                         menu.performActionForItem(at: index)
+                        self.traceAirTrafficMenu("action returned", menu: menu, values: ["selected_index": index])
                         menu.cancelTracking()
                         self.phase = waitingPhase + 1
                     }
@@ -121,12 +175,15 @@ extension Runtime {
         case 7:
             note("row destination menu action")
         case 8:
+            check.startAirTrafficMenuTrace()
             guard let rule = routing?.rules.first, rule.destination == .space(.mostRecent) else { note("row destination stored"); return }
             check.report("rule_clean", rule.conditions.first?.text == "example.com")
             check.report("row_destination", true)
             step(9)
             check.watchAirTrafficMenu(title: "Most Recent Space")
-            if !press(.popUpButton, "Default destination") {
+            let pressed = press(.popUpButton, "Default destination")
+            check.traceAirTrafficMenu("default popup press", values: ["pressed": pressed])
+            if !pressed {
                 check.stopWatchingAirTrafficMenu()
                 step(8)
             }

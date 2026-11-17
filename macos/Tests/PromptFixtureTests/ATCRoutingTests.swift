@@ -28,7 +28,44 @@ private final class ATCMenuTarget: NSObject {
 }
 
 @Test @MainActor
-func settingsATCMenuActsOnceDuringTrackingForBothDestinations() {
+func settingsATCMenuTraceCoversTrackingAndObserverDecisionsOnlyInDiagnosticPhases() throws {
+    let check = SettingsScreenCheck()
+    check.startAirTrafficMenuTrace()
+    check.startAirTrafficMenuTrace()
+    let menu = NSMenu(title: "Default destination")
+    menu.autoenablesItems = false
+    let selected = menu.addItem(withTitle: "Little Window", action: nil, keyEquivalent: "")
+    selected.state = .on
+    let disabled = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    disabled.isEnabled = false
+    disabled.isHidden = true
+    for phase in [7, 8, 9, 10, 11] {
+        check.phase = phase
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    }
+    var entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+    #expect(entries.compactMap { $0["phase"] as? Int } == [8, 9, 10])
+    let items = try #require(entries[0]["items"] as? [[String: Any]])
+    #expect(items[0]["title"] as? String == "Little Window")
+    #expect(items[0]["selected"] as? Bool == true)
+    #expect(items[1]["enabled"] as? Bool == false)
+    #expect(items[1]["hidden"] as? Bool == true)
+    check.phase = 9
+    check.watchAirTrafficMenu(title: disabled.title)
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+    NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+    #expect(check.airTrafficMenuObserver != nil)
+    entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+    let decisions = entries.filter { $0["event"] as? String == "observer not matched" }
+    #expect(decisions.compactMap { $0["reason"] as? String } == [
+        "no exact title", "exact title exists but is disabled, hidden, or a separator"
+    ])
+    #expect(JSONSerialization.isValidJSONObject(check.details))
+    check.stopWatchingAirTrafficMenu()
+}
+
+@Test @MainActor
+func settingsATCMenuActsOnceDuringTrackingForBothDestinations() throws {
     _ = NSApplication.shared
     for phase in [7, 9] {
         let check = SettingsScreenCheck()
@@ -52,6 +89,13 @@ func settingsATCMenuActsOnceDuringTrackingForBothDestinations() {
         #expect(target.calls == 1)
         #expect(check.phase == phase + 1)
         #expect(check.conditions["row_destination"] == nil && check.conditions["default_stored"] == nil)
+        if phase == 9 {
+            let entries = try #require(check.details["atc_menu_trace"] as? [[String: Any]])
+            #expect(entries.compactMap { $0["event"] as? String } == [
+                "observer not matched", "observer matched", "perform action", "action returned"
+            ])
+            #expect(entries.last?["selected_index"] as? Int == 0)
+        }
     }
 }
 
