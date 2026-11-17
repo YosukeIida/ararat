@@ -692,9 +692,9 @@ func onlySuccessfulSameSpaceTodayDragShowsRenameHint() throws {
 }
 
 @MainActor
-private func dropPinBeforeSelection() throws -> (SidebarView, WorkspaceSnapshot) {
+private func dropPinBeforeSelection(staleSelection: String? = nil) throws -> (SidebarView, WorkspaceSnapshot) {
     _ = NSApplication.shared
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil, spaces: [dragFixture(), dragSpace("other")]))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: staleSelection, spaces: [dragFixture(), dragSpace("other")]))
     sidebar.frame = CGRect(x: 0, y: 0, width: 240, height: 700)
     sidebar.layoutSubtreeIfNeeded()
     sidebar.layoutSubtreeIfNeeded()
@@ -702,13 +702,13 @@ private func dropPinBeforeSelection() throws -> (SidebarView, WorkspaceSnapshot)
     sidebar.renameHintClock = { 100 }
     let row = try startDrag(sidebar, id: "a")
     let geometry = try #require(sidebar.dragGeometry())
-    let dropped = WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: nil,
-        spaces: [dragSpace(pinned: [dragRow("a", "ps")], today: [dragRow("b", "ts")]), dragSpace("other")])
+    let dropped = WorkspaceSnapshot(archive: [], shownSpaceId: "s", selectedId: staleSelection,
+        spaces: [dragSpace(pinned: [dragRow("a", "ps")], today: [dragRow("b", "ts"), dragRow("c", "ts", 1)]), dragSpace("other")])
     sidebar.onMove = { _, _, _, _, done in done(dropped) }
     let point = CGPoint(x: 30, y: geometry.rows[0].frame.minY)
     row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
     row.mouseUp(with: try dragEvent(.leftMouseUp, sidebar: sidebar, position: point))
-    #expect(sidebar.selectedRowID == nil)
+    #expect(sidebar.selectedRowID == staleSelection)
     #expect(!sidebar.organizeCheckHint(id: "a"))
     #expect(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "a" }?.pinned == true)
     return (sidebar, dropped)
@@ -730,11 +730,23 @@ func pinHintWaitsForTheSelectionSnapshot(replace: Bool) throws {
     #expect(!sidebar.organizeCheckHint(id: "a"))
 }
 
-@Test @MainActor
-func pinHintIsDiscardedWhenAnotherRowIsSelectedFirst() throws {
-    let (sidebar, dropped) = try dropPinBeforeSelection()
+@Test(arguments: [false, true]) @MainActor
+func pinHintWaitsPastAStaleNonNilSelection(replace: Bool) throws {
+    let (sidebar, dropped) = try dropPinBeforeSelection(staleSelection: "b")
+    sidebar.update(snapshot: dropped)
+    #expect(!sidebar.organizeCheckHint(id: "a"))
     var selected = dropped
-    selected.selectedId = "b"
+    selected.selectedId = "a"
+    if replace { sidebar.update(snapshot: selected) }
+    else { sidebar.applySelection(snapshot: selected) }
+    #expect(sidebar.organizeCheckHint(id: "a"))
+}
+
+@Test(arguments: [nil, "b"] as [String?]) @MainActor
+func pinHintIsDiscardedWhenAnotherRowIsSelectedFirst(staleSelection: String?) throws {
+    let (sidebar, dropped) = try dropPinBeforeSelection(staleSelection: staleSelection)
+    var selected = dropped
+    selected.selectedId = staleSelection == nil ? "b" : "c"
     sidebar.applySelection(snapshot: selected)
     #expect(!sidebar.organizeCheckHint(id: "a"))
     selected.selectedId = "a"

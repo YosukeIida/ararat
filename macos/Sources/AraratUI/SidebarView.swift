@@ -202,7 +202,7 @@ public final class SidebarView: NSView {
     private let listScroll = SidebarScrollView()
     private let rows = NSStackView()
     private var hintSpaceID: String?
-    private var pendingPinHintID: String?
+    private var pendingPinHint: (id: String, staleSelection: String?)?
     var renameHintClock: () -> CFTimeInterval = CACurrentMediaTime
     private var rowViews: [String: SidebarRowView] = [:]
     private var noTabsRows: [String: SidebarNoTabsRow] = [:]
@@ -1538,7 +1538,7 @@ public final class SidebarView: NSView {
         let space = snapshotSpace
         if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
         if space?.id != hintSpaceID {
-            pendingPinHintID = nil
+            pendingPinHint = nil
             rowViews.values.forEach { $0.hideRenameHint("space-change") }
             hintSpaceID = space?.id
         }
@@ -3143,19 +3143,22 @@ extension SidebarView: NSMenuDelegate {
             FileHandle.standardError.write(Data("ararat-trace: pin-hint arm id=\(id) space=\(space ?? "nil") shown=\(shown) pinned=\(rowViews[id]?.pinned ?? false) selected=\(selectedID == id) selectedID=\(selectedID ?? "nil") store_selected=\(snapshot.selectedId ?? "nil") rename=\(renamingID ?? "nil")\n".utf8))
         }
         guard shown else { return }
-        pendingPinHintID = id
+        pendingPinHint = (id, selectedID)
         showPendingPinHint()
     }
 
     private func showPendingPinHint() {
-        guard let id = pendingPinHintID else { return }
-        guard let row = rowViews[id], row.pinned, row.row.kind == .tab, renamingID == nil else {
-            pendingPinHintID = nil
+        guard let pending = pendingPinHint else { return }
+        guard let row = rowViews[pending.id], row.pinned, row.row.kind == .tab, renamingID == nil else {
+            pendingPinHint = nil
             return
         }
-        guard let selectedID else { return }
-        pendingPinHintID = nil
-        if selectedID == id { row.showRenameHint() }
+        if selectedID == pending.id {
+            pendingPinHint = nil
+            row.showRenameHint()
+        } else if selectedID != pending.staleSelection {
+            pendingPinHint = nil
+        }
     }
 
     private func menuMove(_ id: String, container: String, index: Int) {
@@ -3245,7 +3248,7 @@ extension SidebarView: NSMenuDelegate {
     }
 
     func beginRename(id: String) {
-        pendingPinHintID = nil
+        pendingPinHint = nil
         if let old = renamingID, old != id {
             rowViews[old]?.finishRename(commit: true)
             favoriteTiles[old]?.renameField?.finish(commit: true)
