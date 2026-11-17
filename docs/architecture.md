@@ -37,7 +37,7 @@ Constraints, set by the owner:
 | Core | Rust crate `ararat-core`, SQLite storage, UniFFI bindings for Swift, a C ABI for C++ | Same core on macOS, Windows, Linux and iPhone | 6 |
 | macOS UI | AppKit for everything that moves; SwiftUI for settings and onboarding | Cra measured 1900 → 440 ms main-thread time on a space swipe after moving from SwiftUI to AppKit (Cra ledger 12) | 7 |
 | Sync | End-to-end encrypted, account-free; our server is a blind relay of authenticated, append-only blobs; devices join with a recovery phrase or a PAKE-authenticated pairing code | "Own server, no login"; works where no Chromium sync engine or shared folder exists (iPhone, Windows) | 8 |
-| Process | Scope (Opus 5.5) → parallel implementation seats (Codex `gpt-6.1-terra`, high, personal account; GLM-5.3-Flash on OpenCode Go, free model when Go is out) → review (Opus 5.5); owner's choice, 2026-11-08; hard edge-case bugs start from Codex | Owner's rule (`AGENTS.md`) | 13 |
+| Process | Scope (Opus 5.5) → parallel implementation seats (Codex `gpt-6.2-sol`, medium, personal account; GLM-5.3-Flash on OpenCode Go, free model when Go is out) → review (Opus 5.5); Codex model and effort updated 2026-11-18. Hard edge-case bugs start from Codex | Owner's rule (`AGENTS.md`) | 13 |
 
 ## 3. Layers and repository layout
 
@@ -458,7 +458,7 @@ A small Rust service: blob put/get/list per group, device-key verification, rate
 
 ## 13. Development process
 
-Each unit of work: Opus 5.5 sets the scope → two implementation seats run in parallel, Codex `gpt-6.1-terra` (effort high, personal account) and GLM-5.3-Flash on OpenCode Go (free model when Go is out) → Opus 5.5 reviews and decides fix or no fix per finding. The owner chose the personal account on 2026-11-08; ararat does not use labteam. Hard edge-case bugs run the other way round (Codex investigates, Opus gives a second opinion, Codex implements, Opus reviews). Measurement and design-stage work need no review unless the owner asks. Tasks run on orca-agent-team or herdr-agent-team seats (`AGENTS.md`). Reviews and judgements are kept in `docs/reviews/`.
+Each unit of work: Opus 5.5 sets the scope → two implementation seats run in parallel, Codex `gpt-6.2-sol` (effort medium, personal account) and GLM-5.3-Flash on OpenCode Go (free model when Go is out) → Opus 5.5 reviews and decides fix or no fix per finding. The owner chose the personal account on 2026-11-08; ararat does not use labteam. Hard edge-case bugs run the other way round (Codex investigates, Opus gives a second opinion, Codex implements, Opus reviews). Measurement and design-stage work need no review unless the owner asks. Tasks run on orca-agent-team or herdr-agent-team seats (`AGENTS.md`). Reviews and judgements are kept in `docs/reviews/`.
 
 ## 14. Open decisions for the owner
 

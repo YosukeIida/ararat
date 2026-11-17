@@ -28,7 +28,7 @@ repo の中のファイル（README、AGENTS.md、`docs/` の下すべて、コ�
 
 - Ardia（`mantrakp04/ardia`、GPL-3.0）: Chromium の fork と自前の層。この repo も GPL-3.0 なので、コードを流用してよい。流用したファイルには出典を残す
 - Cra（`VictorKildahl/cra`、MIT）: Swift + CEF。UI の実装の参考
-- Yab（`yetanotherbrowser/yab`、2026-11-14 から Apache-2.0。clone は `~/workspace/github.com/yetanotherbrowser/yab`）: Swift。既定は WebKit で、Chromium は helper のプロセスの CEF で動かす（`docs/chromium-*.md`）。同じものを両方が作っているときは、2 つの実装を突き合わせて質の良い方を取り込む。動きの値はこれまでどおり Arc の計測に従う。Apache-2.0 のコードは GPL-3.0 のこの repo に流用してよい。流用したファイルには Yab の著作権表示とライセンスと変更点を残し、Yab の NOTICE をこの repo の notice に引き継ぐ。名前・ロゴ・アプリのアイコンは商標で、同梱の Central Icon System のアイコンは別のライセンスなので、写さない
+- Yab（`yetanotherbrowser/yab`、2026-11-14 から Apache-2.0。clone は `~/workspace/github.com/yetanotherbrowser/yab`）: Swift。既定は WebKit で、Chromium は helper のプロセスの CEF で動かす（`docs/chromium-*.md`）。同じものを両方が作っているときは、2 つの実装を突き合わせて質の良い方を取り込む。動きの値はこれまでどおり Arc の計測に従う。Arc の実測がない項目は Cra と Yab の値を比較し、採用する値とその理由を設計資料に記録する。Apache-2.0 のコードは GPL-3.0 のこの repo に流用してよい。流用したファイルには Yab の著作権表示とライセンスと変更点を残し、Yab の NOTICE をこの repo の notice に引き継ぐ。名前・ロゴ・アプリのアイコンは商標で、同梱の Central Icon System のアイコンは別のライセンスなので、写さない
 - Arc・Dia: 非公開。公開されている解析結果と、規約が許す範囲の静的な解析だけを使う。コードや素材は写さない
 - 調査の記録は `docs/research/`
 - REA（`morluto/rea`）で解析するときは、npm の配布物（`npx rea-agents`）ではなく、repo を clone して使う。node は devshell に閉じる
