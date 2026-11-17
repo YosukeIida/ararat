@@ -7937,6 +7937,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let state = host.checkProfileCloseState()
       guard state["dialogs"] as? Int == 2, state["closing"] as? Bool == false, multipleCloseChildValid(),
             let pages = state["dialog_pages"] as? [[String: Any]], pages.count == 2 else { return }
+      guard let adapter, let selected = snapshot.selectedId,
+            ProfileCloseCheck.restorationReady(selected: selected, active: host.activeItemId(),
+              request: adapter.checkInFlightSelection(item: selected)) else { return }
       guard let rows = captureCheckRows(), let original = multiCloseOriginal,
             rows.filter({ !["window", "last_selected"].contains($0.first ?? "") }) == original.filter({ !["window", "last_selected"].contains($0.first ?? "") }),
             multipleClosePagesValid(pages, defaultCount: 2, namedCount: 0),
@@ -8870,6 +8873,22 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     Launcher.startupWatchdog?.cancel()
     Launcher.browserCheckFinished = true
     var result = values
+    if !ok, browserCheckMode == "profiles", [503, 504].contains(browserCheckPhase),
+       CommandLine.arguments.contains("--ararat-multiple-close-check"), let host {
+      let state = host.checkProfileCloseState()
+      let pages = state["dialog_pages"] as? [[String: Any]] ?? []
+      let request = snapshot.selectedId.flatMap { adapter?.checkInFlightSelection(item: $0) }
+      result.merge([
+        "rows_before": multiCloseOriginal as Any? ?? NSNull(),
+        "rows_after": captureCheckRows() as Any? ?? NSNull(),
+        "selectedId": snapshot.selectedId as Any? ?? NSNull(),
+        "activeItemId": host.activeItemId() as Any? ?? NSNull(),
+        "close_state": state,
+        "child_unchanged": multipleCloseChildValid(),
+        "dialog_pages_valid": multipleClosePagesValid(pages, defaultCount: browserCheckPhase == 503 ? 1 : 2, namedCount: 0),
+        "selection_request": request.map { ["command": $0.command as Any? ?? NSNull(), "resolved": $0.resolved, "activated": $0.activated] } as Any? ?? NSNull()
+      ]) { _, new in new }
+    }
     if ["ext-popup", "ext-windows-popup"].contains(browserCheckMode ?? "") {
       result["windows_hidden"] = popupWindowsHidden && !NSApp.windows.contains { $0.isVisible || $0.isKeyWindow }
       result["front_before"] = popupFrontBefore ?? ""
@@ -9039,6 +9058,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       Launcher.teardownFailure = true
       FileHandle.standardError.write(Data("ararat-teardown: result serialization failed\n".utf8))
     }
+    // Why not AttemptExit on a failed check: armed fixtures can cancel quit after the result.
+    if !ok, CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") }) { exit(1) }
     if let symbol = dlsym(Launcher.handle, "AraratFinishSliceCheck") {
       if traceTeardown { FileHandle.standardError.write(Data("ararat-teardown: finish symbol found; calling\n".utf8)) }
       unsafeBitCast(symbol, to: (@convention(c) (Bool) -> Void).self)(ok)
