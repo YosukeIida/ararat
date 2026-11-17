@@ -5,6 +5,56 @@ import ObjectiveC.runtime
 import Testing
 @testable import Ararat
 
+@Test @MainActor
+func settingsATCMenuLookupRequiresAnExactVisibleEnabledItem() {
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    menu.addItem(withTitle: "Most Recent Space extra", action: nil, keyEquivalent: "")
+    let hidden = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    hidden.isHidden = true
+    let disabled = menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    disabled.isEnabled = false
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Most Recent Space") == nil)
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Most Recent Space", action: nil, keyEquivalent: "")
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Most Recent Space") == 4)
+    #expect(SettingsATCInput.menuItemIndex(in: menu, title: "Missing") == nil)
+}
+
+@MainActor
+private final class ATCMenuTarget: NSObject {
+    var calls = 0
+    @objc func selectDestination(_ sender: NSMenuItem) { calls += 1 }
+}
+
+@Test @MainActor
+func settingsATCMenuActsOnceDuringTrackingForBothDestinations() {
+    _ = NSApplication.shared
+    for phase in [7, 9] {
+        let check = SettingsScreenCheck()
+        check.phase = phase
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let target = ATCMenuTarget()
+        let item = menu.addItem(withTitle: "Most Recent Space", action: #selector(ATCMenuTarget.selectDestination(_:)), keyEquivalent: "")
+        item.target = target
+        check.watchAirTrafficMenu(title: item.title)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+        #expect(check.airTrafficMenuObserver != nil)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        #expect(check.airTrafficMenuObserver == nil)
+        #expect(check.phase == phase && target.calls == 0)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        let deadline = Date(timeIntervalSinceNow: 1)
+        while check.phase == phase && Date() < deadline {
+            RunLoop.main.run(mode: .eventTracking, before: deadline)
+        }
+        #expect(target.calls == 1)
+        #expect(check.phase == phase + 1)
+        #expect(check.conditions["row_destination"] == nil && check.conditions["default_stored"] == nil)
+    }
+}
+
 @Test
 func settingsATCKeysKeepTheirPhysicalKeyAndUnicodeTextWithoutPosting() throws {
     let eisu = try #require(SettingsATCInput.events(code: 102, text: "\u{10}"))

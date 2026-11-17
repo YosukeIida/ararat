@@ -6,6 +6,11 @@ enum SettingsATCInput {
     static let conditions = ["post_permission", "new_route", "draft_not_stored", "rule_clean",
                              "row_destination", "default_stored", "default_routes", "command_bar_ime"]
 
+    @MainActor
+    static func menuItemIndex(in menu: NSMenu, title: String) -> Int? {
+        menu.items.firstIndex { $0.title == title && $0.isEnabled && !$0.isHidden && !$0.isSeparatorItem }
+    }
+
     static func events(code: CGKeyCode, text: String? = nil) -> [CGEvent]? {
         guard let source = CGEventSource(stateID: .hidSystemState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
@@ -21,22 +26,52 @@ enum SettingsATCInput {
     }
 }
 
+extension SettingsScreenCheck {
+    func watchAirTrafficMenu(title: String) {
+        stopWatchingAirTrafficMenu()
+        let waitingPhase = phase
+        airTrafficMenuObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let menu = notification.object as? NSMenu else { return }
+            MainActor.assumeIsolated {
+                guard let self, self.phase == waitingPhase,
+                      let index = SettingsATCInput.menuItemIndex(in: menu, title: title) else { return }
+                self.stopWatchingAirTrafficMenu()
+                // Why not act in the notification: tracking has not entered its run loop yet.
+                RunLoop.main.perform(inModes: [.eventTracking]) { [weak self, weak menu] in
+                    MainActor.assumeIsolated {
+                        guard let self, let menu, self.phase == waitingPhase else { return }
+                        menu.performActionForItem(at: index)
+                        menu.cancelTracking()
+                        self.phase = waitingPhase + 1
+                    }
+                }
+            }
+        }
+    }
+
+    func stopWatchingAirTrafficMenu() {
+        if let airTrafficMenuObserver {
+            NotificationCenter.default.removeObserver(airTrafficMenuObserver)
+            self.airTrafficMenuObserver = nil
+        }
+    }
+}
+
 extension Runtime {
     func settingsAirTrafficTick(_ probe: SettingsCheckProbe, check: SettingsScreenCheck,
                                note: (String) -> Void, step: (Int) -> Void, end: (String, Bool) -> Void,
                                finish: () -> Void, capture: (String) -> Bool) {
         guard let session = adapter?.session, let settings = (root ?? self).settings,
               let window = settings.window else { return }
-        // Why not a fresh probe each tick: menu tracking begins after the posted click returns.
-        if check.airTrafficProbe == nil { check.airTrafficProbe = probe }
-        guard let probe = check.airTrafficProbe else { return }
         func post(_ code: CGKeyCode, _ text: String? = nil) -> Bool {
             guard let events = SettingsATCInput.events(code: code, text: text) else { return false }
             for event in events { event.post(tap: .cghidEventTap) }
             return true
         }
         func press(_ role: NSAccessibility.Role, _ label: String) -> Bool {
-            check.details["atc_control_input"] = "window-server clicks at NSView markers; native menu item AXPress"
+            check.details["atc_control_input"] = "window-server clicks at NSView markers; NSMenu action during tracking"
             let pressed = probe.pressAirTrafficElement(role: role, label: label)
             if !pressed {
                 check.details["atc_ax_tree"] = probe.airTrafficAccessibilityTree
@@ -78,19 +113,25 @@ extension Runtime {
                 note("Return commits the URL"); return
             }
             step(7)
-            if !press(.popUpButton, "Route 1 destination") { step(6) }
+            check.watchAirTrafficMenu(title: "Most Recent Space")
+            if !press(.popUpButton, "Route 1 destination") {
+                check.stopWatchingAirTrafficMenu()
+                step(6)
+            }
         case 7:
-            guard press(.menuItem, "Most Recent Space") else { return }
-            step(8)
+            note("row destination menu action")
         case 8:
             guard let rule = routing?.rules.first, rule.destination == .space(.mostRecent) else { note("row destination stored"); return }
             check.report("rule_clean", rule.conditions.first?.text == "example.com")
             check.report("row_destination", true)
             step(9)
-            if !press(.popUpButton, "Default destination") { step(8) }
+            check.watchAirTrafficMenu(title: "Most Recent Space")
+            if !press(.popUpButton, "Default destination") {
+                check.stopWatchingAirTrafficMenu()
+                step(8)
+            }
         case 9:
-            guard press(.menuItem, "Most Recent Space") else { return }
-            step(10)
+            note("default destination menu action")
         case 10:
             guard routing?.default == .space(.mostRecent) else { note("default destination stored"); return }
             check.report("default_stored", true)

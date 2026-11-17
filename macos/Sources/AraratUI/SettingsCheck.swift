@@ -17,17 +17,12 @@ public struct SettingsRailPaneInfo: Sendable {
 public final class SettingsCheckProbe: NSObject {
     private let controller: SettingsWindowController
     private let window: NSWindow
-    private var airTrafficMenu: NSMenu?
 
     init(controller: SettingsWindowController, window: NSWindow) {
         self.controller = controller
         self.window = window
         super.init()
-        NotificationCenter.default.addObserver(self, selector: #selector(airTrafficMenuOpened(_:)),
-            name: NSMenu.didBeginTrackingNotification, object: nil)
     }
-
-    deinit { NotificationCenter.default.removeObserver(self) }
 
     public var model: SettingsModel { controller.model }
     public var windowFrame: NSRect { window.frame }
@@ -74,20 +69,6 @@ public final class SettingsCheckProbe: NSObject {
     }
 
     public func pressAirTrafficElement(role: NSAccessibility.Role, label: String) -> Bool {
-        func find(_ element: any NSAccessibilityProtocol, depth: Int) -> (any NSAccessibilityProtocol)? {
-            guard depth < 20 else { return nil }
-            if element.accessibilityRole() == role,
-               element.accessibilityLabel() == label || element.accessibilityTitle() == label {
-                return element
-            }
-            for child in NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? []).compactMap({ $0 as? any NSAccessibilityProtocol }) {
-                if let found = find(child, depth: depth + 1) { return found }
-            }
-            return nil
-        }
-        if role == .menuItem, let airTrafficMenu {
-            return find(airTrafficMenu, depth: 0)?.accessibilityPerformPress() ?? false
-        }
         let markerID: String
         switch (role, label) {
         case (.button, "New Route"): markerID = "atc-new-route"
@@ -103,7 +84,6 @@ public final class SettingsCheckProbe: NSObject {
         let location = CGPoint(x: screenPoint.x, y: (NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY) - screenPoint.y)
         guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: location, mouseButton: .left),
               let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: location, mouseButton: .left) else { return false }
-        airTrafficMenu = nil
         down.setIntegerValueField(.mouseEventClickState, value: 1)
         up.setIntegerValueField(.mouseEventClickState, value: 1)
         down.post(tap: .cghidEventTap)
@@ -111,9 +91,6 @@ public final class SettingsCheckProbe: NSObject {
         return true
     }
 
-    @objc private func airTrafficMenuOpened(_ notification: Notification) {
-        airTrafficMenu = notification.object as? NSMenu
-    }
     public var canGoBack: Bool { model.historyIndex > 0 }
     public var spaceIDs: [String] { model.snapshot.spaces.map(\.id) }
     public func searchKey(_ key: SettingsSearchKey) -> Bool { model.handleSearchKey(key) }
