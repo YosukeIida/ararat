@@ -1,15 +1,18 @@
 --- a/chrome/browser/chrome_browser_application_mac.mm
 +++ b/chrome/browser/chrome_browser_application_mac.mm
-@@ -363,8 +363,11 @@
-         &self->_observers, event);
- 
+@@ -365,6 +365,15 @@
      BOOL sendEventToKeyWindow = NO;
-+    // Why not import the view: its Cocoa implementation is private to content.
      if (event.type == NSEventTypeKeyDown &&
--        (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana)) {
-+        (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana) &&
-+        [NSApp.keyWindow.firstResponder
-+            isKindOfClass:NSClassFromString(@"RenderWidgetHostViewCocoa")]) {
+         (event.keyCode == kVK_JIS_Eisu || event.keyCode == kVK_JIS_Kana)) {
++      NSResponder* responder = NSApp.keyWindow.firstResponder;
++      // Why not import the view: its Cocoa implementation is private to content.
++      if (![responder
++              isKindOfClass:NSClassFromString(@"RenderWidgetHostViewCocoa")]) {
++        [responder.inputContext handleEvent:event];
++        // Why not forward unhandled keys: a US-only input source can insert C0.
++        return;
++      }
++
        // Mac Eisu and Kana keydown events are by default swallowed by sendEvent
        // and sent directly to IME, which prevents ui keydown events from firing.
        // These events need to be sent to [NSApp keyWindow] for handling.

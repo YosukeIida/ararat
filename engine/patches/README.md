@@ -78,7 +78,7 @@ is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
 
-`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery only for `RenderWidgetHostViewCocoa`; native field editors use the normal application input-method path.
+`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery only for `RenderWidgetHostViewCocoa`; for other first responders, it offers the keyDown to the responder’s input context and returns regardless of whether it handled the event. This preserves legitimate IME commits while preventing an unhandled key from reaching keyDown and inserting a raw control character, including with a US-only input source.
 
 `ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. Ardia (`mantrakp04/ardia`, GPL-3.0) has the same guard in `engine/ardiacore/apply.sh`. This patch was written independently against Chromium's source.
 

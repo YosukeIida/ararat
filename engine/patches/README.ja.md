@@ -67,7 +67,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 ## 独自パッチに関する注記
 
-`ararat/native-editor-ime.patch` は、英数・かなキーを key window へ直接配送する Chromium の処理を `RenderWidgetHostViewCocoa` に限定し、ネイティブの編集フィールドでは通常の application の経路で入力メソッドへ渡す。
+`ararat/native-editor-ime.patch` は、英数・かなキーを key window へ直接配送する Chromium の処理を `RenderWidgetHostViewCocoa` に限定し、それ以外の first responder では keyDown を responder の input context に渡し、処理されたかどうかにかかわらず戻る。これにより、IME の正当な確定処理を維持し、US 入力ソースだけの環境でも、未処理のキーが keyDown に到達して制御文字を挿入することを防ぐ。
 
 `ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。Ardia（`mantrakp04/ardia`、GPL-3.0）の `engine/ardiacore/apply.sh` にも同じガードがある。このパッチは Chromium のソースに対して独自に記述した。
 
