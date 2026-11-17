@@ -432,6 +432,95 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(row.actionButtons.map(\.title) == ["Pause", "Cancel"])
 }
 
+/// A popover whose anchor sits in a window (so `show(present: false)` prepares its rows) but is
+/// never ordered front.
+@MainActor private func preparedPopover(_ model: DownloadsModel) throws -> (DownloadsPopover, NSWindow) {
+    _ = NSApplication.shared
+    let screen = try #require(NSScreen.main)
+    let window = NSWindow(contentRect: NSRect(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY, width: 400, height: 400),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let anchor = DownloadsButton(frame: NSRect(x: 9, y: 9, width: 32, height: 32))
+    window.contentView?.addSubview(anchor)
+    let popover = DownloadsPopover(model: model, anchor: anchor)
+    popover.show(present: false)
+    _ = popover.checkMetrics
+    return (popover, window)
+}
+
+private func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(labels) }
+
+@Test @MainActor func downloadRowActionsSitAtTheTrailingEdgeAtTheBarButtonSize() throws {
+    let model = DownloadsModel()
+    var item = download("a", actions: ["show", "open", "remove"])
+    item["status"] = "1.0/2.0 MB, 9 minutes left"
+    model.update([item])
+    let (popover, window) = try preparedPopover(model)
+    defer { popover.close(); window.contentView = nil }
+    let row = try #require(popover.rows["a"])
+    #expect(row.actionButtons.map(\.title) == ["Show in Finder", "Open", "Remove"])
+    for (index, button) in row.actionButtons.enumerated() {
+        #expect(abs(button.frame.width - DownloadRowMetrics.actionSize) < 0.01)
+        #expect(abs(button.frame.height - DownloadRowMetrics.actionSize) < 0.01)
+        #expect(button.isBordered == false)
+        #expect(button.image != nil && button.toolTip == button.title)
+        #expect(abs(button.frame.midY - row.bounds.midY) <= 0.5)
+        #expect(button.frame.maxX <= row.bounds.maxX + 0.5)
+        if index + 1 < row.actionButtons.count {
+            #expect(abs(row.actionButtons[index + 1].frame.minX - button.frame.maxX - DownloadRowMetrics.gap) <= 0.5)
+        }
+    }
+    let last = try #require(row.actionButtons.last)
+    #expect(abs(last.frame.maxX - (row.bounds.maxX - DownloadRowMetrics.inset)) <= 0.5)
+    let name = try #require(labels(row).first { $0.stringValue == "a" })
+    #expect(abs(name.frame.minX - DownloadRowMetrics.textLeading) <= 0.5)
+    #expect(name.frame.maxX <= last.frame.minX + 0.5)
+    #expect(row.statusFits)
+}
+
+@Test @MainActor func downloadActionButtonFillsOnHover() throws {
+    let button = DownloadActionButton(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
+    func fill() -> CGFloat { button.layer?.backgroundColor.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? -1 }
+    #expect(button.fillAlpha == 0 && fill() == 0 && !button.isHovering)
+    let entered = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+    let exited = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+    button.mouseEntered(with: entered)
+    #expect(button.isHovering && button.fillAlpha == 0.08 && abs(fill() - 0.08) < 0.005)
+    button.mouseExited(with: exited)
+    #expect(!button.isHovering && button.fillAlpha == 0 && fill() == 0)
+}
+
+@Test @MainActor func popoverHeaderTextStartsAtTheRowsFileNameInset() throws {
+    let model = DownloadsModel()
+    model.update([download("a")])
+    let (popover, window) = try preparedPopover(model)
+    defer { popover.close(); window.contentView = nil }
+    let metrics = popover.checkMetrics
+    #expect(popover.library.title == "Open Library")
+    #expect(popover.clear.title == "Clear All")
+    #expect(popover.library.titleInset == DownloadRowMetrics.textLeading)
+    #expect(popover.clear.titleInset == DownloadRowMetrics.textLeading)
+    #expect((metrics["library_title_inset"] as? CGFloat) == DownloadRowMetrics.textLeading)
+    #expect(metrics["library_fills"] as? Bool == true)
+    let row = try #require(popover.rows["a"])
+    let name = try #require(labels(row).first { $0.stringValue == "a" })
+    #expect(abs(name.frame.minX - DownloadRowMetrics.textLeading) <= 0.5)
+}
+
+@Test @MainActor func popoverTakesTheAnchorTooltipWhileOpenAndPutsItBack() {
+    let anchor = NSView()
+    anchor.toolTip = "Library"
+    let popover = DownloadsPopover(model: DownloadsModel(), anchor: anchor)
+    popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
+    #expect(anchor.toolTip == nil)
+    // A second show while it is open must not lose the tooltip it took away.
+    popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
+    popover.popoverDidClose(Notification(name: NSPopover.didCloseNotification))
+    #expect(anchor.toolTip == "Library")
+    // A close for a popover that never showed leaves the anchor alone.
+    popover.popoverDidClose(Notification(name: NSPopover.didCloseNotification))
+    #expect(anchor.toolTip == "Library")
+}
+
 @Test @MainActor func downloadDragProviderWritesOnlyAnExistingCompletedFileURL() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + " download.txt")
     try Data("download".utf8).write(to: url)
