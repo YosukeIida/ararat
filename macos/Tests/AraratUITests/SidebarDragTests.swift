@@ -714,7 +714,7 @@ private func dropPinBeforeSelection(staleSelection: String? = nil) throws -> (Si
     return (sidebar, dropped)
 }
 
-@Test(arguments: ["move", "firstFavorite", "openFolder", "edit"]) @MainActor
+@Test(arguments: ["move", "moveIfLive", "firstFavorite", "openFolder", "edit"]) @MainActor
 func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -744,7 +744,7 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
     actions.configureEditing(adapter: adapter, isActive: { true }, window: { window }, show: { snapshot in
         shown.append(snapshot.selectedId)
         sidebar.update(snapshot: snapshot)
-        if route == "move" { replies.continuation.yield(snapshot) }
+        if route == "move" || route == "moveIfLive" { replies.continuation.yield(snapshot) }
     }, record: { recorded.append($0.selectedId) })
     actions.bind(to: sidebar)
     let receive: (WorkspaceSnapshot?) -> Void = { snapshot in
@@ -754,6 +754,20 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
         } else { Issue.record("edit unexpectedly failed"); replies.continuation.finish() }
     }
     switch route {
+    case "moveIfLive":
+        let live = try session.queue.sync { try session.store!.liveOpen(item: id, url: "about:blank") }
+        sidebar.onMove = { item, container, index, openFolder, completion in
+            adapter.moveIfLive(id: item, container: container, index: index, openFolder: openFolder, expectedLive: live.id) { result in
+                guard case .success(let snapshot?) = result else { Issue.record("live move unexpectedly failed"); replies.continuation.finish(); return }
+                recorded.append(snapshot.selectedId)
+                completion(snapshot)
+                shown.append(snapshot.selectedId)
+                sidebar.update(snapshot: snapshot)
+                replies.continuation.yield(snapshot)
+            }
+        }
+        #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
+        #expect(sidebar.organizeCheckEnd())
     case "move":
         #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
         #expect(sidebar.organizeCheckEnd())
@@ -774,7 +788,7 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
     #expect(recorded == [id])
     #expect(shown == (route == "openFolder" ? [] : [id]))
     #expect(sidebar.selectedRowID == id)
-    if route == "move" {
+    if route == "move" || route == "moveIfLive" {
         #expect(sidebar.organizeCheckHint(id: id))
         #expect(delivered.spaces.first { $0.id == space.id }?.pinned.contains { $0.id == id } == true)
     }

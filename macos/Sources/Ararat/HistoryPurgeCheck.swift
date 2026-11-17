@@ -80,7 +80,7 @@ final class HistoryPurgeCheck {
     guard let runtime, let workspace = runtime.workspace else { fail("workspace missing"); return }
     workspace.select(id: pinned) { result in
       guard case .success = result else { self.fail("pinned selection failed"); return }
-      runtime.showAndSelect(result, selectedItem: self.pinned)
+      runtime.showAndSelect(result)
     }
   }
 
@@ -145,8 +145,8 @@ final class HistoryPurgeCheck {
                   let workspace = runtime.workspace else { self.fail("stale purge removed new file"); return }
             self.phase = 100
             workspace.createTab(url: "data:text/html,<title>history-pinned-a</title>") { result in
-              guard case .success(let snapshot) = result, let id = snapshot.selectedId else { self.fail("pinned fixture failed"); return }
-              self.pinned = id; self.phase = 6; runtime.showAndSelect(result)
+              guard case .success(let created) = result, let id = created.id else { self.fail("pinned fixture failed"); return }
+              self.pinned = id; self.phase = 6; runtime.showAndSelect(result.map(\.snapshot))
             }
           }
         }
@@ -211,8 +211,8 @@ final class HistoryPurgeCheck {
         let replaced = state["generation_current"] as? Bool == true && (state["count"] as? Int ?? 0) > 0
         guard (removed || replaced), let workspace = runtime.workspace else { self.fail("corrupt file remained"); return }
         workspace.createTab(url: "data:text/html,<title>history-purge-failure</title>") { result in
-          guard case .success(let snapshot) = result, let id = snapshot.selectedId else { self.fail("failure fixture failed"); return }
-          self.failedItem = id; self.phase = 16; runtime.showAndSelect(result)
+          guard case .success(let created) = result, let id = created.id else { self.fail("failure fixture failed"); return }
+          self.failedItem = id; self.phase = 16; runtime.showAndSelect(result.map(\.snapshot))
         }
       }
     } else if phase == 16, runtime.sliceActive == failedItem,

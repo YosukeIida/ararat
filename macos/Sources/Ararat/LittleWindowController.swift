@@ -408,7 +408,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
                   let engine = origin.adapter else { fail(); return }
             engine.beginLittleWindowHandoff()
             adapter.createTab(url: url) { [weak self] result in
-                guard let self, case .success(let snapshot) = result, let row = snapshot.selectedId else {
+                guard let self, case .success(let created) = result, let row = created.id else {
                     engine.endLittleWindowHandoff()
                     fail()
                     return

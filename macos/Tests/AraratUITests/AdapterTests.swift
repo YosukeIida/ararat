@@ -33,6 +33,72 @@ func adapterRunsOffMainInOrderAndDeliversErrorsOnMain() async {
     }
 }
 
+@Test(arguments: ["select", "createTab"]) @MainActor
+func selectionRepliesKeepNewerSelectionAndCreatedTabIdentity(route: String) async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                          windowID: "organize", card: NSView(), seedOrganize: true, session: session)
+    let store = try #require(session.store)
+    let before = session.queue.sync { store.snapshot(windowId: "organize") }
+    let space = try #require(before.spaces.first { $0.id == "organize-work" })
+    let first = try #require(space.today.first?.id)
+    let newer = try #require(space.pinned.first { $0.kind == .tab }?.id)
+    _ = NSApplication.shared
+    let sidebar = SidebarView(snapshot: before)
+    let adapter = WorkspaceAdapter(windowID: "organize", session: session)
+    let replies = AsyncStream<WorkspaceAdapter.Change>.makeStream()
+    defer { replies.continuation.finish() }
+    let receive: WorkspaceAdapter.Completion<WorkspaceAdapter.Change> = { result in
+        guard case .success(let change) = result else { Issue.record("selection unexpectedly failed"); replies.continuation.finish(); return }
+        sidebar.applySelection(snapshot: change.snapshot)
+        replies.continuation.yield(change)
+    }
+    if route == "select" {
+        adapter.select(id: first) { result in receive(result.map { (first, $0) }) }
+    } else {
+        adapter.createTab(url: "https://created.example/", completion: receive)
+    }
+    let (operationID, selected) = try session.queue.sync {
+        let operationID = try #require(store.snapshot(windowId: "organize").selectedId)
+        return (operationID, try store.selectItem(windowId: "organize", id: newer))
+    }
+    sidebar.applySelection(snapshot: selected)
+    var iterator = replies.stream.makeAsyncIterator()
+    let delivered = try #require(await iterator.next())
+    #expect(delivered.id == operationID)
+    #expect(delivered.snapshot == selected)
+    #expect(sidebar.selectedRowID == newer)
+    if route == "createTab" {
+        #expect(operationID != newer)
+        #expect(delivered.snapshot.spaces.flatMap(\.today).contains { $0.id == operationID && $0.url == "https://created.example/" })
+    }
+}
+
+@Test @MainActor
+func refusedLiveMoveStaysNilAfterNewerSelection() async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                          windowID: "organize", card: NSView(), seedOrganize: true, session: session)
+    let store = try #require(session.store)
+    let before = session.queue.sync { store.snapshot(windowId: "organize") }
+    let space = try #require(before.spaces.first { $0.id == "organize-work" })
+    let id = try #require(space.today.first?.id)
+    let adapter = WorkspaceAdapter(windowID: "organize", session: session)
+    let replies = AsyncStream<Result<WorkspaceSnapshot?, Error>>.makeStream()
+    defer { replies.continuation.finish() }
+    adapter.moveIfLive(id: id, container: space.pinnedId, index: 0, openFolder: false, expectedLive: "stale") { replies.continuation.yield($0) }
+    let selected = try session.queue.sync { try store.selectItem(windowId: "organize", id: id) }
+    var iterator = replies.stream.makeAsyncIterator()
+    let delivered = try #require(await iterator.next())
+    #expect(try delivered.get() == nil)
+    #expect(session.queue.sync { store.snapshot(windowId: "organize") } == selected)
+    #expect(selected.spaces.first { $0.id == space.id }?.today.contains { $0.id == id } == true)
+}
+
 @Test @MainActor
 func missingAndMalformedWindowsKeepTheSidebarImportAvailable() async throws {
     let directory = try testTemporaryDirectory()

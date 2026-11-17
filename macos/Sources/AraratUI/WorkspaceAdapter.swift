@@ -49,6 +49,14 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }
     }
 
+    private func enqueueEdit(_ operation: @escaping @Sendable () throws -> WorkspaceSnapshot?, completion: @escaping Completion<WorkspaceSnapshot?>) {
+        enqueue(operation) { result in
+            completion(result.flatMap { snapshot in
+                Result { try snapshot.map { _ in try self.queue.sync { try self.opened().snapshot(windowId: self.windowID) } } }
+            })
+        }
+    }
+
     public func open(path: String, json: @escaping @Sendable () throws -> String, windowsJSON: @escaping @Sendable () -> String?, keyBindingsJSON: @escaping @Sendable () -> String?, linkRoutingJSON: @escaping @Sendable () -> String?, ownerProfile: Profile? = nil, onImport: @escaping @Sendable (ImportReport) -> Void = { _ in }, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueue({
             let opened = try WorkspaceStore.open(path: path)
@@ -174,7 +182,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func moveIfLive(id: String, container: String, index: Int, openFolder: Bool, expectedLive: String, completion: @escaping Completion<WorkspaceSnapshot?>) {
-        enqueue({
+        enqueueEdit({
             let store = try self.opened()
             guard store.liveTab(item: id) == expectedLive else { return nil }
             return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: openFolder)
@@ -186,7 +194,7 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     public func select(id: String, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().selectItem(windowId: self.windowID, id: id) }, completion: completion)
+        enqueueEdit({ try self.opened().selectItem(windowId: self.windowID, id: id) }, completion: completion)
     }
 
     public func createSpace(name: String, completion: @escaping Completion<WorkspaceSnapshot>) {
@@ -254,8 +262,15 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ try self.opened().recentTabs(windowId: self.windowID, limit: limit) }, completion: completion)
     }
 
-    public func createTab(url: String, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueue({ try self.opened().createTab(windowId: self.windowID, url: url) }, completion: completion)
+    public func createTab(url: String, completion: @escaping Completion<Change>) {
+        enqueue({ () throws -> Change in
+            let snapshot = try self.opened().createTab(windowId: self.windowID, url: url)
+            return (snapshot.selectedId, snapshot)
+        }) { result in
+            completion(result.flatMap { created in
+                Result { (created.id, try self.queue.sync { try self.opened().snapshot(windowId: self.windowID) }) }
+            })
+        }
     }
 
     public func setTabURL(id: String, url: String, completion: @escaping Completion<WorkspaceSnapshot>) {

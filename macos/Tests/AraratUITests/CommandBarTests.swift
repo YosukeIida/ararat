@@ -158,7 +158,7 @@ func switchingSpacesSelectsAnOpenRowInTheDestination() async throws {
     defer { try? FileManager.default.removeItem(at: directory) }
     let (_, adapter) = try await commitHarness(directory)
     try await commitValue { adapter.showSpace(id: "space-home", completion: $0) }
-    let initialHome = try await commitValue { adapter.createTab(url: "https://home.example", completion: $0) }
+    let initialHome = try await commitValue { adapter.createTab(url: "https://home.example", completion: $0) }.snapshot
     let expectedHomeID = try #require(initialHome.selectedId)
     let first = try await commitValue { adapter.showSpaceSelecting(id: "space-work", completion: $0) }
     let work = try #require(first.spaces.first { $0.id == "space-work" })

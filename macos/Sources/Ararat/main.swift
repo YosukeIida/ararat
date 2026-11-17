@@ -5422,7 +5422,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       // p4checks: a second archived row, so the Library's own delete button has one to remove.
       workspace?.createTab(url: "data:text/html,<title>keyboard delete row</title>") { [weak self] result in
         guard let self else { return }
-        guard case .success(let created) = result, let id = created.selectedId else { return }
+        guard case .success(let created) = result, let id = created.id else { return }
         self.keyboardLibraryDeleteItem = id
         self.adapter?.close(id: id, archive: true)
         self.adapter?.close(id: row.id, archive: true)
@@ -6165,7 +6165,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           browserCheckPhase = 645
           workspace.select(id: seed) { [weak self] result in
             guard let self, self.selectionGeneration == generation else { return }
-            self.showAndSelect(result, expectedSpace: "default", selectedItem: seed)
+            self.showAndSelect(result, expectedSpace: "default")
           }
         }
       }
@@ -6344,7 +6344,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 681
       workspace.select(id: seed) { [weak self] result in
         guard let self, self.selectionGeneration == generation else { return }
-        self.showAndSelect(result, expectedSpace: "default", selectedItem: seed)
+        self.showAndSelect(result, expectedSpace: "default")
       }
       return
     }

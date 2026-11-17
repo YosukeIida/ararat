@@ -689,7 +689,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 adapter.setTabURL(id: id, url: url) { [weak self] result in _ = self?.publish(result) }
             }
         } else {
-            adapter.createTab(url: url) { [weak self] result in _ = self?.publish(result) }
+            adapter.createTab(url: url) { [weak self] result in _ = self?.publish(result.map(\.snapshot)) }
         }
     }
 

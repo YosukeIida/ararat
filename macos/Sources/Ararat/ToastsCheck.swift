@@ -78,7 +78,7 @@ extension Runtime {
     func createFailure(next: Int) {
       browserCheckPhase = 100
       workspace.createTab(url: "data:text/html,<title>toast purge</title>") { result in
-        guard case .success(let snapshot) = result, let id = snapshot.selectedId else { fail("create purge fixture"); return }
+        guard case .success(let created) = result, let id = created.id else { fail("create purge fixture"); return }
         workspace.close(id: id) { result in
           guard case .success = result else { fail("close purge fixture"); return }
           session.queue.async {
@@ -91,7 +91,7 @@ extension Runtime {
                 case .default: check.failureProfile = "Default"
                 case .named(let name): check.failureProfile = name
                 }
-                check.failureProfileID = snapshot.spaces.first { $0.profile == purge.profile }?.profileKey ?? "unknown"
+                check.failureProfileID = created.snapshot.spaces.first { $0.profile == purge.profile }?.profileKey ?? "unknown"
               } else { check.secondID = purge.id }
               self.browserCheckPhase = next
             }
@@ -215,8 +215,8 @@ extension Runtime {
       workspace.createTab(url: "data:text/html,<title>undo one</title>") { result in
         guard case .success = result else { fail("create undo fixture"); return }
         workspace.createTab(url: "data:text/html,<title>undo two</title>") { result in
-          guard case .success(let snapshot) = result else { fail("create undo fixture"); return }
-          self.show(snapshot)
+          guard case .success(let created) = result else { fail("create undo fixture"); return }
+          self.show(created.snapshot)
           self.browserCheckPhase = 14
         }
       }
@@ -273,8 +273,8 @@ extension Runtime {
             container.checkToastState.visible else { wait("first replacement clear"); return }
       check.clearGeneration = container.checkToastState.generation
       workspace.createTab(url: "data:text/html,<title>second clear</title>") { result in
-        guard case .success(let snapshot) = result else { fail("create replacement fixture"); return }
-        self.show(snapshot)
+        guard case .success(let created) = result else { fail("create replacement fixture"); return }
+        self.show(created.snapshot)
         self.browserCheckPhase = 19
       }
       browserCheckPhase = 100

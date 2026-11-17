@@ -104,10 +104,10 @@ extension Runtime {
       trace("create pin fixture")
       browserCheckPhase = 11
       workspace.createTab(url: "http://127.0.0.1:\(port)/keyboard") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else { return }
+        guard let self, case .success(let next) = result, let id = next.id else { return }
         self.errorPageItem = id
-        self.show(next)
-        self.adapter?.select(id: id, url: "http://127.0.0.1:\(port)/keyboard")
+        self.show(next.snapshot)
+        if next.snapshot.selectedId == id { self.adapter?.select(id: id, url: "http://127.0.0.1:\(port)/keyboard") }
       }
     case 11:
       guard let tab, !tab.isLoading, tab.url.contains("/keyboard"), let id = errorPageItem,
@@ -146,10 +146,10 @@ extension Runtime {
       trace("create download-check seed")
       browserCheckPhase = 17
       workspace.createTab(url: "http://127.0.0.1:\(port)/keyboard") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else { return }
+        guard let self, case .success(let next) = result, let id = next.id else { return }
         self.errorPageItem = id
-        self.show(next)
-        self.adapter?.select(id: id, url: "http://127.0.0.1:\(port)/keyboard")
+        self.show(next.snapshot)
+        if next.snapshot.selectedId == id { self.adapter?.select(id: id, url: "http://127.0.0.1:\(port)/keyboard") }
       }
     case 17:
       guard host.hasBrowser(), let tab, !tab.isLoading, tab.url.contains("/keyboard") else { return }
