@@ -508,7 +508,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 deferredSelection = nil
                 tracePrivate("select coalesced item=\(id) pending_whole_split=\(request.wholeSplit) whole_split=\(wholeSplit) generation=\(request.generation) command=\(request.command ?? "nil") resolved=\(request.resolved) activated=\(request.activated)")
             } else {
-                deferredSelection = { [weak self] in self?.select(id: id, url: url, wholeSplit: wholeSplit, source: source, line: line) }
+                deferredSelection = { [weak self] in
+                    guard let self, self.queue.sync(execute: { self.store?.snapshot(windowId: self.windowID).shownSpaceId == space }) else { return }
+                    self.select(id: id, url: url, wholeSplit: wholeSplit, source: source, line: line)
+                }
             }
             return
         }

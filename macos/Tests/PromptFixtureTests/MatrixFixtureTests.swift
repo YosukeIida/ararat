@@ -107,8 +107,10 @@ private final class MatrixFakeHost: NSObject {
         if source.active == tab.itemId { source.active = source.entries.first?.itemId }
         tab.owner = self
         entries.append(tab)
-        if activate { active = tab.itemId }
-        activated.append(command)
+        if activate {
+            active = tab.itemId
+            activated.append(command)
+        }
         return true
     }
     @objc(prepareTransferProfile:) func prepareProfile(_ profile: String) { preparedProfiles.append(profile) }
@@ -540,6 +542,7 @@ func pendingLoneSelectionUsesTheLastRequestedSplitMode(wholeSplit: Bool) async t
         try await matrixWait { Set(b.splitFrames.keys) == ["close-split-a", "close-split-b"] }
         #expect(a.entries.isEmpty)
         #expect(target.checkSplitLayout().split)
+        #expect(b.activated.count == 2)
     } else {
         try await matrixWait { target.checkInFlightSelection(item: "close-split-a") == nil }
         #expect(b.activated.count == 1 && b.entries.count == 1)
@@ -547,6 +550,44 @@ func pendingLoneSelectionUsesTheLastRequestedSplitMode(wholeSplit: Bool) async t
         #expect(a.entries.map(\.itemId) == ["close-split-b"])
     }
     #expect(b.active == "close-split-a")
+}
+
+@Test @MainActor
+func deferredSplitSelectionDoesNotFollowASpaceChange() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "deferred-space", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    defer { engine.shutdown() }
+    let item = try session.queue.sync {
+        try #require(session.store?.snapshot(windowId: "deferred-space").spaces.first { $0.id == "default" }?.today.first?.id)
+    }
+    engine.select(id: item, url: "about:blank")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "deferred-space", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { engine.checkInFlightSelection(item: item) == nil }
+    var held: (() -> Void)?
+    engine.checkSelectionDispatch = { stage, _, resume in
+        if stage == "registered" { held = resume } else { resume() }
+    }
+    engine.select(id: item, url: "about:blank", wholeSplit: false)
+    try await matrixWait { held != nil }
+    engine.select(id: item, url: "about:blank", wholeSplit: true)
+    let generation = engine.checkSelectionState()["generation"] as? Int
+    try session.queue.sync { try #require(session.store).showSpace(windowId: "deferred-space", spaceId: "named") }
+    engine.checkSelectionDispatch = nil
+    let resume = try #require(held)
+    resume()
+    try await matrixWait {
+        engine.checkInFlightSelection(item: item) == nil &&
+            engine.checkSelectionState()["pending_commands"] as? [String] == []
+    }
+    #expect(engine.checkSelectionState()["generation"] as? Int == generation)
+    #expect(fake.activated.isEmpty && fake.opened.count == 1)
+    #expect(session.queue.sync { session.store?.snapshot(windowId: "deferred-space").shownSpaceId } == "named")
 }
 
 @Test @MainActor
