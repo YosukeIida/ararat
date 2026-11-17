@@ -54,8 +54,8 @@ final class SplitCommandsCheck {
     conditions[name] = value
     FileHandle.standardError.write(Data("ararat-trace: split-commands \(name)=\(value)\n".utf8))
   }
-  func wait(_ name: String, _ details: String) {
-    if name != waitName || waitCount % 20 == 0 { FileHandle.standardError.write(Data("ararat-trace: split-commands wait=\(name) \(details)\n".utf8)) }
+  func wait(_ name: String, _ details: String, everyTime: Bool = false) {
+    if everyTime || name != waitName || waitCount % 20 == 0 { FileHandle.standardError.write(Data("ararat-trace: split-commands wait=\(name) \(details)\n".utf8)) }
     if name != waitName { waitCount = 0; waitName = name }
     waitCount += 1
   }
@@ -85,11 +85,18 @@ extension Runtime {
     let state = adapter.checkSplitLayout()
     func details() -> String {
       let drag = sidebar.dragStateForCheck
+      var selection = ""
+      if (28...35).contains(browserCheckPhase) {
+        let source = browserCheckPhase <= 29 ? check.keyTab : browserCheckPhase <= 32 ? check.commandTab : check.menuTab
+        let members = splitHolding(source).map { adapter.checkSplitMembers($0) } ?? []
+        selection = " " + adapter.checkSplitSelectionTrace(items: [check.keyTab, source] + members)
+          + " shownSpace=\(snapshot.shownSpaceId ?? "nil") sidebarSpace=\(sidebar.spaceShown) source=\(source) newPane=\(members.last ?? "nil") focusedPane=\(sidebar.focusedPane?.id ?? "nil")"
+      }
       return "phase=\(browserCheckPhase) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") "
         + "panes=\(state.panes) members=\(check.split.isEmpty ? [] : adapter.checkSplitMembers(check.split)) "
         + "split=\(check.split) left=\(check.left.isEmpty ? "nil" : check.left) right=\(check.right.isEmpty ? "nil" : check.right) "
         + "added=\(check.added.isEmpty ? "nil" : check.added) addedLeft=\(check.addedLeft.isEmpty ? "nil" : check.addedLeft) "
-        + "drag=\(drag.active)/\(drag.settling)/\(drag.drop)"
+        + "drag=\(drag.active)/\(drag.settling)/\(drag.drop)" + selection
     }
     func fail(_ message: String) {
       var result = check.diagnostics(screen: screen); result["error"] = message
@@ -98,7 +105,7 @@ extension Runtime {
     // A bounded hold: true once the condition holds, false after 6 s with a named failure.
     func ready(_ name: String, _ condition: @autoclosure () -> Bool) -> Bool {
       if condition() { return true }
-      check.wait(name, details())
+      check.wait(name, details(), everyTime: (28...35).contains(browserCheckPhase))
       if check.waitCount > 60 { fail("\(name) never resolved (\(details()))") }
       return false
     }
@@ -566,7 +573,7 @@ extension Runtime {
       browserCheckPhase = 31
     case 31:
       guard let bar = commandPresenter?.controller else {
-        check.wait("add split command bar", "no command bar")
+        check.wait("add split command bar", "no command bar \(details())", everyTime: true)
         if check.waitCount > 60 { fail("the command bar never opened") }
         return
       }
