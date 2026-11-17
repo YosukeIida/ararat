@@ -28,11 +28,13 @@ namespace base { struct FeatureList {
 @implementation InputContext
 - (BOOL)handleEvent:(Event*)event { ++contextCalls; return self.handled; }
 @end
-@interface NSResponder : NSObject
+@interface NSResponder : NSObject @end
+@implementation NSResponder @end
+@interface NSView : NSResponder
 @property(strong) InputContext* inputContext;
 @end
-@implementation NSResponder @end
-@interface RenderWidgetHostViewCocoa : NSResponder @end
+@implementation NSView @end
+@interface RenderWidgetHostViewCocoa : NSView @end
 @implementation RenderWidgetHostViewCocoa @end
 @interface PageSubclass : RenderWidgetHostViewCocoa @end
 @implementation PageSubclass @end
@@ -78,7 +80,7 @@ int main() {
       [dispatcher sendEvent:event];
       assert(contextCalls == contexts && windowCalls == windows && superCalls == supers);
     };
-    auto* native = [NSResponder new];
+    auto* native = [NSView new];
     for (int code : {kVK_JIS_Eisu, kVK_JIS_Kana}) {
       for (BOOL handled : {NO, YES}) {
         native.inputContext = [InputContext new];
@@ -88,6 +90,7 @@ int main() {
       native.inputContext = nil;
       check(native, NSEventTypeKeyDown, code, 0, 0, 0, 0);
       check(nil, NSEventTypeKeyDown, code, 0, 0, 0, 0);
+      check([NSResponder new], NSEventTypeKeyDown, code, 0, 0, 0, 0);
       check([RenderWidgetHostViewCocoa new], NSEventTypeKeyDown, code, 0, 0, 1, 0);
       check([PageSubclass new], NSEventTypeKeyDown, code, 0, 0, 1, 0);
       check(native, NSEventTypeKeyUp, code, 0, 0, 0, 1);
@@ -97,7 +100,7 @@ int main() {
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 1, 0);
     forwardCmd = false;
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 0, 1);
-    std::puts("extracted native editor IME dispatch checks passed (18 cases; no AppKit dispatch)");
+    std::puts("extracted native editor IME dispatch checks passed (20 cases; no AppKit dispatch)");
   }
 }
 '''
