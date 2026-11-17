@@ -513,15 +513,18 @@ extension Runtime {
         }
       }
     case 27:
+      browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-key.example/") { [weak self] result in
         guard let self, case .success(let next) = result, let id = next.selectedId else {
           self?.splitCommandsFail("add split key tab", screen: screen); return
         }
         check.keyTab = id
+        self.showAndSelect(result)
         self.browserCheckPhase = 28
       }
     case 28:
-      guard ready("add split key tab", snapshot.selectedId == check.keyTab && rowInSnapshot(check.keyTab)) else { return }
+      guard ready("add split key tab", snapshot.selectedId == check.keyTab && rowInSnapshot(check.keyTab)
+                  && host.activeItemId() == check.keyTab) else { return }
       // The key goes to the key window; the second window took the key in phase 25, so A takes it
       // back first (its menu item then answers, as it would for a user in A).
       guard ready("add split key window", window.isKeyWindow) else { window.makeKeyAndOrderFront(nil); return }
@@ -545,15 +548,18 @@ extension Runtime {
       guard ready("add split key focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
       check.mark("key_focus")
       check.mark("key_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
+      browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-command.example/") { [weak self] result in
         guard let self, case .success(let next) = result, let id = next.selectedId else {
           self?.splitCommandsFail("add split command tab", screen: screen); return
         }
         check.commandTab = id
+        self.showAndSelect(result)
         self.browserCheckPhase = 30
       }
     case 30:
-      guard ready("add split command tab", snapshot.selectedId == check.commandTab && rowInSnapshot(check.commandTab)) else { return }
+      guard ready("add split command tab", snapshot.selectedId == check.commandTab && rowInSnapshot(check.commandTab)
+                  && host.activeItemId() == check.commandTab) else { return }
       // The command-bar row: the core's own list, typed the way a user reaches it. The rows land
       // when the per-open session arrives, so the wait is on the row itself.
       openCommandBar(.newTab)
@@ -582,15 +588,18 @@ extension Runtime {
       guard ready("add split command focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
       check.mark("command_focus")
       check.mark("command_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
+      browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-menu.example/") { [weak self] result in
         guard let self, case .success(let next) = result, let id = next.selectedId else {
           self?.splitCommandsFail("add split menu tab", screen: screen); return
         }
         check.menuTab = id
+        self.showAndSelect(result)
         self.browserCheckPhase = 33
       }
     case 33:
-      guard ready("add split menu tab", snapshot.selectedId == check.menuTab && rowInSnapshot(check.menuTab)) else { return }
+      guard ready("add split menu tab", snapshot.selectedId == check.menuTab && rowInSnapshot(check.menuTab)
+                  && host.activeItemId() == check.menuTab) else { return }
       // The row menu's item, after Duplicate, run through the item's own action.
       guard sidebar.runTabMenuItemForCheck(id: check.menuTab, titled: "Add Split View") else {
         let menu = sidebar.tabMenuForCheck(id: check.menuTab)

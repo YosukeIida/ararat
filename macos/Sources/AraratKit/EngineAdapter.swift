@@ -40,7 +40,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var selectionClosed: Bool { closeStateLock.withLock { closeStarted } }
     private func setSelectionClosed(_ closed: Bool) { closeStateLock.withLock { closeStarted = closed } }
     private var selectionGeneration = 0
-    private var selectionRequest: (item: String, space: String?, url: String, restoring: Bool, generation: Int, command: String?, resolved: Bool, activated: Bool)?
+    private var selectionRequest: (item: String, space: String?, url: String, wholeSplit: Bool, restoring: Bool, generation: Int, command: String?, resolved: Bool, activated: Bool)?
+    private var deferredSelection: (() -> Void)?
     private var restoringSelection = false
     private var recoveryDispatched = false
     private var openingSelections: [String: SelectionContext] = [:]
@@ -500,17 +501,28 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         let drawing = displayedSplit?.id
         let space = queue.sync { store?.snapshot(windowId: windowID).shownSpaceId }
         if restoring == nil, let request = selectionRequest, request.item == id, request.space == space, request.url == url, !request.restoring {
-            tracePrivate("select coalesced item=\(id) generation=\(request.generation) command=\(request.command ?? "nil") resolved=\(request.resolved) activated=\(request.activated)")
+            if CommandLine.arguments.contains(where: { $0 == "--ararat-check=split-commands" || $0 == "--ararat-screen=split-commands" }) {
+                FileHandle.standardError.write(Data("ararat-trace: selection-request item=\(id) pending_whole_split=\(request.wholeSplit) whole_split=\(wholeSplit) action=\(request.wholeSplit == wholeSplit ? "coalesced" : "deferred")\n".utf8))
+            }
+            if request.wholeSplit == wholeSplit {
+                deferredSelection = nil
+                tracePrivate("select coalesced item=\(id) pending_whole_split=\(request.wholeSplit) whole_split=\(wholeSplit) generation=\(request.generation) command=\(request.command ?? "nil") resolved=\(request.resolved) activated=\(request.activated)")
+            } else {
+                deferredSelection = { [weak self] in
+                    guard let self, self.queue.sync(execute: { self.store?.snapshot(windowId: self.windowID).shownSpaceId == space }) else { return }
+                    self.select(id: id, url: url, wholeSplit: wholeSplit, source: source, line: line)
+                }
+            }
             return
         }
         invalidateSelection()
         let generation = selectionGeneration
-        selectionRequest = (id, space, url, restoring != nil, generation, nil, false, false)
+        selectionRequest = (id, space, url, wholeSplit, restoring != nil, generation, nil, false, false)
         queue.async {
             func abandon() {
                 self.tracePrivate("select abandoned item=\(id) generation=\(generation)")
                 DispatchQueue.main.async {
-                    if self.selectionRequest?.generation == generation { self.selectionRequest = nil }
+                    if self.selectionRequest?.generation == generation { self.finishSelectionRequest() }
                 }
             }
             do {
@@ -603,11 +615,19 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         }
     }
 
+    private func finishSelectionRequest() {
+        let next = deferredSelection
+        selectionRequest = nil
+        deferredSelection = nil
+        next?()
+    }
+
     public func invalidateSelection() {
         precondition(Thread.isMainThread)
         tracePrivate("invalidate generation=\(selectionGeneration) item=\(selectionRequest?.item ?? "nil") command=\(selectionRequest?.command ?? "nil") lone=\(loneSplitPane ?? "nil")")
         selectionGeneration += 1
         selectionRequest = nil
+        deferredSelection = nil
         loneSplitPane = nil
         pendingSplitOpens.removeAll()
         let withdrawn = openingSelections.keys.filter { host?.cancelPendingOpen($0) == true }
@@ -1140,7 +1160,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     for command in outcome.commands { self.execute(command) }
                     if case .command(let id) = transaction.cause {
-                        if self.selectionRequest?.command == id { self.selectionRequest = nil }
                         self.restoringSplitCommands.remove(id)
                         if self.restoringTargetCommand == id { self.restoringTargetCommand = nil }
                     }
@@ -1161,6 +1180,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         self.session.captureSnapshot(tab, item: item)
                     }
                     if case .command(let id) = transaction.cause { self.traceMatrix("selection transaction command=\(id) rev=\(transaction.rev) applied=\(outcome.applied)") }
+                    if case .command(let id) = transaction.cause, self.selectionRequest?.command == id { self.finishSelectionRequest() }
                     self.onTransaction?(transaction, outcome.applied)
                     if outcome.applied && workspaceChanged { self.onWorkspaceChange?() }
                 }
@@ -1518,7 +1538,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         tracePrivate("cancel command=\(command.id) item=\(command.item)")
         guard command.kind == .open || command.kind == .activate else { return }
         DispatchQueue.main.async {
-            if self.selectionRequest?.command == command.id { self.selectionRequest = nil }
+            if self.selectionRequest?.command == command.id { self.finishSelectionRequest() }
             self.pendingSplitOpens.removeValue(forKey: command.id)
             if let live = self.queue.sync(execute: { self.store?.liveTab(item: command.item) }) {
                 self.session.cancelTransfer(live, destination: self.windowID)

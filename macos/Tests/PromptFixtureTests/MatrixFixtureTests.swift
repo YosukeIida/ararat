@@ -107,8 +107,10 @@ private final class MatrixFakeHost: NSObject {
         if source.active == tab.itemId { source.active = source.entries.first?.itemId }
         tab.owner = self
         entries.append(tab)
-        if activate { active = tab.itemId }
-        activated.append(command)
+        if activate {
+            active = tab.itemId
+            activated.append(command)
+        }
         return true
     }
     @objc(prepareTransferProfile:) func prepareProfile(_ profile: String) { preparedProfiles.append(profile) }
@@ -485,6 +487,135 @@ func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws 
     try await matrixWait { fake.closed.count == 2 }
     #expect(fake.closed[0] != fake.closed[1])
     engine.shutdown()
+}
+
+@Test(arguments: [true, false]) @MainActor
+func pendingLoneSelectionUsesTheLastRequestedSplitMode(wholeSplit: Bool) async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let source = try EngineAdapter(path: path, windowID: "source", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let target = try EngineAdapter(path: path, windowID: "target", card: NSView(frame: NSRect(x: 0, y: 0, width: 804, height: 600)), session: session)
+    let (a, aHost) = matrixFake()
+    let (b, bHost) = matrixFake()
+    source.attach(aHost); target.attach(bHost)
+    defer { source.shutdown(); target.shutdown() }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        for window in ["source", "target"] {
+            try store.showSpace(windowId: window, spaceId: "named")
+            _ = try store.selectItem(windowId: window, id: "close-split-a")
+        }
+    }
+    a.shownProfile = "Profile 1"; b.shownProfile = "Profile 1"
+    source.select(id: "close-split-a", url: "about:blank")
+    try await matrixWait { a.opened.count == 1 }
+    source.windowHost(aHost, didReceiveTransaction: matrixTransaction(a, window: "source", epoch: 1, rev: 0, command: a.opened[0]))
+    try await matrixWait { a.backgroundOpened.count == 1 }
+    source.windowHost(aHost, didReceiveTransaction: matrixTransaction(a, window: "source", epoch: 1, rev: 1, command: a.backgroundOpened[0]))
+    try await matrixWait { a.splitFrames.count == 2 }
+    var held: (() -> Void)?
+    target.checkSelectionDispatch = { stage, _, resume in
+        if stage == "resolved" { held = resume } else { resume() }
+    }
+    target.select(id: "close-split-a", url: "about:blank", wholeSplit: false)
+    try await matrixWait { held != nil }
+    let generation = target.checkSelectionState()["generation"] as? Int
+    target.select(id: "close-split-a", url: "about:blank", wholeSplit: false)
+    #expect(target.checkSelectionState()["generation"] as? Int == generation)
+    target.select(id: "close-split-a", url: "about:blank", wholeSplit: true)
+    target.select(id: "close-split-a", url: "about:blank", wholeSplit: wholeSplit)
+    #expect(target.checkSelectionState()["generation"] as? Int == generation)
+    #expect(b.activated.isEmpty)
+    target.checkSelectionDispatch = nil
+    let resume = try #require(held)
+    resume()
+    try await matrixWait { b.activated.count == 1 }
+    target.windowHost(bHost, didReceiveTransaction: matrixTransaction(b, window: "target", epoch: 1, rev: 2, command: b.activated[0]))
+    if wholeSplit {
+        try await matrixWait { b.activated.count == 2 }
+        target.windowHost(bHost, didReceiveTransaction: matrixTransaction(b, window: "target", epoch: 1, rev: 3, command: b.activated[1]))
+        try await matrixWait { b.entries.count == 2 }
+        target.windowHost(bHost, didReceiveTransaction: matrixTransaction(b, window: "target", epoch: 1, rev: 4, command: nil))
+        try await matrixWait { Set(b.splitFrames.keys) == ["close-split-a", "close-split-b"] }
+        #expect(a.entries.isEmpty)
+        #expect(target.checkSplitLayout().split)
+        #expect(b.activated.count == 2)
+    } else {
+        try await matrixWait { target.checkInFlightSelection(item: "close-split-a") == nil }
+        #expect(b.activated.count == 1 && b.entries.count == 1)
+        #expect(!target.checkSplitLayout().split && b.splitFrames.isEmpty)
+        #expect(a.entries.map(\.itemId) == ["close-split-b"])
+    }
+    #expect(b.active == "close-split-a")
+}
+
+@Test @MainActor
+func deferredSplitSelectionDoesNotFollowASpaceChange() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "deferred-space", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    defer { engine.shutdown() }
+    let item = try session.queue.sync {
+        try #require(session.store?.snapshot(windowId: "deferred-space").spaces.first { $0.id == "default" }?.today.first?.id)
+    }
+    engine.select(id: item, url: "about:blank")
+    try await matrixWait { fake.opened.count == 1 }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "deferred-space", epoch: 1, rev: 0, command: fake.opened[0]))
+    try await matrixWait { engine.checkInFlightSelection(item: item) == nil }
+    var held: (() -> Void)?
+    engine.checkSelectionDispatch = { stage, _, resume in
+        if stage == "registered" { held = resume } else { resume() }
+    }
+    engine.select(id: item, url: "about:blank", wholeSplit: false)
+    try await matrixWait { held != nil }
+    engine.select(id: item, url: "about:blank", wholeSplit: true)
+    let generation = engine.checkSelectionState()["generation"] as? Int
+    try session.queue.sync { try #require(session.store).showSpace(windowId: "deferred-space", spaceId: "named") }
+    engine.checkSelectionDispatch = nil
+    let resume = try #require(held)
+    resume()
+    try await matrixWait {
+        engine.checkInFlightSelection(item: item) == nil &&
+            engine.checkSelectionState()["pending_commands"] as? [String] == []
+    }
+    #expect(engine.checkSelectionState()["generation"] as? Int == generation)
+    #expect(fake.activated.isEmpty && fake.opened.count == 1)
+    #expect(session.queue.sync { session.store?.snapshot(windowId: "deferred-space").shownSpaceId } == "named")
+}
+
+@Test @MainActor
+func splitCommandsCreatesAndSelectsItsKeyTabOnceWithoutAnEngineSnapshot() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "setup", card: NSView(), seedProfiles: true, session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    defer { engine.shutdown() }
+    let runtime = Runtime(windowID: "setup")
+    runtime.adapter = engine; runtime.host = host
+    runtime.workspace = WorkspaceAdapter(windowID: "setup", session: session)
+    runtime.snapshot = session.queue.sync { session.store!.snapshot(windowId: "setup") }
+    runtime.sidebar = SidebarView(snapshot: runtime.snapshot)
+    runtime.container = SidebarContainerView(sidebar: try #require(runtime.sidebar), page: NSView())
+    let before = runtime.snapshot.spaces.flatMap(\.today).count
+    runtime.browserCheckPhase = 27
+    runtime.splitCommandsCheckTick(host, screen: false)
+    #expect(runtime.browserCheckPhase == 100)
+    runtime.splitCommandsCheckTick(host, screen: false)
+    try await matrixWait { runtime.browserCheckPhase == 28 && fake.opened.count == 1 }
+    let item = try #require(runtime.splitCommandsCheck?.keyTab)
+    #expect(runtime.snapshot.selectedId == item && fake.active == item)
+    #expect(runtime.snapshot.spaces.flatMap(\.today).contains { $0.id == item })
+    #expect(session.queue.sync { session.store!.snapshot(windowId: "setup").spaces.flatMap(\.today).count } == before + 1)
 }
 
 @Test @MainActor
