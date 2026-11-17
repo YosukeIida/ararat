@@ -14,17 +14,22 @@ enum { NSEventTypeKeyDown, NSEventTypeKeyUp, NSEventTypeMouseMoved };
 enum { kVK_JIS_Eisu = 102, kVK_JIS_Kana = 104, NSEventModifierFlagCommand = 1 };
 int contextCalls = 0, windowCalls = 0, superCalls = 0;
 bool forwardCmd = true;
-bool inputMethodActive = true, hasInputSource = true;
-using TISInputSourceRef = CFStringRef;
+enum InputSources { LayoutOnly, EnabledSourceWithoutType, LayoutWithEnabledIME, IMESelected };
+InputSources inputSources = LayoutOnly;
+bool hasInputSourceList = true;
 const CFStringRef kTISPropertyInputSourceType = CFSTR("type");
 const CFStringRef kTISTypeKeyboardInputMode = CFSTR("mode");
-TISInputSourceRef TISCopyCurrentKeyboardInputSource() {
-  return hasInputSource ? CFStringCreateWithCString(
-      nullptr, inputMethodActive ? "mode" : "layout", kCFStringEncodingUTF8) : nullptr;
-}
-void* TISGetInputSourceProperty(TISInputSourceRef source, CFStringRef property) {
-  assert(property == kTISPropertyInputSourceType);
-  return const_cast<void*>(static_cast<const void*>(source));
+CFArrayRef TISCreateInputSourceList(CFDictionaryRef filter, Boolean includeAllInstalled) {
+  assert(!includeAllInstalled);
+  assert(CFDictionaryGetCount(filter) == 1);
+  const void* filterType = CFDictionaryGetValue(filter, kTISPropertyInputSourceType);
+  assert(filterType && CFEqual(filterType, kTISTypeKeyboardInputMode));
+  CFStringRef type = inputSources == EnabledSourceWithoutType ? nullptr :
+      inputSources == LayoutOnly ? CFSTR("layout") : kTISTypeKeyboardInputMode;
+  const void* modes[] = {kTISTypeKeyboardInputMode};
+  return hasInputSourceList ? CFArrayCreate(kCFAllocatorDefault, modes,
+      type && CFEqual(type, kTISTypeKeyboardInputMode) ? 1 : 0,
+      &kCFTypeArrayCallBacks) : nullptr;
 }
 int kForwardCmdKeyUpEventsToWindow = 0;
 namespace base { struct FeatureList {
@@ -95,12 +100,14 @@ int main() {
     };
     auto* native = [NSView new];
     for (int code : {kVK_JIS_Eisu, kVK_JIS_Kana}) {
-      for (bool active : {false, true}) {
-        inputMethodActive = active;
+      for (InputSources sources : {LayoutOnly, EnabledSourceWithoutType,
+                                   LayoutWithEnabledIME, IMESelected}) {
+        inputSources = sources;
         for (BOOL handled : {NO, YES}) {
           native.inputContext = [InputContext new];
           native.inputContext.handled = handled;
-          check(native, NSEventTypeKeyDown, code, 0, active ? 1 : 0, 0, 0);
+          int contexts = sources == LayoutWithEnabledIME || sources == IMESelected ? 1 : 0;
+          check(native, NSEventTypeKeyDown, code, 0, contexts, 0, 0);
         }
         native.inputContext = nil;
         check(native, NSEventTypeKeyDown, code, 0, 0, 0, 0);
@@ -110,17 +117,17 @@ int main() {
         check([PageSubclass new], NSEventTypeKeyDown, code, 0, 0, 1, 0);
         check(native, NSEventTypeKeyUp, code, 0, 0, 0, 1);
       }
-      hasInputSource = false;
+      hasInputSourceList = false;
       native.inputContext = [InputContext new];
       check(native, NSEventTypeKeyDown, code, 0, 0, 0, 0);
-      hasInputSource = true;
+      hasInputSourceList = true;
     }
     check(native, NSEventTypeKeyDown, 0, 0, 0, 0, 1);
     check(native, NSEventTypeMouseMoved, 0, 0, 0, 0, 1);
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 1, 0);
     forwardCmd = false;
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 0, 1);
-    std::puts("extracted native editor IME dispatch checks passed (38 cases; no AppKit dispatch)");
+    std::puts("extracted native editor IME dispatch checks passed (70 cases; no AppKit dispatch)");
   }
 }
 '''
