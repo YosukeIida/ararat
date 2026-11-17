@@ -15,6 +15,7 @@ final class SplitFocusCheck {
   var dragEnd = NSPoint.zero
   let pasteboard = NSPasteboard(name: NSPasteboard.Name("ararat-split-focus-\(UUID().uuidString)"))
   var presses: [[String: String]] = []
+  var observations: [[String: String]] = []
   func mark(_ name: String, _ value: Bool = true) {
     conditions[name] = value
     FileHandle.standardError.write(Data("ararat-trace: split-focus \(name)=\(value)\n".utf8))
@@ -27,7 +28,7 @@ final class SplitFocusCheck {
   func diagnostics(screen: Bool) -> [String: Any] {
     let required = Self.names + (screen ? ["capture_a", "capture_b", "capture_frozen", "capture_release"] : [])
     return ["conditions": Dictionary(uniqueKeysWithValues: required.map { ($0, conditions[$0] == true) }),
-            "failed_conditions": required.filter { conditions[$0] != true }, "wait": waitName, "images": images, "presses": presses]
+            "failed_conditions": required.filter { conditions[$0] != true }, "wait": waitName, "images": images, "presses": presses, "observations": observations]
   }
 }
 
@@ -38,7 +39,19 @@ extension Runtime {
     let window = host.window()
     let tabs = (host.tabs() as? [any ARTabAPI]) ?? []
     let state = adapter.checkSplitFocus()
-    func wait(_ name: String) { check.wait(name, "phase=\(browserCheckPhase) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") dispatches=\(splitFocusDispatches) tabs=\(tabs.map { $0.itemId ?? "nil" })") }
+    func record(_ stage: String) {
+      let pending = snapshot.selectedId.flatMap { adapter.checkInFlightSelection(item: $0) }
+      check.observations.append(["stage": stage, "phase": String(browserCheckPhase),
+        "selected": snapshot.selectedId ?? "nil", "active": host.activeItemId() ?? "nil",
+        "focused_pane_id": sidebar.focusedPane?.id ?? "nil", "focused_pane_url": sidebar.focusedPane?.url ?? "nil",
+        "tab_url": tabs.first(where: { $0.itemId == snapshot.selectedId })?.url ?? "nil",
+        "url_host": sidebar.urlHostForCheck, "clipboard": check.pasteboard.string(forType: .string) ?? "nil",
+        "pending": pending.map { "command=\($0.command ?? "nil") resolved=\($0.resolved) activated=\($0.activated)" } ?? "nil"])
+    }
+    func wait(_ name: String) {
+      if name != check.waitName || check.waitCount % 20 == 0 { record("wait \(name)") }
+      check.wait(name, "phase=\(browserCheckPhase) selected=\(snapshot.selectedId ?? "nil") active=\(host.activeItemId() ?? "nil") dispatches=\(splitFocusDispatches) tabs=\(tabs.map { $0.itemId ?? "nil" }) observations=\(check.observations.last ?? [:])")
+    }
     func fail(_ message: String) { var result = check.diagnostics(screen: screen); result["error"] = message; finishBrowserCheck(ok: false, values: result) }
     func select(_ id: String, next: Int) {
       browserCheckPhase = 100
@@ -102,6 +115,7 @@ extension Runtime {
       guard snapshot.selectedId == "close-split-a", host.activeItemId() == "close-split-a", let pane = state.panes["close-split-b"] else { wait("restore a"); return }
       check.mark("url_a", sidebar.urlHostForCheck == "127.0.0.1")
       sidebar.checkClickCopyLink()
+      record("copy_a")
       check.mark("copy_a", check.pasteboard.string(forType: .string) == tabs.first(where: { $0.itemId == "close-split-a" })?.url && container.checkToastState.visible)
       guard postClick(NSPoint(x: pane.midX, y: pane.midY)) else { fail("click event"); return }
       browserCheckPhase = 7
@@ -110,6 +124,7 @@ extension Runtime {
       check.mark("click_b"); check.mark("ring_b", ring("close-split-b"))
       check.mark("url_b", sidebar.urlHostForCheck == "localhost")
       sidebar.checkClickCopyLink()
+      record("copy_b")
       check.mark("copy_b", check.pasteboard.string(forType: .string) == tabs.first(where: { $0.itemId == "close-split-b" })?.url && container.checkToastState.visible)
       capture("b")
       guard let page = tabs.first(where: { $0.itemId == "close-split-b" })?.view,
@@ -155,6 +170,7 @@ extension Runtime {
     case 12:
       guard let id = browserCheckSeedID, snapshot.selectedId == id, host.activeItemId() == id else { wait("single after split"); return }
       check.mark("single_after_split", state.ring == nil)
+      record("single_after_split")
       let result = check.diagnostics(screen: screen)
       finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)
     default: break
