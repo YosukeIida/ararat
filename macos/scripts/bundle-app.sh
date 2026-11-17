@@ -17,7 +17,7 @@ Ararat executable in Contents/MacOS (build it first: swift build -c release in
 macos/), renames the bundle id to net.iodine2.ararat and signs everything
 ad-hoc inside out with the engine's entitlements (renderer and GPU helpers
 carry allow-jit; the app the app entitlements; entitlements that need a team
-are dropped). Product name and helper names stay Chromium.
+are dropped). The bundle name and display name are Ararat; helper names stay Chromium.
 USAGE
 }
 
