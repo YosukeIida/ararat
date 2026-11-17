@@ -5,18 +5,6 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## State
 
-- Default-browser setter: request http exactly once; the prior macOS 26.4 VM experiment
-  confirmed that accepting changes both http and https and refusing leaves both unchanged.
-  Settings still reads https. The setter's internal NSWorkspace-call seam lets the unit test
-  assert the app URL and exactly one http request without changing the host's handlers.
-  The implementation envelope described an existing call seam and result/error reporting,
-  but this checkout had neither: it discarded completion errors. That behavior is preserved.
-  Verification: `macos/scripts/build-core.sh` passed; full `swift test --no-parallel`
-  passed (148 + 654 = 802 tests, zero failures), including the new http-only test.
-  Logs: `/tmp/defbrowser-3-build-core.log`, `/tmp/defbrowser-3-swift-test-final.log`.
-  Swift used the README's Xcode environment override after the bare command could not
-  find Swift; an initial compile caught a completion argument label, fixed before the pass.
-  No host app or VM run is part of this change; nothing was pushed.
 - Phase 3 U17a done: relaunch selects the adopted window's selected row, other rows stay
   Unloaded; a cancelled, withdrawn or rejected Open rolls the row back; the core keeps a
   durable outbox of history purges (written, not yet consumed); a crashed renderer keeps its
