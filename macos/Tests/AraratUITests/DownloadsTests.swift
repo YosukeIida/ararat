@@ -506,19 +506,33 @@ private func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).ma
     #expect(abs(name.frame.minX - DownloadRowMetrics.textLeading) <= 0.5)
 }
 
-@Test @MainActor func popoverTakesTheAnchorTooltipWhileOpenAndPutsItBack() {
-    let anchor = NSView()
-    anchor.toolTip = "Library"
-    let popover = DownloadsPopover(model: DownloadsModel(), anchor: anchor)
+@Test @MainActor func downloadActionButtonTracksHoverWhileThePopoverIsNotKey() throws {
+    _ = NSApplication.shared
+    let button = DownloadActionButton(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 56), styleMask: [.titled], backing: .buffered, defer: false)
+    defer { window.contentView = nil }
+    window.contentView?.addSubview(button)
+    button.updateTrackingAreas()
+    #expect(!window.isKeyWindow)
+    #expect(button.trackingAreas.contains { $0.options.contains(.mouseEnteredAndExited) && $0.options.contains(.activeAlways) })
+}
+
+@Test @MainActor func libraryTooltipStaysDismissedWhileTheDownloadsPopoverIsOpen() throws {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.setDownloadsModel(DownloadsModel())
+    let popover = try #require(sidebar.downloadsPopover)
+    // The first target call moves the button's native toolTip into SidebarTooltip's map, as the
+    // window attach does in the app.
+    #expect(sidebar.tooltipTarget(for: sidebar.libraryButton) === sidebar.libraryButton)
+    sidebar.tooltip.update(target: sidebar.libraryButton, point: NSPoint(x: 20, y: 20))
+    #expect(sidebar.tooltip.idleTimer != nil && sidebar.tooltip.text == nil)
     popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
-    #expect(anchor.toolTip == nil)
-    // A second show while it is open must not lose the tooltip it took away.
-    popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
+    #expect(popover.isOpen)
+    #expect(sidebar.tooltip.idleTimer == nil && sidebar.tooltip.text == nil)
+    #expect(sidebar.tooltipTarget(for: sidebar.libraryButton) == nil)
     popover.popoverDidClose(Notification(name: NSPopover.didCloseNotification))
-    #expect(anchor.toolTip == "Library")
-    // A close for a popover that never showed leaves the anchor alone.
-    popover.popoverDidClose(Notification(name: NSPopover.didCloseNotification))
-    #expect(anchor.toolTip == "Library")
+    #expect(!popover.isOpen)
+    #expect(sidebar.tooltipTarget(for: sidebar.libraryButton) === sidebar.libraryButton)
 }
 
 @Test @MainActor func downloadDragProviderWritesOnlyAnExistingCompletedFileURL() throws {

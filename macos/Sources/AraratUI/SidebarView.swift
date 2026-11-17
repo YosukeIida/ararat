@@ -432,6 +432,8 @@ public final class SidebarView: NSView {
         let popover = DownloadsPopover(model: model, anchor: libraryButton)
         popover.showsLibrary = !privateWindow
         popover.openLibrary = { [weak self] in self?.setLibraryOpen(true, downloads: true) }
+        // The Library bubble would sit over the popover, and its idle timer would re-show it.
+        popover.onShow = { [weak self] in self?.tooltip.dismiss() }
         downloadsPopover = popover
         libraryButton.onHover = { [weak self] in self?.downloadsPopover?.show() }
         model.onChange = { [weak self, weak model] in
@@ -1333,6 +1335,8 @@ public final class SidebarView: NSView {
     func tooltipTarget(for hit: NSView?) -> NSView? {
         guard let hit else { return nil }
         let target = tooltip.target(at: hit)
+        // The downloads popover sits over the Library button; its bubble would cover the popover.
+        if target === libraryButton, downloadsPopover?.isOpen == true { return nil }
         guard let id = renamingID else { return target }
         return target === rowViews[id] || target === favoriteTiles[id] ? nil : target
     }

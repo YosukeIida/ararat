@@ -93,8 +93,10 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     let clear = DownloadsHeaderButton(title: "Clear All")
     var showsLibrary = true { didSet { library.isHidden = !showsLibrary; clear.isHidden = showsLibrary } }
     private(set) var rows: [String: DownloadRowView] = [:]
-    /// The anchor's tooltip, taken away while the popover covers the anchor and put back on close.
-    private var savedToolTip: String?
+    /// True between the popover's did-show and did-close, which covers a transient dismissal.
+    private(set) var isOpen = false
+    /// The sidebar owns the anchor's tooltip: it dismisses or hides its own bubble while open.
+    var onShow: (() -> Void)?
     var openLibrary: (() -> Void)?
     init(model: DownloadsModel, anchor: NSView) {
         self.model = model; self.anchor = anchor
@@ -146,17 +148,15 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
                 "library_title_inset": library.titleInset,
                 "title_font": rows.values.first?.titleFontSize ?? 0, "title_height": rows.values.first?.titleHeight ?? 0]
     }
-    /// The popover sits over the anchor's tooltip: take the tooltip away while it is open.
+    /// The popover covers the anchor, so the anchor's tooltip must not show while it is open.
     func popoverDidShow(_ notification: Notification) {
-        guard savedToolTip == nil else { return }
-        savedToolTip = anchor.toolTip
-        anchor.toolTip = nil
+        guard !isOpen else { return }
+        isOpen = true
+        onShow?()
     }
-    /// Put the anchor's tooltip back when the popover closes, transient dismissal included.
+    /// Every close path lands here, a transient dismissal included.
     func popoverDidClose(_ notification: Notification) {
-        guard let tip = savedToolTip else { return }
-        anchor.toolTip = tip
-        savedToolTip = nil
+        isOpen = false
     }
     func close() { popover.performClose(nil) }
     static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
@@ -392,7 +392,8 @@ final class DownloadActionButton: NSButton {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        // A hover-opened popover is not key, so the fill must track in any window state.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area)
         tracking = area
     }
