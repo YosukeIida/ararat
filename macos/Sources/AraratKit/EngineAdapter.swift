@@ -13,7 +13,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         FileHandle.standardError.write(Data("ararat-trace: matrix window=\(windowID) \(message())\n".utf8))
     }
     private func tracePrivate(_ message: @autoclosure () -> String) {
-        guard CommandLine.arguments.contains(where: { ["--ararat-check=private-window", "--ararat-screen=private-window", "--ararat-check=split-commands", "--ararat-screen=split-commands"].contains($0) }) else { return }
+        guard CommandLine.arguments.contains(where: { ["--ararat-check=private-window", "--ararat-screen=private-window", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=organize", "--ararat-screen=organize"].contains($0) }) else { return }
         FileHandle.standardError.write(Data("ararat-trace: private-selection window=\(windowID) \(message())\n".utf8))
     }
     private func traceLittleWindow(_ message: @autoclosure () -> String) {

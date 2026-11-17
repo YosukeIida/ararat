@@ -152,7 +152,16 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({
             let store = try self.opened()
             return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: openFolder)
-        }, completion: completion)
+        }) { result in
+            if CommandLine.arguments.contains(where: { $0 == "--ararat-check=organize" || $0 == "--ararat-screen=organize" }),
+               case .success(let captured) = result {
+                let selection = self.queue.sync {
+                    "current_selected=\(self.store?.snapshot(windowId: self.windowID).selectedId ?? "nil") stored_selected=\(self.store?.selectedItem(windowId: self.windowID) ?? "nil")"
+                }
+                FileHandle.standardError.write(Data("ararat-trace: organize move-reply window=\(self.windowID) item=\(id) container=\(container) captured_selected=\(captured.selectedId ?? "nil") \(selection)\n".utf8))
+            }
+            completion(result)
+        }
     }
 
     public func firstFavorite(id: String, space: String, index: Int, completion: @escaping Completion<WorkspaceSnapshot>) {

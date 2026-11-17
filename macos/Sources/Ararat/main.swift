@@ -8608,6 +8608,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 2
     case 2:
+      if browserCheckAttempts % 20 == 0 {
+        let stored = session.queue.sync { session.store?.selectedItem(windowId: windowID) }
+        FileHandle.standardError.write(Data("ararat-trace: organize phase2-selection attempt=\(browserCheckAttempts) current_selected=\(current.selectedId ?? "nil") stored_selected=\(stored ?? "nil") sidebar_selected=\(sidebar.selectedRowID ?? "nil") idle=\(sidebar.organizeCheckIdle) item=\(row("today")?.id ?? "nil") parent=\(row("today")?.parentId ?? "nil") pinned=\(space.pinnedId) active=\(host.activeItemId() ?? "nil")\n".utf8))
+      }
       guard let today = row("today"), today.parentId == space.pinnedId, sidebar.organizeCheckIdle,
             current.selectedId == today.id, sidebar.selectedRowID == today.id else { return }
       organizeConditions["today_to_pinned"] = true
