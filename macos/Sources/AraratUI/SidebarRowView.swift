@@ -1,7 +1,7 @@
 import AppKit
 import AraratKit
 
-/// `--ararat-check=organize` or `--ararat-screen=organize`: the rename hint's arm and hide
+/// `--ararat-check=organize` or `--ararat-screen=organize`: the rename hint's arm, show and hide
 /// lines. The hint is the organize check's one intermittent condition, so the lines say what
 /// the row was and which state took the hint down.
 enum PinHintTrace {
@@ -304,6 +304,9 @@ final class SidebarRowView: NSView {
         titleCenterY.constant = -6
         title.maximumNumberOfLines = 1
         scheduleHintTimer(after: 3)
+        if PinHintTrace.enabled {
+            FileHandle.standardError.write(Data("ararat-trace: pin-hint show id=\(row.id)\n".utf8))
+        }
     }
 
     private func scheduleHintTimer(after interval: TimeInterval, repeats: Bool = false) {
