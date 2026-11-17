@@ -5,6 +5,48 @@ import Testing
 @testable import AraratUI
 
 @Test @MainActor
+func defaultDestinationPressWaitsForTheRowMenusEndNotification() throws {
+    _ = NSApplication.shared
+    let runtime = Runtime(windowID: "atc-menu-order")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                                   windowID: runtime.windowID, card: NSView(), seedSidebar: true)
+    defer { adapter.shutdown() }
+    runtime.adapter = adapter
+    let workspace = WorkspaceAdapter(windowID: runtime.windowID, session: adapter.session)
+    let model = SettingsModel(snapshot: adapter.session.store!.snapshot(windowId: runtime.windowID),
+        adapter: workspace, publish: { _ in }, resetWidth: {}, keyBindings: KeyBindingsModel(adapter: workspace),
+        airTraffic: AirTrafficModel(adapter: workspace))
+    let settings = SettingsWindowController(model: model)
+    runtime.settings = settings
+    defer { settings.window?.contentViewController = nil }
+    let probe = try #require(settings.checkProbe())
+    let check = SettingsScreenCheck()
+    check.phase = 8
+    var waits: [String] = []
+    func tick() {
+        runtime.settingsAirTrafficTick(probe, check: check, note: { waits.append($0) },
+            step: { _ in Issue.record("advanced before a stored route") },
+            end: { _, _ in Issue.record("ended before a stored route") },
+            finish: { Issue.record("finished before a stored route") },
+            capture: { _ in Issue.record("captured before a stored route"); return false })
+    }
+    tick()
+    let menu = NSMenu()
+    check.watchAirTrafficRowMenuEnd(menu)
+    tick()
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: NSMenu())
+    tick()
+    #expect(waits == Array(repeating: "row menu tracking ended", count: 3))
+    NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+    tick()
+    #expect(waits.last == "row destination stored")
+    #expect(check.phase == 8 && check.airTrafficMenuObserver == nil)
+}
+
+@Test @MainActor
 func spaceNameCheckCanWaitForSelectionAfterClosingTheLookPopover() throws {
     _ = NSApplication.shared
     let runtime = Runtime(windowID: "space-name-check")

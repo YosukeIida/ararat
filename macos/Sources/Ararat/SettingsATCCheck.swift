@@ -199,6 +199,7 @@ extension Runtime {
             note("row destination menu action")
         case 8:
             check.startAirTrafficMenuTrace()
+            guard check.airTrafficRowMenuTracking == false else { note("row menu tracking ended"); return }
             guard let rule = routing?.rules.first, rule.destination == .space(.mostRecent) else { note("row destination stored"); return }
             check.report("rule_clean", rule.conditions.first?.text == "example.com")
             check.report("row_destination", true)
