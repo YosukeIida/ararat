@@ -1537,7 +1537,7 @@ public final class SidebarView: NSView {
         let space = snapshotSpace
         if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
         if space?.id != hintSpaceID {
-            rowViews.values.forEach { $0.hideRenameHint() }
+            rowViews.values.forEach { $0.hideRenameHint("space-change") }
             hintSpaceID = space?.id
         }
         lookSettings?.update(snapshot: snapshot)
@@ -3133,7 +3133,13 @@ extension SidebarView: NSMenuDelegate {
     }
 
     private func showPinHint(id: String, space: String?) {
-        guard let space, snapshotSpace?.id == space else { return }
+        // The trace sits before the guard: a pin that asks for the hint and is refused is as
+        // much the answer as one that hides it later.
+        let shown = space.map { snapshotSpace?.id == $0 } ?? false
+        if PinHintTrace.enabled {
+            FileHandle.standardError.write(Data("ararat-trace: pin-hint arm id=\(id) space=\(space ?? "nil") shown=\(shown) pinned=\(rowViews[id]?.pinned ?? false) selected=\(selectedID == id) selectedID=\(selectedID ?? "nil") store_selected=\(snapshot.selectedId ?? "nil") rename=\(renamingID ?? "nil")\n".utf8))
+        }
+        guard shown else { return }
         rowViews[id]?.showRenameHint()
     }
 
