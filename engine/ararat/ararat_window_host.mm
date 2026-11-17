@@ -1681,6 +1681,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSMutableDictionary<NSString*, NSDictionary*>* matrix_states_;
   NSString* command_id_;
   NSString* opening_item_;
+  bool foreground_open_;
   uint64_t opening_stamp_;
   BOOL draining_opens_;
   BOOL loading_profile_;
@@ -3629,6 +3630,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     }
     return YES;
   }
+  base::AutoReset<bool> foreground_open(&foreground_open_, !background);
   command_id_ = commandId;
   opening_item_ = itemId;
   opening_stamp_ = stamp;
@@ -4347,6 +4349,17 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost {
   if (!g_epoch || closing_all_ || closing_window_) return;
   NSArray* strips = @[ [self barrierSnapshot:[cause isKindOfClass:NSString.class] preserveActive:[cause isKindOfClass:NSString.class]] ];
+  if (workspace_page_hidden_ && !workspace_remote_ && foreground_open_ && opening_item_ && command_id_ &&
+      [cause isKindOfClass:NSDictionary.class] && [cause[@"Command"] isEqualToString:command_id_]) {
+    auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
+    auto* identity = contents ? static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey)) : nullptr;
+    if (identity && [identity->live_id isEqualToString:command_id_] && [identity->item_id isEqualToString:opening_item_]) {
+      // Why not unmask stripSnapshot: later hidden-page reports must still withhold their active tab.
+      NSMutableDictionary* strip = [strips.firstObject mutableCopy];
+      strip[@"active"] = identity->live_id;
+      strips = @[strip];
+    }
+  }
   if (setEmptyReported)
     empty_reported_ = [self tabs].count == 0;
   // The flag is computed before the post: the private Profile* may be destroyed by the time the

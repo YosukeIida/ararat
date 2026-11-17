@@ -148,6 +148,8 @@ The AppController hook resolves the shown Browser for the main window, so its la
 
 Each host keeps one Browser and profile keep-alive per profile it has shown. A strip contains every hosted profile's tabs, each tagged with its profile; its active id belongs to the shown Browser. The `showProfile` delegate switches to the window's most recently shown space for that profile, and the host switches the page and reports activation to Chrome (ours).
 
+A hidden workspace page normally reports no active tab. A foreground Open's completion strip reports the tab it opened even while the page is hidden, only when the command id, live id and item id match the active tab. Remote pages remain masked. Background Opens and later hidden-page snapshots retain the mask (ours).
+
 **Windows and profiles.**
 
 - One app window is one Views-backed `NSWindow` (`NativeWidgetMacNSWindow`), so Chrome's bubbles, dialogs, menus and autofill dropdowns attach to it as child windows.
