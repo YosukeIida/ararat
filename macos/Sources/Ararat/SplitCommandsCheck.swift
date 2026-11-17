@@ -204,9 +204,7 @@ extension Runtime {
       guard let pane = newMember(in: members, known: [check.left, check.right]) else { fail("no new member after Add Right Split: \(members)"); return }
       check.added = pane
       check.mark("add_right", members == [check.left, check.right, pane])
-      // The sidebar's own focused pane, not the guard's active id (review 2, SF3), and waited for:
-      // the screen run's screenshot lands first, so a one-shot read can miss the focus.
-      guard ready("add right focus", sidebar.focusedPane?.id == pane) else { return }
+      guard ready("add right focus", sidebar.focusedPane?.id == pane && host.activeItemId() == pane) else { return }
       check.mark("add_right_focus", sidebar.focusedPane?.id == pane)
       check.mark("add_right_new_tab_page", rowURL(pane) == "chrome://newtab/")
       check.frames = adapter.checkSplitFocus().panes
@@ -334,7 +332,8 @@ extension Runtime {
       guard ready("left drop settle", !sidebar.dragStateForCheck.active && !sidebar.dragStateForCheck.settling) else { return }
       // The core's members and the delivered selection/focus are both waited for (review 3, N2).
       guard ready("left drop", adapter.checkSplitMembers(check.split) == [check.dragged, check.left, check.right]
-                  && snapshot.selectedId == check.dragged && sidebar.focusedPane?.id == check.dragged) else { return }
+                  && snapshot.selectedId == check.dragged && sidebar.focusedPane?.id == check.dragged
+                  && host.activeItemId() == check.dragged) else { return }
       check.mark("drag_left_joins")
       check.mark("focus_after_drop")
       workspace.createTab(url: "https://split-commands-drag-right.example/") { [weak self] result in
@@ -552,7 +551,7 @@ extension Runtime {
       let pane = members.last
       check.keySplit = split ?? ""
       check.mark("key_split")
-      guard ready("add split key focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      guard ready("add split key focus", pane.map { sidebar.focusedPane?.id == $0 && host.activeItemId() == $0 } == true) else { return }
       check.mark("key_focus")
       check.mark("key_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
       browserCheckPhase = 100
@@ -592,7 +591,7 @@ extension Runtime {
       let pane = members.last
       check.commandSplit = split ?? ""
       check.mark("command_split")
-      guard ready("add split command focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      guard ready("add split command focus", pane.map { sidebar.focusedPane?.id == $0 && host.activeItemId() == $0 } == true) else { return }
       check.mark("command_focus")
       check.mark("command_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
       browserCheckPhase = 100
@@ -623,7 +622,7 @@ extension Runtime {
       let pane = members.last
       check.menuSplit = split ?? ""
       check.mark("menu_split")
-      guard ready("add split menu focus", pane.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      guard ready("add split menu focus", pane.map { sidebar.focusedPane?.id == $0 && host.activeItemId() == $0 } == true) else { return }
       check.mark("menu_focus")
       check.mark("menu_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
       // Already a split: the selection is the new pane, a member, so the same key adds a pane to
@@ -639,7 +638,7 @@ extension Runtime {
       let members = adapter.checkSplitMembers(check.menuSplit)
       guard ready("add split third", members.count == 3 && state.panes == 3) else { return }
       check.mark("split_third")
-      guard ready("add split third focus", members.last.map { sidebar.focusedPane?.id == $0 } == true) else { return }
+      guard ready("add split third focus", members.last.map { sidebar.focusedPane?.id == $0 && host.activeItemId() == $0 } == true) else { return }
       check.mark("split_third_focus")
       let result = check.diagnostics(screen: screen)
       finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty, values: result)

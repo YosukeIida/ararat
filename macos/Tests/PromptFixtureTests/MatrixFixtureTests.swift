@@ -134,23 +134,26 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
 }
 
 @Test @MainActor
-func synchronousSplitSelectionUpdatesURLAndCopyBeforeActivation() throws {
+func synchronousSplitSelectionUpdatesURLAndCopyBeforeActivation() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let session = WorkspaceSession()
     let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "focus", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
-    let snapshot = try session.queue.sync {
-        try session.store!.showSpace(windowId: "focus", spaceId: "named")
-        return try session.store!.selectItem(windowId: "focus", id: "close-split-a")
-    }
+    try session.queue.sync { try session.store!.showSpace(windowId: "focus", spaceId: "named") }
     let runtime = Runtime(windowID: "focus")
     let (fake, host) = matrixFake()
     let tab = MatrixFakeTab(item: "close-split-a", live: "live-a", profile: "Profile 1", owner: fake)
     tab.url = "http://127.0.0.1:1234/search"
-    fake.entries = [tab]
+    let other = MatrixFakeTab(item: "close-split-b", live: "live-b", profile: "Profile 1", owner: fake)
+    fake.entries = [tab, other]
     fake.active = "close-split-b"
     runtime.host = host
+    var applied = false
+    engine.onTransaction = { _, accepted in applied = accepted }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "focus", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { applied }
+    let snapshot = try session.queue.sync { try session.store!.selectItem(windowId: "focus", id: "close-split-a") }
     let sidebar = SidebarView(snapshot: snapshot)
     runtime.sidebar = sidebar
     let pasteboard = NSPasteboard(name: .init("split-sync-\(UUID().uuidString)"))
@@ -164,6 +167,32 @@ func synchronousSplitSelectionUpdatesURLAndCopyBeforeActivation() throws {
     #expect(sidebar.urlHostForCheck == "127.0.0.1")
     sidebar.copySelectedLinkForCommand()
     #expect(pasteboard.string(forType: .string) == tab.url)
+    var published = false
+    engine.onSnapshot = { value in
+        #expect(value.selectedId == "close-split-a")
+        runtime.updateSidebar(value)
+        published = true
+    }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "focus", epoch: 1, rev: 1, command: nil))
+    try await matrixWait { published }
+    #expect(fake.active == "close-split-b")
+    #expect(sidebar.focusedPane?.id == "close-split-a")
+    #expect(sidebar.focusedPane?.url == tab.url)
+    #expect(sidebar.urlHostForCheck == "127.0.0.1")
+    sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == tab.url)
+    tab.url = ""
+    runtime.showAndSelect(.success(snapshot))
+    #expect(sidebar.focusedPane?.url == "about:blank")
+    sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == "about:blank")
+    published = false
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "focus", epoch: 1, rev: 2, command: nil))
+    try await matrixWait { published }
+    #expect(sidebar.focusedPane?.id == "close-split-a")
+    #expect(sidebar.focusedPane?.url == "about:blank")
+    sidebar.copySelectedLinkForCommand()
+    #expect(pasteboard.string(forType: .string) == "about:blank")
     fake.entries = []
     runtime.showAndSelect(.success(snapshot))
     #expect(sidebar.focusedPane?.id == "close-split-a")

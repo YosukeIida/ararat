@@ -1393,7 +1393,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if SpaceWheelMotionCheck.enabled {
       adapter.onSnapshotTrace = { [weak sidebar] in sidebar?.traceSpaceWheelMotion($0) }
     }
-    adapter.onSnapshot = { [weak self, weak sidebar, weak container] snapshot in
+    adapter.onSnapshot = { [weak self, weak container] snapshot in
       guard self?.host?.isClosing() != true, self?.host?.isClosingAll() != true else { return }
       self?.snapshot = snapshot
       self?.updatePageVisibility(snapshot)
@@ -1405,11 +1405,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         // switch the check made, which is the race that flake showed.
         _ = self?.host?.setProfileDirectory(space.profileName)
       }
-      let active = self?.host?.activeItemId()
-      if let active, active == snapshot.selectedId, let tab = (self?.host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == active }) {
-        sidebar?.focusedPane = (active, tab.url)
-      } else { sidebar?.focusedPane = nil }
-      sidebar?.update(snapshot: snapshot)
+      self?.updateSidebar(snapshot)
       for controller in self?.littleWindows ?? [] { controller.originSnapshotChanged(snapshot) }
       self?.refreshSidebarRowState(snapshot)
       container?.selectionChanged()
@@ -1787,16 +1783,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
     return false
   }
 
+  func updateSidebar(_ snapshot: WorkspaceSnapshot) {
+    let liveURL = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == snapshot.selectedId })?.url
+    if let id = snapshot.selectedId, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+       let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
+       let url = liveURL.flatMap { $0.isEmpty ? nil : $0 } ?? row.url {
+      sidebar?.focusedPane = (id, url)
+    } else { sidebar?.focusedPane = nil }
+    sidebar?.update(snapshot: snapshot)
+  }
+
   func show(_ snapshot: WorkspaceSnapshot) {
     self.snapshot = snapshot
     updatePageVisibility(snapshot)
     if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
-    if let id = snapshot.selectedId, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
-       let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
-       let url = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.url ?? row.url {
-      sidebar?.focusedPane = (id, url)
-    } else { sidebar?.focusedPane = nil }
-    sidebar?.update(snapshot: snapshot)
+    updateSidebar(snapshot)
     refreshSidebarRowState(snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
