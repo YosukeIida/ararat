@@ -1,6 +1,14 @@
 import AppKit
 import AraratKit
 
+/// `--ararat-check=organize` or `--ararat-screen=organize`: the rename hint's arm and hide
+/// lines. The hint is the organize check's one intermittent condition, so the lines say what
+/// the row was and which state took the hint down.
+enum PinHintTrace {
+    static let enabled = CommandLine.arguments.contains("--ararat-check=organize")
+        || CommandLine.arguments.contains("--ararat-screen=organize")
+}
+
 @MainActor
 private final class SplitSegmentButton: NSButton {
     weak var rowView: SidebarRowView?
@@ -212,7 +220,9 @@ final class SidebarRowView: NSView {
         toolTip = row.url ?? row.title
         icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed)
             : crashed ? Self.symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed") : Self.symbol(for: row.kind)
-        if !pinned || !selected || row.kind != .tab { hideRenameHint() }
+        if !pinned || !selected || row.kind != .tab {
+            hideRenameHint(!pinned ? "not-pinned" : !selected ? "not-selected" : "not-tab")
+        }
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = 10 + CGFloat(row.depth) * 16
         setAccessibilityLabel(title.stringValue)
@@ -286,7 +296,7 @@ final class SidebarRowView: NSView {
 
     func showRenameHint() {
         guard pinned, selected, row.kind == .tab, renameField == nil else { return }
-        hideRenameHint()
+        hideRenameHint("restart")
         hintStartedAt = hintClock()
         renameHint.isHidden = false
         renameHint.alphaValue = 1
@@ -309,14 +319,19 @@ final class SidebarRowView: NSView {
     func refreshRenameHint() {
         guard let start = hintStartedAt else { return }
         let elapsed = hintClock() - start
-        if elapsed >= 3.2 || (elapsed >= 3 && hintReduceMotion()) { hideRenameHint() }
+        if elapsed >= 3.2 || (elapsed >= 3 && hintReduceMotion()) { hideRenameHint("expiry") }
         else {
             renameHint.alphaValue = min(1, max(0, (3.2 - elapsed) / 0.2))
             if elapsed >= 3 && hintTimer?.timeInterval == 0 { scheduleHintTimer(after: 1.0 / 60, repeats: true) }
         }
     }
 
-    func hideRenameHint() {
+    func hideRenameHint(_ reason: String) {
+        // Only an armed hint can be taken down; an unarmed row is every other row on every
+        // reload, and saying so would bury the one line that matters.
+        if PinHintTrace.enabled, hintTimer != nil {
+            FileHandle.standardError.write(Data("ararat-trace: pin-hint hide id=\(row.id) reason=\(reason)\n".utf8))
+        }
         hintTimer?.invalidate()
         hintTimer = nil
         hintStartedAt = nil
@@ -499,7 +514,7 @@ final class SidebarRowView: NSView {
 
     func beginRename() {
         guard renameField == nil else { return }
-        hideRenameHint()
+        hideRenameHint("rename-started")
         let field = SidebarRenameField(title: row.title, save: { [weak self] title, done in
             guard let self, let save = self.onRenameCommit else { done(false); return }
             save(self.row, title, done)
