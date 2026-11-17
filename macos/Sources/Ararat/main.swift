@@ -7900,6 +7900,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let state = host.checkProfileCloseState()
       guard state["dialogs"] as? Int == 1, state["closing"] as? Bool == false, multipleCloseChildValid(),
             let pages = state["dialog_pages"] as? [[String: Any]], pages.count == 1 else { return }
+      guard let adapter, let selected = snapshot.selectedId,
+            ProfileCloseCheck.restorationReady(selected: selected, active: host.activeItemId(),
+              request: adapter.checkInFlightSelection(item: selected)) else { return }
       if CommandLine.arguments.contains(where: { $0 == "--ararat-cross-window-selection-check" || $0.hasPrefix("--ararat-cross-window-selection-check=") }) {
         guard childRaceActivated, childRaceCompleted, let command = childRaceCommand,
               let childAdapter = children.first?.adapter else { return }
@@ -8885,6 +8888,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         "activeItemId": host.activeItemId() as Any? ?? NSNull(),
         "close_state": state,
         "child_unchanged": multipleCloseChildValid(),
+        "child_race_activated": childRaceActivated,
+        "child_race_completed": childRaceCompleted,
+        "child_race_command": childRaceCommand as Any? ?? NSNull(),
+        "child_adapter_present": children.first?.adapter != nil,
         "dialog_pages_valid": multipleClosePagesValid(pages, defaultCount: browserCheckPhase == 503 ? 1 : 2, namedCount: 0),
         "selection_request": request.map { ["command": $0.command as Any? ?? NSNull(), "resolved": $0.resolved, "activated": $0.activated] } as Any? ?? NSNull()
       ]) { _, new in new }
