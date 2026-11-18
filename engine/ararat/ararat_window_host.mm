@@ -1681,7 +1681,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   NSMutableDictionary<NSString*, NSDictionary*>* matrix_states_;
   NSString* command_id_;
   NSString* opening_item_;
-  bool foreground_open_;
+  NSString* foreground_open_item_;
   uint64_t opening_stamp_;
   BOOL draining_opens_;
   BOOL loading_profile_;
@@ -3630,7 +3630,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     }
     return YES;
   }
-  base::AutoReset<bool> foreground_open(&foreground_open_, !background);
+  // Why not use opening_item_: syncTabs consumes it before the observer captures the strip.
+  base::AutoReset<NSString*> foreground_open(&foreground_open_item_, background ? nil : itemId);
   command_id_ = commandId;
   opening_item_ = itemId;
   opening_stamp_ = stamp;
@@ -4349,11 +4350,26 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (void)transactionWithCause:(id)cause setEmptyReported:(BOOL)setEmptyReported retainHost:(BOOL)retainHost {
   if (!g_epoch || closing_all_ || closing_window_) return;
   NSArray* strips = @[ [self barrierSnapshot:[cause isKindOfClass:NSString.class] preserveActive:[cause isKindOfClass:NSString.class]] ];
-  if (workspace_page_hidden_ && !workspace_remote_ && foreground_open_ && opening_item_ && command_id_ &&
-      [cause isKindOfClass:NSDictionary.class] && [cause[@"Command"] isEqualToString:command_id_]) {
+  BOOL command_cause = [cause isKindOfClass:NSDictionary.class];
+  NSString* cause_command = command_cause ? cause[@"Command"] : nil;
+  BOOL matching_command = command_id_ && [cause_command isEqualToString:command_id_];
+  BOOL hidden_open = workspace_page_hidden_ && !workspace_remote_ && foreground_open_item_ && matching_command;
+  const auto* flags = base::CommandLine::ForCurrentProcess();
+  bool trace = (foreground_open_item_ || command_cause) &&
+      (flags->GetSwitchValueASCII("ararat-check") == "organize" ||
+       flags->GetSwitchValueASCII("ararat-screen") == "organize");
+  if (hidden_open || trace) {
     auto* contents = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
     auto* identity = contents ? static_cast<TabIdentity*>(contents->GetUserData(kTabIdentityKey)) : nullptr;
-    if (identity && [identity->live_id isEqualToString:command_id_] && [identity->item_id isEqualToString:opening_item_]) {
+    BOOL matching_live = identity && [identity->live_id isEqualToString:command_id_];
+    BOOL matching_item = identity && [identity->item_id isEqualToString:foreground_open_item_];
+    if (trace) std::fprintf(stderr, "ararat-trace: private-selection window=%s open-completion cause_command=%s command=%s hidden=%d remote=%d foreground_open=%d opening_item=%d command_cause=%d command_match=%d active_contents=%d active_identity=%d live_match=%d item_match=%d override=%d\n",
+                            window_id_.UTF8String, cause_command ? cause_command.UTF8String : "nil",
+                            command_id_ ? command_id_.UTF8String : "nil", workspace_page_hidden_, workspace_remote_,
+                            foreground_open_item_ != nil, opening_item_ != nil, command_cause, matching_command,
+                            contents != nullptr, identity != nullptr, matching_live, matching_item,
+                            hidden_open && matching_live && matching_item);
+    if (hidden_open && matching_live && matching_item) {
       // Why not unmask stripSnapshot: later hidden-page reports must still withhold their active tab.
       NSMutableDictionary* strip = [strips.firstObject mutableCopy];
       strip[@"active"] = identity->live_id;
