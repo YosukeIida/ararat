@@ -1133,14 +1133,18 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 func leaves(_ pane: SplitPane) -> [String] {
                     pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves)
                 }
-                let selectedSplits = selections.compactMap { adapter, generation -> (adapter: EngineAdapter, generation: Int, split: String, owners: [(String, String?)])? in
-                    guard let item = store.selectedItem(windowId: adapter.windowID),
-                          let split = store.splitLayout(itemId: item) else { return nil }
-                    return (adapter, generation, split.id, leaves(split).map { ($0, store.liveWindow(item: $0)) })
+                let selectedOwners = selections.compactMap { adapter, generation -> (adapter: EngineAdapter, generation: Int, selectionID: String, owners: [(String, String?)])? in
+                    guard let item = store.selectedItem(windowId: adapter.windowID) else { return nil }
+                    let split = store.splitLayout(itemId: item)
+                    let items = split.map(leaves) ?? [item]
+                    return (adapter, generation, split?.id ?? item, items.map { ($0, store.liveWindow(item: $0)) })
                 }
                 let outcome = try store.liveApply(transaction: transaction)
-                let affectedSplits = outcome.applied ? selectedSplits.filter { selection in
-                    selection.owners.contains { item, owner in store.liveWindow(item: item) != owner }
+                let affectedSelections = outcome.applied ? selectedOwners.filter { selection in
+                    selection.owners.contains { item, owner in
+                        guard let newOwner = store.liveWindow(item: item) else { return false }
+                        return newOwner != owner && newOwner != selection.adapter.windowID
+                    }
                 } : []
                 self.traceLittleWindow("transaction-result rev=\(rev) applied=\(outcome.applied) mappings=\(transaction.strips.flatMap { strip in strip.tabs.compactMap { tab in tab.item.map { "\($0):\(tab.liveId):\(store.liveTab(item: $0) ?? "nil")" } } }.joined(separator: ","))")
                 let settled = outcome.applied ? transaction.strips.filter { $0.window == self.windowID }.flatMap { strip in
@@ -1201,13 +1205,12 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         self.session.captureSnapshot(tab, item: item)
                     }
                     if case .command(let id) = transaction.cause { self.traceMatrix("selection transaction command=\(id) rev=\(transaction.rev) applied=\(outcome.applied)") }
-                    // After finishing the request, a reclaim could restart a selection that is already opening the split.
-                    for (adapter, generation, split, _) in affectedSplits {
+                    for (adapter, generation, selectionID, _) in affectedSelections {
                         guard adapter.selectionGeneration == generation, adapter.deferredSelection == nil,
                               adapter.littleWindowHandoffs == 0,
                               let host = adapter.host, (host as AnyObject).responds(to: #selector(ARWindowHostAPI.window)),
                               host.window().isKeyWindow else { continue }
-                        adapter.takeRemoteSelection(inSplit: split)
+                        adapter.takeRemoteSelection(matching: selectionID)
                     }
                     if case .command(let id) = transaction.cause, self.selectionRequest?.command == id { self.finishSelectionRequest() }
                     self.onTransaction?(transaction, outcome.applied)
@@ -1679,12 +1682,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         return owner != window || remoteSibling ? (true, true) : (false, true)
     }
 
-    private func takeRemoteSelection(inSplit expectedSplit: String? = nil) {
+    private func takeRemoteSelection(matching expectedSelection: String? = nil) {
         precondition(Thread.isMainThread)
         if littleWindowHandoffs > 0 { littleWindowKeyTakePending = true; traceLittleWindow("key-selection deferred=true count=\(littleWindowHandoffs)"); return }
         guard !selectionClosed, !restoringSelection, let host, !host.isClosing(), !host.isClosingAll() else { tracePrivate("key take skipped closed=\(selectionClosed) restoring=\(restoringSelection)"); return }
         tracePrivate("key take generation=\(selectionGeneration) displayed=\(displayedSelection ?? "nil") active=\(host.activeItemId() ?? "nil") lone=\(loneSplitPane ?? "nil")")
         let loneHere = loneSplitPane
+        let requestedItem = selectionRequest?.item
         let candidate: (id: String, url: String, wholeSplit: Bool)? = queue.sync {
             guard let store else { return nil }
             let snapshot = store.snapshot(windowId: windowID)
@@ -1697,7 +1701,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 return pane.children.contains(where: hasRemote)
             }
             let split = store.splitLayout(itemId: id)
-            if let expectedSplit, split?.id != expectedSplit { return nil }
+            if let expectedSelection {
+                guard (split?.id ?? id) == expectedSelection,
+                      requestedItem == nil || requestedItem == id else { return nil }
+            }
             let remoteSplit = split.map(hasRemote) ?? false
             let owner = store.liveWindow(item: id)
             let take = Self.remoteTake(owner: owner, window: windowID, remoteSibling: remoteSplit,

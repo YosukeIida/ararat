@@ -569,12 +569,13 @@ func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws 
     engine.shutdown()
 }
 
-private enum SplitOwnershipChange: CaseIterable {
+private enum SelectionOwnershipChange: CaseIterable {
     case key, nonKey, unrelated
+    case arrivingSibling, pendingSelection, singleTab
 }
 
-@Test(arguments: SplitOwnershipChange.allCases) @MainActor
-private func splitOwnershipApplyReclaimsOnlyForTheKeyWindow(change: SplitOwnershipChange) async throws {
+@Test(arguments: SelectionOwnershipChange.allCases) @MainActor
+private func ownershipApplyReclaimsTheCurrentKeySelection(change: SelectionOwnershipChange) async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -589,46 +590,74 @@ private func splitOwnershipApplyReclaimsOnlyForTheKeyWindow(change: SplitOwnersh
     let other = try session.queue.sync {
         let store = try #require(session.store)
         for window in ["first", "second"] { try store.showSpace(windowId: window, spaceId: "named") }
-        return try #require(store.createTab(windowId: "first", url: "about:blank?other").selectedId)
+        let item = try #require(store.createTab(windowId: "first", url: "about:blank?other").selectedId)
+        if change == .arrivingSibling {
+            let pinned = try #require(store.snapshot(windowId: "first").spaces.first { $0.id == "named" }?.pinnedId)
+            _ = try store.moveItem(windowId: "first", id: item, container: pinned, index: 0, openFolder: false)
+            _ = try store.makeSplit(windowId: "first", draggedId: item, targetId: right, side: .right)
+        }
+        return item
     }
     first.attach(aHost); second.attach(bHost)
     defer { first.shutdown(); second.shutdown() }
-    a.entries = [left, right, other].map { MatrixFakeTab(item: $0, live: "live-\($0)", profile: "Profile 1", owner: a) }
-    a.active = left
-    var applied = false
-    first.onTransaction = { _, accepted in applied = accepted }
-    first.windowHost(aHost, didReceiveTransaction: matrixTransaction(a, window: "first", epoch: 1, rev: 0, command: nil))
-    try await matrixWait { applied }
-    try session.queue.sync { _ = try session.store?.selectItem(windowId: "first", id: left) }
+    let arriving = change == .arrivingSibling
+    let selected = change == .singleTab ? other : left
+    for item in [left, right, other] {
+        let owner = arriving && item != left ? b : a
+        owner.entries.append(MatrixFakeTab(item: item, live: "live-\(item)", profile: "Profile 1", owner: owner))
+    }
+    a.active = selected
+    b.active = b.entries.first?.itemId
+    func apply(_ rev: UInt64, adapter: EngineAdapter, host: any ARWindowHostAPI) async throws {
+        var transaction = matrixTransaction(a, window: "first", epoch: 1, rev: rev, command: nil)
+        let source = try #require(transaction["strips"] as? [[String: Any]])
+        let destination = try #require(matrixTransaction(b, window: "second", epoch: 1, rev: rev, command: nil)["strips"] as? [[String: Any]])
+        transaction["strips"] = source + destination
+        transaction["cause"] = "Chrome"
+        var applied: Bool?
+        adapter.onTransaction = { _, accepted in applied = accepted }
+        defer { adapter.onTransaction = nil }
+        adapter.windowHost(host, didReceiveTransaction: transaction)
+        try await matrixWait { applied != nil }
+        try #require(applied == true)
+    }
+    try await apply(0, adapter: first, host: aHost)
+    try session.queue.sync { _ = try session.store?.selectItem(windowId: "first", id: selected) }
+
+    let movedItem = change == .unrelated || change == .singleTab ? other : right
+    let source = arriving ? b : a
+    let target = arriving ? a : b
+    let tab = try #require(source.entries.first { $0.itemId == movedItem })
+    try #require(target.handoff(tab, activate: !arriving))
+    try #require(first.checkLiveWindow(movedItem) == (arriving ? "second" : "first"))
+    a.fakeWindow.keyForTest = true
+    if !arriving {
+        let beforeKey = try #require(first.checkSelectionState()["generation"] as? Int)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: a.window())
+        #expect(first.checkSelectionState()["generation"] as? Int == beforeKey)
+    }
+    if change == .nonKey { a.fakeWindow.keyForTest = false }
+    if change == .pendingSelection {
+        var registered = false
+        first.checkSelectionDispatch = { stage, _, _ in if stage == "registered" { registered = true } }
+        first.select(id: other, url: "about:blank?other")
+        try await matrixWait { registered }
+        try #require(first.checkInFlightSelection(item: other) != nil)
+    }
     let generation = try #require(first.checkSelectionState()["generation"] as? Int)
 
-    let movedItem = change == .unrelated ? other : right
-    let tab = try #require(a.entries.first { $0.itemId == movedItem })
-    try #require(b.handoff(tab, activate: true))
-    #expect(first.checkLiveWindow(movedItem) == "first")
-    a.fakeWindow.keyForTest = true
-    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: a.window())
-    #expect(first.checkSelectionState()["generation"] as? Int == generation)
-    if change == .nonKey { a.fakeWindow.keyForTest = false }
-
-    var paired = matrixTransaction(b, window: "second", epoch: 1, rev: 1, command: nil)
-    let sourceStrip = try #require(matrixTransaction(a, window: "first", epoch: 1, rev: 1, command: nil)["strips"] as? [[String: Any]])
-    let destinationStrip = try #require(paired["strips"] as? [[String: Any]])
-    paired["strips"] = sourceStrip + destinationStrip
-    paired["cause"] = "Chrome"
-    applied = false
-    second.onTransaction = { _, accepted in applied = accepted }
-    second.windowHost(bHost, didReceiveTransaction: paired)
-    try await matrixWait { applied }
-    #expect(first.checkLiveWindow(movedItem) == "second")
-    if change == .key {
+    try await apply(1, adapter: arriving ? first : second, host: arriving ? aHost : bHost)
+    #expect(first.checkLiveWindow(movedItem) == (arriving ? "first" : "second"))
+    if change == .key || change == .singleTab {
+        try #require(first.checkSelectionState()["generation"] as? Int == generation + 1)
         try await matrixWait { a.activated.count == 1 }
-        #expect(first.checkSelectionState()["generation"] as? Int == generation + 1)
-        #expect(a.active == left)
+        #expect(a.active == selected)
     } else {
         #expect(first.checkSelectionState()["generation"] as? Int == generation)
         #expect(a.activated.isEmpty)
     }
+    if arriving { #expect(first.checkLiveWindow(other) == "second") }
+    if change == .pendingSelection { #expect(first.checkInFlightSelection(item: other) != nil) }
 }
 
 @Test(arguments: [true, false]) @MainActor
