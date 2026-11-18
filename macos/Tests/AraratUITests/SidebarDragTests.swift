@@ -533,7 +533,7 @@ func clickingSplitMemberSelectsItWithoutMovingTheSplit() throws {
     let (window, sidebar) = dragWindow(dragSpace(pinned: [dragRow("split", "ps", kind: .split), dragRow("member", "split", depth: 1)]))
     defer { window.contentView = nil }
     let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
-    let button = try #require(dragDescendants(row).compactMap { $0 as? NSButton }.first { $0.title == "member" })
+    let button = try #require(dragDescendants(row).compactMap { $0 as? SplitSegmentButton }.first { $0.paneTitle == "member" })
     var selected: [String] = []
     var moves = 0
     sidebar.onSelect = { selected.append($0.id) }
@@ -554,7 +554,7 @@ func splitMenuFollowsTheAxisAndThePanePosition() throws {
     let (window, sidebar) = dragWindow(dragSpace(today: [split, first, second]))
     defer { window.contentView = nil }
     let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
-    let buttons = dragDescendants(row).compactMap { $0 as? NSButton }.filter { $0.title == "first" || $0.title == "second" }
+    let buttons = dragDescendants(row).compactMap { $0 as? SplitSegmentButton }.filter { $0.paneTitle == "first" || $0.paneTitle == "second" }
         .sorted { $0.frame.minX < $1.frame.minX }
     #expect(buttons.count == 2)
     let right = try #require(buttons.first)
@@ -587,7 +587,7 @@ func splitSegmentForwardsContextAndMiddleClick() throws {
     let (window, sidebar) = dragWindow(dragSpace(today: [split, member]))
     defer { window.contentView = nil }
     let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
-    let button = try #require(dragDescendants(row).compactMap { $0 as? NSButton }.first { $0.title == "member" })
+    let button = try #require(dragDescendants(row).compactMap { $0 as? SplitSegmentButton }.first { $0.paneTitle == "member" })
     let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
     let hit = try #require(window.contentView?.hitTest(point))
     let right = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))

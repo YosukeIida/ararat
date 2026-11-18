@@ -9,14 +9,119 @@ enum PinHintTrace {
         || CommandLine.arguments.contains("--ararat-screen=organize")
 }
 
+/// U20 board: a split is one row with a segment per pane. The segment draws its pane's glyph,
+/// its title and its own background, so a split row draws no row-level glyph, fill or title
+/// (`updateSegments`). The board's `.split`: 36 pt tall with a 2 pt gap, the row's 11 pt radius on
+/// the first and last segment's outer end and 4 pt inside, the glyph 16 pt at 10 pt from the
+/// segment's left and the title 13 pt at 32 pt, truncated at the tail.
 @MainActor
-private final class SplitSegmentButton: NSButton {
+final class SplitSegmentButton: NSButton {
     weak var rowView: SidebarRowView?
-    let selectionFill = CALayer()
+    let pane: Row
+    // The board's outer end carries the row radius and the inner one 4 pt; a lone segment is the
+    // whole row.
+    let leadingRadius: CGFloat
+    let trailingRadius: CGFloat
+    let fill = CAShapeLayer()
+    let iconView = NSImageView()
+    let titleField = NSTextField(labelWithString: "")
+    private(set) var active: Bool
+
+    var paneTitle: String { titleField.stringValue }
+
+    init(pane: Row, title: String, index: Int, count: Int, active: Bool) {
+        self.pane = pane
+        self.active = active
+        let outer = SidebarMetrics.cornerRadius
+        let inner = SidebarMetrics.splitSegmentRadius
+        let radii: (leading: CGFloat, trailing: CGFloat) = count <= 1 ? (outer, outer)
+            : index == 0 ? (outer, inner)
+            : index == count - 1 ? (inner, outer)
+            : (inner, inner)
+        leadingRadius = radii.leading
+        trailingRadius = radii.trailing
+        super.init(frame: .zero)
+        // The title is our own label so its 32 pt indent and tail truncation hold; the button's
+        // own title stays empty and draws nothing.
+        self.title = ""
+        isBordered = false
+        wantsLayer = true
+        fill.name = "split-segment-fill"
+        layer?.insertSublayer(fill, at: 0)
+        iconView.imageScaling = .scaleNone
+        iconView.contentTintColor = .secondaryLabelColor
+        iconView.setAccessibilityHidden(true)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        titleField.stringValue = title
+        titleField.font = .systemFont(ofSize: SidebarMetrics.splitSegmentTitleSize)
+        titleField.maximumNumberOfLines = 1
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleField.setAccessibilityElement(false)
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+        addSubview(titleField)
+        let titleLeading = titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SidebarMetrics.splitSegmentTitleLeading)
+        // A segment narrower than the indent drops the indent rather than break the layout.
+        titleLeading.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SidebarMetrics.rowIconInset),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            titleLeading,
+            titleField.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -SidebarMetrics.splitSegmentTitleTrailing),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyFill()
+        setAccessibilityValue(active ? "Selected" : "")
+        setAccessibilitySelected(active)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: SidebarMetrics.splitSegmentTitleLeading + 8, height: SidebarMetrics.rowFillHeight)
+    }
+
+    // The focused pane's segment takes the row's selected fill; every other segment keeps the
+    // row's hover fill (the board's `.split span.on` and `.split span`).
+    func applyFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let alpha = active ? SidebarMetrics.rowSelectedFillAlpha : SidebarMetrics.rowHoverFillAlpha
+            fill.fillColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
+        }
+    }
+
     override func layout() {
         super.layout()
-        selectionFill.frame = bounds.insetBy(dx: 4, dy: 4)
+        fill.frame = bounds
+        fill.path = Self.path(in: bounds, leading: leadingRadius, trailing: trailingRadius)
     }
+
+    // One rounded rectangle with a radius per end; AppKit has no per-corner radius, and the
+    // board's corners are plain arcs.
+    static func path(in rect: CGRect, leading: CGFloat, trailing: CGFloat) -> CGPath {
+        let limit = min(rect.width, rect.height) / 2
+        let left = min(leading, limit)
+        let right = min(trailing, limit)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX + left, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - right, y: rect.maxY))
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY), tangent2End: CGPoint(x: rect.maxX, y: rect.minY), radius: right)
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY), tangent2End: CGPoint(x: rect.minX, y: rect.minY), radius: right)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY), tangent2End: CGPoint(x: rect.minX, y: rect.maxY), radius: left)
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY), tangent2End: CGPoint(x: rect.maxX, y: rect.maxY), radius: left)
+        path.closeSubpath()
+        return path
+    }
+
+    // The glyph and the title are decoration: a click anywhere on the segment belongs to the row.
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+
     override func mouseDown(with event: NSEvent) { rowView?.mouseDown(with: event) }
     override func mouseDragged(with event: NSEvent) { rowView?.mouseDragged(with: event) }
     override func mouseUp(with event: NSEvent) { rowView?.mouseUp(with: event) }
@@ -124,14 +229,16 @@ final class SidebarRowView: NSView {
         segments.orientation = .horizontal
         segments.isHidden = true
         segments.distribution = .fillEqually
-        segments.spacing = 2
+        segments.spacing = SidebarMetrics.splitSegmentGap
         segments.translatesAutoresizingMaskIntoConstraints = false
         addSubview(segments)
         NSLayoutConstraint.activate([
-            segments.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            segments.trailingAnchor.constraint(equalTo: fill.trailingAnchor, constant: -4),
+            // The board starts the segments at the row's own left inset and ends them at its
+            // right inset, so they line up with the row fill (and its indent).
+            segments.leadingAnchor.constraint(equalTo: fill.leadingAnchor),
+            segments.trailingAnchor.constraint(equalTo: fill.trailingAnchor),
             segments.centerYAnchor.constraint(equalTo: centerYAnchor),
-            segments.heightAnchor.constraint(equalToConstant: 36),
+            segments.heightAnchor.constraint(equalToConstant: SidebarMetrics.rowFillHeight),
         ])
         unreadDot.wantsLayer = true
         unreadDot.layer?.cornerRadius = SidebarMetrics.unreadDotSize / 2
@@ -147,7 +254,7 @@ final class SidebarRowView: NSView {
             fillLeading,
             fill.trailingAnchor.constraint(equalTo: trailingAnchor),
             fill.centerYAnchor.constraint(equalTo: centerYAnchor),
-            fill.heightAnchor.constraint(equalToConstant: 36),
+            fill.heightAnchor.constraint(equalToConstant: SidebarMetrics.rowFillHeight),
             iconLeading,
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
@@ -219,12 +326,12 @@ final class SidebarRowView: NSView {
         title.stringValue = row.kind == .split && row.title.isEmpty ? "Split" : row.title
         toolTip = row.url ?? row.title
         icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed)
-            : crashed ? Self.symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed") : Self.symbol(for: row.kind)
+            : crashed ? Self.tabIcon(crashed: true) : Self.symbol(for: row.kind)
         if !pinned || !selected || row.kind != .tab {
             hideRenameHint(!pinned ? "not-pinned" : !selected ? "not-selected" : "not-tab")
         }
         fillLeading.constant = CGFloat(row.depth) * 16
-        iconLeading.constant = 10 + CGFloat(row.depth) * 16
+        iconLeading.constant = SidebarMetrics.rowIconInset + CGFloat(row.depth) * 16
         setAccessibilityLabel(title.stringValue)
         updateStatus()
         updateFill()
@@ -235,26 +342,39 @@ final class SidebarRowView: NSView {
     func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) {
         segmentRows = members
         segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        segments.isHidden = members.isEmpty
-        title.isHidden = !members.isEmpty
+        // A split draws its panes' segments and nothing of its own: no row-level glyph, fill or
+        // title (the U20 board's split row).
+        let drawing = !members.isEmpty
+        segments.isHidden = !drawing
+        title.isHidden = drawing
+        fill.isHidden = drawing
         for (index, member) in members.enumerated() {
-            let button = SplitSegmentButton(title: member.title, target: self, action: #selector(segmentClicked(_:)))
+            let name = Self.paneName(member)
+            let button = SplitSegmentButton(pane: member, title: name, index: index, count: members.count, active: member.id == active)
             button.rowView = self
             button.tag = index
-            button.isBordered = false
-            button.wantsLayer = true
-            button.selectionFill.name = "split-segment-fill"
-            button.selectionFill.cornerRadius = 8
-            button.selectionFill.backgroundColor = member.id == active ? NSColor.controlAccentColor.withAlphaComponent(0.35).cgColor : NSColor.clear.cgColor
-            button.layer?.insertSublayer(button.selectionFill, at: 0)
-            let name = member.title.isEmpty ? (member.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : member.title
+            button.target = self
+            button.action = #selector(segmentClicked(_:))
+            let paneCrashed = crashed.contains(member.id)
+            button.iconView.image = Self.tabIcon(crashed: paneCrashed)
+            button.alphaValue = member.unloaded || paneCrashed ? SidebarMetrics.unloadedOpacity : 1
             button.setAccessibilityLabel("Pane \(index + 1) of \(members.count): \(name)")
-            button.setAccessibilityValue(member.id == active ? "Selected" : "")
-            button.setAccessibilitySelected(member.id == active)
-            button.alphaValue = member.unloaded || crashed.contains(member.id) ? 0.45 : 1
             segments.addArrangedSubview(button)
         }
-        if !members.isEmpty { setAccessibilityLabel("Split: " + members.map { $0.title.isEmpty ? ($0.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : $0.title }.joined(separator: ", ")) }
+        updateStatus()
+        updateFill()
+        setAccessibilityLabel(drawing ? "Split: " + members.map(Self.paneName).joined(separator: ", ") : title.stringValue)
+    }
+
+    // A pane with no title reads as its host, as the row's own name does.
+    static func paneName(_ row: Row) -> String {
+        row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : row.title
+    }
+
+    // The glyph a tab row draws, so a split's segment draws the same one: the globe, or the
+    // warning when that pane's renderer died.
+    static func tabIcon(crashed: Bool) -> NSImage {
+        crashed ? symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed") : symbol(for: .tab)
     }
 
     @objc private func segmentClicked(_ sender: NSButton) {
@@ -266,7 +386,8 @@ final class SidebarRowView: NSView {
     // has not shown. Both are view state, so the core's row never carries them.
     private func updateStatus() {
         let loading = status?.loading == true && row.kind == .tab && !crashed
-        icon.isHidden = loading
+        // A split's segments carry its panes' glyphs, so the row keeps its own one hidden.
+        icon.isHidden = loading || !segmentRows.isEmpty
         if loading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         let muted = status?.muted == true
         audioButton.isHidden = row.kind != .tab || !(muted || status?.audible == true)
@@ -280,7 +401,7 @@ final class SidebarRowView: NSView {
         if row.kind == .folder {
             icon.image = Self.folderSymbol(collapsed: row.collapsed)
         } else if crashed {
-            icon.image = Self.symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed")
+            icon.image = Self.tabIcon(crashed: true)
         } else {
             icon.image = Self.symbol(for: row.kind)
         }
@@ -495,10 +616,12 @@ final class SidebarRowView: NSView {
     }
 
     private func updateFill() {
-        let alpha: CGFloat = dragSource || dragCopy || pressed || selected ? 0.22 : hovered || dropHovered ? 0.12 : 0
+        let alpha: CGFloat = dragSource || dragCopy || pressed || selected ? SidebarMetrics.rowSelectedFillAlpha
+            : hovered || dropHovered ? SidebarMetrics.rowHoverFillAlpha : 0
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
+        for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
