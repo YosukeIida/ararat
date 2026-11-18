@@ -28,6 +28,12 @@ private final class MatrixFakeTab: NSObject {
 }
 
 @MainActor
+private final class MatrixFakeWindow: NSWindow {
+    var keyForTest = false
+    override var isKeyWindow: Bool { keyForTest }
+}
+
+@MainActor
 private final class MatrixFakeHost: NSObject {
     @objc dynamic weak var delegate: AnyObject?
     var entries: [MatrixFakeTab] = []
@@ -49,9 +55,9 @@ private final class MatrixFakeHost: NSObject {
     var failHandoffAt = 0
     var captureCompletions: [(NSImage?) -> Void] = []
     var remotePlaceholder = false
-    private lazy var fakeWindow: NSWindow = {
+    lazy var fakeWindow: MatrixFakeWindow = {
         _ = NSApplication.shared
-        return NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: false)
+        return MatrixFakeWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: false)
     }()
     var profileReady = true
     var preparedProfiles: [String] = []
@@ -561,6 +567,68 @@ func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws 
     try await matrixWait { fake.closed.count == 2 }
     #expect(fake.closed[0] != fake.closed[1])
     engine.shutdown()
+}
+
+private enum SplitOwnershipChange: CaseIterable {
+    case key, nonKey, unrelated
+}
+
+@Test(arguments: SplitOwnershipChange.allCases) @MainActor
+private func splitOwnershipApplyReclaimsOnlyForTheKeyWindow(change: SplitOwnershipChange) async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let first = try EngineAdapter(path: path, windowID: "first", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let second = try EngineAdapter(path: path, windowID: "second", card: NSView(), session: session)
+    let (a, aHost) = matrixFake()
+    let (b, bHost) = matrixFake()
+    let left = "close-split-a"
+    let right = "close-split-b"
+    let other = try session.queue.sync {
+        let store = try #require(session.store)
+        for window in ["first", "second"] { try store.showSpace(windowId: window, spaceId: "named") }
+        return try #require(store.createTab(windowId: "first", url: "about:blank?other").selectedId)
+    }
+    first.attach(aHost); second.attach(bHost)
+    defer { first.shutdown(); second.shutdown() }
+    a.entries = [left, right, other].map { MatrixFakeTab(item: $0, live: "live-\($0)", profile: "Profile 1", owner: a) }
+    a.active = left
+    var applied = false
+    first.onTransaction = { _, accepted in applied = accepted }
+    first.windowHost(aHost, didReceiveTransaction: matrixTransaction(a, window: "first", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { applied }
+    try session.queue.sync { _ = try session.store?.selectItem(windowId: "first", id: left) }
+    let generation = try #require(first.checkSelectionState()["generation"] as? Int)
+
+    let movedItem = change == .unrelated ? other : right
+    let tab = try #require(a.entries.first { $0.itemId == movedItem })
+    try #require(b.handoff(tab, activate: true))
+    #expect(first.checkLiveWindow(movedItem) == "first")
+    a.fakeWindow.keyForTest = true
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: a.window())
+    #expect(first.checkSelectionState()["generation"] as? Int == generation)
+    if change == .nonKey { a.fakeWindow.keyForTest = false }
+
+    var paired = matrixTransaction(b, window: "second", epoch: 1, rev: 1, command: nil)
+    let sourceStrip = try #require(matrixTransaction(a, window: "first", epoch: 1, rev: 1, command: nil)["strips"] as? [[String: Any]])
+    let destinationStrip = try #require(paired["strips"] as? [[String: Any]])
+    paired["strips"] = sourceStrip + destinationStrip
+    paired["cause"] = "Chrome"
+    applied = false
+    second.onTransaction = { _, accepted in applied = accepted }
+    second.windowHost(bHost, didReceiveTransaction: paired)
+    try await matrixWait { applied }
+    #expect(first.checkLiveWindow(movedItem) == "second")
+    if change == .key {
+        try await matrixWait { a.activated.count == 1 }
+        #expect(first.checkSelectionState()["generation"] as? Int == generation + 1)
+        #expect(a.active == left)
+    } else {
+        #expect(first.checkSelectionState()["generation"] as? Int == generation)
+        #expect(a.activated.isEmpty)
+    }
 }
 
 @Test(arguments: [true, false]) @MainActor
