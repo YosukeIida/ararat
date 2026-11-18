@@ -2607,6 +2607,10 @@ extension SidebarView {
             copy.translatesAutoresizingMaskIntoConstraints = true
             copy.frame = nativeDragRect(state.originFrame)
             addSubview(copy)
+            // A dragged split draws the same segments as its row does (the U20 board's split row).
+            if state.row.kind == .split {
+                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems)
+            }
             dragCopyView = copy
             rowViews[state.row.id]?.dragSource = true
             listScroll.stopReveal()

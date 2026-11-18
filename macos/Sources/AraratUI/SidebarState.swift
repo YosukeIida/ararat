@@ -74,6 +74,21 @@ enum SidebarMetrics {
     static let spaceWheelPause = 0.250
     static let momentumQuiet: TimeInterval = 0.150
     static let unloadedOpacity: CGFloat = 0.45
+    // The row fill's two looks, both of the label colour: hovered 0.12, pressed or selected 0.22.
+    // A split's segments are drawn in the first and the focused pane's segment in the second (the
+    // U20 board's `.split span` and `.split span.on`).
+    static let rowHoverFillAlpha: CGFloat = 0.12
+    static let rowSelectedFillAlpha: CGFloat = 0.22
+    // The U20 board's split row (`.split`): 36 pt segments 2 pt apart, the row's 11 pt radius on
+    // the first and last segment's outer end and 4 pt inside (middle segments 4 pt all round);
+    // each pane's glyph 16 pt at 10 pt from the segment's left and its title 13 pt at 32 pt.
+    static let rowFillHeight: CGFloat = 36
+    static let rowIconInset: CGFloat = 10
+    static let splitSegmentGap: CGFloat = 2
+    static let splitSegmentRadius: CGFloat = 4
+    static let splitSegmentTitleLeading: CGFloat = 32
+    static let splitSegmentTitleTrailing: CGFloat = 6
+    static let splitSegmentTitleSize: CGFloat = 13
     static let rowCloseMoveDuration = 0.120
     static let rowCloseFadeDuration = 0.110
     static let easeOutCubic = CAMediaTimingFunction(controlPoints: 1 / 3, 1, 2 / 3, 1)
