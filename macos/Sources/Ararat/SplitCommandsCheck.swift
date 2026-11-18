@@ -299,7 +299,7 @@ extension Runtime {
       check.mark("close_pane")
       check.frames = adapter.checkSplitFocus().panes
       workspace.createTab(url: "https://split-commands-drag.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("drag row", screen: screen); return
         }
         check.dragged = id
@@ -337,7 +337,7 @@ extension Runtime {
       check.mark("drag_left_joins")
       check.mark("focus_after_drop")
       workspace.createTab(url: "https://split-commands-drag-right.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("right drag row", screen: screen); return
         }
         check.draggedRight = id
@@ -364,7 +364,7 @@ extension Runtime {
       check.memberCount = adapter.checkSplitMembers(check.split).count
       // A row dragged onto the page while it is the shown tab has no half to land on.
       workspace.createTab(url: "https://split-commands-refused.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("refused row", screen: screen); return
         }
         check.refusedRow = id
@@ -521,11 +521,11 @@ extension Runtime {
     case 27:
       browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-key.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("add split key tab", screen: screen); return
         }
         check.keyTab = id
-        self.showAndSelect(result)
+        self.showAndSelect(result.map(\.snapshot))
         self.browserCheckPhase = 28
       }
     case 28:
@@ -556,11 +556,11 @@ extension Runtime {
       check.mark("key_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
       browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-command.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("add split command tab", screen: screen); return
         }
         check.commandTab = id
-        self.showAndSelect(result)
+        self.showAndSelect(result.map(\.snapshot))
         self.browserCheckPhase = 30
       }
     case 30:
@@ -596,11 +596,11 @@ extension Runtime {
       check.mark("command_new_page", pane.flatMap { rowURL($0) } == "chrome://newtab/")
       browserCheckPhase = 100
       workspace.createTab(url: "https://split-commands-add-menu.example/") { [weak self] result in
-        guard let self, case .success(let next) = result, let id = next.selectedId else {
+        guard let self, case .success(let next) = result, let id = next.id else {
           self?.splitCommandsFail("add split menu tab", screen: screen); return
         }
         check.menuTab = id
-        self.showAndSelect(result)
+        self.showAndSelect(result.map(\.snapshot))
         self.browserCheckPhase = 33
       }
     case 33:

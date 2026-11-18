@@ -152,6 +152,8 @@ AppController の hook はメインウィンドウの表示中 Browser を返し
 
 host は表示したプロファイルごとに Browser と profile keep-alive を保持する。strip はすべての Browser のタブと各タブのプロファイルを含み、active id は表示中の Browser に属する。`showProfile` delegate はそのウィンドウで最後に表示した当該プロファイルの space に切り替え、host はページと Chrome のアクティブ状態を切り替える（我々の規則）。
 
+workspace のページが非表示なら、通常は active タブを報告しない。foreground Open の完了 strip では、command id、live id、item id が実際の active タブと一致するときだけ、ページが非表示でも開いたタブを報告する。remote のページでは抑制を維持する。background Open と、それ以降の非表示ページの snapshot でも抑制を維持する（我々の規則）。
+
 **ウィンドウとプロファイル。**
 
 - アプリのウィンドウ 1 つは、Views を基盤とする `NSWindow`（`NativeWidgetMacNSWindow`）1 つである。これにより、Chrome の bubble、ダイアログ、メニュー、autofill のドロップダウンが子ウィンドウとしてこのウィンドウに付随する。

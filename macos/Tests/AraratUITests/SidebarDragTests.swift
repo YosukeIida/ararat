@@ -714,6 +714,86 @@ private func dropPinBeforeSelection(staleSelection: String? = nil) throws -> (Si
     return (sidebar, dropped)
 }
 
+@Test(arguments: ["move", "moveIfLive", "firstFavorite", "openFolder", "edit"]) @MainActor
+func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws {
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = WorkspaceSession()
+    _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                          windowID: "organize", card: NSView(), seedOrganize: true, session: session)
+    let initial = try session.queue.sync {
+        _ = try session.store!.liveApply(transaction: LiveTransaction(offTheRecord: false, epoch: 1, rev: 0, cause: .engine, strips: []))
+        return session.store!.snapshot(windowId: "organize")
+    }
+    let space = try #require(initial.spaces.first { $0.id == "organize-work" })
+    let id = try #require(space.today.first?.id)
+    #expect(initial.selectedId == nil)
+    _ = NSApplication.shared
+    let sidebar = SidebarView(snapshot: initial)
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 700), styleMask: [], backing: .buffered, defer: false)
+    window.contentView = sidebar
+    defer { window.contentView = nil }
+    sidebar.dragReduceMotion = { true }
+    sidebar.renameHintClock = { 100 }
+    let adapter = WorkspaceAdapter(windowID: "organize", session: session)
+    let actions = SidebarActions()
+    let replies = AsyncStream<WorkspaceSnapshot>.makeStream()
+    defer { replies.continuation.finish() }
+    var recorded: [String?] = []
+    var shown: [String?] = []
+    actions.configureEditing(adapter: adapter, isActive: { true }, window: { window }, show: { snapshot in
+        shown.append(snapshot.selectedId)
+        sidebar.update(snapshot: snapshot)
+        if route == "move" || route == "moveIfLive" { replies.continuation.yield(snapshot) }
+    }, record: { recorded.append($0.selectedId) })
+    actions.bind(to: sidebar)
+    let receive: (WorkspaceSnapshot?) -> Void = { snapshot in
+        if let snapshot {
+            sidebar.update(snapshot: snapshot)
+            replies.continuation.yield(snapshot)
+        } else { Issue.record("edit unexpectedly failed"); replies.continuation.finish() }
+    }
+    switch route {
+    case "moveIfLive":
+        let live = try session.queue.sync { try session.store!.liveOpen(item: id, url: "about:blank") }
+        sidebar.onMove = { item, container, index, openFolder, completion in
+            adapter.moveIfLive(id: item, container: container, index: index, openFolder: openFolder, expectedLive: live.id) { result in
+                guard case .success(let snapshot?) = result else { Issue.record("live move unexpectedly failed"); replies.continuation.finish(); return }
+                recorded.append(snapshot.selectedId)
+                completion(snapshot)
+                shown.append(snapshot.selectedId)
+                sidebar.update(snapshot: snapshot)
+                replies.continuation.yield(snapshot)
+            }
+        }
+        #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
+        #expect(sidebar.organizeCheckEnd())
+    case "move":
+        #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
+        #expect(sidebar.organizeCheckEnd())
+    case "firstFavorite": actions.onFirstFavorite?(id, space.id, 0, receive)
+    case "openFolder": actions.onOpenFolder?("organize-inner", receive)
+    default: actions.onItemEdit?(.rename(id: id, title: "Renamed", folder: false), receive)
+    }
+    let selected = try session.queue.sync {
+        #expect(session.store!.snapshot(windowId: "organize").selectedId == nil)
+        return try session.store!.selectItem(windowId: "organize", id: id)
+    }
+    #expect(recorded.isEmpty)
+    sidebar.applySelection(snapshot: selected)
+    #expect(sidebar.selectedRowID == id)
+    var iterator = replies.stream.makeAsyncIterator()
+    let delivered = try #require(await iterator.next())
+    #expect(delivered == selected)
+    #expect(recorded == [id])
+    #expect(shown == (route == "openFolder" ? [] : [id]))
+    #expect(sidebar.selectedRowID == id)
+    if route == "move" || route == "moveIfLive" {
+        #expect(sidebar.organizeCheckHint(id: id))
+        #expect(delivered.spaces.first { $0.id == space.id }?.pinned.contains { $0.id == id } == true)
+    }
+}
+
 @Test(arguments: [false, true]) @MainActor
 func pinHintWaitsForTheSelectionSnapshot(replace: Bool) throws {
     let (sidebar, dropped) = try dropPinBeforeSelection()

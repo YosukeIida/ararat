@@ -98,7 +98,7 @@ func checkSeedSelectionCommitsTheRequestedVisibleRow() async throws {
     let workspace = WorkspaceAdapter(windowID: "check-seed", session: engine.session)
     let before = try await splitValue { workspace.snapshot(completion: $0) }
     let row = try #require(before.spaces.first(where: { $0.id == "default" })?.today.first)
-    let other = try await splitValue { workspace.createTab(url: "about:blank?other", completion: $0) }
+    let other = try await splitValue { workspace.createTab(url: "about:blank?other", completion: $0) }.snapshot
     #expect(other.selectedId != row.id)
     #expect(!Runtime.checkSeedSelectionMatches(other, item: row.id, space: "default"))
     let selected = try await splitValue { workspace.select(id: row.id, completion: $0) }

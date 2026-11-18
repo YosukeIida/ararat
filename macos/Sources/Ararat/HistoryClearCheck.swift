@@ -75,10 +75,10 @@ final class HistoryClearCheck {
       tab.checkFlushHistory { written in MainActor.assumeIsolated {
         guard !written, let workspace = runtime.workspace else { self.fail("old writer was not fenced"); return }
         workspace.createTab(url: "data:text/html,<title>history-clear-new</title>") { result in
-          guard case .success(let snapshot) = result, let id = snapshot.selectedId else { self.fail("new tab creation failed"); return }
+          guard case .success(let created) = result, let id = created.id else { self.fail("new tab creation failed"); return }
           self.newItem = id
           self.phase = 5
-          runtime.showAndSelect(result)
+          runtime.showAndSelect(result.map(\.snapshot))
         }
       } }
     } else if phase == 5, runtime.sliceActive == newItem,
