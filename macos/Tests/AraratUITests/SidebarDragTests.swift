@@ -547,6 +547,41 @@ func clickingSplitMemberSelectsItWithoutMovingTheSplit() throws {
 }
 
 @Test @MainActor
+func draggedSplitShowsItsPanesAsSegments() throws {
+    let split = dragRow("split", "ts", kind: .split)
+    let (window, sidebar) = dragWindow(dragSpace(today: [split, dragRow("b", "split", depth: 1), dragRow("c", "split", 1, depth: 1)]))
+    defer { window.contentView = nil }
+    let row = try #require(dragDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "split" })
+    let frame = try #require(sidebar.dragGeometry()?.rows.first { $0.row.id == "split" }?.frame)
+    row.mouseDown(with: try dragEvent(.leftMouseDown, sidebar: sidebar, position: CGPoint(x: frame.midX, y: frame.midY)))
+    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: CGPoint(x: frame.midX + 4, y: frame.midY)))
+    // The dragged row is the same split row, so it draws the same segments with the same focused
+    // pane, and no row-level glyph behind them.
+    let copy = try #require(sidebar.dragCopyView)
+    copy.layoutSubtreeIfNeeded()
+    let segments = dragDescendants(copy).compactMap { $0 as? SplitSegmentButton }
+    #expect(segments.map(\.pane.id) == ["b", "c"])
+    #expect(segments.map(\.active) == dragDescendants(row).compactMap { $0 as? SplitSegmentButton }.map(\.active))
+    let glyph = try #require(copy.subviews.compactMap { $0 as? NSImageView }.first)
+    #expect(glyph.isHidden)
+    sidebar.cancelOperation(nil)
+    #expect(sidebar.dragCopyView == nil)
+    // A drag that starts on a pane's segment drags the split, and that pane is the focused one.
+    let segment = try #require(dragDescendants(row).compactMap { $0 as? SplitSegmentButton }.first { $0.pane.id == "b" })
+    let local = sidebar.convert(segment.bounds, from: segment)
+    let position = CGPoint(x: local.midX, y: sidebar.bounds.height - local.midY)
+    let hit = try #require(window.contentView?.hitTest(sidebar.convert(CGPoint(x: local.midX, y: local.midY), to: nil)))
+    hit.mouseDown(with: try dragEvent(.leftMouseDown, sidebar: sidebar, position: position))
+    hit.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: CGPoint(x: position.x + 4, y: position.y)))
+    let moved = try #require(sidebar.dragCopyView)
+    moved.layoutSubtreeIfNeeded()
+    let movedSegments = dragDescendants(moved).compactMap { $0 as? SplitSegmentButton }
+    #expect(movedSegments.map(\.pane.id) == ["b", "c"])
+    #expect(movedSegments.map(\.active) == [true, false])
+    sidebar.cancelOperation(nil)
+}
+
+@Test @MainActor
 func splitMenuFollowsTheAxisAndThePanePosition() throws {
     let split = dragRow("split", "ts", kind: .split)
     let first = dragRow("first", "split", depth: 1)
