@@ -70,6 +70,11 @@ public final class WorkspaceSession: @unchecked Sendable {
         keyOrder.removeValue(forKey: window)
     }
 
+    func attachedAdapters() -> [EngineAdapter] {
+        precondition(Thread.isMainThread)
+        return adapters.values.compactMap(\.value)
+    }
+
     func noteKey(window: String) {
         precondition(Thread.isMainThread)
         keySequence &+= 1
