@@ -168,7 +168,10 @@ extension Runtime {
       guard let id = browserCheckSeedID else { fail("single seed missing"); return }
       select(id, next: 12)
     case 12:
-      guard let id = browserCheckSeedID, snapshot.selectedId == id, host.activeItemId() == id else { wait("single after split"); return }
+      guard let id = browserCheckSeedID, snapshot.selectedId == id, host.activeItemId() == id,
+            let tab = tabs.first(where: { $0.itemId == id }),
+            host.checkPagePresentation(tab.liveId)["presented"] as? Bool == true else { wait("single after split"); return }
+      let state = adapter.checkSplitFocus()
       check.mark("single_after_split", state.ring == nil)
       record("single_after_split")
       let result = check.diagnostics(screen: screen)
