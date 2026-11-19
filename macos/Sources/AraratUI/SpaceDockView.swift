@@ -63,6 +63,9 @@ final class SpaceDockButton: NSButton {
     private var hovered = false
     private var pressInside = false
     var backgroundAlpha: CGFloat { openFraction > 0 ? Self.openFillAlpha(fraction: openFraction, appearance: effectiveAppearance) : pressInside ? 0.078 : hovered ? 0.045 : 0 }
+    /// The letter uses the label colour or its readable fallback. The F boards supersede the
+    /// A board's accent-tinted open cell (design's N2 ruling). `attributedTitle` lets the letter
+    /// use this colour because `NSButton` draws its plain `title` in the system control colour.
     static let glyphColor = NSColor.labelColor
     static let dotAlpha: CGFloat = 0.55
     var checkGlyphColor: NSColor {
@@ -78,6 +81,7 @@ final class SpaceDockButton: NSButton {
         }
         return value
     }
+    /// The cell's glyph is the space's icon or its first letter.
     func setGlyph(_ text: String, bold: Bool) {
         attributedTitle = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: 15, weight: bold ? .bold : .regular),

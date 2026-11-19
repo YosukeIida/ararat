@@ -282,6 +282,7 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
             #expect(contrast(paneIcon.withAlphaComponent(paneIcon.alphaComponent * segment.iconView.alphaValue), over: segmentBackdrop, quantized: true) >= 3)
             #expect(contrast(emptyTitle.withAlphaComponent(emptyTitle.alphaComponent * emptyLabel.alphaValue), over: emptyBackdrop, quantized: true) >= 4.5)
         }
+        var titleRatios: [Bool: [String: CGFloat]] = [:]
         for row in rows {
             let title = try #require(row.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == row.row.title })
             let icon = try #require(row.subviews.compactMap { $0 as? NSImageView }.first)
@@ -308,7 +309,7 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
                     if let audio { #expect(audio.contentTintColor == nil) }
                 }
                 appearance.performAsCurrentDrawingAppearance {
-                    @MainActor func check(_ part: String, _ color: NSColor, _ opacity: CGFloat, preferred: NSColor, preferredOpacity: CGFloat, minimum: CGFloat) {
+                    @MainActor func check(_ part: String, _ color: NSColor, _ opacity: CGFloat, preferred: NSColor, preferredOpacity: CGFloat, minimum: CGFloat) -> CGFloat {
                         let resolved = color.usingColorSpace(.sRGB)!
                         let baseline = preferred.usingColorSpace(.sRGB)!
                         let ratio = contrast(resolved.withAlphaComponent(resolved.alphaComponent * opacity), over: backdrop, quantized: true)
@@ -319,16 +320,25 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
                             #expect(resolved == baseline)
                             #expect(opacity == preferredOpacity)
                         }
+                        return ratio
                     }
-                    check("title", title.textColor!, title.alphaValue, preferred: .labelColor, preferredOpacity: baseOpacity, minimum: 4.5)
-                    check("icon", icon.contentTintColor!, icon.alphaValue, preferred: .secondaryLabelColor, preferredOpacity: baseOpacity, minimum: 3)
+                    let titleRatio = check("title", title.textColor!, title.alphaValue, preferred: .labelColor, preferredOpacity: baseOpacity, minimum: 4.5)
+                    if color == nil { titleRatios[hovered, default: [:]][row.row.id] = titleRatio }
+                    _ = check("icon", icon.contentTintColor!, icon.alphaValue, preferred: .secondaryLabelColor, preferredOpacity: baseOpacity, minimum: 3)
                     if let audio {
-                        check("audio", audio.contentTintColor ?? .labelColor, 1, preferred: .labelColor, preferredOpacity: 1, minimum: 3)
+                        _ = check("audio", audio.contentTintColor ?? .labelColor, 1, preferred: .labelColor, preferredOpacity: 1, minimum: 3)
                     }
                 }
             }
             row.pointerLocation = nil
             row.refreshHover()
+        }
+        if color == nil {
+            for hovered in [false, true] {
+                let plain = try #require(titleRatios[hovered]?["Today"])
+                let dimmed = try #require(titleRatios[hovered]?["Dimmed"])
+                #expect(dimmed < plain)
+            }
         }
     }
 }

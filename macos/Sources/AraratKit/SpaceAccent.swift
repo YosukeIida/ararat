@@ -5,6 +5,8 @@ public enum SpaceAccent {
     public static let privateColor = NSColor(srgbRed: 110 / 255, green: 110 / 255, blue: 120 / 255, alpha: 1)
     // Why not 3.0: 8-bit quantization can push an exact 3.0 below 3:1.
     private static let minimumContrast: CGFloat = 3.1
+    // Why not the exact floor for a restyled colour: tint rasterization and view opacity add rounding.
+    private static let drawingContrastMargin: CGFloat = 0.1
 
     public static func resolve(_ look: Look?, privateWindow: Bool = false, fallback: NSColor = teal) -> NSColor {
         if privateWindow { return privateColor }
@@ -56,23 +58,24 @@ public enum SpaceAccent {
         let background = luminance(base, quantized: true)
         let originalAlpha = original.alphaComponent * opacity
 
-        func passes(_ color: NSColor, alpha: CGFloat) -> Bool {
+        func contrast(_ color: NSColor, alpha: CGFloat) -> CGFloat {
             let blended = NSColor(srgbRed: color.redComponent * alpha + base.redComponent * (1 - alpha),
                                   green: color.greenComponent * alpha + base.greenComponent * (1 - alpha),
                                   blue: color.blueComponent * alpha + base.blueComponent * (1 - alpha), alpha: 1)
             let foreground = luminance(blended, quantized: true)
-            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05) >= minimum
+            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
         }
 
-        if passes(original, alpha: originalAlpha) { return (preferred, opacity) }
+        if contrast(original, alpha: originalAlpha) >= minimum { return (preferred, opacity) }
         let fallback: NSColor = background > 0.179 ? .black : .white
         let target = fallback.usingColorSpace(.sRGB)!
-        if passes(target, alpha: originalAlpha) { return (fallback, originalAlpha) }
+        let targetContrast = min(minimum + drawingContrastMargin, contrast(target, alpha: 1))
+        if contrast(target, alpha: originalAlpha) >= targetContrast { return (fallback, originalAlpha) }
         var lower = originalAlpha
         var upper: CGFloat = 1
         for _ in 0..<12 {
             let middle = (lower + upper) / 2
-            if passes(target, alpha: middle) { upper = middle }
+            if contrast(target, alpha: middle) >= targetContrast { upper = middle }
             else { lower = middle }
         }
         return (fallback, upper)
