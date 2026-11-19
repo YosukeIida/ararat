@@ -299,6 +299,25 @@ func aFavoriteWithoutAFaviconUsesTheEngineMonogramOrTitle() throws {
 }
 
 @Test @MainActor
+func favoriteTileUsesTheTitleOrHostForAccessibility() {
+    var row = u25Row("favorite")
+    row.url = "https://example.com/reading"
+    row.title = "My reading"
+    let tile = FavoriteTile(row: row, iconText: "E") { _ in }
+    #expect(tile.accessibilityLabel() == "My reading")
+    #expect(tile.accessibilityTitle() == "My reading")
+    row.title = ""
+    tile.update(row: row, iconText: "E")
+    #expect(tile.accessibilityLabel() == "example.com")
+    #expect(tile.accessibilityTitle() == "example.com")
+    row.url = "about:blank"
+    tile.update(row: row, iconText: nil)
+    #expect(tile.accessibilityLabel() != "Button")
+    #expect(tile.accessibilityTitle() != "Button")
+    #expect(tile.title.isEmpty)
+}
+
+@Test @MainActor
 func theCloseRuleFollowsTheRowAndASplitClosesThroughItsSplit() {
     let favourite = u25Row("f", parent: "work-fav")
     let loadedPin = u25Row("p", parent: "work-pin")

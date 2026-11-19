@@ -965,6 +965,7 @@ final class FavoriteTile: NSButton {
         super.init(frame: .zero)
         isBordered = false
         imagePosition = .imageOnly
+        title = ""
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
@@ -1002,7 +1003,9 @@ final class FavoriteTile: NSButton {
         image = glyphBox.isHidden ? SidebarRowView.symbol(for: .tab) : nil
         refreshForeground()
         toolTip = row.title
-        setAccessibilityLabel(row.title)
+        let label = row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "") : row.title
+        setAccessibilityTitle(label)
+        setAccessibilityLabel(label)
     }
 
     @objc private func pressed() { onPress(row) }
