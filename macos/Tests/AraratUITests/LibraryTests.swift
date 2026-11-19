@@ -43,7 +43,7 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     #expect(sidebar.libraryOpenFraction == 1)
     let fill = try #require(button.layer?.sublayers?.first { $0.backgroundColor?.alpha ?? 0 > 0 })
     button.effectiveAppearance.performAsCurrentDrawingAppearance {
-        let expected = NSColor.controlAccentColor.withAlphaComponent(
+        let expected = SpaceAccent.teal.withAlphaComponent(
             SpaceDockButton.fillAlpha(fraction: 1, appearance: button.effectiveAppearance)
         )
         #expect(fill.backgroundColor == expected.cgColor)
