@@ -160,6 +160,69 @@ func settingsRebindingUpdatesTheInstalledAppMenu() async throws {
 }
 
 @Test @MainActor
+func chromiumNewTabMenuFollowsTheCoreBinding() async throws {
+    _ = NSApplication.shared
+    let originalMenu = NSApp.mainMenu
+    defer { NSApp.mainMenu = originalMenu }
+    let menu = NSMenu()
+    let file = NSMenu(title: "File")
+    menu.addItem(withTitle: "Ararat", action: nil, keyEquivalent: "").submenu = NSMenu()
+    menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
+    let newTab = file.addItem(withTitle: "New Tab", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "t")
+    newTab.tag = 34014
+    NSApp.mainMenu = menu
+
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let runtime = Runtime(windowID: "alias-binding")
+    let session = WorkspaceSession()
+    let store = try WorkspaceStore.open(path: directory.appendingPathComponent("db").path)
+    let cmdJ = KeyCombination(key: "j", command: true, control: false, option: false, shift: false)
+    let cmdT = KeyCombination(key: "t", command: true, control: false, option: false, shift: false)
+    try session.queue.sync {
+        _ = try store.setKeyBinding(command: "new_tab", key: cmdJ)
+        session.store = store
+    }
+    let bindings = KeyBindingsModel(adapter: WorkspaceAdapter(windowID: runtime.windowID, session: session))
+    runtime.keyBindings = bindings
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.load { continuation.resume(with: $0) }
+    }
+    runtime.installCoreMenu()
+    let toggleSidebar = try #require(menu.item(withTitle: "Ararat Commands")?.submenu?.item(withTitle: "Toggle Sidebar"))
+    #expect(bindings.binding(command: "new_tab")?.key == cmdJ)
+    #expect(newTab.keyEquivalent == "j")
+    #expect(newTab.keyEquivalentModifierMask == [.command])
+
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.reset(command: "new_tab") { continuation.resume(with: $0) }
+    }
+    #expect(newTab.keyEquivalent == "t" && newTab.keyEquivalentModifierMask == [.command])
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.set(command: "toggle_sidebar", key: cmdT) { continuation.resume(with: $0) }
+    }
+    #expect(bindings.binding(command: "toggle_sidebar")?.key == cmdT)
+    #expect(newTab.keyEquivalent == "")
+    #expect(newTab.keyEquivalentModifierMask.isEmpty)
+    #expect(toggleSidebar.keyEquivalent == "t")
+    #expect(toggleSidebar.keyEquivalentModifierMask == [.command])
+
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.set(command: "new_tab", key: cmdJ) { continuation.resume(with: $0) }
+    }
+    #expect(newTab.keyEquivalent == "j" && newTab.keyEquivalentModifierMask == [.command])
+    #expect(toggleSidebar.keyEquivalent == "t" && toggleSidebar.keyEquivalentModifierMask == [.command])
+
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.resetAll { continuation.resume(with: $0) }
+    }
+    #expect(newTab.keyEquivalent == "t" && newTab.keyEquivalentModifierMask == [.command])
+    #expect(toggleSidebar.keyEquivalent == "s" && toggleSidebar.keyEquivalentModifierMask == [.command])
+    #expect(newTab.action == NSSelectorFromString("commandDispatch:"))
+}
+
+@Test @MainActor
 func installingArchiveMenuKeepsEveryHistoryTagKnownToChromium() throws {
     _ = NSApplication.shared
     let originalMenu = NSApp.mainMenu

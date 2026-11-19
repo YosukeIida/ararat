@@ -85,7 +85,18 @@
    NSMenu* dockMenu = [[NSMenu alloc] initWithTitle:@""];
  
    BOOL profilesAdded = [_profileMenuController insertItemsIntoMenu:dockMenu
-@@ -2492,6 +2522,15 @@
+@@ -2417,6 +2447,10 @@
+ 
+ // Updates menu items in the File menu to match the main window.
+ - (void)updateMenuItemKeyEquivalents {
++  // Why not swap: Ararat applies the user's Close Tab key by command tag.
++  // Ararat's Settings window handles its own ⌘W.
++  if (g_ararat_shown_browser)
++    return;
+   // If the browser window has tabs, assign ⇧⌘W to "Close Window"
+   // and ⌘W to "Close Tab", otherwise hide the "Close Tab" item and
+   // assign ⌘W to "Close Window".
+@@ -2492,6 +2526,15 @@
      return NO;
  
    GURL gurl(base::SysNSStringToUTF8([url absoluteString]));

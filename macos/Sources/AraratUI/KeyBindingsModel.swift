@@ -51,10 +51,30 @@ public final class KeyBindingsModel: ObservableObject {
     }
 
     public static func apply(_ bindings: [KeyBinding], to menu: NSMenu) {
-        for item in menu.items {
-            if let submenu = item.submenu { apply(bindings, to: submenu) }
-            guard let id = item.identifier?.rawValue, let row = bindings.first(where: { $0.command == id }) else { continue }
-            setCoreMenuShortcut(row.key, on: item)
+        var shortcuts: [(NSMenuItem, KeyCombination?)] = []
+        func collectShortcuts(in menu: NSMenu) {
+            for item in menu.items {
+                if let submenu = item.submenu { collectShortcuts(in: submenu) }
+                guard let id = chromiumAliasCommand(tag: item.tag) ?? item.identifier?.rawValue,
+                      let row = bindings.first(where: { $0.command == id }) else { continue }
+                shortcuts.append((item, row.key))
+            }
+        }
+        collectShortcuts(in: menu)
+        // AppKit can reject an equivalent that another item still holds during a takeover or reset.
+        for (item, _) in shortcuts { item.keyEquivalent = "" }
+        for (item, key) in shortcuts {
+            setCoreMenuShortcut(key, on: item)
+        }
+    }
+
+    private static func chromiumAliasCommand(tag: Int) -> String? {
+        switch tag {
+        case 34014: "new_tab" // IDC_NEW_TAB
+        case 34015: "close_tab" // IDC_CLOSE_TAB
+        case 34031: "quit" // IDC_EXIT
+        case 39001: "edit_url" // IDC_FOCUS_LOCATION
+        default: nil
         }
     }
 
@@ -187,16 +207,9 @@ public final class KeyBindingsModel: ObservableObject {
             let matches = equivalent == key && (itemModifiers == modifiers || (shifted && itemModifiers == modifiers.subtracting(.shift)))
             let deleteMatches = (key == "\u{7F}" && equivalent == "\u{08}") || (key == "\u{F728}" && equivalent == "\u{7F}")
             guard matches || (deleteMatches && itemModifiers == modifiers) else { continue }
-            // Chromium swaps Close Tab and Close Window while Settings has focus.
-            let alias: String?
-            switch item.tag {
-            case 34012 where key == "w" && modifiers == .command: alias = "close_tab" // IDC_CLOSE_WINDOW
-            case 34014: alias = "new_tab" // IDC_NEW_TAB
-            case 34015: alias = "close_tab" // IDC_CLOSE_TAB
-            case 34031: alias = "quit" // IDC_EXIT
-            case 39001: alias = "edit_url" // IDC_FOCUS_LOCATION
-            default: alias = nil
-            }
+            // The recorder also recognizes Chromium's contextual ⌘W Close Window item.
+            let alias = item.tag == 34012 && key == "w" && modifiers == .command // IDC_CLOSE_WINDOW
+                ? "close_tab" : Self.chromiumAliasCommand(tag: item.tag)
             guard let alias, alias == command || alias == coreHolder else { return item.title }
         }
         return nil
