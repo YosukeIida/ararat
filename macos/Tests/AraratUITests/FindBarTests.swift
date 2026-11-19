@@ -43,12 +43,30 @@ func findOverlayRemainsAboveASeparateHostedPage() {
 }
 
 @Test @MainActor
-func findResultsExposeRequestAndFinalUpdate() {
-    let view = FindBarView()
+func findResultsShowTheTrailingCountAndDisableButtonsOnlyForConfirmedZero() throws {
+    let view = FindBarView(frame: NSRect(x: 0, y: 0, width: 380, height: 36))
+    view.layoutSubtreeIfNeeded()
+    let count = try #require(view.subviews.compactMap { $0 as? NSTextField }
+        .first { $0.identifier?.rawValue == "find-match-count" })
+    let buttons = view.subviews.compactMap { $0 as? NSButton }
+    #expect(buttons.count == 3)
+    #expect(buttons.allSatisfy { $0.image != nil && $0.imagePosition == .imageOnly })
+    #expect(!view.field.isBezeled && !view.field.drawsBackground)
+    #expect(view.field.frame.maxX <= count.frame.minX)
+    #expect(count.frame.maxX <= buttons[0].frame.minX)
+    #expect(view.bounds.contains(count.frame))
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": false])
     #expect(view.requestID == 7 && !view.finalUpdate)
+    #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": true])
     #expect(view.requestID == 7 && view.finalUpdate && view.matches == 0)
+    #expect(count.stringValue == "Not found" && count.textColor == .systemRed)
+    #expect(buttons.map(\.isEnabled) == [false, false, true])
+    view.update(state: ["visible": true, "text": "need", "matches": 12, "ordinal": 3])
+    #expect(count.stringValue == "3 of 12" && count.textColor == .secondaryLabelColor)
+    #expect(buttons.map(\.isEnabled) == [true, true, true])
+    view.update(state: ["visible": true, "text": "", "matches": 0, "final_update": true])
+    #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
 }
 
 @Test @MainActor

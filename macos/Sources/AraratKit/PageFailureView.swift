@@ -5,6 +5,26 @@ private final class FailurePrimaryButton: NSButton {
 }
 
 public final class PageFailureView: NSView {
+    private static let sadWindow: NSImage = {
+        let image = NSImage(size: NSSize(width: 44, height: 44), flipped: false) { _ in
+            NSColor.black.set()
+            let outline = NSBezierPath(roundedRect: NSRect(x: 5, y: 8, width: 34, height: 28), xRadius: 5, yRadius: 5)
+            outline.move(to: NSPoint(x: 5, y: 28))
+            outline.line(to: NSPoint(x: 39, y: 28))
+            outline.move(to: NSPoint(x: 17, y: 13))
+            outline.curve(to: NSPoint(x: 27, y: 13), controlPoint1: NSPoint(x: 20, y: 17), controlPoint2: NSPoint(x: 24, y: 17))
+            outline.lineWidth = 2.5
+            outline.lineCapStyle = .round
+            outline.stroke()
+            for x: CGFloat in [16, 25] {
+                NSBezierPath(ovalIn: NSRect(x: x, y: 19, width: 3, height: 3)).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }()
+
     private let image = NSImageView()
     private let heading = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
@@ -121,7 +141,7 @@ public final class PageFailureView: NSView {
 
     public func update(crashed: Bool, error: Int, host: String, archive: Bool) {
         let host = host.isEmpty ? "this page" : host
-        image.image = NSImage(systemSymbolName: crashed ? "macwindow" : "wifi.slash", accessibilityDescription: nil)
+        image.image = crashed ? Self.sadWindow : NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
         heading.stringValue = crashed ? "This page crashed" : (error == -106 ? "You’re offline" : "This site can’t be reached")
         message.stringValue = crashed
             ? "Something went wrong while showing \(host). Reloading usually brings it back."

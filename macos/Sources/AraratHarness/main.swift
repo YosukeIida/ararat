@@ -686,7 +686,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if let tabSwitcher, tabSwitcher.isOpen { tabSwitcher.advance(backwards: backwards); return }
         guard let window, !terminating else { return }
         let space = shownSpaceID
-        let switcher = TabSwitcher(parent: window, backwards: backwards, accent: spaceAccent, favicon: { _ in nil })
+        let switcher = TabSwitcher(parent: window, pageCard: card, backwards: backwards, accent: spaceAccent, favicon: { _ in nil })
         tabSwitcher = switcher
         switcher.onClose = { [weak self, weak switcher] in
             if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
