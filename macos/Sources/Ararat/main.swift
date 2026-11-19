@@ -2446,7 +2446,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
       KeyBindingsModel.setCoreMenuShortcut(binding.key, on: settingsItem)
     }
     displacedMenuItems = KeyBindingsModel.clearCollisions(bindings + defaultKeyBindings().filter { $0.command == "reopen_closed_tab" }, in: menu)
-    if let appMenu { keyBindings?.register(appMenu) }
     let core = NSMenu(title: "Ararat Commands")
     for binding in bindings {
       let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")
@@ -2458,7 +2457,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
     coreItem.tag = 0x4152434d
     coreItem.submenu = core
-    keyBindings?.register(core)
     // Why not Tab: reuse Chromium's File item so a second ⇧⌘T item cannot invoke its tab restore.
     if let file = menu.item(withTitle: "File")?.submenu,
        let binding = defaultKeyBindings().first(where: { $0.command == "reopen_closed_tab" }) {
@@ -2469,8 +2467,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       item.representedObject = binding.command
       item.identifier = NSUserInterfaceItemIdentifier(binding.command)
       KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
-      keyBindings?.register(file)
     }
+    keyBindings?.register(menu)
     // U27h: the Little Window's menu entry. Its own block so the other U27 branches' command
     // additions merge without touching it.
     if let file = menu.item(withTitle: "File")?.submenu {

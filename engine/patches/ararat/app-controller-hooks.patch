@@ -20,7 +20,30 @@
  
  namespace {
  
-@@ -1123,9 +1129,12 @@
+@@ -847,6 +853,12 @@
+   NSMenuItem* cmdWMenuItem = nil;
+ 
+   for (NSMenuItem* item in fileMenuItemArray) {
++    // Ararat keeps the item's identity when its key or command tag changes.
++    if (g_ararat_shown_browser) {
++      if ([item.identifier isEqualToString:@"close_tab"])
++        return item;
++      continue;
++    }
+     if ([@"w" isEqualToString:item.keyEquivalent] &&
+         item.keyEquivalentModifierMask == NSEventModifierFlagCommand) {
+       cmdWMenuItem = item;
+@@ -896,6 +908,9 @@
+ // the profile is loaded or any preferences have been registered). Defer any
+ // user-data initialization until -applicationDidFinishLaunching:.
+ - (void)mainMenuCreated {
++  if (g_ararat_shown_browser)
++    [[self fileMenu] itemWithTag:IDC_CLOSE_TAB].identifier = @"close_tab";
++
+   NSNotificationCenter* notificationCenter = NSNotificationCenter.defaultCenter;
+   [notificationCenter
+       addObserver:self
+@@ -1123,9 +1138,12 @@
  }
  
  - (void)windowDidBecomeMain:(NSNotification*)notify {
@@ -36,7 +59,7 @@
    if (!browser)
      return;
  
-@@ -1495,6 +1504,10 @@
+@@ -1495,6 +1513,10 @@
          ProfileBrowserCollection::GetForProfile(profile.get())
              ->GetLastActiveBrowser();
      if (!browser) {
@@ -47,7 +70,7 @@
        browser = CreateBrowserWindow(
            BrowserWindowCreateParams(profile.get(), /*user_gesture=*/true));
        browser->GetWindow()->Show();
-@@ -1856,6 +1869,8 @@
+@@ -1856,6 +1878,8 @@
    // to prevent AppKit from doing anything.
    if (browser_shutdown::IsTryingToQuit())
      return NO;
@@ -56,7 +79,7 @@
  
    // Bring all browser windows to the front. Specifically, this brings them in
    // front of any app windows. FocusWindowSet will also unminimize the most
-@@ -2079,6 +2094,19 @@
+@@ -2079,6 +2103,19 @@
    }
  
    if (!startupTabs.empty()) {
@@ -76,7 +99,7 @@
      [self openStartupTabsReplacingNTP:std::move(startupTabs)];
    }
  }
-@@ -2142,6 +2170,8 @@
+@@ -2142,6 +2179,8 @@
  }
  
  - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
@@ -85,7 +108,19 @@
    NSMenu* dockMenu = [[NSMenu alloc] initWithTitle:@""];
  
    BOOL profilesAdded = [_profileMenuController insertItemsIntoMenu:dockMenu
-@@ -2492,6 +2522,15 @@
+@@ -2447,6 +2486,11 @@
+     // Close Tab       ⌘W
+     [self configureMenuItemForCloseWindow:shiftCmdWMenuItem];
+     [self configureMenuItemForCloseTab:cmdWMenuItem];
++  } else if (g_ararat_shown_browser && cmdWMenuItem.keyEquivalent.length == 0) {
++    // Keep ⇧⌘W available when Ararat has no Close Tab key to reuse.
++    [self hideMenuItem:cmdWMenuItem];
++    [self configureMenuItemForCloseWindow:shiftCmdWMenuItem];
++
+   } else {
+     // (no ⇧⌘W menu item)
+     // Close All     ⌥⇧⌘W (alternate, appears when ⌥ pressed)
+@@ -2492,6 +2536,15 @@
      return NO;
  
    GURL gurl(base::SysNSStringToUTF8([url absoluteString]));
