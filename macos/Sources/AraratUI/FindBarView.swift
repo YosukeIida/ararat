@@ -4,6 +4,7 @@ import AppKit
 public final class FindBarView: NSView, NSTextFieldDelegate {
     public let field = NSTextField()
     private let count = NSTextField(labelWithString: "")
+    private let spinner = NSProgressIndicator()
     private let previous = NSButton()
     private let next = NSButton()
     private let close = NSButton()
@@ -11,6 +12,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     private var updating = false
     private var live = ""
     private var profile = ""
+    private var editedAfterRequest = 0
     public private(set) var matches = 0
     public private(set) var ordinal = 0
     public private(set) var requestID = 0
@@ -31,8 +33,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         field.setAccessibilityLabel("Find in page")
         count.identifier = NSUserInterfaceItemIdentifier("find-match-count")
         count.font = .systemFont(ofSize: 12)
-        count.alignment = .right
+        count.alignment = .left
         count.lineBreakMode = .byTruncatingTail
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.isHidden = true
+        spinner.setAccessibilityLabel("Searching")
         field.delegate = self
         for (button, symbol, label) in [(previous, "chevron.up", "Previous match"),
                                         (next, "chevron.down", "Next match"), (close, "xmark", "Close find")] {
@@ -47,7 +54,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         previous.action = #selector(previousMatch)
         next.action = #selector(nextMatch)
         close.action = #selector(closeFind)
-        for view in [field, count, previous, next, close] as [NSView] { addSubview(view) }
+        for view in [field, count, spinner, previous, next, close] as [NSView] { addSubview(view) }
     }
 
     @available(*, unavailable)
@@ -71,14 +78,19 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         field.frame = NSRect(x: inset, y: (bounds.height - fieldHeight) / 2,
                              width: max(0, countX - inset - 4), height: fieldHeight)
         count.frame = NSRect(x: countX, y: (bounds.height - countHeight) / 2, width: countWidth, height: countHeight)
+        let spinnerSize = min(14, countWidth)
+        spinner.frame = NSRect(x: countX, y: (bounds.height - spinnerSize) / 2, width: spinnerSize, height: spinnerSize)
         for (index, button) in [previous, next, close].enumerated() {
             button.frame = NSRect(x: controlsX + CGFloat(index) * (buttonWidth + 2), y: 6, width: buttonWidth, height: 24)
         }
     }
 
     public func update(state: [String: Any]) {
-        live = state["live"] as? String ?? ""
-        profile = state["profile"] as? String ?? ""
+        let nextLive = state["live"] as? String ?? ""
+        let nextProfile = state["profile"] as? String ?? ""
+        if live != nextLive || profile != nextProfile { editedAfterRequest = 0 }
+        live = nextLive
+        profile = nextProfile
         isHidden = !(state["visible"] as? Bool ?? false)
         let marked = (field.currentEditor() as? NSTextView)?.hasMarkedText() == true
         if !marked, let text = state["text"] as? String, field.stringValue != text {
@@ -86,16 +98,14 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
             field.stringValue = text
             updating = false
         }
-        matches = state["matches"] as? Int ?? 0
-        ordinal = state["ordinal"] as? Int ?? 0
-        requestID = state["request_id"] as? Int ?? 0
-        finalUpdate = state["final_update"] as? Bool ?? false
-        let hasQuery = !field.stringValue.isEmpty
-        let notFound = hasQuery && matches == 0 && finalUpdate
-        count.stringValue = notFound ? "Not found" : (hasQuery && matches > 0 ? "\(max(0, ordinal)) of \(matches)" : "")
-        count.textColor = notFound ? .systemRed : .secondaryLabelColor
-        previous.isEnabled = !notFound
-        next.isEnabled = !notFound
+        let resultRequest = state["request_id"] as? Int ?? 0
+        if resultRequest == 0 || resultRequest > editedAfterRequest {
+            matches = state["matches"] as? Int ?? 0
+            ordinal = state["ordinal"] as? Int ?? 0
+            requestID = resultRequest
+            finalUpdate = state["final_update"] as? Bool ?? false
+        }
+        updateResultPresentation()
         if !isHidden && (state["focus"] as? Bool ?? false) {
             window?.makeFirstResponder(field)
             if !marked, let editor = field.currentEditor(), let start = state["start"] as? Int,
@@ -106,7 +116,27 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }
 
     public func controlTextDidChange(_ obj: Notification) {
-        if !updating { send("change") }
+        guard !updating else { return }
+        editedAfterRequest = max(editedAfterRequest, requestID)
+        matches = 0
+        ordinal = 0
+        finalUpdate = false
+        updateResultPresentation()
+        send("change")
+    }
+
+    private func updateResultPresentation() {
+        let hasQuery = !field.stringValue.isEmpty
+        let searching = !isHidden && hasQuery && requestID > editedAfterRequest && !finalUpdate
+        let notFound = hasQuery && matches == 0 && finalUpdate
+        count.stringValue = notFound ? "Not found" : (hasQuery && !searching && matches > 0 ? "\(max(0, ordinal)) of \(matches)" : "")
+        count.textColor = notFound ? .systemRed : .secondaryLabelColor
+        previous.isEnabled = !notFound
+        next.isEnabled = !notFound
+        if searching == spinner.isHidden {
+            spinner.isHidden = !searching
+            if searching { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        }
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {

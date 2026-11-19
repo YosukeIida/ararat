@@ -6,18 +6,24 @@ private final class FailurePrimaryButton: NSButton {
 
 public final class PageFailureView: NSView {
     private static let sadWindow: NSImage = {
-        let image = NSImage(size: NSSize(width: 44, height: 44), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 44, height: 44), flipped: true) { _ in
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            let transform = NSAffineTransform()
+            transform.scale(by: 2.75)
+            transform.concat()
             NSColor.black.set()
-            let outline = NSBezierPath(roundedRect: NSRect(x: 5, y: 8, width: 34, height: 28), xRadius: 5, yRadius: 5)
-            outline.move(to: NSPoint(x: 5, y: 28))
-            outline.line(to: NSPoint(x: 39, y: 28))
-            outline.move(to: NSPoint(x: 17, y: 13))
-            outline.curve(to: NSPoint(x: 27, y: 13), controlPoint1: NSPoint(x: 20, y: 17), controlPoint2: NSPoint(x: 24, y: 17))
-            outline.lineWidth = 2.5
+            let outline = NSBezierPath(roundedRect: NSRect(x: 1.6, y: 3, width: 12.8, height: 10.4), xRadius: 2, yRadius: 2)
+            outline.move(to: NSPoint(x: 1.6, y: 6))
+            outline.line(to: NSPoint(x: 14.4, y: 6))
+            outline.move(to: NSPoint(x: 6, y: 11.4))
+            outline.curve(to: NSPoint(x: 10, y: 11.4), controlPoint1: NSPoint(x: 7.2, y: 10.4), controlPoint2: NSPoint(x: 8.8, y: 10.4))
+            outline.lineWidth = 1.1
             outline.lineCapStyle = .round
             outline.stroke()
-            for x: CGFloat in [16, 25] {
-                NSBezierPath(ovalIn: NSRect(x: x, y: 19, width: 3, height: 3)).fill()
+            let eyeRadius: CGFloat = 0.85
+            for x: CGFloat in [6, 10] {
+                NSBezierPath(ovalIn: NSRect(x: x - eyeRadius, y: 8.6 - eyeRadius, width: 2 * eyeRadius, height: 2 * eyeRadius)).fill()
             }
             return true
         }

@@ -251,13 +251,10 @@ final class CommandBarRowView: NSView {
     }
 
     /// [ours] The effective key from the core's binding table.
-    private static func keycap(_ key: KeyCombination) -> String {
-        var text = ""
-        if key.control { text += "⌃" }
-        if key.option { text += "⌥" }
-        if key.shift { text += "⇧" }
-        if key.command { text += "⌘" }
-        return text + key.key.uppercased()
+    static func keycap(_ key: KeyCombination) -> String {
+        var caps = SidebarTooltip.caps(for: key)
+        if key.key == "\t" { caps[caps.count - 1] = "Tab" }
+        return caps.joined()
     }
 
     private static func detail(_ suggestion: Suggestion) -> String {

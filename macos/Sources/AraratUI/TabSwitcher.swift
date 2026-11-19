@@ -11,7 +11,6 @@ public final class TabSwitcher {
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     public var visibleWindow: NSWindow? { panel.isVisible ? panel : nil }
     private weak var parent: NSWindow?
-    private weak var pageCard: NSView?
     private var monitor: Any?
     private var deactivate: NSObjectProtocol?
     private var resignKey: NSObjectProtocol?
@@ -20,12 +19,18 @@ public final class TabSwitcher {
     private var commitPending = false
     private let favicon: (String) -> NSImage?
     private let accent: NSColor
+    private let hints: [String]
 
-    public init(parent: NSWindow, pageCard: NSView?, backwards: Bool, accent: NSColor, favicon: @escaping (String) -> NSImage?) {
+    public init(parent: NSWindow, backwards: Bool, bindings: [KeyBinding], accent: NSColor, favicon: @escaping (String) -> NSImage?) {
         self.parent = parent
-        self.pageCard = pageCard
         self.favicon = favicon
         self.accent = accent
+        let steps = [("cycle_tabs_next", "Next"), ("cycle_tabs_previous", "Previous")]
+        hints = steps.compactMap { step -> String? in
+            let (command, action) = step
+            guard let key = bindings.first(where: { $0.command == command })?.key else { return nil }
+            return "\(CommandBarRowView.keycap(key)) \(action)"
+        } + ["Release ⌃ Switch", "Esc Cancel"]
         offset = backwards ? -1 : 0
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -84,7 +89,7 @@ public final class TabSwitcher {
         if let deactivate { NotificationCenter.default.removeObserver(deactivate); self.deactivate = nil }
         if let resignKey { NotificationCenter.default.removeObserver(resignKey); self.resignKey = nil }
         if panel.parent != nil { parent?.removeChildWindow(panel) }
-        panel.orderOut(nil)
+        if panel.isVisible { panel.orderOut(nil) }
         onClose()
     }
 
@@ -99,9 +104,9 @@ public final class TabSwitcher {
 
     func makeOverlay() -> (content: NSView, frame: NSRect)? {
         guard let parent, !rows.isEmpty else { return nil }
-        let page = parent.convertToScreen(pageCard.map { $0.convert($0.bounds, to: nil) } ?? parent.contentLayoutRect)
+        let window = parent.frame
         let hintGap = CommandBarMetrics.hintGap
-        let pills = ["⌃Tab Next", "⌃⇧Tab Previous", "Release ⌃ Switch", "Esc Cancel"].map { title in
+        let pills = hints.map { title in
             let label = NSTextField(labelWithString: title)
             label.font = .systemFont(ofSize: CommandBarMetrics.hintFontSize)
             label.textColor = .white
@@ -117,18 +122,19 @@ public final class TabSwitcher {
         func hintWidth(_ row: [NSView]) -> CGFloat {
             row.reduce(0) { $0 + $1.frame.width } + CGFloat(row.count - 1) * hintGap
         }
-        let hintRows = hintWidth(pills) > page.width ? [Array(pills.prefix(2)), Array(pills.suffix(2))] : [pills]
+        let split = (pills.count + 1) / 2
+        let hintRows = hintWidth(pills) > window.width ? [Array(pills.prefix(split)), Array(pills.dropFirst(split))] : [pills]
         let hintHeight = pills[0].frame.height
         let hintRowGap = CommandBarMetrics.hintPaddingY
         let panelY = CGFloat(hintRows.count) * (hintHeight + hintRowGap) - hintRowGap + 12
         let tilePadding: CGFloat = 12
         let tileGap: CGFloat = 8
         let tileSpacing = 2 * tilePadding + CGFloat(rows.count - 1) * tileGap
-        let tileWidth = min(144, max(0, (page.width - tileSpacing) / CGFloat(rows.count)))
+        let tileWidth = min(144, max(0, (window.width - tileSpacing) / CGFloat(rows.count)))
         let panelWidth = CGFloat(rows.count) * tileWidth + tileSpacing
         let width = max(panelWidth, hintRows.map(hintWidth).max() ?? 0)
         let panelHeight: CGFloat = 136
-        let frame = NSRect(x: page.midX - width / 2, y: page.midY - panelHeight / 2 - panelY,
+        let frame = NSRect(x: window.midX - width / 2, y: window.midY - panelHeight / 2 - panelY,
                            width: width, height: panelHeight + panelY)
         let content = NSView(frame: NSRect(origin: .zero, size: frame.size))
         let background = NSVisualEffectView(frame: NSRect(x: (width - panelWidth) / 2, y: panelY,

@@ -2557,7 +2557,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     guard hasUsableHost, let host, let workspace else { return }
     commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), pageCard: container?.pageCard, backwards: backwards, accent: spaceAccent) { [weak host] id in
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
