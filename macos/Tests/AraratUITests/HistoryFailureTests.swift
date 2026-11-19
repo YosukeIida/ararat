@@ -178,10 +178,14 @@ private func controls(in view: NSView) -> [NSButton] {
 
 @Test @MainActor
 func historyFailureCardKeepsIconTitleBodyAndActionInOneColumn() throws {
+    _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
-    sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 600)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = sidebar
+    sidebar.appearance = try #require(NSAppearance(named: .aqua))
+    defer { window.contentView = nil }
     sidebar.showHistoryFailure(true)
-    sidebar.layoutSubtreeIfNeeded()
+    window.layoutIfNeeded()
     sidebar.layoutSubtreeIfNeeded()
     let card = sidebar.historyBanner
     let icon = try #require(card.subviews.compactMap { $0 as? NSImageView }.first)
@@ -213,4 +217,36 @@ func historyFailureCardKeepsIconTitleBodyAndActionInOneColumn() throws {
     #expect(abs(iconTop - 8) <= 1)
     #expect(abs(dismissTop - 4) <= 1)
     #expect(abs(card.bounds.maxX - dismissFrame.maxX - 4) <= 1)
+    // The layout rect can still be misleading: a label that keeps its intrinsic width can sit at
+    // the column's trailing edge without changing its own frame (the VM showed the title at x 57
+    // and the body at x 40). Compare where the glyphs actually draw.
+    let rep = try #require(sidebar.bitmapImageRepForCachingDisplay(in: sidebar.bounds))
+    sidebar.cacheDisplay(in: sidebar.bounds, to: rep)
+    let scale = CGFloat(rep.pixelsWide) / sidebar.bounds.width
+    let titleGlyphX = try #require(drawnGlyphLeadingX(title, in: sidebar, rep: rep, scale: scale))
+    let bodyGlyphX = try #require(drawnGlyphLeadingX(message, in: sidebar, rep: rep, scale: scale))
+    #expect(abs(titleGlyphX - bodyGlyphX) <= 1)
+    let retryGlyphX = try #require(retry.superview).convert(retry.alignmentRect(forFrame: retry.frame), to: sidebar).minX
+    #expect(abs(retryGlyphX - titleGlyphX) <= 1)
+}
+
+/// The leading edge of the darkest pixel in a field's own rect: the drawn title text frame, not the
+/// field frame.
+private func drawnGlyphLeadingX(_ field: NSTextField, in root: NSView, rep: NSBitmapImageRep, scale: CGFloat) -> CGFloat? {
+    guard let superview = field.superview else { return nil }
+    let frame = root.convert(field.frame, from: superview)
+    let top = max(0, Int((root.bounds.height - frame.maxY) * scale))
+    let bottom = min(rep.pixelsHigh, Int((root.bounds.height - frame.minY) * scale))
+    let left = max(0, Int(frame.minX * scale)), right = min(rep.pixelsWide, Int(frame.maxX * scale))
+    guard top < bottom, left < right else { return nil }
+    var leading: Int?
+    for y in top..<bottom {
+        for x in left..<right {
+            guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), color.alphaComponent > 0.5 else { continue }
+            if 0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent < 0.85 {
+                leading = min(leading ?? x, x)
+            }
+        }
+    }
+    return leading.map { CGFloat($0) / scale }
 }

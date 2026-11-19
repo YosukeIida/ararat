@@ -1215,6 +1215,7 @@ public final class SidebarView: NSView {
             warning.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 8),
             warning.widthAnchor.constraint(equalToConstant: 16),
             warning.heightAnchor.constraint(equalToConstant: 16),
+            historyTitle.widthAnchor.constraint(equalTo: historyTextColumn.widthAnchor),
             historyTextColumn.leadingAnchor.constraint(equalTo: historyBanner.leadingAnchor, constant: 32),
             historyTextColumn.trailingAnchor.constraint(equalTo: historyBanner.trailingAnchor, constant: -32),
             historyTextColumn.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 8),
