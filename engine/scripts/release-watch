@@ -15,8 +15,8 @@ behind_days counts whole days since the earliest Mac stable release newer
 than the pin (0 if there are none). It is a lower bound if the chromiumdash
 page omits older unpinned releases.
 security is true if any of these versions has a desktop stable release note
-listing a CVE. Otherwise it is "unknown" if any version has no note or there
-are no unpinned releases, and false if every version has a note.
+listing a CVE. Otherwise it is "unknown" if any version has no note, and
+false if every version has a note or there are no unpinned releases.
 
 Exit codes: 0 nothing is new, 10 the pin is behind in Chromium or in the base
 patch set, 2 the inputs could not be read or fetched or an argument was
@@ -176,7 +176,7 @@ def security_state(payload, versions):
             has_cves = has_cves or "CVE-" in body
     if has_cves:
         return True
-    if versions and known == versions:
+    if known == versions:
         return False
     return "unknown"
 

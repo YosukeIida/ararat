@@ -64,7 +64,7 @@ jobs:
             echo '`stable` and `base_tag_latest` from upstream today. `behind_days`'
             echo 'counts whole days from the earliest unpinned Mac stable release on the ChromiumDash page.'
             echo '`security` is `true` if any unpinned Mac stable release has desktop stable notes listing CVEs.'
-            echo 'Otherwise it is `unknown` if any unpinned release lacks notes or there are no unpinned releases, and `false` if all have notes.'
+            echo 'Otherwise it is `unknown` if any unpinned release lacks notes, and `false` if all have notes or there are no unpinned releases.'
           } >"$body"
           number="$(gh issue list --state all --limit 500 --json number,title \
             --jq "map(select(.title == \"$title\"))|.[0].number // empty")"

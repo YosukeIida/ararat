@@ -292,7 +292,7 @@ class Run(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(report["behind_days"], 0)
-        self.assertEqual(report["security"], "unknown")
+        self.assertIs(report["security"], False)
 
     def test_a_newer_base_tag_alone_is_ten(self):
         report, code = rw.run(
