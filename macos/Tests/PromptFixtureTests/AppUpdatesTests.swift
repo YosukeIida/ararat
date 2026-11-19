@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import Testing
 @testable import Ararat
 
@@ -22,4 +23,23 @@ func updaterRequiresAConfiguredFeedAndPublicKey() throws {
     #expect(AppUpdates.channels(for: info) == ["nightly"])
     info["SUPublicEDKey"] = "invalid"
     #expect(AppUpdates.channels(for: info) == nil)
+}
+
+@Test @MainActor
+func sparkleRelaunchDelegateBypassesQuitConfirmationUntilTheCycleEnds() {
+    let updates = AppUpdates(channels: [])
+    let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: updates, userDriverDelegate: nil)
+
+    func shouldAsk() -> Bool {
+        let source = QuitConfirmation.source(poweringOff: false, quitReason: nil,
+                                             sparkleRelaunching: updates.isRelaunching, checkBypass: false)
+        return QuitConfirmation.shouldAsk(source: source, warn: true, visible: [.regular])
+    }
+
+    let delegate: any SPUUpdaterDelegate = updates
+    #expect(shouldAsk())
+    delegate.updaterWillRelaunchApplication?(controller.updater)
+    #expect(!shouldAsk())
+    delegate.updater?(controller.updater, didFinishUpdateCycleFor: .updates, error: nil)
+    #expect(shouldAsk())
 }

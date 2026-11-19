@@ -11,6 +11,12 @@
 extern "C" {
 #endif
 
+#ifdef __BLOCKS__
+typedef void (^AraratContinueQuit)(void);
+#else
+typedef void* AraratContinueQuit;
+#endif
+
 // The callbacks the engine calls on its own stages; any function may be null.
 typedef struct AraratCallbacks {
   void (*started)(void* ctx);
@@ -21,6 +27,8 @@ typedef struct AraratCallbacks {
   // OTR profile is its parent's, which cannot tell two OTR profiles apart).
   void* (*create_host)(void* ctx, bool popup, bool off_the_record, void* profile, const char* profile_name, int x, int y, int width, int height);
   void (*open_urls)(void* ctx, void* urls);
+  bool (*confirm_quit)(void* ctx, bool powering_off, bool shortcut,
+                       bool is_repeat, AraratContinueQuit continue_quit);
   void* ctx;
 } AraratCallbacks;
 

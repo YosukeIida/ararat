@@ -1728,3 +1728,20 @@ fn the_download_device_reads_through_the_ffi_refuses_a_relative_folder_and_stays
     drop(store);
     for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
 }
+
+#[test]
+fn warn_before_quitting_defaults_on_and_survives_reopen() {
+    let path = fresh_db("warn-before-quitting");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(store.settings().warn_before_quitting);
+    store.set_warn_before_quitting("one".into(), false).unwrap();
+    drop(store);
+
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    assert!(!store.settings().warn_before_quitting);
+    assert_eq!(store.settings().startup, ararat_ffi::StartupBehavior::RestoreWindows);
+    store.set_warn_before_quitting("one".into(), true).unwrap();
+    drop(store);
+    assert!(!records(&path).iter().any(|(kind, _, _)| kind == "settings"));
+    for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+}

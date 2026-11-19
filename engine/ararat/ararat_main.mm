@@ -439,6 +439,12 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   g_trace_teardown = profiles && reverse;
   AraratInstallWindowFactory();
   AraratInstallPermissionPrompt();
+  g_ararat_quit_confirmation = [](bool powering_off, bool shortcut, bool is_repeat,
+                                  void (^continue_quit)(void)) {
+    return g_ararat_callbacks.confirm_quit &&
+           g_ararat_callbacks.confirm_quit(g_ararat_callbacks.ctx, powering_off,
+                                           shortcut, is_repeat, continue_quit);
+  };
   g_ararat_reopen = [](bool has_visible_windows) {
     return g_ararat_callbacks.reopen &&
            g_ararat_callbacks.reopen(g_ararat_callbacks.ctx, has_visible_windows);

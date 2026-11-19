@@ -200,7 +200,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)checkTryingToQuit;
 - (NSUInteger)checkStockBrowsers;
 - (NSUInteger)checkBrowserViews;
-- (void)disableCheckConfirmQuit;
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition;
 - (void)checkCreateDeferredBrowsers;
 - (void)checkMenuCommand:(BOOL)newWindow;

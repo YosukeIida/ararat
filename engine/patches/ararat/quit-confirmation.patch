@@ -1,0 +1,240 @@
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -16,6 +16,7 @@
+ #include "base/apple/bridging.h"
+ #include "base/apple/foundation_util.h"
+ #include "base/apple/scoped_cftyperef.h"
++#include "base/functional/callback_helpers.h"
+ #include "base/auto_reset.h"
+ #include "base/check_is_test.h"
+ #include "base/check_op.h"
+@@ -154,12 +155,23 @@
+ #include "ui/native_theme/native_theme.h"
+ #include "url/gurl.h"
+ 
++bool (*g_ararat_quit_confirmation)(bool, bool, bool, void (^)(void)) = nullptr;
+ bool (*g_ararat_reopen)(bool) = nullptr;
+ NSMenu* (*g_ararat_dock_menu)() = nullptr;
+ void (*g_ararat_open_urls)(NSArray*, Profile*) = nullptr;
+ BrowserWindowInterface* (*g_ararat_shown_browser)(NSWindow*, bool*) = nullptr;
+ 
+ namespace {
++
++bool MaybeDeferAraratQuit(bool system_quit, void (^continuation)(void)) {
++  if (!g_ararat_quit_confirmation || browser_shutdown::IsTryingToQuit())
++    return false;
++  NSEvent* event = NSApp.currentEvent;
++  bool shortcut = event.type == NSEventTypeKeyDown &&
++                  CommandForKeyEvent(event).chrome_command == IDC_EXIT;
++  return g_ararat_quit_confirmation(system_quit, shortcut,
++                                   shortcut && event.isARepeat, continuation);
++}
+ 
+ // True while AppController is calling chrome::NewEmptyWindow(). We need a
+ // global flag here, analogue to StartupBrowserCreator::InProcessStartup()
+@@ -546,7 +558,6 @@
+ @interface AppController () <HandoffObserverDelegate>
+ - (void)initMenuState;
+ - (void)initProfileMenu;
+-- (void)updateConfirmToQuitPrefMenuItem:(NSMenuItem*)item;
+ - (void)cancelConfirmQuitPanel;
+ - (void)registerServicesMenuTypesTo:(NSApplication*)app;
+ - (void)checkForAnyKeyWindows;
+@@ -935,9 +946,21 @@
+ // (NSApplicationDelegate protocol) This is the Apple-approved place to override
+ // the default handlers.
+ - (void)applicationWillFinishLaunching:(NSNotification*)notification {
++  if (g_ararat_quit_confirmation) {
++    g_browser_process->local_state()->SetBoolean(prefs::kConfirmToQuitEnabled,
++                                                false);
++  }
+   NSWindow.allowsAutomaticWindowTabbing = NO;
+ 
+   [self initShareMenu];
++}
++
++- (void)requestUserTermination {
++  if (!MaybeDeferAraratQuit(_isPoweringOff, ^{
++        [self tryToTerminateApplication];
++      })) {
++    [self tryToTerminateApplication];
++  }
+ }
+ 
+ - (void)tryToTerminateApplication {
+@@ -1013,6 +1036,9 @@
+ }
+ 
+ - (ConfirmQuitResult)confirmQuitIfNeeded {
++  if (g_ararat_quit_confirmation)
++    return ConfirmQuitResultNotPrompted;
++
+   // If there are no windows, quit immediately.
+   if (!GetLastActiveBrowserWindowInterfaceWithAnyProfile() &&
+       !AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0)) {
+@@ -1676,9 +1702,6 @@
+     enable = canOpenNewBrowser;
+   } else if (action == @selector(orderFrontStandardAboutPanel:)) {
+     enable = canOpenNewBrowser;
+-  } else if (action == @selector(toggleConfirmToQuit:)) {
+-    [self updateConfirmToQuitPrefMenuItem:static_cast<NSMenuItem*>(item)];
+-    enable = [self shouldEnableConfirmToQuitPrefMenuItem];
+   }
+   return enable;
+ }
+@@ -1998,27 +2021,6 @@
+   shareMenuItem.submenu = shareSubmenu;
+ }
+ 
+-// The Confirm to Quit preference is atypical in that the preference lives in
+-// the app menu right above the Quit menu item. This method will refresh the
+-// display of that item depending on the preference state.
+-- (void)updateConfirmToQuitPrefMenuItem:(NSMenuItem*)item {
+-  // Format the string so that the correct key equivalent is displayed.
+-  NSString* acceleratorString = [ConfirmQuitPanelController keyCommandString];
+-  NSString* title = l10n_util::GetNSStringF(IDS_CONFIRM_TO_QUIT_OPTION,
+-      base::SysNSStringToUTF16(acceleratorString));
+-  [item setTitle:title];
+-
+-  const PrefService* prefService = g_browser_process->local_state();
+-  bool enabled = prefService->GetBoolean(prefs::kConfirmToQuitEnabled);
+-  [item setState:enabled ? NSControlStateValueOn : NSControlStateValueOff];
+-}
+-
+-- (BOOL)shouldEnableConfirmToQuitPrefMenuItem {
+-  const PrefService* prefService = g_browser_process->local_state();
+-  return !prefService->FindPreference(prefs::kConfirmToQuitEnabled)
+-              ->IsManaged();
+-}
+-
+ - (void)registerServicesMenuTypesTo:(NSApplication*)app {
+   // Note that RenderWidgetHostViewCocoa implements NSServicesRequests which
+   // handles requests from services.
+@@ -2155,12 +2157,6 @@
+   } else {
+     chrome::OpenAboutWindow(profile);
+   }
+-}
+-
+-- (IBAction)toggleConfirmToQuit:(id)sender {
+-  PrefService* prefService = g_browser_process->local_state();
+-  bool enabled = prefService->GetBoolean(prefs::kConfirmToQuitEnabled);
+-  prefService->SetBoolean(prefs::kConfirmToQuitEnabled, !enabled);
+ }
+ 
+ // Explicitly bring to the foreground when creating new windows from the dock.
+@@ -2766,6 +2762,11 @@
+ 
+ }  // namespace
+ 
++bool AraratDeferUserQuit(base::OnceClosure continuation) {
++  return MaybeDeferAraratQuit(false,
++                             base::CallbackToBlock(std::move(continuation)));
++}
++
+ namespace app_controller_mac {
+ 
+ bool IsOpeningNewWindow() {
+--- a/chrome/browser/app_controller_mac.h
++++ b/chrome/browser/app_controller_mac.h
+@@ -68,6 +68,7 @@
+ 
+ // Try to close all browser windows, and if that succeeds then quit.
+ - (void)tryToTerminateApplication;
++- (void)requestUserTermination;
+ 
+ // Stop trying to terminate the application. That is, prevent the final browser
+ // window closure from causing the application to quit.
+@@ -123,9 +124,6 @@
+ - (IBAction)orderFrontStandardAboutPanel:(id)sender;
+ - (IBAction)orderFrontStandardAboutPanelForProfile:(Profile*)profile;
+ 
+-// Toggles the "Confirm to Quit" preference.
+-- (IBAction)toggleConfirmToQuit:(id)sender;
+-
+ // Delegate method to return the dock menu.
+ - (NSMenu*)applicationDockMenu:(NSApplication*)sender;
+ 
+--- a/chrome/browser/chrome_browser_application_mac.mm
++++ b/chrome/browser/chrome_browser_application_mac.mm
+@@ -46,7 +46,7 @@
+ }
+ 
+ void Terminate() {
+-  [NSApp terminate:nil];
++  [AppController.sharedController tryToTerminateApplication];
+ }
+ 
+ void CancelTerminate() {
+@@ -316,7 +316,7 @@
+ // NSApplication event loop, so final post- MessageLoop::Run() work is done
+ // before exiting.
+ - (void)terminate:(id)sender {
+-  [AppController.sharedController tryToTerminateApplication];
++  [AppController.sharedController requestUserTermination];
+   // Return, don't exit. The application is responsible for exiting on its own.
+ }
+ 
+--- a/chrome/browser/lifetime/application_lifetime.cc
++++ b/chrome/browser/lifetime/application_lifetime.cc
+@@ -8,6 +8,7 @@
+ #include <set>
+ #include <string>
+ 
++#include "base/functional/bind.h"
+ #include "base/logging.h"
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+@@ -28,6 +29,10 @@
+ #if !BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/lifetime/application_lifetime_desktop.h"
+ #endif  // !BUILDFLAG(IS_ANDROID)
++
++#if BUILDFLAG(IS_MAC)
++bool AraratDeferUserQuit(base::OnceClosure continuation);
++#endif
+ 
+ namespace chrome {
+ 
+@@ -53,7 +58,9 @@
+ // The ChromeOS implementations are in application_lifetime_chromeos.cc
+ #if !BUILDFLAG(IS_CHROMEOS)
+ 
+-void AttemptUserExit() {
++namespace {
++
++void AttemptUserExitConfirmed() {
+   // Reset the restart bit that might have been set in cancelled restart
+   // request.
+ #if !BUILDFLAG(IS_ANDROID)
+@@ -62,6 +69,16 @@
+   PrefService* pref_service = g_browser_process->local_state();
+   pref_service->SetBoolean(prefs::kRestartLastSessionOnShutdown, false);
+   AttemptExitInternal(false);
++}
++
++}  // namespace
++
++void AttemptUserExit() {
++#if BUILDFLAG(IS_MAC)
++  if (AraratDeferUserQuit(base::BindOnce(&AttemptUserExitConfirmed)))
++    return;
++#endif
++  AttemptUserExitConfirmed();
+ }
+ 
+ void AttemptRelaunch() {
+--- a/chrome/browser/ui/cocoa/main_menu_builder.mm
++++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
+@@ -87,11 +87,6 @@
+                                             NSEventModifierFlagOption),
+               Item(IDS_SHOW_ALL_MAC)
+                   .action(@selector(unhideAllApplications:)),
+-              Item().is_separator(),
+-              Item(IDS_CONFIRM_TO_QUIT_OPTION)
+-                  .target(app_delegate)
+-                  .action(@selector(toggleConfirmToQuit:))
+-                  .remove_if(is_pwa),
+               Item().is_separator(),
+               Item(IDS_EXIT_MAC)
+                   .string_format_1(product_name)

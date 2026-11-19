@@ -870,6 +870,7 @@ pub struct Settings {
     pub privacy: PrivacySettings,
     /// P5b: what the first window of a launch does (restore the kept windows or open a new one).
     pub startup: StartupBehavior,
+    pub warn_before_quitting: bool,
 }
 
 impl Default for Settings {
@@ -877,7 +878,7 @@ impl Default for Settings {
         Self { new_tab_row_shown: true, space_scroll_direction: SpaceScrollDirection::Natural, tooltips_shown: true,
             little_window_open_in: LittleWindowOpenIn::MostRecent, little_window_close_after: true, theme: Theme::System,
             site_defaults: SiteDefaults::default(), privacy: PrivacySettings::default(),
-            startup: StartupBehavior::RestoreWindows }
+            startup: StartupBehavior::RestoreWindows, warn_before_quitting: true }
     }
 }
 

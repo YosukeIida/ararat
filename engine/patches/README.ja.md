@@ -48,6 +48,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/devtools-hook.patch` | `mantrakp04/ardia`（GPL-3.0） |
 | `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia`（GPL-3.0） |
 | `ararat/app-controller-hooks.patch` | 独自 |
+| `ararat/quit-confirmation.patch` | 独自 |
 | `ararat/browser-window-factory.patch` | 独自 |
 | `ararat/viewless-read-anything.patch` | 独自 |
 | `ararat/viewless-bubble-anchor.patch` | 独自 |

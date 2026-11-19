@@ -133,8 +133,8 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 相違 | `settings-extensions-extensions` と `settings-extensions-extensions-review` でプロファイル選択、インストール済みの行、Review… の状態を確認した（決定 102）。Add from Arc は下の未実装行に記録する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
 | `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。レールにグループの間隔がなく、Passwords、Sync、About を除く 11 ペインが連続して並ぶ。 |
-| `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting、Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
-| `E-General` | General の残りの設定 | — | 未実装 | 終了前の確認、検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
+| `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
+| `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
 | `E-Passwords` | 保存済みパスワードと Touch ID | — | 未実装 | U20 のパスワード設定は計画段階にある。 |
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 相違 | `settings-privacy-privacy` には仕様検討中の Protection 機能がない（決定 97）。`settings-privacy-sheet` は Cancel に塗りがあり、Clear Data を Clear と表示し、プロファイルを固定ラベルで示し、Site permissions のチェックボックスがない。 |

@@ -6,6 +6,7 @@ final class AppUpdates: NSObject, SPUUpdaterDelegate {
     private static var delegateKey: UInt8 = 0
     private var controller: SPUStandardUpdaterController?
     private let channels: Set<String>
+    private(set) var isRelaunching = false
 
     static func channels(for info: [String: Any]) -> Set<String>? {
         guard let feed = info["SUFeedURL"] as? String,
@@ -17,10 +18,22 @@ final class AppUpdates: NSObject, SPUUpdaterDelegate {
         return info["AraratUpdateChannel"] as? String == "nightly" ? ["nightly"] : []
     }
 
-    private init(channels: Set<String>) {
+    init(channels: Set<String>) {
         self.channels = channels
         super.init()
-        controller = SPUStandardUpdaterController(updaterDelegate: self, userDriverDelegate: nil)
+    }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        isRelaunching = true
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        isRelaunching = false
+    }
+
+    static func isRelaunching(owner: (any NSApplicationDelegate)?) -> Bool {
+        guard let owner else { return false }
+        return (objc_getAssociatedObject(owner, &delegateKey) as? AppUpdates)?.isRelaunching == true
     }
 
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
@@ -31,6 +44,7 @@ final class AppUpdates: NSObject, SPUUpdaterDelegate {
         let item = NSMenuItem(title: "Check for Updates…", action: nil, keyEquivalent: "")
         if let owner, let channels = channels(for: info) {
             let updates = AppUpdates(channels: channels)
+            updates.controller = SPUStandardUpdaterController(updaterDelegate: updates, userDriverDelegate: nil)
             // Chromium's delegate must stay installed and retain the updater across window lifetimes.
             objc_setAssociatedObject(owner, &delegateKey, updates, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             item.target = updates.controller

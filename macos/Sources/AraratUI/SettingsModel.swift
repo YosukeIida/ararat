@@ -90,6 +90,7 @@ public final class SettingsModel: ObservableObject {
     /// window's, so no model test opens one.
     @Published private(set) var defaultBrowserIsDefault = false
     @Published var startup: StartupBehavior = .restoreWindows
+    @Published private(set) var warnBeforeQuitting = true
     @Published var downloads: DownloadDevice = .board
     /// Whether the last `readGeneral` answered both core reads. The check waits for it before
     /// comparing the rows, so its conditions cannot pass on the model's initial values.
@@ -292,6 +293,7 @@ public final class SettingsModel: ObservableObject {
     public static let defaultBrowserStatusMarker = "default-browser-status"
     public static let makeDefaultButtonMarker = "make-default-button"
     public static let startupRowID = "startup"
+    static let warnBeforeQuittingRowID = "warn-before-quitting"
     public static let startupMenuMarker = "startup-menu"
     public static let downloadsFolderRowID = "downloads-folder"
     public static let downloadsFolderMarker = "downloads-folder-name"
@@ -1033,10 +1035,11 @@ public final class SettingsModel: ObservableObject {
         downloadsRead = false
         defaultBrowserIsDefault = defaultBrowserStatus.isDefaultBrowser()
         let generation = contextGeneration
-        adapter.startupBehavior { [weak self] result in
+        adapter.generalWorkspaceSettings { [weak self] result in
             guard let self, self.contextGeneration == generation else { return }
             guard case .success(let value) = result else { return }
-            self.startup = value
+            self.startup = value.startup
+            self.warnBeforeQuitting = value.warnBeforeQuitting
             self.startupRead = true
             self.generalLoaded = self.startupRead && self.downloadsRead
         }
@@ -1070,6 +1073,17 @@ public final class SettingsModel: ObservableObject {
             completion(result)
             guard let self, self.contextGeneration == generation, case .success = result else { return }
             self.startup = value
+        }
+    }
+
+    func setWarnBeforeQuitting(_ value: Bool) {
+        guard warnBeforeQuitting != value else { return }
+        let generation = contextGeneration
+        let completion = editCompletion()
+        adapter.setWarnBeforeQuitting(value) { [weak self] result in
+            completion(result)
+            guard let self, self.contextGeneration == generation, case .success = result else { return }
+            self.warnBeforeQuitting = value
         }
     }
 

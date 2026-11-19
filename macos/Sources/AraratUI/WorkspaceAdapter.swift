@@ -432,8 +432,12 @@ extension WorkspaceAdapter {
 
     // P5b: the General pane's When Ararat opens, the same synced settings record, read at the
     // launch site (a window start) and on every open of the pane.
-    public func startupBehavior(completion: @escaping Completion<StartupBehavior>) {
-        enqueue({ try self.opened().settings().startup }, completion: completion)
+    public func generalWorkspaceSettings(completion: @escaping Completion<WorkspaceSettings>) {
+        enqueue({ try self.opened().settings() }, completion: completion)
+    }
+
+    public func setWarnBeforeQuitting(_ warn: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
+        enqueue({ try self.opened().setWarnBeforeQuitting(windowId: self.windowID, warn: warn) }, completion: completion)
     }
 
     public func setStartupBehavior(_ value: StartupBehavior, completion: @escaping Completion<WorkspaceSnapshot>) {

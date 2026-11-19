@@ -23,16 +23,19 @@ public enum WorkspaceCommands {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         // Keys with Command never yield: they cannot be typed into a field anyway.
         guard !flags.contains(.command) else { return false }
-        let characters = [event.charactersIgnoringModifiers, event.characters(byApplyingModifiers: [])]
-            .compactMap { $0?.lowercased() }
-        for binding in bindings {
-            guard let key = binding.key, !key.command else { continue }
-            guard key.control == flags.contains(.control),
-                  key.option == flags.contains(.option),
-                  key.shift == flags.contains(.shift) else { continue }
-            if characters.contains(where: { $0 == key.key.lowercased() }) { return true }
+        return bindings.contains { binding in
+            binding.key.map { matches($0, event: event) } ?? false
         }
-        return false
+    }
+
+    public static func matches(_ key: KeyCombination, event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+        guard key.command == flags.contains(.command),
+              key.control == flags.contains(.control),
+              key.option == flags.contains(.option),
+              key.shift == flags.contains(.shift) else { return false }
+        return event.characters(byApplyingModifiers: [])?.lowercased() == key.key.lowercased()
+            || event.charactersIgnoringModifiers?.lowercased() == key.key.lowercased()
     }
 
     public static let showSpace = NSSelectorFromString("showSpace:")

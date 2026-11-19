@@ -58,6 +58,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/devtools-hook.patch` | `mantrakp04/ardia` (GPL-3.0) |
 | `ararat/autofill-address-bubble.patch` | `mantrakp04/ardia` (GPL-3.0) |
 | `ararat/app-controller-hooks.patch` | ours |
+| `ararat/quit-confirmation.patch` | ours |
 | `ararat/browser-window-factory.patch` | ours |
 | `ararat/viewless-read-anything.patch` | ours |
 | `ararat/viewless-bubble-anchor.patch` | ours |

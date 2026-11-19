@@ -87,9 +87,6 @@ enum SettingsRegistry {
     /// The search index: every built pane's rows, in the rail's order.
     static func rows(_ model: SettingsModel) -> [SettingsModel.Row] { built.flatMap { $0.rows(model) } }
 
-    /// P5b: the three E-General rows Phase 5 brings in, in the board's order. The rest of the pane
-    /// (Warn before quitting, Search engine, Show search suggestions, Check spelling) stays phase 7
-    /// and is not drawn, so no row here is a dead control.
     static func generalRows(_ model: SettingsModel) -> [SettingsModel.Row] {
         [SettingsModel.Row(id: SettingsModel.defaultBrowserRowID, pane: .general,
                            title: "Default browser",
@@ -99,6 +96,9 @@ enum SettingsRegistry {
          SettingsModel.Row(id: SettingsModel.startupRowID, pane: .general,
                            title: "When Ararat opens",
                            subtitle: model.startupLabel),
+         SettingsModel.Row(id: SettingsModel.warnBeforeQuittingRowID, pane: .general,
+                           title: "Warn before quitting",
+                           subtitle: model.warnBeforeQuitting ? "On" : "Off"),
          SettingsModel.Row(id: SettingsModel.downloadsFolderRowID, pane: .general,
                            title: "Save downloads to",
                            subtitle: model.downloadFolderName),
