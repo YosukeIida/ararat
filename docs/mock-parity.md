@@ -4,9 +4,9 @@ The source is the owner's U20 project under `~/.config/herdr-agent-team/ararat/r
 
 ## Token and structure checks
 
-The [reviewed token table](research/mock-values.json) has 94 entries. The Swift suite compares 85 entries, including the selected shadow's offset, blur and opacity. The other 9 carry reasons in the table, including owner spacing decisions and the Library Downloads row pitch. One CSS declaration can map to several tokens or resolve differently in each appearance.
+The [reviewed token table](research/mock-values.json) has 97 entries. The Swift suite compares 88 entries, including the selected shadow's offset, blur and opacity. The other 9 carry reasons in the table, including owner spacing decisions and the Library Downloads row pitch. One CSS declaration can map to several tokens or resolve differently in each appearance.
 
-The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 88 have a reviewed disposition and 27,694 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
+The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 91 have a reviewed disposition and 27,691 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -51,7 +51,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | Mock page | Element | VM check | Status | Evidence or follow-up |
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library, add menu and space cells | `dock (cells)` | matches | Library and + sit in the dock; structure check library-dock PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
-| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | matches | Open space keeps its letter cell and the others become dots, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | differs | The open space keeps its letter cell and the others become dots, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. The open cell uses the F boards’ owner-approved 55% light and 10% dark overlay and normal label colour. The A board shows 60% and 13% with an accent glyph. |
 | `A-FavouriteTiles` | Favicon tiles, loading, audio and unread marks | `organize-first-favorite` | not reviewed | This frame covers the first tile. The remaining states need separate frames. |
 | `A-FavouriteTiles` | Empty favourites area | `organize-empty-favorites` | not reviewed | The area collapses without a placeholder (decision 13). |
 | `A-Folders` | Expanded folder, empty line and row retention | `folder-empty (line, drop)` | matches | Empty folder shows the No tabs line; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
@@ -63,7 +63,8 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `A-TabRows` | Pinned and Today rows, spinner, unread, crash and audio | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | not reviewed | The hover and pressed PNGs show an unselected loaded pin. The selected PNG shows the adjacent Today row. |
 | `A-TabRows` | Split segment geometry and unfocused fill | `split-focus (a), split-commands (vertical, split)` | matches | The token suite and the offscreen row test verify the mapped geometry and both unfocused fills. |
 | `A-TabRows` | Multi-selection | — | not built | Multi-selection is deferred past Phase 5 (§7). |
-| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | not reviewed | The token suite checks the light shadow and zero opacity in dark. Compare the Today row and the selected split segment visually. |
+| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | matches | The Today row and focused segment use the same fill. In light appearance, the opaque white card and shadow match the board. In dark appearance, the 19.5% white overlay matches the board’s sRGB (67, 63, 75) within one 8-bit code value per channel on the default backdrop and preserves other dark Looks’ hues. |
+| `A-TabRows` | Multiple selected rows | — | differs | The sidebar currently has one selected row. Each row marked selected uses the same fill rule. |
 | `A-TabRows` | Loading and crashed glyphs | `sidebar-rows-loading`, `sidebar-rows-crashed` | not reviewed | Decision 15 puts the loading spinner in the favicon's place. |
 | `A-TabRows` | Unread and muted rows | `sidebar-rows-unread`, `sidebar-rows-muted` | not reviewed | The dot follows title changes on hidden loaded tabs (decisions 19 and 24). |
 | `A-TabRows` | Row archive and close controls | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | not reviewed | The action depends on the kind and loading state of the row (decisions 29 and 32). |
@@ -76,7 +77,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `B-Drag` | Cross-profile refusal | `dock-refused` | not reviewed | Decision 68 specifies the dimmed cell and refused pointer badge. |
 | `B-DragPage` | Page drop target for creating a split | `split-commands-drop-target` | not reviewed | The capture shows the split indicator before the simulated drag is released. |
 | `B-Floating` | Floating sidebar geometry and content | `fullscreen-edge` | not reviewed | The edge-reveal capture shows the floating panel during browser fullscreen. |
-| `B-FloatingDark` | Dark floating sidebar | `fullscreen-dark-floating` | not reviewed | After the fullscreen assertions, the check captures the dark floating panel in a regular window. |
+| `B-FloatingDark` | Dark floating sidebar | `fullscreen-dark-floating` | matches | The default dark backdrop uses the measured sRGB (22, 15, 31). Verify its composition in the floating capture. |
 | `B-FloatingMotion` | Edge reveal, dwell and hide | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | not reviewed | The check moves the pointer to the reveal edge and then away from the panel. The three images document the settled states. Dwell and motion durations need timing evidence. |
 | `B-Fullscreen` | Page fullscreen, browser fullscreen and edge reveal | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | not reviewed | Each condition has a separate capture. |
 | `B-History` | History deletion banner and Retry | `toasts-banner` | not reviewed | The decisions specify a per-profile banner on failure (decision 56). |
@@ -119,7 +120,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | not reviewed | The commandbar check verifies switching and cancellation without a PNG. |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | not reviewed | The history failure uses a per-profile banner (decision 56). |
 | `D-Toasts` | Update ready with Restart | — | not built | The updater is planned for a later phase (§15). |
-| `Dark` | Dark browser overview | `fullscreen-dark-docked` | not reviewed | The fullscreen check captures the dark docked window after it has returned to normal size. |
+| `Dark` | Dark browser overview | `fullscreen-dark-docked` | matches | The default backdrop uses measured sRGB (22, 15, 31). The selected row composites to within one 8-bit code value per channel of (67, 63, 75) on that backdrop. Verify their composition in the docked capture. |
 | `E-About` | About and update states | — | not built | The settings implementation has no About pane. |
 | `E-AirTraffic` | Routing rules and destination editor | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | not reviewed | The second frame shows the saved route before opening the Default destination menu. |
 | `E-Appearance` | Appearance controls | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | not reviewed | The pane implements Theme, Look, the New Tab row and Tooltips. Page zoom is pending. |
@@ -147,7 +148,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `F-LookGallery` | Presets and colour picker | `look-55-popover` | not reviewed | Confirm that the captured picker is on the same preset page as the board. |
 | `F-LookPopover` | Look popover and colour field | `look-55-popover`, `look-glass-popover` | not reviewed | Pair the popover frame with the matching mock specimen. |
 | `F-LookSidebar` | Space tint and sidebar at different settings | `look-55-sidebar`, `look-detent-sidebar`, `look-glass-sidebar` | not reviewed | The check records paired sidebar and popover images. |
-| `F-LookStates` | Picker, preset and Grain states | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | not reviewed | The popover shows the picker and presets. The sidebar captures sample Grain at 0, 5, 50 and 100%. |
+| `F-LookStates` | Picker, preset and Grain states | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | matches | The navy grain fixture now uses Auto, so the URL placeholder, row titles, Clear and dock glyphs use the light foreground. Verify it in the four grain captures. |
 | `F-Onboarding` | Welcome, source, choices, default browser, progress, done and two errors | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | not reviewed | The token table records the owner size and spacing exceptions for the buttons. |
 | `F-Onboarding` | Welcome and source discovery | `onboarding-welcome`, `onboarding-source` | not reviewed | The source check uses the Arc detector fixture. |
 | `F-Onboarding` | Import choices and default-browser request | `onboarding-what-to-import`, `onboarding-default-browser` | not reviewed | Verify the import rows and the default-browser action separately. |
@@ -155,5 +156,5 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `F-Onboarding` | Progress and completion report | `onboarding-progress`, `onboarding-done` | not reviewed | The report rows come from the import fixture. |
 | `F-Onboarding` | Import error and sibling-file warning | `onboarding-error`, `onboarding-sibling-file` | not reviewed | Both failure variants have separate captures. |
 | `Floating` | Overview floating sidebar | `fullscreen-edge` | not reviewed | Browser fullscreen provides an edge-reveal frame. The non-fullscreen overview still needs its own frame. |
-| `Main` | Main-window overview | `header-240` | not reviewed | The 240 pt header capture shows the whole window. |
-| `Themes` | Look overview, colour layer and slider | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | not reviewed | The owner chose the transparency slider and detent in decisions 113–115. |
+| `Main` | Main-window overview | `header-240` | differs | The light selected row uses the white fill. The rendered Main board stacks the favourites across the page, so compare the row against A-TabRows. |
+| `Themes` | Look overview, colour layer and slider | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | differs | Auto text follows decision 114. The rendered board has unresolved template fields, which limit the comparison to the sidebar. |

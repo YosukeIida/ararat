@@ -71,15 +71,39 @@ func selectedRowFillCarriesTheShadowInLightAndNoneInDark() throws {
     let view = shadowRow("tab", selected: true)
     let fill = try #require(view.subviews[0].layer)
     inAppearance(view, .aqua)
+    let light = try #require(fill.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB))
+    #expect(light == NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
     #expect(abs(view.fillShadow.layer.shadowOpacity - 0.08) < 0.0001)
     // The shadow follows the fill's 11 pt rounded rect, not the alpha of its drawing.
     let path = try #require(view.fillShadow.layer.shadowPath)
     #expect(path.boundingBox.width == fill.bounds.width && path.boundingBox.height == fill.bounds.height)
     // The appearance change takes it away and brings it back.
     inAppearance(view, .darkAqua)
+    let dark = try #require(fill.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB))
+    #expect(dark == NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.195))
     #expect(view.fillShadow.layer.shadowOpacity == 0)
     inAppearance(view, .aqua)
     #expect(abs(view.fillShadow.layer.shadowOpacity - 0.08) < 0.0001)
+}
+
+@Test @MainActor
+func darkSelectedFillMatchesTheMeasuredSidebarAndKeepsOtherLookColours() throws {
+    let view = shadowRow("tab", selected: true)
+    inAppearance(view, .darkAqua)
+    let fill = try #require(view.subviews[0].layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+    let measured = [67.0, 63.0, 75.0]
+    func compositeBytes(over base: NSColor) -> [CGFloat] {
+        let color = SidebarPanelView.mix(fill, fill, fraction: 0, base: base)
+        return [color.redComponent, color.greenComponent, color.blueComponent].map { ($0 * 255).rounded() }
+    }
+    let defaultFill = compositeBytes(over: SidebarPanelView.defaultDarkBackground)
+    for (actual, expected) in zip(defaultFill, measured) {
+        #expect(abs(actual - expected) <= 1)
+    }
+    let navy = NSColor(srgbRed: 0, green: 27.0 / 255, blue: 89.0 / 255, alpha: 1)
+    let navyFill = compositeBytes(over: navy)
+    #expect(navyFill[2] > measured[2] + 1)
+    #expect(navyFill[1] > navyFill[0])
 }
 
 @Test @MainActor
@@ -216,14 +240,12 @@ func theSegmentsShadowIsDrawnOutsideItsFillToo() throws {
 
 @Test @MainActor
 func aDragSourceKeepsTheFillWithoutTheShadow() throws {
-    // The board's shadow is on the selected row alone: a drag source draws the selected fill's
-    // alpha and carries no shadow (as hover and pressed do, `updateFill`).
     let view = shadowRow("tab", selected: false)
     let fill = try #require(view.subviews[0].layer)
     inAppearance(view, .aqua)
     #expect(view.fillShadow.layer.shadowOpacity == 0)
     view.dragSource = true
-    #expect(abs(try #require(fill.backgroundColor?.alpha) - SidebarMetrics.rowSelectedFillAlpha) < 0.0001)
+    #expect(fill.backgroundColor == SidebarMetrics.rowSelectedFillLight.cgColor)
     #expect(view.fillShadow.layer.shadowOpacity == 0)
 }
 

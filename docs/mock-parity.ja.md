@@ -4,9 +4,9 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 94 件あり、このうち 85 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
+[照合表](research/mock-values.json)には 97 件あり、このうち 88 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
 
-76 ページから抽出した CSS 宣言の候補は 27,782 件で、88 件を確認し、27,694 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
+76 ページから抽出した CSS 宣言の候補は 27,782 件で、91 件を確認し、27,691 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -52,7 +52,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | モックページ | 要素 | VM チェック | 状態 | 根拠または確認事項 |
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。 |
-| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 一致 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2。 |
+| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。開いているセルは、オーナーが承認した F ボードの白いオーバーレイ（ライト 55%、ダーク 10%）と通常のラベル色を使う。A ボードは 60% と 13% のオーバーレイとアクセント色のグリフを描く。 |
 | `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 未レビュー | 最初のタイルを撮影する。ほかの状態には個別のフレームが必要である。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 未レビュー | プレースホルダーを表示せず、領域をたたむ（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
@@ -64,7 +64,8 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
-| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 未レビュー | トークンテストではライトの影とダークの不透明度 0 を検査する。Today の行と選択された分割セグメントの外観を確認する。 |
+| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | Today の選択行と分割行のフォーカス中のセグメントは同じ塗りを使う。ライトでは不透明な白と影がボードと一致する。ダークでは白を不透明度 19.5% で重ねる。既定の背景上ではボードの sRGB (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致し、他のダーク Look では背景の色相が残る。 |
+| `A-TabRows` | 複数行の選択 | — | 相違 | 現在のサイドバーでは選択行は 1 行。選択状態の描画には全行で共通の規則を使う。 |
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows-loading`, `sidebar-rows-crashed` | 未レビュー | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
 | `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
 | `A-TabRows` | 行のアーカイブと閉じるボタン | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | 未レビュー | 行の種類と読み込み状態に応じてアクションが変わる（決定 29、32）。 |
@@ -77,7 +78,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Drag` | 別プロファイルへのドロップ拒否 | `dock-refused` | 未レビュー | セルを暗くし、ポインタに拒否マークを付ける（決定 68）。 |
 | `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 |
 | `B-Floating` | フローティングサイドバーの配置と内容 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いたフローティングパネルを撮影する。 |
-| `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 未レビュー | 全画面表示の検査後、通常ウィンドウでダークのフローティングパネルを撮影する。 |
+| `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。画面上の合成結果はフローティングの再撮影で確認する。 |
 | `B-FloatingMotion` | 端からの表示、待機時間、非表示 | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | 未レビュー | ポインタを表示領域の端に置き、パネルを開いてから離す。3 枚は静止状態の画像で、待機時間と動作時間の判定には計測が必要である。 |
 | `B-Fullscreen` | ページとブラウザの全画面表示、端からの表示 | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | 未レビュー | 状態ごとに撮影する。 |
 | `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 未レビュー | 削除失敗時に同一プロファイルの全ウィンドウで表示する（決定 56）。 |
@@ -120,7 +121,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
-| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 未レビュー | fullscreen チェックで通常サイズへ戻った後、サイドバーを固定したダークのウィンドウを撮影する。 |
+| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。その上で描く選択行は (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致する。画面上の合成結果は固定サイドバーの再撮影で確認する。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 未レビュー | 2 枚目はルートを保存した後、Default destination のメニューを開く直前の画像である。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 未レビュー | Theme、Look、New Tab の行のスイッチ、Tooltips を実装している。Page zoom は未実装である。 |
@@ -148,7 +149,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `F-LookGallery` | プリセットとカラーピッカー | `look-55-popover` | 未レビュー | モックと同じプリセットページを開いた状態で比較する。 |
 | `F-LookPopover` | Look ポップオーバーと色の入力欄 | `look-55-popover`, `look-glass-popover` | 未レビュー | 該当するモック内の見本とポップオーバーのフレームを組み合わせる。 |
 | `F-LookSidebar` | 設定値ごとのスペース色とサイドバー | `look-55-sidebar`, `look-detent-sidebar`, `look-glass-sidebar` | 未レビュー | サイドバーとポップオーバーを対応する組として記録する。 |
-| `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 未レビュー | ピッカーとプリセットはポップオーバーで確認する。サイドバーは Grain が 0、5、50、100% のときに撮影する。 |
+| `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 一致 | 濃紺の Grain 検査を Auto に設定した。URL のプレースホルダー、行のタイトル、Clear、dock のグリフは明るい前景色になる。粒状感の 4 状態は再撮影で確認する。 |
 | `F-Onboarding` | ようこそ、ソース、対象選択、既定ブラウザ、進捗、完了、二つのエラー | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | 未レビュー | ボタンの高さと間隔の例外はオーナー決定としてトークン表に記載した。 |
 | `F-Onboarding` | ようこそとインポート元の検出 | `onboarding-welcome`, `onboarding-source` | 未レビュー | インポート元のチェックは Arc 検出のフィクスチャを使う。 |
 | `F-Onboarding` | インポート対象と既定ブラウザの設定 | `onboarding-what-to-import`, `onboarding-default-browser` | 未レビュー | インポート対象の行と既定ブラウザの操作を個別に確認する。 |
@@ -156,5 +157,5 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 未レビュー | 報告の各行はインポートのフィクスチャに基づく。 |
 | `F-Onboarding` | インポートエラーと関連ファイルの警告 | `onboarding-error`, `onboarding-sibling-file` | 未レビュー | 失敗の二つの状態を個別に撮影する。 |
 | `Floating` | フローティングサイドバーの概要 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いた状態を撮影する。通常のウィンドウでの浮動表示は別途撮影が必要である。 |
-| `Main` | メインウィンドウの概要 | `header-240` | 未レビュー | 幅 240 pt のヘッダーを撮影した画像はウィンドウ全体を含む。 |
-| `Themes` | Look の概要、色レイヤー、スライダー | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | 未レビュー | 透明度スライダーとデテントは決定 113–115 で採用された。 |
+| `Main` | メインウィンドウの概要 | `header-240` | 相違 | ライトの選択行は白で描く。Main ボードのレンダリングではお気に入りがページにまたがって縦に並ぶため、選択行は A-TabRows と比較する。 |
+| `Themes` | Look の概要、色レイヤー、スライダー | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | 相違 | Auto の文字色は決定 114 に従う。ボードのレンダリングにテンプレートの未展開箇所があるため、比較できる範囲はサイドバーに限られる。 |
