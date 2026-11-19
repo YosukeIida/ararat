@@ -83,7 +83,7 @@ enum DownloadRowMetrics {
 
 @MainActor
 final class DownloadsPopover: NSObject, NSPopoverDelegate {
-    static let rowHeight: CGFloat = 56
+    static let rowHeight: CGFloat = 48
     static let headerHeight: CGFloat = 40
     private let popover = NSPopover()
     private let model: DownloadsModel

@@ -214,13 +214,13 @@ func splitRowDrawsASegmentPerPane() {
     let rowAlpha = alpha(selectedRow.subviews[0].layer?.backgroundColor)
     #expect(abs(rowAlpha - SidebarMetrics.rowSelectedFillAlpha) < 0.001)
     #expect(abs(alpha(segments[0].fill.fillColor) - rowAlpha) < 0.001)
-    #expect(abs(alpha(segments[1].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha) < 0.001)
+    #expect(abs(alpha(segments[1].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha(for: view.effectiveAppearance)) < 0.001)
     // The focus moves with the workspace's selection.
     view.updateSegments(members, active: "b")
     view.layoutSubtreeIfNeeded()
     let again = view.subviews.compactMap { $0 as? NSStackView }.first!.arrangedSubviews.compactMap { $0 as? SplitSegmentButton }
     #expect(abs(alpha(again[1].fill.fillColor) - rowAlpha) < 0.001)
-    #expect(abs(alpha(again[0].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha) < 0.001)
+    #expect(abs(alpha(again[0].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha(for: view.effectiveAppearance)) < 0.001)
 }
 
 @Test @MainActor
