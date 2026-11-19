@@ -95,7 +95,7 @@ func favoriteTileDrawsSharedFaviconAndLiveMarks() throws {
 }
 
 @Test @MainActor
-func faviconDrawingSelectsRetinaPixelsAndDoesNotEnlargeTheOneTimesBitmap() throws {
+func faviconDrawingUsesSixteenPointsWithEitherBitmapDensity() throws {
     func bitmap(_ pixels: Int) throws -> NSBitmapImageRep {
         try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
@@ -112,6 +112,9 @@ func faviconDrawingSelectsRetinaPixelsAndDoesNotEnlargeTheOneTimesBitmap() throw
     let image = NSImage()
     image.addRepresentation(try representation(16, color: .red))
     let retina = try representation(32, color: .green)
+    let retinaContext = try #require(NSGraphicsContext(bitmapImageRep: retina)).cgContext
+    retinaContext.setFillColor(NSColor.blue.cgColor)
+    retinaContext.fill(CGRect(x: 16, y: 0, width: 1, height: 32))
     image.addRepresentation(retina)
     image.size = icon.bounds.size
     icon.setIcon(favicon: image)
@@ -130,11 +133,14 @@ func faviconDrawingSelectsRetinaPixelsAndDoesNotEnlargeTheOneTimesBitmap() throw
     let standard = try draw(scale: 1)
     #expect((standard.colorAt(x: 8, y: 8)?.redComponent ?? 0) > 0.9)
     let highDensity = try draw(scale: 2)
-    #expect((highDensity.colorAt(x: 2, y: 2)?.greenComponent ?? 0) > 0.9)
+    #expect((highDensity.colorAt(x: 15, y: 16)?.greenComponent ?? 0) > 0.9)
+    #expect((highDensity.colorAt(x: 16, y: 16)?.blueComponent ?? 0) > 0.9)
+    #expect((highDensity.colorAt(x: 17, y: 16)?.greenComponent ?? 0) > 0.9)
 
     image.removeRepresentation(retina)
     let withoutRetina = try draw(scale: 2)
-    #expect((withoutRetina.colorAt(x: 8, y: 8)?.redComponent ?? 0) > 0.9)
-    #expect((withoutRetina.colorAt(x: 7, y: 16)?.alphaComponent ?? 1) == 0)
-    #expect((withoutRetina.colorAt(x: 24, y: 16)?.alphaComponent ?? 1) == 0)
+    for coordinate in [0, 31] {
+        let edge = try #require(withoutRetina.colorAt(x: coordinate, y: coordinate))
+        #expect(edge.redComponent > 0.9 && edge.alphaComponent > 0.9)
+    }
 }

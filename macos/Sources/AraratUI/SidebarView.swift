@@ -348,13 +348,13 @@ public final class SidebarView: NSView {
     }
     private var scrollGeneration = 0
     private var isScrollPreview = false
-    private let siteIconText: (String) -> String?
+    private let favoriteIconText: (String) -> String?
     private var laidOutSidebarWidth: CGFloat = 0
     private var spacePagePitch: Double { Double(bounds.width) }
 
-    public init(snapshot: WorkspaceSnapshot, siteIconText: @escaping (String) -> String? = { _ in nil }) {
+    public init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
         self.snapshot = snapshot
-        self.siteIconText = siteIconText
+        self.favoriteIconText = favoriteIconText
         self.selectedID = Self.sidebarSelection(snapshot)
         self.spaceIndex = snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
         super.init(frame: .zero)
@@ -1775,7 +1775,7 @@ public final class SidebarView: NSView {
             let start = index * columns
             var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
                 guard let row else { return NSView() }
-                let iconText = row.url.flatMap(siteIconText)
+                let iconText = row.url.flatMap(favoriteIconText)
                 let tile: FavoriteTile
                 if let existing = favoriteTiles[row.id] {
                     tile = existing
@@ -1848,7 +1848,7 @@ public final class SidebarView: NSView {
         view.crashed = crashedItems.contains(row.id)
         view.unread = unreadItems.contains(row.id)
         if row.kind == .split {
-            view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems, siteIconText: siteIconText)
+            view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems)
         } else { view.updateSegments([], active: nil) }
         view.updateFavicons(favicons)
         view.acceptsKeyboardFocus = !isScrollPreview
@@ -2317,7 +2317,7 @@ public final class SidebarView: NSView {
                 if prepared { return true }
                 prepared = true
             }
-            let preview = cached ?? SidebarView(snapshot: snapshot, siteIconText: siteIconText)
+            let preview = cached ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
             preview.isScrollPreview = true
             preview.snapshot = snapshot
             preview.selectedID = selectedID
@@ -2354,7 +2354,7 @@ public final class SidebarView: NSView {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
             traceSpaceWheelMotion("preview-row-rebuild", detail: "index=\(index)")
             let prepared = preparedScrollPreviews.removeValue(forKey: index)
-            let preview = prepared ?? SidebarView(snapshot: snapshot, siteIconText: siteIconText)
+            let preview = prepared ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
             traceSpaceWheelMotion("preview-source", detail: prepared == nil ? "cold" : "prepared")
             let reload = prepared == nil || preview.snapshot != snapshot || preview.spaceIndex != index || preview.selectedID != selectedID
             preview.isScrollPreview = true
@@ -2760,7 +2760,7 @@ extension SidebarView {
             addSubview(copy)
             // A dragged split draws the same segments as its row does (the U20 board's split row).
             if state.row.kind == .split {
-                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems, siteIconText: siteIconText)
+                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems)
             }
             copy.updateFavicons(favicons)
             dragCopyView = copy

@@ -1,12 +1,6 @@
 import AppKit
 import AraratKit
 
-extension Row {
-    func fallbackIconText(_ siteIconText: String?) -> String {
-        siteIconText ?? title.first?.uppercased() ?? ""
-    }
-}
-
 @MainActor
 final class SidebarIconView: NSImageView {
     private var drawsFavicon = false
@@ -23,15 +17,11 @@ final class SidebarIconView: NSImageView {
             return
         }
         guard image.size.width > 0, image.size.height > 0, !bounds.isEmpty else { return }
-        let fit = min(1, bounds.width / image.size.width, bounds.height / image.size.height)
+        let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
         let target = bounds.insetBy(dx: (bounds.width - image.size.width * fit) / 2,
                                    dy: (bounds.height - image.size.height * fit) / 2)
         guard let rep = image.bestRepresentation(for: target, context: context, hints: nil) else { return }
-        let pixels = context.cgContext.convertToDeviceSpace(target).size
-        let scale = rep.pixelsWide > 0 && rep.pixelsHigh > 0
-            ? min(1, CGFloat(rep.pixelsWide) / pixels.width, CGFloat(rep.pixelsHigh) / pixels.height) : 1
-        let rect = target.insetBy(dx: target.width * (1 - scale) / 2, dy: target.height * (1 - scale) / 2)
-        rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        rep.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 }
 
@@ -115,7 +105,6 @@ final class SplitSegmentButton: NSButton {
     let fill = CAShapeLayer()
     let fillShadow = SelectedRowShadow(name: "split-segment-shadow")
     let iconView = SidebarIconView()
-    let iconLetter: NSTextField
     let titleField = NSTextField(labelWithString: "")
     let preferredOpacity: CGFloat
     private let crashed: Bool
@@ -123,11 +112,10 @@ final class SplitSegmentButton: NSButton {
 
     var paneTitle: String { titleField.stringValue }
 
-    init(pane: Row, title: String, letter: String, index: Int, count: Int, active: Bool, crashed: Bool) {
+    init(pane: Row, title: String, index: Int, count: Int, active: Bool, crashed: Bool) {
         self.pane = pane
         self.active = active
         self.crashed = crashed
-        iconLetter = NSTextField(labelWithString: letter)
         preferredOpacity = pane.unloaded || crashed ? SidebarMetrics.unloadedOpacity : 1
         let outer = SidebarMetrics.cornerRadius
         let inner = SidebarMetrics.splitSegmentRadius
@@ -151,10 +139,6 @@ final class SplitSegmentButton: NSButton {
         iconView.contentTintColor = .secondaryLabelColor
         iconView.setAccessibilityHidden(true)
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconLetter.font = .systemFont(ofSize: 9, weight: .bold)
-        iconLetter.setAccessibilityHidden(true)
-        iconLetter.translatesAutoresizingMaskIntoConstraints = false
-        iconView.addSubview(iconLetter)
         titleField.stringValue = title
         titleField.font = .systemFont(ofSize: SidebarMetrics.splitSegmentTitleSize)
         titleField.maximumNumberOfLines = 1
@@ -173,8 +157,6 @@ final class SplitSegmentButton: NSButton {
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 16),
             iconView.heightAnchor.constraint(equalToConstant: 16),
-            iconLetter.centerXAnchor.constraint(equalTo: iconView.centerXAnchor),
-            iconLetter.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
             titleLeading,
             titleField.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
             titleField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -SidebarMetrics.splitSegmentTitleTrailing),
@@ -191,8 +173,7 @@ final class SplitSegmentButton: NSButton {
 
     func updateIcon(favicon: NSImage?) {
         let favicon = crashed ? nil : favicon
-        iconLetter.isHidden = crashed || favicon != nil || iconLetter.stringValue.isEmpty
-        iconView.setIcon(favicon: favicon, fallback: iconLetter.isHidden && favicon == nil ? SidebarRowView.tabIcon(crashed: crashed) : nil)
+        iconView.setIcon(favicon: favicon, fallback: favicon == nil ? SidebarRowView.tabIcon(crashed: crashed) : nil)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -228,7 +209,6 @@ final class SplitSegmentButton: NSButton {
                 (iconView.contentTintColor, iconView.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: preferredOpacity, on: backdrop, minimum: 3)
             }
         }
-        iconLetter.textColor = iconView.contentTintColor
     }
 
     // The shadow follows the segment's rounded path, on a layer behind the fill.
@@ -484,7 +464,7 @@ final class SidebarRowView: NSView {
         noteFocusRingMaskChanged()
     }
 
-    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = [], siteIconText: (String) -> String? = { _ in nil }) {
+    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) {
         segmentRows = members
         segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // A split draws its panes' segments and nothing of its own: no row-level glyph, fill or
@@ -496,8 +476,7 @@ final class SidebarRowView: NSView {
         for (index, member) in members.enumerated() {
             let name = Self.paneName(member)
             let paneCrashed = crashed.contains(member.id)
-            let letter = member.fallbackIconText(member.url.flatMap(siteIconText))
-            let button = SplitSegmentButton(pane: member, title: name, letter: letter, index: index,
+            let button = SplitSegmentButton(pane: member, title: name, index: index,
                                             count: members.count, active: member.id == active, crashed: paneCrashed)
             button.rowView = self
             button.tag = index
@@ -1085,7 +1064,7 @@ final class FavoriteTile: NSButton {
 
     func update(row: Row, iconText: String?) {
         self.row = row
-        glyphLabel.stringValue = row.fallbackIconText(iconText)
+        glyphLabel.stringValue = iconText ?? row.title.first?.uppercased() ?? ""
         updateGlyph()
         toolTip = row.title
         let label = row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "") : row.title

@@ -282,7 +282,7 @@ func aFavoriteWithoutAFaviconUsesTheEngineMonogramOrTitle() throws {
     }
     let space = u25Space(favorites: rows)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]),
-                              siteIconText: { engineText[$0] })
+                              favoriteIconText: { engineText[$0] })
     let tiles = u25Descendants(sidebar).compactMap { $0 as? FavoriteTile }
     for (row, fixture) in zip(rows, cases) {
         let tile = try #require(tiles.first { $0.row.id == row.id })
