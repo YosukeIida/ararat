@@ -107,6 +107,7 @@
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_muted_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
@@ -186,6 +187,7 @@
 - (void)prepareCloseHandoff:(void (^)(BOOL))completion;
 - (NSString*)traceWindowID;
 - (NSRect)modalPageRectForContents:(content::WebContents*)contents;
+- (BOOL)refreshWorkspaceTitleFrom:(BrowserWindowInterface*)source;
 - (BOOL)hasPermissionContents:(const void*)contents;
 - (void)setPermissionDim:(const void*)contents visible:(BOOL)visible;
 - (void)refreshPermissionDims;
@@ -1035,6 +1037,10 @@ gfx::NativeWindow AraratWindowHostCore::GetNativeWindow() const {
 
 void AraratWindowHostCore::SetTitle(const std::u16string& title) {
   delegate_->SetTitle(title);
+}
+
+bool AraratWindowHostCore::UpdateWorkspaceTitle(BrowserWindowInterface* source) {
+  return [(__bridge ARWindowHost*)owner_ refreshWorkspaceTitleFrom:source];
 }
 
 void AraratWindowHostCore::SetPageFullscreen(bool fullscreen) {
@@ -3184,6 +3190,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   [self syncTabs];
 }
 
+- (void)refreshWorkspaceWindowTitle {
+  [self refreshWorkspaceTitleFrom:nullptr];
+}
+
 - (void)setWorkspaceRemote:(BOOL)remote {
   if (workspace_remote_ == remote) return;
   workspace_remote_ = remote;
@@ -4003,13 +4013,30 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   [self syncTabs];
 }
 
-- (void)syncTabs {
+- (content::WebContents*)presentedActiveContents {
   content::WebContents* active = browser_ ? browser_->GetTabStripModel()->GetActiveWebContents() : nullptr;
-  if (!core_->popup() && (workspace_page_hidden_ || workspace_remote_)) active = nullptr;
+  if (!core_->popup() && (workspace_page_hidden_ || workspace_remote_)) return nullptr;
   if (active && split_frames_.count) {
     auto* identity = static_cast<TabIdentity*>(active->GetUserData(kTabIdentityKey));
-    if (!identity || !identity->item_id || !split_frames_[identity->item_id]) active = nullptr;
+    if (!identity || !identity->item_id || !split_frames_[identity->item_id]) return nullptr;
   }
+  return active;
+}
+
+- (BOOL)refreshWorkspaceTitleFrom:(BrowserWindowInterface*)source {
+  id<ARWindowHostDelegate> delegate = self.delegate;
+  if (core_->popup() || ![delegate respondsToSelector:@selector(windowHost:windowTitleForPresentedPage:)]) return NO;
+  if (source && source != browser_) return YES;
+  const auto* metadata = [self presentedActiveContents] ? WindowMetadataController::From(browser_) : nullptr;
+  NSString* pageTitle = metadata ? base::SysUTF16ToNSString(metadata->GetWindowTitleForCurrentTab(true)) : nil;
+  NSString* title = [delegate windowHost:self windowTitleForPresentedPage:pageTitle];
+  if (title) core_->SetTitle(base::SysNSStringToUTF16(title));
+  return YES;
+}
+
+- (void)syncTabs {
+  content::WebContents* active = [self presentedActiveContents];
+  [self refreshWorkspaceWindowTitle];
   [site_state_ setContents:active];
   [capture_ selectContents:active];
   auto* extension_window = core_->window();

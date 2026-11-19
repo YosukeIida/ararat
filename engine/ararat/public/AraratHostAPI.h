@@ -93,6 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (nullable NSString*)windowHost:(id<ARWindowHostAPI>)host windowTitleForPresentedPage:(nullable NSString*)pageTitle;
 - (void)tabCloseCancelled:(NSString*)itemId commandId:(NSString*)commandId;
 - (BOOL)isLittleWindowForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
@@ -168,6 +169,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setTabMuted:(BOOL)muted itemId:(NSString*)itemId;
 - (BOOL)hasActiveTab;
 - (void)setWorkspacePageHidden:(BOOL)hidden;
+- (void)refreshWorkspaceWindowTitle;
 - (void)setWorkspaceRemote:(BOOL)remote;
 - (BOOL)setSplitFrames:(NSDictionary<NSString*, NSValue*>*)frames frozen:(BOOL)frozen;
 - (BOOL)transferTab:(id<ARTabAPI>)tab commandId:(NSString*)commandId;
