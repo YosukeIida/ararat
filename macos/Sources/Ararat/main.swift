@@ -1423,6 +1423,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
         if extensionPopupCheck { self?.sliceRows = rows.filter { $0.url?.contains("/probe.html") == true } }
       }
     }
+    if browserCheckMode == "header" || browserCheckMode == "screen-header" {
+      headerCheck = HeaderCheck()
+    }
     adapter.onTransaction = { [weak self] transaction, applied in
       guard let self else { return }
       if self.browserCheckMode == "screen-dialogs" && self.sliceTransactions == 0 {
@@ -1443,11 +1446,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
       self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
-      let headerState = host.activeItemId().flatMap { self.adapter?.rowStates[$0] }
+      let activeItem = host.activeItemId()
+      let headerState = activeItem.flatMap { self.adapter?.rowStates[$0] }
       self.container?.header.canGoBack = headerState?.canGoBack ?? false
       self.container?.header.canGoForward = headerState?.canGoForward ?? false
       self.container?.header.loading = headerState?.loading ?? false
-      self.container?.header.hasTab = host.activeItemId() != nil
+      self.container?.header.hasTab = activeItem != nil
+      if applied, let check = self.headerCheck {
+        let strip = transaction.strips.first { $0.window == self.windowID }
+        check.headerTab = headerState == nil ? nil : strip?.tabs.first { $0.liveId == strip?.active && $0.item == activeItem }
+      }
       if self.sidebarChecksActive, !self.sidebarFirstTransactionTraced {
         self.sidebarFirstTransactionTraced = true
         let active = transaction.strips.first?.active ?? "-"
