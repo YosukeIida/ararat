@@ -81,8 +81,8 @@ enum SidebarMetrics {
     static let rowSelectedFillAlpha: CGFloat = 0.22
     // The board's selected-row shadow (`--selsh: 0 1px 2px rgba(0,0,0,.08)`, and `none` in dark)
     // on the selected row's fill and on the focused segment of a split row: 1 pt down, 2 pt of
-    // CSS blur (Core Animation's radius is half of it). The y is the board's, down; the layer's
-    // own geometry decides the sign (`applySelectedShadow`).
+    // CSS blur (Core Animation's radius is half of it). The y is the board's, down; the flip of
+    // the view that owns the fill decides the sign (`SelectedRowShadow.apply`).
     static let rowSelectedShadowY: CGFloat = 1
     static let rowSelectedShadowBlur: CGFloat = 2
     static let rowSelectedShadowAlpha: CGFloat = 0.08
