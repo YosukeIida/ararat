@@ -14,6 +14,8 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var crashed = false
     @objc dynamic var networkError = 0
     @objc dynamic var url = "about:blank"
+    @objc dynamic var title = ""
+    @objc dynamic var navigationCount: UInt = 0
     weak var owner: MatrixFakeHost?
     var profile: String
     init(item: String, live: String, profile: String, owner: MatrixFakeHost) {
@@ -55,6 +57,7 @@ private final class MatrixFakeHost: NSObject {
     var failHandoffAt = 0
     var captureCompletions: [(NSImage?) -> Void] = []
     var remotePlaceholder = false
+    var incognitoOpens = 0
     lazy var fakeWindow: MatrixFakeWindow = {
         _ = NSApplication.shared
         return MatrixFakeWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: false)
@@ -71,6 +74,7 @@ private final class MatrixFakeHost: NSObject {
     @objc(setProfileDirectory:) func setProfile(_ name: String) -> Bool { shownProfile = name; return true }
     @objc func activeItemId() -> String? { active }
     @objc func tabs() -> [Any] { entries }
+    @objc func checkCreateIncognito() { incognitoOpens += 1 }
     @objc func setWorkspacePageHidden(_ value: Bool) { hidden = value }
     @objc func refreshWorkspaceWindowTitle() {}
     @objc(setWorkspaceRemote:) func setWorkspaceRemote(_ value: Bool) { remotePlaceholder = value }
@@ -138,6 +142,92 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
     class_addProtocol(MatrixFakeTab.self, objc_getProtocol("ARTabAPI")!)
     let fake = MatrixFakeHost()
     return (fake, fake as! any ARWindowHostAPI)
+}
+
+@Test @MainActor
+func privateWindowWaitsForTheRegularSeedBaseline() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("workspace.sqlite").path
+    let runtime = Runtime(windowID: "regular")
+    let session = WorkspaceSession()
+    runtime.adapter = try EngineAdapter(path: path, windowID: runtime.windowID, card: NSView(), session: session)
+    let seed = try session.queue.sync {
+        let store = try #require(session.store)
+        return try store.createTab(windowId: runtime.windowID, url: "about:blank")
+    }
+    let item = try #require(seed.selectedId)
+    runtime.snapshot = seed
+    runtime.sliceActive = item
+    runtime.browserCheckSeedID = item
+    runtime.browserCheckPhase = 1
+    runtime.quitPath = path
+    let (fake, host) = matrixFake()
+    let tab = MatrixFakeTab(item: item, live: "live", profile: "Default", owner: fake)
+    tab.title = "Settled"
+    tab.url = "about:blank?settled"
+    fake.entries = [tab]
+    fake.active = item
+
+    func tick() { runtime.privateWindowCheckTick(host, screen: false) }
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular seed navigation")
+    tab.navigationCount = 1
+    runtime.quitPath = nil
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular rows capture failed")
+    runtime.quitPath = path
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular seed metadata")
+    #expect(runtime.quitBefore == nil && runtime.browserCheckPhase == 1 && fake.incognitoOpens == 0)
+
+    func persistMetadata(revision: UInt64, url: String, title: String?) throws {
+        let live = LiveTab(offTheRecord: false, profile: .default, liveId: tab.liveId,
+                           item: item, opener: nil, navigated: true, url: url, title: title)
+        let strip = LiveStrip(window: runtime.windowID, tabs: [live], active: live.liveId)
+        let transaction = LiveTransaction(offTheRecord: false, epoch: 1, rev: revision,
+                                          cause: .engine, strips: [strip])
+        runtime.snapshot = try session.queue.sync {
+            let store = try #require(session.store)
+            let applied = try store.liveApply(transaction: transaction).applied
+            try #require(applied)
+            return store.snapshot(windowId: runtime.windowID)
+        }
+    }
+    try persistMetadata(revision: 0, url: "about:blank", title: tab.title)
+    tick()
+    #expect(runtime.quitBefore == nil && fake.incognitoOpens == 0)
+    try persistMetadata(revision: 1, url: tab.url, title: "")
+    tick()
+    #expect(runtime.quitBefore == nil && fake.incognitoOpens == 0)
+    let staleSnapshot = runtime.snapshot
+    try persistMetadata(revision: 2, url: tab.url, title: tab.title)
+    let settledSnapshot = runtime.snapshot
+    runtime.snapshot = staleSnapshot
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular seed snapshot")
+    #expect(runtime.quitBefore == nil && fake.incognitoOpens == 0)
+    runtime.snapshot = settledSnapshot
+    tick()
+    let baseline = try #require(runtime.quitBefore)
+    #expect(checkStoredTabMetadata(baseline, item: item, url: tab.url, title: tab.title))
+    #expect(runtime.browserCheckPhase == 2 && fake.incognitoOpens == 1)
+
+    runtime.browserCheckPhase = 10
+    runtime.quitPath = nil
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular rows capture failed")
+    #expect(runtime.browserCheckPhase == 10 && fake.incognitoOpens == 1)
+    runtime.quitPath = path
+    try persistMetadata(revision: 3, url: tab.url, title: "Changed after opening")
+    tick()
+    #expect(runtime.privateWindowCheck?.waitName == "regular rows changed")
+    #expect(runtime.quitBefore == baseline && fake.incognitoOpens == 1)
+    try persistMetadata(revision: 4, url: tab.url, title: tab.title)
+    tick()
+    #expect(runtime.privateWindowCheck?.conditions["private_rows_unchanged"] == true)
+    #expect(runtime.browserCheckPhase == 11 && fake.incognitoOpens == 2)
 }
 
 @Test @MainActor

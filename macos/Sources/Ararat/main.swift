@@ -280,7 +280,7 @@ func pageOnlyTraceRows(_ rows: [[String]]?) -> [[String: String]]? {
   }
 }
 
-func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: Any]] {
+func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?, includeValues: Bool = false) -> [[String: Any]] {
   guard let before, let after else { return [["kind": "missing", "id": "", "fields": ["$snapshot"]]] }
   func indexed(_ rows: [[String]]) -> [String: [String]] {
     Dictionary(rows.filter { $0.count == 3 }.map { ("\($0[0])\u{0}\($0[1])", $0) }, uniquingKeysWith: { first, _ in first })
@@ -294,10 +294,11 @@ func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: A
     let a = old[key], b = new[key]
     guard a != b else { return nil }
     let row = a ?? b!
+    let left = a.flatMap { object($0[2]) }, right = b.flatMap { object($0[2]) }
     var fields = ["$record"]
-    if let a, let b {
+    if a != nil, b != nil {
       fields = ["$value"]
-      if let left = object(a[2]), let right = object(b[2]) {
+      if let left, let right {
         let keys = Set(left.allKeys.compactMap { $0 as? String }).union(right.allKeys.compactMap { $0 as? String })
         fields = keys.sorted().filter { name in
           let lhs = left[name] as? NSObject, rhs = right[name] as? NSObject
@@ -306,7 +307,16 @@ func checkRecordDiff(_ before: [[String]]?, _ after: [[String]]?) -> [[String: A
         }
       }
     }
-    return ["kind": row[0], "id": row[1], "fields": fields]
+    var result: [String: Any] = ["kind": row[0], "id": row[1], "fields": fields]
+    if includeValues {
+      result["changes"] = (fields.isEmpty ? ["$value"] : fields).map { field -> [String: Any] in
+        let entireBody = field == "$record" || field == "$value"
+        let oldValue: Any? = entireBody ? a?[2] : left?[field]
+        let newValue: Any? = entireBody ? b?[2] : right?[field]
+        return ["field": field, "old": oldValue ?? NSNull(), "new": newValue ?? NSNull()]
+      }
+    }
+    return result
   }
 }
 
