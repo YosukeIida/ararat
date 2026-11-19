@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+unset DEVELOPER_DIR SDKROOT
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 tree="$(git -C "$repo" rev-parse HEAD:engine)"

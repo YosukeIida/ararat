@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 QUOTED = r""""(?:[^"\\]|\\.)*"|'(?:[^']|'')*'"""
+SEQUENCE_PREFIX = re.compile(r"(?:-[ \t]+)*")
 TOKENS = re.compile(
     rf'''(?:^[ \t]*(?:-[ \t]+)?|[{{,][ \t]*)(?P<uses>uses|"uses"|'uses')[ \t]*:'''
     rf'''|(?:[:\-][ \t]+)(?P<block>[|>](?:[1-9][+-]?|[+-][1-9]?)?)[ \t]*(?:#.*)?$'''
@@ -25,7 +26,7 @@ def unpinned_uses(path):
             block_indent = None
         for token in TOKENS.finditer(line):
             if token.group("block"):
-                block_indent = indent
+                block_indent = SEQUENCE_PREFIX.match(line, indent, token.start()).end()
             if token.group("uses") and not PINNED.match(line, token.end()):
                 yield number
 

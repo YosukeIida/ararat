@@ -476,7 +476,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 `.github/workflows/release.yml` は `v1.2.3` のようなバージョンタグで動く。手動実行時は、ワークフローの ref に同じタグを指定する。`engine/scripts/engine-key` はチェックアウトしたコミットから `engine-<key>` を出力する。`engine/build-inputs.toml` の SHA-256 と `engine/` の Git tree ID をこの順に 1 行ずつ並べ、末尾の改行を含めて SHA-256 を求める。オーナーはローカルの Chromium ツリーを検査した後（§4.7）、このタグで GitHub prerelease を公開し、`Chromium.zip`、`Chromium.zip.sha256`（`shasum -a 256 Chromium.zip` の出力）、`provenance.json` を添付する。provenance は文字列フィールドを 2 つ持つ JSON オブジェクトである。`engine_key` は `engine-<key>` タグ全体、`patch_state_sha256` はビルドに使った `engine/patch-state.sha256` の小文字の SHA-256 である。ZIP には `out/Ararat/Chromium.app` と `chrome/app/` 以下の app・renderer・GPU の entitlement plist を入れる。CI は ZIP の SHA-256 を照合し、展開した `out/` と `chrome/` と同じ階層に provenance を置く。`bundle-app.sh --from-artifact` が provenance の 2 項目を照合し、アプリを組み立てる。
 
-`release-signing` ジョブは、組み立て済みのアプリを取得し、Developer ID で署名して notarization と stapling を行い、stable チャネルの Sparkle appcast を生成する。一時キーチェーンの作成直後にユーザーの検索リストを復元し、作成前と復元後のリストをログに記録してから署名 ID を取り込む。`codesign` と `notarytool` には一時キーチェーンのパスを明示する。一時キーチェーンと API キーのファイルは runner の一時ディレクトリに置き、ジョブが失敗した場合も後処理で削除する。公開ジョブは、署名済み ZIP、appcast、Corresponding Source のアーカイブとチェックサムをタグのドラフトリリースに添付してから公開する。
+`release-signing` ジョブは、組み立て済みのアプリを取得し、Developer ID で署名して notarization と stapling を行い、stable チャネルの Sparkle appcast を生成する。一時キーチェーンの作成直後にユーザーの検索リストを復元し、作成前と復元後のリストをログに記録してから署名 ID を取り込む。`codesign` には一時キーチェーンのパスを明示する。notarization スクリプトは API キーファイルで認証する。一時キーチェーンと API キーのファイルは runner の一時ディレクトリに置き、ジョブが失敗した場合も後処理で削除する。公開ジョブは、署名済み ZIP、appcast、Corresponding Source のアーカイブとチェックサムをタグのドラフトリリースに添付してから公開する。
 
 `release-signing` 環境では、信頼済みのリリースタグからの実行を許可し、以下の環境シークレットを登録する。
 

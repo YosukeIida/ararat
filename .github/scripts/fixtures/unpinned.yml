@@ -7,3 +7,11 @@ jobs:
       - uses: ./local-action
   call:
     "uses": owner/repo/.github/workflows/release.yml@main
+  scalar_headers:
+    steps:
+      - if: >-
+          github.event_name == 'push'
+        uses: actions/checkout@v7
+      - name: |
+          Read repository
+        uses: actions/checkout@v7

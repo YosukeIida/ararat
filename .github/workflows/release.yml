@@ -164,7 +164,7 @@ jobs:
           fi
           macos/scripts/sign-release.sh --identity "$identity" --entitlements "$creds/entitlements.plist" "$app"
           macos/scripts/notarize.sh --key "$creds/notary.p8" --key-id "$notary_key_id" \
-            --issuer "$notary_issuer" --keychain "$keychain" "$app"
+            --issuer "$notary_issuer" "$app"
           rm "$creds/notary.p8"
           out="$RUNNER_TEMP/signed"
           mkdir "$out"
