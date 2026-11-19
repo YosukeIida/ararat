@@ -6672,7 +6672,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     task.arguments = ["-x"] + (withoutShadow ? ["-o"] : []) + ["-l\(window.windowNumber)", path]
     do { try task.run(); task.waitUntilExit() } catch { return nil }
-    return task.terminationStatus == 0 && FileManager.default.fileExists(atPath: path) ? path : nil
+    guard task.terminationStatus == 0, FileManager.default.fileExists(atPath: path),
+          ScreenViewTree.write(nextTo: path, name: name, windows: [window]) else { return nil }
+    return path
   }
 
   func rectFields(_ r: NSRect) -> [String: Double] {

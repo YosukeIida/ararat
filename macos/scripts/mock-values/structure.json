@@ -1,0 +1,11 @@
+[
+  {"source": "mock-decisions.md:17", "capture": "split-focus-a", "kind": "split-row", "segments": 2},
+  {"source": "mock-decisions.md:17", "capture": "split-commands-vertical", "kind": "split-row", "segments": 3},
+  {"source": "mock-decisions.md:17", "capture": "split-commands-split", "kind": "split-row", "segments": 4},
+  {"source": "mock-decisions.md:65", "capture": "split-focus-a", "kind": "split-chrome"},
+  {"source": "mock-decisions.md:81", "capture": "dock-cells", "kind": "library-dock"},
+  {"source": "mock-decisions.md:73", "capture": "urlfield-host", "kind": "url-field"},
+  {"source": "mock-decisions.md:45", "capture": "folder-empty-line", "kind": "count", "class": "SidebarNoTabsRow", "count": 1},
+  {"source": "mock-decisions.md:39", "capture": "today-today", "kind": "count", "class": "SidebarTodayDivider", "count": 1},
+  {"source": "mock-decisions.md:39", "capture": "today-cleared", "kind": "count", "class": "SidebarTodayDivider", "count": 0}
+]
