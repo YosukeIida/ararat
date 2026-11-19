@@ -139,15 +139,24 @@ public final class KeyBindingsModel: ObservableObject {
             recording = nil
             return true
         }
-        guard let characters = event.characters(byApplyingModifiers: []), characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first else { return true }
+        let menuCharacters = event.charactersIgnoringModifiers
+        // Stripping modifiers would turn the pane shortcuts' arrow keys into C0 control characters.
+        let characters = switch menuCharacters {
+        case "\u{F702}", "\u{F703}": menuCharacters
+        default: event.characters(byApplyingModifiers: [])
+        }
+        guard let characters, characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first else { return true }
         let candidate = KeyCombination(key: String(scalar), command: modifiers.contains(.command), control: modifiers.contains(.control), option: modifiers.contains(.option), shift: modifiers.contains(.shift))
-        if let holder = menuShortcutHolder(in: mainMenu(), event: event, candidate: candidate, command: command) ?? nonMenuShortcutHolder(event) {
+        let coreHolder = bindings.first { $0.key == candidate && !$0.conflicting }
+        let checkNonMenu = coreHolder == nil && candidate != binding(command: command)?.defaultKey
+        if let holder = menuShortcutHolder(in: mainMenu(), event: event, candidate: candidate, command: command)
+            ?? (checkNonMenu ? nonMenuShortcutHolder(event) : nil) {
             errorCommand = command
             error = String(localized: "This shortcut is used by \(holder).")
             recording = nil
             return true
         }
-        if let holder = bindings.first(where: { $0.key == candidate && $0.conflicting == false && $0.command != command }) {
+        if let holder = coreHolder, holder.command != command {
             if recording?.candidate == candidate {
                 set(command: command, key: candidate)
                 recording = nil
@@ -176,7 +185,8 @@ public final class KeyBindingsModel: ObservableObject {
             guard !equivalent.isEmpty else { continue }
             let itemModifiers = item.keyEquivalentModifierMask
             let matches = equivalent == key && (itemModifiers == modifiers || (shifted && itemModifiers == modifiers.subtracting(.shift)))
-            guard matches else { continue }
+            let deleteMatches = (key == "\u{7F}" && equivalent == "\u{08}") || (key == "\u{F728}" && equivalent == "\u{7F}")
+            guard matches || (deleteMatches && itemModifiers == modifiers) else { continue }
             // Chromium swaps Close Tab and Close Window while Settings has focus.
             let alias: String?
             switch item.tag {
