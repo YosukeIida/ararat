@@ -9,7 +9,7 @@
  #include <algorithm>
  #include <iterator>
  #include <map>
-@@ -832,6 +834,11 @@
+@@ -832,6 +834,13 @@
  
  #include "base/win/windows_h_disallowed.h"
  
@@ -17,11 +17,13 @@
 +// stock: the client creates its parts and nothing else joins them.
 +void (*g_ararat_add_browser_main_extra_parts)(
 +    ChromeBrowserMainParts* parts) = nullptr;
++void (*g_ararat_add_check_navigation_throttle)(
++    content::NavigationThrottleRegistry&) = nullptr;
 +
  using blink::mojom::EffectiveConnectionType;
  using blink::web_pref::WebPreferences;
  using content::BrowserThread;
-@@ -1793,10 +1800,15 @@
+@@ -1793,10 +1802,15 @@
  
  std::unique_ptr<content::BrowserMainParts>
  ChromeContentBrowserClient::CreateBrowserMainParts(bool is_integration_test) {
@@ -38,3 +40,12 @@
  }
  
  void ChromeContentBrowserClient::PostAfterStartupTask(
+@@ -5742,6 +5756,8 @@
+ 
+ void ChromeContentBrowserClient::CreateThrottlesForNavigation(
+     content::NavigationThrottleRegistry& registry) {
+   CreateAndAddChromeThrottlesForNavigation(registry);
++  if (g_ararat_add_check_navigation_throttle)
++    g_ararat_add_check_navigation_throttle(registry);
+ }
+ 

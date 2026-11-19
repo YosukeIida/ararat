@@ -258,6 +258,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
         let popover = NSPopover()
         popover.behavior = .transient
+        popover.animates = origin.browserCheckMode != "screen-little-window"
+        popover.appearance = panel.appearance
         popover.delegate = self
         popover.contentViewController = Self.panelController(panel)
         popover.contentSize = NSSize(width: LittleWindowMetrics.profileMenuWidth, height: panel.checkHeight)
@@ -290,6 +292,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         }
         let popover = NSPopover()
         popover.behavior = .transient
+        popover.animates = origin?.browserCheckMode != "screen-little-window"
+        popover.appearance = panel.appearance
         popover.delegate = self
         popover.contentViewController = Self.panelController(panel)
         popover.contentSize = NSSize(width: LittleWindowMetrics.menuWidth, height: panel.checkHeight)

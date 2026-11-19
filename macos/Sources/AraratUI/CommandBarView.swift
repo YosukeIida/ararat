@@ -214,7 +214,7 @@ final class CommandBarRowView: NSView {
         if isTab {
             // "Switch to Tab" is 14 pt medium, with an arrow [Cra, V:305-307].
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
-            trailing.stringValue = "Switch to Tab"
+            trailing.stringValue = queryEmpty ? suggestion.subtitle : "Switch to Tab"
         } else if case .command = suggestion.target, let key = suggestion.key {
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
             trailing.stringValue = Self.keycap(key)

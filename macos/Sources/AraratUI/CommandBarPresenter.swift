@@ -31,7 +31,7 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
         super.init()
         panel.contentView = view
         panel.delegate = self
-        panel.appearance = parent.effectiveAppearance
+        panel.appearance = width == nil ? parent.effectiveAppearance : NSAppearance(named: .darkAqua)
         panel.menuCommandBindings = bindings
         controller.highlight = highlight
         if width == nil {

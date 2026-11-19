@@ -422,6 +422,7 @@ void* AraratRequestHost(bool popup, bool off_the_record, void* profile,
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
+  g_ararat_add_check_navigation_throttle = &AraratCheckAddNavigationThrottle;
   content::g_ararat_reject_javascript_dialog = &AraratCheckRejectJavaScriptDialog;
   content::g_ararat_begin_beforeunload = &AraratCheckBeginBeforeUnload;
   content::g_ararat_finish_beforeunload = &AraratCheckFinishBeforeUnload;

@@ -74,14 +74,13 @@ final class LookEditorModel: ObservableObject {
     /// The field's colour: `x` is a hue that wraps (a turn past red continues at 0), `y` the radial
     /// coordinate (0 rim, 1 centre).
     static func fieldColor(x: Double, y: Double) -> LookColor { color(x: wrapped(x), y: 0.05 + 0.9 * clamp(y)) }
-    static let fieldCanvasSize = CGSize(width: 264, height: 232)
+    static let fieldCanvasSize = CGSize(width: 340, height: 300)
     /// The inscribed circle. The dots fill it, centres on an 8 pt half-pitch lattice (no dot at the
-    /// centre) out to 114 pt; the handles reach 100 pt, so a dragged 32 pt handle stays inside the
-    /// circle (100 + 16 = 116) and the dots always reach the handle range.
-    static let fieldDotDiscRadius: CGFloat = 116
+    /// centre). Leave room for the dragged handle to stay inside the dot field.
+    static let fieldDotDiscRadius = min(fieldCanvasSize.width, fieldCanvasSize.height) / 2
     static let fieldDotPitch: CGFloat = 8
     static let fieldDotSize: CGFloat = 4
-    static let fieldMaxRadius: CGFloat = 100
+    static let fieldMaxRadius = fieldDotDiscRadius - 16
     static var fieldCentre: CGPoint { CGPoint(x: fieldCanvasSize.width / 2, y: fieldCanvasSize.height / 2) }
     /// The dots' centres in field coordinates.
     static func dotCentres() -> [CGPoint] {

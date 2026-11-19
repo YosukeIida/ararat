@@ -295,6 +295,7 @@ fn empty_query_orders_recent_tabs_and_limits_to_five() {
     }
     let rows = Index::new(&ws, "one", 10).query("", &[]).rows;
     assert_eq!(rows.len(), 5);
+    assert!(rows.iter().all(|s| s.subtitle == "Today"));
     let ids: Vec<_> = rows.iter().map(|s| match &s.target { Target::Tab { id, .. } => id.as_str(), _ => panic!("not a tab") }).collect();
     assert_eq!(ids, ["recent-5", "recent-4", "recent-3", "recent-2", "recent-1"]);
 }
@@ -315,6 +316,7 @@ fn empty_query_is_the_shown_space_s_own_recents_without_the_current_tab_or_favou
     let rows = Index::new(&ws, "one", 1000).query("", &[]).rows;
     let ids: Vec<_> = rows.iter().map(|s| match &s.target { Target::Tab { id, .. } => id.as_str(), _ => panic!("not a tab") }).collect();
     assert_eq!(ids, ["tab-spec", "tab-a", "tab-b"]);
+    assert!(rows.iter().all(|s| s.subtitle == "Pinned"));
     // The favourite and the other space stay reachable once something is typed.
     assert!(Index::new(&ws, "one", 1000).query("mail", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-mail")));
     assert!(Index::new(&ws, "one", 1000).query("home probe", &[]).rows.iter().any(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-home")));

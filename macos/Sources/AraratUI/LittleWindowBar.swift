@@ -14,6 +14,7 @@ public enum LittleWindowMetrics {
     /// The traffic lights occupy the leading corner; the board starts the profile chip at 84
     /// after them, which the step rule rounds to 80.
     public static let profileInset: CGFloat = 80
+    public static let addressInset: CGFloat = 90 // D-LittleWindow's address flex padding.
     public static let trailingInset: CGFloat = 8
     public static let buttonSize: CGFloat = 28
     public static let buttonRadius: CGFloat = 8
@@ -364,9 +365,10 @@ public final class LittleWindowBarView: NSView {
 
         address.font = .systemFont(ofSize: 13)
         address.textColor = LittleWindowMetrics.barText
-        address.alignment = .center
+        address.alignment = .left
         address.lineBreakMode = .byTruncatingTail
         address.translatesAutoresizingMaskIntoConstraints = false
+        address.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         glyph.contentTintColor = LittleWindowMetrics.barSecondaryText
         glyph.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glyph)
@@ -392,6 +394,14 @@ public final class LittleWindowBarView: NSView {
         chevronButton.toolTip = "Choose a space"
         addSubview(chevronButton)
 
+        let addressArea = NSLayoutGuide()
+        let addressGroup = NSLayoutGuide()
+        addLayoutGuide(addressArea)
+        addLayoutGuide(addressGroup)
+        let centreAddress = addressGroup.centerXAnchor.constraint(equalTo: addressArea.centerXAnchor)
+        // Keep as much of the address visible as will fit when the profile crowds the centre.
+        centreAddress.priority = .init(rawValue: NSLayoutConstraint.Priority.defaultLow.rawValue - 1)
+
         NSLayoutConstraint.activate([
             hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -410,13 +420,23 @@ public final class LittleWindowBarView: NSView {
             copyButton.trailingAnchor.constraint(equalTo: extensionsButton.leadingAnchor, constant: -4),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
+            addressArea.leadingAnchor.constraint(equalTo: leadingAnchor, constant: LittleWindowMetrics.addressInset),
+            addressArea.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -copyButton.alignmentRectInsets.left),
+            addressArea.topAnchor.constraint(equalTo: topAnchor),
+            addressArea.bottomAnchor.constraint(equalTo: bottomAnchor),
+            addressGroup.leadingAnchor.constraint(equalTo: glyph.leadingAnchor, constant: -glyph.alignmentRectInsets.left),
+            addressGroup.trailingAnchor.constraint(equalTo: address.trailingAnchor, constant: address.alignmentRectInsets.right),
+            addressGroup.topAnchor.constraint(equalTo: glyph.topAnchor),
+            addressGroup.bottomAnchor.constraint(equalTo: glyph.bottomAnchor),
+            centreAddress,
+            addressGroup.leadingAnchor.constraint(greaterThanOrEqualTo: profileButton.trailingAnchor,
+                                                  constant: profileButton.alignmentRectInsets.right + 16),
+            addressGroup.trailingAnchor.constraint(lessThanOrEqualTo: addressArea.trailingAnchor, constant: -16),
+
             glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
             glyph.widthAnchor.constraint(equalToConstant: 12),
             glyph.heightAnchor.constraint(equalToConstant: 12),
             address.centerYAnchor.constraint(equalTo: centerYAnchor),
-            address.centerXAnchor.constraint(equalTo: centerXAnchor, constant: 12),
-            address.leadingAnchor.constraint(greaterThanOrEqualTo: profileButton.trailingAnchor, constant: 16),
-            address.trailingAnchor.constraint(lessThanOrEqualTo: copyButton.leadingAnchor, constant: -16),
             glyph.trailingAnchor.constraint(equalTo: address.leadingAnchor, constant: -6),
         ])
         apply()
@@ -522,18 +542,20 @@ public final class LittleWindowMenuPanel: NSView {
     }
 
     public var rows: [Row] = [] { didSet { rebuild() } }
-    public var showsSearch = false { didSet { searchField.isHidden = !showsSearch } }
+    private let showsSearch: Bool
     public var onSelect: (String) -> Void = { _ in }
     public var onSearch: (String) -> Void = { _ in }
     public private(set) var searchText = ""
     private let stack = NSStackView()
     private let searchField = LittleWindowSearchField()
     private var rowViews: [NSButton] = []
+    public override var isFlipped: Bool { true }
 
     public init(width: CGFloat, rows: [Row], showsSearch: Bool) {
         self.rows = rows
         self.showsSearch = showsSearch
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 0))
+        appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
         layer?.backgroundColor = LittleWindowMetrics.menuBackground.cgColor
         layer?.cornerRadius = 8
@@ -541,29 +563,30 @@ public final class LittleWindowMenuPanel: NSView {
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = "Search spaces"
         searchField.font = .systemFont(ofSize: 12)
-        searchField.isBordered = false
-        searchField.drawsBackground = true
-        searchField.backgroundColor = NSColor(white: 1, alpha: 0.1)
         searchField.focusRingType = .none
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
         searchField.sendsSearchStringImmediately = true
         searchField.setAccessibilityLabel("Search spaces")
-        searchField.isHidden = !showsSearch
-        addSubview(searchField)
-
         stack.orientation = .vertical
         stack.spacing = 2
         stack.alignment = .width
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         let inset = LittleWindowMetrics.menuInset
+        if showsSearch {
+            addSubview(searchField)
+            NSLayoutConstraint.activate([
+                searchField.topAnchor.constraint(equalTo: topAnchor, constant: inset + 1),
+                searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 1),
+                searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset - 1),
+                searchField.heightAnchor.constraint(equalToConstant: LittleWindowMetrics.menuSearchHeight),
+                stack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
+            ])
+        } else {
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: inset).isActive = true
+        }
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: topAnchor, constant: inset + 1),
-            searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 1),
-            searchField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset - 1),
-            searchField.heightAnchor.constraint(equalToConstant: LittleWindowMetrics.menuSearchHeight),
-            stack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
@@ -574,7 +597,7 @@ public final class LittleWindowMenuPanel: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    public var checkRowTitles: [String] { rowViews.compactMap { $0.attributedTitle.string.isEmpty ? $0.title : $0.attributedTitle.string } }
+    public var checkRowTitles: [String] { rows.map(\.title) }
     public var checkWidth: CGFloat { frame.width }
     public var checkHeight: CGFloat { frame.height }
     public var checkSearchField: NSSearchField { searchField }
@@ -594,18 +617,17 @@ public final class LittleWindowMenuPanel: NSView {
         for view in rowViews { stack.removeArrangedSubview(view); view.removeFromSuperview() }
         rowViews.removeAll()
         for row in rows {
-            let button = LittleWindowMenuRowButton(row: row)
+            let button = LittleWindowMenuRowButton(row: row, showsSearch: showsSearch)
             button.target = self
             button.action = #selector(rowClicked(_:))
             button.translatesAutoresizingMaskIntoConstraints = false
             stack.addArrangedSubview(button)
+            button.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             rowViews.append(button)
         }
-        needsLayout = true
-        layoutSubtreeIfNeeded()
-        let height = LittleWindowMetrics.menuInset * 2 + (showsSearch ? LittleWindowMetrics.menuSearchHeight + 5 : 0)
-            + CGFloat(rows.count) * LittleWindowMetrics.menuRowHeight + CGFloat(max(0, rows.count - 1)) * 2
-        setFrameSize(NSSize(width: frame.width, height: max(1, height)))
+        let height = LittleWindowMetrics.menuInset * 2 + (showsSearch ? LittleWindowMetrics.menuSearchHeight + 6 : 0)
+            + CGFloat(rows.count) * LittleWindowMetrics.menuRowHeight + CGFloat(max(0, rows.count - 1)) * stack.spacing
+        setFrameSize(NSSize(width: frame.width, height: height))
     }
 
     @objc private func rowClicked(_ sender: LittleWindowMenuRowButton) { onSelect(sender.row.id) }
@@ -620,11 +642,14 @@ public final class LittleWindowMenuPanel: NSView {
 @MainActor
 private final class LittleWindowMenuRowButton: NSButton {
     let row: LittleWindowMenuPanel.Row
-    private var hovering = false
+    private let selectedFill: Bool
     private var tracking: NSTrackingArea?
+    private static let blue = NSColor(srgbRed: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1)
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    init(row: LittleWindowMenuPanel.Row) {
+    init(row: LittleWindowMenuPanel.Row, showsSearch: Bool) {
         self.row = row
+        selectedFill = showsSearch && row.selected
         super.init(frame: .zero)
         isBordered = false
         bezelStyle = .inline
@@ -632,14 +657,27 @@ private final class LittleWindowMenuRowButton: NSButton {
         layer?.cornerRadius = LittleWindowMetrics.menuRowRadius
         translatesAutoresizingMaskIntoConstraints = false
         heightAnchor.constraint(equalToConstant: LittleWindowMetrics.menuRowHeight).isActive = true
-        title = row.title
-        font = .systemFont(ofSize: 13)
-        alignment = .left
-        contentTintColor = .white
-        let check = row.selected ? "✓  " : "    "
-        attributedTitle = NSAttributedString(string: check + row.title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.white,
+        title = ""
+        let label = NSTextField(labelWithString: row.title)
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = LittleWindowMetrics.barText
+        label.lineBreakMode = .byTruncatingTail
+        label.setAccessibilityHidden(true)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        let check = NSTextField(labelWithString: row.selected ? "✓" : "")
+        check.textColor = LittleWindowMetrics.barText
+        check.setAccessibilityHidden(true)
+        check.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(check)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            check.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            check.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        updateFill()
         setAccessibilityLabel(row.title)
         if row.selected { setAccessibilityValue("Selected") }
     }
@@ -656,12 +694,14 @@ private final class LittleWindowMenuRowButton: NSButton {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        hovering = true
-        layer?.backgroundColor = NSColor(srgbRed: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1).cgColor
+        updateFill(hovered: true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        hovering = false
-        layer?.backgroundColor = NSColor.clear.cgColor
+        updateFill()
+    }
+
+    private func updateFill(hovered: Bool = false) {
+        layer?.backgroundColor = (hovered || selectedFill ? Self.blue : .clear).cgColor
     }
 }
