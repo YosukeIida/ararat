@@ -21,7 +21,9 @@ env:
 
 jobs:
   assemble:
-    runs-on: xcode-27
+    # The macos-26 label and Xcode path are unverified until the first run.
+    runs-on: macos-26
+    timeout-minutes: 45
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -40,10 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          manifest=$(shasum -a 256 engine/build-inputs.toml | cut -d ' ' -f 1)
-          tree=$(git rev-parse "${GITHUB_SHA}:engine")
-          key=$(printf '%s\n' "$manifest" "$tree" | shasum -a 256 | cut -d ' ' -f 1)
-          engine_tag="engine-$key"
+          engine_tag=$(engine/scripts/engine-key)
           test "$(gh release view "$engine_tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true
           cd "$RUNNER_TEMP"
           gh release download "$engine_tag" --repo "$GITHUB_REPOSITORY" \
@@ -56,6 +55,7 @@ jobs:
           fi
           test -s provenance.json
           ditto -x -k Chromium.zip engine
+          mv provenance.json engine/provenance.json
           rm Chromium.zip
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: Build Swift bindings
@@ -76,7 +76,7 @@ jobs:
           swift build --package-path macos -c release
           engine="$RUNNER_TEMP/engine"
           stage="$RUNNER_TEMP/stage"
-          macos/scripts/bundle-app.sh "$engine/out/Ararat/Chromium.app" "$stage"
+          macos/scripts/bundle-app.sh --from-artifact "$engine" "$stage"
           ditto -c -k --keepParent "$stage/Ararat.app" "$RUNNER_TEMP/assembled.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -88,7 +88,8 @@ jobs:
 
   sign:
     needs: assemble
-    runs-on: xcode-27
+    runs-on: macos-26
+    timeout-minutes: 60
     environment: release-signing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,8 +127,22 @@ jobs:
           printf '%s\n' "${NOTARY_API_KEY:?}" > "$creds/notary.p8"
           printf '%s\n' "${ARARAT_RELEASE_ENTITLEMENTS:?}" > "$creds/entitlements.plist"
           printf '%s\n' "${SPARKLE_ED_PRIVATE_KEY:?}" > "$creds/sparkle.key"
-          # Why not use login.keychain: a private filename keeps creation out of the search list.
-          security create-keychain -p "$password" "$keychain"
+          before=$(security list-keychains -d user)
+          printf 'User keychain search list before creation:\n%s\n' "$before"
+          set --
+          quoted_path='^[[:space:]]*"(.+)"[[:space:]]*$'
+          while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            [[ "$entry" =~ $quoted_path ]] || exit 1
+            set -- "$@" "${BASH_REMATCH[1]}"
+          done <<< "$before"
+          # Creation can add the keychain to the search list before it holds any credentials.
+          create_status=0
+          security create-keychain -p "$password" "$keychain" || create_status=$?
+          security list-keychains -d user -s "$@"
+          after=$(security list-keychains -d user)
+          printf 'User keychain search list after restoration:\n%s\n' "$after"
+          [[ "$after" == "$before" && "$create_status" == 0 ]]
           security set-keychain-settings "$keychain"
           security unlock-keychain -p "$password" "$keychain"
           security import "$creds/developer-id.p12" -k "$keychain" -f pkcs12 \
@@ -179,6 +194,7 @@ jobs:
   publish:
     needs: sign
     runs-on: macos-26
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:

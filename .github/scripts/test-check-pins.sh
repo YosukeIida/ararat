@@ -2,8 +2,8 @@
 set -eu
 
 cd "$(dirname "$0")"
-./check-pins.rb fixtures/pinned.yml
-if output=$(./check-pins.rb fixtures/unpinned.yml 2>&1); then
+uv run --no-project python check-pins.py fixtures/pinned.yml
+if output=$(uv run --no-project python check-pins.py fixtures/unpinned.yml 2>&1); then
   echo 'Expected unpinned actions to fail the check' >&2
   exit 1
 fi
