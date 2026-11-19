@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$repo/engine/scripts/env.sh"
+scratch="$(mktemp -d "$TMPDIR/p6src-check.XXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
+out="$scratch/Ararat source"
+
+/bin/bash "$repo/engine/scripts/corresponding-source" "$out"
+[[ "$(cat "$out/REVISION")" == "$(git -C "$repo" rev-parse HEAD)" ]]
+cmp "$ARARAT_BUILD_INPUTS" "$out/ararat/engine/build-inputs.toml"
+cmp "$ARARAT_SERIES" "$out/ararat/engine/patches/series"
+patches="$(series_lines)"
+while IFS= read -r patch; do
+  cmp "$ARARAT_PATCHES/$patch" "$out/ararat/engine/patches/$patch"
+done <<<"$patches"
+msg "all $(printf '%s\n' "$patches" | wc -l | tr -d ' ') patches match apply's series"
+
+(cd -- "$scratch" && shasum -a 256 -c "Ararat source.tar.xz.sha256")
+mkdir -- "$scratch/unpacked"
+tar -xf "$out.tar.xz" -C "$scratch/unpacked"
+diff -r -- "$out" "$scratch/unpacked/Ararat source"
+unpacked="$scratch/unpacked/Ararat source"
+(cd / && /bin/bash "$unpacked/reproduce.sh" --check-only)
+
+last_patch="$(printf '%s\n' "$patches" | tail -n 1)"
+printf '\n' >>"$unpacked/ararat/engine/patches/$last_patch"
+if /bin/bash "$unpacked/reproduce.sh" --check-only >"$scratch/tamper.log" 2>&1; then
+  die "check-only accepted a modified patch"
+fi
+grep -q 'series SHA-256 mismatch' "$scratch/tamper.log"
+msg "check-only rejected a modified patch"
+wc -c "$out.tar.xz" "$out.tar.xz.sha256"
