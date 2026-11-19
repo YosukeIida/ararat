@@ -279,7 +279,7 @@ workspace のページが非表示なら、通常は active タブを報告し�
 
 ### 4.9 セキュリティの保守
 
-- 日次のジョブが、Chromium の新しい stable リリースと、ベースのパッチセットの新しいタグを検出する（Cra ledger 6）。
+- 日次のジョブが、Chromium の新しい stable リリースと、ベースのパッチセットの新しいタグを検出する（Cra ledger 6）。検査は `engine/scripts/release-watch` が行う。`engine/build-inputs.toml` のピンを読み、JSON を 1 行出力し、upstream が先に進んでいれば 10 で終わる。`.github/workflows/release-watch.yml` がこれを毎日と手動で実行し、新しい stable のバージョンをタイトルにした issue を 1 件だけ開くか更新する。
 - パッチの遅延の上限は、upstream の stable リリースの時点から数える。実際に悪用されている脆弱性の修正は 48 時間以内に出荷し、それ以外の High と Critical の修正は 7 日以内に出荷する。
 - 同じ Chromium の milestone 上でのセキュリティ修正のみの再ビルドはインクリメンタルとし、事前に承認済みとする。milestone の更新にはフルビルドが必要であり、それを事前承認とするかはオーナーの判断である（14）。
 - ベースのパッチセットが上限を超えて Chromium から遅れた場合は、自らより新しい Chromium にリベースし、ベースのパッチを引き継ぐ。

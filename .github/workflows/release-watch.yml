@@ -1,0 +1,75 @@
+name: Release watch
+
+# §4.9: a daily job detects new Chromium stable releases and new base-patch-set
+# tags. The check is engine/scripts/release-watch, which reads the pin from
+# engine/build-inputs.toml and exits 10 when upstream is ahead. Its only output
+# is one issue named after the stable version: a new stable opens a new issue,
+# and a later run that still sees the same stable updates that one.
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Run the watch
+        id: watch
+        run: |
+          rc=0
+          uv run --no-project python engine/scripts/release-watch >"$RUNNER_TEMP/release-watch.json" || rc=$?
+          cat "$RUNNER_TEMP/release-watch.json"
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          case "$rc" in
+            0 | 10) ;;
+            *)
+              echo "::error::release-watch exited $rc, see the message above"
+              exit "$rc"
+              ;;
+          esac
+
+      - name: Open or update the issue
+        if: steps.watch.outputs.rc == '10'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          json="$(cat "$RUNNER_TEMP/release-watch.json")"
+          stable="$(jq -r .stable "$RUNNER_TEMP/release-watch.json")"
+          title="Release watch: $stable"
+          body="$RUNNER_TEMP/release-watch.md"
+          {
+            echo 'The engine pin is behind upstream (§4.9). The watch prints this:'
+            echo
+            echo '```json'
+            echo "$json"
+            echo '```'
+            echo
+            echo '`pinned` and `base_tag_pinned` come from `engine/build-inputs.toml`,'
+            echo '`stable` and `base_tag_latest` from upstream today. `behind_days`'
+            echo 'counts from the stable release, the unit the patch-lag limits use.'
+            echo '`security` stays `unknown` until the release notes list the CVEs.'
+          } >"$body"
+          number="$(gh issue list --state all --limit 500 --json number,title \
+            --jq "map(select(.title == \"$title\"))|.[0].number // empty")"
+          if [ -n "$number" ]; then
+            gh issue reopen "$number" >/dev/null 2>&1 || true
+            gh issue edit "$number" --body-file "$body"
+          else
+            gh issue create --title "$title" --body-file "$body"
+          fi

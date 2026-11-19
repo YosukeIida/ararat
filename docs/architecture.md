@@ -273,7 +273,7 @@ The `relaunch-windows` two-run check creates three windows with distinct spaces,
 
 ### 4.9 Security maintenance
 
-- A daily job detects new Chromium stable releases and new base-patch-set tags (Cra ledger 6).
+- A daily job detects new Chromium stable releases and new base-patch-set tags (Cra ledger 6). The check is `engine/scripts/release-watch`, which reads the pin from `engine/build-inputs.toml`, prints one JSON line and exits 10 when upstream is ahead; `.github/workflows/release-watch.yml` runs it daily and on dispatch and opens or updates a single issue titled after the new stable version.
 - Patch-lag limits, counted from the upstream stable release: fixes for vulnerabilities exploited in the wild ship within 48 hours; other High and Critical fixes within 7 days.
 - Security-only rebuilds on the same Chromium milestone are incremental and pre-authorised. Milestone bumps need a full build; whether they are pre-authorised is an owner decision (14).
 - If the base patch set lags Chromium beyond the limit, we rebase onto the newer Chromium ourselves and carry the base patches.
