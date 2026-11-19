@@ -13,7 +13,7 @@ import AraratUI
 /// and text metrics the VM's screen scale does not change.
 @MainActor
 final class URLFieldCheckState {
-    static let names = ["fixture", "seed", "host", "file", "data", "about_blank", "new_tab",
+    static let names = ["fixture", "seed", "host", "ip_host_untruncated", "file", "data", "about_blank", "new_tab",
                         "internal", "failed", "long_host", "long_host_narrow", "copy_states",
                         "copy_focus", "placeholder_buttons"]
     static let screens = ["capture_host", "capture_placeholder", "capture_internal", "capture_long_host",
@@ -117,6 +117,7 @@ extension Runtime {
             check.port = ports
             check.item = row.id
             browserCheckSeedID = row.id
+            setWidth(sidebar.checkDefaultWidth)
             selectCheckSeed(row)
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-urlfield-check.md")
             try? "URL field check".write(to: file, atomically: true, encoding: .utf8)
@@ -141,6 +142,8 @@ extension Runtime {
             }
             check.mark("host", sidebar.urlFieldCopyLinkVisible && sidebar.urlFieldSiteControlsVisible
                        && sidebar.urlFieldCopyLinkEnabled)
+            sidebar.layoutSubtreeIfNeeded()
+            check.mark("ip_host_untruncated", sidebar.checkHostLabelFits)
             if screen { check.mark("capture_host", capture("host")) }
             navigate(check.fileURL, next: 3)
         case 3:

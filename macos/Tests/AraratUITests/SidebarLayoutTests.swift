@@ -592,3 +592,41 @@ func fieldTextInsetAndGlyphStepFollowTheStepRule() {
     let privateField = privateWindow.convert(privateWindow.urlField.bounds, from: privateWindow.urlField)
     #expect(abs(privateWindow.checkHostClipFrame.minX - privateField.minX - 32) <= 0.5)
 }
+
+@Test @MainActor
+func hostLabelsDrawTheirFullTextAtBothSidebarWidths() throws {
+    let hosts = ["127.0.0.1", "[::1]", "localhost", "intranet",
+                 "averyveryveryverylongsubdomainname.docs.example.com"]
+    for width: CGFloat in [240, 164] {
+        for host in hosts {
+            let sidebar = urlFieldSidebar(live: "http://\(host):8080/path", width: width)
+            let clip = try #require(sidebar.urlField.subviews.compactMap { $0 as? URLFieldTextClipView }.first)
+            let label = clip.host
+            #expect(label.stringValue == host)
+            #expect(sidebar.checkURLFieldAccessibilityValue == host)
+
+            let overflows = host == hosts.last
+            #expect(sidebar.urlFieldHostHasLeadingFade == overflows)
+            #expect(sidebar.checkHostLabelFits == !overflows)
+            if overflows {
+                #expect(label.frame.minX < 0)
+                #expect(abs(label.frame.maxX - clip.bounds.maxX) <= 0.5)
+            } else {
+                #expect(label.frame.minX == 0)
+                #expect(label.frame.maxX <= clip.bounds.maxX)
+            }
+
+            let bounds = label.bounds
+            let actual = try #require(label.bitmapImageRepForCachingDisplay(in: bounds))
+            label.cacheDisplay(in: bounds, to: actual)
+            label.frame.size.width += 20
+            defer { label.frame.size.width = bounds.width }
+            let reference = try #require(label.bitmapImageRepForCachingDisplay(in: bounds))
+            label.cacheDisplay(in: bounds, to: reference)
+            let byteCount = actual.bytesPerRow * actual.pixelsHigh
+            let actualPixels = Data(bytes: try #require(actual.bitmapData), count: byteCount)
+            let referencePixels = Data(bytes: try #require(reference.bitmapData), count: byteCount)
+            #expect(actualPixels == referencePixels, "\(host) at sidebar width \(width)")
+        }
+    }
+}
