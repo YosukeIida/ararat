@@ -14,6 +14,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
+#include "base/scoped_observation.h"
 #include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -51,6 +52,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "components/favicon/content/content_favicon_driver.h"
+#include "components/favicon/core/favicon_driver_observer.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -101,11 +104,23 @@ bool IsPromptScreen() {
   return screen == "prompts" || screen == "dialogs" || screen == "site-controls" ||
          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "site-controls";
 }
-class TabContentsObserver : public content::WebContentsObserver {
+class TabContentsObserver : public content::WebContentsObserver,
+                            public favicon::FaviconDriverObserver {
  public:
   TabContentsObserver(content::WebContents* contents, ARTab* tab)
-      : tab_(tab) { Observe(contents); }
-  void Stop() { Observe(nullptr); }
+      : content::WebContentsObserver(contents), tab_(tab) {
+    if (auto* driver = favicon::ContentFaviconDriver::FromWebContents(contents))
+      favicon_observation_.Observe(driver);
+  }
+  void Stop() {
+    favicon_observation_.Reset();
+    Observe(nullptr);
+  }
+  void OnFaviconUpdated(favicon::FaviconDriver*, NotificationIconType type,
+                        const GURL&, bool, const gfx::Image&) override {
+    if (type == NON_TOUCH_16_DIP)
+      [[tab_ ownerHost] tabMetadataChanged:@"favicon" tab:tab_];
+  }
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
       const auto error = navigation->GetNetErrorCode();
@@ -136,6 +151,8 @@ class TabContentsObserver : public content::WebContentsObserver {
 
  private:
   __weak ARTab* tab_;
+  base::ScopedObservation<favicon::FaviconDriver, favicon::FaviconDriverObserver>
+      favicon_observation_{this};
 };
 }  // namespace
 

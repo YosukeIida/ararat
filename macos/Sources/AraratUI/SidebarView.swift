@@ -278,6 +278,14 @@ public final class SidebarView: NSView {
     // from the workspace's settings record and handed to the paging pipeline.
     public var spaceScrollDirection: SpaceScrollDirection = .natural
     public var rowStates: [String: EngineAdapter.RowState] = [:] { didSet { applyRowStatus() } }
+    public var favicons: [String: NSImage] = [:] {
+        didSet {
+            guard oldValue != favicons else { return }
+            for view in rowViews.values { view.updateFavicons(favicons) }
+            for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
+            dragCopyView?.updateFavicons(favicons)
+        }
+    }
     public var onMute: ((String, Bool) -> Void)?
     public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
@@ -1776,6 +1784,8 @@ public final class SidebarView: NSView {
                     tile = FavoriteTile(row: row, iconText: iconText) { [weak self] row in self?.select(row) }
                 }
                 favoriteTiles[row.id] = tile
+                tile.accent = spaceAccent
+                applyFavoriteStatus(tile)
                 wireDrag(tile)
                 tile.menuProvider = { [weak self, weak tile] in
                     guard let self, !self.isScrollPreview, let tile else { return nil }
@@ -1840,6 +1850,7 @@ public final class SidebarView: NSView {
         if row.kind == .split {
             view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems)
         } else { view.updateSegments([], active: nil) }
+        view.updateFavicons(favicons)
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -1861,6 +1872,12 @@ public final class SidebarView: NSView {
             view.crashed = crashedItems.contains(id)
             view.unread = unreadItems.contains(id)
         }
+        for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
+    }
+
+    private func applyFavoriteStatus(_ tile: FavoriteTile) {
+        let id = tile.row.id
+        tile.updateStatus(favicon: favicons[id], status: rowStates[id], unread: unreadItems.contains(id))
     }
 
     // The row the core says is a folder's empty line is drawn by its own view, so the rows
@@ -2345,6 +2362,9 @@ public final class SidebarView: NSView {
             preview.spaceListOrigins = spaceListOrigins
             preview.selectedID = selectedID
             if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
+            preview.rowStates = rowStates
+            preview.favicons = favicons
+            preview.unreadItems = unreadItems
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
@@ -2382,6 +2402,7 @@ public final class SidebarView: NSView {
             pullIndicator.accent = accent
             libraryButton.accent = accent
             for row in rowViews.values { row.accent = accent }
+            for tile in favoriteTiles.values { tile.accent = accent }
             onSpaceAccentChanged?(accent)
         }
         guard let onLookChanged else { return }
@@ -2741,6 +2762,7 @@ extension SidebarView {
             if state.row.kind == .split {
                 copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems)
             }
+            copy.updateFavicons(favicons)
             dragCopyView = copy
             rowViews[state.row.id]?.dragSource = true
             listScroll.stopReveal()
@@ -3448,6 +3470,11 @@ public struct SidebarRowCheckInfo: Sendable {
 extension SidebarView {
     public var rowCheckIds: [String] { Array(rowViews.keys) }
     public func pressRowAudioForCheck(id: String) { rowViews[id]?.pressAudioForCheck() }
+
+    public func favoriteTileMarksForCheck(id: String) -> (favicon: Bool, audio: Bool, unread: Bool)? {
+        guard let tile = favoriteTiles[id] else { return nil }
+        return (!tile.faviconView.isHidden, !tile.audioMark.isHidden, !tile.unreadDot.isHidden)
+    }
 
     public func rowCheckInfo(id: String) -> SidebarRowCheckInfo? {
         guard let view = rowViews[id] else { return nil }

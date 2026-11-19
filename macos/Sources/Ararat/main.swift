@@ -1562,6 +1562,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
       self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
+      self.sidebar?.favicons = self.sidebarFavicons()
       let activeItem = host.activeItemId()
       let headerState = activeItem.flatMap { self.adapter?.rowStates[$0] }
       self.container?.header.canGoBack = headerState?.canGoBack ?? false
@@ -2647,6 +2648,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
   @objc func undoClearTabs(_ item: NSMenuItem) {
     let owner = root ?? self
     ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }?.clearUndo.run()
+  }
+
+  func sidebarFavicons() -> [String: NSImage] {
+    var images: [String: NSImage] = [:]
+    for tab in (host?.tabs() as? [any ARTabAPI]) ?? [] {
+      if let id = tab.itemId, let icon = tab.favicon { images[id] = icon }
+    }
+    return images
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
@@ -8804,7 +8813,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images", "favorite_status_image"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -8858,6 +8867,38 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 4:
       guard let favorite = row("favorite"), favorite.parentId == space.favoritesId, sidebar.organizeCheckIdle else { return }
       organizeConditions["pinned_to_favorites"] = true
+      if screen {
+        guard let icon = row("fav1"), let playing = row("fav2"),
+              sidebar.favoriteTileMarksForCheck(id: icon.id) != nil,
+              sidebar.favoriteTileMarksForCheck(id: playing.id) != nil,
+              sidebar.favoriteTileMarksForCheck(id: favorite.id) != nil else { return }
+        let savedFavicons = sidebar.favicons
+        let savedRowStates = sidebar.rowStates
+        let savedUnread = sidebar.unreadItems
+        defer {
+          sidebar.rowStates = savedRowStates
+          sidebar.favicons = savedFavicons
+          sidebar.unreadItems = savedUnread
+        }
+        let favicon = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
+          NSColor.systemBlue.setFill()
+          NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+          NSColor.white.setFill()
+          NSBezierPath(ovalIn: rect.insetBy(dx: 6, dy: 6)).fill()
+          return true
+        }
+        sidebar.favicons[icon.id] = favicon
+        sidebar.rowStates[icon.id] = .init(loading: true, audible: false, muted: false, canGoBack: false, canGoForward: false)
+        sidebar.rowStates[playing.id] = .init(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false)
+        sidebar.unreadItems.insert(favorite.id)
+        if sidebar.favoriteTileMarksForCheck(id: icon.id)?.favicon == true,
+           sidebar.favoriteTileMarksForCheck(id: playing.id)?.audio == true,
+           sidebar.favoriteTileMarksForCheck(id: favorite.id)?.unread == true {
+          host.window().displayIfNeeded()
+          capture("favorite-status")
+        }
+        organizeConditions["favorite_status_image"] = organizeImages["favorite-status"] != nil
+      }
       guard begin("dock", "dock"), sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 5
     case 5:
