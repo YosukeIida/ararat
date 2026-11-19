@@ -60,6 +60,113 @@ private func openedBindings(_ directory: URL) async throws -> (WorkspaceAdapter,
     return (adapter, snapshot)
 }
 
+@Test @MainActor
+func recorderRefusesLiveChromiumMenuShortcutsWithoutWriting() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openedBindings(directory)
+    let menu = NSMenu()
+    let view = NSMenu()
+    view.autoenablesItems = false
+    menu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
+    let bindings = KeyBindingsModel(adapter: adapter, mainMenu: { menu })
+    let recorder = ShortcutsRecorderView()
+    recorder.bindings = bindings
+    try await bindingValue { bindings.load(completion: $0) }
+    let before = bindings.bindings
+    var writes = 0
+    bindings.onChange = { writes += 1 }
+    let reload = view.addItem(withTitle: "Reload", action: nil, keyEquivalent: "r")
+    reload.isEnabled = false
+    view.addItem(withTitle: "Zoom In", action: nil, keyEquivalent: "+")
+    view.addItem(withTitle: "Hard Reload", action: nil, keyEquivalent: "R")
+    let command = "toggle_sidebar"
+    for (code, key, flags, title) in [
+        (UInt16(15), "r", NSEvent.ModifierFlags.command, "Reload"),
+        (15, "r", .command, "Reload"),
+        (24, "+", [.command, .shift], "Zoom In"),
+        (15, "R", [.command, .shift], "Hard Reload"),
+    ] {
+        bindings.toggleRecording(command)
+        let event = try recorderKeyEvent(keyCode: code, characters: key, charactersIgnoringModifiers: key, flags: flags)
+        #expect(recorder.performKeyEquivalent(with: event))
+        #expect(bindings.error == "This shortcut is used by \(title).")
+        #expect(bindings.errorCommand == command)
+        #expect(bindings.recording == nil)
+    }
+    let after = try await bindingValue { adapter.keyBindings(completion: $0) }
+    #expect(after == before)
+    #expect(writes == 0)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func recorderRefusesAChromiumAcceleratorBeforeCoreTakeover() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openedBindings(directory)
+    var engineHoldsShortcut = false
+    let bindings = KeyBindingsModel(adapter: adapter, mainMenu: { nil }, nonMenuShortcutHolder: { event in
+        engineHoldsShortcut && event.keyCode == 37 && event.modifierFlags.contains([.command, .option]) ? "Downloads" : nil
+    })
+    try await bindingValue { bindings.set(command: "toggle_library", key: recorderBinding(key: "l", command: true, option: true), completion: $0) }
+    let before = bindings.bindings
+    let recorder = ShortcutsRecorderView()
+    recorder.bindings = bindings
+    let event = try recorderKeyEvent(keyCode: 37, characters: "¬", charactersIgnoringModifiers: "l", flags: [.command, .option])
+    bindings.toggleRecording("toggle_sidebar")
+    #expect(recorder.performKeyEquivalent(with: event))
+    #expect(bindings.recording?.holder == "Toggle Library")
+    engineHoldsShortcut = true
+    #expect(recorder.performKeyEquivalent(with: event))
+    #expect(bindings.error == "This shortcut is used by Downloads.")
+    #expect(bindings.recording == nil)
+    let after = try await bindingValue { adapter.keyBindings(completion: $0) }
+    #expect(after == before)
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
+func recorderAcceptsItsChromiumAliasAndAFreeShortcut() async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openedBindings(directory)
+    let menu = NSMenu()
+    let bindings = KeyBindingsModel(adapter: adapter, mainMenu: { menu })
+    let recorder = ShortcutsRecorderView()
+    recorder.bindings = bindings
+    var writes = 0
+    bindings.onChange = { writes += 1 }
+    for (tag, title, command, key, code) in [
+        (34012, "Close Window", "close_tab", "w", UInt16(13)),
+        (34014, "New Tab", "new_tab", "t", 17),
+        (34015, "Close Tab", "close_tab", "w", 13),
+        (34031, "Quit Ararat", "quit", "q", 12),
+        (39001, "Open Location", "edit_url", "l", 37),
+    ] {
+        menu.removeAllItems()
+        menu.addItem(withTitle: title, action: nil, keyEquivalent: key).tag = tag
+        let event = try recorderKeyEvent(keyCode: code, characters: key, charactersIgnoringModifiers: key, flags: .command)
+        bindings.toggleRecording("toggle_sidebar")
+        #expect(recorder.performKeyEquivalent(with: event))
+        #expect(bindings.error == "This shortcut is used by \(title).")
+        let previousWrites = writes
+        bindings.toggleRecording(command)
+        #expect(recorder.performKeyEquivalent(with: event))
+        try await waitUntil { writes == previousWrites + 1 }
+        #expect(bindings.error == nil)
+        #expect(bindings.recording == nil)
+    }
+    let event = try recorderKeyEvent(keyCode: 38, characters: "j", charactersIgnoringModifiers: "j", flags: [.command, .control, .option])
+    bindings.toggleRecording("toggle_sidebar")
+    #expect(recorder.performKeyEquivalent(with: event))
+    try await waitUntil { bindings.binding(command: "toggle_sidebar")?.key == recorderBinding(key: "j", command: true, control: true, option: true) }
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
 /// assembles the running pieces for the recorder tests, like the menus tests do.
 @MainActor
 private func mountedHarness(_ adapter: WorkspaceAdapter, snapshot: WorkspaceSnapshot) throws -> (HarnessDelegate, NSMenu, SettingsWindowController, ShortcutsRecorderView) {

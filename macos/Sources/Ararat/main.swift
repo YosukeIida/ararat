@@ -1360,7 +1360,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
       keyBindings = bindings
       sidebar.keyBindings = bindings.bindings
     } else {
-      let bindings = KeyBindingsModel(adapter: workspace)
+      typealias NonMenuShortcutHolder = @convention(c) (NSEvent) -> Unmanaged<NSString>?
+      guard let symbol = dlsym(Launcher.handle, "AraratNonMenuShortcutHolder") else {
+        fail("cannot find AraratNonMenuShortcutHolder")
+      }
+      let nonMenuShortcutHolder = unsafeBitCast(symbol, to: NonMenuShortcutHolder.self)
+      let bindings = KeyBindingsModel(adapter: workspace, nonMenuShortcutHolder: { event in
+        nonMenuShortcutHolder(event)?.takeUnretainedValue() as String?
+      })
       keyBindings = bindings
       bindings.onChange = { [weak self, weak bindings] in
         guard let self, let bindings else { return }

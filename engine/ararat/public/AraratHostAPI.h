@@ -265,6 +265,8 @@ void AraratStartMeasure(id<ARWindowHostAPI> host, NSString* scenario);
 __attribute__((visibility("default")))
 NSString* _Nullable AraratUserDataDirectory(void);
 __attribute__((visibility("default")))
+NSString* _Nullable AraratNonMenuShortcutHolder(NSEvent* event);
+__attribute__((visibility("default")))
 void AraratPurgeTabHistory(NSString* profile, NSString* itemId, uint64_t changedAt, void (^completion)(BOOL ok));
 __attribute__((visibility("default")))
 void AraratFinishCrashRecovery(void);

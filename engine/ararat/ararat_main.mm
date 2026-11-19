@@ -20,10 +20,12 @@
 #include "base/functional/bind.h"
 #include "base/scoped_observation.h"
 #include "base/path_service.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/global_features.h"
+#include "chrome/browser/global_keyboard_shortcuts_mac.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -36,6 +38,10 @@
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "ui/base/accelerators/platform_accelerator_cocoa.h"
+#import "ui/base/cocoa/nsmenuitem_additions.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 #import "ararat/core/public/AraratHostAPI.h"
 
 // 157 declares ChromeMain file-locally (chrome/app/chrome_main.cc:89-93) and
@@ -533,6 +539,52 @@ __attribute__((visibility("default"))) NSString* AraratUserDataDirectory(void) {
   if (!base::PathService::Get(chrome::DIR_USER_DATA, &path))
     return nil;
   return [NSString stringWithUTF8String:path.value().c_str()];
+}
+
+__attribute__((visibility("default"))) NSString* AraratNonMenuShortcutHolder(NSEvent* event) {
+  for (const auto& shortcut : GetShortcutsNotPresentInMainMenu()) {
+    const int modifiers = (shortcut.command_key ? ui::EF_COMMAND_DOWN : 0) |
+                          (shortcut.shift_key ? ui::EF_SHIFT_DOWN : 0) |
+                          (shortcut.cntrl_key ? ui::EF_CONTROL_DOWN : 0) |
+                          (shortcut.opt_key ? ui::EF_ALT_DOWN : 0);
+    const ui::Accelerator accelerator(
+        ui::KeyboardCodeFromKeyCode(shortcut.vkey_code), modifiers);
+    auto* equivalent = ui::GetKeyEquivalentAndModifierMaskFromAccelerator(accelerator);
+    NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"" action:nil
+                                        keyEquivalent:equivalent.keyEquivalent];
+    item.keyEquivalentModifierMask = equivalent.modifierMask;
+    if (![item cr_firesForKeyEquivalentEvent:event])
+      continue;
+
+    const int command = shortcut.chrome_command;
+    if (command >= IDC_SELECT_TAB_0 && command <= IDC_SELECT_TAB_7)
+      return [NSString stringWithFormat:@"Select Tab %d", command - IDC_SELECT_TAB_0 + 1];
+
+    switch (command) {
+      case IDC_SELECT_NEXT_TAB: return @"Select Next Tab";
+      case IDC_SELECT_PREVIOUS_TAB: return @"Select Previous Tab";
+      case IDC_MOVE_TAB_NEXT: return @"Move Tab Right";
+      case IDC_MOVE_TAB_PREVIOUS: return @"Move Tab Left";
+      case IDC_SELECT_LAST_TAB: return @"Select Last Tab";
+      case IDC_SHOW_AVATAR_MENU: return @"Show Profile Menu";
+      case IDC_SHOW_DOWNLOADS: return @"Downloads";
+      case IDC_DEV_TOOLS_INSPECT: return @"Inspect Element";
+      case IDC_FOCUS_NEXT_PANE: return @"Focus Next Browser Pane";
+      case IDC_FOCUS_PREVIOUS_PANE: return @"Focus Previous Browser Pane";
+      case IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY: return @"Focus Inactive Popup";
+      case IDC_SHOW_READING_MODE_KEYBOARD: return @"Open Reading Mode";
+      case IDC_ADD_NEW_TAB_TO_GROUP: return @"Add New Tab to Group";
+      case IDC_CREATE_NEW_TAB_GROUP: return @"Create New Tab Group";
+      case IDC_CLOSE_TAB_GROUP: return @"Close Tab Group";
+      case IDC_FOCUS_NEXT_TAB_GROUP: return @"Focus Next Tab Group";
+      case IDC_FOCUS_PREV_TAB_GROUP: return @"Focus Previous Tab Group";
+      case IDC_DEBUG_TOGGLE_TABLET_MODE: return @"Toggle Tablet Mode";
+      case IDC_DEBUG_PRINT_VIEW_TREE: return @"Print View Tree";
+      case IDC_DEBUG_PRINT_VIEW_TREE_DETAILS: return @"Print View Tree Details";
+      default: return @"Chromium Browser Command";
+    }
+  }
+  return nil;
 }
 
 __attribute__((visibility("default"))) NSUInteger AraratBrowserCount(void) {
