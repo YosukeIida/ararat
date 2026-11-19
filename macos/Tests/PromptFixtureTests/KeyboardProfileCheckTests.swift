@@ -9,6 +9,7 @@ import Testing
 @MainActor
 private final class KeyboardProfileTab: NSObject {
     @objc dynamic var itemId: String? = "restored"
+    @objc dynamic var liveId = "live"
     @objc dynamic var url = "http://127.0.0.1:1234/keyboard"
     @objc dynamic var isLoading = false
     @objc dynamic var navigationCount = 1
@@ -19,14 +20,75 @@ private final class KeyboardProfileHost: NSObject {
     let tab = KeyboardProfileTab()
     var actions: [Int] = []
     var shortcutCount = 0
+    var pagePresented = false
     @objc func profileDirectory() -> String { "Profile 1" }
     @objc(hasBrowserForProfile:) func hasBrowser(_ profile: String) -> Bool { true }
     @objc func activeItemId() -> String? { tab.itemId }
+    @objc func hasActiveTab() -> Bool { false }
     @objc func tabs() -> [Any] { [tab] }
+    @objc func checkPagePresentation(_ liveId: String) -> [String: Any] { ["presented": pagePresented && liveId == tab.liveId] }
     @objc func extensionActions() -> [[String: Any]] { [["id": "kmgaadhbnkendcanjninlfmfgehagggl"]] }
     @objc(checkExtensionAction:) func checkAction(_ command: Int) { actions.append(command) }
     @objc func checkReassignedAction() -> Bool { shortcutCount += 1; return true }
     @objc func checkExtensionActionState() -> [String: Any] { [:] }
+}
+
+@Test @MainActor
+func keyboardNoTabCaptureWaitsForThePresentedPageToLeave() {
+    _ = NSApplication.shared
+    class_addProtocol(KeyboardProfileHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    class_addProtocol(KeyboardProfileTab.self, objc_getProtocol("ARTabAPI")!)
+    let fake = KeyboardProfileHost()
+    fake.tab.itemId = "seed"
+    fake.pagePresented = true
+    let runtime = Runtime(windowID: "keyboard-no-tab")
+    runtime.browserCheckSeedID = "seed"
+    runtime.promptFixturePort = 1234
+    runtime.browserCheckPhase = 36411
+    runtime.keyboardArchiveSiblingSpace = "sibling"
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "named", pinnedId: "pinned", todayId: "today",
+                              favoritesId: nil, archiveAfter: .hours12, profileName: "Profile 1", profile: .named("Profile 1"),
+                              id: "sibling", title: "Adjacent", icon: nil, look: nil, pinnedCollapsed: false,
+                              favorites: [], pinned: [], today: [])
+    runtime.snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space])
+    let sidebar = SidebarView(snapshot: runtime.snapshot)
+    runtime.sidebar = sidebar
+
+    runtime.keyboardCheckTick(fake as! any ARWindowHostAPI, screen: true)
+
+    #expect(runtime.browserCheckPhase == 36411)
+    #expect(runtime.keyboardCaptureCondition == "no_tab_state")
+    #expect(runtime.keyboardResults["capture_wait"] as? String == "no_tab_state")
+    #expect(runtime.keyboardResults["no_tab_state"] as? Bool == false)
+    #expect(!sidebar.libraryOpen)
+}
+
+@Test @MainActor
+func keyboardEmptyArchiveCaptureWaitsForTheArchivePageToDrawItsEmptyState() {
+    _ = NSApplication.shared
+    class_addProtocol(KeyboardProfileHost.self, objc_getProtocol("ARWindowHostAPI")!)
+    class_addProtocol(KeyboardProfileTab.self, objc_getProtocol("ARTabAPI")!)
+    let fake = KeyboardProfileHost()
+    fake.tab.itemId = "seed"
+    let runtime = Runtime(windowID: "keyboard-archive-empty")
+    runtime.browserCheckSeedID = "seed"
+    runtime.promptFixturePort = 1234
+    runtime.browserCheckPhase = 3657
+    let sidebar = SidebarView(snapshot: runtime.snapshot)
+    sidebar.frame = NSRect(x: 0, y: 0, width: 420, height: 700)
+    runtime.sidebar = sidebar
+    sidebar.setLibraryOpen(true, downloads: true)
+
+    runtime.keyboardCheckTick(fake as! any ARWindowHostAPI, screen: true)
+
+    #expect(runtime.browserCheckPhase == 3657)
+    #expect(runtime.keyboardCaptureCondition == "archive_empty_state")
+    #expect(runtime.keyboardResults["capture_wait"] as? String == "archive_empty_state")
+    #expect(runtime.keyboardResults["archive_empty_state"] as? Bool == false)
+    #expect(sidebar.libraryOpen)
+    sidebar.setLibraryOpen(true)
+    sidebar.layoutSubtreeIfNeeded()
+    #expect(sidebar.checkArchiveEmptyStateVisible)
 }
 
 @Test @MainActor

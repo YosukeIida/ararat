@@ -3633,6 +3633,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions", "onboarding", "screen-onboarding", "window-drag", "screen-window-drag", "create-space", "screen-create-space"].contains(mode) || SettingsScreenCheck.Mode.mode(mode) != nil ? 900 : 300
     if browserCheckAttempts > limit {
+      if mode == "screen-keyboard", let condition = keyboardCaptureCondition {
+        timeoutValues["capture_wait"] = condition
+        timeoutValues["failed_conditions"] = [condition]
+        timeoutValues[condition] = false
+      }
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
       }
@@ -4528,6 +4533,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     NSApp.sendEvent(event)
   }
 
+  var keyboardCaptureCondition: String? {
+    switch browserCheckPhase {
+    case 36411: "no_tab_state"
+    case 3657: "archive_empty_state"
+    default: nil
+    }
+  }
+
   func keyboardCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
     guard !keyboardCapturing else { return }
     if CommandLine.arguments.contains("--ararat-space-matrix-check") {
@@ -4611,6 +4624,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       window.contentView?.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
       keyboardResults["\(name)_screenshot"] = promptScreenScreenshot(window, name: "keyboard-\(name)", withoutShadow: true)
+    }
+    func captureStateReady(_ ready: Bool) -> Bool {
+      guard let condition = keyboardCaptureCondition else { return false }
+      if !ready, keyboardResults["capture_wait"] == nil {
+        FileHandle.standardError.write(Data("ararat-trace: keyboard wait=\(condition)\n".utf8))
+      }
+      keyboardResults["capture_wait"] = ready ? nil : condition
+      keyboardResults[condition] = ready
+      return ready
     }
     func bubbleNearAnchor(_ state: [String: Any], frame: NSRect) -> Bool {
       guard let x = state["anchor_x"] as? CGFloat else { return false }
@@ -5492,9 +5514,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 100
       switchWorkspaceSpace(keyboardArchiveSiblingSpace) { [weak self] in self?.browserCheckPhase = 36411 }
     case 36411:
-      guard snapshot.shownSpaceId == keyboardArchiveSiblingSpace, snapshot.shownSpaceId != "named",
-            host.profileDirectory() == "Profile 1", let sidebar, !sidebar.libraryOpen else { return }
-      if snapshot.selectedId == nil { capture("no-tab") }
+      let adjacentShown = snapshot.shownSpaceId == keyboardArchiveSiblingSpace && snapshot.shownSpaceId != "named"
+        && host.profileDirectory() == "Profile 1" && sidebar?.libraryOpen == false
+      if screen {
+        let emptySpaceShown = snapshot.spaces.enumerated().contains { index, space in
+          space.id == keyboardArchiveSiblingSpace && sidebar?.spaceShown == index
+            && space.today.isEmpty && space.pinned.isEmpty && space.favorites.isEmpty
+        }
+        guard captureStateReady(adjacentShown && emptySpaceShown && snapshot.selectedId == nil && !host.hasActiveTab()
+          && !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: {
+            host.checkPagePresentation($0.liveId)["presented"] as? Bool == true
+          })) else { return }
+      }
+      guard adjacentShown, let sidebar else { return }
+      capture("no-tab")
       sidebar.setLibraryOpen(true)
       browserCheckPhase = 3642
     case 3642:
@@ -5612,7 +5645,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 3657:
       keyboardResults["reopen_empty_archive"] = !Self.archiveActionsEnabled(self) && snapshot.archive.isEmpty
         && !(host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }
-      if sidebar?.libraryOpen == true && snapshot.archive.isEmpty { capture("archive-empty") }
+      if screen {
+        guard captureStateReady(snapshot.archive.isEmpty && sidebar?.checkArchiveEmptyStateVisible == true) else { return }
+        capture("archive-empty")
+      }
       sidebar?.setLibraryOpen(false)
       browserCheckPhase = 100
       workspace?.deleteSpace(id: keyboardArchiveSiblingSpace) { [weak self] result in

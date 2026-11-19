@@ -25,6 +25,10 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     let table = ArchiveTableView()
     private let scroll = LibraryScrollView()
     private let emptyState = ArchiveHeadingView()
+    var archiveEmptyStateVisible: Bool {
+        page == .archive && filteredEntries.isEmpty && !emptyState.label.isHiddenOrHasHiddenAncestor
+            && !emptyState.visibleRect.isEmpty && emptyState.label.stringValue == "No archived tabs"
+    }
     private var archiveRows: [ListRow] = []
     private var needsGrouping = true
     private var listRows: [ListRow] = []
