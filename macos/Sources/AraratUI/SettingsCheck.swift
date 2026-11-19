@@ -227,6 +227,7 @@ public final class SettingsCheckProbe: NSObject {
     /// The fallback only: `model.toggleRecording`, the action the row's button runs, for the case
     /// where neither the accessibility pass nor the synthesized click reached the button.
     public func beginShortcutRecording(_ command: String) { model.keyBindings.toggleRecording(command) }
+    public func cancelShortcutRecording() { model.keyBindings.cancelRecording() }
     public func resetShortcut(_ command: String) { model.resetShortcut(command) }
     public var shortcutRecordingCommand: String? { model.keyBindings.recording?.command }
     @discardableResult

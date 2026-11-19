@@ -739,6 +739,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
+  var keyboardCapturing = false
   var keyboardSidebarBefore = ""
   var keyboardLibraryBefore = false
   var profileFocusEventCount = 0
@@ -1060,6 +1061,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var fullscreenFocusTraceDropped = 0
   var fullscreenMenuDispatch: [String: Any] = [:]
   var fullscreenPhase4Observed = false
+  var fullscreenParityCapturing = false
 
   func recordFullscreenFocus(_ event: String, window: NSWindow) {
     guard fullscreenFocusTrace.count < 64 else { fullscreenFocusTraceDropped += 1; return }
@@ -4527,6 +4529,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func keyboardCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    guard !keyboardCapturing else { return }
     if CommandLine.arguments.contains("--ararat-space-matrix-check") {
       commandSpaceMatrixTick(host, screen: screen)
       return
@@ -4574,7 +4577,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let c2OK = !c2 || (keyboardResults["c2_page_attachment"] as? Bool == true &&
         keyboardResults["c2_find_attachment"] as? Bool == true && keyboardResults["c2_find_resized_attachment"] as? Bool == true &&
         (!screen || (keyboardResults["c2_page_input_hit"] as? Bool == true && keyboardResults["c2_find_stacking_input"] as? Bool == true)))
-      let caseOK = requiredOK && modeOK && c2OK && stock == 0
+      let capturesOK = !screen || ["find-count", "no-tab", "archive-list", "archive-search", "archive-no-matches", "archive-empty"]
+        .allSatisfy { keyboardResults["\($0)_screenshot"] != nil }
+      let caseOK = requiredOK && modeOK && c2OK && capturesOK && stock == 0
       keyboardResults["hidden_window_safe"] = hiddenWindowSafe
       keyboardResults["unverified_reach"] = ["core_menu_and_suggestion_reach",
         "page_only_menu_actions", "find_lifetime_and_geometry"]
@@ -4597,6 +4602,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["error"] = reason
       keyboardResults["phase"] = browserCheckPhase
       finishBrowserCheck(ok: false, values: keyboardResults)
+    }
+    func capture(_ name: String) {
+      guard screen else { return }
+      keyboardCapturing = true
+      defer { keyboardCapturing = false }
+      let window = host.window()
+      window.contentView?.layoutSubtreeIfNeeded()
+      window.displayIfNeeded()
+      keyboardResults["\(name)_screenshot"] = promptScreenScreenshot(window, name: "keyboard-\(name)", withoutShadow: true)
     }
     func bubbleNearAnchor(_ state: [String: Any], frame: NSRect) -> Bool {
       guard let x = state["anchor_x"] as? CGFloat else { return false }
@@ -5012,6 +5026,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let find = container?.findBar, find.matches == 3, find.ordinal > 0, find.requestID > keyboardFindRequest, find.finalUpdate else { return }
       keyboardResults["find_count"] = find.matches
       keyboardResults["find_initial"] = find.ordinal
+      capture("find-count")
       host.findAction("next", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
       browserCheckPhase = 14
     case 14:
@@ -5479,10 +5494,17 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 36411:
       guard snapshot.shownSpaceId == keyboardArchiveSiblingSpace, snapshot.shownSpaceId != "named",
             host.profileDirectory() == "Profile 1", let sidebar, !sidebar.libraryOpen else { return }
+      if snapshot.selectedId == nil { capture("no-tab") }
       sidebar.setLibraryOpen(true)
       browserCheckPhase = 3642
     case 3642:
       guard let sidebar, sidebar.libraryOpen, !keyboardLibraryDeleteItem.isEmpty else { return }
+      if screen {
+        capture("archive-list")
+        if sidebar.searchArchive("?restore") > 0 { capture("archive-search") }
+        if sidebar.searchArchive("ararat-no-such-archive-entry") == 0 { capture("archive-no-matches") }
+        _ = sidebar.searchArchive("")
+      }
       // The Library row's own delete button: the closure the app wires to deleteArchive.
       guard sidebar.checkPressArchiveRowButton(id: keyboardLibraryDeleteItem, restore: false) else {
         keyboardResults["library_delete_press"] = false
@@ -5590,6 +5612,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 3657:
       keyboardResults["reopen_empty_archive"] = !Self.archiveActionsEnabled(self) && snapshot.archive.isEmpty
         && !(host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }
+      if sidebar?.libraryOpen == true && snapshot.archive.isEmpty { capture("archive-empty") }
       sidebar?.setLibraryOpen(false)
       browserCheckPhase = 100
       workspace?.deleteSpace(id: keyboardArchiveSiblingSpace) { [weak self] result in
@@ -6683,6 +6706,22 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     do { try task.run(); task.waitUntilExit() } catch { return nil }
     guard task.terminationStatus == 0, FileManager.default.fileExists(atPath: path),
           ScreenViewTree.write(nextTo: path, name: name, windows: [window]) else { return nil }
+    return path
+  }
+
+  func promptScreenMenuScreenshot(_ menu: NSMenu, window: NSWindow, name: String, show: () -> Void) -> String? {
+    var path: String?
+    let captureMenu: @MainActor @Sendable () -> Void = { [weak self, weak menu] in
+      guard let menu else { return }
+      defer { menu.cancelTracking() }
+      path = self?.promptScreenScreenshot(window, name: name, includeOverlays: true)
+    }
+    let timer = Timer(timeInterval: 0.2, repeats: false) { _ in
+      MainActor.assumeIsolated { captureMenu() }
+    }
+    RunLoop.main.add(timer, forMode: .eventTracking)
+    show()
+    timer.invalidate()
     return path
   }
 
@@ -8762,6 +8801,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func fullscreenScreenTick(_ host: any ARWindowHostAPI, tabs: [any ARTabAPI], state: [String: Any]) {
+    guard !fullscreenParityCapturing else { return }
     let window = host.window()
     let full = state["window"] as? Bool == true
     let page = state["tab"] as? Bool == true
@@ -8779,6 +8819,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         if let found = fullscreenMenu(item.submenu) { return found }
       }
       return nil
+    }
+    func movePointer(to point: NSPoint) -> Bool {
+      guard let top = NSScreen.screens.first?.frame.maxY,
+            CGWarpMouseCursorPosition(CGPoint(x: point.x, y: top - point.y)) == .success,
+            let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: point),
+              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+              context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
+      NSApp.sendEvent(event)
+      return true
+    }
+    func capture(_ name: String) {
+      fullscreenParityCapturing = true
+      defer { fullscreenParityCapturing = false }
+      fullscreenResults["\(name)_screenshot"] = promptScreenScreenshot(window, name: "fullscreen-\(name)", withoutShadow: true)
     }
     switch browserCheckPhase {
     case 0:
@@ -8838,13 +8892,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       fullscreenResults["browser_screenshot"] = image
       fullscreenResults["menu_toggle"] = true
       fullscreenResults["appkit_lights"] = true
-      guard let screen = NSScreen.screens.first else { return }
       let edge = NSPoint(x: window.frame.minX + 2, y: window.frame.midY)
-      guard CGWarpMouseCursorPosition(CGPoint(x: edge.x, y: screen.frame.maxY - edge.y)) == .success,
-            let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: edge),
-              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-              context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
-      NSApp.sendEvent(event)
+      guard movePointer(to: edge) else { return }
       browserCheckPhase = 8
     case 8:
       guard full, !page, let container, container.sidebarState == "floating", !container.sidebarAnimating,
@@ -8881,7 +8930,37 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard fullscreenElement == false, container?.pageFullscreen == false else { return }
       fullscreenResults["green_button_exit"] = true
       fullscreenResults["stock_browsers"] = host.checkStockBrowsers()
-      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: fullscreenResults)
+      fullscreenResults["fullscreen_checks_ok"] = host.checkStockBrowsers() == 0
+      window.appearance = NSAppearance(named: .darkAqua)
+      if let container, container.sidebarState != "docked" { container.toggleSidebar() }
+      browserCheckPhase = 71
+    case 71:
+      guard let container, container.sidebarState == "docked", !container.sidebarAnimating,
+            container.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
+            movePointer(to: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY)) else { return }
+      capture("dark-docked")
+      container.toggleSidebar()
+      browserCheckPhase = 72
+    case 72:
+      guard let container, container.sidebarState == "hidden", !container.sidebarAnimating else { return }
+      capture("floating-before-reveal")
+      guard movePointer(to: NSPoint(x: window.frame.minX + 2, y: window.frame.midY)) else {
+        finishBrowserCheck(ok: false, values: fullscreenResults); return
+      }
+      browserCheckPhase = 73
+    case 73:
+      guard let container, container.sidebarState == "floating", !container.sidebarAnimating else { return }
+      capture("dark-floating")
+      guard movePointer(to: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY)) else {
+        finishBrowserCheck(ok: false, values: fullscreenResults); return
+      }
+      browserCheckPhase = 74
+    case 74:
+      guard let container, container.sidebarState == "hidden", !container.sidebarAnimating else { return }
+      capture("floating-after-hide")
+      let capturesOK = ["dark-docked", "floating-before-reveal", "dark-floating", "floating-after-hide"]
+        .allSatisfy { fullscreenResults["\($0)_screenshot"] != nil }
+      finishBrowserCheck(ok: fullscreenResults["fullscreen_checks_ok"] as? Bool == true && capturesOK, values: fullscreenResults)
     default: break
     }
   }

@@ -913,6 +913,45 @@ extension Runtime {
             }
             check.report("recorder_restored", true)
             guard capture("shortcuts") else { end("capture", false); return }
+            (root ?? self).settings?.window?.makeKey()
+            probe.beginShortcutRecording("toggle_sidebar")
+            check.panePhaseStart = browserCheckAttempts
+            step(241)
+        case 241, 243:
+            guard probe.shortcutRecordingCommand == "toggle_sidebar", probe.shortcutRecorderIsFirstResponder else {
+                if browserCheckAttempts - check.panePhaseStart > 120 { end("capture", false) }
+                return
+            }
+            let conflict = check.phase == 241
+            let character = conflict ? "t" : "3"
+            let flags: NSEvent.ModifierFlags = conflict ? .command : [.command, .shift]
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                                               context: nil, characters: character, charactersIgnoringModifiers: character,
+                                               isARepeat: false, keyCode: conflict ? 17 : 20) else { end("capture", false); return }
+            if conflict, probe.shortcutKey("new_tab") != KeyCombination(key: "t", command: true, control: false, option: false, shift: false) {
+                end("capture", false); return
+            }
+            probe.recordShortcutKey(event)
+            check.panePhaseStart = browserCheckAttempts
+            step(check.phase + 1)
+        case 242, 244:
+            let conflict = check.phase == 242
+            let row = "shortcut-toggle_sidebar"
+            guard (probe.shortcutRecordingCommand != nil) == conflict,
+                  (probe.marker("recorder-\(row)") != nil) == conflict,
+                  probe.marker("message-\(row)") != nil else {
+                if browserCheckAttempts - check.panePhaseStart > 120 { end("capture", false) }
+                return
+            }
+            guard capture(conflict ? "shortcuts-conflict" : "shortcuts-refusal") else { end("capture", false); return }
+            if conflict {
+                probe.cancelShortcutRecording()
+                probe.beginShortcutRecording("toggle_sidebar")
+                check.panePhaseStart = browserCheckAttempts
+                step(243)
+                return
+            }
             finish()
         default: break
         }

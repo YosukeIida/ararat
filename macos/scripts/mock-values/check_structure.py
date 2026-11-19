@@ -65,6 +65,18 @@ def check(rule, capture):
             return {"Copy Link", "Site controls"} <= labels
         case "count":
             return len(by_class(rule["class"])) == rule["count"]
+        case "floating-sidebar":
+            panels = by_class("SidebarPanelView")
+            if len(panels) != 1:
+                return False
+            panel = panels[0][-1]["frame"]
+            owner = next((node["frame"] for node in reversed(panels[0][:-1])
+                          if node["class"] == "SidebarContainerView"), None)
+            if owner is None:
+                return False
+            gaps = [panel["x"] - owner["x"], panel["y"] - owner["y"],
+                    owner["y"] + owner["height"] - panel["y"] - panel["height"]]
+            return all(abs(gap - rule["inset"]) <= 1 for gap in gaps)
         case "contains":
             def matches(node, selector):
                 return all(node.get(key) == value for key, value in selector.items())
@@ -77,6 +89,8 @@ def check(rule, capture):
             for container in containers:
                 descendants = [path[-1] for path in paths if any(ancestor is container for ancestor in path[:-1])]
                 if not all(any(matches(node, member) for node in descendants) for member in rule["members"]):
+                    return False
+                if any(matches(node, member) for node in descendants for member in rule.get("absent", [])):
                     return False
             return True
         case _:

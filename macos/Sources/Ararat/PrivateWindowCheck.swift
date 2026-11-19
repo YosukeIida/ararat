@@ -370,6 +370,22 @@ extension Runtime {
                   snap.archive.isEmpty else { wait("new private window starts empty"); return }
             check.mark("private_new_starts_empty")
             check.mark("private_open_without_browser_refused", child.host?.checkRefuseOpenWithoutBrowser() == true)
+            if screen, let childHost = child.host, let container = child.container, let sidebar = child.sidebar {
+                check.capturing = true
+                let selected = sidebar.selectedRowID
+                // Closing the last private tab closes the window, so use the existing empty view over the scratch window.
+                sidebar.updateSelection(id: nil)
+                childHost.setWorkspacePageHidden(true)
+                container.privateEmptyShown = true
+                let childWindow = childHost.window()
+                childWindow.contentView?.layoutSubtreeIfNeeded()
+                childWindow.displayIfNeeded()
+                check.images["empty"] = promptScreenScreenshot(childWindow, name: "private-window-empty", withoutShadow: true)
+                container.privateEmptyShown = child.snapshot.selectedId == nil
+                child.updatePageVisibility(child.snapshot)
+                sidebar.updateSelection(id: selected)
+                check.capturing = false
+            }
             // Two more rows, then Clear: removal with no toast or Undo, and the window closes
             // with its last tab (design M1).
             let space = child.snapshot.shownSpaceId ?? "private"
@@ -393,7 +409,8 @@ extension Runtime {
             check.mark("private_rows_unchanged")
             let result = check.diagnostics()
             finishBrowserCheck(ok: (result["failed_conditions"] as? [String] ?? ["invalid"]).isEmpty &&
-                               host.checkStockBrowsers() == 0 && snapshot == browserCheckBefore, values: result)
+                               host.checkStockBrowsers() == 0 && snapshot == browserCheckBefore &&
+                               (!screen || check.images["empty"] != nil), values: result)
         default:
             break
         }

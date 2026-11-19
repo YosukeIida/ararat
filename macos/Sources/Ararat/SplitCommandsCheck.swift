@@ -22,7 +22,7 @@ final class SplitCommandsCheck {
                       "key_split", "key_focus", "key_new_page", "command_split", "command_focus",
                       "command_new_page", "menu_split", "menu_focus", "menu_new_page", "split_third",
                       "split_third_focus"]
-  static let screenNames = ["capture_menu", "capture_vertical", "capture_split", "capture_drop-target"]
+  static let screenNames = ["capture_menu", "capture_menu-open", "capture_vertical", "capture_split", "capture_drop-target"]
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
   var capturing = false
@@ -195,6 +195,16 @@ extension Runtime {
       check.mark("menu_leftmost", menu.items[0].isEnabled == false && menu.items[1].isEnabled == true
                   && rightMenu?.items[0].isEnabled == true && rightMenu?.items[1].isEnabled == false)
       capture("menu")
+      if screen, let frame = sidebar.rowFrameForCheck(check.split), let view = window.contentView {
+        let point = view.convert(NSPoint(x: frame.minX + frame.width / 4, y: frame.midY), from: nil)
+        check.capturing = true
+        let path = promptScreenMenuScreenshot(menu, window: window, name: "split-commands-menu-open") {
+          menu.popUp(positioning: nil, at: point, in: view)
+        }
+        check.capturing = false
+        check.images["menu-open"] = path
+        check.mark("capture_menu-open", path != nil)
+      }
       check.frames = adapter.checkSplitFocus().panes
       guard sidebar.runPaneMenuItemForCheck(paneID: check.right, titled: "Add Right Split") else { fail("add right split item"); return }
       browserCheckPhase = 2

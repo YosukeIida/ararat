@@ -84,18 +84,9 @@ extension Runtime {
       if screen {
         check.capturing = true
         let menu = header.makeMenu()
-        let window = host.window()
-        let captureMenu: @MainActor @Sendable () -> Void = { [weak self, weak menu] in
-          guard let menu else { return }
-          defer { menu.cancelTracking() }
-          check.images["overflow-menu"] = self?.promptScreenScreenshot(window, name: "header-overflow-menu", includeOverlays: true)
+        check.images["overflow-menu"] = promptScreenMenuScreenshot(menu, window: host.window(), name: "header-overflow-menu") {
+          header.showMenu(menu)
         }
-        let timer = Timer(timeInterval: 0.2, repeats: false) { _ in
-          MainActor.assumeIsolated { captureMenu() }
-        }
-        RunLoop.main.add(timer, forMode: .eventTracking)
-        header.showMenu(menu)
-        timer.invalidate()
         check.capturing = false
         capturesOK = capturesOK && check.images["overflow-menu"] != nil
       }

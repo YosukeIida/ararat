@@ -413,6 +413,20 @@ extension Runtime {
                 return
             }
             check.report("close_caps_current", true)
+            if screen {
+                check.capturing = true
+                let image = sidebar.tabMenuForCheck(id: todayB.id).flatMap { menu in
+                    sidebar.rowFrameForCheck(todayB.id).flatMap { frame in
+                        let point = sidebar.convert(NSPoint(x: frame.midX, y: frame.midY), from: nil)
+                        return promptScreenMenuScreenshot(menu, window: host.window(), name: "sidebar-rows-tab-menu") {
+                            menu.popUp(positioning: nil, at: point, in: sidebar)
+                        }
+                    }
+                }
+                check.capturing = false
+                check.images["tab-menu"] = image
+                check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+            }
             check.commandWId = todayB.id
             sidebar.closeSelectedTab(nil)
             step(6)
@@ -951,6 +965,16 @@ extension Runtime {
             check.report("menu_dock_same", titles == sidebar.dockMenuItems(for: space.id).map(\.title))
             // S4: the click above toggled rather than renaming, and the menu's item starts it.
             check.report("rename_menu_only", name.checkRenameFieldFrame == nil)
+            if screen, let window = name.window {
+                check.capturing = true
+                let point = NSPoint(x: name.bounds.midX, y: name.bounds.midY)
+                let image = promptScreenMenuScreenshot(menu, window: window, name: "space-name-menu") {
+                    menu.popUp(positioning: nil, at: point, in: name)
+                }
+                check.capturing = false
+                check.images["menu"] = image
+                check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+            }
             guard let rename = menu.items.first(where: { $0.title == "Rename Space…" }), let action = rename.action else {
                 check.report("rename_field_height", false); step(4); return
             }

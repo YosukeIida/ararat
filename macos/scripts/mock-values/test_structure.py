@@ -9,6 +9,26 @@ def view(name, x=0, y=0, children=(), hidden=False, **attributes):
 
 
 class StructureTests(unittest.TestCase):
+    def test_refusal_requires_the_message_and_hides_the_recorder(self):
+        rule = {"kind": "contains", "members": [{"identifier": "message"}], "absent": [{"identifier": "recorder"}]}
+        message = view("NSView", identifier="message")
+        recorder = view("NSView", identifier="recorder")
+        for children, expected in [([message], True), ([message, recorder], False), ([recorder], False),
+                                   ([message, {**recorder, "hidden": True}], True)]:
+            with self.subTest(children=children):
+                self.assertEqual(check(rule, {"windows": [{"root": view("NSView", children=children)}]}), expected)
+
+    def test_floating_sidebar_requires_insets_inside_its_container(self):
+        rule = {"kind": "floating-sidebar", "inset": 5}
+        frame = {"x": 15, "y": 25, "width": 60, "height": 90}
+        for panel_frame, expected in [(frame, True), ({**frame, "height": 100}, False),
+                                      ({**frame, "x": -45}, False)]:
+            panel = view("SidebarPanelView", frame=panel_frame)
+            owner = view("SidebarContainerView", frame={"x": 10, "y": 20, "width": 200, "height": 100},
+                         children=[panel])
+            with self.subTest(panel_frame=panel_frame):
+                self.assertEqual(check(rule, {"windows": [{"root": owner}]}), expected)
+
     def test_required_parts_belong_to_each_visible_container(self):
         rule = {"kind": "contains", "container": {"class": "CommandBarRowView"},
                 "members": [{"identifier": "icon"}, {"identifier": "title"}]}

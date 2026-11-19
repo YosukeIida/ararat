@@ -17,8 +17,10 @@ uv run --no-project python macos/scripts/mock-values/census.py "$MOCK_PROJECT"
 VM では次のチェックを `--ararat-screen=<name>` で実行する。[画面チェックの実行例](architecture.ja.md)に従い、バンドル済みのアプリ、一時プロファイル、ワークスペースを用意する。
 
 - サイドバーとウィンドウは `organize`、`header`、`space-name`、`sidebar-rows`、`today`、`folder-empty`、`create-space`、`dock`、`split-commands`、`split-focus`、`fullscreen`、`window-drag`、`urlfield`。
-- ページとパネルは `prompts`、`dialogs`、`downloads`、`ext-actions`、`site-controls`、`commandbar`、`errorpages`、`little-window`、`private-window`、`toasts`。
+- ページとパネルは `keyboard`、`prompts`、`dialogs`、`downloads`、`ext-actions`、`site-controls`、`commandbar`、`errorpages`、`little-window`、`private-window`、`toasts`。
 - 設定とオンボーディングは `settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
+
+ページ内検索と Archive の撮影には、keyboard のメインチェックを `--ararat-keyboard-main-scope` 付きで実行する。
 
 PNG と、拡張子以外のファイル名が同じ JSON を一緒に取得する。JSON の座標はウィンドウ座標系で、単位は pt である。領域撮影の JSON には親ウィンドウのビュー階層が入る。サイドバー、分割セグメント、コマンドバー、タブ切り替え、Little Window、Downloads、設定の検査項目は [structure.json](../macos/scripts/mock-values/structure.json) に示す。AppKit のメニューとページ内の DOM の外観は PNG で確認する。
 
@@ -58,7 +60,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-Header` | ショートカット押下中と狭い幅でのオーバーフロー | `header-command`, `header-command-r`, `header-command-r-narrow`, `header-command-w` | 未レビュー | コントロールとキーキャップの押下時の表示を比較する（決定 9–10）。 |
 | `A-Header` | ヘッダーのオーバーフローメニュー | `header-overflow-menu` | 未レビュー | AppKit のメニューが開いている間にウィンドウの表示領域を撮影する。JSON には親ウィンドウのビュー階層を記録する。 |
 | `A-Layout` | サイドバーの配置 | `header-240` | 未レビュー | 既定幅 240 pt と選択行の寸法はトークンテストの対象である。 |
-| `A-SpaceName` | 名前、シェブロン、メニュー、ピンの折りたたみ | `space-name-hover`, `space-name-collapsed`, `space-name-renamed` | 未レビュー | ホバー、折りたたみ、改名後の画像がある。ネイティブのオーバーフローメニューは撮影が必要である。 |
+| `A-SpaceName` | 名前、シェブロン、メニュー、ピンの折りたたみ | `space-name-hover`, `space-name-collapsed`, `space-name-menu`, `space-name-renamed` | 未レビュー | ホバー、折りたたみ、ネイティブメニュー、改名後の状態を撮影する。 |
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
@@ -75,15 +77,15 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Drag` | 別プロファイルへのドロップ拒否 | `dock-refused` | 未レビュー | セルを暗くし、ポインタに拒否マークを付ける（決定 68）。 |
 | `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 |
 | `B-Floating` | フローティングサイドバーの配置と内容 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いたフローティングパネルを撮影する。 |
-| `B-FloatingDark` | ダークのフローティングサイドバー | — | 未撮影 | ダークの外観で撮影が必要である。 |
-| `B-FloatingMotion` | 端からの表示、待機時間、非表示 | — | 未撮影 | 表示のタイミングは別のチェックで扱う。静止画からは判定できない。 |
+| `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 未レビュー | 全画面表示の検査後、通常ウィンドウでダークのフローティングパネルを撮影する。 |
+| `B-FloatingMotion` | 端からの表示、待機時間、非表示 | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | 未レビュー | ポインタを表示領域の端に置き、パネルを開いてから離す。3 枚は静止状態の画像で、待機時間と動作時間の判定には計測が必要である。 |
 | `B-Fullscreen` | ページとブラウザの全画面表示、端からの表示 | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | 未レビュー | 状態ごとに撮影する。 |
 | `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 未レビュー | 削除失敗時に同一プロファイルの全ウィンドウで表示する（決定 56）。 |
 | `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 未レビュー | 失敗時のバナーを撮影する。再試行に成功するとバナーは消える。 |
-| `B-Library` | Library のレールとアーカイブ一覧 | — | 未撮影 | Downloads の撮影対象は Library 内の別のページである。 |
-| `B-LibraryStates` | アーカイブ一覧の状態 | — | 未撮影 | 検索、復元、削除は LibraryView に実装されている。 |
-| `B-Menus` | 行、スペース、分割のネイティブメニュー | — | 未撮影 | split-commands チェックは項目とアイコンを検査する。既存の画像ではメニューが閉じている。 |
-| `B-NoTab` | 空のページカードとショートカット案内 | — | 未撮影 | サイドバーを表示した空のワークスペースの撮影が必要である。 |
+| `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 未レビュー | keyboard チェックでは、テスト用の 2 項目を削除・復元する前に Archive を開いて撮影する。 |
+| `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 未レビュー | 一覧、URL での絞り込み、検索結果なし、Clear Archive 後の空一覧を撮影する。行の操作ボタンのフォーカスとホバー、ダーク表示、レールの操作状態は別途撮影が必要である。 |
+| `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 未レビュー | Today のタブ、スペース名、左ペインのネイティブメニューを開いて撮影する。ほかの行種別とメニューの派生状態は別途撮影が必要である。 |
+| `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 未レビュー | タブを選択していないスペースのページカードを撮影する。モックにある 2 種類のショートカット案内は未実装である。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 未レビュー | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
 | `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 |
 | `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 未レビュー | 説明文は Swift が連続した仕切り線を描くとする。SplitDividerView はホバー中とドラッグ中にグリップを描画する。 |
@@ -109,16 +111,16 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
 | `D-CommandBarRows` | 結果行の寸法、内側余白、行間 | — | 一致 | 対応表に記載した行と入力欄の寸法は一致した。行の外観は未確認である。 |
 | `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 未レビュー | ネイティブのエラーページを各状態で撮影する。 |
-| `D-FindBar` | ページ内検索バーと件数 | `header-find-bar` | 未レビュー | 検索欄を開いた直後の画像がある。結果件数は、検索語を入力した状態の撮影が必要である。 |
-| `D-FindBarPage` | ページ上の検索バー | `header-find-bar` | 未レビュー | header チェックで使うページと、開いたページ内検索バーを同じ画像に含める。 |
+| `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`, `keyboard-find-count` | 未レビュー | header では検索欄を開いた直後を、keyboard ではテストページで件数と選択中の一致箇所が確定した状態を撮影する。 |
+| `D-FindBarPage` | ページ上の検索バー | `header-find-bar`, `keyboard-find-count` | 未レビュー | keyboard の画像には、テストページと、件数を表示するページ内検索バーが写る。 |
 | `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 未レビュー | 対応表はバーの高さ 48 pt の例外を記録し、色とコントロールの値を照合する。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 未レビュー | プライベートブラウザのウィンドウを撮影する。 |
-| `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 未撮影 | 既存の画像には、最初に取り込んだプライベートタブが写る。空の状態は別途撮影が必要である。 |
+| `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | `private-window-empty` | 未レビュー | 新しく開いたプライベートワークスペースの検査後、既存の空状態のビューを一時的に表示して撮影する。通常は最後のタブを閉じるとウィンドウも閉じる。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 未レビュー | Archive Tab と Close Tab の状態を個別に撮影する。 |
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
-| `Dark` | ダークのブラウザ全体 | — | 未撮影 | ウィンドウ全体を比較するため、ダークのワークスペースを撮影する。 |
+| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 未レビュー | fullscreen チェックで通常サイズへ戻った後、サイドバーを固定したダークのウィンドウを撮影する。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 未レビュー | 2 枚目はルートを保存した後、Default destination のメニューを開く直前の画像である。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 未レビュー | Theme、Look、New Tab の行のスイッチ、Tooltips を実装している。Page zoom は未実装である。 |
@@ -133,7 +135,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 未レビュー | 保護機能の仮の項目はこのフェーズの製品に表示しない（§7）。 |
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 未レビュー | 検索結果の強調表示の角丸、内側余白、行の高さはトークンテストの対象である。 |
-| `E-Shortcuts` | ショートカット一覧、入力、競合の表示 | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder` | 未レビュー | 一覧と記録中の状態を撮影する。割り当ての競合と拒否は撮影が必要である。 |
+| `E-Shortcuts` | ショートカット一覧、入力、競合の表示 | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder`, `settings-shortcuts-shortcuts-conflict`, `settings-shortcuts-shortcuts-refusal` | 未レビュー | テスト用の割り当てを元に戻した後、⌘T の割り当て先を表示する競合状態と、システム予約済みの ⇧⌘3 を拒否した状態を撮影する。 |
 | `E-SpacePage` | スペース個別の設定 | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | 未レビュー | Spaces と Dock のチェックで、個別のスペースの設定を開く。Appearance のチェックでは Look の行から開く。 |
 | `E-Spaces` | スペース一覧とスクロール方向 | `settings-spaces-spaces` | 未レビュー | スクロール方向はワークスペース全体の設定である。 |
 | `E-Sync` | 同期設定とデバイス | — | 未実装 | 同期はフェーズ 8 で実装予定である（決定 100）。 |

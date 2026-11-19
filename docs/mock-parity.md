@@ -17,8 +17,10 @@ uv run --no-project python macos/scripts/mock-values/census.py "$MOCK_PROJECT"
 Run the checks below as `--ararat-screen=<name>` on the VM. Use the bundled app with a fresh scratch profile and workspace, as in the [screen check commands](architecture.md).
 
 - Sidebar and window: `organize`, `header`, `space-name`, `sidebar-rows`, `today`, `folder-empty`, `create-space`, `dock`, `split-commands`, `split-focus`, `fullscreen`, `window-drag` and `urlfield`.
-- Page and panels: `prompts`, `dialogs`, `downloads`, `ext-actions`, `site-controls`, `commandbar`, `errorpages`, `little-window`, `private-window` and `toasts`.
+- Page and panels: `keyboard`, `prompts`, `dialogs`, `downloads`, `ext-actions`, `site-controls`, `commandbar`, `errorpages`, `little-window`, `private-window` and `toasts`.
 - Settings and onboarding: `settings-air-traffic`, `settings-appearance`, `settings-extensions`, `settings-frame`, `settings-toolbar`, `settings-general`, `settings-little-window`, `settings-privacy`, `settings-search`, `settings-shortcuts`, `settings-spaces`, `settings-tabs`, `settings-websites`, `look` and `onboarding`.
+
+Run the Keyboard main check with `--ararat-keyboard-main-scope` for the Find and Archive captures.
 
 Copy each PNG with its same-stem JSON file. View frames in the JSON use window coordinates in points. A region capture's sidecar describes the host window. The checker covers the sidebar, split segments, command bar and switcher, Little Window, Downloads and settings structures listed in [structure.json](../macos/scripts/mock-values/structure.json). Inspect native menus and rendered web DOM in the PNGs.
 
@@ -57,7 +59,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `A-Header` | Shortcut held and overflow at narrow width | `header-command`, `header-command-r`, `header-command-r-narrow`, `header-command-w` | not reviewed | These phases compare the pressed states of the control and keycaps (decisions 9–10). |
 | `A-Header` | Header overflow menu | `header-overflow-menu` | not reviewed | The PNG shows the tracked AppKit menu within the browser window's screen region. The sidecar describes the host window. |
 | `A-Layout` | Sidebar geometry | `header-240` | not reviewed | The token test covers the default 240 pt width and selected row dimensions. |
-| `A-SpaceName` | Name, chevron, overflow and collapsed pin group | `space-name-hover`, `space-name-collapsed`, `space-name-renamed` | not reviewed | The captures cover hover, collapse and rename. The native overflow menu still needs a frame. |
+| `A-SpaceName` | Name, chevron, overflow and collapsed pin group | `space-name-hover`, `space-name-collapsed`, `space-name-menu`, `space-name-renamed` | not reviewed | The Space Name check captures hover, collapse, the native menu and rename. |
 | `A-TabRows` | Pinned and Today rows, spinner, unread, crash and audio | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | not reviewed | The hover and pressed PNGs show an unselected loaded pin. The selected PNG shows the adjacent Today row. |
 | `A-TabRows` | Split segment geometry and unfocused fill | `split-focus (a), split-commands (vertical, split)` | matches | The token suite and the offscreen row test verify the mapped geometry and both unfocused fills. |
 | `A-TabRows` | Multi-selection | — | not built | Multi-selection is deferred past Phase 5 (§7). |
@@ -74,15 +76,15 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `B-Drag` | Cross-profile refusal | `dock-refused` | not reviewed | Decision 68 specifies the dimmed cell and refused pointer badge. |
 | `B-DragPage` | Page drop target for creating a split | `split-commands-drop-target` | not reviewed | The capture shows the split indicator before the simulated drag is released. |
 | `B-Floating` | Floating sidebar geometry and content | `fullscreen-edge` | not reviewed | The edge-reveal capture shows the floating panel during browser fullscreen. |
-| `B-FloatingDark` | Dark floating sidebar | — | not captured | A capture with the dark effective appearance is needed. |
-| `B-FloatingMotion` | Edge reveal, dwell and hide | — | not captured | The sidebar timing is checked elsewhere. A static frame cannot verify timing. |
+| `B-FloatingDark` | Dark floating sidebar | `fullscreen-dark-floating` | not reviewed | After the fullscreen assertions, the check captures the dark floating panel in a regular window. |
+| `B-FloatingMotion` | Edge reveal, dwell and hide | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | not reviewed | The check moves the pointer to the reveal edge and then away from the panel. The three images document the settled states. Dwell and motion durations need timing evidence. |
 | `B-Fullscreen` | Page fullscreen, browser fullscreen and edge reveal | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | not reviewed | Each condition has a separate capture. |
 | `B-History` | History deletion banner and Retry | `toasts-banner` | not reviewed | The decisions specify a per-profile banner on failure (decision 56). |
 | `B-HistoryStates` | History-store failures and retry states | `toasts-banner` | not reviewed | The error banner has a frame. Successful retry removes it. |
-| `B-Library` | Library rail and archived tabs | — | not captured | The Downloads capture covers a different Library page. |
-| `B-LibraryStates` | Archive list states | — | not captured | Archive search, restore and removal exist in LibraryView. |
-| `B-Menus` | Native row, space and split menus | — | not captured | The split-commands check asserts menu items and icons. The saved frame shows the split with the menu closed. |
-| `B-NoTab` | Empty page card and keyboard hints | — | not captured | Use an empty workspace capture with the sidebar visible. |
+| `B-Library` | Library rail and archived tabs | `keyboard-archive-list` | not reviewed | The Keyboard check opens Archive with two fixture entries before deleting or restoring either one. |
+| `B-LibraryStates` | Archive list states | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | not reviewed | The check captures the list, URL filtering, no search matches and an empty archive after Clear Archive. Row-action focus and hover, dark variants and rail interaction states still need frames. |
+| `B-Menus` | Native row, space and split menus | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | not reviewed | The checks open native menus for a Today tab, the space name and the left pane. Other row kinds and menu variants still need frames. |
+| `B-NoTab` | Empty page card and keyboard hints | `keyboard-no-tab` | not reviewed | The capture shows an empty space with the page card exposed. The mock's two keyboard hints need product UI. |
 | `B-SpacePaging` | Paging and dock cross-fade | `dock-mid` | not reviewed | The wheel-motion check records timing separately. |
 | `B-Split` | Two panes, focus ring and shared chrome | `split-focus (a, b)` | matches | Two panes, accent ring on the focused pane, no per-pane bar, one sidebar row with a segment per pane (per A-TabRows, not this page's single fill). VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `B-SplitStates` | Multiple panes, divider, drag and transfer | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | not reviewed | The caption describes a continuous separator line in Swift. SplitDividerView only paints the grip on hover or drag. |
@@ -108,16 +110,16 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `D-CommandBarPanels` | Command panel variants | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | not reviewed | The check captures the regular panel in five states. The Little Window panel has a separate capture. |
 | `D-CommandBarRows` | Result row sizing, inset and gap | — | matches | The mapped row and field dimensions match in the token suite. Row appearance is pending. |
 | `D-ErrorPages` | Offline and DNS errors | `errorpages-offline`, `errorpages-dns` | not reviewed | The native page fixtures capture each failure. |
-| `D-FindBar` | Find bar and result counter | `header-find-bar` | not reviewed | The header check shows the open bar before entering a query. The result counter still needs a populated frame. |
-| `D-FindBarPage` | Find bar over a page | `header-find-bar` | not reviewed | The host capture shows the open find bar over the page used by the header check. |
+| `D-FindBar` | Find bar and result counter | `header-find-bar`, `keyboard-find-count` | not reviewed | Header captures the open field. Keyboard captures the final match count and active match over the search fixture. |
+| `D-FindBarPage` | Find bar over a page | `header-find-bar`, `keyboard-find-count` | not reviewed | The Keyboard capture shows the find bar and its result count over the fixture page. |
 | `D-LittleWindow` | Bar, Open in menu, profile menu and command bar | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | not reviewed | The token table records the 48 pt bar height and compares the mapped colours and controls. |
 | `D-PrivateWindow` | Private window and URL-field mask | `private-window` | not reviewed | The screen mode captures a private browser window. |
-| `D-PrivateWindowEmpty` | Empty private window | — | not captured | The existing private-window frame shows the first adopted private tab. The empty mock needs a dedicated frame. |
+| `D-PrivateWindowEmpty` | Empty private window | `private-window-empty` | not reviewed | After checking a fresh incognito workspace, the capture temporarily shows its existing empty view. Closing the last private tab normally closes the window. |
 | `D-SadTab` | Crashed Today tab and pin | `errorpages-today-crash`, `errorpages-pin-crash` | not reviewed | The two captures exercise Archive Tab and Close Tab respectively. |
 | `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | not reviewed | The commandbar check verifies switching and cancellation without a PNG. |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | not reviewed | The history failure uses a per-profile banner (decision 56). |
 | `D-Toasts` | Update ready with Restart | — | not built | The updater is planned for a later phase (§15). |
-| `Dark` | Dark browser overview | — | not captured | A dark workspace capture is needed to compare the full window. |
+| `Dark` | Dark browser overview | `fullscreen-dark-docked` | not reviewed | The fullscreen check captures the dark docked window after it has returned to normal size. |
 | `E-About` | About and update states | — | not built | The settings implementation has no About pane. |
 | `E-AirTraffic` | Routing rules and destination editor | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | not reviewed | The second frame shows the saved route before opening the Default destination menu. |
 | `E-Appearance` | Appearance controls | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | not reviewed | The pane implements Theme, Look, the New Tab row and Tooltips. Page zoom is pending. |
@@ -132,7 +134,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `E-Privacy` | Clear data, retention, cookie and privacy controls | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | not reviewed | The user-facing protection placeholders do not ship in this phase (§7). |
 | `E-Privacy` | Blocker and dangerous-site warnings | — | not built | Design and sources are open (§14). |
 | `E-Search` | Search in Settings and highlighted result | `settings-search-search`, `settings-search-search-cleared` | not reviewed | The token suite verifies the result highlight's corner radius, inset and row height. |
-| `E-Shortcuts` | Shortcut list, recorder and conflicts | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder` | not reviewed | The list and active recorder have frames. Shortcut conflict and refusal states still need captures. |
+| `E-Shortcuts` | Shortcut list, recorder and conflicts | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder`, `settings-shortcuts-shortcuts-conflict`, `settings-shortcuts-shortcuts-refusal` | not reviewed | After restoring the test binding, the recorder shows the current holder for Command-T and the system refusal for Shift-Command-3. |
 | `E-SpacePage` | Settings for one space | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | not reviewed | The Spaces and Dock checks open the space-settings page. The Appearance check opens it from the Look row. |
 | `E-Spaces` | Space list and scroll direction | `settings-spaces-spaces` | not reviewed | The direction is a workspace-wide setting. |
 | `E-Sync` | Sync setup and devices | — | not built | Sync is scheduled for Phase 8 (decision 100). |
