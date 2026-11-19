@@ -113,14 +113,15 @@ func selectedSidebarRowKeepsItsFillDuringPressAndDrag() throws {
     defer { window.contentView = nil }
     let row = try #require(interactionRows(sidebar).first { $0.row.id == "pin" })
     let fill = try #require(row.subviews.first)
+    let selected = SidebarMetrics.rowSelectedFill(for: row.effectiveAppearance).cgColor
     let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
     row.pointerLocation = { point }
     row.mouseDown(with: try rowEvent(.leftMouseDown, point: point))
     #expect(row.pressed)
-    #expect(fill.layer?.backgroundColor?.alpha == SidebarMetrics.rowSelectedFillAlpha)
+    #expect(fill.layer?.backgroundColor == selected)
     row.dragSource = true
     #expect(row.pressed)
-    #expect(fill.layer?.backgroundColor?.alpha == SidebarMetrics.rowSelectedFillAlpha)
+    #expect(fill.layer?.backgroundColor == selected)
     #expect(!window.isVisible && !window.isKeyWindow)
 }
 

@@ -16,9 +16,67 @@ private func lookPanel() -> SidebarPanelView {
     let panel = SidebarPanelView(frame: NSRect(x: 0, y: 0, width: 64, height: 64))
     panel.reduceTransparency = { false }
     panel.systemAppearance = { NSAppearance(named: .aqua)! }
+    panel.appearance = NSAppearance(named: .aqua)
     panel.updateLook(nil, nil, fraction: 0)
     panel.layoutSubtreeIfNeeded()
     return panel
+}
+
+@Test @MainActor
+func unthemedDarkSidebarDrawsTheMeasuredBackdrop() throws {
+    let panel = lookPanel()
+    panel.appearance = NSAppearance(named: .darkAqua)
+    #expect(!panel.coating.isHidden)
+    expectRGB(try pixel(panel.gradient), 22.0 / 255, 15.0 / 255, 31.0 / 255)
+    panel.active = false
+    #expect(!panel.coating.isHidden)
+    panel.appearance = NSAppearance(named: .aqua)
+    #expect(panel.coating.isHidden)
+}
+
+@Test @MainActor
+func autoLookUpdatesSidebarControlsAndSelectionOffscreen() throws {
+    let panel = lookPanel()
+    let row = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "tab",
+                  title: "Test", url: "https://example.com", depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "pinned",
+                              todayId: "today", favoritesId: nil, archiveAfter: .hours12, profileName: "Default",
+                              profile: .`default`, id: "space", title: "Space", icon: nil, look: nil,
+                              favorites: [], pinned: [], today: [row])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
+    panel.addSubview(sidebar)
+    func descendants(_ root: NSView) -> [NSView] {
+        root.subviews + root.subviews.flatMap(descendants)
+    }
+    let views = descendants(sidebar)
+    let title = try #require(views.compactMap { $0 as? NSTextField }.first { $0.stringValue == "Test" })
+    let placeholder = try #require(views.compactMap { $0 as? NSTextField }.first { $0.stringValue == URLFieldContent.placeholderText })
+    let clear = try #require(views.compactMap { $0 as? SidebarClearButton }.first)
+    let dock = try #require(views.compactMap { $0 as? SpaceDockButton }.first)
+    let rowView = try #require(views.compactMap { $0 as? SidebarRowView }.first { $0.row.id == row.id })
+    let fill = try #require(rowView.subviews.first?.layer)
+    rowView.update(row: row, selected: true)
+    for (system, look, expected) in [
+        (NSAppearance.Name.aqua, solidLook(0, 0.106, 0.349), NSAppearance.Name.darkAqua),
+        (.darkAqua, solidLook(1, 0.96, 0.90), .aqua),
+        (.aqua, solidLook(0, 0.106, 0.349, opacity: 0.1), .aqua),
+    ] {
+        panel.appearance = NSAppearance(named: system)
+        panel.systemAppearance = { NSAppearance(named: system)! }
+        panel.updateLook(look, look, fraction: 0)
+        let labels: [(NSView, NSColor?)] = [(title, title.textColor), (placeholder, placeholder.textColor),
+                                            (clear, clear.contentTintColor), (dock, dock.checkGlyphColor)]
+        for (view, color) in labels {
+            #expect(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expected)
+            var resolved: NSColor?
+            view.effectiveAppearance.performAsCurrentDrawingAppearance { resolved = color?.usingColorSpace(.sRGB) }
+            let red = try #require(resolved).redComponent
+            #expect(expected == .darkAqua ? red > 0.5 : red < 0.5)
+        }
+        let selected = expected == .darkAqua ? SidebarMetrics.rowSelectedFillDark : SidebarMetrics.rowSelectedFillLight
+        #expect(fill.backgroundColor == selected.cgColor)
+        #expect(dock.checkFill?.alphaComponent == (expected == .darkAqua ? 0.10 : 0.55))
+    }
 }
 
 @MainActor
@@ -94,7 +152,7 @@ func glassWithZeroOpacityUnderReducedTransparencyKeepsGrain() throws {
 }
 
 @Test @MainActor
-func noLookKeepsLegacyVibrancyAndPixels() throws {
+func unthemedLightSidebarKeepsLegacyVibrancyAndPixels() throws {
     for reduced in [false, true] {
         let panel = lookPanel()
         panel.reduceTransparency = { reduced }
@@ -105,6 +163,7 @@ func noLookKeepsLegacyVibrancyAndPixels() throws {
         #expect(panel.vibrancy.blendingMode == .behindWindow)
         #expect(panel.vibrancy.appearance == nil)
         let legacy = NSVisualEffectView(frame: panel.bounds)
+        legacy.appearance = panel.appearance
         legacy.material = .sidebar
         legacy.blendingMode = .behindWindow
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 128, height: 64), styleMask: [], backing: .buffered, defer: false)
