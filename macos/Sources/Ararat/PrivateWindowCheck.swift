@@ -77,13 +77,23 @@ extension Runtime {
             child.adapter?.session.queue.sync { child.adapter?.session.store?.snapshot(windowId: child.windowID) }
         }
         func regularRowsUnchanged() -> Bool {
-            guard let before = quitBefore, let rows = captureCheckRows() else { return false }
+            guard let before = quitBefore else { wait("regular rows baseline missing"); return false }
+            guard let rows = captureCheckRows() else { wait("regular rows capture failed"); return false }
             // Why not the whole table: the regular window's device-local Window/LastSelected rows
             // commit on their own batch; the workspace rows are what a private run must not touch.
             func stable(_ rows: [[String]]) -> [[String]] {
                 rows.filter { $0.count == 3 && $0[0] != "window" && $0[0] != "last_selected" }
             }
-            return stable(before) == stable(rows)
+            let old = stable(before)
+            let new = stable(rows)
+            guard old != new else { return true }
+            check.wait("regular rows changed", {
+                let diff = checkRecordDiff(old, new, includeValues: true)
+                let details = (try? JSONSerialization.data(withJSONObject: diff, options: .sortedKeys))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? String(describing: diff)
+                return "phase=\(browserCheckPhase) diff=\(details)"
+            }())
+            return false
         }
         func diskSnapshot() -> [String: Any] {
             let manager = FileManager.default
@@ -115,10 +125,17 @@ extension Runtime {
         case 1:
             guard let seed = browserCheckSeedID, sliceActive == seed,
                   snapshot.selectedId == seed, host.activeItemId() == seed,
-                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }),
-                  !tab.isLoading else { wait("regular seed selected"); return }
+                  let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == seed }) else {
+                wait("regular seed selected"); return
+            }
+            guard !tab.isLoading, tab.navigationCount > 0 else { wait("regular seed navigation"); return }
+            guard let rows = captureCheckRows() else { wait("regular rows capture failed"); return }
+            guard !tab.url.isEmpty, checkStoredTabMetadata(rows, item: seed, url: tab.url, title: tab.title) else {
+                wait("regular seed metadata"); return
+            }
+            let seedRow = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }?.today.first { $0.id == seed }
+            guard seedRow?.url == tab.url, seedRow?.title == tab.title else { wait("regular seed snapshot"); return }
             browserCheckBefore = snapshot
-            quitBefore = captureCheckRows()
             check.title = "ararat-private-\(UUID().uuidString)"
             check.db = quitPath ?? ""
             // The profile is the runners' `--user-data-dir` (RelaunchDriver.swift:195), not the
@@ -129,6 +146,7 @@ extension Runtime {
                 .map { String($0.dropFirst("--user-data-dir=".count)) } ?? ""
             check.diskBefore = diskSnapshot()
             check.mark("private_disk_recorded", !check.title.isEmpty && !check.db.isEmpty && !check.userDataDir.isEmpty)
+            quitBefore = rows
             host.checkCreateIncognito()
             browserCheckPhase = 2
         case 2:
@@ -173,7 +191,7 @@ extension Runtime {
             guard label else { wait("private close label"); return }
             check.mark("private_routing_domain", host.checkRoutingDomain() && (child.host?.checkRoutingDomain() == true))
             check.mark("private_downloads_library_row", sidebar.checkPrivateDownloadsLibraryRowHidden)
-            guard regularRowsUnchanged() else { wait("regular rows unchanged"); return }
+            guard regularRowsUnchanged() else { return }
             privateFirstWindowID = child.windowID
             privateFirstItem = item
             privateFirstLive = live
@@ -336,7 +354,8 @@ extension Runtime {
                 first.close(next)
                 return
             }
-            guard snap.archive.isEmpty, regularRowsUnchanged() else { wait("private close leaves no archive"); return }
+            guard snap.archive.isEmpty else { wait("private close leaves no archive"); return }
+            guard regularRowsUnchanged() else { return }
             // Only the uniquely titled row is left; closing the window closes with its last tab.
             browserCheckPhase = 9
         case 9:
@@ -357,8 +376,8 @@ extension Runtime {
             first.host?.close()
             browserCheckPhase = 10
         case 10:
-            guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0,
-                  regularRowsUnchanged() else { wait("last private window released"); return }
+            guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0 else { wait("last private window released"); return }
+            guard regularRowsUnchanged() else { return }
             check.mark("private_last_close_releases")
             check.mark("private_rows_unchanged")
             host.checkCreateIncognito()
@@ -387,8 +406,8 @@ extension Runtime {
                        child.container?.checkToastState.visible != true && child.clearUndo.available == false)
             browserCheckPhase = 26
         case 26:
-            guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0,
-                  regularRowsUnchanged() else { wait("private window closed by Clear"); return }
+            guard privateChildren().isEmpty, PrivateWorkspaces.liveCount == 0 else { wait("private window closed by Clear"); return }
+            guard regularRowsUnchanged() else { return }
             check.mark("private_last_tab_closes_window")
             check.mark("private_rows_unchanged")
             let result = check.diagnostics()
