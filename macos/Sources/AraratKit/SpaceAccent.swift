@@ -3,6 +3,8 @@ import AppKit
 public enum SpaceAccent {
     public static let teal = NSColor(srgbRed: 47 / 255, green: 111 / 255, blue: 115 / 255, alpha: 1)
     public static let privateColor = NSColor(srgbRed: 110 / 255, green: 110 / 255, blue: 120 / 255, alpha: 1)
+    // Why not 3.0: 8-bit quantization can push an exact 3.0 below 3:1.
+    private static let minimumContrast: CGFloat = 3.1
 
     public static func resolve(_ look: Look?, privateWindow: Bool = false, fallback: NSColor = teal) -> NSColor {
         if privateWindow { return privateColor }
@@ -33,7 +35,7 @@ public enum SpaceAccent {
                                    green: color.greenComponent * alpha + base.greenComponent * (1 - alpha),
                                    blue: color.blueComponent * alpha + base.blueComponent * (1 - alpha), alpha: 1)
             let foreground = luminance(rendered) + 0.05
-            return max(foreground, background) / min(foreground, background) >= 3
+            return max(foreground, background) / min(foreground, background) >= minimumContrast
         }
 
         if hasContrast(rgb) { return accent }

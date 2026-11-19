@@ -205,9 +205,12 @@ func sidebarAccentPartsHaveThreeToOneContrastOnTheLook() throws {
         for (part, color, backdrop) in samples {
             let foreground = try #require(color.flatMap(NSColor.init(cgColor:)))
             let measured = contrast(foreground, over: backdrop)
+            let quantized = contrast(foreground, over: backdrop, quantized: true)
             let ratio = String(format: "%.3f", measured)
-            print("mockfix-d-2 \(name) \(part): \(ratio)")
+            let quantizedRatio = String(format: "%.3f", quantized)
+            print("mockfix-d-3 \(name) \(part): \(ratio) (8-bit \(quantizedRatio))")
             #expect(measured >= 3, "\(name) \(part)")
+            #expect(quantized >= 3, "\(name) \(part), 8-bit")
             let rgb = try #require(foreground.usingColorSpace(.sRGB))
             let hsv = NSColor(deviceRed: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent, alpha: 1)
             if hsv.saturationComponent == 0 {
@@ -235,10 +238,13 @@ func sidebarAccentOnlyUsesOpaqueFallbackWhenItsAlphaCannotReachThreeToOne() {
 }
 
 @MainActor
-private func contrast(_ color: NSColor, over backdrop: NSColor) -> CGFloat {
+private func contrast(_ color: NSColor, over backdrop: NSColor, quantized: Bool = false) -> CGFloat {
     func luminance(_ color: NSColor) -> CGFloat {
         let rgb = color.usingColorSpace(.sRGB)!
-        func linear(_ value: CGFloat) -> CGFloat { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        func linear(_ channel: CGFloat) -> CGFloat {
+            let value = quantized ? (channel * 255).rounded() / 255 : channel
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
         return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
     }
     let foreground = luminance(SidebarPanelView.mix(color, color, fraction: 0, base: backdrop))
