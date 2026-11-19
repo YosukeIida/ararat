@@ -472,6 +472,20 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 - すべてのリリースに Corresponding Source を付ける（4.7）。
 - Windows と Linux のアップデーターは、それぞれの phase で決定する。
 
+`.github/workflows/ci.yml` は push と pull request で動く。全ワークフローの action がコミットの SHA で固定されていることを検査し、lock 済みの Nix devshell で Rust の core と FFI のテストを実行する。Swift の `PromptFixtureTests` と `AraratUITests` は、arm64 の macOS runner 上で Xcode 27.2 を使って直列に実行する。
+
+`.github/workflows/release.yml` は `v1.2.3` のようなバージョンタグで動く。手動実行時は、ワークフローの ref に同じタグを指定する。組み立てジョブは、`engine/build-inputs.toml` の SHA-256 と、タグが指す `engine/` の Git tree ID をこの順に 1 行ずつ並べ、末尾の改行を含めて SHA-256 を取る。エンジンの公開側は、`engine-<key>` タグの GitHub prerelease に `Chromium.zip`、`Chromium.zip.sha256`（`shasum -a 256 Chromium.zip` の出力）、`provenance.json` を添付する。ZIP には `out/Ararat/Chromium.app` と、`chrome/app/` 以下の app・renderer・GPU の entitlement plist を入れる。CI は ZIP の SHA-256 を照合し、そのエンジンでアプリを組み立てる。
+
+`release-signing` ジョブは、組み立て済みのアプリを取得し、Developer ID で署名して notarization と stapling を行い、stable チャネルの Sparkle appcast を生成する。署名 ID は一時キーチェーンに保存し、notarization の API キーは一時ファイルでスクリプトに渡す。どちらも runner の一時ディレクトリに置き、署名ジョブの終了時に削除する。公開ジョブは、署名済み ZIP、appcast、Corresponding Source のアーカイブとチェックサムをタグのドラフトリリースに添付してから公開する。
+
+`release-signing` 環境では、信頼済みのリリースタグからの実行を許可し、以下の環境シークレットを登録する。
+
+- `DEVELOPER_ID_P12`（Developer ID Application の PKCS#12 エクスポートを Base64 にした値）、`DEVELOPER_ID_P12_PASSWORD`
+- `NOTARY_API_KEY`（App Store Connect チームの `.p8` ファイルの内容）、`NOTARY_API_KEY_ID`、`NOTARY_API_ISSUER`
+- `SPARKLE_ED_PRIVATE_KEY`（Sparkle の EdDSA 秘密鍵をエクスポートしたファイルの内容）
+
+リポジトリ変数 `ARARAT_ED_PUBLIC_KEY` に対応する Sparkle 公開鍵を設定する。フィードの既定 URL はリポジトリの `releases/latest/download/appcast.xml` である。生成したフィードを別の場所で配信する場合は、リポジトリ変数 `ARARAT_FEED_URL` に HTTPS URL を指定する。`release-signing` の環境変数 `ARARAT_RELEASE_ENTITLEMENTS` には本番用 entitlement plist の内容を設定する。これらの entitlement に対して Apple が provisioning profile を要求する場合は、環境変数 `ARARAT_PROVISIONING_PROFILE` に配布用 profile を Base64 にした値を設定する。
+
 ## 13. 開発プロセス
 
 各作業単位は次の順で進める: Opus 5.5 がスコープを決め → Codex `gpt-6.2-sol`（effort medium、personal アカウント）と OpenCode Go の GLM-5.3-Flash が 2 席で並列に実装し、Go の残量がないときは無料モデルを使い → Opus 5.5 がレビューし、指摘ごとに修正するか否かを判定する。personal アカウントは 2026-11-08 のオーナーの選択であり、ararat では labteam を使わない。際どいエッジケースのバグは逆順で進める（Codex が調査し、Opus がセカンドオピニオンを出し、Codex が実装し、Opus がレビューする）。計測と設計段階の作業は、オーナーが求めない限りレビューを要しない。タスクは orca-agent-team または herdr-agent-team の席で実行する（`AGENTS.md`）。レビューと判定は `docs/reviews/` に保存する。

@@ -1,0 +1,28 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check action pins
+        run: |
+          .github/scripts/test-check-pins.sh
+          .github/scripts/check-pins.rb
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Test Rust
+        run: nix develop ./nix --no-update-lock-file -c cargo test --locked --manifest-path core/Cargo.toml -p ararat-core -p ararat-ffi
+      - name: Build Swift bindings
+        run: nix develop ./nix --no-update-lock-file -c macos/scripts/build-core.sh
+      - name: Test Swift
+        working-directory: macos
+        run: swift test --no-parallel --filter 'PromptFixtureTests|AraratUITests'

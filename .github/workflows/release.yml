@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+
+jobs:
+  assemble:
+    runs-on: xcode-27
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read release tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != tag || ! "$GITHUB_REF_NAME" =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo 'Select a release tag such as v1.2.3' >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Download pinned engine prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          manifest=$(shasum -a 256 engine/build-inputs.toml | cut -d ' ' -f 1)
+          tree=$(git rev-parse "${GITHUB_SHA}:engine")
+          key=$(printf '%s\n' "$manifest" "$tree" | shasum -a 256 | cut -d ' ' -f 1)
+          engine_tag="engine-$key"
+          test "$(gh release view "$engine_tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true
+          cd "$RUNNER_TEMP"
+          gh release download "$engine_tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern Chromium.zip --pattern Chromium.zip.sha256 --pattern provenance.json
+          read -r expected filename < Chromium.zip.sha256
+          actual=$(shasum -a 256 Chromium.zip | cut -d ' ' -f 1)
+          if [[ "$actual" != "$expected" || "$filename" != Chromium.zip ]]; then
+            echo 'Chromium.zip failed SHA-256 verification' >&2
+            exit 1
+          fi
+          test -s provenance.json
+          ditto -x -k Chromium.zip engine
+          rm Chromium.zip
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Build Swift bindings
+        run: nix develop ./nix --no-update-lock-file -c macos/scripts/build-core.sh
+      - name: Assemble app
+        env:
+          ARARAT_BUILD_VERSION: ${{ steps.tag.outputs.version }}
+          ARARAT_ED_PUBLIC_KEY: ${{ vars.ARARAT_ED_PUBLIC_KEY }}
+          ARARAT_FEED_URL: ${{ vars.ARARAT_FEED_URL }}
+        run: |
+          : "${ARARAT_ED_PUBLIC_KEY:?Set the Sparkle EdDSA public key}"
+          : "${ARARAT_FEED_URL:=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml}"
+          if [[ "$ARARAT_FEED_URL" != https://?* ]]; then
+            echo 'Set an HTTPS appcast URL' >&2
+            exit 1
+          fi
+          export ARARAT_FEED_URL
+          swift build --package-path macos -c release
+          engine="$RUNNER_TEMP/engine"
+          stage="$RUNNER_TEMP/stage"
+          macos/scripts/bundle-app.sh "$engine/out/Ararat/Chromium.app" "$stage"
+          ditto -c -k --keepParent "$stage/Ararat.app" "$RUNNER_TEMP/assembled.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assembled-app
+          path: ${{ runner.temp }}/assembled.zip
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+
+  sign:
+    needs: assemble
+    runs-on: xcode-27
+    environment: release-signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: assembled-app
+          path: ${{ runner.temp }}
+      - name: Prepare signing inputs
+        run: |
+          ditto -x -k "$RUNNER_TEMP/assembled.zip" "$RUNNER_TEMP/stage"
+          rm "$RUNNER_TEMP/assembled.zip"
+          swift package --package-path macos resolve
+      - name: Sign, notarize and generate appcast
+        env:
+          ARARAT_SIGNING_KEYCHAIN: ${{ runner.temp }}/ararat-signing/release.keychain-db
+          ARARAT_RELEASE_ENTITLEMENTS: ${{ vars.ARARAT_RELEASE_ENTITLEMENTS }}
+          ARARAT_PROVISIONING_PROFILE: ${{ vars.ARARAT_PROVISIONING_PROFILE }}
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ needs.assemble.outputs.version }}
+        run: |
+          umask 077
+          creds="$RUNNER_TEMP/ararat-signing"
+          keychain="$ARARAT_SIGNING_KEYCHAIN"
+          mkdir "$creds"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          printf '%s' "${DEVELOPER_ID_P12:?}" | base64 --decode > "$creds/developer-id.p12"
+          printf '%s\n' "${NOTARY_API_KEY:?}" > "$creds/notary.p8"
+          printf '%s\n' "${ARARAT_RELEASE_ENTITLEMENTS:?}" > "$creds/entitlements.plist"
+          printf '%s\n' "${SPARKLE_ED_PRIVATE_KEY:?}" > "$creds/sparkle.key"
+          # Why not use login.keychain: a private filename keeps creation out of the search list.
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$creds/developer-id.p12" -k "$keychain" -f pkcs12 \
+            -P "${DEVELOPER_ID_P12_PASSWORD:?}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          rm "$creds/developer-id.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" |
+            sed -n 's/^[^"]*"\(Developer ID Application: [^"]*\)".*$/\1/p')
+          if [[ -z "$identity" || "$identity" == *$'\n'* ]]; then
+            echo 'Expected exactly one Developer ID Application identity' >&2
+            exit 1
+          fi
+          notary_key_id="${NOTARY_API_KEY_ID:?}"
+          notary_issuer="${NOTARY_API_ISSUER:?}"
+          unset DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_API_KEY NOTARY_API_KEY_ID NOTARY_API_ISSUER SPARKLE_ED_PRIVATE_KEY
+          app="$RUNNER_TEMP/stage/Ararat.app"
+          if [[ -n "$ARARAT_PROVISIONING_PROFILE" ]]; then
+            printf '%s' "$ARARAT_PROVISIONING_PROFILE" | base64 --decode > "$app/Contents/embedded.provisionprofile"
+          fi
+          macos/scripts/sign-release.sh --identity "$identity" --entitlements "$creds/entitlements.plist" "$app"
+          macos/scripts/notarize.sh --key "$creds/notary.p8" --key-id "$notary_key_id" \
+            --issuer "$notary_issuer" --keychain "$keychain" "$app"
+          rm "$creds/notary.p8"
+          out="$RUNNER_TEMP/signed"
+          mkdir "$out"
+          ditto -c -k --keepParent "$app" "$out/Ararat.zip"
+          export ARARAT_DOWNLOAD_URL_PREFIX="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/"
+          macos/scripts/make-appcast.sh --key-file "$creds/sparkle.key" stable "$RELEASE_VERSION" "$out"
+      - name: Delete temporary signing credentials
+        if: always()
+        run: |
+          creds="$RUNNER_TEMP/ararat-signing"
+          status=0
+          if [[ -f "$creds/release.keychain-db" ]]; then
+            security delete-keychain "$creds/release.keychain-db" || status=$?
+          fi
+          rm -rf -- "$creds"
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-release
+          path: |
+            ${{ runner.temp }}/signed/Ararat.zip
+            ${{ runner.temp }}/signed/appcast.xml
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: sign
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-release
+          path: ${{ runner.temp }}/release
+      - name: Generate and attach Corresponding Source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          engine/scripts/corresponding-source "$RUNNER_TEMP/Ararat-source"
+          cd "$RUNNER_TEMP"
+          test -s release/Ararat.zip
+          test -s release/appcast.xml
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes
+          fi
+          test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
+            release/Ararat.zip release/appcast.xml Ararat-source.tar.xz Ararat-source.tar.xz.sha256
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

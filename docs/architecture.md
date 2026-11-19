@@ -465,6 +465,20 @@ A small Rust service: blob put/get/list per group, device-key verification, rate
 - Every release carries its Corresponding Source (4.7).
 - Windows and Linux updaters are decided in their phases.
 
+`.github/workflows/ci.yml` runs on pushes and pull requests. It checks every workflow's action pins, runs the Rust core and FFI tests in the locked Nix devshell, and runs `PromptFixtureTests` and `AraratUITests` serially on an arm64 macOS runner with Xcode 27.2.
+
+`.github/workflows/release.yml` runs on version tags such as `v1.2.3`. For a manual run, select the same tag as the workflow ref. The assembly job hashes the two newline-terminated lines containing the SHA-256 of `engine/build-inputs.toml` and the tag's Git tree ID for `engine/`, in that order. The engine producer publishes a GitHub prerelease tagged `engine-<key>` with `Chromium.zip`, `Chromium.zip.sha256` (the output of `shasum -a 256 Chromium.zip`) and `provenance.json`. The ZIP contains `out/Ararat/Chromium.app` and the app, renderer and GPU entitlement plists under `chrome/app/`. CI verifies the ZIP's SHA-256 and assembles the app with that engine.
+
+The `release-signing` job downloads the assembled app, signs it with Developer ID, notarizes and staples it, and generates the stable Sparkle appcast. It keeps the signing identity in a temporary keychain and gives the notarization script the API key as a temporary file. Both are under the runner's temporary directory and are deleted after signing. The publish job adds the signed ZIP, appcast, and Corresponding Source archive and checksum to a draft release for the tag, then publishes the release.
+
+Configure the `release-signing` environment to allow trusted release tags. Add these environment secrets.
+
+- `DEVELOPER_ID_P12` (base64-encoded Developer ID Application PKCS#12 export) and `DEVELOPER_ID_P12_PASSWORD`
+- `NOTARY_API_KEY` (the App Store Connect team's `.p8` file contents), `NOTARY_API_KEY_ID` and `NOTARY_API_ISSUER`
+- `SPARKLE_ED_PRIVATE_KEY` (the exported Sparkle EdDSA private key file contents)
+
+Set the repository variable `ARARAT_ED_PUBLIC_KEY` to the matching Sparkle public key. The feed URL defaults to the repository's `releases/latest/download/appcast.xml`. Set the repository variable `ARARAT_FEED_URL` to the HTTPS URL when serving the generated feed elsewhere. Set the `release-signing` environment variable `ARARAT_RELEASE_ENTITLEMENTS` to the production entitlement plist contents. If Apple requires a provisioning profile for those entitlements, set the environment variable `ARARAT_PROVISIONING_PROFILE` to the base64-encoded distribution profile.
+
 ## 13. Development process
 
 Each unit of work: Opus 5.5 sets the scope → two implementation seats run in parallel, Codex `gpt-6.2-sol` (effort medium, personal account) and GLM-5.3-Flash on OpenCode Go (free model when Go is out) → Opus 5.5 reviews and decides fix or no fix per finding. The owner chose the personal account on 2026-11-08; ararat does not use labteam. Hard edge-case bugs run the other way round (Codex investigates, Opus gives a second opinion, Codex implements, Opus reviews). Measurement and design-stage work need no review unless the owner asks. Tasks run on orca-agent-team or herdr-agent-team seats (`AGENTS.md`). Reviews and judgements are kept in `docs/reviews/`.
