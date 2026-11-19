@@ -12,7 +12,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     var scheduleSpinnerStart: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
-    private var pendingSpinnerStart: DispatchWorkItem?
+    private var pendingSpinnerStart: (requestID: Int, work: DispatchWorkItem)?
     private var spinningRequest: Int?
     private var updating = false
     private var live = ""
@@ -141,7 +141,8 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         count.textColor = notFound ? .systemRed : .secondaryLabelColor
         previous.isEnabled = !notFound
         next.isEnabled = !notFound
-        pendingSpinnerStart?.cancel()
+        if searching, pendingSpinnerStart?.requestID == requestID { return }
+        pendingSpinnerStart?.work.cancel()
         pendingSpinnerStart = nil
         if let spinningRequest, !searching || spinningRequest != requestID {
             spinner.stopAnimation(nil)
@@ -156,7 +157,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
             self.spinner.isHidden = false
             self.spinner.startAnimation(nil)
         }
-        pendingSpinnerStart = start
+        pendingSpinnerStart = (requestID, start)
         scheduleSpinnerStart(0.25, start)
     }
 
