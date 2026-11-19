@@ -223,6 +223,51 @@ func chromiumNewTabMenuFollowsTheCoreBinding() async throws {
 }
 
 @Test @MainActor
+func chromiumCloseShortcutFollowsTheActiveCloseMenuItem() throws {
+    let file = NSMenu(title: "File")
+    let closeWindowAction = NSSelectorFromString("performClose:")
+    let closeTabAction = NSSelectorFromString("commandDispatch:")
+    let secondary = file.addItem(withTitle: "", action: nil, keyEquivalent: "W")
+    secondary.tag = 0
+    secondary.isHidden = true
+    let primary = file.addItem(withTitle: "Close Window", action: closeWindowAction, keyEquivalent: "w")
+    primary.tag = 34012
+    primary.identifier = NSUserInterfaceItemIdentifier("close_tab")
+
+    var binding = try #require(defaultKeyBindings().first { $0.command == "close_tab" })
+    KeyBindingsModel.apply([binding], to: file)
+    #expect(primary.keyEquivalent == "w" && primary.keyEquivalentModifierMask == [.command])
+    #expect(primary.action == closeWindowAction)
+
+    binding.key = KeyCombination(key: "j", command: true, control: false, option: false, shift: false)
+    KeyBindingsModel.apply([binding], to: file)
+    #expect(primary.keyEquivalent == "j" && primary.keyEquivalentModifierMask == [.command])
+    #expect(primary.action == closeWindowAction)
+
+    // Chromium changes the menu items' roles when a tabbed window becomes active.
+    primary.title = "Close Tab"
+    primary.tag = 34015
+    primary.action = closeTabAction
+    secondary.title = "Close Window"
+    secondary.tag = 34012
+    secondary.action = closeWindowAction
+    secondary.isHidden = false
+    KeyBindingsModel.apply([binding], to: file)
+    #expect(primary.keyEquivalent == "j" && primary.keyEquivalentModifierMask == [.command])
+    #expect(primary.action == closeTabAction)
+    #expect(secondary.keyEquivalent == "W" && secondary.keyEquivalentModifierMask == [.command])
+
+    binding.key = binding.defaultKey
+    KeyBindingsModel.apply([binding], to: file)
+    #expect(primary.keyEquivalent == "w" && primary.keyEquivalentModifierMask == [.command])
+
+    binding.key = nil
+    KeyBindingsModel.apply([binding], to: file)
+    #expect(primary.keyEquivalent.isEmpty)
+    #expect(secondary.keyEquivalent == "W" && secondary.keyEquivalentModifierMask == [.command])
+}
+
+@Test @MainActor
 func installingArchiveMenuKeepsEveryHistoryTagKnownToChromium() throws {
     _ = NSApplication.shared
     let originalMenu = NSApp.mainMenu

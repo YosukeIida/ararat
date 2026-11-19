@@ -55,7 +55,7 @@ public final class KeyBindingsModel: ObservableObject {
         func collectShortcuts(in menu: NSMenu) {
             for item in menu.items {
                 if let submenu = item.submenu { collectShortcuts(in: submenu) }
-                guard let id = chromiumAliasCommand(tag: item.tag) ?? item.identifier?.rawValue,
+                guard let id = chromiumAliasCommand(for: item) ?? item.identifier?.rawValue,
                       let row = bindings.first(where: { $0.command == id }) else { continue }
                 shortcuts.append((item, row.key))
             }
@@ -68,8 +68,9 @@ public final class KeyBindingsModel: ObservableObject {
         }
     }
 
-    private static func chromiumAliasCommand(tag: Int) -> String? {
-        switch tag {
+    private static func chromiumAliasCommand(for item: NSMenuItem) -> String? {
+        if item.identifier?.rawValue == "close_tab" { return "close_tab" }
+        return switch item.tag {
         case 34014: "new_tab" // IDC_NEW_TAB
         case 34015: "close_tab" // IDC_CLOSE_TAB
         case 34031: "quit" // IDC_EXIT
@@ -200,7 +201,8 @@ public final class KeyBindingsModel: ObservableObject {
                 if let holder = menuShortcutHolder(in: submenu, event: event, candidate: candidate, command: command, coreHolder: coreHolder) { return holder }
                 continue
             }
-            if let id = item.identifier?.rawValue, binding(command: id) != nil { continue }
+            let alias = Self.chromiumAliasCommand(for: item)
+            if alias == nil, let id = item.identifier?.rawValue, binding(command: id) != nil { continue }
             let equivalent = item.keyEquivalent
             guard !equivalent.isEmpty else { continue }
             let itemModifiers = item.keyEquivalentModifierMask
@@ -208,9 +210,9 @@ public final class KeyBindingsModel: ObservableObject {
             let deleteMatches = (key == "\u{7F}" && equivalent == "\u{08}") || (key == "\u{F728}" && equivalent == "\u{7F}")
             guard matches || (deleteMatches && itemModifiers == modifiers) else { continue }
             // The recorder also recognizes Chromium's contextual ⌘W Close Window item.
-            let alias = item.tag == 34012 && key == "w" && modifiers == .command // IDC_CLOSE_WINDOW
-                ? "close_tab" : Self.chromiumAliasCommand(tag: item.tag)
-            guard let alias, alias == command || alias == coreHolder else { return item.title }
+            let contextualAlias = item.tag == 34012 && key == "w" && modifiers == .command // IDC_CLOSE_WINDOW
+                ? "close_tab" : alias
+            guard let contextualAlias, contextualAlias == command || contextualAlias == coreHolder else { return item.title }
         }
         return nil
     }
