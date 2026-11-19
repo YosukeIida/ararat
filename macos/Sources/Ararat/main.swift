@@ -496,6 +496,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     quitMode == "screen-quit" && CommandLine.arguments.contains("--ararat-quit-confirm-check")
   }
   var quitConfirmationChecks: [Bool] = []
+  var screenQuitCancelled = false
 
   func confirmQuit(poweringOff: Bool, shortcut: Bool, repeatKey: Bool,
                    continueQuit: @escaping () -> Void) -> Bool {
@@ -553,8 +554,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
                           quitBinding: { [weak self] in self?.keyBindings?.binding(command: "quit")?.key },
                           onModal: inspect) { [weak self] accepted, checked in
       guard let self else { return }
-      if self.checksQuitConfirmation, !accepted, self.quitConfirmationChecks.count == 1, let host = self.host {
-        DispatchQueue.main.async { self.sendQuitKey(host) }
+      if self.checksQuitConfirmation, self.quitPhase == 8, !accepted, self.quitConfirmationChecks == [true],
+         let host = self.host {
+        self.screenQuitCancelled = !host.checkTryingToQuit() &&
+          host.checkClosingEvents().count == self.screenClosingOffset
       }
       guard accepted else { return }
       if QuitConfirmation.disablesWarning(accepted: accepted, checked: checked), let session {
@@ -9375,6 +9378,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     return false
   }
 
+  func screenQuitClosingEvents(_ host: any ARWindowHostAPI) -> [Bool] {
+    host.checkClosingEvents().dropFirst(screenClosingOffset).map(\.boolValue)
+  }
+
+  func answerScreenQuitBeforeUnload(_ host: any ARWindowHostAPI, stay: Bool) {
+    // Why not find a window by its button alone: the quit panel exposes the same key equivalents.
+    if checksQuitConfirmation {
+      guard !quitConfirmation.isPending,
+            ScreenQuitConfirmationCheck.canAnswerBeforeUnload(stay: stay, panels: quitConfirmationChecks,
+              closing: screenQuitClosingEvents(host), tryingToQuit: host.checkTryingToQuit()) else { return }
+    }
+    _ = clickScreenDialog(stay: stay)
+  }
+
   func quitTick() {
     guard let mode = quitMode else { return }
     let sameProfileEmpty = CommandLine.arguments.contains("--ararat-same-profile-empty-quit-check")
@@ -9608,14 +9625,27 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if screenDialogs == 0 { _ = clickScreenDialog(stay: true); return }
       guard !host.checkTryingToQuit(), host.tabs().count == 1,
             (host.tabs() as? [any ARTabAPI])?.first?.checkHasBeforeUnload() == true else { return }
+      if checksQuitConfirmation {
+        guard hasUsableHost, NSApp.modalWindow == nil, host.checkClosingEvents().last?.boolValue == false else { return }
+      }
       screenClosingOffset = host.checkClosingEvents().count
       screenDialogs = 0
+      quitPhase = checksQuitConfirmation ? 8 : 3
+      sendQuitKey(host)
+      return
+    }
+    if quitPhase == 8, mode == "screen-quit", let host {
+      guard screenQuitCancelled, hasUsableHost, NSApp.modalWindow == nil else { return }
       quitPhase = 3
       sendQuitKey(host)
       return
     }
     if quitPhase == 3, let host, mode != "quit" {
-      if mode == "screen-quit", screenDialogs == 0 { _ = clickScreenDialog(stay: true); return }
+      if mode == "screen-quit", screenDialogs == 0 { answerScreenQuitBeforeUnload(host, stay: true); return }
+      if checksQuitConfirmation {
+        guard hasUsableHost, NSApp.modalWindow == nil,
+              screenQuitClosingEvents(host) == ScreenQuitConfirmationCheck.afterStay else { return }
+      }
       let seen = mode == "screen-quit" ? screenDialogs : Int(host.checkDialogCount())
       let expectedBrowsers = mode == "quit-cancel" ? 2 : 1
       let splitCheck = CommandLine.arguments.contains("--ararat-split-close-check") && !sameProfileEmpty
@@ -9681,8 +9711,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       else { beginCloseRaceCheck(host) { host.expectCheckDialogs(2); NSApp.terminate(nil) } }
       return
     }
-    if quitPhase == 4 && mode == "screen-quit" && screenDialogs == 1 {
-      _ = clickScreenDialog(stay: false)
+    if quitPhase == 4, mode == "screen-quit", screenDialogs == 1, let host {
+      answerScreenQuitBeforeUnload(host, stay: false)
       return
     }
     if quitPhase == 4 && mode == "close" && host == nil,
@@ -9775,10 +9805,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       // Why the raw shape and not the collapsed one: a collapse would also accept two attempts before
       // the Stay or a cancel notified twice. closingTransitions stays in the result as a diagnostic.
       conditions = ["rows_unchanged": unchanged, "first_passed": firstPassed, "dialog_seen": dialogSeen == 2,
-        "closing_after_offset": closingAfterOffset == [true, true, false, true, true],
+        "closing_after_offset": closingAfterOffset == ScreenQuitConfirmationCheck.retryQuit,
         "sidebar_lights": screenSidebarLights, "appkit_lights_hidden": screenAppKitLightsHidden]
       if checksQuitConfirmation {
-        conditions["quit_confirmations_before_unload"] = quitConfirmationChecks == [true, true, true]
+        conditions["quit_confirmations_before_unload"] = screenQuitCancelled && quitConfirmationChecks == [true, true, true]
       }
     default:
       conditions = ["known_mode": false]
@@ -9805,6 +9835,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["closing_offset"] = screenClosingOffset
       result["closing_after_offset"] = closingAfterOffset
       result["closing_transitions"] = closingTransitions
+      if checksQuitConfirmation {
+        result["quit_confirmation_cancelled"] = screenQuitCancelled
+        result["quit_confirmation_panels"] = quitConfirmationChecks
+      }
     }
     if mode == "quit-cancel", CommandLine.arguments.contains("--ararat-split-close-check"),
        !CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-selection-race=") }) {
