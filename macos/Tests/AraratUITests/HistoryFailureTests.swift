@@ -124,8 +124,36 @@ func toastLabelsPassHitsAndUndoButtonReceivesThem() {
     container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
     container.layoutSubtreeIfNeeded()
     container.showLinkCopied()
+    #expect(!container.toastIcon.isHidden && container.toastIcon.image != nil)
+    #expect(container.toastIcon.alignmentRect(forFrame: container.toastIcon.frame).size == NSSize(width: 16, height: 16))
     #expect(container.checkToastHits().labelPasses)
     container.showTabsCleared(undo: {})
+    #expect(container.toastIcon.isHidden)
     let hits = container.checkToastHits()
     #expect(hits.labelPasses && hits.undoReceives)
+}
+
+@Test @MainActor
+func failedHistoryCardShowsWarningCopyAndKeepsBothActions() {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.frame = NSRect(x: 0, y: 0, width: 164, height: 600)
+    sidebar.showHistoryFailure(true)
+    sidebar.layoutSubtreeIfNeeded()
+    let card = sidebar.historyBanner
+    #expect(!card.isHidden)
+    #expect(abs(card.frame.width - 148) < 1)
+    let labels = card.arrangedSubviews.compactMap { $0 as? NSTextField }
+    #expect(labels.map(\.stringValue) == [
+        "History not fully deleted", "Some history files could not be removed. Ararat will try again.",
+    ])
+    #expect(labels.allSatisfy { card.bounds.contains(card.convert($0.bounds, from: $0)) })
+    #expect((labels.last?.bounds.height ?? 0) > 24)
+    #expect(card.subviews.contains { ($0 as? NSImageView)?.image != nil })
+    #expect(card.subviews.contains { ($0 as? NSButton)?.accessibilityLabel() == "Dismiss" })
+    var actions: [String] = []
+    sidebar.onRetryHistory = { actions.append("retry") }
+    sidebar.onDismissHistory = { actions.append("dismiss") }
+    sidebar.checkClickHistoryRetry()
+    sidebar.checkClickHistoryDismiss()
+    #expect(actions == ["retry", "dismiss"])
 }

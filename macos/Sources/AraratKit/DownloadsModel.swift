@@ -13,6 +13,7 @@ public struct DownloadEntry: Equatable, Identifiable {
     public let start: Double
     public let received: Int64
     public let total: Int64
+    public let secondsRemaining: Int?
     public let status: String
     public let actions: [String]
 
@@ -28,6 +29,7 @@ public struct DownloadEntry: Equatable, Identifiable {
         self.path = path
         self.paused = paused
         self.start = start; self.received = received; self.total = total
+        secondsRemaining = (value["secondsRemaining"] as? Int).flatMap { $0 >= 0 ? $0 : nil }
         self.status = status; self.actions = actions
     }
 }

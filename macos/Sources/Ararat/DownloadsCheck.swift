@@ -137,14 +137,14 @@ extension Runtime {
       browserCheckPhase = 4
     case 4:
       guard state["list"] as? Bool == true else { wait("click popover"); return }
-      check.mark("click_list"); check.mark("popover_first", state["first"] as? String == "Open Library")
+      check.mark("click_list"); check.mark("popover_first", state["library_action"] as? String == "Open in Library")
       if screen {
         check.mark("popover_inside_above", state["popover_inside_above"] as? Bool == true)
         check.mark("popover_readable", state["popover_readable"] as? Bool == true)
         let metrics = state["popover_metrics"] as? [String: Any] ?? [:]
         FileHandle.standardError.write(Data("ararat-trace: downloads popover metrics=\(metrics)\n".utf8))
         check.mark("popover_content", (metrics["content_width"] as? CGFloat ?? 0) >= 240 && (metrics["title_font"] as? CGFloat ?? 0) >= 13 && (metrics["title_height"] as? CGFloat ?? 0) >= 13)
-        check.mark("popover_rows_layout", metrics["rows_leading_and_status_fit"] as? Bool == true && metrics["library_fills"] as? Bool == true)
+        check.mark("popover_rows_layout", metrics["rows_leading_and_status_fit"] as? Bool == true && metrics["header_layout"] as? Bool == true && metrics["header_title"] as? String == "Downloads")
         check.mark("capture_popover", sidebar.downloadsCheckPopoverWindow.map { capture("popover", window: $0) } ?? false)
       }
       check.rowIdentity = (state["rows"] as? [String: UInt])?[check.slowID]

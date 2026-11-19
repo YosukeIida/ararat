@@ -77,16 +77,13 @@ final class DownloadsButton: SidebarDockButton {
     }
 }
 
-/// The download row's metrics, shared with the popover header so the two line up. The action
-/// buttons follow the Little Window bar's icon buttons (28 pt squares, 13 pt symbols, the same
-/// hover and pressed states).
 enum DownloadRowMetrics {
     static let inset: CGFloat = 8
     static let iconSize: CGFloat = 16
     static let gap: CGFloat = 4
     static let actionSize: CGFloat = 28
     static let actionSymbolSize: CGFloat = 13
-    /// The file name's leading inset from the row's leading edge (the header's titles use it).
+    static let progressHeight: CGFloat = 3
     static let textLeading: CGFloat = inset + iconSize + gap
 }
 
@@ -98,8 +95,9 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     private let model: DownloadsModel
     private let anchor: NSView
     private let stack = NSStackView()
-    let library = DownloadsHeaderButton(title: "Open Library")
-    let clear = DownloadsHeaderButton(title: "Clear All")
+    let title = NSTextField(labelWithString: "Downloads")
+    let library = NSButton(title: "Open in Library", target: nil, action: nil)
+    let clear = NSButton(title: "Clear All", target: nil, action: nil)
     var showsLibrary = true { didSet { library.isHidden = !showsLibrary; clear.isHidden = showsLibrary } }
     private(set) var rows: [String: DownloadRowView] = [:]
     /// True between the popover's did-show and did-close, which covers a transient dismissal.
@@ -114,20 +112,27 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
         popover.animates = false
         popover.delegate = self
         stack.orientation = .vertical; stack.alignment = .width; stack.spacing = 0
-        library.target = self; library.action = #selector(open)
-        library.setAccessibilityLabel("Open Library")
-        clear.target = self; clear.action = #selector(clearAll)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.setAccessibilityLabel(title.stringValue)
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for button in [library, clear] {
+            button.target = self
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 12)
+            button.contentTintColor = .secondaryLabelColor
+            button.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        }
+        library.action = #selector(open)
+        library.setAccessibilityLabel(library.title)
+        clear.action = #selector(clearAll)
         clear.setAccessibilityLabel("Clear All Downloads")
         clear.isHidden = true
-        let header = NSStackView(views: [library, clear])
-        header.orientation = .vertical; header.alignment = .width; header.spacing = 0
+        let header = NSStackView(views: [title, library, clear])
+        header.alignment = .centerY
+        header.edgeInsets = NSEdgeInsets(top: 0, left: DownloadRowMetrics.inset, bottom: 0, right: DownloadRowMetrics.inset)
         stack.addArrangedSubview(header)
-        library.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        clear.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        library.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
-        clear.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
-        header.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
-        header.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+        header.heightAnchor.constraint(equalToConstant: Self.headerHeight).isActive = true
         let controller = NSViewController()
         let content = NSView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
         content.addSubview(stack)
@@ -141,6 +146,7 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     var checkMetrics: [String: Any] {
         let content = popover.contentViewController?.view
         content?.layoutSubtreeIfNeeded()
+        let button = showsLibrary ? library : clear
         return ["window_frame": NSStringFromRect(checkWindow?.frame ?? .zero),
                 "content_frame": NSStringFromRect(content?.frame ?? .zero), "content_bounds": NSStringFromRect(content?.bounds ?? .zero),
                 "window_content_frame": NSStringFromRect(checkWindow?.contentView?.frame ?? .zero),
@@ -153,8 +159,9 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
                     let frame = stack.convert(row.bounds, from: row)
                     return abs(frame.minX - stack.bounds.minX) <= 16 && frame.width >= stack.bounds.width - 1 && row.statusFits
                 },
-                "library_fills": abs(stack.convert(library.bounds, from: library).minX - stack.bounds.minX) <= 1 && library.bounds.width >= stack.bounds.width - 1,
-                "library_title_inset": library.titleInset,
+                "header_title": title.stringValue,
+                "header_layout": title.bounds.width >= title.intrinsicContentSize.width &&
+                    stack.convert(title.bounds, from: title).maxX <= stack.convert(button.bounds, from: button).minX,
                 "title_font": rows.values.first?.titleFontSize ?? 0, "title_height": rows.values.first?.titleHeight ?? 0]
     }
     /// The popover covers the anchor, so the anchor's tooltip must not show while it is open.
@@ -221,36 +228,6 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// The header's borderless button. It spans the header so the whole strip opens the Library, and
-/// its title starts at the rows' file-name leading instead of at the popover's edge.
-@MainActor
-final class DownloadsHeaderButton: NSButton {
-    init(title: String) {
-        super.init(frame: .zero)
-        cell = DownloadsHeaderCell(textCell: "")
-        self.title = title
-        bezelStyle = .inline
-        isBordered = false
-        alignment = .left
-        font = .systemFont(ofSize: 13)
-    }
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-    /// Where the title is drawn inside the button: the buttons' own leading space plus the inset.
-    var titleRect: NSRect { (cell as? NSButtonCell)?.titleRect(forBounds: bounds) ?? bounds }
-    var titleInset: CGFloat { titleRect.minX }
-}
-
-private final class DownloadsHeaderCell: NSButtonCell {
-    override func titleRect(forBounds rect: NSRect) -> NSRect {
-        var frame = super.titleRect(forBounds: rect)
-        let inset = min(DownloadRowMetrics.textLeading, frame.width)
-        frame.origin.x += inset
-        frame.size.width -= inset
-        return frame
-    }
-}
-
 @MainActor
 final class DownloadRowView: NSView, NSDraggingSource {
     static let libraryCompactWidth: CGFloat = 264
@@ -281,7 +258,10 @@ final class DownloadRowView: NSView, NSDraggingSource {
     private(set) var actionButtons: [DownloadActionButton] = []
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
-    private let status = NSTextField(labelWithString: "")
+    let status = NSTextField(labelWithString: "")
+    let progress = NSView()
+    private let progressFill = CALayer()
+    private var progressFraction = 0.0
     var titleFontSize: CGFloat { name.font?.pointSize ?? 0 }
     var titleHeight: CGFloat { name.bounds.height }
     var statusFits: Bool {
@@ -289,7 +269,9 @@ final class DownloadRowView: NSView, NSDraggingSource {
         return frame.width > 0 && bounds.insetBy(dx: -1, dy: -1).contains(frame)
     }
     func statusFrame(in view: NSView) -> NSRect { view.convert(status.bounds, from: status) }
-    var statusTruncates: Bool { status.maximumNumberOfLines == 1 && status.lineBreakMode == .byTruncatingTail && status.cell?.isScrollable == false && status.cell?.usesSingleLineMode == true }
+    var statusTruncates: Bool {
+        status.maximumNumberOfLines == 1 && status.lineBreakMode == .byTruncatingMiddle && status.cell?.isScrollable == false
+    }
     /// p4checks: presses the row's own button for an action and answers whether one was there.
     func checkPress(action: String) -> Bool {
         guard let button = actionButtons.first(where: { $0.downloadAction == action }), button.isEnabled else { return false }
@@ -314,10 +296,19 @@ final class DownloadRowView: NSView, NSDraggingSource {
         icon.setAccessibilityHidden(true)
         name.font = .systemFont(ofSize: 13); name.lineBreakMode = .byTruncatingMiddle
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
-        status.maximumNumberOfLines = 1; status.lineBreakMode = .byTruncatingTail
-        status.cell?.usesSingleLineMode = true; status.cell?.isScrollable = false; status.cell?.wraps = false; status.cell?.lineBreakMode = .byTruncatingTail
+        status.maximumNumberOfLines = 1
+        status.cell?.isScrollable = false
+        status.lineBreakMode = .byTruncatingMiddle
         for view in [icon, name, status] { addSubview(view) }
-        if !libraryPage { heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true }
+        if !libraryPage {
+            heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true
+            progress.setAccessibilityHidden(true)
+            progress.wantsLayer = true
+            progress.layer?.cornerRadius = DownloadRowMetrics.progressHeight / 2
+            progressFill.cornerRadius = DownloadRowMetrics.progressHeight / 2
+            progress.layer?.addSublayer(progressFill)
+            addSubview(progress)
+        }
         update(item: item)
     }
     /// The name and status take the width left of the action buttons; the buttons hug the row's
@@ -340,18 +331,54 @@ final class DownloadRowView: NSView, NSDraggingSource {
         let width = max(0, (actionButtons.isEmpty ? bounds.width - inset : trailing) - leading)
         let nameHeight = name.intrinsicContentSize.height
         let statusHeight = status.intrinsicContentSize.height
-        let top = ((bounds.height - nameHeight - statusHeight) / 2).rounded()
+        let progressHeight = progress.isHidden ? 0 : DownloadRowMetrics.progressHeight
+        let progressSpacing = progressHeight > 0 ? progressHeight + gap : 0
+        let top = ((bounds.height - nameHeight - statusHeight - progressSpacing) / 2).rounded()
         let nameLeading = compact ? inset : leading
         let nameWidth = compact ? max(0, bounds.width - 2 * inset) : width
-        let nameY = compact ? actionCenterY + size / 2 : top + statusHeight
+        let nameY = compact ? actionCenterY + size / 2 : top + statusHeight + progressSpacing
         name.frame = NSRect(x: nameLeading, y: nameY, width: nameWidth, height: nameHeight)
         status.frame = NSRect(x: leading, y: compact ? actionCenterY - statusHeight / 2 : top, width: width, height: statusHeight)
+        if progressHeight > 0 {
+            progress.frame = NSRect(x: leading, y: top + statusHeight + gap / 2, width: width, height: progressHeight)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            progressFill.frame = NSRect(x: 0, y: 0, width: width * progressFraction, height: progressHeight)
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                progress.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
+                progressFill.backgroundColor = SpaceAccent.visible(SpaceAccent.teal, on: .controlBackgroundColor).cgColor
+            }
+            CATransaction.commit()
+        }
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsLayout = true
     }
     func update(item: DownloadEntry) {
         itemID = item.id
         if icon.image == nil || name.stringValue != item.name { icon.image = downloadIcon(item.name) }
         name.stringValue = item.name
+        let transferring = item.running || (item.state == 0 && item.paused && item.actions.contains("resume"))
+        progress.isHidden = libraryPage || !transferring
+        progressFraction = item.total > 0 ? Double(max(0, min(item.received, item.total))) / Double(item.total) : 0
         status.stringValue = item.status
+        if !libraryPage && transferring {
+            let received = ByteCountFormatter.string(fromByteCount: item.received, countStyle: .file)
+            let size = item.total > 0 ? "\(received) of \(ByteCountFormatter.string(fromByteCount: item.total, countStyle: .file))" : received
+            if item.paused {
+                status.stringValue = "Paused · \(size)"
+            } else if let seconds = item.secondsRemaining {
+                let remaining = seconds < 60 ? "\(seconds) s" : "\(1 + (seconds - 1) / 60) min"
+                status.stringValue = "\(size) · \(remaining) left"
+            } else {
+                status.stringValue = size
+            }
+        } else if !libraryPage && item.state == 1 && item.actions.contains("open") {
+            let size = ByteCountFormatter.string(fromByteCount: item.received, countStyle: .file)
+            let host = URL(string: item.url)?.host
+            status.stringValue = host.map { "\(size) · \($0)" } ?? size
+        }
         for button in actionButtons { button.setAccessibilityLabel("\(button.title) \(item.name)") }
         guard actionButtons.map(\.downloadAction) != item.actions || actionButtons.contains(where: { $0.downloadID != item.id }) else {
             needsLayout = true

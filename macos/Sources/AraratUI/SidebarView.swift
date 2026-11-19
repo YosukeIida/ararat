@@ -8,14 +8,19 @@ public final class SidebarView: NSView {
     public var onLinkCopied: (() -> Void)?
     public var onRetryHistory: (() -> Void)?
     public var onDismissHistory: (() -> Void)?
-    private let historyBanner = NSStackView()
-    private let historyMessage = NSTextField(wrappingLabelWithString: "History could not be deleted.")
+    let historyBanner = NSStackView()
+    private let historyTitle = NSTextField(wrappingLabelWithString: "History not fully deleted")
     private let historyRetryButton = NSButton()
     private let historyDismissButton = NSButton()
+    private static let historyCardFill = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 59 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1)
+            : .white
+    }
     var historyFailureVisible: Bool { !historyBanner.isHidden }
     public var checkHistoryVisible: Bool { !historyBanner.isHidden }
     public var checkHistoryContext: (space: String?, profileID: String?, profile: String?, message: String) {
-        (snapshotSpace?.id, snapshotSpace?.profileKey, snapshotSpace?.profileName, historyMessage.stringValue)
+        (snapshotSpace?.id, snapshotSpace?.profileKey, snapshotSpace?.profileName, historyTitle.stringValue)
     }
     public var checkHistoryAnnouncement: ((String) -> Void)?
     public func checkClickCopyLink() { copyLinkButton.performClick(nil) }
@@ -525,7 +530,7 @@ public final class SidebarView: NSView {
         let fittingHeight = DownloadsPopover.headerHeight + CGFloat(downloadsPopover?.rows.count ?? 0) * DownloadsPopover.rowHeight
         let metrics = downloadsPopover?.checkMetrics ?? [:]
         return ["progress": progress, "ring_visible": ringVisible, "items": downloadsModel?.items.map { ["id": $0.id, "name": $0.name, "state": $0.state, "received": $0.received, "total": $0.total, "restored": $0.restored, "paused": $0.paused, "actions": $0.actions] as [String: Any] } ?? [],
-                "list": downloadsPopover?.isShown ?? false, "first": downloadsPopover?.library.title ?? "",
+                "list": downloadsPopover?.isShown ?? false, "library_action": downloadsPopover?.library.title ?? "",
                 "rows": downloadsPopover?.rows.mapValues { UInt(bitPattern: ObjectIdentifier($0)) } ?? [:],
                 "popover_inside_above": panel != nil && inside && panelFrame.minY >= buttonFrame.maxY - 1,
                 "popover_readable": panel != nil && panelFrame.width >= SidebarMetrics.defaultWidth && panelFrame.height >= fittingHeight,
@@ -590,7 +595,7 @@ public final class SidebarView: NSView {
     }
 
     public func setLibraryOpen(_ open: Bool, scrolling: Bool = false, downloads: Bool = false) {
-        // A private workspace has no Library archive page (design: hide the "Open Library" row).
+        // A private workspace has no Library archive page.
         if privateWindow && open { return }
         if open { if downloads { library.showDownloads() } else { library.showArchive() } }
         guard open != libraryOpen else { return }
@@ -1024,8 +1029,8 @@ public final class SidebarView: NSView {
         historyBanner.isHidden = !visible
         if visible, let profile = snapshotSpace?.profileName,
            historySession?.claimHistoryFailureAnnouncement(profile: profile) == true {
-            checkHistoryAnnouncement?("History could not be deleted.")
-            NSAccessibility.post(element: historyBanner, notification: .announcementRequested, userInfo: [.announcement: "History could not be deleted.", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+            checkHistoryAnnouncement?(historyTitle.stringValue)
+            NSAccessibility.post(element: historyBanner, notification: .announcementRequested, userInfo: [.announcement: historyTitle.stringValue, .priority: NSAccessibilityPriorityLevel.high.rawValue])
         }
     }
     public func observeHistoryFailures(_ session: WorkspaceSession) {
@@ -1155,17 +1160,53 @@ public final class SidebarView: NSView {
             dock.topAnchor.constraint(equalTo: bottomBar.topAnchor), dock.bottomAnchor.constraint(equalTo: bottomBar.bottomAnchor),
             bottomBar.heightAnchor.constraint(equalToConstant: SidebarMetrics.libraryButtonSize),
         ])
-        historyRetryButton.title = "Retry"
+        historyRetryButton.title = "Try Again"
+        historyRetryButton.bezelStyle = .inline
         historyRetryButton.target = self
         historyRetryButton.action = #selector(retryHistory)
-        historyDismissButton.title = "Dismiss"
+        historyDismissButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        historyDismissButton.imagePosition = .imageOnly
+        historyDismissButton.isBordered = false
+        historyDismissButton.contentTintColor = .secondaryLabelColor
+        historyDismissButton.setAccessibilityLabel("Dismiss")
+        historyDismissButton.toolTip = "Dismiss"
         historyDismissButton.target = self
         historyDismissButton.action = #selector(dismissHistory)
+        let warning = NSImageView()
+        warning.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
+        warning.contentTintColor = .systemOrange
+        warning.setAccessibilityHidden(true)
+        historyTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+        let historyMessage = NSTextField(wrappingLabelWithString: "Some history files could not be removed. Ararat will try again.")
+        historyMessage.font = .systemFont(ofSize: 11)
+        historyMessage.textColor = .secondaryLabelColor
         historyBanner.orientation = .vertical
-        historyBanner.alignment = .leading
+        historyBanner.alignment = .width
+        historyBanner.edgeInsets = NSEdgeInsets(top: 8, left: 32, bottom: 8, right: 32)
         historyBanner.spacing = 4
+        historyBanner.wantsLayer = true
+        historyBanner.layer?.backgroundColor = Self.historyCardFill.cgColor
+        historyBanner.layer?.cornerRadius = SidebarMetrics.cornerRadius
+        historyBanner.addArrangedSubview(historyTitle)
         historyBanner.addArrangedSubview(historyMessage)
-        historyBanner.addArrangedSubview(NSStackView(views: [historyRetryButton, historyDismissButton]))
+        let retryRow = NSStackView()
+        retryRow.addView(historyRetryButton, in: .leading)
+        historyBanner.addArrangedSubview(retryRow)
+        for view in [warning, historyDismissButton] {
+            historyBanner.addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+        NSLayoutConstraint.activate([
+            warning.leadingAnchor.constraint(equalTo: historyBanner.leadingAnchor, constant: 8),
+            warning.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 8),
+            warning.widthAnchor.constraint(equalToConstant: 16),
+            warning.heightAnchor.constraint(equalToConstant: 16),
+            historyDismissButton.trailingAnchor.constraint(equalTo: historyBanner.trailingAnchor, constant: -4),
+            historyDismissButton.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 4),
+            historyDismissButton.widthAnchor.constraint(equalToConstant: 24),
+            historyDismissButton.heightAnchor.constraint(equalToConstant: 24),
+        ])
         historyBanner.isHidden = true
         let column = NSStackView(views: [urlField, actionsRow, spaceViewport, historyBanner, bottomBar])
         mainColumn = column
@@ -1175,6 +1216,7 @@ public final class SidebarView: NSView {
         column.setCustomSpacing(8, after: urlField)
         column.setCustomSpacing(8, after: actionsRow)
         column.setCustomSpacing(10, after: spaceViewport)
+        column.setCustomSpacing(8, after: historyBanner)
         column.edgeInsets = NSEdgeInsets(top: 46, left: 8, bottom: 8, right: 8)
         addSubview(column)
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -1199,6 +1241,7 @@ public final class SidebarView: NSView {
             actionsRow.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             actionsHeight,
             bottomBar.widthAnchor.constraint(equalTo: urlField.widthAnchor),
+            historyBanner.widthAnchor.constraint(equalTo: urlField.widthAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 36),
             privateBadgeGlyph.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             privateBadgeGlyph.widthAnchor.constraint(equalToConstant: 16),
@@ -1562,6 +1605,9 @@ public final class SidebarView: NSView {
     public var checkArchiveEmptyStateVisible: Bool { libraryOpen && library.archiveEmptyStateVisible }
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            historyBanner.layer?.backgroundColor = Self.historyCardFill.cgColor
+        }
         updateDockSelection()
     }
 
