@@ -1,23 +1,14 @@
 #!/bin/bash
-# Builds Ararat.app from the engine's Chromium.app and our Ararat launcher:
-# bundle-app.sh [--release] <engine-app> <out-dir>
-#
-# <engine-app> is the built engine, e.g. ~/chromium-build/src/out/Ararat/Chromium.app.
-# Our executable comes from this package's SwiftPM build products (run
-# `swift build -c release` in macos/ first). Everything is signed ad-hoc inside
-# out, no hardened runtime: helpers first, then the framework, then the app.
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
 usage: bundle-app.sh [--release] <engine-app> <out-dir>
 
-Copies the engine's Chromium.app to <out-dir>/Ararat.app, puts this package's
-Ararat executable in Contents/MacOS (build it first: swift build -c release in
-macos/), renames the bundle id to net.iodine2.ararat and signs everything
-ad-hoc inside out with the engine's entitlements (renderer and GPU helpers
-carry allow-jit; the app the app entitlements; entitlements that need a team
-are dropped). The bundle name and display name are Ararat; helper names stay Chromium.
+Builds an ad-hoc signed Ararat.app using the matching SwiftPM executable and
+Sparkle framework. ARARAT_FEED_URL and ARARAT_ED_PUBLIC_KEY enable updating.
+ARARAT_UPDATE_CHANNEL is stable (default) or nightly. ARARAT_BUILD_VERSION
+overrides CFBundleVersion and is required for builds that enable updating.
 
 With --release, use a clean release checkout, verify the engine tree against
 the recorded manifest and emit Corresponding Source before staging Ararat.app.
@@ -58,8 +49,26 @@ elif [[ ! -x "$exe" ]]; then
 fi
 [[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
 
-ent_dir="$engine_src/chrome/app"
-[[ -r "$ent_dir/app-entitlements.plist" ]] || die "no engine entitlements at $ent_dir (pass an engine built from a Chromium checkout)"
+products_dir="$(cd -- "$(dirname -- "$exe")" && pwd -P)"
+sparkle="$products_dir/Sparkle.framework"
+[[ -d "$sparkle" ]] || die "missing Sparkle.framework in $products_dir"
+
+channel="${ARARAT_UPDATE_CHANNEL:-stable}"
+case "$channel" in stable|nightly) ;; *) die "expected stable or nightly update channel" ;; esac
+version="${ARARAT_BUILD_VERSION:-}"
+if [[ -n "$version" && ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  die "expected a numeric ARARAT_BUILD_VERSION"
+fi
+if [[ -n "${ARARAT_FEED_URL:-}" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
+  [[ -n "${ARARAT_FEED_URL:-}" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$version" ]] ||
+    die "updates require ARARAT_FEED_URL, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
+  case "$ARARAT_FEED_URL" in
+    https://?*|http://localhost/*|http://localhost:*) ;;
+    *) die "expected an HTTPS feed URL or a localhost HTTP test feed" ;;
+  esac
+  [[ "$ARARAT_ED_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
+    die "expected a Base64-encoded EdDSA public key"
+fi
 
 if [[ "$release" == 1 ]]; then
   /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
@@ -72,6 +81,8 @@ cp -R -- "$engine_app" "$app"
 
 rm -f -- "$app/Contents/MacOS/Chromium"
 cp -- "$exe" "$app/Contents/MacOS/Ararat"
+ditto "$sparkle" "$app/Contents/Frameworks/Sparkle.framework"
+cp -- "$package_dir/.build/artifacts/sparkle/Sparkle/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 
 plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Ararat" "$plist"
@@ -79,82 +90,23 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ararat" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier net.iodine2.ararat" "$plist"
 
-# Team-bound entitlements fail ad-hoc signing (their values carry a team
-# prefix); they are dropped and named, not kept.
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bundle-app.XXXXXX")"
-trap 'rm -rf -- "$scratch"' EXIT
-entitlements() { # entitlements <name> -> filtered plist path
-  local name="$1"
-  # separate declaration: the words of one local statement are expanded before
-  # any of its assignments land, so $name here would read a caller's `name`
-  local src="$ent_dir/$name.plist" dst="$scratch/$name.plist" key value drop
-  [[ -r "$src" ]] || { printf 'bundle-app: missing entitlements %s\n' "$src" >&2; return 1; }
-  cp -- "$src" "$dst"
-  # Team-bound entitlements fail ad-hoc signing: their values carry a team
-  # prefix and there is no team. Dropped by key name, or by value for any key
-  # a rebase renames; every drop is named on stderr — stdout is the plist path.
-  while IFS= read -r key; do
-    [[ -n "$key" ]] || continue
-    drop=0
-    case "$key" in
-      com.apple.application-identifier|keychain-access-groups|\
-com.apple.developer.web-browser.public-key-credential|\
-com.apple.developer.associated-domains*)
-        drop=1 ;;
-      *)
-        value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$dst" 2>/dev/null)"
-        if [[ "$value" == *TeamIdentifierPrefix* || "$value" == *'${CHROMIUM_TEAM_ID}'* ]]; then
-          drop=1
-        fi
-        ;;
-    esac
-    if [[ "$drop" == 1 ]]; then
-      /usr/libexec/PlistBuddy -c "Delete :$key" "$dst"
-      printf 'bundle-app: dropped %s from %s\n' "$key" "$name" >&2
-    fi
-  done < <(plutil -convert xml1 -o - "$dst" | sed -n 's/[[:space:]]*<key>\(.*\)<\/key>/\1/p')
-  printf '%s\n' "$dst"
-}
-
-sign() { # sign <path> <entitlements-name or "">
-  local path="$1" file
-  if [[ -n "${2:-}" ]]; then
-    file="$(entitlements "$2")"
-    codesign --force --sign - --entitlements "$file" "$path"
-  else
-    codesign --force --sign - "$path"
+for key in SUFeedURL SUPublicEDKey AraratUpdateChannel SURequireSignedFeed SUVerifyUpdateBeforeExtraction SUSignedFeedFailureExpirationInterval; do
+  if plutil -extract "$key" xml1 -o /dev/null "$plist" 2>/dev/null; then
+    plutil -remove "$key" "$plist"
   fi
-}
-
-framework="$(cd -- "$app/Contents/Frameworks" && ls -d *.framework | head -n1)"
-fw_root="$app/Contents/Frameworks/$framework"
-[[ -n "$framework" ]] || die "no framework in the engine app"
-versions="$(cd -- "$fw_root/Versions" && ls | grep -vx Current | head -n1)"
-fw_ver="$fw_root/Versions/$versions"
-
-# Inside out: the framework's dylibs, the bare helper executables, the helper
-# apps, the framework, the app. Helpers that load nothing but their share of
-# the framework's code carry no entitlements; the renderer and GPU helpers
-# carry allow-jit (Aperitif variants ride the same entitlements as the engine's
-# own signing model).
-for dylib in "$fw_ver"/Libraries/*.dylib; do
-  [[ -e "$dylib" ]] && sign "$dylib" ""
 done
-for helper in "$fw_ver"/Helpers/*; do
-  [[ -f "$helper" ]] || continue
-  file -b "$helper" | grep -q "Mach-O" && sign "$helper" ""
-done
-for helper_app in "$fw_ver"/Helpers/*.app; do
-  case "$(basename -- "$helper_app")" in
-    *"Helper (Renderer).app"|*"Helper (Aperitif Renderer).app") ent=helper-renderer-entitlements ;;
-    *"Helper (GPU).app"|*"Helper (Aperitif GPU).app") ent=helper-gpu-entitlements ;;
-    *) ent="" ;;
-  esac
-  sign "$helper_app" "$ent"
-done
-sign "$fw_root" ""
+if [[ -n "$version" ]]; then
+  # Chromium locates its versioned framework via CFBundleShortVersionString.
+  plutil -replace CFBundleVersion -string "$version" "$plist"
+fi
+if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
+  plutil -insert SUFeedURL -string "$ARARAT_FEED_URL" "$plist"
+  plutil -insert SUPublicEDKey -string "$ARARAT_ED_PUBLIC_KEY" "$plist"
+  plutil -insert AraratUpdateChannel -string "$channel" "$plist"
+  plutil -replace SUVerifyUpdateBeforeExtraction -bool true "$plist"
+  plutil -replace SURequireSignedFeed -bool true "$plist"
+  plutil -replace SUSignedFeedFailureExpirationInterval -integer 0 "$plist"
+fi
 
-sign "$app" app-entitlements
-
-codesign --verify --deep --strict "$app"
+"$script_dir/sign-release.sh" --identity - "$engine_app" "$app"
 printf 'bundle-app: %s ready\n' "$app"

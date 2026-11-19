@@ -15,6 +15,9 @@ let package = Package(
         .executable(name: "AraratHarness", targets: ["AraratHarness"]),
         .executable(name: "Ararat", targets: ["Ararat"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+    ],
     targets: [
         .target(name: "AraratEngineAPI"),
         .target(
@@ -38,6 +41,11 @@ let package = Package(
             resources: [.copy("Fixtures")]
         ),
         // Why not NSApplicationMain: Chromium must create the first NSApplication.
-        .executableTarget(name: "Ararat", dependencies: ["AraratEngineAPI", "AraratKit", "AraratUI"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(
+            name: "Ararat",
+            dependencies: ["AraratEngineAPI", "AraratKit", "AraratUI", .product(name: "Sparkle", package: "Sparkle")],
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+        ),
     ]
 )
