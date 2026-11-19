@@ -23,21 +23,23 @@ final class SelectedRowShadow {
 
     init(name: String) {
         layer.name = name
-        // Why not a layer with only a shadow path: a layer that draws nothing casts no shadow, so
-        // the shape is filled. The mask hides the fill and leaves only the shadow it casts.
-        layer.fillColor = NSColor.black.cgColor
+        // Why not a filled shape: the fill and the mask's hole would share one path, so an edge
+        // pixel covered c by the fill and kept 1 - c by the mask gets black at c(1 - c), a ring of
+        // up to a quarter at every corner. A clear fill draws nothing; only the shadow the window
+        // server casts from `shadowPath` shows, and the even-odd mask keeps it outside the fill.
+        layer.fillColor = NSColor.clear.cgColor
         outside.fillRule = .evenOdd
         layer.mask = outside
     }
 
     /// `rect` is the fill's frame in its superlayer and `path` its rounded path in the fill's own
-    /// coordinates. `flipped` is the flip of the layer the shadow draws in, which is the owner's:
-    /// a flipped view's shape layer sits in y-down coordinates while its own flag is false.
+    /// coordinates. `flipped` is the flip of the view whose layer holds the shadow layer, not the
+    /// fill's: a flipped view's shape layer sits in y-down coordinates while its own flag is false.
     func apply(rect: CGRect, path: CGPath?, flipped: Bool, on: Bool, appearance: NSAppearance, scale: CGFloat) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        guard let path, !path.isEmpty else { layer.shadowOpacity = 0; return }
+        guard let path, !path.isEmpty else { layer.shadowOpacity = 0; layer.isHidden = true; return }
         let box = path.boundingBoxOfPath
         layer.bounds = CGRect(origin: .zero, size: CGSize(width: box.width + 2 * Self.margin, height: box.height + 2 * Self.margin))
         layer.position = CGPoint(x: rect.midX, y: rect.midY)
@@ -45,19 +47,21 @@ final class SelectedRowShadow {
         outside.frame = layer.bounds
         let shaped = CGMutablePath()
         shaped.addPath(path, transform: CGAffineTransform(translationX: Self.margin - box.minX, y: Self.margin - box.minY))
-        layer.path = shaped
         layer.shadowPath = shaped
         let masked = CGMutablePath()
         masked.addRect(layer.bounds)
         masked.addPath(shaped)
         outside.path = masked
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let alpha = on ? (dark ? SidebarMetrics.rowSelectedShadowAlphaDark : SidebarMetrics.rowSelectedShadowAlpha) : 0
         layer.shadowColor = NSColor.black.cgColor
         // The board draws 1 pt down; a y-up layer takes the negative offset and a flipped one the
         // positive.
         layer.shadowOffset = CGSize(width: 0, height: flipped ? SidebarMetrics.rowSelectedShadowY : -SidebarMetrics.rowSelectedShadowY)
         layer.shadowRadius = SidebarMetrics.rowSelectedShadowBlur / 2
-        layer.shadowOpacity = Float(on ? (dark ? SidebarMetrics.rowSelectedShadowAlphaDark : SidebarMetrics.rowSelectedShadowAlpha) : 0)
+        layer.shadowOpacity = Float(alpha)
+        // An off shadow hides the layer rather than leaving one more thing to draw.
+        layer.isHidden = alpha == 0
     }
 }
 
@@ -692,7 +696,6 @@ final class SidebarRowView: NSView {
         }
         // The board's `--selsh` is on `.row.is-sel .fill` alone: hover, pressed and a drag source
         // carry the selected fill's alpha but not its shadow. A drag copy is built selected.
-        fillShadow.layer.isHidden = fill.isHidden
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
     }
@@ -701,7 +704,10 @@ final class SidebarRowView: NSView {
     // selected row's fill and on a split row's focused segment.
     private func applySelectedShadow() {
         let path = CGPath(roundedRect: fill.bounds, cornerWidth: SidebarMetrics.cornerRadius, cornerHeight: SidebarMetrics.cornerRadius, transform: nil)
-        fillShadow.apply(rect: fill.frame, path: path, flipped: fill.isFlipped, on: selected,
+        // A split row draws its own fill hidden and its segments instead, so the row-level shadow
+        // goes with it. The shadow layer is a sublayer of the row's, so its y direction is the
+        // row's.
+        fillShadow.apply(rect: fill.frame, path: path, flipped: isFlipped, on: selected && !fill.isHidden,
                          appearance: effectiveAppearance, scale: layer?.contentsScale ?? 1)
     }
 

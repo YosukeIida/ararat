@@ -23,11 +23,28 @@ private func inAppearance(_ view: NSView, _ name: NSAppearance.Name) {
     view.viewDidChangeEffectiveAppearance()
 }
 
-// On screen y grows down. A y-up view's layer takes the negative offset for the board's 1 pt down
-// and a flipped one's the positive, so this is what a reader sees.
+// On screen y grows down. This maps the shadow's offset through the layer tree into an unflipped
+// root, where y grows up, so a shadow below its fill reads as a negative dy. It never looks at the
+// sign the code chose.
 @MainActor
-private func screenHeight(_ shadow: SelectedRowShadow, in view: NSView) -> CGFloat {
-    view.isFlipped ? shadow.layer.shadowOffset.height : -shadow.layer.shadowOffset.height
+private func offsetInUnflippedRoot(_ shadow: SelectedRowShadow, in root: NSView) throws -> CGPoint {
+    let layer = shadow.layer
+    let rootLayer = try #require(root.layer)
+    let origin = layer.convert(CGPoint(x: 0, y: 0), to: rootLayer)
+    let tip = layer.convert(CGPoint(x: 0, y: layer.shadowOffset.height), to: rootLayer)
+    return CGPoint(x: tip.x - origin.x, y: tip.y - origin.y)
+}
+
+// A plain NSView is unflipped, so its layer is the y-up root the mapping above reads.
+@MainActor
+private func inUnflippedRoot(_ view: NSView) -> NSView {
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
+    root.wantsLayer = true
+    root.addSubview(view)
+    view.frame = NSRect(x: 8, y: 8, width: 224, height: 41)
+    root.layoutSubtreeIfNeeded()
+    view.layoutSubtreeIfNeeded()
+    return root
 }
 
 @MainActor
@@ -69,16 +86,90 @@ func selectedRowFillCarriesTheShadowInLightAndNoneInDark() throws {
 func theShadowFallsOnePointDownOnScreenForTheRowAndTheFocusedSegment() throws {
     let view = shadowRow("tab", selected: true)
     inAppearance(view, .aqua)
-    #expect(screenHeight(view.fillShadow, in: try #require(view.subviews[0])) == SidebarMetrics.rowSelectedShadowY)
+    let root = inUnflippedRoot(view)
+    #expect(!root.isFlipped)
+    let row = try offsetInUnflippedRoot(view.fillShadow, in: root)
+    #expect(row.x == 0)
+    #expect(abs(row.y + SidebarMetrics.rowSelectedShadowY) < 0.0001)
 
     let split = shadowRow("split", kind: .split, selected: true)
     inAppearance(split, .aqua)
+    let splitRoot = inUnflippedRoot(split)
     let segments = try splitSegments(split, active: "b")
-    // The row's fill is a plain view (y up); a segment is an NSButton (flipped), so its layer's
-    // offset takes the other sign. Both put the shadow below the fill on screen.
-    #expect(segments[1].isFlipped)
-    #expect(screenHeight(segments[1].fillShadow, in: segments[1]) == SidebarMetrics.rowSelectedShadowY)
-    #expect(segments[1].fillShadow.layer.shadowOffset == CGSize(width: 0, height: 1))
+    // A segment is an NSButton, whose layer is flipped, so the raw offset carries the other sign;
+    // both still put the shadow below the fill on screen.
+    let segment = try offsetInUnflippedRoot(segments[1].fillShadow, in: splitRoot)
+    #expect(segment.x == 0)
+    #expect(abs(segment.y + SidebarMetrics.rowSelectedShadowY) < 0.0001)
+}
+
+@Test @MainActor
+func theShadowLayerDrawsNothingButItsShadow() throws {
+    // The layer is clear and has no path, so nothing opaque can meet the mask's antialiased edge;
+    // its only drawing is the shadow the window server casts from `shadowPath`.
+    let view = shadowRow("tab", selected: true)
+    inAppearance(view, .aqua)
+    let rowFill = try #require(view.fillShadow.layer.fillColor)
+    #expect(rowFill.alpha == 0)
+    #expect(view.fillShadow.layer.path == nil)
+    #expect(view.fillShadow.layer.shadowPath != nil)
+
+    let split = shadowRow("split", kind: .split, selected: true)
+    inAppearance(split, .aqua)
+    let segment = try splitSegments(split, active: "b")[1]
+    let segmentFill = try #require(segment.fillShadow.layer.fillColor)
+    #expect(segmentFill.alpha == 0)
+    #expect(segment.fillShadow.layer.shadowPath != nil)
+}
+
+@Test @MainActor
+func theShadowLayerIsHiddenWheneverTheShadowIsOff() throws {
+    // An off shadow hides its layer: left visible, a clear shape would still draw at the mask's
+    // edge, and before this change an opaque one did.
+    let unselected = shadowRow("tab", selected: false)
+    inAppearance(unselected, .aqua)
+    #expect(unselected.fillShadow.layer.isHidden)
+
+    let selected = shadowRow("tab", selected: true)
+    inAppearance(selected, .aqua)
+    #expect(!selected.fillShadow.layer.isHidden)
+    // The board draws no shadow in dark.
+    inAppearance(selected, .darkAqua)
+    #expect(selected.fillShadow.layer.isHidden)
+    inAppearance(selected, .aqua)
+    #expect(!selected.fillShadow.layer.isHidden)
+
+    // Hover, press and a drag source carry the selected fill's alpha without its shadow.
+    let hovered = shadowRow("tab", selected: false)
+    inAppearance(hovered, .aqua)
+    hovered.pointerLocation = { NSPoint(x: 10, y: 10) }
+    hovered.refreshHover()
+    #expect(hovered.hovered)
+    #expect(hovered.fillShadow.layer.isHidden)
+
+    let pressed = shadowRow("tab", selected: false)
+    inAppearance(pressed, .aqua)
+    pressed.pointerLocation = { NSPoint(x: 10, y: 10) }
+    pressed.refreshHover()
+    pressed.mouseDown(with: try #require(NSEvent.mouseEvent(
+        with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0,
+        windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)))
+    #expect(pressed.pressed)
+    #expect(pressed.fillShadow.layer.isHidden)
+
+    let dragging = shadowRow("tab", selected: false)
+    inAppearance(dragging, .aqua)
+    dragging.dragSource = true
+    #expect(dragging.fillShadow.layer.isHidden)
+
+    // A split row draws its segments and nothing of its own: no row-level fill, no row-level
+    // shadow. Its focused segment keeps both.
+    let split = shadowRow("split", kind: .split, selected: true)
+    inAppearance(split, .aqua)
+    let segments = try splitSegments(split, active: "b")
+    #expect(split.fillShadow.layer.isHidden)
+    #expect(!segments[1].fillShadow.layer.isHidden)
+    #expect(segments[0].fillShadow.layer.isHidden)
 }
 
 @Test @MainActor
