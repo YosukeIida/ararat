@@ -3,6 +3,7 @@ import AraratKit
 
 @MainActor
 final class SidebarPanelView: NSView {
+    static let defaultDarkBackground = NSColor(srgbRed: 22.0 / 255, green: 15.0 / 255, blue: 31.0 / 255, alpha: 1)
     let vibrancy = NSVisualEffectView()
     let coating = NSView()
     let gradient = CAGradientLayer()
@@ -93,8 +94,7 @@ final class SidebarPanelView: NSView {
         renderLook()
     }
 
-    /// The colour layer's first drawn colour, for the checks' wait conditions; nil while the tint
-    /// is not drawn (no look, or an inactive window).
+    /// The colour layer's first drawn colour, for the checks' wait conditions.
     var checkDrawnColor: NSColor? { coating.isHidden ? nil : drawnColors.first }
 
     @objc nonisolated private func accessibilityChanged() {
@@ -112,9 +112,13 @@ final class SidebarPanelView: NSView {
         let mode = chosen?.appearance ?? .auto
         let backgroundAppearance = mode == .auto ? systemAppearance() : NSAppearance(named: mode == .dark ? .darkAqua : .aqua)!
         let base = Self.windowColor(in: backgroundAppearance)
+        let unthemed = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? Self.defaultDarkBackground : NSColor.clear
         let reduced = reduceTransparency()
         let colors = [0.0, 0.5, 1.0].map { position in
-            Self.mix(Self.sample(source, at: position), Self.sample(destination, at: position), fraction: fraction, base: nil)
+            Self.mix(source == nil ? unthemed : Self.sample(source, at: position),
+                     destination == nil ? unthemed : Self.sample(destination, at: position),
+                     fraction: fraction, base: nil)
         }
         drawnColors = colors
         let dark: Bool
@@ -122,7 +126,9 @@ final class SidebarPanelView: NSView {
         case .dark: dark = true
         case .light: dark = false
         case .auto:
-            let composed = Self.mix(Self.average(source), Self.average(destination), fraction: fraction, base: base)
+            let composed = Self.mix(source == nil ? unthemed : Self.average(source),
+                                    destination == nil ? unthemed : Self.average(destination),
+                                    fraction: fraction, base: base)
             dark = Self.usesLightText(composed)
         }
         // Why not force Auto's backdrop appearance: its vibrancy must keep following the system.
@@ -157,7 +163,7 @@ final class SidebarPanelView: NSView {
             gradient.colors = colors.map(\.cgColor)
         }
         grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
-        coating.isHidden = !hasLook || !active
+        coating.isHidden = hasLook ? !active : unthemed.alphaComponent == 0
         CATransaction.commit()
     }
 

@@ -9,12 +9,20 @@ import Testing
     let buttons = descendants(view).compactMap { $0 as? NSButton }
     let reload = try #require(buttons.first)
     let close = try #require(buttons.last)
+    func titleColor() -> NSColor? {
+        let title = reload.attributedTitle
+        guard title.length > 0 else { return nil }
+        return title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    }
     var reloaded = false
     var closed = false
     view.onReload = { reloaded = true }
     view.onClose = { closed = true }
     view.update(crashed: true, error: 0, host: "example.test", archive: true)
     #expect(reload.title == "Reload")
+    #expect(titleColor() == .white)
+    view.accent = NSColor(srgbRed: 0.95, green: 0.9, blue: 0.85, alpha: 1)
+    #expect(titleColor() == .black)
     #expect(close.title == "Archive Tab" && !close.isHidden)
     reload.performClick(nil)
     close.performClick(nil)
@@ -27,6 +35,7 @@ import Testing
     #expect(close.title == "Close Tab")
     view.update(crashed: false, error: -106, host: "example.test", archive: false)
     #expect(reload.title == "Try Again" && close.isHidden)
+    #expect(titleColor() == .black)
     for (error, expected) in [(-105, "ERR_NAME_NOT_RESOLVED"), (-137, "ERR_NAME_RESOLUTION_FAILED")] {
         view.update(crashed: false, error: error, host: "example.test", archive: false)
         let labels = descendants(view).compactMap { $0 as? NSTextField }.map(\.stringValue)

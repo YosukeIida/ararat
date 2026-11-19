@@ -64,15 +64,15 @@ final class LookScreenCheck {
         guard let look else { return NSNull() }
         return ["opacity": look.opacity, "grain": look.grain, "glass": look.glass, "appearance": String(describing: look.appearance), "colors": look.colors.map { ["red": $0.red, "green": $0.green, "blue": $0.blue, "x": $0.x, "y": $0.y] }] as [String: Any]
     }
-    /// The grain phases' fixed probe: one colour, Light, Transparency 0 (the colour layer is opaque
+    /// The grain phases' fixed probe: one colour, Auto, Transparency 0 (the colour layer is opaque
     /// and the grain sits on it). The mock's Slate keeps the noise's contrast large: with L′ ≈ 0.152
     /// the mock's sd is about 1.7, 17.3 and 34.6 code values at 5, 50 and 100 %.
     static func probeLook(grain: Double) -> Look {
         Look(colors: [LookColor(red: 0, green: 27.0 / 255, blue: 89.0 / 255, x: 220.0 / 360, y: 0.5)],
-             opacity: 1, grain: grain, glass: false, appearance: .light)
+             opacity: 1, grain: grain, glass: false, appearance: .auto)
     }
     static func isProbe(_ look: Look, grain: Double) -> Bool {
-        abs(look.grain - grain) < 0.001 && abs(look.opacity - 1) < 0.001 && !look.glass && look.appearance == .light
+        abs(look.grain - grain) < 0.001 && abs(look.opacity - 1) < 0.001 && !look.glass && look.appearance == .auto
             && look.colors.count == 1 && abs(look.colors[0].blue - 89.0 / 255) < 0.01
     }
     static func isProbeColour(_ color: NSColor) -> Bool {

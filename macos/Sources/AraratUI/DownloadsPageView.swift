@@ -4,6 +4,8 @@ import AraratKit
 @MainActor
 final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     static let rowHeight: CGFloat = 56
+    static let contentInset: CGFloat = 8
+    static let searchHeight: CGFloat = 24
 
     let search = NSSearchField()
     let clear = NSButton(title: "Clear All", target: nil, action: nil)
@@ -94,25 +96,26 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         back.action = #selector(exitLibrary)
         for view in [title, search, clear, scroll, empty, back] { addSubview(view); view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: clear.leadingAnchor, constant: -8),
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            title.heightAnchor.constraint(equalToConstant: 32),
-            clear.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            clear.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            title.leadingAnchor.constraint(equalTo: search.leadingAnchor),
+            title.trailingAnchor.constraint(equalTo: search.trailingAnchor),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: SidebarMetrics.libraryContentTop),
+            title.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
+            clear.trailingAnchor.constraint(equalTo: search.trailingAnchor),
+            clear.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: Self.contentInset),
+            clear.centerYAnchor.constraint(equalTo: back.centerYAnchor),
+            search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset),
+            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.contentInset),
             search.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-            search.heightAnchor.constraint(equalToConstant: 24),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            search.heightAnchor.constraint(equalToConstant: Self.searchHeight),
+            scroll.leadingAnchor.constraint(equalTo: search.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: search.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 8),
             scroll.bottomAnchor.constraint(equalTo: back.topAnchor, constant: -8),
             empty.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             empty.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
             empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
-            back.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            back.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            back.leadingAnchor.constraint(equalTo: search.leadingAnchor),
+            back.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -SidebarMetrics.libraryFooterInset),
             back.widthAnchor.constraint(equalToConstant: 32), back.heightAnchor.constraint(equalToConstant: 32),
         ])
         empty.isHidden = false
@@ -169,7 +172,8 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let model, entries.indices.contains(row) else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("download-row")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? DownloadRowView ?? DownloadRowView(item: entries[row], model: model)
+        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? DownloadRowView
+            ?? DownloadRowView(item: entries[row], model: model, libraryPage: true)
         cell.identifier = identifier
         configure(cell, index: row)
         return cell

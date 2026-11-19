@@ -4,9 +4,11 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 94 件あり、このうち 85 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
+[照合表](research/mock-values.json)には 128 件あり、このうち 120 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 8 件は、オーナーの寸法規則など、照合表に理由を記載した項目である。Library の Downloads の行間隔も、照合表に記録した Arc の実測値と比較する。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
 
-76 ページから抽出した CSS 宣言の候補は 27,782 件で、88 件を確認し、27,694 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
+76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
+
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 16 件、相違 20 件、未レビュー 62 件、未実装 11 件である。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -51,8 +53,9 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 
 | モックページ | 要素 | VM チェック | 状態 | 根拠または確認事項 |
 | --- | --- | --- | --- | --- |
-| `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。 |
-| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 一致 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2。 |
+| `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。 |
+| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。開いているセルは、オーナーが承認した F ボードの白いオーバーレイ（ライト 55%、ダーク 10%）と通常のラベル色を使う。A ボードは 60% と 13% のオーバーレイとアクセント色のグリフを描く。 |
+| `A-BottomDock` | 開いている Library の塗り | `keyboard-archive-list` | 一致 | 開いた時点のスペースの Look のアクセントで塗る（mock-decisions.md:33）。 |
 | `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 未レビュー | 最初のタイルを撮影する。ほかの状態には個別のフレームが必要である。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 未レビュー | プレースホルダーを表示せず、領域をたたむ（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
@@ -64,7 +67,8 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
-| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 未レビュー | トークンテストではライトの影とダークの不透明度 0 を検査する。Today の行と選択された分割セグメントの外観を確認する。 |
+| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | Today の選択行と分割行のフォーカス中のセグメントは同じ塗りを使う。ライトでは不透明な白と影がボードと一致する。ダークでは白を不透明度 19.5% で重ねる。既定の背景上ではボードの sRGB (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致し、他のダーク Look では背景の色相が残る。 |
+| `A-TabRows` | 複数行の選択 | — | 相違 | 現在のサイドバーでは選択行は 1 行。選択状態の描画には全行で共通の規則を使う。 |
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows-loading`, `sidebar-rows-crashed` | 未レビュー | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
 | `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
 | `A-TabRows` | 行のアーカイブと閉じるボタン | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | 未レビュー | 行の種類と読み込み状態に応じてアクションが変わる（決定 29、32）。 |
@@ -72,20 +76,20 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TodayNewTab` | Clear 後の区切り線 | `today (cleared)` | 一致 | Today が空になると区切り線が消える。構造検査は PASS。VM の実行 mp2。 |
 | `A-TodayNewTab` | Appearance で New Tab を非表示 | `today-new-tab-hidden` | 未レビュー | ワークスペースの設定で New Tab の行を隠した状態を撮影する。 |
 | `B-CreateSpace` | スペース作成フォーム | `space-name-create-page` | 未レビュー | フォームはサイドバー内に表示する。 |
-| `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space-created`, `create-space-failure` | 未レビュー | 既存のチェックで成功と失敗を撮影する。 |
+| `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space-created`, `create-space-failure` | 一致 | 有効な Create Space ボタンにはモックのチャコール色を指定し、Cancel には標準のラベル色を使う。作成の失敗と成功を個別に撮影する。 |
 | `B-Drag` | サイドバーのドロップ位置、フォルダ上のホバー、拒否 | `organize-drop`, `organize-hover-open`, `dock-refused` | 未レビュー | 行のドラッグと、別プロファイルへのドロップ拒否を確認する。 |
 | `B-Drag` | 別プロファイルへのドロップ拒否 | `dock-refused` | 未レビュー | セルを暗くし、ポインタに拒否マークを付ける（決定 68）。 |
 | `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 |
 | `B-Floating` | フローティングサイドバーの配置と内容 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いたフローティングパネルを撮影する。 |
-| `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 未レビュー | 全画面表示の検査後、通常ウィンドウでダークのフローティングパネルを撮影する。 |
+| `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。画面上の合成結果はフローティングの再撮影で確認する。 |
 | `B-FloatingMotion` | 端からの表示、待機時間、非表示 | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | 未レビュー | ポインタを表示領域の端に置き、パネルを開いてから離す。3 枚は静止状態の画像で、待機時間と動作時間の判定には計測が必要である。 |
 | `B-Fullscreen` | ページとブラウザの全画面表示、端からの表示 | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | 未レビュー | 状態ごとに撮影する。 |
 | `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 未レビュー | 削除失敗時に同一プロファイルの全ウィンドウで表示する（決定 56）。 |
 | `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 未レビュー | 失敗時のバナーを撮影する。再試行に成功するとバナーは消える。 |
-| `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 未レビュー | keyboard チェックでは、テスト用の 2 項目を削除・復元する前に Archive を開いて撮影する。 |
-| `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 未レビュー | 一覧、URL での絞り込み、検索結果なし、Clear Archive 後の空一覧を撮影する。行の操作ボタンのフォーカスとホバー、ダーク表示、レールの操作状態は別途撮影が必要である。 |
+| `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違あり。Clear Archive… は Ararat が [Phase 5](architecture.ja.md) で追加した操作である。Downloads は [Arc の Library レールの実測](research/arc-sidebar-layout.ja.md)に従って表示する。 | レールのタイルはラベルの上にアイコンを置き、ライト表示では選択中のタイルを白で塗る。フッターは dock の上に置く。Library を開いている間、dock のボタンは開いた時点のスペースの Look のアクセントで塗る。表示は Archive の撮影で確認する。 |
+| `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違あり。Ararat が [Phase 5](architecture.ja.md) で追加した Clear Archive… を dock の上に置く。 | 一覧、URL での絞り込み、検索結果なし、空一覧の各撮影でフッターを確認する。ライトとダークの両方でレールの選択表示を確認する。 |
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 未レビュー | Today のタブ、スペース名、左ペインのネイティブメニューを開いて撮影する。ほかの行種別とメニューの派生状態は別途撮影が必要である。 |
-| `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 未レビュー | タブを選択していないスペースのページカードを撮影する。モックにある 2 種類のショートカット案内は未実装である。 |
+| `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | 空のカードと既定の 2 つの案内をオフスクリーンテストで確認した。VM の keyboard の撮影（merge/mockfix f9246dc、2026-11-19）で、カードと 2 つの案内の表示を確認した。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 未レビュー | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
 | `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 |
 | `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 未レビュー | 説明文は Swift が連続した仕切り線を描くとする。SplitDividerView はホバー中とドラッグ中にグリップを描画する。 |
@@ -93,10 +97,10 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-command`, `header-command-r`, `header-command-w` | 未レビュー | ヘッダーのツールチップには個別の画像がある。Command-W の画像では行の閉じるボタンが押下状態になる。行のツールチップは撮影が必要である。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag-sidebar` | 未レビュー | ドラッグの画像はサイドバーを撮影する。非アクティブ時の色は別途撮影する。 |
 | `C-DialogHost` | ページカード上のダイアログ | `permission`, `permission-dialog`, `javascript`, `javascript-dialog`, `dialogs-permission`, `dialogs-permission-dialog`, `dialogs-long-origin`, `dialogs-long-origin-dialog`, `dialogs-javascript`, `dialogs-javascript-dialog`, `dialogs-queued-permission`, `dialogs-queued-permission-dialog`, `dialogs-split`, `dialogs-split-dialog` | 未レビュー | 接頭辞のない画像は prompts、dialogs で始まる画像は dialogs を実行して取得する。ダイアログと親ウィンドウを個別に撮影する。 |
-| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 未レビュー | ポップオーバーの行の高さは 48 pt で一致した。間隔の例外はトークン表に記載した。 |
+| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 相違あり。全履歴は実測の 56 pt の行間隔を維持する。 | 各状態の行を参照する。 |
 | `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 未レビュー | 視差効果を減らす設定ではアイコンの移動を省く（§7）。 |
 | `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 未レビュー | 各段階の状態表示と実行できるアクションを比較する。 |
-| `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 未レビュー | 全履歴を表示した Library を撮影する。 |
+| `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 相違あり。全履歴は Arc 実測の 56 pt の行間隔を維持し、フッターに Clear All を置く。 | 見出しはウィンドウの操作ボタンの下に置き、幅の狭い行ではファイル名を独立した行に置く。幅 197 pt の一覧でモックのファイル名が収まることをオフスクリーンテストで確認した。表示は Downloads の撮影で確認する。 |
 | `C-Extensions` | URL 欄のピン留め拡張機能とオーバーフロー行 | `ext-actions-action`, `ext-actions-overflow`, `ext-actions-three-actions` | 未レビュー | ホスト名に最低 64 pt を確保する（決定 47）。 |
 | `C-Extensions` | 拡張機能アクションのオーバーフロー | `ext-actions-overflow`, `ext-actions-three-actions` | 未レビュー | アイコンの寸法、行の高さ、複数行に折り返す条件を個別に確認する。 |
 | `C-Permissions` | 権限の確認とブロック済みサイトの表示 | `permission-dialog`, `site-controls-popover` | 未レビュー | permission-dialog は prompts、ブロック済みサイトのポップオーバーは site-controls で取得する。 |
@@ -106,25 +110,25 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
 | `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
 | `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。`cac6112` ではラベルにホスト名全体を収める幅を確保し、末尾が早く切れる問題を修正した。再撮影後に外観を確認する。 |
-| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 未レビュー | 通常のコマンドパネルについて、検索時と、入力欄が空で最近のタブを表示する状態を撮影する。 |
-| `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 未レビュー | 検索結果の先頭行と、ループバックのテストページの閲覧履歴を撮影する。 |
-| `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
+| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 差異あり | ヒントには Return で選択行を開く操作を表示する。Tab による補完は U23 で廃止した（mock-decisions.md:84）。 |
+| `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 一致 | 検索が先頭に出て、その後に履歴が続く。選択行には表示中のスペースの Look のアクセントを使う。 |
+| `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 差異あり | 選択行には Look のアクセントを使う。最近のタブには「Switch to Tab」を表示する。検索優先の決定に従い、Edit URL では Open URL の 1 行を表示する。 |
 | `D-CommandBarRows` | 結果行の寸法、内側余白、行間 | — | 一致 | 対応表に記載した行と入力欄の寸法は一致した。行の外観は未確認である。 |
-| `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 未レビュー | ネイティブのエラーページを各状態で撮影する。 |
+| `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 差異あり | Try Again にはスペースのアクセントを使う。オフラインのテストページでは、サイドバーに Chromium の内部 URL が表示されることがある。 |
 | `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`, `keyboard-find-count` | 未レビュー | header では検索欄を開いた直後を、keyboard ではテストページで件数と選択中の一致箇所が確定した状態を撮影する。 |
 | `D-FindBarPage` | ページ上の検索バー | `header-find-bar`, `keyboard-find-count` | 未レビュー | keyboard の画像には、テストページと、件数を表示するページ内検索バーが写る。 |
 | `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 未レビュー | 対応表はバーの高さ 48 pt の例外を記録し、色とコントロールの値を照合する。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 未レビュー | プライベートブラウザのウィンドウを撮影する。 |
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違あり | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
-| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 未レビュー | Archive Tab と Close Tab の状態を個別に撮影する。 |
-| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
+| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 差異あり | Reload にはスペースのアクセントを使う。アイコンは点が並んだウィンドウを表示する。 |
+| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 差異あり | 選択タイルには Look のアクセントを使う。パネルはウィンドウの中央にあり、タイルにはアイコンとタイトルを表示する。サムネイルとキーヒントは未実装である。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
-| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 未レビュー | fullscreen チェックで通常サイズへ戻った後、サイドバーを固定したダークのウィンドウを撮影する。 |
+| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。その上で描く選択行は (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致する。画面上の合成結果は固定サイドバーの再撮影で確認する。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 未レビュー | 2 枚目はルートを保存した後、Default destination のメニューを開く直前の画像である。 |
-| `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 未レビュー | Theme、Look、New Tab の行のスイッチ、Tooltips を実装している。Page zoom は未実装である。 |
-| `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 未レビュー | 行内に AppKit と SwiftUI のネイティブコントロールを使う。 |
+| `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 差異あり | SwiftUI のスイッチには Look のアクセントを指定し、色が無い場合はモックの青緑を使う。Page zoom は未実装である。 |
+| `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 差異あり | SwiftUI のコントロールとショートカットの記録欄には Look のアクセントを指定する。ネイティブのセグメントでシステムの色が使われる場合があり、モックのステッパーは未実装である。 |
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 未レビュー | インストール済み一覧は Chromium を通して取得する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
 | `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 未レビュー | グループカードの角丸と間隔は対応表の値と一致した。 |
@@ -148,7 +152,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `F-LookGallery` | プリセットとカラーピッカー | `look-55-popover` | 未レビュー | モックと同じプリセットページを開いた状態で比較する。 |
 | `F-LookPopover` | Look ポップオーバーと色の入力欄 | `look-55-popover`, `look-glass-popover` | 未レビュー | 該当するモック内の見本とポップオーバーのフレームを組み合わせる。 |
 | `F-LookSidebar` | 設定値ごとのスペース色とサイドバー | `look-55-sidebar`, `look-detent-sidebar`, `look-glass-sidebar` | 未レビュー | サイドバーとポップオーバーを対応する組として記録する。 |
-| `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 未レビュー | ピッカーとプリセットはポップオーバーで確認する。サイドバーは Grain が 0、5、50、100% のときに撮影する。 |
+| `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 一致 | 濃紺の Grain 検査を Auto に設定した。URL のプレースホルダー、行のタイトル、Clear、dock のグリフは明るい前景色になる。粒状感の 4 状態は再撮影で確認する。 |
 | `F-Onboarding` | ようこそ、ソース、対象選択、既定ブラウザ、進捗、完了、二つのエラー | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | 未レビュー | ボタンの高さと間隔の例外はオーナー決定としてトークン表に記載した。 |
 | `F-Onboarding` | ようこそとインポート元の検出 | `onboarding-welcome`, `onboarding-source` | 未レビュー | インポート元のチェックは Arc 検出のフィクスチャを使う。 |
 | `F-Onboarding` | インポート対象と既定ブラウザの設定 | `onboarding-what-to-import`, `onboarding-default-browser` | 未レビュー | インポート対象の行と既定ブラウザの操作を個別に確認する。 |
@@ -156,5 +160,5 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 未レビュー | 報告の各行はインポートのフィクスチャに基づく。 |
 | `F-Onboarding` | インポートエラーと関連ファイルの警告 | `onboarding-error`, `onboarding-sibling-file` | 未レビュー | 失敗の二つの状態を個別に撮影する。 |
 | `Floating` | フローティングサイドバーの概要 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いた状態を撮影する。通常のウィンドウでの浮動表示は別途撮影が必要である。 |
-| `Main` | メインウィンドウの概要 | `header-240` | 未レビュー | 幅 240 pt のヘッダーを撮影した画像はウィンドウ全体を含む。 |
-| `Themes` | Look の概要、色レイヤー、スライダー | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | 未レビュー | 透明度スライダーとデテントは決定 113–115 で採用された。 |
+| `Main` | メインウィンドウの概要 | `header-240` | 相違 | ライトの選択行は白で描く。Main ボードのレンダリングではお気に入りがページにまたがって縦に並ぶため、選択行は A-TabRows と比較する。 |
+| `Themes` | Look の概要、色レイヤー、スライダー | `look-55-popover`, `look-55-sidebar`, `look-detent-popover`, `look-detent-sidebar`, `look-glass-popover`, `look-glass-sidebar` | 相違 | Auto の文字色は決定 114 に従う。ボードのレンダリングにテンプレートの未展開箇所があるため、比較できる範囲はサイドバーに限られる。 |

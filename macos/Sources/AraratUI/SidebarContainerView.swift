@@ -13,6 +13,7 @@ private final class ToastView: NSView {
 public final class SidebarContainerView: NSView {
     private let sidebar: SidebarView
     private let page: NSView
+    private let emptyPageHints = EmptyPageHints()
     private let toast = ToastView()
     private let toastLabel = NSTextField(labelWithString: "Link copied")
     private let toastUndo = NSButton(title: "Undo", target: nil, action: nil)
@@ -39,6 +40,7 @@ public final class SidebarContainerView: NSView {
         didSet {
             privateBackdrop.isHidden = !privateWindow
             privateEmpty.isHidden = !(privateWindow && privateEmptyShown)
+            updateEmptyPage()
             needsLayout = true
             layoutSubtreeIfNeeded()
         }
@@ -109,8 +111,10 @@ public final class SidebarContainerView: NSView {
                 maskingTransition = false
                 panel.layer?.removeAllAnimations()
                 page.layer?.removeAllAnimations()
+                emptyPageHints.layer?.removeAllAnimations()
                 pageMask.removeAllAnimations()
             }
+            updateEmptyPage()
             needsLayout = true
             layoutSubtreeIfNeeded()
             if !pageFullscreen { processPointer() }
@@ -240,6 +244,12 @@ public final class SidebarContainerView: NSView {
         panel.wantsLayer = true
         panel.layer?.cornerCurve = .continuous
         addSubview(page)
+        // Chromium owns the card's children and removes them when synchronizing its tabs.
+        emptyPageHints.wantsLayer = true
+        addSubview(emptyPageHints, positioned: .above, relativeTo: page)
+        sidebar.onKeyBindingsChanged = { [weak self] in self?.updateEmptyPageHints() }
+        updateEmptyPageHints()
+        updateEmptyPage()
         privateBackdrop.wantsLayer = true
         privateBackdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.92).cgColor
         privateBackdrop.isHidden = true
@@ -413,7 +423,21 @@ public final class SidebarContainerView: NSView {
 
     public func selectionChanged() {
         state.hasSelection = sidebar.selectedRowID != nil && !sidebar.createSpaceOpen
+        updateEmptyPage()
         processPointer()
+    }
+
+    private func updateEmptyPage() {
+        let showsCard = sidebar.selectedRowID == nil && !privateWindow && !pageFullscreen
+        emptyPageHints.isHidden = !showsCard || sidebar.createSpaceOpen
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            page.layer?.backgroundColor = showsCard ? EmptyPageHints.cardFill(for: effectiveAppearance).cgColor : nil
+        }
+        page.layer?.cornerRadius = showsCard ? SidebarMetrics.cornerRadius : 0
+    }
+
+    private func updateEmptyPageHints() {
+        emptyPageHints.update(bindings: sidebar.keyBindings)
     }
 
     public func showLinkCopied() {
@@ -531,6 +555,7 @@ public final class SidebarContainerView: NSView {
         page.frame = NSRect(x: pageX, y: SidebarMetrics.cardInset,
                             width: max(0, bounds.width - pageX - SidebarMetrics.cardInset),
                             height: max(0, bounds.height - SidebarMetrics.cardInset * 2))
+        emptyPageHints.frame = page.frame
         privateEmpty.frame = page.frame
         layoutToast()
         layoutFindBar()
@@ -598,6 +623,7 @@ public final class SidebarContainerView: NSView {
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateBorder()
+        updateEmptyPage()
     }
 
     private func updateBorder() {
@@ -625,7 +651,7 @@ public final class SidebarContainerView: NSView {
         }
         defer { CATransaction.commit() }
         let oldMaskPath = (pageMask.presentation() as? CAShapeLayer)?.path ?? pageMask.path
-        let views = [panel as NSView, page]
+        let views = [panel as NSView, page, emptyPageHints]
         let old = views.map { ($0.layer?.presentation() ?? $0.layer).map { ($0.position, $0.bounds) } }
         changes()
         layout()

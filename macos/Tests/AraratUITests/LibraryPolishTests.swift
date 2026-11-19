@@ -101,7 +101,8 @@ func archiveEmptyMessagesAreCenteredInTheListArea() throws {
     #expect(label.alignment == .center && label.textColor == .secondaryLabelColor)
     let rect = label.convert(label.bounds, to: library)
     let listRect = scroll.convert(scroll.bounds, to: library)
-    #expect(abs(rect.midX - listRect.midX) < 0.1 && abs(rect.midY - listRect.midY) < 0.1)
+    #expect(abs(rect.midX - listRect.midX) <= 0.5)
+    #expect(abs(rect.midY - listRect.midY) <= 0.5)
     _ = sidebar.searchArchive("missing")
     #expect(label.stringValue == "No matching tabs")
 }

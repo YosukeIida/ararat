@@ -113,11 +113,13 @@ public final class SidebarView: NSView {
 
     private var lookPreview: (spaceID: String, look: Look?)?
     private let shortcutMenus = NSHashTable<NSMenu>.weakObjects()
+    var onKeyBindingsChanged: (() -> Void)?
     public var keyBindings = defaultKeyBindings() {
         didSet {
             for menu in shortcutMenus.allObjects { KeyBindingsModel.apply(keyBindings, to: menu) }
             let caps = closeCaps
             for view in rowViews.values { view.closeCaps = caps }
+            onKeyBindingsChanged?()
         }
     }
 
@@ -738,6 +740,7 @@ public final class SidebarView: NSView {
         else if lookPreview?.spaceID == spaceID { lookPreview = nil }
         snapshot.spaces[index].look = look
         refreshLook()
+        updateDockSelection(offset: pagePresentationOffset)
     }
 
     private func keepingLookPreview(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
@@ -2304,7 +2307,9 @@ public final class SidebarView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            libraryFill.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
+            let look = libraryLookSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id } } ?? snapshotSpace
+            libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
+                .withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
         }
     }
 
