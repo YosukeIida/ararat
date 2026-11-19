@@ -14,6 +14,7 @@ public enum LittleWindowMetrics {
     /// The traffic lights occupy the leading corner; the board starts the profile chip at 84
     /// after them, which the step rule rounds to 80.
     public static let profileInset: CGFloat = 80
+    public static let addressInset: CGFloat = 90 // D-LittleWindow's address flex padding.
     public static let trailingInset: CGFloat = 8
     public static let buttonSize: CGFloat = 28
     public static let buttonRadius: CGFloat = 8
@@ -397,6 +398,9 @@ public final class LittleWindowBarView: NSView {
         let addressGroup = NSLayoutGuide()
         addLayoutGuide(addressArea)
         addLayoutGuide(addressGroup)
+        let centreAddress = addressGroup.centerXAnchor.constraint(equalTo: addressArea.centerXAnchor)
+        // Keep as much of the address visible as will fit when the profile crowds the centre.
+        centreAddress.priority = .init(rawValue: NSLayoutConstraint.Priority.defaultLow.rawValue - 1)
 
         NSLayoutConstraint.activate([
             hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -416,7 +420,7 @@ public final class LittleWindowBarView: NSView {
             copyButton.trailingAnchor.constraint(equalTo: extensionsButton.leadingAnchor, constant: -4),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            addressArea.leadingAnchor.constraint(equalTo: profileButton.trailingAnchor, constant: profileButton.alignmentRectInsets.right),
+            addressArea.leadingAnchor.constraint(equalTo: leadingAnchor, constant: LittleWindowMetrics.addressInset),
             addressArea.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -copyButton.alignmentRectInsets.left),
             addressArea.topAnchor.constraint(equalTo: topAnchor),
             addressArea.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -424,8 +428,9 @@ public final class LittleWindowBarView: NSView {
             addressGroup.trailingAnchor.constraint(equalTo: address.trailingAnchor, constant: address.alignmentRectInsets.right),
             addressGroup.topAnchor.constraint(equalTo: glyph.topAnchor),
             addressGroup.bottomAnchor.constraint(equalTo: glyph.bottomAnchor),
-            addressGroup.centerXAnchor.constraint(equalTo: addressArea.centerXAnchor),
-            addressGroup.leadingAnchor.constraint(greaterThanOrEqualTo: addressArea.leadingAnchor, constant: 16),
+            centreAddress,
+            addressGroup.leadingAnchor.constraint(greaterThanOrEqualTo: profileButton.trailingAnchor,
+                                                  constant: profileButton.alignmentRectInsets.right + 16),
             addressGroup.trailingAnchor.constraint(lessThanOrEqualTo: addressArea.trailingAnchor, constant: -16),
 
             glyph.centerYAnchor.constraint(equalTo: centerYAnchor),

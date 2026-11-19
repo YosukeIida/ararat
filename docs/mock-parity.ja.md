@@ -118,7 +118,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 修正済み、VM 再確認待ち | オフラインの fixture は docs.example.org への遷移を Chromium の切断エラーで失敗させ、遷移先のホスト名を表示する（決定 87）。 |
 | `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`、`keyboard-find-count`、`keyboard-find-no-match` | 修正済み、VM 再確認待ち | 入力欄の右端の表示枠に件数を左揃えで表示する。現在の検索の途中結果が届くとスピナーを表示し、0 件が確定すると赤い Not found を表示してシェブロンを無効にする。 |
 | `D-FindBarPage` | ページ上の検索バー | `header-find-bar`、`keyboard-find-count`、`keyboard-find-no-match` | 修正済み、VM 再確認待ち | ページの右上に、欄内の件数、シェブロン、0 件確定時の表示を備えた検索バーを出す。 |
-| `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 修正済み、VM 再確認待ち | アドレスをプロファイルチップと Copy Link の間の中央に配置する。2 つのメニューはダーク表示で行を左にそろえ、Edit URL パネルもダーク表示にする（決定 89）。 |
+| `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 修正済み、VM 再確認待ち | アドレスはバーの先頭から 90 pt の位置と Copy Link の間の中央に置き、プロファイルチップから 16 pt 以上離す。2 つのメニューはダーク表示で行を左にそろえ、Edit URL パネルもダーク表示にする（決定 89）。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 相違 | `private-window` のダーク外観、マスク、Private 表示は一致する（決定 86）。サイドバーには Today、Clear、Library、+ があり、New Tab と表示され、終了時の削除を説明する脚注がない。 |
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違 | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 修正済み、VM 再確認待ち | ページには悲しい顔のウィンドウを表示する。サイドバーの行には A-TabRows で指定された警告アイコンを使う（決定 16）。 |

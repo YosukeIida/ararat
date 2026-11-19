@@ -99,9 +99,9 @@ func littleWindowBarLaysOutTheBoardsBand() throws {
     #expect((frames["profile"]?.minX ?? 0) >= 80)
     let profile = try #require(frames["profile"])
     let copy = try #require(frames["copy"])
-    let gapCentre = (profile.maxX + copy.minX) / 2
+    let regionCentre = (90 + copy.minX) / 2
     let group = try #require(frames["glyph"]).union(try #require(frames["address"]))
-    #expect(abs(group.midX - gapCentre) <= 1)
+    #expect(abs(group.midX - regionCentre) <= 1)
     #expect(abs((frames["chevron"]?.maxX ?? 0) - (640 - LittleWindowMetrics.trailingInset)) <= 1)
     #expect((frames["open"]?.maxX ?? 0) <= (frames["chevron"]?.minX ?? 0))
     #expect((frames["copy"]?.maxX ?? 0) <= (frames["open"]?.minX ?? 0))
@@ -122,7 +122,20 @@ func littleWindowBarLaysOutTheBoardsBand() throws {
     #expect(address.frame.width < address.intrinsicContentSize.width)
     #expect(longGroup.minX >= profile.maxX + 16)
     #expect(longGroup.maxX <= copy.minX - 16)
-    #expect(abs(longGroup.midX - gapCentre) <= 1)
+
+    model.profileName = "University Research and Teaching"
+    bar.model = model
+    bar.layoutSubtreeIfNeeded()
+    let longProfileFrames = bar.checkButtonFrames
+    let longProfile = try #require(longProfileFrames["profile"])
+    let longProfileCopy = try #require(longProfileFrames["copy"])
+    let longProfileAddress = try #require(longProfileFrames["address"])
+    let shiftedGroup = try #require(longProfileFrames["glyph"]).union(longProfileAddress)
+    #expect(shiftedGroup.minX > regionCentre)
+    #expect(abs(shiftedGroup.minX - (longProfile.maxX + 16)) <= 1)
+    #expect(shiftedGroup.maxX <= longProfileCopy.minX - 16)
+    #expect(longProfileAddress.width > 0)
+    #expect(longProfileAddress.width < address.intrinsicContentSize.width)
 }
 
 @Test @MainActor
