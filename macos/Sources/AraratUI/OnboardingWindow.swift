@@ -557,10 +557,12 @@ final class OnboardingRowView: NSView {
         return wrapsToTwoLines(in: width) ? Self.twoLineHeight : Self.oneLineHeight
     }
 
+    /// Whether the label's own cell lays the text out on more than one line at this row width.
+    /// The cell wraps a few points before the string's own width because of its inset, so the
+    /// height must come from the cell rather than from a string measurement.
     private func wrapsToTwoLines(in width: CGFloat) -> Bool {
-        let textWidth = max(0, width - 32)
-        let oneLine = (titleField.stringValue as NSString).size(withAttributes: [.font: Self.titleFont]).width
-        return oneLine > textWidth
+        let bounds = NSRect(x: 0, y: 0, width: max(0, width - 32), height: .greatestFiniteMagnitude)
+        return (titleField.cell?.cellSize(forBounds: bounds).height ?? 0) > 17
     }
 
     override func layout() {

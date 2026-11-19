@@ -89,16 +89,6 @@ func theDestructiveRedIsTheBoardsDynamicColour() throws {
     #expect(abs(dark.redComponent - 0xFF / 255) < 0.002)
     #expect(abs(dark.greenComponent - 0x8A / 255) < 0.002)
     #expect(abs(dark.blueComponent - 0x80 / 255) < 0.002)
-    // Increase Contrast takes its own values: darker on white, lighter on the dark card. AppKit
-    // maps a constructed high-contrast appearance to aqua/darkAqua here, so the provider's branch
-    // is read through the values it feeds rather than through a synthetic appearance.
-    let contrastLight = try #require(SettingsColor.destructiveRed(dark: false, highContrast: true).usingColorSpace(.sRGB))
-    let contrastDark = try #require(SettingsColor.destructiveRed(dark: true, highContrast: true).usingColorSpace(.sRGB))
-    #expect(contrastLight.redComponent < light.redComponent && contrastLight.greenComponent < light.greenComponent)
-    #expect(contrastDark.greenComponent > dark.greenComponent && contrastDark.blueComponent > dark.blueComponent)
-    #expect(contrastLight != light && contrastDark != dark)
-    #expect(SettingsColor.destructiveRed(dark: false, highContrast: false).usingColorSpace(.sRGB) == light)
-    #expect(SettingsColor.destructiveRed(dark: true, highContrast: false).usingColorSpace(.sRGB) == dark)
 }
 
 @Test @MainActor

@@ -393,21 +393,11 @@ enum SettingsColor {
     /// The keycap and space-icon-tile grey (`--kc` on the boards).
     static let keycap = grey(231, 68)
     /// The boards' destructive red, `--red`: #B3261E on a light background and #FF8A80 on a dark
-    /// one (E-SpacePage, E-Websites), not `systemRed`, which is about 3.5:1 on white. Increase
-    /// Contrast takes a darker light value and a lighter dark one, so 13 pt text stays readable.
-    static func destructiveRed(dark: Bool, highContrast: Bool) -> NSColor {
-        switch (dark, highContrast) {
-        case (false, false): NSColor(srgbRed: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
-        case (false, true): NSColor(srgbRed: 0x7A / 255, green: 0x0B / 255, blue: 0x06 / 255, alpha: 1)
-        case (true, false): NSColor(srgbRed: 0xFF / 255, green: 0x8A / 255, blue: 0x80 / 255, alpha: 1)
-        case (true, true): NSColor(srgbRed: 0xFF / 255, green: 0xC1 / 255, blue: 0xBA / 255, alpha: 1)
-        }
-    }
+    /// one (E-SpacePage, E-Websites), not `systemRed`, which is about 3.5:1 on white.
     static let destructiveColor = NSColor(name: nil) { appearance in
-        let highContrast = appearance.name == .accessibilityHighContrastAqua
-            || appearance.name == .accessibilityHighContrastDarkAqua
-        return destructiveRed(dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-                              highContrast: highContrast)
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0xFF / 255, green: 0x8A / 255, blue: 0x80 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
     }
     static let destructive = Color(nsColor: destructiveColor)
 }
