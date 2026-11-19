@@ -1706,6 +1706,7 @@ pub struct LiveCommand {
     pub kind: LiveCommandKind,
     pub item: String,
     pub url: Option<String>,
+    pub target_window: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -1808,6 +1809,7 @@ impl From<ararat_core::live::Command> for LiveCommand {
             },
             item: command.item,
             url: command.url,
+            target_window: command.target_window,
         }
     }
 }

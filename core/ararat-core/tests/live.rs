@@ -798,7 +798,10 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     // window left: the strip keeps its mapping and must not take the selection back.
     let (ops, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
         epoch: 1, rev: 2, cause: Cause::Command(late.id.clone()),
-        strips: vec![strip(&live, &["a", "d"], Some("a"))],
+        strips: vec![
+            Strip { window: "two".into(), tabs: vec![], active: None },
+            strip(&live, &["a", "d"], Some("a")),
+        ],
     });
     assert!(outcome.applied);
     assert_eq!(ws.selected("one"), Some("d"));
@@ -807,12 +810,12 @@ fn a_late_activation_from_the_space_the_window_left_keeps_the_shown_selection() 
     assert!(live.item_for(&late.id).is_none());
     assert!(!ops.iter().any(|op| matches!(op, Op::Put(Record::Window(_)))));
     // Chrome stays on a, and the page follows Chrome, so the core answers with one Activate
-    // for the row the window keeps — the close successor's shape. The command names the tab,
-    // not the window; its strip is the one that reported the off-space active tab.
+    // for the row the window keeps, addressed to the window with the off-space active tab.
     assert_eq!(outcome.commands.len(), 1);
     let reassert = outcome.commands[0].clone();
     assert_eq!(reassert.kind, CommandKind::Activate);
     assert_eq!(reassert.item, "d");
+    assert_eq!(reassert.target_window.as_deref(), Some("one"));
     assert!(reassert.url.is_none());
     assert!(reassert.id.starts_with("cmd-"));
     assert!(live.item_for(&reassert.id).is_none());
@@ -955,6 +958,7 @@ fn chrome_close_of_the_active_tab_activates_the_successor_the_core_chooses() {
     assert_eq!(outcome.commands.len(), 1);
     assert_eq!(outcome.commands[0].kind, CommandKind::Activate);
     assert_eq!(outcome.commands[0].item, "c");
+    assert_eq!(outcome.commands[0].target_window.as_deref(), Some("one"));
     assert_eq!(ws.selected("one"), Some("c"));
     assert_eq!(ws.items["b"].lifecycle, Lifecycle::Closed);
     assert!(live.live_tab("b").is_none());

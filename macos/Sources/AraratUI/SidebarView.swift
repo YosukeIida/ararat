@@ -2970,8 +2970,7 @@ extension SidebarView: NSMenuDelegate {
                   SidebarMenuItem("Delete") { [weak self] in self?.deleteFolder(row) }])
     }
 
-    // The split row's panes, in row order: a nested split contributes its own leaves. P5d's key
-    // and command bar read it too, so they pick the same pane the segment menu does.
+    // The split row's panes, in row order: a nested split contributes its own leaves.
     public func paneRows(of split: String) -> [Row] {
         let all = (snapshotSpace?.pinned ?? []) + (snapshotSpace?.today ?? [])
         func leaves(_ id: String) -> [Row] {

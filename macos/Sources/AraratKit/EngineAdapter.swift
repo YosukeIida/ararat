@@ -644,11 +644,34 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     // ring and the sidebar follow. A new pane opens the New Tab page and takes the focus.
     static let newTabPage = "chrome://newtab/"
 
-    public func addSplitPane(item: String, side: SplitSide) {
+    public var addSplitViewTarget: String? {
+        let active = host?.activeItemId()
+        return queue.sync { store.flatMap { selectedSplitTarget(in: $0, active: active) } }
+    }
+
+    private func selectedSplitTarget(in store: WorkspaceStore, active: String?) -> String? {
+        let snapshot = store.snapshot(windowId: windowID)
+        guard let id = snapshot.selectedId,
+              let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+              let row = (space.today + space.pinned).first(where: { $0.id == id }) else { return nil }
+        switch row.kind {
+        case .tab: return id
+        case .split:
+            func leaves(_ pane: SplitPane) -> [String] {
+                pane.kind == .tab ? [pane.id] : pane.children.flatMap(leaves)
+            }
+            let panes = store.splitLayout(itemId: id).map(leaves) ?? []
+            return panes.first { $0 == active } ?? panes.first ?? id
+        default: return nil
+        }
+    }
+
+    public func addSplitPane(item: String? = nil, side: SplitSide) {
         precondition(Thread.isMainThread)
+        let active = item == nil ? host?.activeItemId() : nil
         queue.async {
             do {
-                guard let store = self.store else { return }
+                guard let store = self.store, let item = item ?? self.selectedSplitTarget(in: store, active: active) else { return }
                 let change = try store.addSplitPane(windowId: self.windowID, itemId: item, side: side)
                 DispatchQueue.main.async {
                     self.deliverIfCurrent(change.snapshot)
@@ -1154,8 +1177,17 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                 } : []
                 if let error = outcome.persistenceError { self.report(CoreError.Store(message: error)) }
-                for command in outcome.commands where command.kind == .activate || command.kind == .open {
-                    self.pendingSelectionCommands.insert(command.id)
+                let reactivations = outcome.commands.compactMap { command -> (LiveCommand, EngineAdapter, Int)? in
+                    guard let window = command.targetWindow else {
+                        if command.kind == .activate || command.kind == .open { self.pendingSelectionCommands.insert(command.id) }
+                        return nil
+                    }
+                    guard let (target, generation) = selections.first(where: { $0.0.windowID == window }) else {
+                        _ = store.liveCancel(commandId: command.id)
+                        return nil
+                    }
+                    target.pendingSelectionCommands.insert(command.id)
+                    return (command, target, generation)
                 }
                 let snapshot = store.snapshot(windowId: self.windowID)
                 self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) strips=\(transaction.strips.map { "\($0.window):active=\($0.active ?? "nil")" }) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
@@ -1174,6 +1206,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         self.traceLittleWindow("settled item=\(item) live=\(live)")
                         self.endLittleWindowHandoff()
                     }
+                    for (command, target, generation) in reactivations {
+                        guard target.selectionGeneration == generation else {
+                            target.cancelSelectionCommand(command)
+                            continue
+                        }
+                        target.execute(command)
+                    }
                     guard !(hasClosingTabs && self.selectionClosed) else { self.tracePrivate("transaction rejected on delivery rev=\(rev)"); return }
                     for (live, owner) in movedLives {
                         self.session.noteTransfer(live, destination: owner)
@@ -1183,7 +1222,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     for adopted in outcome.adopted {
                         self.tab(adopted.liveId)?.itemId = adopted.item
                     }
-                    for command in outcome.commands { self.execute(command) }
+                    for command in outcome.commands where command.targetWindow == nil { self.execute(command) }
                     if case .command(let id) = transaction.cause {
                         self.restoringSplitCommands.remove(id)
                         if self.restoringTargetCommand == id { self.restoringTargetCommand = nil }
@@ -1773,11 +1812,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 DispatchQueue.main.async {
                     if command.kind == .activate {
                         self.selectionDispatchForCheck("resolved", command: command) {
-                            if self.tab(id) == nil, let remote = self.session.tab(id) {
-                                self.tracePrivate("beginTransfer item=\(command.item) live=\(id) command=\(command.id)")
-                                self.session.beginTransfer(id, destination: self.windowID)
-                                self.session.captureSnapshot(remote, item: command.item)
-                            }
                             self.dispatchActivation(command, live: id, host: host, selection: selection,
                                                     deadline: .now() + 5, retrying: false)
                         }
@@ -1797,7 +1831,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                   self.selectionGeneration == context.generation && current.profileDirectory() == context.profile &&
                   self.queue.sync { self.store?.snapshot(windowId: self.windowID).shownSpaceId == context.space }
               }) ?? true,
-              queue.sync(execute: { self.store?.liveTab(item: command.item) == live && self.pendingSelectionCommands.contains(command.id) })
+              command.targetWindow == nil || selectionRequest == nil || selectionRequest?.item == command.item,
+              queue.sync(execute: {
+                  guard let store = self.store, store.liveTab(item: command.item) == live,
+                        self.pendingSelectionCommands.contains(command.id) else { return false }
+                  return command.targetWindow == nil || (command.targetWindow == self.windowID &&
+                      store.snapshot(windowId: self.windowID).selectedId == command.item)
+              })
         else { tracePrivate("activation guard failed item=\(command.item) command=\(command.id)"); traceMatrix("selection cancelled command=\(command.id) live=\(live) generation=\(selectionGeneration) expected=\(selection?.generation.description ?? "none")"); cancelSelectionCommand(command); return }
         if let local = tab(live) {
             queue.sync { _ = pendingSelectionCommands.remove(command.id) }
@@ -1809,6 +1849,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             return
         }
         let remote = session.tab(live)
+        if !retrying, let remote {
+            tracePrivate("beginTransfer item=\(command.item) live=\(live) command=\(command.id)")
+            session.beginTransfer(live, destination: windowID)
+            session.captureSnapshot(remote, item: command.item)
+        }
         let supported = (current as AnyObject).responds(to: #selector(ARWindowHostAPI.transferTab(_:commandId:)))
         if let remote, supported, current.transferTab(remote, commandId: command.id) {
             tracePrivate("transfer accepted item=\(command.item) command=\(command.id) active=\(current.activeItemId() ?? "nil")")
