@@ -262,8 +262,8 @@ workspace のページが非表示なら、通常は active タブを報告し�
 - `smoke` はビルドしたアプリを、`$TMPDIR` の使い捨て profile と `--use-mock-keychain` で `--headless=new --dump-dom`（data: URL）と `--version` の 2 回で実行する。どちらかでも失敗すれば 0 以外で終わる。実の login keychain を使うと、out/Dev のビルドは DOM を出した後に「Teardown watchdog expired」で終了コード 2 になり、keychain に「Chromium Safe Storage」の項目が作られる（我々の規則）。
 - GN args は 1 つのファイルに置く: official build、ThinLTO、PGO、DCHECK なし、シンボルの除去、`proprietary_codecs=true`、`ffmpeg_branding="Chrome"`、独自のブランディング。phase 2 の実装（`engine/args.gn`）は ungoogled の `flags.gn` と `flags.macos.gn` にこちらの入力 `target_cpu="arm64"` を加えた形で、`chrome_pgo_phase` は暫定で 0 とし、独占の API キーは設定しない。ブランディングは phase 3 に回す。
 - `engine/build-inputs.toml` には、Chromium のタグとコミット、収録した ungoogled のコミットと `ungoogled_tag`、GN args のパスと SHA-256、Xcode と SDK のバージョンとビルド番号、アーキテクチャを記録する。汎用 ungoogled パッチセットの版はコミットで固定する。`ungoogled_tag` はそのコミットに対応する人間向けのタグで、release-watch が upstream のタグとの比較に使う。`engine/patch-state.sha256` には、series の SHA-256 と、パッチの適用対象およびコピーしたファイルのハッシュを記録する。DEPS は固定した Chromium のツリーに含まれる。エンジンの成果物のキーは、ビルド入力のハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
-- CI ではエンジンをビルドしない。エンジンはローカルでビルドし、このキーのもとで prerelease として公開する。
-- リリースのタグを打つ前に `apply` を実行し、更新された `engine/patch-state.sha256` をコミットする。リリースコミットからエンジンと配布用の Swift 実行ファイルをビルドし、`macos/scripts/bundle-app.sh --release <engine-app> <out-dir>` を実行する。このコマンドはクリーンなチェックアウトを要求し、リポジトリのレイヤーとエンジンツリーを記録済みマニフェストと照合する。アプリを配置する前に `engine/scripts/corresponding-source <out-dir>/Ararat-source` を呼び出す。バイナリとともに `Ararat-source.tar.xz` とその `.sha256` を公開する。
+- リリースのタグを打つ前に `apply` を実行し、更新された `engine/patch-state.sha256` をコミットする。リリースコミットからエンジンをビルドする。オーナーは §12 の provenance を添えてエンジンの prerelease を公開する前に、ローカルの Chromium ツリーに対して `engine/scripts/series-check --release` を実行する。CI はこのエンジンをダウンロードし、`macos/scripts/bundle-app.sh --from-artifact <dir> <out-dir>` で provenance をリリースコミットのエンジンキーとマニフェストのハッシュに照合する。Chromium のソースツリーの検査はビルド機で行う。
+- ローカルでリリースを組み立てるには、配布用の Swift 実行ファイルをビルドし、`macos/scripts/bundle-app.sh --release <engine-app> <out-dir>` を実行する。このコマンドはクリーンなチェックアウトを要求し、リポジトリのレイヤーとエンジンツリーを記録済みマニフェストと照合する。アプリを配置する前に `engine/scripts/corresponding-source <out-dir>/Ararat-source` を呼び出す。バイナリとともに `Ararat-source.tar.xz` とその `.sha256` を公開する。
 - Corresponding Source（対応ソース）のディレクトリには、コミット ID と Ararat の `git archive` による書き出しを収録する。書き出しには `build-inputs.toml`、`patch-state.sha256`、および `series` が適用順を定めるパッチ一式が含まれる。`reproduce.sh --check-only` は記録済みマニフェストの series の SHA-256 を使い、series をオフラインで検証する。README には固定した Sparkle 2.10.1 のリビジョンに対応するソースアーカイブの取得 URL を記載し、書き出しにはアーカイブの SHA-256 を収録する。通常実行では、固定した Chromium と DEPS を取得してパッチを適用し、レイヤーを配置した後、生成したマニフェストを記録済みマニフェストとバイト単位で比較する。
 
 - U19 の 157.0.8103.39 から 158.0.8127.18 への練習リベース（2026-11-10、第 2 の root）: `out` を除く `src` のクローンに 221 秒かかり、論理サイズ約 50 GB に対して空き容量は 0.84 GB 減った。APFS は extent を共有したが、ツールでは clone と copyfile の fallback を区別できなかった。タグの取得に 328 秒、`gclient sync` に 526 秒かかった。順次適用では series 42 件中 8 件（generic 5 件、我々のパッチ 3 件）が失敗した。dry run の予測は 6 件で、`viewless-bubble-anchor` と `sad-tab-viewless` は予測できなかった。`add-credits` は残存ファイルだけが原因で失敗した。ungoogled の 158 リリースがなかったため、generic 5 件は手作業で移植しており、upstream とバイト単位では一致しない。
@@ -461,7 +461,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 - SwiftPM で Sparkle 2.10.1 を固定する。Chromium のアプリデリゲートがアップデーターを保持し、アプリメニューの **Check for Updates…** から Sparkle 標準の画面を開く。更新設定のない開発用バンドルでは、この項目を無効にする。stable は Sparkle の既定チャネルを使う。nightly ビルドは `nightly` タグの付いた項目も受け付ける。
 - 更新を有効にするには、`macos/scripts/bundle-app.sh` に `ARARAT_FEED_URL`（公開先の HTTPS appcast URL）、`ARARAT_ED_PUBLIC_KEY`（EdDSA 公開鍵）、単調増加する `ARARAT_BUILD_VERSION` を渡す。nightly ビルドには `ARARAT_UPDATE_CHANNEL=nightly` を指定する。ビルド番号は `CFBundleVersion` に入る。Chromium は `CFBundleShortVersionString` を基にフレームワークを探す。
 - `macos/scripts/sign-release.sh --identity <identity> [--entitlements <release.plist>] <Ararat.app>` は、構成済みのアプリを hardened runtime とセキュアタイムスタンプ付きで再署名する。アプリと Chromium のヘルパーには、バンドルの ad-hoc 署名に含まれる entitlement を引き継ぐ。アプリの entitlement を上書きする場合は、エンジンのデバイス系 entitlement と承認済みの本番用 entitlement を含む plist 全体を渡す。付与された entitlement が provisioning profile を必要とする場合は、署名前に対応するプロファイルを埋め込む。CI の署名用キーチェーンは `ARARAT_SIGNING_KEYCHAIN` で指定する。スクリプトは `codesign` でバンドル全体の署名を検証し、Gatekeeper の判定を確認する。
-- ローカルでは `macos/scripts/notarize.sh --keychain-profile <profile> <Ararat.app>`、CI では `macos/scripts/notarize.sh --key <p8> --key-id <id> --issuer <id> [--keychain <path>] <Ararat.app>` を実行する。アプリを ZIP にして申請し、受理後にチケットを添付して検証し、Gatekeeper の受理を確認する。
+- ローカルでは `macos/scripts/notarize.sh --keychain-profile <profile> <Ararat.app>`、CI では `macos/scripts/notarize.sh --key <p8> --key-id <id> --issuer <id> <Ararat.app>` を実行する。アプリを ZIP にして申請し、受理後にチケットを添付して検証し、Gatekeeper の受理を確認する。
 - チケットを添付したバンドルを `ditto -c -k --keepParent` でアーカイブする。アーカイブのディレクトリには、前回の appcast とフィードに残すアーカイブを置く。`macos/scripts/make-appcast.sh --key-file <private-key-file> <stable|nightly> <build-version> <archive-dir>` を実行する。Sparkle は指定された鍵ファイルを使い、フィードと更新アーカイブに署名する。オーナーの EdDSA 秘密鍵はアーカイブのディレクトリ外に置く。フィードとアーカイブは、オーナーが選ぶ配布先（GitHub Releases または iodine2.net）に公開する。ダウンロード元と appcast の URL のディレクトリが異なる場合は、新規項目の `ARARAT_DOWNLOAD_URL_PREFIX` を指定する。
 - 使い捨ての `ararat-test` VM で Swift パッケージをビルドし、`uv` が使える GUI セッションから `ARARAT_TEST_VM=ararat-test macos/scripts/vm-update-test.sh <engine-app>` を実行する。スクリプトは使い捨ての EdDSA 鍵を生成し、localhost で署名済みの nightly フィードを配信する。Chromium のモックキーチェーンを指定して ad-hoc のビルド 1000 を起動し、終了時に Sparkle がビルド 1001 をインストールしたことを確認する。
 - bundle id、team id、entitlement（passkey 用のキーチェーンのアクセスグループ、Bluetooth の使用）、ヘルパーの署名は、資格情報の保存がこれらに依存するため、phase 3 の spike で確定する。
@@ -471,6 +471,20 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 - CI では署名のフェーズをビルドのフェーズから分離する。action はコミットの SHA で固定する。
 - すべてのリリースに Corresponding Source を付ける（4.7）。
 - Windows と Linux のアップデーターは、それぞれの phase で決定する。
+
+`.github/workflows/ci.yml` は push と pull request で動く。全ワークフローの action がコミットの SHA で固定されていることを検査し、lock 済みの Nix devshell で Rust の core と FFI のテストを実行する。Swift の `PromptFixtureTests` と `AraratUITests` は Xcode 27.2 で直列に実行する。CI とリリースのジョブは `macos-26` ラベルを使う。このラベルと設定済みの Xcode 27.2 のパスは、ワークフローの初回実行で確認する。
+
+`.github/workflows/release.yml` は `v1.2.3` のようなバージョンタグで動く。手動実行時は、ワークフローの ref に同じタグを指定する。`engine/scripts/engine-key` はチェックアウトしたコミットから `engine-<key>` を出力する。`engine/build-inputs.toml` の SHA-256 と `engine/` の Git tree ID をこの順に 1 行ずつ並べ、末尾の改行を含めて SHA-256 を求める。オーナーはローカルの Chromium ツリーを検査した後（§4.7）、このタグで GitHub prerelease を公開し、`Chromium.zip`、`Chromium.zip.sha256`（`shasum -a 256 Chromium.zip` の出力）、`provenance.json` を添付する。provenance は文字列フィールドを 2 つ持つ JSON オブジェクトである。`engine_key` は `engine-<key>` タグ全体、`patch_state_sha256` はビルドに使った `engine/patch-state.sha256` の小文字の SHA-256 である。ZIP には `out/Ararat/Chromium.app` と `chrome/app/` 以下の app・renderer・GPU の entitlement plist を入れる。CI は ZIP の SHA-256 を照合し、展開した `out/` と `chrome/` と同じ階層に provenance を置く。`bundle-app.sh --from-artifact` が provenance の 2 項目を照合し、アプリを組み立てる。
+
+`release-signing` ジョブは、組み立て済みのアプリを取得し、Developer ID で署名して notarization と stapling を行い、stable チャネルの Sparkle appcast を生成する。一時キーチェーンの作成直後にユーザーの検索リストを復元し、作成前と復元後のリストをログに記録してから署名 ID を取り込む。`codesign` には一時キーチェーンのパスを明示する。notarization スクリプトは API キーファイルで認証する。一時キーチェーンと API キーのファイルは runner の一時ディレクトリに置き、ジョブが失敗した場合も後処理で削除する。公開ジョブは、署名済み ZIP、appcast、Corresponding Source のアーカイブとチェックサムをタグのドラフトリリースに添付してから公開する。
+
+`release-signing` 環境では、信頼済みのリリースタグからの実行を許可し、以下の環境シークレットを登録する。
+
+- `DEVELOPER_ID_P12`（Developer ID Application の PKCS#12 エクスポートを Base64 にした値）、`DEVELOPER_ID_P12_PASSWORD`
+- `NOTARY_API_KEY`（App Store Connect チームの `.p8` ファイルの内容）、`NOTARY_API_KEY_ID`、`NOTARY_API_ISSUER`
+- `SPARKLE_ED_PRIVATE_KEY`（Sparkle の EdDSA 秘密鍵をエクスポートしたファイルの内容）
+
+リポジトリ変数 `ARARAT_ED_PUBLIC_KEY` に対応する Sparkle 公開鍵を設定する。フィードの既定 URL はリポジトリの `releases/latest/download/appcast.xml` である。生成したフィードを別の場所で配信する場合は、リポジトリ変数 `ARARAT_FEED_URL` に HTTPS URL を指定する。`release-signing` の環境変数 `ARARAT_RELEASE_ENTITLEMENTS` には本番用 entitlement plist の内容を設定する。これらの entitlement に対して Apple が provisioning profile を要求する場合は、環境変数 `ARARAT_PROVISIONING_PROFILE` に配布用 profile を Base64 にした値を設定する。
 
 ## 13. 開発プロセス
 

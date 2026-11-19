@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 usage: bundle-app.sh [--release] <engine-app> <out-dir>
+       bundle-app.sh --from-artifact <dir> <out-dir>
 
 Builds an ad-hoc signed Ararat.app using the matching SwiftPM executable and
 Sparkle framework. ARARAT_FEED_URL and ARARAT_ED_PUBLIC_KEY enable updating.
@@ -12,6 +13,8 @@ overrides CFBundleVersion and is required for builds that enable updating.
 
 With --release, use a clean release checkout, verify the engine tree against
 the recorded manifest and emit Corresponding Source before staging Ararat.app.
+With --from-artifact, use <dir>/out/Ararat/Chromium.app and verify
+<dir>/provenance.json against the current commit.
 USAGE
 }
 
@@ -19,14 +22,22 @@ die() { printf 'bundle-app: %s\n' "$*" >&2; exit 1; }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 release=0
+from_artifact=0
 if [[ "${1:-}" == --release ]]; then
   release=1
+  shift
+elif [[ "${1:-}" == --from-artifact ]]; then
+  from_artifact=1
   shift
 fi
 [[ $# == 2 ]] || { usage >&2; exit 2; }
 [[ -n "$2" ]] || die "empty out-dir"
 
-engine_app="$(cd -- "$1" && pwd)"
+engine_path="$1"
+if [[ "$from_artifact" == 1 ]]; then
+  engine_path="$1/out/Ararat/Chromium.app"
+fi
+engine_app="$(cd -- "$engine_path" && pwd)"
 out_dir="$2"
 [[ -d "$engine_app/Contents/MacOS" ]] || die "no engine app: $engine_app"
 
@@ -44,6 +55,14 @@ if [[ "$release" == 1 ]]; then
   env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ARARAT_SRC_DIR="$engine_src" \
     ARARAT_BUILD_ROOT="$(dirname -- "$engine_src")" \
     /bin/bash "$package_dir/../engine/scripts/series-check" --release
+elif [[ "$from_artifact" == 1 ]]; then
+  provenance="$engine_src/provenance.json"
+  key="$(/bin/bash "$package_dir/../engine/scripts/engine-key")"
+  patch_state="$(git -C "$package_dir" show HEAD:engine/patch-state.sha256 | shasum -a 256 | cut -d ' ' -f 1)"
+  [[ "$(/usr/bin/plutil -extract engine_key raw -expect string -o - -- "$provenance")" == "$key" ]] ||
+    die "artifact engine_key differs from $key or is missing"
+  [[ "$(/usr/bin/plutil -extract patch_state_sha256 raw -expect string -o - -- "$provenance")" == "$patch_state" ]] ||
+    die "artifact patch_state_sha256 differs from the recorded manifest or is missing"
 elif [[ ! -x "$exe" ]]; then
   exe="$package_dir/.build/debug/Ararat"
 fi
