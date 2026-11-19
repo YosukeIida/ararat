@@ -257,15 +257,18 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
 
     let editorColor = LookEditorModel.defaultLook.colors[0]
     let brightest = LookEditorModel.fieldColor(x: 1.0 / 6, y: 0)
-    for (name, mode, color, opacity) in [
+    let looks: [(String, Appearance, LookColor?, Double)] = [
         ("brightest-dark", Appearance.dark, brightest, 1.0),
         ("editor-default-light", .light, editorColor, 0.45),
         ("editor-default-dark", .dark, editorColor, 0.45),
-    ] {
+        ("no-look-light", .light, nil, 0),
+        ("no-look-dark", .dark, nil, 0),
+    ]
+    for (name, mode, color, opacity) in looks {
         let appearance = try #require(NSAppearance(named: mode == .dark ? .darkAqua : .aqua))
         container.appearance = appearance
         panel.systemAppearance = { appearance }
-        sidebar.previewLook(spaceID: first.id, look: Look(colors: [color], opacity: opacity, grain: 0, glass: false, appearance: mode))
+        sidebar.previewLook(spaceID: first.id, look: color.map { Look(colors: [$0], opacity: opacity, grain: 0, glass: false, appearance: mode) })
         container.layoutSubtreeIfNeeded()
         let segmentFill = try #require(segment.fill.fillColor.flatMap(NSColor.init(cgColor:)))
         let effectiveFill = segmentFill.withAlphaComponent(segmentFill.alphaComponent * CGFloat(segment.fill.opacity))
@@ -276,7 +279,7 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
             let paneIcon = segment.iconView.contentTintColor!.usingColorSpace(.sRGB)!
             let emptyTitle = emptyLabel.textColor!.usingColorSpace(.sRGB)!
             #expect(contrast(paneTitle.withAlphaComponent(paneTitle.alphaComponent * segment.titleField.alphaValue), over: segmentBackdrop, quantized: true) >= 4.5)
-            #expect(contrast(paneIcon.withAlphaComponent(paneIcon.alphaComponent * segment.iconView.alphaValue), over: segmentBackdrop, quantized: true) >= 4.5)
+            #expect(contrast(paneIcon.withAlphaComponent(paneIcon.alphaComponent * segment.iconView.alphaValue), over: segmentBackdrop, quantized: true) >= 3)
             #expect(contrast(emptyTitle.withAlphaComponent(emptyTitle.alphaComponent * emptyLabel.alphaValue), over: emptyBackdrop, quantized: true) >= 4.5)
         }
         for row in rows {
@@ -295,28 +298,110 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
                 let baseOpacity = row.row.unloaded ? SidebarMetrics.unloadedOpacity : 1
                 if row.row.unloaded { #expect(title.alphaValue < 1) }
                 let state = hovered ? "hovered" : "plain"
+                if name != "brightest-dark" {
+                    #expect(title.textColor == (row.row.unloaded ? (mode == .dark ? .white : .black) : .labelColor))
+                    if !row.row.unloaded {
+                        #expect(title.alphaValue == 1)
+                        #expect(icon.contentTintColor == .secondaryLabelColor)
+                        #expect(icon.alphaValue == 1)
+                    }
+                    if let audio { #expect(audio.contentTintColor == nil) }
+                }
                 appearance.performAsCurrentDrawingAppearance {
-                    @MainActor func check(_ part: String, _ color: NSColor, _ opacity: CGFloat, preferred: NSColor, preferredOpacity: CGFloat) {
+                    @MainActor func check(_ part: String, _ color: NSColor, _ opacity: CGFloat, preferred: NSColor, preferredOpacity: CGFloat, minimum: CGFloat) {
                         let resolved = color.usingColorSpace(.sRGB)!
                         let baseline = preferred.usingColorSpace(.sRGB)!
                         let ratio = contrast(resolved.withAlphaComponent(resolved.alphaComponent * opacity), over: backdrop, quantized: true)
                         let original = contrast(baseline.withAlphaComponent(baseline.alphaComponent * preferredOpacity), over: backdrop, quantized: true)
                         print("rowcontrast \(name) \(row.row.id) \(state) \(part): \(String(format: "%.3f -> %.3f", original, ratio))")
-                        #expect(ratio >= 4.5, "\(name) \(row.row.id) \(state) \(part)")
-                        if original >= 4.5 {
+                        #expect(ratio >= minimum, "\(name) \(row.row.id) \(state) \(part)")
+                        if original >= minimum {
                             #expect(resolved == baseline)
                             #expect(opacity == preferredOpacity)
                         }
                     }
-                    check("title", title.textColor!, title.alphaValue, preferred: .labelColor, preferredOpacity: baseOpacity)
-                    check("icon", icon.contentTintColor!, icon.alphaValue, preferred: .secondaryLabelColor, preferredOpacity: baseOpacity)
+                    check("title", title.textColor!, title.alphaValue, preferred: .labelColor, preferredOpacity: baseOpacity, minimum: 4.5)
+                    check("icon", icon.contentTintColor!, icon.alphaValue, preferred: .secondaryLabelColor, preferredOpacity: baseOpacity, minimum: 3)
                     if let audio {
-                        check("audio", audio.contentTintColor ?? .labelColor, 1, preferred: .labelColor, preferredOpacity: 1)
+                        check("audio", audio.contentTintColor ?? .labelColor, 1, preferred: .labelColor, preferredOpacity: 1, minimum: 3)
                     }
                 }
             }
             row.pointerLocation = nil
             row.refreshHover()
+        }
+    }
+}
+
+@Test @MainActor
+func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
+    _ = NSApplication.shared
+    var first = space("first", look: nil)
+    first.favorites = first.today
+    first.favoritesId = "favorites"
+    first.today = []
+    let second = space("second", look: nil)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: first.id, selectedId: nil, spaces: [first, second]))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    let panel = try #require(sidebar.superview as? SidebarPanelView)
+    let views = descendants(sidebar)
+    let favorite = try #require(views.compactMap { $0 as? FavoriteTile }.first)
+    let icon = try #require(favorite.subviews.compactMap { $0 as? NSImageView }.first)
+    let library = sidebar.libraryButton
+    let plus = try #require(views.compactMap { $0 as? SidebarDockButton }.first { $0.accessibilityLabel() == "New Space menu" })
+    let cells = views.compactMap { $0 as? SpaceDockButton }
+    try #require(cells.count == 2)
+    let brightest = look(LookEditorModel.fieldColor(x: 1.0 / 6, y: 0))
+    let editor = LookEditorModel.defaultLook
+    let looks: [(String, NSAppearance.Name, Look?)] = [
+        ("no-look-light", NSAppearance.Name.aqua, nil),
+        ("no-look-dark", .darkAqua, nil),
+        ("editor-default-dark", .darkAqua, editor),
+        ("brightest-dark", .darkAqua, brightest),
+    ]
+    for (name, scheme, preview) in looks {
+        let appearance = try #require(NSAppearance(named: scheme))
+        container.appearance = appearance
+        panel.systemAppearance = { appearance }
+        sidebar.previewLook(spaceID: first.id, look: preview)
+        container.layoutSubtreeIfNeeded()
+        let favoriteTint = try #require(icon.contentTintColor)
+        if name != "brightest-dark" {
+            #expect(favoriteTint == .labelColor)
+            #expect(icon.alphaValue == 1)
+            #expect(library.contentTintColor == nil)
+            #expect(plus.contentTintColor == nil)
+            #expect(cells.allSatisfy { $0.checkGlyphColor == .labelColor })
+        }
+        appearance.performAsCurrentDrawingAppearance {
+            let favoriteRGB = favoriteTint.usingColorSpace(.sRGB)!
+            let glyphs: [(String, NSView, NSColor, CGColor?)] = [
+                ("favorite", icon, favoriteRGB.withAlphaComponent(favoriteRGB.alphaComponent * icon.alphaValue), favorite.layer?.backgroundColor),
+                ("library", library, library.contentTintColor ?? .labelColor, library.libraryFill.backgroundColor),
+                ("plus", plus, plus.contentTintColor ?? .labelColor, nil),
+            ] + cells.enumerated().map { ("dock-\($0.offset)", $0.element, $0.element.checkGlyphColor, $0.element.checkFill?.cgColor) }
+            for (part, view, color, fill) in glyphs {
+                let backdrop = SidebarPanelView.backdrop(behind: view, overlaidBy: fill)
+                #expect(backdrop != nil)
+                guard let backdrop else { continue }
+                let before = contrast(.labelColor, over: backdrop, quantized: true)
+                let after = contrast(color, over: backdrop, quantized: true)
+                print("rowcontrast-2 \(name) \(part): \(String(format: "%.3f -> %.3f", before, after))")
+                #expect(after >= 3, "\(name) \(part)")
+            }
+        }
+        if name == "brightest-dark" {
+            sidebar.setLibraryOpen(true)
+            let fill = try #require(library.libraryFill.backgroundColor.flatMap(NSColor.init(cgColor:)))
+            #expect(fill.alphaComponent > 0)
+            let backdrop = try #require(SidebarPanelView.backdrop(behind: library, overlaidBy: library.libraryFill.backgroundColor))
+            appearance.performAsCurrentDrawingAppearance {
+                let before = contrast(.labelColor, over: backdrop, quantized: true)
+                let after = contrast(library.contentTintColor ?? .labelColor, over: backdrop, quantized: true)
+                print("rowcontrast-2 \(name) library-open: \(String(format: "%.3f -> %.3f", before, after))")
+                #expect(after >= 3)
+            }
         }
     }
 }

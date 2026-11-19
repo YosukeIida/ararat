@@ -173,8 +173,8 @@ final class SplitSegmentButton: NSButton {
             alphaValue = 1
             fill.opacity = Float(preferredOpacity)
             effectiveAppearance.performAsCurrentDrawingAppearance {
-                (titleField.textColor, titleField.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: preferredOpacity, on: backdrop)
-                (iconView.contentTintColor, iconView.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: preferredOpacity, on: backdrop)
+                (titleField.textColor, titleField.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: preferredOpacity, on: backdrop, minimum: 4.5)
+                (iconView.contentTintColor, iconView.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: preferredOpacity, on: backdrop, minimum: 3)
             }
         }
     }
@@ -771,9 +771,9 @@ final class SidebarRowView: NSView {
             icon.alphaValue = opacity
         } else if let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: fill.layer?.backgroundColor) {
             effectiveAppearance.performAsCurrentDrawingAppearance {
-                (title.textColor, title.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop)
-                (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: opacity, on: backdrop)
-                let (audio, _) = SpaceAccent.readableForeground(.labelColor, opacity: 1, on: backdrop)
+                (title.textColor, title.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop, minimum: 4.5)
+                (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: opacity, on: backdrop, minimum: 3)
+                let (audio, _) = SpaceAccent.readableForeground(.labelColor, opacity: 1, on: backdrop, minimum: 3)
                 audioButton.contentTintColor = audio == .labelColor ? nil : audio
             }
         } else {
@@ -930,7 +930,7 @@ final class SidebarNoTabsRow: NSView {
     func refreshForeground() {
         guard let backdrop = SidebarPanelView.backdrop(behind: self) else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            (label.textColor, label.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: 1, on: backdrop)
+            (label.textColor, label.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: 1, on: backdrop, minimum: 4.5)
         }
     }
 
@@ -991,7 +991,7 @@ final class FavoriteTile: NSButton {
     func update(row: Row) {
         self.row = row
         icon.image = SidebarRowView.symbol(for: row.kind)
-        icon.alphaValue = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+        refreshForeground()
         toolTip = row.title
         setAccessibilityLabel(row.title)
     }
@@ -1030,6 +1030,24 @@ final class FavoriteTile: NSButton {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateFill()
+        refreshForeground()
+    }
+
+    override func layout() {
+        super.layout()
+        refreshForeground()
+    }
+
+    func refreshForeground() {
+        let opacity = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+        guard let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor) else {
+            icon.contentTintColor = .labelColor
+            icon.alphaValue = opacity
+            return
+        }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop, minimum: 3)
+        }
     }
 
     private func updateFill() {

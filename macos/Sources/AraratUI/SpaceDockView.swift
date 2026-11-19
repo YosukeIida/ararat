@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 // Width rule: Cra (MIT), SpaceDockView.cellWidths; analysis/peers/2026-11-02-recent-updates.md §2.3.
 @MainActor
@@ -26,6 +27,7 @@ public final class SpaceDockView: NSView {
             guard let cell = view as? SpaceDockButton else { continue }
             cell.glyph = dense && index != selectedIndex ? .dot : .letter(cell.title)
             cell.openFraction = max(0, 1 - abs(selectionPosition - CGFloat(index)))
+            cell.refreshGlyph()
         }
     }
 
@@ -61,12 +63,12 @@ final class SpaceDockButton: NSButton {
     private var hovered = false
     private var pressInside = false
     var backgroundAlpha: CGFloat { openFraction > 0 ? Self.openFillAlpha(fraction: openFraction, appearance: effectiveAppearance) : pressInside ? 0.078 : hovered ? 0.045 : 0 }
-    /// The glyph keeps the normal label colour, accent-coloured only never (design's N2 ruling: the
-    /// F boards supersede the A board's accent-tinted open cell). Drawn through `attributedTitle`,
-    /// because an `NSButton` draws its plain `title` with the system's control colour.
     static let glyphColor = NSColor.labelColor
     static let dotAlpha: CGFloat = 0.55
-    var checkGlyphColor: NSColor { Self.glyphColor }
+    var checkGlyphColor: NSColor {
+        guard attributedTitle.length > 0 else { return Self.glyphColor }
+        return attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor ?? Self.glyphColor
+    }
     /// The dot's fill as the cell draws it, resolved in `appearance` (`.labelColor` is a dynamic
     /// colour, so the check must resolve it while that appearance is current).
     func checkDotColor(_ appearance: NSAppearance) -> NSColor? {
@@ -76,12 +78,25 @@ final class SpaceDockButton: NSButton {
         }
         return value
     }
-    /// The cell's glyph: the space's icon or its first letter, in the normal glyph colour.
     func setGlyph(_ text: String, bold: Bool) {
         attributedTitle = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: 15, weight: bold ? .bold : .regular),
             .foregroundColor: Self.glyphColor,
         ])
+        refreshGlyph()
+    }
+
+    func refreshGlyph() {
+        guard glyph != .dot, attributedTitle.length > 0 else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            guard let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: checkFill?.cgColor) else { return }
+            let (color, opacity) = SpaceAccent.readableForeground(Self.glyphColor, opacity: 1, on: backdrop, minimum: 3)
+            let tint = opacity == 1 ? color : color.withAlphaComponent(opacity)
+            guard tint != checkGlyphColor else { return }
+            let title = NSMutableAttributedString(attributedString: attributedTitle)
+            title.addAttribute(.foregroundColor, value: tint, range: NSRange(location: 0, length: title.length))
+            attributedTitle = title
+        }
     }
     /// The fill `draw` puts under the glyph, nil when the cell draws none: white for the open cell,
     /// the label colour for hover and press. The checks read this to pin the drawn colours.
@@ -97,8 +112,8 @@ final class SpaceDockButton: NSButton {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
         super.updateTrackingAreas()
     }
-    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) { hovered = true; refreshGlyph(); needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; refreshGlyph(); needsDisplay = true }
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
     override func draw(_ dirtyRect: NSRect) {
         let rect = NSRect(x: 0, y: (bounds.height - 24) / 2, width: bounds.width, height: 24)
@@ -111,10 +126,11 @@ final class SpaceDockButton: NSButton {
             NSBezierPath(ovalIn: NSRect(x: bounds.midX - 2.5, y: bounds.midY - 2.5, width: 5, height: 5)).fill()
         } else { super.draw(dirtyRect) }
     }
-    override func mouseDown(with event: NSEvent) { trackingPress = true; pressInside = true; highlight(true); needsDisplay = true }
+    override func mouseDown(with event: NSEvent) { trackingPress = true; pressInside = true; highlight(true); refreshGlyph(); needsDisplay = true }
     override func mouseDragged(with event: NSEvent) {
         pressInside = bounds.contains(convert(event.locationInWindow, from: nil))
         highlight(pressInside)
+        refreshGlyph()
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
@@ -122,6 +138,7 @@ final class SpaceDockButton: NSButton {
         trackingPress = false
         pressInside = false
         highlight(false)
+        refreshGlyph()
         needsDisplay = true
         if activate { _ = sendAction(action, to: target) }
     }

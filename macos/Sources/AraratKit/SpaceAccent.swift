@@ -50,7 +50,7 @@ public enum SpaceAccent {
         return color(towardTarget: upper)
     }
 
-    public static func readableForeground(_ preferred: NSColor, opacity: CGFloat, on backdrop: NSColor) -> (color: NSColor, opacity: CGFloat) {
+    public static func readableForeground(_ preferred: NSColor, opacity: CGFloat, on backdrop: NSColor, minimum: CGFloat) -> (color: NSColor, opacity: CGFloat) {
         let base = backdrop.usingColorSpace(.sRGB)!
         let original = preferred.usingColorSpace(.sRGB)!
         let background = luminance(base, quantized: true)
@@ -61,7 +61,7 @@ public enum SpaceAccent {
                                   green: color.greenComponent * alpha + base.greenComponent * (1 - alpha),
                                   blue: color.blueComponent * alpha + base.blueComponent * (1 - alpha), alpha: 1)
             let foreground = luminance(blended, quantized: true)
-            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05) >= 4.5
+            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05) >= minimum
         }
 
         if passes(original, alpha: originalAlpha) { return (preferred, opacity) }
