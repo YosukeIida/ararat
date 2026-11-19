@@ -9,6 +9,11 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     private let next = NSButton()
     private let close = NSButton()
     public var onAction: (String, String, NSRange, String, String) -> Void = { _, _, _, _, _ in }
+    var scheduleSpinnerStart: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    private var pendingSpinnerStart: DispatchWorkItem?
+    private var spinningRequest: Int?
     private var updating = false
     private var live = ""
     private var profile = ""
@@ -125,18 +130,34 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         send("change")
     }
 
+    private var searching: Bool {
+        !isHidden && !field.stringValue.isEmpty && requestID > editedAfterRequest && !finalUpdate
+    }
+
     private func updateResultPresentation() {
         let hasQuery = !field.stringValue.isEmpty
-        let searching = !isHidden && hasQuery && requestID > editedAfterRequest && !finalUpdate
         let notFound = hasQuery && matches == 0 && finalUpdate
         count.stringValue = notFound ? "Not found" : (hasQuery && !searching && matches > 0 ? "\(max(0, ordinal)) of \(matches)" : "")
         count.textColor = notFound ? .systemRed : .secondaryLabelColor
         previous.isEnabled = !notFound
         next.isEnabled = !notFound
-        if searching == spinner.isHidden {
-            spinner.isHidden = !searching
-            if searching { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        pendingSpinnerStart?.cancel()
+        pendingSpinnerStart = nil
+        if let spinningRequest, !searching || spinningRequest != requestID {
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+            self.spinningRequest = nil
         }
+        guard searching, spinningRequest == nil else { return }
+        let start = DispatchWorkItem { [weak self, requestID] in
+            guard let self, self.requestID == requestID, self.searching else { return }
+            self.pendingSpinnerStart = nil
+            self.spinningRequest = requestID
+            self.spinner.isHidden = false
+            self.spinner.startAnimation(nil)
+        }
+        pendingSpinnerStart = start
+        scheduleSpinnerStart(0.25, start)
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {

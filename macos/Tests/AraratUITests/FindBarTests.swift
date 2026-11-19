@@ -62,7 +62,7 @@ func findResultsShowTheTrailingCountAndDisableButtonsOnlyForConfirmedZero() thro
     #expect(spinner.isHidden)
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": false])
     #expect(view.requestID == 7 && !view.finalUpdate)
-    #expect(!spinner.isHidden)
+    #expect(spinner.isHidden)
     #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": true])
     #expect(view.requestID == 7 && view.finalUpdate && view.matches == 0)
@@ -78,13 +78,58 @@ func findResultsShowTheTrailingCountAndDisableButtonsOnlyForConfirmedZero() thro
     view.update(state: ["visible": true, "text": "need", "matches": 2, "request_id": 6, "final_update": false])
     #expect(spinner.isHidden && count.stringValue.isEmpty)
     view.update(state: ["visible": true, "text": "need", "matches": 2, "request_id": 8, "final_update": false])
-    #expect(!spinner.isHidden && count.stringValue.isEmpty)
+    #expect(spinner.isHidden && count.stringValue.isEmpty)
     view.update(state: ["visible": true, "text": "need", "matches": 12, "ordinal": 3, "request_id": 8, "final_update": true])
     #expect(spinner.isHidden)
     #expect(count.stringValue == "3 of 12" && count.textColor == .secondaryLabelColor)
     #expect(buttons.map(\.isEnabled) == [true, true, true])
     view.update(state: ["visible": true, "text": "", "matches": 0, "request_id": 9, "final_update": true])
     #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
+}
+
+@Test @MainActor
+func findSpinnerWaitsForAnUnfinishedRequest() throws {
+    let view = FindBarView()
+    let spinner = try #require(view.subviews.compactMap { $0 as? NSProgressIndicator }.first)
+    var starts: [DispatchWorkItem] = []
+    view.scheduleSpinnerStart = { delay, work in
+        #expect(delay == 0.25)
+        starts.append(work)
+    }
+    func update(_ request: Int, final: Bool = false, visible: Bool = true) {
+        view.update(state: ["visible": visible, "text": "needle", "request_id": request, "final_update": final])
+    }
+    func takeStart() throws -> DispatchWorkItem {
+        let work = starts.popLast()
+        return try #require(work)
+    }
+
+    update(7)
+    #expect(spinner.isHidden)
+    let fast = try takeStart()
+    update(7, final: true)
+    #expect(fast.isCancelled)
+    fast.perform()
+    #expect(spinner.isHidden)
+
+    update(8)
+    let first = try takeStart()
+    update(8)
+    #expect(first.isCancelled)
+    first.perform()
+    #expect(spinner.isHidden)
+    try takeStart().perform()
+    #expect(!spinner.isHidden)
+    update(8, final: true)
+    #expect(spinner.isHidden)
+
+    update(9)
+    let pending = try takeStart()
+    update(9, visible: false)
+    #expect(pending.isCancelled)
+    pending.perform()
+    #expect(spinner.isHidden)
+    #expect(starts.isEmpty)
 }
 
 @Test @MainActor
