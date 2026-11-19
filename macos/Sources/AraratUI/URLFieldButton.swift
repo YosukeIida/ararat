@@ -1,10 +1,12 @@
 import AppKit
+import AraratKit
 
 /// D3: the URL field's own surface and the two 24 pt buttons inside it, with the board's radius
 /// 6 and its hover, pressed, focus and copied states. Fills are starting values tuned on the
 /// real app; sizes and the 4 pt step are ours (the board's 6/2 were not Arc measurements).
 @MainActor
 public final class URLFieldBackgroundButton: NSButton {
+    static let focusRingAlpha: CGFloat = 0.55
     /// The board's field fills. The resting fill is the sidebar boards' `--fill`: white 55 % on the
     /// tinted sidebar, 10 % in dark (`mock-decisions.md` 2026-11-11; the F boards' URL field). Hover
     /// and pressed are the C-UrlField board's `--fieldH` and `--fieldP`: the field lightens under
@@ -27,6 +29,7 @@ public final class URLFieldBackgroundButton: NSButton {
     public var isPressed = false { didSet { updateBackground() } }
     public var showsFocusRing = false { didSet { updateFocusRing() } }
     private let focusLayer = CALayer()
+    var accent = SpaceAccent.teal { didSet { updateBackground() } }
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -84,6 +87,7 @@ public final class URLFieldBackgroundButton: NSButton {
         CATransaction.setDisableActions(true)
         focusLayer.frame = bounds.insetBy(dx: -3, dy: -3)
         CATransaction.commit()
+        refreshFocusColor()
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -96,8 +100,15 @@ public final class URLFieldBackgroundButton: NSButton {
         appearance.performAsCurrentDrawingAppearance {
             let alpha = Self.fillAlpha(pressed: isPressed, hovered: isHovered, appearance: appearance)
             layer?.backgroundColor = NSColor.white.withAlphaComponent(alpha).cgColor
-            focusLayer.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.55).cgColor
         }
+        refreshFocusColor()
+        for case let button as URLFieldButton in subviews { button.refreshFocusColor() }
+    }
+
+    func refreshFocusColor() {
+        let color = accent.withAlphaComponent(Self.focusRingAlpha)
+        let backdrop = SidebarPanelView.backdrop(behind: self)
+        focusLayer.borderColor = (backdrop.map { SpaceAccent.visible(color, on: $0) } ?? color).cgColor
     }
 
     private func updateFocusRing() {
@@ -120,6 +131,7 @@ public class URLFieldButton: NSButton {
     /// The copied tick keeps Copy Link's board state; the sidebar clears it after the toast's 2 s.
     public var showsCopied = false { didSet { updateImage() } }
     private let focusLayer = CALayer()
+    var accent = SpaceAccent.teal { didSet { updateBackground() } }
 
     public init(role: Role) {
         self.role = role
@@ -205,6 +217,7 @@ public class URLFieldButton: NSButton {
         CATransaction.setDisableActions(true)
         focusLayer.frame = bounds.insetBy(dx: -3, dy: -3)
         CATransaction.commit()
+        refreshFocusColor()
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -231,8 +244,14 @@ public class URLFieldButton: NSButton {
         let alpha: CGFloat = isPressed ? 0.14 : isHovered ? 0.07 : 0
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = alpha == 0 ? nil : NSColor.labelColor.withAlphaComponent(alpha).cgColor
-            focusLayer.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.55).cgColor
         }
+        refreshFocusColor()
+    }
+
+    func refreshFocusColor() {
+        let color = accent.withAlphaComponent(URLFieldBackgroundButton.focusRingAlpha)
+        let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: superview?.layer?.backgroundColor)
+        focusLayer.borderColor = (backdrop.map { SpaceAccent.visible(color, on: $0) } ?? color).cgColor
     }
 
     private func updateFocusRing() {

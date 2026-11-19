@@ -47,9 +47,9 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
         let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 3, dy: 3))
         NSGraphicsContext.saveGraphicsState()
         ring.addClip()
-        let colors = space.look?.colors.map { NSColor(srgbRed: $0.red, green: $0.green, blue: $0.blue, alpha: 1) } ?? [.controlAccentColor]
+        let colors = space.look?.colors.map { NSColor(srgbRed: $0.red, green: $0.green, blue: $0.blue, alpha: 1) } ?? []
         if colors.count > 1 { NSGradient(colors: colors)?.draw(in: ring.bounds, angle: -90) }
-        else { colors[0].setFill(); ring.fill() }
+        else { SpaceAccent.resolve(space.look).setFill(); ring.fill() }
         NSGraphicsContext.restoreGraphicsState()
         NSColor.separatorColor.setStroke()
         ring.lineWidth = 1

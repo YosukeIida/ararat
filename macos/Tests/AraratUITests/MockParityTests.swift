@@ -140,6 +140,7 @@ final class MockParityTests: XCTestCase {
             "SpaceDockButton.dotAlpha": .number(SpaceDockButton.dotAlpha),
             "SpaceAccent.privateColor": .color(SpaceAccent.privateColor),
             "SpaceAccent.teal": .color(SpaceAccent.teal),
+            "SpaceAccent.teal with URLFieldBackgroundButton.focusRingAlpha": .color(SpaceAccent.teal.withAlphaComponent(URLFieldBackgroundButton.focusRingAlpha)),
             "TooltipKeycap.gap": .number(TooltipKeycap.gap),
             "TooltipKeycap.size": .number(TooltipKeycap.size),
         ]

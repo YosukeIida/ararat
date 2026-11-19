@@ -4,7 +4,7 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 128 件あり、このうち 120 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 8 件は、オーナーの寸法規則など、照合表に理由を記載した項目である。Library の Downloads の行間隔も、照合表に記録した Arc の実測値と比較する。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
+[照合表](research/mock-values.json)には 134 件あり、このうち 126 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 8 件は、オーナーの寸法規則など、照合表に理由を記載した項目である。Library の Downloads の行間隔も、照合表に記録した Arc の実測値と比較する。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
@@ -67,19 +67,19 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
-| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | Today の選択行と分割行のフォーカス中のセグメントは同じ塗りを使う。ライトでは不透明な白と影がボードと一致する。ダークでは白を不透明度 19.5% で重ねる。既定の背景上ではボードの sRGB (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致し、他のダーク Look では背景の色相が残る。 |
+| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | Today の選択行と分割行のフォーカス中のセグメントは同じ塗りを使う。ライトでは不透明な白と影がボードと一致する。ダークでは白を不透明度 19.5% で重ねる。既定の背景上ではボードの sRGB (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致し、他のダーク Look では背景の色相が残る。 タイトルとグリフの色は、行の位置の Look に選択背景を重ねた色とのコントラストで決める。 オフスクリーンでのタイトルのコントラスト比は、不透明で最も明るいダーク Look で 20.20:1、既定のダーク背景で 10.36:1 となる。 |
 | `A-TabRows` | 複数行の選択 | — | 相違 | 現在のサイドバーでは選択行は 1 行。選択状態の描画には全行で共通の規則を使う。 |
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows-loading`, `sidebar-rows-crashed` | 未レビュー | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
-| `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
+| `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 ドットにはスペースの Look のアクセントを使う。Look が色を持たない場合はモックの青緑、プライベートウィンドウでは中性色を使う。 |
 | `A-TabRows` | 行のアーカイブと閉じるボタン | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | 未レビュー | 行の種類と読み込み状態に応じてアクションが変わる（決定 29、32）。 |
 | `A-TodayNewTab` | Today の区切り線、Clear、New Tab | `today (today, cleared, new-tab-row)` | 一致 | 区切り線と Clear が Today の上にあり、New Tab が先頭にある。構造検査は PASS。VM の実行 mp2。 |
 | `A-TodayNewTab` | Clear 後の区切り線 | `today (cleared)` | 一致 | Today が空になると区切り線が消える。構造検査は PASS。VM の実行 mp2。 |
 | `A-TodayNewTab` | Appearance で New Tab を非表示 | `today-new-tab-hidden` | 未レビュー | ワークスペースの設定で New Tab の行を隠した状態を撮影する。 |
-| `B-CreateSpace` | スペース作成フォーム | `space-name-create-page` | 未レビュー | フォームはサイドバー内に表示する。 |
+| `B-CreateSpace` | スペース作成フォーム | `space-name-create-page` | 未レビュー | フォームはサイドバー内に表示する。 プルインジケーターは表示中のスペースのアクセントに従う。 |
 | `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space-created`, `create-space-failure` | 一致 | 有効な Create Space ボタンにはモックのチャコール色を指定し、Cancel には標準のラベル色を使う。作成の失敗と成功を個別に撮影する。 |
 | `B-Drag` | サイドバーのドロップ位置、フォルダ上のホバー、拒否 | `organize-drop`, `organize-hover-open`, `dock-refused` | 未レビュー | 行のドラッグと、別プロファイルへのドロップ拒否を確認する。 |
 | `B-Drag` | 別プロファイルへのドロップ拒否 | `dock-refused` | 未レビュー | セルを暗くし、ポインタに拒否マークを付ける（決定 68）。 |
-| `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 |
+| `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 ドロップ先の枠と背景には表示中のスペースのアクセントを使う。 |
 | `B-Floating` | フローティングサイドバーの配置と内容 | `fullscreen-edge` | 未レビュー | ブラウザーの全画面表示中に画面端から開いたフローティングパネルを撮影する。 |
 | `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。画面上の合成結果はフローティングの再撮影で確認する。 |
 | `B-FloatingMotion` | 端からの表示、待機時間、非表示 | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | 未レビュー | ポインタを表示領域の端に置き、パネルを開いてから離す。3 枚は静止状態の画像で、待機時間と動作時間の判定には計測が必要である。 |
@@ -91,14 +91,14 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 未レビュー | Today のタブ、スペース名、左ペインのネイティブメニューを開いて撮影する。ほかの行種別とメニューの派生状態は別途撮影が必要である。 |
 | `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | 空のカードと既定の 2 つの案内をオフスクリーンテストで確認した。VM の keyboard の撮影（merge/mockfix f9246dc、2026-11-19）で、カードと 2 つの案内の表示を確認した。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 未レビュー | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
-| `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 |
+| `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 リングは表示中のスペースの Look に従い、編集中も更新する。プライベートウィンドウでは中性色を使う。 |
 | `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 未レビュー | 説明文は Swift が連続した仕切り線を描くとする。SplitDividerView はホバー中とドラッグ中にグリップを描画する。 |
 | `B-SplitStates` | 一つのサイドバー行に並ぶ 3 ペイン | `split-commands (vertical)` | 一致 | 縦の split でもセグメントは三つ横に並ぶ。構造検査は PASS。VM の実行 mp2。 |
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-command`, `header-command-r`, `header-command-w` | 未レビュー | ヘッダーのツールチップには個別の画像がある。Command-W の画像では行の閉じるボタンが押下状態になる。行のツールチップは撮影が必要である。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag-sidebar` | 未レビュー | ドラッグの画像はサイドバーを撮影する。非アクティブ時の色は別途撮影する。 |
 | `C-DialogHost` | ページカード上のダイアログ | `permission`, `permission-dialog`, `javascript`, `javascript-dialog`, `dialogs-permission`, `dialogs-permission-dialog`, `dialogs-long-origin`, `dialogs-long-origin-dialog`, `dialogs-javascript`, `dialogs-javascript-dialog`, `dialogs-queued-permission`, `dialogs-queued-permission-dialog`, `dialogs-split`, `dialogs-split-dialog` | 未レビュー | 接頭辞のない画像は prompts、dialogs で始まる画像は dialogs を実行して取得する。ダイアログと親ウィンドウを個別に撮影する。 |
 | `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 相違あり。全履歴は実測の 56 pt の行間隔を維持する。 | 各状態の行を参照する。 |
-| `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 未レビュー | 視差効果を減らす設定ではアイコンの移動を省く（§7）。 |
+| `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 未レビュー | 視差効果を減らす設定ではアイコンの移動を省く（§7）。 リングには表示中のスペースの Look のアクセントを使い、プライベートウィンドウでは中性色を使う。 |
 | `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 未レビュー | 各段階の状態表示と実行できるアクションを比較する。 |
 | `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 相違あり。全履歴は Arc 実測の 56 pt の行間隔を維持し、フッターに Clear All を置く。 | 見出しはウィンドウの操作ボタンの下に置き、幅の狭い行ではファイル名を独立した行に置く。幅 197 pt の一覧でモックのファイル名が収まることをオフスクリーンテストで確認した。表示は Downloads の撮影で確認する。 |
 | `C-Extensions` | URL 欄のピン留め拡張機能とオーバーフロー行 | `ext-actions-action`, `ext-actions-overflow`, `ext-actions-three-actions` | 未レビュー | ホスト名に最低 64 pt を確保する（決定 47）。 |
@@ -108,7 +108,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControls` | 縦長キャプチャ、翻訳、拡張機能グリッド、未実装の設定 | — | 未実装 | 対象の機能は §7 と §14 で実装を見送っている。 |
 | `C-SiteControlsStates` | ポップオーバーの各状態の寸法 | `site-controls-popover`, `site-controls-overlay`, `site-controls-toast` | 未レビュー | 幅、パディング、間隔、ボタン寸法はトークンテストの対象である。 |
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
-| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
+| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 URL 欄、Copy Link、サイト操作ボタンのフォーカス枠には表示中のスペースのアクセントを使う。 |
 | `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。`cac6112` ではラベルにホスト名全体を収める幅を確保し、末尾が早く切れる問題を修正した。再撮影後に外観を確認する。 |
 | `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 差異あり | ヒントには Return で選択行を開く操作を表示する。Tab による補完は U23 で廃止した（mock-decisions.md:84）。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 一致 | 検索が先頭に出て、その後に履歴が続く。選択行には表示中のスペースの Look のアクセントを使う。 |
@@ -150,7 +150,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `F-Import` | ログイン状態の引き継ぎとキーチェーン権限 | — | 未実装 | キーチェーンを使うフローにはインポートの調査が必要である（決定 105–106）。 |
 | `F-LookControls` | 透明度、Glass のデテント、粒状感、メニュー | `look-55-popover`, `look-detent-popover`, `look-glass-popover` | 未レビュー | ポップオーバーの画像にスライダーとデテントが写る。Look のメニューは撮影が必要である。 |
 | `F-LookGallery` | プリセットとカラーピッカー | `look-55-popover` | 未レビュー | モックと同じプリセットページを開いた状態で比較する。 |
-| `F-LookPopover` | Look ポップオーバーと色の入力欄 | `look-55-popover`, `look-glass-popover` | 未レビュー | 該当するモック内の見本とポップオーバーのフレームを組み合わせる。 |
+| `F-LookPopover` | Look ポップオーバーと色の入力欄 | `look-55-popover`, `look-glass-popover` | 未レビュー | 該当するモック内の見本とポップオーバーのフレームを組み合わせる。 Look が色を持たない場合、設定画面の色見本にはモックの青緑を使う。 |
 | `F-LookSidebar` | 設定値ごとのスペース色とサイドバー | `look-55-sidebar`, `look-detent-sidebar`, `look-glass-sidebar` | 未レビュー | サイドバーとポップオーバーを対応する組として記録する。 |
 | `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 一致 | 濃紺の Grain 検査を Auto に設定した。URL のプレースホルダー、行のタイトル、Clear、dock のグリフは明るい前景色になる。粒状感の 4 状態は再撮影で確認する。 |
 | `F-Onboarding` | ようこそ、ソース、対象選択、既定ブラウザ、進捗、完了、二つのエラー | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | 未レビュー | ボタンの高さと間隔の例外はオーナー決定としてトークン表に記載した。 |

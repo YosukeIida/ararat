@@ -98,8 +98,8 @@ func pullIndicatorGeometryColorsAndAccessibility() throws {
     }
     for excess in [164.0, 165, 164] {
         view.update(excess: excess)
-        #expect(view.circle.fillColor == (excess == 165 ? NSColor.white : NSColor.controlAccentColor).cgColor)
-        #expect(view.plus.strokeColor == (excess == 165 ? NSColor.controlAccentColor : NSColor.white).cgColor)
+        #expect(view.circle.fillColor == (excess == 165 ? NSColor.white : SpaceAccent.teal).cgColor)
+        #expect(view.plus.strokeColor == (excess == 165 ? SpaceAccent.teal : NSColor.white).cgColor)
     }
     #expect(!view.isAccessibilityElement())
     #expect(view.isAccessibilityHidden())

@@ -227,6 +227,19 @@ func lookGradientHasVerticalEqualStopsAndDeterministicGrain() throws {
 }
 
 @Test @MainActor
+func rowBackdropSamplesTheDrawnGradientAtTheRowsHeight() throws {
+    let panel = lookPanel()
+    var look = solidLook(1, 1, 1, appearance: .dark)
+    look.colors.append(LookColor(red: 0, green: 0, blue: 0, x: 0, y: 1))
+    let row = NSView(frame: NSRect(x: 0, y: 47.5, width: 64, height: 1))
+    panel.addSubview(row)
+    panel.updateLook(look, look, fraction: 0)
+    expectRGB(panel.rowBackdrop(behind: row), 0.75, 0.75, 0.75)
+    row.frame.origin.y = 15.5
+    expectRGB(panel.rowBackdrop(behind: row), 0.25, 0.25, 0.25)
+}
+
+@Test @MainActor
 func sidebarLookTracksPagesAndVirtualNeighbors() {
     let first = solidLook(1, 0, 0), last = solidLook(0, 0, 1)
     let spaces = [first, last].enumerated().map { index, look in

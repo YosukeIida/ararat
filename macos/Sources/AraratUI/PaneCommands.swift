@@ -39,6 +39,7 @@ final class PaneDropIndicator: NSView {
     static let inset: CGFloat = 8
     static let border: CGFloat = 2
     private let fill = NSView()
+    var accent = SpaceAccent.teal { didSet { updateColors() } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -57,6 +58,7 @@ final class PaneDropIndicator: NSView {
             fill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.inset),
         ])
         setAccessibilityHidden(true)
+        updateColors()
     }
 
     @available(*, unavailable)
@@ -65,15 +67,8 @@ final class PaneDropIndicator: NSView {
     // The page under it takes the clicks: the mark is a picture of where the drop goes.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        updateLook()
-    }
-
-    func updateLook() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            fill.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
-            fill.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
-        }
+    private func updateColors() {
+        fill.layer?.backgroundColor = accent.withAlphaComponent(0.08).cgColor
+        fill.layer?.borderColor = accent.withAlphaComponent(0.9).cgColor
     }
 }

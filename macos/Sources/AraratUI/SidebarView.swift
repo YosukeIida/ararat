@@ -96,7 +96,6 @@ public final class SidebarView: NSView {
     private var downloadsHoverFired = false
     var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
-    private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
     var dockCursor: (Bool) -> Void = { refused in (refused ? NSCursor.operationNotAllowed : NSCursor.arrow).set() }
     public private(set) var libraryOpenFraction: CGFloat = 0
@@ -105,6 +104,24 @@ public final class SidebarView: NSView {
     public var onShowSpace: ((String) -> Void)?
 
     var onLookChanged: ((Look?, Look?, Double) -> Void)?
+    var onSpaceAccentChanged: ((NSColor) -> Void)?
+    private(set) var spaceAccent = SpaceAccent.teal
+    func refreshRowColors() {
+        for row in rowViews.values {
+            row.refreshSelectedForeground()
+            row.refreshUnreadAccent()
+        }
+        dragCopyView?.refreshSelectedForeground()
+        for preview in scrollPreviews { preview.refreshRowColors() }
+    }
+
+    func refreshAccentColors() {
+        urlField.refreshFocusColor()
+        copyLinkButton.refreshFocusColor()
+        siteControlsButton.refreshFocusColor()
+        pullIndicator.refreshAccent()
+        libraryButton.refreshAccent()
+    }
     var wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
     var wheelDrawnRow = CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") ? SpaceWheelDrawnRow() : nil
     private(set) var lookSampling: CADisplayLink?
@@ -1102,6 +1119,7 @@ public final class SidebarView: NSView {
         scroll.onRevealEnd = { [weak self] in self?.notifyAutoArchiveReady() }
         scroll.onBoundsChanged = { [weak self] in
             guard let self else { return }
+            self.refreshRowColors()
             self.refreshPointer()
             if self.drag?.active == true && !self.dragSettling { self.resolveDrag() }
         }
@@ -1238,8 +1256,6 @@ public final class SidebarView: NSView {
         libraryButton.imagePosition = .imageOnly
         libraryButton.isBordered = false
         libraryButton.wantsLayer = true
-        libraryFill.cornerRadius = 6
-        libraryButton.layer?.insertSublayer(libraryFill, at: 0)
         libraryButton.target = self
         libraryButton.action = #selector(libraryButtonClicked(_:))
         libraryButton.toolTip = "Library"
@@ -1357,7 +1373,7 @@ public final class SidebarView: NSView {
         super.layout()
         wheelDrawnRow?.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
         library.frame = bounds
-        libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
+        libraryButton.libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
         creation.frame = bounds
         pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
@@ -1733,6 +1749,7 @@ public final class SidebarView: NSView {
         }
         view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
         view.privateWindow = privateWindow
+        view.accent = spaceAccent
         view.onClose = { [weak self] id in
             guard let self, let target = self.closeTarget(for: id) else { return }
             // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
@@ -2281,6 +2298,17 @@ public final class SidebarView: NSView {
     func refreshLook(offset: Double = 0) {
         traceSpaceWheelMotion("refreshLook")
         defer { traceSpaceWheelMotion("refreshLook-end") }
+        let accent = SpaceAccent.resolve(snapshotSpace?.look, privateWindow: privateWindow)
+        if accent != spaceAccent {
+            spaceAccent = accent
+            urlField.accent = accent
+            copyLinkButton.accent = accent
+            siteControlsButton.accent = accent
+            pullIndicator.accent = accent
+            libraryButton.accent = accent
+            for row in rowViews.values { row.accent = accent }
+            onSpaceAccentChanged?(accent)
+        }
         guard let onLookChanged else { return }
         // U26f: a private window is always dark, whatever its space's look (it has none).
         if privateWindow {
@@ -2308,9 +2336,10 @@ public final class SidebarView: NSView {
         defer { CATransaction.commit() }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let look = libraryLookSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id } } ?? snapshotSpace
-            libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
+            libraryButton.libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
                 .withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
         }
+        libraryButton.refreshAccent()
     }
 
     private var pageView: NSView { libraryOpen ? library : createSpaceOpen ? creation : spaceColumn }
@@ -2643,6 +2672,7 @@ extension SidebarView {
         frame.origin.x += position.x - state.origin.x
         frame.origin.y += position.y - state.origin.y
         dragCopyView?.frame = nativeDragRect(frame)
+        dragCopyView?.refreshSelectedForeground()
         resolveDrag()
     }
 

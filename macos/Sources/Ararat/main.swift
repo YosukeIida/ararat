@@ -1322,6 +1322,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.setDownloadsModel(downloads)
     let container = SidebarContainerView(sidebar: sidebar, page: card)
     container.privateWindow = isPrivateWindow
+    container.onSpaceAccentChanged = { [weak adapter] in adapter?.updateSplitFocusAccent($0) }
     if let presentation { container.restorePresentation(presentation) }
     typealias Factory = @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> UnsafeMutableRawPointer?
     let factory = unsafeBitCast(createSymbol, to: Factory.self)

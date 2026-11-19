@@ -146,6 +146,9 @@ public final class SidebarContainerView: NSView {
     // zones along the shown split's axis are offered (design S1): left/right for a horizontal
     // split or a lone tab, top/bottom for a vertical one.
     private let paneDrop = PaneDropIndicator(frame: .zero)
+    public var onSpaceAccentChanged: ((NSColor) -> Void)? {
+        didSet { onSpaceAccentChanged?(sidebar.spaceAccent) }
+    }
     public func paneDropHalf(at windowPoint: NSPoint, axis: PaneDropAxis) -> PaneDropHalf? {
         guard page.superview === self, !page.isHiddenOrHasHiddenAncestor, page.bounds.width > 0, page.bounds.height > 0 else { return nil }
         // This view is flipped (y grows downward), so the first half is the one nearer minY.
@@ -168,7 +171,6 @@ public final class SidebarContainerView: NSView {
         }
         paneDrop.frame = half.rect
         if paneDrop.superview !== self { addSubview(paneDrop) }
-        paneDrop.updateLook()
         paneDrop.isHidden = false
     }
 
@@ -324,6 +326,11 @@ public final class SidebarContainerView: NSView {
             self?.panel.updateLook(from, to, fraction: fraction)
         }
         sidebar.onLinkCopied = { [weak self] in self?.showLinkCopied() }
+        paneDrop.accent = sidebar.spaceAccent
+        sidebar.onSpaceAccentChanged = { [weak self] accent in
+            self?.paneDrop.accent = accent
+            self?.onSpaceAccentChanged?(accent)
+        }
         sidebar.refreshLook()
         resizeHandle.onWidthChanged = { [weak self] in
             self?.needsLayout = true
