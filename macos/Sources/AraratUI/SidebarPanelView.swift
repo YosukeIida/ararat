@@ -13,6 +13,8 @@ final class SidebarPanelView: NSView {
     private var destination: Look?
     private var fraction = 0.0
     private var drawnColors: [NSColor] = []
+    // shortcut: estimate the material with the window color until AppKit exposes its rendered color.
+    private var backdropBase = NSColor.clear
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var systemAppearance: () -> NSAppearance = { NSApp.effectiveAppearance }
     /// False while the window is not the active one: the space's colour and grain are dropped, the vibrancy and Glass stay.
@@ -165,6 +167,17 @@ final class SidebarPanelView: NSView {
         grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
         coating.isHidden = hasLook ? !active : unthemed.alphaComponent == 0
         CATransaction.commit()
+        backdropBase = base
+        for case let sidebar as SidebarView in subviews { sidebar.refreshSelectedRowForegrounds() }
+    }
+
+    func rowBackdrop(behind row: NSView) -> NSColor {
+        guard !coating.isHidden, drawnColors.count == 3 else { return backdropBase }
+        let point = convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), from: row)
+        let position = bounds.height > 0 ? min(1, max(0, (bounds.maxY - point.y) / bounds.height)) : 0.5
+        let lower = position < 0.5 ? 0 : 1
+        return Self.mix(drawnColors[lower], drawnColors[lower + 1],
+                        fraction: 2 * position - Double(lower), base: backdropBase)
     }
 
     static func windowColor(in appearance: NSAppearance) -> NSColor {

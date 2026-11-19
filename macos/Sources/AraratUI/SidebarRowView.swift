@@ -156,6 +156,12 @@ final class SplitSegmentButton: NSButton {
         applyShadow()
     }
 
+    func applySelectedForeground(_ color: NSColor) {
+        guard active else { return }
+        titleField.textColor = color
+        iconView.contentTintColor = color
+    }
+
     // The shadow follows the segment's rounded path, on a layer behind the fill.
     private func applyShadow() {
         fillShadow.apply(rect: fill.frame, path: fill.path, flipped: isFlipped, on: active,
@@ -228,6 +234,7 @@ final class SidebarRowView: NSView {
     // The unread dot (R7) is app state from the live strip, never stored in the row.
     var unread = false { didSet { updateStatus() } }
     var unreadDotVisible: Bool { !unreadDot.isHidden }
+    var accent = SpaceAccent.teal { didSet { unreadDot.layer?.backgroundColor = accent.cgColor } }
     var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
     // D11: the row’s ⌘W caps are explicit (the app menu’s item is not the lookup’s action), and
     // they follow the close_tab binding; R2 shows them on the current tab only.
@@ -312,6 +319,7 @@ final class SidebarRowView: NSView {
         ])
         unreadDot.wantsLayer = true
         unreadDot.layer?.cornerRadius = SidebarMetrics.unreadDotSize / 2
+        unreadDot.layer?.backgroundColor = accent.cgColor
         unreadDot.isHidden = true
         unreadDot.setAccessibilityHidden(true)
         unreadDot.translatesAutoresizingMaskIntoConstraints = false
@@ -480,9 +488,6 @@ final class SidebarRowView: NSView {
         setAccessibilityValue(states.isEmpty ? nil : states.joined(separator: ", "))
         updateCloseButton()
         unreadDot.isHidden = !unread || !closeButton.isHidden
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        }
     }
 
     func showRenameHint() {
@@ -655,6 +660,7 @@ final class SidebarRowView: NSView {
 
     override func layout() {
         super.layout()
+        refreshSelectedForeground()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
         // The fill's shadow follows its rounded fill, not the alpha of its drawing.
         applySelectedShadow()
@@ -706,8 +712,14 @@ final class SidebarRowView: NSView {
     }
 
     private func updateFill() {
+        let drawsSelection = dragSource || dragCopy || selected
+        if !drawsSelection {
+            title.textColor = .labelColor
+            icon.contentTintColor = .secondaryLabelColor
+            audioButton.contentTintColor = nil
+        }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            if dragSource || dragCopy || selected {
+            if drawsSelection {
                 fill.layer?.backgroundColor = SidebarMetrics.rowSelectedFill(for: effectiveAppearance).cgColor
             } else {
                 let alpha: CGFloat
@@ -723,6 +735,27 @@ final class SidebarRowView: NSView {
         // The board applies `--selsh` only to the selected fill. A drag copy is built selected.
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
+        refreshSelectedForeground()
+    }
+
+    func refreshSelectedForeground() {
+        let drawsSelection = dragSource || dragCopy || selected
+        guard drawsSelection || !segmentRows.isEmpty else { return }
+        let selectedFill = SidebarMetrics.rowSelectedFill(for: effectiveAppearance)
+        let panel = superview.flatMap {
+            sequence(first: $0, next: \.superview).first { $0 is SidebarPanelView } as? SidebarPanelView
+        }
+        let backdrop = panel?.rowBackdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
+        let composite = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: backdrop)
+        let foreground = SpaceAccent.foreground(on: composite)
+        if drawsSelection {
+            title.textColor = foreground
+            icon.contentTintColor = foreground
+            audioButton.contentTintColor = foreground
+        }
+        for case let segment as SplitSegmentButton in segments.arrangedSubviews {
+            segment.applySelectedForeground(foreground)
+        }
     }
 
     // The board's selected-row shadow: `0 1px 2px rgba(0,0,0,.08)` in light, none in dark, on the

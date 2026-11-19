@@ -62,7 +62,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var littleWindowKeyTakePending = false
     private var littleWindowAwaiting: [String: String] = [:]
     private var splitHandles: [String: SplitDividerView] = [:]
-    private let splitFocusRing = SplitFocusRingView()
+    let splitFocusRing = SplitFocusRingView()
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
     private var failureViews: [String: PageFailureView] = [:]
     private var displayedSelection: String?
@@ -1421,6 +1421,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func checkFailureState(item: String) -> [String: Any] { failureViews[item]?.checkState ?? [:] }
+    public func updateSplitFocusAccent(_ accent: NSColor) { splitFocusRing.accent = accent }
+
     public func updateFailureAccent(_ accent: NSColor) {
         for view in failureViews.values { view.accent = accent }
     }

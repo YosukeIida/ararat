@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 
 @MainActor
 final class SpacePullIndicator: NSView {
@@ -7,6 +8,7 @@ final class SpacePullIndicator: NSView {
     let ring = CAShapeLayer()
     private(set) var excess = 0.0
     private var exitDistance = 0.0
+    var accent = SpaceAccent.teal { didSet { update(excess: excess, exit: exitDistance) } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -54,8 +56,8 @@ final class SpacePullIndicator: NSView {
         let position = CGPoint(x: bounds.maxX + 15 - Self.travel(excess) + exit, y: bounds.midY)
         for shape in [circle, plus, ring] { shape.position = position }
         let ready = excess >= SidebarMetrics.spaceCreateThreshold
-        circle.fillColor = (ready ? NSColor.white : NSColor.controlAccentColor).cgColor
-        plus.strokeColor = (ready ? NSColor.controlAccentColor : NSColor.white).cgColor
+        circle.fillColor = (ready ? NSColor.white : accent).cgColor
+        plus.strokeColor = (ready ? accent : NSColor.white).cgColor
         ring.strokeEnd = Self.ringFraction(excess)
         CATransaction.commit()
     }

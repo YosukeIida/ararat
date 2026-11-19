@@ -11,11 +11,13 @@ final class DownloadsButton: SidebarDockButton {
     var libraryOpen = false { didSet { if progress == .none { updateRing() } } }
     var progress: DownloadsModel.Progress = .none { didSet { if progress != oldValue { updateRing() } } }
     let ring = CAShapeLayer()
+    var accent = SpaceAccent.teal { didSet { ring.strokeColor = accent.cgColor } }
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         ring.fillColor = NSColor.clear.cgColor
         ring.lineWidth = 2
+        ring.strokeColor = accent.cgColor
         layer?.addSublayer(ring)
         updateRing()
     }
@@ -41,11 +43,9 @@ final class DownloadsButton: SidebarDockButton {
         })
     }
     override func layout() { super.layout(); updateRing() }
-    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateRing() }
     private func updateRing() {
         ring.frame = bounds
         ring.path = CGPath(ellipseIn: bounds.insetBy(dx: 4, dy: 4), transform: nil)
-        effectiveAppearance.performAsCurrentDrawingAppearance { ring.strokeColor = NSColor.controlAccentColor.cgColor }
         switch progress {
         case .none:
             ring.removeAnimation(forKey: "spin"); ring.isHidden = true; setAccessibilityValue(libraryOpen ? 1 : 0)

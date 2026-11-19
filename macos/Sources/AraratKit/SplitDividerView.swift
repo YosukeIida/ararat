@@ -1,12 +1,13 @@
 import AppKit
 
 final class SplitFocusRingView: NSView {
+    var accent = SpaceAccent.teal { didSet { needsDisplay = true } }
     static let lineWidth: CGFloat = 2
     override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.controlAccentColor.setStroke()
+        accent.setStroke()
         let path = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
         path.lineWidth = Self.lineWidth
         path.stroke()
