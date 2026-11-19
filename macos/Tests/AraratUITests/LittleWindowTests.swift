@@ -76,7 +76,7 @@ func littleWindowAddressUsesTheURLFieldRule() {
 /// The bar's geometry follows the design's step rule: 48 pt tall, the ⌘L bar 504 pt, the
 /// board's colours and radii.
 @Test @MainActor
-func littleWindowBarLaysOutTheBoardsBand() {
+func littleWindowBarLaysOutTheBoardsBand() throws {
     let bar = LittleWindowBarView(frame: NSRect(x: 0, y: 0, width: 640, height: LittleWindowMetrics.barHeight))
     var model = LittleWindowBarModel()
     model.profileName = "Default"
@@ -97,7 +97,11 @@ func littleWindowBarLaysOutTheBoardsBand() {
     // The chip starts clear of the traffic lights and the buttons end at the trailing inset.
     let frames = bar.checkButtonFrames
     #expect((frames["profile"]?.minX ?? 0) >= 80)
-    #expect(abs((frames["glyph"]?.minX ?? 0) - (frames["profile"]?.maxX ?? 0) - LittleWindowMetrics.addressGap) <= 1)
+    let profile = try #require(frames["profile"])
+    let copy = try #require(frames["copy"])
+    let gapCentre = (profile.maxX + copy.minX) / 2
+    let group = try #require(frames["glyph"]).union(try #require(frames["address"]))
+    #expect(abs(group.midX - gapCentre) <= 1)
     #expect(abs((frames["chevron"]?.maxX ?? 0) - (640 - LittleWindowMetrics.trailingInset)) <= 1)
     #expect((frames["open"]?.maxX ?? 0) <= (frames["chevron"]?.minX ?? 0))
     #expect((frames["copy"]?.maxX ?? 0) <= (frames["open"]?.minX ?? 0))
@@ -105,6 +109,20 @@ func littleWindowBarLaysOutTheBoardsBand() {
     let colour = bar.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
     #expect(abs((colour?.redComponent ?? 0) - 0x23 / 255) < 0.01)
     #expect(abs((colour?.blueComponent ?? 0) - 0x27 / 255) < 0.01)
+
+    let longHost = Array(repeating: String(repeating: "a", count: 50), count: 3).joined(separator: ".") + ".example.com"
+    model.pageURL = "https://\(longHost)/page"
+    bar.model = model
+    bar.layoutSubtreeIfNeeded()
+    let longFrames = bar.checkButtonFrames
+    let address = try #require(bar.subviews.compactMap { $0 as? NSTextField }.first)
+    let longGroup = try #require(longFrames["glyph"]).union(try #require(longFrames["address"]))
+    #expect(address.stringValue == longHost)
+    #expect(address.lineBreakMode == .byTruncatingTail)
+    #expect(address.frame.width < address.intrinsicContentSize.width)
+    #expect(longGroup.minX >= profile.maxX + 16)
+    #expect(longGroup.maxX <= copy.minX - 16)
+    #expect(abs(longGroup.midX - gapCentre) <= 1)
 }
 
 @Test @MainActor
