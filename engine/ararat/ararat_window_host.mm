@@ -2896,10 +2896,6 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "links") return @"";
   return l10n_util::GetNSStringWithFixup(IDS_CONTENT_CONTEXT_OPENLINKNEWWINDOW);
 }
-- (void)disableCheckConfirmQuit {
-  g_browser_process->local_state()->SetBoolean(prefs::kConfirmToQuitEnabled, false);
-}
-
 - (NSDictionary<NSString*, id>*)checkProfileState {
   const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
   if (!IsProfileCheck() && check != "popup" && check != "ext-windows-popup") return @{};

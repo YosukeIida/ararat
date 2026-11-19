@@ -790,6 +790,15 @@ impl WorkspaceStore {
         Ok(snapshot(workspace.clone(), &window_id))
     }
 
+    pub fn set_warn_before_quitting(&self, window_id: String, warn: bool) -> Result<WorkspaceSnapshot, CoreError> {
+        self.admit(true)?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let ops = workspace.set_warn_before_quitting(warn);
+        self.store.write(ops);
+        self.store.flush()?;
+        Ok(snapshot(workspace.clone(), &window_id))
+    }
+
     // P5b: the General pane's download folder and ask-each-file switch, a device record (F3: the
     // folder is a path of this Mac, so it is not in the synced Settings and never enters the sync
     // journal). The app pushes it into Chromium's prefs at the launch's first window and after
@@ -1153,6 +1162,7 @@ pub struct WorkspaceSettings {
     pub privacy: PrivacySettings,
     /// P5b: what the first window of a launch does.
     pub startup: StartupBehavior,
+    pub warn_before_quitting: bool,
 }
 impl From<ararat_core::model::Settings> for WorkspaceSettings {
     fn from(settings: ararat_core::model::Settings) -> Self {
@@ -1164,7 +1174,7 @@ impl From<ararat_core::model::Settings> for WorkspaceSettings {
             theme: settings.theme.into(),
             site_defaults: settings.site_defaults.into(),
             privacy: settings.privacy.into(),
-            startup: settings.startup.into() }
+            startup: settings.startup.into(), warn_before_quitting: settings.warn_before_quitting }
     }
 }
 

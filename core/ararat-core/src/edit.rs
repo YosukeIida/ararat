@@ -1521,6 +1521,13 @@ impl Workspace {
         self.commit_settings(settings)
     }
 
+    pub fn set_warn_before_quitting(&mut self, warn: bool) -> Vec<Op> {
+        if self.settings.warn_before_quitting == warn { return Vec::new(); }
+        let mut settings = self.settings.clone();
+        settings.warn_before_quitting = warn;
+        self.commit_settings(settings)
+    }
+
     // P5b: the General pane's downloads pair, one write of the whole device record (F3: the
     // folder is a path of this Mac, so it stays beside the Little Window frame rather than in the
     // synced Settings). The app pushes it into Chromium's prefs at the launch's first window and

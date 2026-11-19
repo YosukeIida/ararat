@@ -136,8 +136,8 @@ func theGeneralRowsWriteTheCoreRecordAndReachTheEngineHandler() async throws {
 
     model.setStartup(.newWindow)
     try await waitUntil { model.startup == .newWindow }
-    let storedStartup: StartupBehavior = try await generalValue { adapter.startupBehavior(completion: $0) }
-    #expect(storedStartup == .newWindow)
+    let storedSettings: WorkspaceSettings = try await generalValue { adapter.generalWorkspaceSettings(completion: $0) }
+    #expect(storedSettings.startup == .newWindow)
 
     model.setDownloadDirectory(URL(fileURLWithPath: "/Users/someone/Desktop"))
     try await waitUntil { applied.count == 1 }
@@ -186,7 +186,7 @@ func theGeneralPaneDrawsItsRowsAndTheSearchCarriesThem() async throws {
     defer { window.contentViewController = nil }
     let probe = try #require(controller.checkProbe())
     let rows = [SettingsModel.defaultBrowserRowID, SettingsModel.startupRowID,
-                SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
+                SettingsModel.warnBeforeQuittingRowID, SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
     try await waitUntil {
         probe.layout()
         return rows.allSatisfy { probe.marker(SettingsModel.rowMarker($0)) != nil }
@@ -200,9 +200,15 @@ func theGeneralPaneDrawsItsRowsAndTheSearchCarriesThem() async throws {
     // The rail puts General first, before Appearance.
     #expect(probe.railPanes.first?.id == "general")
     let searchRows = SettingsRegistry.generalRows(model)
-    #expect(searchRows.map(\.title) == ["Default browser", "When Ararat opens", "Save downloads to",
-                                        "Ask where to save each file"])
+    #expect(searchRows.map(\.title) == ["Default browser", "When Ararat opens", "Warn before quitting",
+                                        "Save downloads to", "Ask where to save each file"])
     #expect(searchRows[1].subtitle == "Restore windows and tabs")
-    #expect(searchRows[2].subtitle == "Downloads")
-    #expect(searchRows[3].subtitle == "Off")
+    #expect(searchRows[2].subtitle == "On")
+    #expect(searchRows[3].subtitle == "Downloads")
+    #expect(searchRows[4].subtitle == "Off")
+    model.setWarnBeforeQuitting(false)
+    try await waitUntil { !model.warnBeforeQuitting }
+    model.readGeneral()
+    try await waitUntil { model.generalLoaded }
+    #expect(!model.warnBeforeQuitting)
 }

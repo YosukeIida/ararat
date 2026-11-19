@@ -31,6 +31,8 @@ extern std::unique_ptr<permissions::PermissionPrompt> (*g_ararat_create_permissi
 @class NSArray<ObjectType>;
 @class NSWindow;
 class BrowserWindowInterface;
+extern bool (*g_ararat_quit_confirmation)(bool powering_off, bool shortcut,
+                                           bool is_repeat, void (^continue_quit)(void));
 extern bool (*g_ararat_reopen)(bool has_visible_windows);
 extern NSMenu* (*g_ararat_dock_menu)();
 extern void (*g_ararat_open_urls)(NSArray* urls, Profile* profile);

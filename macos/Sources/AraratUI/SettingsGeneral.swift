@@ -1,10 +1,6 @@
 import AraratKit
 import SwiftUI
 
-/// The General pane (P5b, the E-General board's first three rows): Default browser, When Ararat
-/// opens, and Save downloads to with Ask where to save each file. The rest of E-General (Warn
-/// before quitting, Search engine, Show search suggestions, Check spelling) stays phase 7 and is
-/// not drawn, so the pane holds no disabled rows.
 struct SettingsGeneralSection: View {
     @ObservedObject var model: SettingsModel
 
@@ -48,6 +44,14 @@ struct SettingsGeneralSection: View {
                     .accessibilityValue(model.startupLabel)
                     .background(SettingsMarker(id: SettingsModel.startupMenuMarker))
                 }.id(SettingsModel.startupRowID)
+                SettingsCardRow(hit: model.highlighted == SettingsModel.warnBeforeQuittingRowID,
+                                marker: SettingsModel.rowMarker(SettingsModel.warnBeforeQuittingRowID)) {
+                    Text("Warn before quitting").frame(maxWidth: .infinity, alignment: .leading)
+                    Toggle("Warn before quitting", isOn: Binding(
+                        get: { model.warnBeforeQuitting }, set: model.setWarnBeforeQuitting
+                    ))
+                    .toggleStyle(.switch).labelsHidden().fixedSize()
+                }.id(SettingsModel.warnBeforeQuittingRowID)
             }
             SettingsGroupCard(heading: "Downloads", marker: SettingsModel.rowMarker("downloads-card")) {
                 SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.downloadsFolderRowID,

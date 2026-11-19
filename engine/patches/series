@@ -31,6 +31,7 @@ ararat/permission-prompt-hook.patch
 ararat/devtools-hook.patch
 ararat/autofill-address-bubble.patch
 ararat/app-controller-hooks.patch
+ararat/quit-confirmation.patch
 ararat/browser-window-factory.patch
 ararat/viewless-read-anything.patch
 ararat/viewless-bubble-anchor.patch

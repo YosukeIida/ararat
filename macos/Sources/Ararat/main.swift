@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import AppKit
+import Carbon.HIToolbox
 import SQLite3
 import AraratEngineAPI
 import AraratKit
@@ -224,7 +225,7 @@ func checkStoredTabMetadata(_ rows: [[String]], item: String, url: String, title
 }
 
 func checkCoverageFlags(_ arguments: [String]) -> [String] {
-  let names = ["--ararat-keyboard-main-scope", "--ararat-incognito-window-check", "--ararat-space-matrix-check", "--ararat-page-only-menu-check", "--ararat-quit-suggestion-check",
+  let names = ["--ararat-quit-confirm-check", "--ararat-keyboard-main-scope", "--ararat-incognito-window-check", "--ararat-space-matrix-check", "--ararat-page-only-menu-check", "--ararat-quit-suggestion-check",
     "--ararat-multiple-quit-check", "--ararat-multiple-close-check", "--ararat-split-close-check",
     "--ararat-empty-close-check", "--ararat-same-profile-empty-quit-check", "--ararat-selection-race",
     "--ararat-selection-supersede", "--ararat-committed-switch-race", "--ararat-cross-window-selection-check",
@@ -475,6 +476,7 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
 @MainActor
 final class Runtime: NSObject, NSMenuItemValidation {
   let clearUndo = ClearUndo()
+  let quitConfirmation = QuitConfirmationPanel()
   var windowID: String
   weak var root: Runtime?
   var children: [Runtime] = []
@@ -490,6 +492,79 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var selectionGeneration = 0
   var hasUsableHost: Bool { !hostClosing && host.map { !$0.isClosing() && !$0.isClosingAll() } == true }
   init(windowID: String = UUID().uuidString) { self.windowID = windowID; super.init() }
+  var checksQuitConfirmation: Bool {
+    quitMode == "screen-quit" && CommandLine.arguments.contains("--ararat-quit-confirm-check")
+  }
+  var quitConfirmationChecks: [Bool] = []
+
+  func confirmQuit(poweringOff: Bool, shortcut: Bool, repeatKey: Bool,
+                   continueQuit: @escaping () -> Void) -> Bool {
+    let event = NSAppleEventManager.shared().currentAppleEvent
+    let quitEvent = event?.eventClass == kCoreEventClass && event?.eventID == kAEQuitApplication ? event : nil
+    let reason = quitEvent?.paramDescriptor(forKeyword: kAEQuitReason)?.enumCodeValue
+    let senderPID = quitEvent?.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+    let sender = senderPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+    let checkBypass = !checksQuitConfirmation && CommandLine.arguments.contains {
+      $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") || $0.hasPrefix("--ararat-measure=")
+    }
+    let source = QuitConfirmation.source(poweringOff: poweringOff, quitReason: reason,
+                                         senderBundleID: sender, checkBypass: checkBypass)
+    if source != .user {
+      quitConfirmation.cancel()
+      return false
+    }
+    if repeatKey, quitEvent == nil { return true }
+    if quitConfirmation.isPending {
+      if quitEvent == nil && QuitConfirmation.confirmsWithShortcut(shortcut: shortcut, repeatKey: repeatKey) {
+        quitConfirmation.answer(.OK)
+      }
+      return true
+    }
+    let browserWindows: [(NSWindow, QuitConfirmation.BrowserWindow)] = windowTree.flatMap { runtime in
+      let windows = runtime.littleWindows.compactMap { little in
+        little.window.map { ($0, QuitConfirmation.BrowserWindow.littleWindow) }
+      }
+      guard runtime.hasUsableHost, let window = runtime.host?.window() else { return windows }
+      return [(window, runtime.isPrivateWindow ? .privateWindow : .regular)] + windows
+    }
+    let visible = browserWindows.filter { $0.0.isVisible && !$0.0.isMiniaturized }
+    let ordered = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 } + NSApp.orderedWindows
+    guard let owner = ordered.first(where: { window in visible.contains { $0.0 === window } })
+        ?? visible.first?.0 else { return false }
+    let session = adapter?.session
+    let warn = session?.queue.sync { session?.store?.settings().warnBeforeQuitting } ?? true
+    guard QuitConfirmation.shouldAsk(source: source, warn: warn, visible: visible.map { $0.1 }) else { return false }
+
+    let inspect: ((NSPanel) -> Void)?
+    if checksQuitConfirmation, let host {
+      let before = host.checkClosingEvents()
+      inspect = { [weak self] panel in
+        guard let self else { return }
+        self.quitConfirmationChecks.append(NSApp.modalWindow === panel &&
+          !host.checkTryingToQuit() && host.checkClosingEvents() == before)
+        self.quitConfirmation.answer(self.quitConfirmationChecks.count == 1 ? .cancel : .OK)
+      }
+    } else {
+      inspect = nil
+    }
+    quitConfirmation.show(over: owner, message: QuitConfirmation.message(for: browserWindows.map { $0.1 }),
+                          onModal: inspect) { [weak self] accepted, checked in
+      guard let self else { return }
+      if self.checksQuitConfirmation, !accepted, self.quitConfirmationChecks.count == 1, let host = self.host {
+        DispatchQueue.main.async { self.sendQuitKey(host) }
+      }
+      guard accepted else { return }
+      if QuitConfirmation.disablesWarning(accepted: accepted, checked: checked), let session {
+        do {
+          try session.queue.sync { _ = try session.store?.setWarnBeforeQuitting(windowId: self.windowID, warn: false) }
+          self.settings?.refreshGeneralSettings()
+        } catch { self.report(error) }
+      }
+      continueQuit()
+    }
+    return true
+  }
+
   func refreshOtherWindows() {
     let owner = root ?? self
     for window in [owner] + owner.children where window !== self { window.adapter?.refresh() }
@@ -1692,7 +1767,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
       RunLoop.main.add(timer, forMode: .common)
     } else if quitMode != nil {
       if quitMode == "screen-quit" {
-        host.disableCheckConfirmQuit()
         NSApp.activate(ignoringOtherApps: true)
         host.window().makeKeyAndOrderFront(nil)
       }
@@ -9644,7 +9718,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     let firstPassed = (quitFirst["rows_unchanged"] as? Bool) == true &&
       (quitFirst["trying_to_quit"] as? Bool) == false && (quitFirst["browsers"] as? UInt) == (mode == "quit-cancel" ? 2 : 1)
     let events = quitEvents.map(\.boolValue)
-    // The engine notifies closing=true twice per quit attempt: chrome::AttemptExit() reaches
+    // The engine notifies closing=true twice per quit attempt: Chromium's AttemptUserExit() path reaches
     // AttemptExitInternal(), which notifies before platform_part()->AttemptExit() ends in
     // -[AppController tryToTerminateApplication] and notifies again. So one attempt reads
     // [true, true], its beforeunload cancel adds [false] (UnloadController::CancelWindowClose),
@@ -9700,6 +9774,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       conditions = ["rows_unchanged": unchanged, "first_passed": firstPassed, "dialog_seen": dialogSeen == 2,
         "closing_after_offset": closingAfterOffset == [true, true, false, true, true],
         "sidebar_lights": screenSidebarLights, "appkit_lights_hidden": screenAppKitLightsHidden]
+      if checksQuitConfirmation {
+        conditions["quit_confirmations_before_unload"] = quitConfirmationChecks == [true, true, true]
+      }
     default:
       conditions = ["known_mode": false]
     }
@@ -10012,6 +10089,13 @@ var callbacks = AraratCallbacks(
       }
       if let runtime = Launcher.runtime { runtime.openURLs(urls) }
       else { Launcher.pendingURLs.append(contentsOf: urls) }
+    }
+  },
+  confirm_quit: { _, poweringOff, shortcut, repeatKey, continuation in
+    MainActor.assumeIsolated {
+      guard let continuation else { return false }
+      return Launcher.runtime?.confirmQuit(poweringOff: poweringOff, shortcut: shortcut,
+                                            repeatKey: repeatKey, continueQuit: continuation) ?? false
     }
   },
   ctx: nil
