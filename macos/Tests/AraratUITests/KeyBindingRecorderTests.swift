@@ -215,7 +215,7 @@ private func checkFunctionKeyRecording(_ keys: [(UInt16, String)], flags: NSEven
 }
 
 @Test @MainActor
-func recorderAcceptsItsChromiumAliasAndAFreeShortcut() async throws {
+func recorderOffersTakeoverForChromiumAliasesAndAcceptsTheirOwnShortcuts() async throws {
     _ = NSApplication.shared
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -226,20 +226,27 @@ func recorderAcceptsItsChromiumAliasAndAFreeShortcut() async throws {
     recorder.bindings = bindings
     var writes = 0
     bindings.onChange = { writes += 1 }
-    for (tag, title, command, key, code) in [
-        (34012, "Close Window", "close_tab", "w", UInt16(13)),
-        (34014, "New Tab", "new_tab", "t", 17),
-        (34015, "Close Tab", "close_tab", "w", 13),
-        (34031, "Quit Ararat", "quit", "q", 12),
-        (39001, "Open Location", "edit_url", "l", 37),
+    for (tag, title, command, holder, key, code) in [
+        (34012, "Close Window", "close_tab", "Close Tab", "w", UInt16(13)),
+        (34014, "New Tab", "new_tab", "New Tab", "t", 17),
+        (34015, "Close Tab", "close_tab", "Close Tab", "w", 13),
+        (34031, "Quit Ararat", "quit", "Quit Ararat", "q", 12),
+        (39001, "Open Location", "edit_url", "Edit URL", "l", 37),
     ] {
         menu.removeAllItems()
         menu.addItem(withTitle: title, action: nil, keyEquivalent: key).tag = tag
         let event = try recorderKeyEvent(keyCode: code, characters: key, charactersIgnoringModifiers: key, flags: .command)
+        let candidate = recorderBinding(key: key, command: true)
+        let before = bindings.bindings
+        let previousWrites = writes
         bindings.toggleRecording("toggle_sidebar")
         #expect(recorder.performKeyEquivalent(with: event))
-        #expect(bindings.error == "This shortcut is used by \(title).")
-        let previousWrites = writes
+        #expect(bindings.recording == KeyBindingsModel.Recording(command: "toggle_sidebar", candidate: candidate, holder: holder))
+        #expect(bindings.error == nil)
+        let after = try await bindingValue { adapter.keyBindings(completion: $0) }
+        #expect(after.first { $0.command == command }?.key == candidate)
+        #expect(after == before)
+        #expect(writes == previousWrites)
         bindings.toggleRecording(command)
         #expect(recorder.performKeyEquivalent(with: event))
         try await waitUntil { writes == previousWrites + 1 }
