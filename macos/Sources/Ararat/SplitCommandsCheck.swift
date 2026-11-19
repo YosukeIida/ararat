@@ -22,7 +22,7 @@ final class SplitCommandsCheck {
                       "key_split", "key_focus", "key_new_page", "command_split", "command_focus",
                       "command_new_page", "menu_split", "menu_focus", "menu_new_page", "split_third",
                       "split_third_focus"]
-  static let screenNames = ["capture_menu", "capture_vertical", "capture_split"]
+  static let screenNames = ["capture_menu", "capture_vertical", "capture_split", "capture_drop-target"]
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
   var capturing = false
@@ -325,6 +325,7 @@ extension Runtime {
       if container.paneDropForCheck != nil, sidebar.dragStateForCheck.drop == "split" { check.indicatorSeen = true }
       guard ready("drop indicator", check.indicatorSeen) else { return }
       check.mark("drag_indicator")
+      capture("drop-target")
       guard let left = check.points["target"] else { fail("no drop point"); return }
       _ = sidebar.releaseDragForCheck(at: left)
       browserCheckPhase = 14

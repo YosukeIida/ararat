@@ -81,6 +81,24 @@ extension Runtime {
       container.resizeHandle.sidebarWidth = 240
       container.layoutSubtreeIfNeeded()
       check.conditions["menu"] = header.makeMenu().items.filter { !$0.isSeparatorItem }.map(\.title) == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"]
+      if screen {
+        check.capturing = true
+        let menu = header.makeMenu()
+        let window = host.window()
+        let captureMenu: @MainActor @Sendable () -> Void = { [weak self, weak menu] in
+          guard let menu else { return }
+          defer { menu.cancelTracking() }
+          check.images["overflow-menu"] = self?.promptScreenScreenshot(window, name: "header-overflow-menu", includeOverlays: true)
+        }
+        let timer = Timer(timeInterval: 0.2, repeats: false) { _ in
+          MainActor.assumeIsolated { captureMenu() }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        header.showMenu(menu)
+        timer.invalidate()
+        check.capturing = false
+        capturesOK = capturesOK && check.images["overflow-menu"] != nil
+      }
       var capsOK = true
       check.details["tooltips_shown"] = header.tooltipsShown
       check.details["loading"] = header.loading
@@ -193,6 +211,13 @@ extension Runtime {
             let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }) else { wait("find bar"); return }
       check.conditions["find"] = true
       check.conditions["menu_find"] = true
+      if screen {
+        check.capturing = true
+        let image = promptScreenScreenshot(host.window(), name: "header-find-bar", withoutShadow: true)
+        check.capturing = false
+        check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+        check.images["find-bar"] = image
+      }
       host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: check.live, profile: host.profileDirectory())
       // p4checks: Zoom In and Zoom Out are the … menu's own items.
       let zoom = host.checkZoomLevel()

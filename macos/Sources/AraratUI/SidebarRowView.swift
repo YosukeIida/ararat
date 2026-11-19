@@ -558,6 +558,24 @@ final class SidebarRowView: NSView {
         if pressed != nextPressed { pressed = nextPressed }
     }
 
+    func capturePointerState(pressed: Bool, capture: () -> Bool) -> Bool {
+        let previousPointer = pointerLocation
+        let previousPress = trackingPress
+        let rect = bounds.intersection(visibleRect)
+        guard !rect.isEmpty else { return false }
+        let point = convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        pointerLocation = { point }
+        trackingPress = pressed
+        refreshHover()
+        window?.displayIfNeeded()
+        defer {
+            pointerLocation = previousPointer
+            trackingPress = previousPress
+            refreshHover()
+        }
+        return hovered && self.pressed == pressed && capture()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshHover()

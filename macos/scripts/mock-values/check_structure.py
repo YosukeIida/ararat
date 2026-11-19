@@ -65,6 +65,20 @@ def check(rule, capture):
             return {"Copy Link", "Site controls"} <= labels
         case "count":
             return len(by_class(rule["class"])) == rule["count"]
+        case "contains":
+            def matches(node, selector):
+                return all(node.get(key) == value for key, value in selector.items())
+
+            selector = rule.get("container")
+            containers = ([path[-1] for path in paths if matches(path[-1], selector)]
+                          if selector else [window["root"] for window in capture["windows"]])
+            if not containers:
+                return False
+            for container in containers:
+                descendants = [path[-1] for path in paths if any(ancestor is container for ancestor in path[:-1])]
+                if not all(any(matches(node, member) for node in descendants) for member in rule["members"]):
+                    return False
+            return True
         case _:
             raise ValueError(f"Unknown rule: {rule['kind']}")
 

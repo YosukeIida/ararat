@@ -46,11 +46,6 @@ final class FolderUploadCheckState {
 
     static func conditionNames(screen: Bool) -> [String] { names + (screen ? screens : []) }
 
-    static func chooserCaptureArguments(frame: NSRect, screenTop: CGFloat, path: String) -> [String] {
-        let region = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height).integral
-        return ["-x", "-R\(Int(region.minX)),\(Int(region.minY)),\(Int(region.width)),\(Int(region.height))", path]
-    }
-
     static func chooserWindow(frame: NSRect, screenTop: CGFloat, windows: [[String: Any]], excluding: Set<Int>) -> [String: Any]? {
         let target = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height)
         return windows.first { row in
@@ -161,7 +156,7 @@ extension Runtime {
             let task = Process()
             let error = Pipe()
             task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            task.arguments = FolderUploadCheckState.chooserCaptureArguments(frame: frame, screenTop: screenTop, path: path)
+            task.arguments = ScreenViewTree.regionArguments(frame: frame, screenTop: screenTop, path: path)
             task.standardError = error
             check.details["capture"] = ["way": "region", "frame": NSStringFromRect(frame), "arguments": task.arguments ?? []]
             do { try task.run(); task.waitUntilExit() } catch {

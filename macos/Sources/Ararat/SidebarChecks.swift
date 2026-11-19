@@ -333,6 +333,12 @@ extension Runtime {
             guard info.closeLabel == "Close Tab" else {
                 note("pin label is \(info.closeLabel ?? "-"), expected Close Tab"); return
             }
+            if screen {
+                _ = capture("selected")
+                let hover = sidebar.captureRowPointerState(id: pin.id, pressed: false) { capture("hover") }
+                let pressed = sidebar.captureRowPointerState(id: pin.id, pressed: true) { capture("pressed") }
+                check.conditions["capture"] = check.conditions["capture"] == true && hover && pressed
+            }
             trace("press the loaded pin's close")
             let action = sidebar.pressRowCloseForCheck(id: pin.id)
             trace("close action for \(pin.id): \(action.map { $0 == .archive ? "archive" : "close" } ?? "no target")")
@@ -752,6 +758,7 @@ extension Runtime {
         case 3:
             guard sidebar.newTabRowForCheck == nil else { return }
             check.report("new_tab_setting_hides", true)
+            _ = capture("new-tab-hidden")
             if let store = adapter?.session.store {
                 _ = adapter?.session.queue.sync { try? store.setNewTabRowShown(windowId: windowID, shown: true) }
             }

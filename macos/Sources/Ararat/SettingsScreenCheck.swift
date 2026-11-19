@@ -821,6 +821,7 @@ extension Runtime {
                 return
             }
             check.report("recorder_opened", true)
+            guard capture("shortcuts-recorder") else { end("capture", false); return }
             guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
                                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
                                                context: nil, characters: "k", charactersIgnoringModifiers: "k",
@@ -1122,6 +1123,7 @@ extension Runtime {
             let hidden = owner.container?.header.checkTooltip("back")
             trace("header tooltip off: \(hidden?.0 ?? "nil") \(hidden?.1 ?? [])")
             check.report("tooltips_off", check.appearanceTooltipShown && hidden?.0 == nil)
+            guard capture("appearance") else { end("capture", false); return }
             trace("pushing the space page from the Look row")
             probe.openLook()
             step(12)
@@ -1131,7 +1133,7 @@ extension Runtime {
             }
             check.report("look_to_space", probe.highlightedRowID == SettingsModel.lookRowId
                 && probe.marker(SettingsModel.rowMarker(SettingsModel.lookRowId)) != nil)
-            guard capture("appearance") else { end("capture", false); return }
+            guard capture("look-space-page") else { end("capture", false); return }
             finish()
         default: break
         }

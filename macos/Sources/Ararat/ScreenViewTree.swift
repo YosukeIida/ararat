@@ -16,7 +16,7 @@ enum ScreenViewTree {
             frame = ScreenViewTree.coordinates(view.convert(view.bounds, to: nil))
             role = view.accessibilityRole()?.rawValue
             label = view.accessibilityLabel()
-            identifier = view.accessibilityIdentifier()
+            identifier = view.identifier?.rawValue ?? view.accessibilityIdentifier()
             hidden = view.isHiddenOrHasHiddenAncestor
             children = view.subviews.map { Node($0) }
         }
@@ -36,6 +36,11 @@ enum ScreenViewTree {
     private struct Window: Encodable {
         let frame: [String: CGFloat]
         let root: Node
+    }
+
+    static func regionArguments(frame: NSRect, screenTop: CGFloat, path: String) -> [String] {
+        let region = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height).integral
+        return ["-x", "-R\(Int(region.minX)),\(Int(region.minY)),\(Int(region.width)),\(Int(region.height))", path]
     }
 
     static func write(nextTo path: String, name: String, windows: [NSWindow]) -> Bool {

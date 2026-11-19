@@ -690,6 +690,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var commandPresenter: CommandBarPresenter?
   var tabSwitcher: TabSwitcher?
   var commandBarConditions: [String: Bool] = [:]
+  var commandBarImages: [String: String] = [:]
+  var commandBarCapturing = false
   var commandBarFixtureID: String?
   var commandBarSearchID: String?
   var commandBarInitialID: String?
@@ -732,7 +734,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var organizeHoverStarted: TimeInterval = 0
   /// p4checks: the resolver's answer for the first-favourite drop, scored only once it lands.
   var organizeFirstFavoriteTarget = false
-  var organizeImage: String?
+  var organizeImages: [String: String] = [:]
+  var organizeCapturing = false
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
@@ -6665,12 +6668,18 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
-  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false) -> String? {
+  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false, includeOverlays: Bool = false) -> String? {
     guard let temporary = ProcessInfo.processInfo.environment["TMPDIR"] else { return nil }
     let path = (temporary as NSString).appendingPathComponent("ararat-prompts-\(name)-\(UUID().uuidString).png")
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     task.arguments = ["-x"] + (withoutShadow ? ["-o"] : []) + ["-l\(window.windowNumber)", path]
+    if includeOverlays {
+      guard let screen = window.screen, let top = NSScreen.screens.first?.frame.maxY else { return nil }
+      let frame = window.frame.intersection(screen.frame).integral
+      guard !frame.isEmpty else { return nil }
+      task.arguments = ScreenViewTree.regionArguments(frame: frame, screenTop: top, path: path)
+    }
     do { try task.run(); task.waitUntilExit() } catch { return nil }
     guard task.terminationStatus == 0, FileManager.default.fileExists(atPath: path),
           ScreenViewTree.write(nextTo: path, name: name, windows: [window]) else { return nil }
@@ -8596,11 +8605,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
-    guard let sidebar, let session = adapter?.session else { return }
+    guard !organizeCapturing, let sidebar, let session = adapter?.session else { return }
     let current = session.queue.sync { session.store?.snapshot(windowId: windowID) }
     guard let current, let space = current.spaces.first(where: { $0.id == "organize-work" }),
           let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
@@ -8611,14 +8620,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckIdle, let id = row(name)?.id else { return false }
       return sidebar.organizeCheckBegin(id: id, destination: destination)
     }
+    func capture(_ name: String) {
+      guard screen else { return }
+      organizeCapturing = true
+      defer { organizeCapturing = false }
+      organizeImages[name] = promptScreenScreenshot(host.window(), name: "organize-\(name)", withoutShadow: true)
+    }
     switch browserCheckPhase {
     case 0:
       guard space.favorites.count == 2, space.today.count == 1, space.pinned.contains(where: { $0.id == "organize-inner" }) else { return }
       organizeConditions["seed"] = true
       guard begin("today", "organize-outer") else { return }
       organizeConditions["drop_line_image"] = !screen || sidebar.organizeCheckDropLine
-      if screen, sidebar.organizeCheckDropLine { organizeImage = promptScreenScreenshot(host.window(), name: "organize-drop", withoutShadow: true) }
-      if screen { organizeConditions["drop_line_image"] = organizeImage != nil }
+      if sidebar.organizeCheckDropLine { capture("drop") }
+      if screen { organizeConditions["drop_line_image"] = organizeImages["drop"] != nil }
       browserCheckPhase = 1
     case 1:
       guard sidebar.organizeCheckEnd() else { return }
@@ -8677,6 +8692,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 81:
       guard current.shownSpaceId == "organize-first", sidebar.organizeCheckIdle,
             let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
+      if first.favorites.isEmpty { capture("empty-favorites") }
       guard begin("first", "favorites") else { return }
       let point = sidebar.dragCheckPoint
       let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("first")?.id ?? "")
@@ -8685,9 +8701,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       // a stall here leaves it unset rather than true.
       organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && first.favoritesId == nil
       FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(first.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
-      if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
-        organizeImage = image
-      }
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 82
     case 82:
@@ -8695,6 +8708,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
       let landed = first.favorites.contains { $0.url == "about:blank?organize-first" }
       organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && first.favoritesId != nil
+      if landed { capture("first-favorite") }
+      if screen { organizeConditions["favorite_images"] = organizeImages["empty-favorites"] != nil && organizeImages["first-favorite"] != nil }
       FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(first.favoritesId ?? "nil") parent=\(row("first")?.parentId ?? "nil")\n".utf8))
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
@@ -8717,7 +8732,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if innerOpen && (target?.kind == "folder" || target?.kind == "insert") && target?.container == "organize-inner" {
         FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover opened target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop)\n".utf8))
         organizeConditions["folder_hover_opens"] = true
-        if screen { organizeImage = promptScreenScreenshot(host.window(), name: "organize-hover-open", withoutShadow: true) ?? organizeImage }
+        capture("hover-open")
         guard sidebar.organizeCheckEnd() else { return }
         browserCheckPhase = 86
         return
@@ -8735,14 +8750,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["hover_drop"] = row("today")?.parentId == "organize-inner"
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
-      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
-      if let organizeImage { values["image"] = organizeImage }
+      let values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed, "images": organizeImages]
       finishBrowserCheck(ok: failed.isEmpty, values: values)
     case 87:
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
-      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed,
+      let values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed, "images": organizeImages,
                                   "hover_wait": ProcessInfo.processInfo.systemUptime - organizeHoverStarted]
-      if let organizeImage { values["image"] = organizeImage }
       finishBrowserCheck(ok: false, values: values)
     default: break
     }
@@ -9037,8 +9050,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result.merge(littleWindowCheckDiagnostics(screen: browserCheckMode == "screen-little-window")) { _, new in new }
     }
     if browserCheckMode == "commandbar" || browserCheckMode == "screen-commandbar" {
-      result["conditions"] = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
-      result["failed_conditions"] = commandBarConditionNames.filter { commandBarConditions[$0] != true }
+      result.merge(commandBarCheckResult(screen: browserCheckMode == "screen-commandbar")) { _, new in new }
     }
     if browserCheckMode == "look" || browserCheckMode == "screen-look" {
       lookCheck?.stopWatchingMenu()
@@ -9050,6 +9062,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let names = organizeConditionNames(screen: browserCheckMode == "screen-organize")
       result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, organizeConditions[$0] == true) })
       result["failed_conditions"] = names.filter { organizeConditions[$0] != true }
+      result["images"] = organizeImages
     }
     if browserCheckMode == "incognito" {
       result.merge(incognitoResultIdentity(check: "incognito", arguments: CommandLine.arguments)) { _, new in new }
