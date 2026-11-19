@@ -1,0 +1,94 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+usage() {
+  printf 'usage: corresponding-source <new-out-dir>\n'
+}
+die() { printf 'corresponding-source: %s\n' "$*" >&2; exit 1; }
+
+[[ "${1:-}" == -h || "${1:-}" == --help ]] && { usage; exit 0; }
+[[ $# == 1 && -n "$1" ]] || { usage >&2; exit 2; }
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+commit="$(git -C "$repo" rev-parse --verify HEAD)"
+parent="$(dirname -- "${1%/}")"
+mkdir -p -- "$parent"
+parent="$(cd -- "$parent" && pwd -P)"
+name="$(basename -- "${1%/}")"
+out="$parent/$name"
+archive="$name.tar.xz"
+checksum="$archive.sha256"
+for path in "$out" "$parent/$archive" "$parent/$checksum"; do
+  [[ ! -e "$path" && ! -L "$path" ]] || die "output already exists: $path"
+done
+
+scratch="$(mktemp -d "$parent/.corresponding-source.XXXXXX")"
+created_out=0
+created_archive=0
+created_checksum=0
+cleanup() {
+  local status=$?
+  if [[ "$status" != 0 ]]; then
+    [[ "$created_checksum" == 0 ]] || rm -f -- "$parent/$checksum"
+    [[ "$created_archive" == 0 ]] || rm -f -- "$parent/$archive"
+    [[ "$created_out" == 0 ]] || rm -rf -- "$out"
+  fi
+  rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -- "$out"
+created_out=1
+mkdir -- "$out/ararat"
+git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$out/ararat"
+printf '%s\n' "$commit" >"$out/REVISION"
+cp -- "$out/ararat/engine/scripts/reproduce-source" "$out/reproduce.sh"
+
+cat >"$out/README.md" <<'EOF'
+# Ararat Corresponding Source
+
+`REVISION` identifies the Ararat commit exported under `ararat/` with
+`git archive`. The export contains `engine/build-inputs.toml` and
+`engine/patches/series`, with all vendored ungoogled and Ararat patches
+and their license and provenance files under `engine/patches/`.
+
+Run `./reproduce.sh --check-only` to validate the patch series against
+the series SHA-256 in `ararat/engine/patch-state.sha256` without fetching
+Chromium.
+
+On macOS, run `./reproduce.sh <new-build-root> <depot_tools-dir>` with a
+working Chromium depot_tools checkout and a new build directory whose
+parent already exists. This fetches the pinned Chromium tag and DEPS,
+applies the release series and copies the Ararat layer. It compares the
+resulting manifest with the recorded `ararat/engine/patch-state.sha256`.
+The reproduced tree is at `<new-build-root>/src`.
+
+Use the Xcode and SDK versions and the arm64 target pinned in
+`ararat/engine/build-inputs.toml`. From the directory containing this
+README, substitute absolute paths in the commands below:
+
+```sh
+export ARARAT_BUILD_ROOT="<new-build-root>"
+export ARARAT_DEPOT_TOOLS="<depot_tools-dir>"
+ararat/engine/scripts/gen
+ararat/engine/scripts/build
+(
+  cd ararat/macos
+  ./scripts/build-core.sh
+  swift build -c release
+  ./scripts/bundle-app.sh "$ARARAT_BUILD_ROOT/src/out/Ararat/Chromium.app" "<out-dir>"
+)
+```
+EOF
+
+env -i PATH="$PATH" /bin/bash "$out/reproduce.sh" --check-only
+COPYFILE_DISABLE=1 tar -cJf "$scratch/$archive" -C "$parent" -- "$name"
+(cd -- "$scratch" && shasum -a 256 -- "$archive" >"$checksum")
+ln -- "$scratch/$archive" "$parent/$archive"
+created_archive=1
+ln -- "$scratch/$checksum" "$parent/$checksum"
+created_checksum=1
+printf '%s\n' "$out" "$parent/$archive" "$parent/$checksum"

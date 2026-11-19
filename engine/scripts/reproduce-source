@@ -1,0 +1,55 @@
+#!/bin/bash
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+scripts="$root/ararat/engine/scripts"
+[[ -r "$scripts/env.sh" ]] || { printf 'Use the reproduce.sh shipped with Corresponding Source.\n' >&2; exit 1; }
+
+if [[ $# == 1 && "$1" == --check-only ]]; then
+  check_only=1
+elif [[ $# == 2 && -n "$1" && "$1" != --check-only && -n "$2" ]]; then
+  check_only=0
+else
+  printf 'usage: reproduce.sh --check-only | <new-build-root> <depot_tools-dir>\n' >&2
+  exit 2
+fi
+
+unset ARARAT_SERIES ARARAT_SRC_DIR ARARAT_ENGINE_LOCK ARARAT_GCLIENT_JOBS
+export ARARAT_BUILD_ROOT="$root" ARARAT_DEPOT_TOOLS="$root"
+if [[ "$check_only" == 0 ]]; then
+  depot_tools="$(cd -- "$2" && pwd -P)"
+  [[ -x "$depot_tools/gclient" ]] || { printf 'No gclient in %s\n' "$depot_tools" >&2; exit 1; }
+  build_parent="$(cd -- "$(dirname -- "${1%/}")" && pwd -P)"
+  build_name="$(basename -- "${1%/}")"
+  export ARARAT_BUILD_ROOT="$build_parent/$build_name" ARARAT_DEPOT_TOOLS="$depot_tools"
+fi
+engine="$root/ararat/engine"
+export ARARAT_BUILD_INPUTS="$engine/build-inputs.toml"
+export ARARAT_PATCHES="$engine/patches"
+export ARARAT_MANIFEST="$ARARAT_BUILD_ROOT/patch-state.sha256"
+recorded_manifest="$engine/patch-state.sha256"
+. "$scripts/env.sh"
+
+patches="$(series_lines)"
+[[ -n "$patches" ]] || die "empty series: $ARARAT_SERIES"
+while IFS= read -r patch; do
+  [[ -f "$ARARAT_PATCHES/$patch" ]] || die "missing patch: $patch"
+done <<<"$patches"
+expected="$(awk '$1 == "series" { print $2; exit }' "$recorded_manifest")"
+actual="$(series_fingerprint)"
+[[ "$actual" == "$expected" ]] || die "series SHA-256 mismatch in engine/patch-state.sha256: recorded ${expected:-missing}, computed $actual"
+msg "series SHA-256 verified: $actual"
+[[ "$check_only" == 0 ]] || exit 0
+
+upstream=https://chromium.googlesource.com/chromium/src.git
+mkdir -- "$ARARAT_BUILD_ROOT"
+git init --quiet "$ARARAT_SRC_DIR"
+git -C "$ARARAT_SRC_DIR" remote add origin "$upstream"
+(cd -- "$ARARAT_BUILD_ROOT" && gclient config --unmanaged "$upstream")
+/bin/bash "$scripts/fetch"
+[[ "$(git -C "$ARARAT_SRC_DIR" rev-parse HEAD)" == "$(toml_get chromium_commit)" ]] \
+  || die "fetched Chromium tag does not match chromium_commit"
+/bin/bash "$scripts/apply"
+cmp -s -- "$recorded_manifest" "$ARARAT_MANIFEST" ||
+  die "reproduced tree differs from the recorded manifest (engine/patch-state.sha256)"

@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: series-check
+usage: series-check [--release]
 
 Read-only: compares every file the series touches in $ARARAT_SRC_DIR, and the
 layer files apply copies into src/ararat/core (and src/chrome/browser/ararat),
@@ -14,14 +14,30 @@ refused too. Exits non-zero when anything drifted, and also when the manifest
 was recorded for a different series. It resets nothing and applies nothing;
 build runs this before its own work and, on failure, stops and says to run
 apply.
+
+With --release, also compare the repository's layer with the recorded
+manifest.
 USAGE
 }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  "") ;;
+  ""|--release) ;;
   *) die "unknown argument: $1" ;;
 esac
+
+if [[ "${1:-}" == --release ]]; then
+  [[ -r "$ARARAT_MANIFEST" ]] ||
+    die "missing engine/patch-state.sha256: run apply and commit the manifest"
+  while IFS=$'\t' read -r src dst; do
+    recorded="$(awk -v prefix="$dst/" 'index($2, prefix) == 1' "$ARARAT_MANIFEST" | LC_ALL=C sort)"
+    current="$(cd -- "$ARARAT_REPO_ROOT/$src" &&
+      find . -type f -exec shasum -a 256 -- {} + |
+      sed "s|  \./|  $dst/|" | LC_ALL=C sort)"
+    [[ "$current" == "$recorded" ]] ||
+      die "stale engine/patch-state.sha256: $src differs from the recorded layer; run apply and commit the manifest"
+  done < <(layer_pairs)
+fi
 
 require_tree
 check_layer_exports

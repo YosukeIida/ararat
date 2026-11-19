@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds Ararat.app from the engine's Chromium.app and our Ararat launcher:
-# bundle-app.sh <engine-app> <out-dir>
+# bundle-app.sh [--release] <engine-app> <out-dir>
 #
 # <engine-app> is the built engine, e.g. ~/chromium-build/src/out/Ararat/Chromium.app.
 # Our executable comes from this package's SwiftPM build products (run
@@ -10,7 +10,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: bundle-app.sh <engine-app> <out-dir>
+usage: bundle-app.sh [--release] <engine-app> <out-dir>
 
 Copies the engine's Chromium.app to <out-dir>/Ararat.app, puts this package's
 Ararat executable in Contents/MacOS (build it first: swift build -c release in
@@ -18,12 +18,20 @@ macos/), renames the bundle id to net.iodine2.ararat and signs everything
 ad-hoc inside out with the engine's entitlements (renderer and GPU helpers
 carry allow-jit; the app the app entitlements; entitlements that need a team
 are dropped). The bundle name and display name are Ararat; helper names stay Chromium.
+
+With --release, use a clean release checkout, verify the engine tree against
+the recorded manifest and emit Corresponding Source before staging Ararat.app.
 USAGE
 }
 
 die() { printf 'bundle-app: %s\n' "$*" >&2; exit 1; }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+release=0
+if [[ "${1:-}" == --release ]]; then
+  release=1
+  shift
+fi
 [[ $# == 2 ]] || { usage >&2; exit 2; }
 [[ -n "$2" ]] || die "empty out-dir"
 
@@ -34,15 +42,28 @@ out_dir="$2"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
 exe="$package_dir/.build/release/Ararat"
-[[ -x "$exe" ]] || exe="$package_dir/.build/debug/Ararat"
-[[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
 
 # The engine's entitlements live in its source tree (the ad-hoc engine build
 # signs nothing, so no compiled copies exist under out/); gen/chrome would
 # carry them only in a build that signs.
 engine_src="$(cd -- "$engine_app/../../.." && pwd)"
+if [[ "$release" == 1 ]]; then
+  changes="$(git -C "$package_dir" status --porcelain --untracked-files=normal)"
+  [[ -z "$changes" ]] || die "use a clean checkout before bundling a release (including untracked files)"
+  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ARARAT_SRC_DIR="$engine_src" \
+    ARARAT_BUILD_ROOT="$(dirname -- "$engine_src")" \
+    /bin/bash "$package_dir/../engine/scripts/series-check" --release
+elif [[ ! -x "$exe" ]]; then
+  exe="$package_dir/.build/debug/Ararat"
+fi
+[[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
+
 ent_dir="$engine_src/chrome/app"
 [[ -r "$ent_dir/app-entitlements.plist" ]] || die "no engine entitlements at $ent_dir (pass an engine built from a Chromium checkout)"
+
+if [[ "$release" == 1 ]]; then
+  /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
+fi
 
 app="$out_dir/Ararat.app"
 rm -rf -- "$app"
