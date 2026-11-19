@@ -260,7 +260,7 @@ workspace のページが非表示なら、通常は active タブを報告し�
 - `build` はまず読み取り専用の series-check を実行し、ツリーが記録されたバイトを再現しなければ、ツリーに触れずに「`apply` を実行せよ」と言って止まる（リセットも再適用もしない）。通ればロックを取り、`autoninja -C out/Ararat chrome` を上の CPU の上限のもとで行い、所要時間と手順数を出力し、`~/chromium-build/build-times.jsonl` に 1 行の JSON 記録を書く。
 - `smoke` はビルドしたアプリを、`$TMPDIR` の使い捨て profile と `--use-mock-keychain` で `--headless=new --dump-dom`（data: URL）と `--version` の 2 回で実行する。どちらかでも失敗すれば 0 以外で終わる。実の login keychain を使うと、out/Dev のビルドは DOM を出した後に「Teardown watchdog expired」で終了コード 2 になり、keychain に「Chromium Safe Storage」の項目が作られる（我々の規則）。
 - GN args は 1 つのファイルに置く: official build、ThinLTO、PGO、DCHECK なし、シンボルの除去、`proprietary_codecs=true`、`ffmpeg_branding="Chrome"`、独自のブランディング。phase 2 の実装（`engine/args.gn`）は ungoogled の `flags.gn` と `flags.macos.gn` にこちらの入力 `target_cpu="arm64"` を加えた形で、`chrome_pgo_phase` は暫定で 0 とし、独占の API キーは設定しない。ブランディングは phase 3 に回す。
-- `engine/build-inputs.toml` には、Chromium のタグとコミット、収録した ungoogled のコミット、GN args のパスと SHA-256、Xcode と SDK のバージョンとビルド番号、アーキテクチャを記録する。`engine/patch-state.sha256` には、series の SHA-256 と、パッチの適用対象およびコピーしたファイルのハッシュを記録する。DEPS は固定した Chromium のツリーに含まれる。エンジンの成果物のキーは、ビルド入力のハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
+- `engine/build-inputs.toml` には、Chromium のタグとコミット、収録した ungoogled のコミットと `ungoogled_tag`、GN args のパスと SHA-256、Xcode と SDK のバージョンとビルド番号、アーキテクチャを記録する。汎用 ungoogled パッチセットの版はコミットで固定する。`ungoogled_tag` はそのコミットに対応する人間向けのタグで、release-watch が upstream のタグとの比較に使う。`engine/patch-state.sha256` には、series の SHA-256 と、パッチの適用対象およびコピーしたファイルのハッシュを記録する。DEPS は固定した Chromium のツリーに含まれる。エンジンの成果物のキーは、ビルド入力のハッシュと `engine/` の git tree である。公開する成果物には SHA-256 と provenance の記録を付ける。
 - CI ではエンジンをビルドしない。エンジンはローカルでビルドし、このキーのもとで prerelease として公開する。
 - リリースのタグを打つ前に `apply` を実行し、更新された `engine/patch-state.sha256` をコミットする。リリースコミットからエンジンと配布用の Swift 実行ファイルをビルドし、`macos/scripts/bundle-app.sh --release <engine-app> <out-dir>` を実行する。このコマンドはクリーンなチェックアウトを要求し、リポジトリのレイヤーとエンジンツリーを記録済みマニフェストと照合する。アプリを配置する前に `engine/scripts/corresponding-source <out-dir>/Ararat-source` を呼び出す。バイナリとともに `Ararat-source.tar.xz` とその `.sha256` を公開する。
 - Corresponding Source（対応ソース）のディレクトリには、コミット ID と Ararat の `git archive` による書き出しを収録する。書き出しには `build-inputs.toml`、`patch-state.sha256`、および `series` が適用順を定めるパッチ一式が含まれる。`reproduce.sh --check-only` は記録済みマニフェストの series の SHA-256 を使い、series をオフラインで検証する。通常実行では、固定した Chromium と DEPS を取得してパッチを適用し、レイヤーを配置した後、生成したマニフェストを記録済みマニフェストとバイト単位で比較する。
@@ -279,7 +279,7 @@ workspace のページが非表示なら、通常は active タブを報告し�
 
 ### 4.9 セキュリティの保守
 
-- 日次のジョブが、Chromium の新しい stable リリースと、ベースのパッチセットの新しいタグを検出する（Cra ledger 6）。
+- 日次のジョブが、Chromium の新しい stable リリースと、ベースのパッチセットの新しいタグを検出する（Cra ledger 6）。検査は `engine/scripts/release-watch` が行う。`engine/build-inputs.toml` のピンを読み、JSON を 1 行出力し、upstream が先に進んでいれば 10 で終わる。`.github/workflows/release-watch.yml` がこれを毎日と手動で実行し、新しい stable のバージョンをタイトルにした issue を 1 件だけ開くか更新する。
 - パッチの遅延の上限は、upstream の stable リリースの時点から数える。実際に悪用されている脆弱性の修正は 48 時間以内に出荷し、それ以外の High と Critical の修正は 7 日以内に出荷する。
 - 同じ Chromium の milestone 上でのセキュリティ修正のみの再ビルドはインクリメンタルとし、事前に承認済みとする。milestone の更新にはフルビルドが必要であり、それを事前承認とするかはオーナーの判断である（14）。
 - ベースのパッチセットが上限を超えて Chromium から遅れた場合は、自らより新しい Chromium にリベースし、ベースのパッチを引き継ぐ。

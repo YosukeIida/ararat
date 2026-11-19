@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""release-watch: is the engine pin behind upstream? (architecture.md §4.9)
+
+Reads the pinned Chromium version and the base patch-set tag from
+engine/build-inputs.toml, asks three public endpoints what upstream has, and
+prints one JSON line:
+
+  {"pinned":...,"stable":...,"base_tag_pinned":...,"base_tag_latest":...,
+   "behind_days":...,"security":...}
+
+pinned is build-inputs.toml's chromium_version, stable the newest Chromium
+stable for Mac on chromiumdash, base_tag_pinned its ungoogled_tag and
+base_tag_latest the newest ungoogled-chromium version tag on GitHub.
+behind_days counts whole days since the earliest Mac stable release newer
+than the pin (0 if there are none). It is a lower bound if the chromiumdash
+page omits older unpinned releases.
+security is true if any of these versions has a desktop stable release note
+listing a CVE. Otherwise it is "unknown" if any version has no note, and
+false if every version has a note or there are no unpinned releases.
+
+Exit codes: 0 nothing is new, 10 the pin is behind in Chromium or in the base
+patch set, 2 the inputs could not be read or fetched or an argument was
+refused (a message goes to stderr; the tree is never touched).
+
+Run it as: uv run --no-project python engine/scripts/release-watch
+(needs Python 3.11 or newer for tomllib). Nothing here writes to the tree.
+"""
+
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+STABLE_URL = "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Mac&num=6"
+TAGS_URL = "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tags?per_page=20"
+FEED_URL = "https://chromereleases.googleblog.com/feeds/posts/default?alt=json&max-results=20"
+
+STABLE_DESKTOP_POST = "Stable Channel Update for Desktop"
+
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$")
+POST_VERSION_RE = re.compile(r"(?<![\d.])((\d+\.\d+\.\d+\.)\d+)(?:\s*/\s*\.(\d+))?(?!\.?\d)")
+TAG_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)-(\d+)$")
+
+DEFAULT_BUILD_INPUTS = Path(__file__).resolve().parents[2] / "engine" / "build-inputs.toml"
+
+USAGE = """usage: release-watch [-h|--help]
+
+Prints one JSON line saying whether the engine pin in engine/build-inputs.toml
+is behind the current Chromium stable for Mac or the newest ungoogled-chromium
+tag, and whether the unpinned stable release notes list security fixes.
+Exits 0 when nothing is new, 10 when the pin is behind, 2 when the inputs
+cannot be read or fetched. Reads only.
+
+The pin is read from ARARAT_BUILD_INPUTS when that is set, engine/
+build-inputs.toml otherwise. Run it through uv, which is not on the engine
+scripts' clean PATH: uv run --no-project python engine/scripts/release-watch
+"""
+
+
+class WatchError(Exception):
+    """An input could not be read or fetched: exit 2 with the message."""
+
+
+def version_key(text):
+    m = VERSION_RE.match(text.strip())
+    if not m:
+        raise WatchError(f"not a Chromium version: {text!r}")
+    return tuple(int(group) for group in m.groups())
+
+
+def tag_key(tag):
+    m = TAG_RE.match(tag.strip())
+    if not m:
+        raise WatchError(f"not an ungoogled-chromium tag: {tag!r}")
+    return tuple(int(group) for group in m.groups())
+
+
+def read_build_inputs(path):
+    try:
+        import tomllib
+    except ModuleNotFoundError as exc:  # python < 3.11
+        raise WatchError("needs Python 3.11 or newer (tomllib)") from exc
+    try:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)
+    except OSError as exc:
+        raise WatchError(f"cannot read {path}: {exc.strerror}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise WatchError(f"{path} is not TOML: {exc}") from exc
+
+
+def http_get(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "ararat-release-watch"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise WatchError(f"{url}: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise WatchError(f"{url}: {getattr(exc, 'reason', exc)}") from exc
+    except UnicodeDecodeError as exc:
+        raise WatchError(f"{url}: response is not UTF-8") from exc
+
+
+def load_json(text, source):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise WatchError(f"{source} did not answer JSON: {exc}") from exc
+
+
+def stable_releases(payload):
+    """The Stable/Mac versions and publication times on the chromiumdash page."""
+    if not isinstance(payload, list):
+        raise WatchError("chromiumdash answered something other than a list")
+    entries = [
+        entry
+        for entry in payload
+        if isinstance(entry, dict)
+        and entry.get("channel") == "Stable"
+        and entry.get("platform") == "Mac"
+        and VERSION_RE.match(str(entry.get("version", "")))
+    ]
+    if not entries:
+        raise WatchError("chromiumdash lists no Stable/Mac release")
+    try:
+        return [(entry["version"], int(entry["time"])) for entry in entries]
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise WatchError("a chromiumdash stable release has no valid time") from exc
+
+
+def pick_latest_tag(payload):
+    if not isinstance(payload, list):
+        raise WatchError("the GitHub tags API answered something other than a list")
+    tags = [
+        entry["name"]
+        for entry in payload
+        if isinstance(entry, dict) and TAG_RE.match(str(entry.get("name", "")))
+    ]
+    if not tags:
+        raise WatchError("the GitHub tags API lists no version tag")
+    # by version, not by position: the API's order is by commit date
+    return max(tags, key=tag_key)
+
+
+def security_state(payload, versions):
+    feed = payload.get("feed") if isinstance(payload, dict) else None
+    entries = feed.get("entry") if isinstance(feed, dict) else None
+    if not isinstance(entries, list):
+        raise WatchError("the Chrome Releases feed has no entry list")
+    known = set()
+    has_cves = False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise WatchError("the Chrome Releases feed has an invalid entry")
+        title, content = entry.get("title"), entry.get("content")
+        if not (isinstance(title, dict) and isinstance(title.get("$t"), str)):
+            raise WatchError("the Chrome Releases feed has an invalid entry title")
+        if not (isinstance(content, dict) and isinstance(content.get("$t"), str)):
+            raise WatchError("the Chrome Releases feed has invalid entry content")
+        if title["$t"] != STABLE_DESKTOP_POST:
+            continue
+        body = content["$t"]
+        mentioned = set()
+        for version, prefix, extra_patch in POST_VERSION_RE.findall(body):
+            mentioned.add(version)
+            if extra_patch:
+                mentioned.add(prefix + extra_patch)
+        matched = versions & mentioned
+        if matched:
+            known.update(matched)
+            has_cves = has_cves or "CVE-" in body
+    if has_cves:
+        return True
+    if known == versions:
+        return False
+    return "unknown"
+
+
+def run(fetch, build_inputs_path, now=None):
+    """The whole check with the network handed in: (report, exit code)."""
+    inputs = read_build_inputs(build_inputs_path)
+    pinned = str(inputs.get("chromium_version", "")).strip()
+    base_pinned = str(inputs.get("ungoogled_tag", "")).strip()
+    if not pinned:
+        raise WatchError(f"no chromium_version in {build_inputs_path}")
+    if not base_pinned:
+        raise WatchError(f"no ungoogled_tag in {build_inputs_path}")
+
+    pinned_key = version_key(pinned)
+    releases = stable_releases(load_json(fetch(STABLE_URL), STABLE_URL))
+    stable = max((version for version, _ in releases), key=version_key)
+    unpinned = [(version, when) for version, when in releases if version_key(version) > pinned_key]
+    now_ms = int(((now or datetime.now(timezone.utc)).timestamp()) * 1000)
+    first_unpinned = min((when for _, when in unpinned), default=now_ms)
+    behind_days = max(0, (now_ms - first_unpinned) // 86_400_000)
+    base_latest = pick_latest_tag(load_json(fetch(TAGS_URL), TAGS_URL))
+    security = security_state(load_json(fetch(FEED_URL), FEED_URL), {version for version, _ in unpinned})
+
+    report = {
+        "pinned": pinned,
+        "stable": stable,
+        "base_tag_pinned": base_pinned,
+        "base_tag_latest": base_latest,
+        "behind_days": behind_days,
+        "security": security,
+    }
+    behind = bool(unpinned) or tag_key(base_latest) > tag_key(base_pinned)
+    return report, (10 if behind else 0)
+
+
+def main(argv):
+    for argument in argv:
+        if argument in ("-h", "--help"):
+            sys.stdout.write(USAGE)
+            return 0
+        sys.stderr.write(f"engine: release-watch: unknown argument: {argument}\n")
+        return 2
+    path = Path(os.environ.get("ARARAT_BUILD_INPUTS") or DEFAULT_BUILD_INPUTS)
+    try:
+        report, code = run(http_get, path)
+    except WatchError as exc:
+        sys.stderr.write(f"engine: release-watch: {exc}\n")
+        return 2
+    sys.stdout.write(json.dumps(report, separators=(",", ":")) + "\n")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

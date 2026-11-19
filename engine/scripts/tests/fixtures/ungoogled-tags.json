@@ -1,0 +1,202 @@
+[
+  {
+    "name": "157.0.8103.78-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/157.0.8103.78-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/157.0.8103.78-1",
+    "commit": {
+      "sha": "8c886dffc6ade39d8f7df5d64ace5a8824b455e1",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/8c886dffc6ade39d8f7df5d64ace5a8824b455e1"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ny4wLjgxMDMuNzgtMQ=="
+  },
+  {
+    "name": "157.0.8103.50-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/157.0.8103.50-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/157.0.8103.50-1",
+    "commit": {
+      "sha": "f5d393f22a60fa4f79f42dbb26acd0bcc01995ae",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/f5d393f22a60fa4f79f42dbb26acd0bcc01995ae"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ny4wLjgxMDMuNTAtMQ=="
+  },
+  {
+    "name": "157.0.8103.38-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/157.0.8103.38-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/157.0.8103.38-1",
+    "commit": {
+      "sha": "de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/de09e0c70c6bc1ac83d4ecdfd0e82c7e250c9a3c"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ny4wLjgxMDMuMzgtMQ=="
+  },
+  {
+    "name": "156.0.8078.79-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/156.0.8078.79-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/156.0.8078.79-1",
+    "commit": {
+      "sha": "28a211ab4ab6b83d919966a4f58a6df23cf4fb29",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/28a211ab4ab6b83d919966a4f58a6df23cf4fb29"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ni4wLjgwNzguNzktMQ=="
+  },
+  {
+    "name": "156.0.8078.73-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/156.0.8078.73-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/156.0.8078.73-1",
+    "commit": {
+      "sha": "6d3e3de2f9d404649842f7457cd3b5ac04dc952f",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/6d3e3de2f9d404649842f7457cd3b5ac04dc952f"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ni4wLjgwNzguNzMtMQ=="
+  },
+  {
+    "name": "156.0.8078.47-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/156.0.8078.47-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/156.0.8078.47-1",
+    "commit": {
+      "sha": "0673f8701c94e5688c33ef8ce5e36602d311d246",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/0673f8701c94e5688c33ef8ce5e36602d311d246"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Ni4wLjgwNzguNDctMQ=="
+  },
+  {
+    "name": "155.0.8059.84-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/155.0.8059.84-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/155.0.8059.84-1",
+    "commit": {
+      "sha": "c7b4b99027bb6f9f33848fdbee8a319a3ba3b238",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/c7b4b99027bb6f9f33848fdbee8a319a3ba3b238"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NS4wLjgwNTkuODQtMQ=="
+  },
+  {
+    "name": "155.0.8059.79-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/155.0.8059.79-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/155.0.8059.79-1",
+    "commit": {
+      "sha": "9f145d8815e6e50cc4a2537fcac40966d911e027",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/9f145d8815e6e50cc4a2537fcac40966d911e027"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NS4wLjgwNTkuNzktMQ=="
+  },
+  {
+    "name": "155.0.8059.39-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/155.0.8059.39-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/155.0.8059.39-1",
+    "commit": {
+      "sha": "ffeb45a2bb88bc56a1dfed31410aeb10e9efcd5a",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/ffeb45a2bb88bc56a1dfed31410aeb10e9efcd5a"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NS4wLjgwNTkuMzktMQ=="
+  },
+  {
+    "name": "154.0.8037.97-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/154.0.8037.97-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/154.0.8037.97-1",
+    "commit": {
+      "sha": "37085e47cf580c815a30402917d350ce97399ded",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/37085e47cf580c815a30402917d350ce97399ded"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NC4wLjgwMzcuOTctMQ=="
+  },
+  {
+    "name": "154.0.8037.92-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/154.0.8037.92-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/154.0.8037.92-1",
+    "commit": {
+      "sha": "dfd7c50244e82b8e306350bfa1353cb152c5d037",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/dfd7c50244e82b8e306350bfa1353cb152c5d037"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NC4wLjgwMzcuOTItMQ=="
+  },
+  {
+    "name": "154.0.8037.57-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/154.0.8037.57-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/154.0.8037.57-1",
+    "commit": {
+      "sha": "800d0bb5078472e4442c1fd73373172754a60939",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/800d0bb5078472e4442c1fd73373172754a60939"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1NC4wLjgwMzcuNTctMQ=="
+  },
+  {
+    "name": "153.0.8010.52-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/153.0.8010.52-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/153.0.8010.52-1",
+    "commit": {
+      "sha": "a638756eb14c8b6ce64b4b2a067afea5d4207bf4",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/a638756eb14c8b6ce64b4b2a067afea5d4207bf4"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1My4wLjgwMTAuNTItMQ=="
+  },
+  {
+    "name": "153.0.8010.47-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/153.0.8010.47-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/153.0.8010.47-1",
+    "commit": {
+      "sha": "809f49cc180bad4e0531732eedb4e8b1670d41ce",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/809f49cc180bad4e0531732eedb4e8b1670d41ce"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1My4wLjgwMTAuNDctMQ=="
+  },
+  {
+    "name": "153.0.8010.36-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/153.0.8010.36-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/153.0.8010.36-1",
+    "commit": {
+      "sha": "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/dd8fb9b5c837982faf41ba58cd30a5664e77c329"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1My4wLjgwMTAuMzYtMQ=="
+  },
+  {
+    "name": "152.0.7977.82-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/152.0.7977.82-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/152.0.7977.82-1",
+    "commit": {
+      "sha": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/e71b91c6e336d0f25cfc6b9ef09298a9d2506e24"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Mi4wLjc5NzcuODItMQ=="
+  },
+  {
+    "name": "152.0.7977.75-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/152.0.7977.75-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/152.0.7977.75-1",
+    "commit": {
+      "sha": "cacf0f0fd2446a837528c54df1880b75874b9580",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/cacf0f0fd2446a837528c54df1880b75874b9580"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Mi4wLjc5NzcuNzUtMQ=="
+  },
+  {
+    "name": "152.0.7977.64-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/152.0.7977.64-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/152.0.7977.64-1",
+    "commit": {
+      "sha": "59657a38437d11520a68618008eb825721319b9e",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/59657a38437d11520a68618008eb825721319b9e"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1Mi4wLjc5NzcuNjQtMQ=="
+  },
+  {
+    "name": "151.0.7922.173-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/151.0.7922.173-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/151.0.7922.173-1",
+    "commit": {
+      "sha": "4087f48e6d66e55486fe7c3a634303559634ba3f",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/4087f48e6d66e55486fe7c3a634303559634ba3f"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1MS4wLjc5MjIuMTczLTE="
+  },
+  {
+    "name": "151.0.7922.169-1",
+    "zipball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/zipball/refs/tags/151.0.7922.169-1",
+    "tarball_url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tarball/refs/tags/151.0.7922.169-1",
+    "commit": {
+      "sha": "6f09e99d9c66ae5862d8eb0af5926fc8371269a1",
+      "url": "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/commits/6f09e99d9c66ae5862d8eb0af5926fc8371269a1"
+    },
+    "node_id": "MDM6UmVmMzczNDc0NTk6cmVmcy90YWdzLzE1MS4wLjc5MjIuMTY5LTE="
+  }
+]
