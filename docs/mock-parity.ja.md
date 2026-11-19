@@ -82,8 +82,8 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Fullscreen` | ページとブラウザの全画面表示、端からの表示 | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | 未レビュー | 状態ごとに撮影する。 |
 | `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 未レビュー | 削除失敗時に同一プロファイルの全ウィンドウで表示する（決定 56）。 |
 | `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 未レビュー | 失敗時のバナーを撮影する。再試行に成功するとバナーは消える。 |
-| `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違あり。Clear Archive… を維持し、レールに Downloads も表示する。 | レールのタイルはラベルの上にアイコンを置き、ライト表示では選択中のタイルを白で塗る。フッターは dock の上に置く。Library を開いている間、dock のボタンはシステムのアクセント色で塗る。表示は Archive の撮影で確認する。 |
-| `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違あり。Clear Archive… を dock の上に残す。 | 一覧、URL での絞り込み、検索結果なし、空一覧の各撮影でフッターを確認する。ライトとダークの両方でレールの選択表示を確認する。 |
+| `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違あり。Clear Archive… は Ararat が [Phase 5](architecture.ja.md) で追加した操作である。Downloads は [Arc の Library レールの実測](research/arc-sidebar-layout.ja.md)に従って表示する。 | レールのタイルはラベルの上にアイコンを置き、ライト表示では選択中のタイルを白で塗る。フッターは dock の上に置く。Library を開いている間、dock のボタンはシステムのアクセント色で塗る。表示は Archive の撮影で確認する。 |
+| `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違あり。Ararat が [Phase 5](architecture.ja.md) で追加した Clear Archive… を dock の上に置く。 | 一覧、URL での絞り込み、検索結果なし、空一覧の各撮影でフッターを確認する。ライトとダークの両方でレールの選択表示を確認する。 |
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 未レビュー | Today のタブ、スペース名、左ペインのネイティブメニューを開いて撮影する。ほかの行種別とメニューの派生状態は別途撮影が必要である。 |
 | `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | 空のカードと既定の 2 つの案内をオフスクリーンテストで確認した。カードの表示は keyboard チェックの撮影で確認する。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 未レビュー | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
@@ -93,7 +93,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-command`, `header-command-r`, `header-command-w` | 未レビュー | ヘッダーのツールチップには個別の画像がある。Command-W の画像では行の閉じるボタンが押下状態になる。行のツールチップは撮影が必要である。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag-sidebar` | 未レビュー | ドラッグの画像はサイドバーを撮影する。非アクティブ時の色は別途撮影する。 |
 | `C-DialogHost` | ページカード上のダイアログ | `permission`, `permission-dialog`, `javascript`, `javascript-dialog`, `dialogs-permission`, `dialogs-permission-dialog`, `dialogs-long-origin`, `dialogs-long-origin-dialog`, `dialogs-javascript`, `dialogs-javascript-dialog`, `dialogs-queued-permission`, `dialogs-queued-permission-dialog`, `dialogs-split`, `dialogs-split-dialog` | 未レビュー | 接頭辞のない画像は prompts、dialogs で始まる画像は dialogs を実行して取得する。ダイアログと親ウィンドウを個別に撮影する。 |
-| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 相違あり。全履歴は実測の 56 pt の行間隔を維持し、ポップオーバーにも配置の差がある。 | 各状態の行を参照する。 |
+| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 相違あり。全履歴は実測の 56 pt の行間隔を維持する。 | 各状態の行を参照する。 |
 | `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 未レビュー | 視差効果を減らす設定ではアイコンの移動を省く（§7）。 |
 | `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 未レビュー | 各段階の状態表示と実行できるアクションを比較する。 |
 | `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 相違あり。全履歴は Arc 実測の 56 pt の行間隔を維持し、フッターに Clear All を置く。 | 見出しはウィンドウの操作ボタンの下に置き、幅の狭い行ではファイル名を独立した行に置く。幅 197 pt の一覧でモックのファイル名が収まることをオフスクリーンテストで確認した。表示は Downloads の撮影で確認する。 |
