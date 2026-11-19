@@ -8,7 +8,8 @@ public final class SidebarView: NSView {
     public var onLinkCopied: (() -> Void)?
     public var onRetryHistory: (() -> Void)?
     public var onDismissHistory: (() -> Void)?
-    let historyBanner = NSStackView()
+    let historyBanner = NSView()
+    private let historyTextColumn = NSStackView()
     private let historyTitle = NSTextField(wrappingLabelWithString: "History not fully deleted")
     private let historyRetryButton = NSButton()
     private let historyDismissButton = NSButton()
@@ -486,7 +487,7 @@ public final class SidebarView: NSView {
     }
 
     @objc private func libraryButtonClicked(_ sender: Any?) {
-        if downloadsModel?.hasSessionDownloads == true { downloadsPopover?.show(focus: true) }
+        if downloadsModel?.hasSessionDownloads == true { downloadsPopover?.show() }
         else if !privateWindow { toggleLibrary(sender) }
     }
 
@@ -1185,22 +1186,23 @@ public final class SidebarView: NSView {
         warning.contentTintColor = Self.historyWarningTint
         warning.setAccessibilityHidden(true)
         historyTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+        historyTitle.alignment = .left
         let historyMessage = NSTextField(wrappingLabelWithString: "Some history files could not be removed. Ararat will try again.")
         historyMessage.font = .systemFont(ofSize: 11)
         historyMessage.textColor = .secondaryLabelColor
-        historyBanner.orientation = .vertical
-        historyBanner.alignment = .width
-        historyBanner.edgeInsets = NSEdgeInsets(top: 8, left: 32, bottom: 8, right: 32)
-        historyBanner.spacing = 4
+        historyMessage.alignment = .left
+        let retryRow = NSStackView()
+        retryRow.alignment = .centerY
+        retryRow.addView(historyRetryButton, in: .leading)
+        historyTextColumn.orientation = .vertical
+        historyTextColumn.alignment = .width
+        historyTextColumn.spacing = 2
+        for view in [historyTitle, historyMessage, retryRow] { historyTextColumn.addArrangedSubview(view) }
+        historyTextColumn.setCustomSpacing(8, after: historyMessage)
         historyBanner.wantsLayer = true
         historyBanner.layer?.backgroundColor = Self.historyCardFill.cgColor
         historyBanner.layer?.cornerRadius = SidebarMetrics.cornerRadius
-        historyBanner.addArrangedSubview(historyTitle)
-        historyBanner.addArrangedSubview(historyMessage)
-        let retryRow = NSStackView()
-        retryRow.addView(historyRetryButton, in: .leading)
-        historyBanner.addArrangedSubview(retryRow)
-        for view in [warning, historyDismissButton] {
+        for view in [warning, historyTextColumn, historyDismissButton] {
             historyBanner.addSubview(view)
             view.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -1209,6 +1211,10 @@ public final class SidebarView: NSView {
             warning.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 8),
             warning.widthAnchor.constraint(equalToConstant: 16),
             warning.heightAnchor.constraint(equalToConstant: 16),
+            historyTextColumn.leadingAnchor.constraint(equalTo: historyBanner.leadingAnchor, constant: 32),
+            historyTextColumn.trailingAnchor.constraint(equalTo: historyBanner.trailingAnchor, constant: -32),
+            historyTextColumn.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 8),
+            historyTextColumn.bottomAnchor.constraint(equalTo: historyBanner.bottomAnchor, constant: -8),
             historyDismissButton.trailingAnchor.constraint(equalTo: historyBanner.trailingAnchor, constant: -4),
             historyDismissButton.topAnchor.constraint(equalTo: historyBanner.topAnchor, constant: 4),
             historyDismissButton.widthAnchor.constraint(equalToConstant: 24),

@@ -616,3 +616,28 @@ private func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).ma
     item["state"] = 1; item["path"] = url.path + ".missing"; model.update([item])
     #expect(row.draggingItem() == nil)
 }
+
+@Test @MainActor func downloadsPopoverOpensOnItsContentViewNotOnAControl() throws {
+    _ = NSApplication.shared
+    let model = DownloadsModel()
+    model.update([download("a")])
+    let popover = DownloadsPopover(model: model, anchor: NSView())
+    let content = try #require(popover.checkContentView)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: 88), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = content
+    defer { window.contentView = nil }
+    window.layoutIfNeeded()
+    // The popover's initial first responder is its content, so it opens with no control focused
+    // (Arc shows no focus ring on open). The header's button stays a first-responder candidate,
+    // which is what the window's key loop offers once Full Keyboard Access is on.
+    #expect(content.acceptsFirstResponder)
+    #expect(window.initialFirstResponder === content)
+    #expect(window.firstResponder === content)
+    #expect(!(window.firstResponder is NSControl))
+    #expect(popover.library.acceptsFirstResponder)
+    // A reused popover window is reset the same way when it is shown again.
+    popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
+    #expect(popover.isOpen)
+    #expect(window.initialFirstResponder === content)
+    #expect(window.firstResponder === content)
+}

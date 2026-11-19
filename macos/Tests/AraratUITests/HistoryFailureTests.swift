@@ -142,7 +142,7 @@ func failedHistoryCardShowsWarningCopyAndKeepsBothActions() throws {
     let card = sidebar.historyBanner
     #expect(!card.isHidden)
     #expect(abs(card.frame.width - 148) < 1)
-    let labels = card.arrangedSubviews.compactMap { $0 as? NSTextField }
+    let labels = textFields(in: card)
     #expect(labels.map(\.stringValue) == [
         "History not fully deleted", "Some history files could not be removed. Ararat will try again.",
     ])
@@ -166,4 +166,51 @@ func failedHistoryCardShowsWarningCopyAndKeepsBothActions() throws {
     sidebar.checkClickHistoryRetry()
     sidebar.checkClickHistoryDismiss()
     #expect(actions == ["retry", "dismiss"])
+}
+
+private func textFields(in view: NSView) -> [NSTextField] {
+    (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(textFields(in:))
+}
+
+private func controls(in view: NSView) -> [NSButton] {
+    (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(controls(in:))
+}
+
+@Test @MainActor
+func historyFailureCardKeepsIconTitleBodyAndActionInOneColumn() throws {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 600)
+    sidebar.showHistoryFailure(true)
+    sidebar.layoutSubtreeIfNeeded()
+    sidebar.layoutSubtreeIfNeeded()
+    let card = sidebar.historyBanner
+    let icon = try #require(card.subviews.compactMap { $0 as? NSImageView }.first)
+    let fields = textFields(in: card)
+    let title = try #require(fields.first)
+    let message = try #require(fields.last)
+    let buttons = controls(in: card)
+    let retry = try #require(buttons.first { $0.title == "Try Again" })
+    let dismiss = try #require(buttons.first { $0.accessibilityLabel() == "Dismiss" })
+    // The frames of text fields and buttons carry AppKit's alignment insets; the layout rect is
+    // where the stack places them and where the text and bezel draw.
+    func layoutRect(_ view: NSView) -> NSRect {
+        let rect = view.alignmentRect(forFrame: view.frame)
+        return view.superview.map { card.convert(rect, from: $0) } ?? rect
+    }
+    let iconFrame = layoutRect(icon), titleFrame = layoutRect(title), messageFrame = layoutRect(message)
+    let retryFrame = layoutRect(retry), dismissFrame = layoutRect(dismiss)
+    #expect(iconFrame.minX == 8)
+    #expect(titleFrame.minX == 32 && messageFrame.minX == 32)
+    #expect(abs(retryFrame.minX - 32) <= 0.5)
+    #expect(title.alignment == .left && message.alignment == .left)
+    #expect(titleFrame.width >= card.bounds.width - 65)
+    #expect(abs(titleFrame.width - messageFrame.width) <= 0.5)
+    #expect(titleFrame.minX >= iconFrame.maxX)
+    #expect(card.bounds.insetBy(dx: -1, dy: -1).contains(messageFrame))
+    #expect(retryFrame.maxY <= messageFrame.minY)
+    let iconTop = card.isFlipped ? iconFrame.minY - card.bounds.minY : card.bounds.maxY - iconFrame.maxY
+    let dismissTop = card.isFlipped ? dismissFrame.minY - card.bounds.minY : card.bounds.maxY - dismissFrame.maxY
+    #expect(abs(iconTop - 8) <= 1)
+    #expect(abs(dismissTop - 4) <= 1)
+    #expect(abs(card.bounds.maxX - dismissFrame.maxX - 4) <= 1)
 }
