@@ -100,6 +100,9 @@ func organizeCheckUsesMouseAndEscapeInput() {
     defer { window.contentView = nil }
     #expect(sidebar.organizeCheckBegin(id: "a", destination: "pin"))
     #expect(sidebar.organizeCheckDragging && sidebar.organizeCheckDropLine)
+    let copy = sidebar.dragCopyView
+    #expect(copy?.closeButton.isHidden == true)
+    #expect(sidebar.dropIndicator.zPosition > (copy?.layer?.zPosition ?? 0))
     #expect(sidebar.organizeCheckEnd(cancel: true))
     #expect(sidebar.organizeCheckIdle)
     #expect(sidebar.organizeCheckEnd())

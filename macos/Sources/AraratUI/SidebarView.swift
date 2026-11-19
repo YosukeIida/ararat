@@ -437,6 +437,10 @@ public final class SidebarView: NSView {
         if !scrolling { clearScrollPresentation(); spaceScroll = SpaceScrollState() }
         if open { creationLookSpaceID = snapshotSpace?.id }
         createSpaceOpen = open
+        if open { downloadsPopover?.close() }
+        libraryButton.isHidden = open
+        dock.isHidden = open || privateWindow
+        plusButton.isHidden = open
         updateDockSelection()
         if open && creation.superview == nil { addSubview(creation, positioned: .below, relativeTo: libraryButton); creation.frame = bounds }
         if !open && !scrolling { creation.removeFromSuperview() }
@@ -2826,6 +2830,7 @@ extension SidebarView {
             let diameter = SidebarDragMetrics.ringDiameter - SidebarDragMetrics.lineWidth
             path.addEllipse(in: CGRect(x: x - diameter / 2, y: nativeY - diameter / 2, width: diameter, height: diameter))
             dropIndicator.path = path
+            dropIndicator.zPosition = 1
             dropIndicator.lineWidth = SidebarDragMetrics.lineWidth
             dropIndicator.fillColor = NSColor.clear.cgColor
             effectiveAppearance.performAsCurrentDrawingAppearance {

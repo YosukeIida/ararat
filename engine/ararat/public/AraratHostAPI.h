@@ -99,8 +99,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)siteStateChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)extensionActionsChangedForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host downloadsChanged:(NSArray<NSDictionary<NSString*, id>*>*)items newDownload:(nullable NSString*)identifier flight:(BOOL)flight;
-- (void)windowHost:(id<ARWindowHostAPI>)host permissionDim:(NSString*)identifier
-        container:(NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
+- (void)windowHost:(id<ARWindowHostAPI>)host pageDialogDim:(NSString*)identifier
+        container:(nullable NSView*)container frame:(NSRect)frame visible:(BOOL)visible;
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host shouldOpenCommand:(NSString*)commandId itemId:(NSString*)itemId;
 - (void)windowHost:(id<ARWindowHostAPI>)host prepareCloseHandoff:(void (^)(BOOL ready))completion;
 - (BOOL)windowHost:(id<ARWindowHostAPI>)host installSplitMeasurement:(NSUInteger)count;

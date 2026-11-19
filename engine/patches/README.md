@@ -65,6 +65,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/keyboard-ime-diagnostics.patch` | ours |
 | `ararat/find-close-command.patch` | ours |
 | `ararat/hidden-dialog-containment.patch` | ours |
+| `ararat/page-dialog-queue.patch` | ours |
 | `ararat/history-deletion-hook.patch` | ours |
 | `ararat/crash-lock-abandon.patch` | ours |
 | `ararat/history-retention.patch` | ours |
@@ -100,6 +101,8 @@ The mode 1 check requests `DeleteURLs` and waits for the file-sequence barrier. 
 `ararat/keyboard-ime-diagnostics.patch` records bounded browser target and forwarding observations for the keyboard checks without recording input text.
 
 `ararat/hidden-dialog-containment.patch` lets the hidden-check layer reject unexpected ordinary JavaScript dialogs and validate beforeunload admission and completion at the WebContents boundary.
+
+`ararat/page-dialog-queue.patch` opts Ararat page dialogs into hiding the closing widget before Chromium advances the web-modal queue.
 
 `ararat/find-close-command.patch` refreshes command state after ending a find session, when the find UI is no longer active.
 
