@@ -11,6 +11,7 @@ out="$scratch/Ararat source"
 /bin/bash "$repo/engine/scripts/corresponding-source" "$out"
 [[ "$(cat "$out/REVISION")" == "$(git -C "$repo" rev-parse HEAD)" ]]
 cmp "$ARARAT_BUILD_INPUTS" "$out/ararat/engine/build-inputs.toml"
+cmp "$ARARAT_MANIFEST" "$out/ararat/engine/patch-state.sha256"
 cmp "$ARARAT_SERIES" "$out/ararat/engine/patches/series"
 patches="$(series_lines)"
 while IFS= read -r patch; do

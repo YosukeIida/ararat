@@ -56,14 +56,32 @@ cat >"$out/README.md" <<'EOF'
 and their license and provenance files under `engine/patches/`.
 
 Run `./reproduce.sh --check-only` to validate the patch series against
-the pinned SHA-256 without fetching Chromium.
+the series SHA-256 in `ararat/engine/patch-state.sha256` without fetching
+Chromium.
 
 On macOS, run `./reproduce.sh <new-build-root> <depot_tools-dir>` with a
 working Chromium depot_tools checkout and a new build directory whose
 parent already exists. This fetches the pinned Chromium tag and DEPS,
-applies the release series and copies the Ararat layer. It verifies the
-result with `series-check` using the manifest written by `apply` in the
-new build root. The reproduced tree is at `<new-build-root>/src`.
+applies the release series and copies the Ararat layer. It compares the
+resulting manifest with the recorded `ararat/engine/patch-state.sha256`.
+The reproduced tree is at `<new-build-root>/src`.
+
+Use the Xcode and SDK versions and the arm64 target pinned in
+`ararat/engine/build-inputs.toml`. From the directory containing this
+README, substitute absolute paths in the commands below:
+
+```sh
+export ARARAT_BUILD_ROOT="<new-build-root>"
+export ARARAT_DEPOT_TOOLS="<depot_tools-dir>"
+ararat/engine/scripts/gen
+ararat/engine/scripts/build
+(
+  cd ararat/macos
+  ./scripts/build-core.sh
+  swift build -c release
+  ./scripts/bundle-app.sh "$ARARAT_BUILD_ROOT/src/out/Ararat/Chromium.app" "<out-dir>"
+)
+```
 EOF
 
 env -i PATH="$PATH" /bin/bash "$out/reproduce.sh" --check-only

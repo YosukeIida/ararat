@@ -24,9 +24,11 @@ if [[ "$check_only" == 0 ]]; then
   build_name="$(basename -- "${1%/}")"
   export ARARAT_BUILD_ROOT="$build_parent/$build_name" ARARAT_DEPOT_TOOLS="$depot_tools"
 fi
-export ARARAT_BUILD_INPUTS="$root/ararat/engine/build-inputs.toml"
-export ARARAT_PATCHES="$root/ararat/engine/patches"
+engine="$root/ararat/engine"
+export ARARAT_BUILD_INPUTS="$engine/build-inputs.toml"
+export ARARAT_PATCHES="$engine/patches"
 export ARARAT_MANIFEST="$ARARAT_BUILD_ROOT/patch-state.sha256"
+recorded_manifest="$engine/patch-state.sha256"
 . "$scripts/env.sh"
 
 patches="$(series_lines)"
@@ -34,9 +36,9 @@ patches="$(series_lines)"
 while IFS= read -r patch; do
   [[ -f "$ARARAT_PATCHES/$patch" ]] || die "missing patch: $patch"
 done <<<"$patches"
-expected="$(toml_get series_sha256)"
+expected="$(awk '$1 == "series" { print $2; exit }' "$recorded_manifest")"
 actual="$(series_fingerprint)"
-[[ "$actual" == "$expected" ]] || die "series SHA-256 mismatch: pin is ${expected:-missing}, computed $actual"
+[[ "$actual" == "$expected" ]] || die "series SHA-256 mismatch in engine/patch-state.sha256: recorded ${expected:-missing}, computed $actual"
 msg "series SHA-256 verified: $actual"
 [[ "$check_only" == 0 ]] || exit 0
 
@@ -49,4 +51,5 @@ git -C "$ARARAT_SRC_DIR" remote add origin "$upstream"
 [[ "$(git -C "$ARARAT_SRC_DIR" rev-parse HEAD)" == "$(toml_get chromium_commit)" ]] \
   || die "fetched Chromium tag does not match chromium_commit"
 /bin/bash "$scripts/apply"
-/bin/bash "$scripts/series-check"
+cmp -s -- "$recorded_manifest" "$ARARAT_MANIFEST" ||
+  die "reproduced tree differs from the recorded manifest (engine/patch-state.sha256)"

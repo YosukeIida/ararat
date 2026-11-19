@@ -19,8 +19,8 @@ ad-hoc inside out with the engine's entitlements (renderer and GPU helpers
 carry allow-jit; the app the app entitlements; entitlements that need a team
 are dropped). The bundle name and display name are Ararat; helper names stay Chromium.
 
-With --release, use the release commit with a clean tracked tree and emit its
-Corresponding Source beside Ararat.app under <out-dir>.
+With --release, use a clean release checkout, verify the engine tree against
+the recorded manifest and emit Corresponding Source before staging Ararat.app.
 USAGE
 }
 
@@ -42,20 +42,28 @@ out_dir="$2"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
 exe="$package_dir/.build/release/Ararat"
-if [[ "$release" == 1 ]]; then
-  tracked_changes="$(git -C "$package_dir" status --porcelain --untracked-files=no)"
-  [[ -z "$tracked_changes" ]] || die "commit all tracked changes before bundling a release"
-elif [[ ! -x "$exe" ]]; then
-  exe="$package_dir/.build/debug/Ararat"
-fi
-[[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
 
 # The engine's entitlements live in its source tree (the ad-hoc engine build
 # signs nothing, so no compiled copies exist under out/); gen/chrome would
 # carry them only in a build that signs.
 engine_src="$(cd -- "$engine_app/../../.." && pwd)"
+if [[ "$release" == 1 ]]; then
+  changes="$(git -C "$package_dir" status --porcelain --untracked-files=normal)"
+  [[ -z "$changes" ]] || die "use a clean checkout before bundling a release (including untracked files)"
+  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ARARAT_SRC_DIR="$engine_src" \
+    ARARAT_BUILD_ROOT="$(dirname -- "$engine_src")" \
+    /bin/bash "$package_dir/../engine/scripts/series-check" --release
+elif [[ ! -x "$exe" ]]; then
+  exe="$package_dir/.build/debug/Ararat"
+fi
+[[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
+
 ent_dir="$engine_src/chrome/app"
 [[ -r "$ent_dir/app-entitlements.plist" ]] || die "no engine entitlements at $ent_dir (pass an engine built from a Chromium checkout)"
+
+if [[ "$release" == 1 ]]; then
+  /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
+fi
 
 app="$out_dir/Ararat.app"
 rm -rf -- "$app"
@@ -149,7 +157,4 @@ sign "$fw_root" ""
 sign "$app" app-entitlements
 
 codesign --verify --deep --strict "$app"
-if [[ "$release" == 1 ]]; then
-  /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
-fi
 printf 'bundle-app: %s ready\n' "$app"
