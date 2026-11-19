@@ -763,8 +763,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
     children.append(child)
     return Unmanaged.passUnretained(host as AnyObject).toOpaque()
   }
-  var host: (any ARWindowHostAPI)?
+  var host: (any ARWindowHostAPI)? {
+    didSet {
+      if (oldValue as AnyObject?) !== (host as AnyObject?) { sidebarFaviconCache.reset() }
+    }
+  }
   var adapter: EngineAdapter?
+  let sidebarFaviconCache = SidebarFaviconCache()
   var isPrivateWindow = false
   var privatePointer: UInt?
   var privateProfile: String?
@@ -1462,6 +1467,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
     self.sidebar = sidebar
+    sidebar.onFaviconRowsChanged = { [weak self] in self?.refreshSidebarFavicons() }
     self.container = container
     if !isPrivateWindow {
       container.onPresentationChanged = { [weak self] in self?.saveWindowPresentation() }
@@ -1562,7 +1568,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // R5: a crashed renderer is reported by the strip, not by a snapshot.
       self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
       self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
-      self.sidebar?.favicons = self.sidebarFavicons()
+      self.refreshSidebarFavicons()
       let activeItem = host.activeItemId()
       let headerState = activeItem.flatMap { self.adapter?.rowStates[$0] }
       self.container?.header.canGoBack = headerState?.canGoBack ?? false
@@ -1591,6 +1597,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     adapter.onRowClose = { [weak self] id in self?.sidebar?.expectRowClose(id: id) }
     adapter.onQuitProfileSwitch = { [weak self] in self?.quitDuringProfileSwitch = self?.captureCheckRows() }
     adapter.onCloseStarted = { [weak self] in
+      self?.sidebarFaviconCache.reset()
       self?.selectionGeneration += 1
       self?.workspace?.cancelPendingSpaceSwitches()
       self?.commandPresenter?.close(restoreFocus: false)
@@ -1908,6 +1915,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func updateSidebar(_ snapshot: WorkspaceSnapshot) {
+    sidebarFaviconCache.useProfile(isPrivateWindow ? nil : snapshot.spaces.first { $0.id == snapshot.shownSpaceId }?.profileName)
     let liveURL = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == snapshot.selectedId })?.url
     if let id = snapshot.selectedId, let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
        let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
@@ -2650,12 +2658,28 @@ final class Runtime: NSObject, NSMenuItemValidation {
     ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }?.clearUndo.run()
   }
 
-  func sidebarFavicons() -> [String: NSImage] {
-    var images: [String: NSImage] = [:]
-    for tab in (host?.tabs() as? [any ARTabAPI]) ?? [] {
-      if let id = tab.itemId, let icon = tab.favicon { images[id] = icon }
+  func refreshSidebarFavicons() {
+    guard hasUsableHost, let host, let sidebar else { return }
+    var live: [String: NSImage?] = [:]
+    for tab in (host.tabs() as? [any ARTabAPI]) ?? [] {
+      if let id = tab.itemId { live.updateValue(tab.favicon, forKey: id) }
     }
-    return images
+    let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+    let profile = isPrivateWindow ? nil : space?.profileName
+    sidebarFaviconCache.useProfile(profile)
+    guard let space, let profile else {
+      sidebar.favicons = live.compactMapValues { $0 }
+      return
+    }
+    let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
+      $0.favorites + $0.pinned + $0.today
+    }
+    sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
+                                                 live: live, request: { url, completion in
+      host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
+    }, changed: { [weak self] in
+      DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
+    })
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {

@@ -39,7 +39,9 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "base/threading/thread_restrictions.h"
+#include "chrome/browser/favicon/favicon_service_factory.h"
 #include "components/favicon/core/fallback_url_util.h"
+#include "components/favicon/core/favicon_service.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
@@ -1648,6 +1650,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::set<std::string> shown_profiles_;
   BrowserWindowInterface* browser_;
   base::CancelableTaskTracker history_queries_;
+  base::CancelableTaskTracker favicon_queries_;
   BOOL workspace_page_hidden_;
   BOOL workspace_remote_;
   NSMutableDictionary<NSValue*, ARTab*>* tabs_;
@@ -2018,8 +2021,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
           [strong_host->check_closing_events_ addObject:@(closing)];
           BOOL was_closing = strong_host->closing_all_;
           strong_host->closing_all_ = closing;
-          if (closing && !was_closing && strong_host.delegate)
-            [strong_host.delegate windowHostWillBeginClosing:strong_host];
+          if (closing && !was_closing) {
+            strong_host->favicon_queries_.TryCancelAll();
+            if (strong_host.delegate)
+              [strong_host.delegate windowHostWillBeginClosing:strong_host];
+          }
           if (!closing) {
             if (strong_host->closing_window_)
               strong_host->core_->OnCloseCancelled();
@@ -2107,6 +2113,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)beginClosing {
   closing_window_ = YES;
+  favicon_queries_.TryCancelAll();
   if (self.delegate) [self.delegate windowHostWillBeginClosing:self];
 }
 
@@ -4409,6 +4416,31 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 - (NSString*)favoriteIconText:(NSString*)url {
   auto text = favicon::GetFallbackIconText(GURL(base::SysNSStringToUTF8(url)));
   return text.empty() ? nil : base::SysUTF16ToNSString(text);
+}
+
+- (BOOL)faviconForPageURL:(NSString*)url
+        profileDirectory:(NSString*)directory
+               completion:(void (^)(NSImage* _Nullable))completion {
+  DCHECK([NSThread isMainThread]);
+  if ([self isClosing] || closing_window_ || closing_all_ || [self isPrivateWindow]) return NO;
+  // Why not complete with nil before the profile is ready: the sidebar would cache a miss.
+  auto* window = core_->windowForProfile(base::SysNSStringToUTF8(directory));
+  if (!window || window->browser()->IsDeleteScheduled()) return NO;
+  Profile* profile = window->browser()->GetProfile();
+  if (!profile || profile->IsOffTheRecord()) return NO;
+  auto* service = FaviconServiceFactory::GetForProfile(profile, ServiceAccessType::IMPLICIT_ACCESS);
+  if (!service) return NO;
+  const GURL page_url(base::SysNSStringToUTF8(url));
+  if (!page_url.is_valid()) {
+    completion(nil);
+    return YES;
+  }
+  return service->GetFaviconImageForPageURL(
+             page_url,
+             base::BindOnce(^(const favicon_base::FaviconImageResult& result) {
+               completion(result.image.IsEmpty() ? nil : result.image.ToNSImage());
+             }),
+             &favicon_queries_) != base::CancelableTaskTracker::kBadTaskId;
 }
 
 - (double)checkZoomLevel {
