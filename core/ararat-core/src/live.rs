@@ -15,6 +15,7 @@ pub struct Command {
     pub kind: CommandKind,
     pub item: Id,
     pub url: Option<String>,
+    pub target_window: Option<Id>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +73,7 @@ pub struct ApplyOutcome {
     pub error: Option<LiveError>,
     pub applied: bool,
     /// Commands the apply produced: closes for engine tabs whose item is closed,
-    /// archived or deleted, and activates for the successor a Chrome-caused close left
-    /// for the core's rule to choose.
+    /// archived or deleted, and window-targeted activates that restore the core selection.
     pub commands: Vec<Command>,
     /// Live tabs the apply adopted, beside the items it created for them — the engine
     /// stores the item id in the tab's session data (§5.2).
@@ -163,10 +163,10 @@ impl Live {
 
     /// One Activate for a row the window keeps, in flight with the transaction that asked for
     /// it: both the close successor and an off-space strip's re-assertion answer with this.
-    fn reactivate(&self, workspace: &Workspace, pending: &mut HashMap<Id, (CommandKind, Id)>, item: &str) -> Command {
+    fn reactivate(&self, workspace: &Workspace, pending: &mut HashMap<Id, (CommandKind, Id)>, window: &str, item: &str) -> Command {
         let command = Command {
             id: self.fresh_command_id(workspace), kind: CommandKind::Activate,
-            item: item.into(), url: None,
+            item: item.into(), url: None, target_window: Some(window.into()),
         };
         pending.insert(command.id.clone(), (CommandKind::Activate, command.item.clone()));
         command
@@ -189,7 +189,7 @@ impl Live {
         let ops = workspace.flip_active(item, workspace.lifecycle_time());
         Ok((ops, Command {
             id: self.fresh_command_id(workspace), kind: CommandKind::Open,
-            item: item.into(), url: Some(url.into()),
+            item: item.into(), url: Some(url.into()), target_window: None,
         }))
     }
 
@@ -340,7 +340,7 @@ impl Live {
     /// confirms it, not here: the strips are the one report of which tab is active.
     pub fn activate(&mut self, workspace: &Workspace, item: &str) -> Result<Command, LiveError> {
         self.map.get(item).ok_or_else(|| LiveError(format!("item {item} has no live tab")))?;
-        Ok(Command { id: self.fresh_command_id(workspace), kind: CommandKind::Activate, item: item.into(), url: None })
+        Ok(Command { id: self.fresh_command_id(workspace), kind: CommandKind::Activate, item: item.into(), url: None, target_window: None })
     }
 
     /// Closes a live tab. The lifecycle change rides the ⌘W rule's own ops — a Today tab
@@ -430,7 +430,7 @@ impl Live {
             let window = self.windows.remove(&live);
             // A row that leaves the map cannot answer an Activate any more.
             self.pending.retain(|_, (kind, pending)| !(*kind == CommandKind::Activate && pending == &item));
-            let command = Command { id: self.fresh_command_id(workspace), kind: CommandKind::Close, item: item.clone(), url: None };
+            let command = Command { id: self.fresh_command_id(workspace), kind: CommandKind::Close, item: item.clone(), url: None, target_window: None };
             let mut ancestors = HashSet::from([item.clone()]);
             let mut parent = before.items[&item].membership.parent.as_ref();
             while let Some(ancestor) = parent.and_then(|id| before.items.get(id)) {
@@ -483,7 +483,7 @@ impl Live {
         let window = self.windows.remove(&live);
         let command = Command {
             id: self.fresh_command_id(workspace), kind: CommandKind::Close,
-            item: item.into(), url: None,
+            item: item.into(), url: None, target_window: None,
         };
         self.pending.insert(command.id.clone(), (CommandKind::Close, item.into()));
         self.close_undo.insert(command.id.clone(), CancelledClose { live, window, undo, bulk: false, space: None });
@@ -592,7 +592,7 @@ impl Live {
                                 if close_seen.insert(item.clone()) {
                                     let command = Command {
                                         id: self.fresh_command_id(&next), kind: CommandKind::Close,
-                                        item: item.clone(), url: None,
+                                        item: item.clone(), url: None, target_window: None,
                                     };
                                     next_pending.insert(command.id.clone(), (command.kind, command.item.clone()));
                                     outcome.commands.push(command);
@@ -719,7 +719,7 @@ impl Live {
                             // for this window.
                             changed_windows.insert(window.clone());
                             if let Some(successor) = after {
-                                outcome.commands.push(self.reactivate(&next, &mut next_pending, &successor));
+                                outcome.commands.push(self.reactivate(&next, &mut next_pending, &window, &successor));
                             }
                         }
                     }
@@ -755,7 +755,7 @@ impl Live {
                         if !outcome.commands.iter().any(|c| c.kind == CommandKind::Close && c.item == *item) {
                             let command = Command {
                                 id: self.fresh_command_id(&next), kind: CommandKind::Close,
-                                item: item.clone(), url: None,
+                                item: item.clone(), url: None, target_window: None,
                             };
                             next_pending.insert(command.id.clone(), (command.kind, command.item.clone()));
                             outcome.commands.push(command);
@@ -817,7 +817,7 @@ impl Live {
                             && !next_pending.values().any(|(kind, pending_item)| {
                                 *kind == CommandKind::Activate && pending_item == &selected
                             }) {
-                            outcome.commands.push(self.reactivate(&next, &mut next_pending, &selected));
+                            outcome.commands.push(self.reactivate(&next, &mut next_pending, &strip.window, &selected));
                         }
                         continue;
                     }

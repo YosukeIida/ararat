@@ -1,5 +1,5 @@
 import AppKit
-import AraratKit
+@testable import AraratKit
 import AraratUI
 import AraratEngineAPI
 import ObjectiveC.runtime
@@ -48,55 +48,50 @@ func theAraratCommandsMenuCarriesClearCacheAndClearCookiesUnbound() throws {
 }
 
 @Test @MainActor
-func addSplitViewMenuNeedsASelectedTodayOrPinnedTab() {
+func addSplitViewMenuNeedsASelectedTodayOrPinnedTab() throws {
     _ = NSApplication.shared
-    let runtime = Runtime(windowID: "add-split-view-menu")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let windowID = "add-split-view-menu"
+    let runtime = Runtime(windowID: windowID)
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: windowID, card: NSView(), session: session)
+    runtime.adapter = engine
+    defer { engine.shutdown() }
     class_addProtocol(AddSplitViewHost.self, objc_getProtocol("ARWindowHostAPI")!)
     let host = AddSplitViewHost()
     runtime.host = host as? any ARWindowHostAPI
     let item = NSMenuItem(title: "Add Split View", action: #selector(Runtime.coreMenuCommand(_:)), keyEquivalent: "")
     item.representedObject = "add_split_view"
-    func row(_ id: String, parent: String, depth: UInt32 = 0, kind: RowKind = .tab) -> Row {
-        Row(folderHasTabs: false, parentId: parent, siblingIndex: 0, collapsed: false, id: id, title: id,
-            url: kind == .tab ? "https://\(id).test" : nil, depth: depth, kind: kind, unloaded: false, lastSelectedAt: nil)
-    }
-    func snapshot(selected: String?, pinned: [Row] = [], today: [Row] = [], favorites: [Row] = []) -> WorkspaceSnapshot {
-        let space = SpaceSnapshot(pinnedCount: UInt32(pinned.count), todayCount: UInt32(today.count), profileKey: "default",
-                                  pinnedId: "pin", todayId: "today", favoritesId: "fav", archiveAfter: .hours12,
-                                  profileName: "Default", profile: .default, id: "work", title: "Work", icon: nil,
-                                  look: nil, pinnedCollapsed: false, favorites: favorites, pinned: pinned, today: today)
-        return WorkspaceSnapshot(archive: [], shownSpaceId: "work", selectedId: selected, spaces: [space])
-    }
-    // No selected tab — an empty space, or the Library shown — disables the item; its key then
-    // reaches the same guard through performWorkspaceCommand and does nothing.
-    runtime.snapshot = snapshot(selected: nil)
+    let store = try session.queue.sync { try #require(session.store) }
+    let space = try #require(session.queue.sync { store.snapshot(windowId: windowID).spaces.first })
     #expect(!runtime.validateMenuItem(item))
-    #expect(runtime.addSplitViewTarget == nil)
-    // A Today tab and a pinned tab are the two rows the row menu offers it on.
-    runtime.snapshot = snapshot(selected: "today-tab", today: [row("today-tab", parent: "today")])
-    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == "today-tab")
-    runtime.snapshot = snapshot(selected: "pin-tab", pinned: [row("pin-tab", parent: "pin")])
-    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == "pin-tab")
-    // A split adds beside its panes: the focused pane is the one the segment menu's Add Right
-    // Split would take, and the split's first pane when the focus sits elsewhere.
-    runtime.snapshot = snapshot(selected: "split", today: [row("split", parent: "today", kind: .split), row("member", parent: "split", depth: 1)])
-    let sidebar = SidebarView(snapshot: runtime.snapshot)
+    let today = try session.queue.sync {
+        try #require(store.createTab(windowId: windowID, url: "https://today.test").selectedId)
+    }
+    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == today)
+    let pinned = try session.queue.sync {
+        let id = try #require(store.createTab(windowId: windowID, url: "https://pinned.test").selectedId)
+        _ = try store.moveItem(windowId: windowID, id: id, container: space.pinnedId, index: 0, openFolder: false)
+        return id
+    }
+    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == pinned)
+    let split = try session.queue.sync { try store.addSplitPane(windowId: windowID, itemId: today, side: .right) }
+    let member = try session.queue.sync { try store.selectItem(windowId: windowID, id: split.pane) }
+    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == split.pane)
+    let sidebar = SidebarView(snapshot: member)
     runtime.sidebar = sidebar
-    sidebar.focusedPane = ("member", "https://member.test")
-    #expect(runtime.validateMenuItem(item) && runtime.addSplitViewTarget == "member")
-    sidebar.focusedPane = nil
-    #expect(runtime.addSplitViewTarget == "member")
-    // A folder has no page to split, a favourite row keeps no split item (the row menu), and the
-    // Library covers the rows, so neither enables the command.
-    runtime.snapshot = snapshot(selected: "folder", today: [row("folder", parent: "today", kind: .folder)])
-    #expect(!runtime.validateMenuItem(item))
-    runtime.snapshot = snapshot(selected: "fav", favorites: [row("fav", parent: "fav")])
-    #expect(!runtime.validateMenuItem(item))
-    runtime.snapshot = snapshot(selected: "today-tab", today: [row("today-tab", parent: "today")])
     sidebar.setLibraryOpen(true)
     #expect(!runtime.validateMenuItem(item))
     sidebar.setLibraryOpen(false)
     #expect(runtime.validateMenuItem(item))
+    try session.queue.sync {
+        _ = try store.ensureFavorites(windowId: windowID, spaceId: space.id, containerId: "favorites")
+        _ = try store.moveItem(windowId: windowID, id: pinned, container: "favorites", index: 0, openFolder: false)
+        _ = try store.selectItem(windowId: windowID, id: pinned)
+    }
+    #expect(!runtime.validateMenuItem(item))
 }
 
 @Test @MainActor

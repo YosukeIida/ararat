@@ -569,6 +569,80 @@ func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws 
     engine.shutdown()
 }
 
+@Test @MainActor
+func offSpaceReactivationReturnsToTheWindowInTheStrip() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let path = dir.appendingPathComponent("db").path
+    let first = try EngineAdapter(path: path, windowID: "first", card: NSView(), seedProfiles: true, seedSplitCheck: true, session: session)
+    let second = try EngineAdapter(path: path, windowID: "second", card: NSView(), session: session)
+    let (a, aHost) = matrixFake()
+    let (b, bHost) = matrixFake()
+    first.attach(aHost)
+    second.attach(bHost)
+    defer { first.shutdown(); second.shutdown() }
+
+    let previous = "close-split-a"
+    a.entries = [MatrixFakeTab(item: previous, live: "live-previous", profile: "Profile 1", owner: a)]
+    a.active = previous
+    var lastApplied: UInt64?
+    first.onTransaction = { if $1 { lastApplied = $0.rev } }
+    second.onTransaction = first.onTransaction
+    first.windowHost(aHost, didReceiveTransaction: matrixTransaction(a, window: "first", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { lastApplied == 0 }
+    let url = "about:blank?new-selection"
+    let item = try session.queue.sync {
+        let store = try #require(session.store)
+        try store.showSpace(windowId: "first", spaceId: "default")
+        return try #require(store.createTab(windowId: "first", url: url).selectedId)
+    }
+    first.select(id: item, url: url)
+    try await matrixWait { a.opened.count == 1 }
+
+    var transaction = matrixTransaction(b, window: "second", epoch: 1, rev: 1, command: nil)
+    let offSpace = matrixTransaction(a, window: "first", epoch: 1, rev: 1, command: nil)
+    var firstStrip = try #require((offSpace["strips"] as? [[String: Any]])?.first)
+    firstStrip["active"] = "live-previous"
+    transaction["strips"] = try #require(transaction["strips"] as? [[String: Any]]) + [firstStrip]
+    transaction["cause"] = "Chrome"
+    second.windowHost(bHost, didReceiveTransaction: transaction)
+    try await matrixWait { lastApplied == 1 && (!a.activated.isEmpty || b.transferAttempts > 0) }
+    #expect(a.active == item)
+    #expect(a.activated.count == 1)
+    #expect(b.transferAttempts == 0)
+}
+
+@Test @MainActor
+func addSplitUsesTheCurrentWindowSelectionBeforeTheSidebarRefreshes() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "split", card: NSView(), session: session)
+    let runtime = Runtime(windowID: "split")
+    runtime.adapter = engine
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    runtime.host = host
+    defer { engine.shutdown() }
+    let (previous, current) = try session.queue.sync {
+        let store = try #require(session.store)
+        let previous = try store.createTab(windowId: "split", url: "about:blank?previous")
+        let current = try #require(store.createTab(windowId: "split", url: "about:blank?current").selectedId)
+        return (previous, current)
+    }
+    runtime.snapshot = previous
+    #expect(runtime.addSplitViewTarget == current)
+    runtime.performWorkspaceCommand("add_split_view")
+    try await matrixWait { fake.opened.count == 1 }
+    session.queue.sync {
+        #expect(session.store?.splitLayout(itemId: current) != nil)
+        #expect(previous.selectedId.flatMap { session.store?.splitLayout(itemId: $0) } == nil)
+    }
+}
+
 private enum SelectionOwnershipChange: CaseIterable {
     case key, nonKey, unrelated
     case arrivingSibling, pendingSelection, singleTab

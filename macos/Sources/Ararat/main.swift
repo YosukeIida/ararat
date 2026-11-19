@@ -2064,32 +2064,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
     adapter?.close(id: id, archive: rowCloseArchives(row, in: space))
   }
 
-  // P5d: Add Split View's one path. The core's add_split_pane wraps a lone row in a new split or
-  // joins the pane beside the focused one, opens the New Tab page in the new pane, and the
-  // adapter selects it, so the focus moves to the new pane. The key, the command bar row and the
-  // menu item all end here, and so does the segment menu's Add Right Split.
   func addSplitView(_ item: String) {
     adapter?.addSplitPane(item: item, side: .right)
   }
 
-  // The row the key and the command bar act on: the selected Today or pinned tab, or a split's
-  // focused pane (the segment menu's own rule for that pane), or the split's first pane when the
-  // focus sits elsewhere. nil when nothing can be split — no selection, the Library shown (it
-  // covers the rows), a folder or favorites row — so the menu item is disabled and the key does
-  // nothing.
   var addSplitViewTarget: String? {
-    guard sidebar?.libraryOpen != true,
-          let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
-          let id = snapshot.selectedId,
-          let row = (space.today + space.pinned).first(where: { $0.id == id }) else { return nil }
-    switch row.kind {
-    case .tab: return row.id
-    case .split:
-      let panes = sidebar?.paneRows(of: row.id) ?? []
-      let focused = sidebar?.focusedPane?.id
-      return panes.first { $0.id == focused }?.id ?? panes.first?.id ?? row.id
-    default: return nil
-    }
+    sidebar?.libraryOpen == true ? nil : adapter?.addSplitViewTarget
   }
 
   // D6: one core batch (live_clear_today) with a Close in flight for every mapped live row,
@@ -2215,7 +2195,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     case "close_tab": if selectedIsVisible { adapter?.closeSelected() }
     case "pin_tab": if selectedIsVisible { sidebar?.pinSelectedTab(nil) }
     case "duplicate", "new_folder", "rename", "delete_folder": sidebar?.organize(command: command)
-    case "add_split_view": if let item = addSplitViewTarget { addSplitView(item) }
+    case "add_split_view": if sidebar?.libraryOpen != true { adapter?.addSplitPane(side: .right) }
     case "toggle_sidebar": container?.toggleSidebar()
     case "toggle_library": sidebar?.toggleLibrary(nil)
     case "reset_sidebar_width": container?.resizeHandle.resetWidth()
