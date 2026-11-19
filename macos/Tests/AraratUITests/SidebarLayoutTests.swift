@@ -594,6 +594,29 @@ func fieldTextInsetAndGlyphStepFollowTheStepRule() {
 }
 
 @Test @MainActor
+func hostLeadingFadeUsesTheUnroundedCellWidth() throws {
+    let host = NSTextField(labelWithString: "127.0.0.1")
+    host.font = .systemFont(ofSize: 13)
+    let placeholder = NSTextField(labelWithString: "")
+    placeholder.isHidden = true
+    let clip = URLFieldTextClipView(host: host, placeholder: placeholder)
+    clip.fadesStart = true
+
+    let cellWidth = try #require(host.cell).cellSize.width
+    let width = cellWidth + 0.1
+    try #require(width < ceil(cellWidth))
+    clip.setFrameSize(NSSize(width: width, height: URLFieldTextClipView.height))
+    #expect(!clip.checkHasFade)
+    #expect(host.frame.minX == 0)
+
+    host.stringValue = "averylongsubdomain.example.com"
+    clip.needsLayout = true
+    clip.layoutSubtreeIfNeeded()
+    #expect(clip.checkHasFade)
+    #expect(host.frame.minX < 0)
+}
+
+@Test @MainActor
 func hostLabelsDrawTheirFullTextAtBothSidebarWidths() throws {
     let hosts = ["127.0.0.1", "[::1]", "localhost", "intranet",
                  "averyveryveryverylongsubdomainname.docs.example.com"]

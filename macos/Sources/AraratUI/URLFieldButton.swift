@@ -307,8 +307,9 @@ public final class URLFieldTextClipView: NSView {
         let intrinsic = visible.intrinsicContentSize
         let height = min(Self.height, intrinsic.height)
         // The field's intrinsic width omits the cell's horizontal drawing padding.
-        let fullWidth = fadesStart ? ceil(visible.cell?.cellSize.width ?? intrinsic.width) : intrinsic.width
-        let fades = fadesStart && fullWidth > bounds.width
+        let cellWidth = visible.cell?.cellSize.width ?? intrinsic.width
+        let fades = fadesStart && cellWidth > bounds.width
+        let fullWidth = fadesStart ? ceil(cellWidth) : intrinsic.width
         let width = fades ? fullWidth : min(fullWidth, bounds.width)
         let x = fades ? bounds.width - fullWidth : 0
         let frame = NSRect(x: x, y: (Self.height - height) / 2, width: width, height: height)
