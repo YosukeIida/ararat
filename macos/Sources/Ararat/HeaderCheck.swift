@@ -80,10 +80,13 @@ extension Runtime {
       if screen { check.conditions["capture"] = capturesOK }
       container.resizeHandle.sidebarWidth = 240
       container.layoutSubtreeIfNeeded()
-      check.conditions["menu"] = header.makeMenu().items.filter { !$0.isSeparatorItem }.map(\.title) == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"]
+      let menu = header.makeMenu()
+      let items = menu.items.filter { !$0.isSeparatorItem }
+      let labels = items.map { $0.attributedTitle?.string.components(separatedBy: "\t").last }
+      check.conditions["menu"] = items.map { $0.title.components(separatedBy: "\t")[0] } == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"] &&
+        labels == ["⌘R", "⇧⌘R", "⌘F", nil, nil, "⌘S", "⌘+", "⌘−", "⌘P", "⌘,"]
       if screen {
         check.capturing = true
-        let menu = header.makeMenu()
         check.images["overflow-menu"] = promptScreenMenuScreenshot(menu, window: host.window(), name: "header-overflow-menu") {
           header.showMenu(menu)
         }
@@ -195,7 +198,7 @@ extension Runtime {
     case 6:
       guard snapshot.selectedId == check.id, host.activeItemId() == check.id, !header.loading else { wait("forward stop"); return }
       // p4checks: the … menu's own Find in Page… item, the path the menu runs.
-      guard header.checkPerformMenuItem("Find in Page…") else { check.conditions["find"] = false; finish(); return }
+      guard header.checkPerformMenuItem("find") else { check.conditions["find"] = false; finish(); return }
       browserCheckPhase = 7
     case 7:
       guard !container.findBar.isHidden,
@@ -212,8 +215,8 @@ extension Runtime {
       host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: check.live, profile: host.profileDirectory())
       // p4checks: Zoom In and Zoom Out are the … menu's own items.
       let zoom = host.checkZoomLevel()
-      let zoomIn = header.checkPerformMenuItem("Zoom In") && host.checkZoomLevel() > zoom
-      let zoomOut = header.checkPerformMenuItem("Zoom Out") && abs(host.checkZoomLevel() - zoom) < 0.001
+      let zoomIn = header.checkPerformMenuItem("zoom_in") && host.checkZoomLevel() > zoom
+      let zoomOut = header.checkPerformMenuItem("zoom_out") && abs(host.checkZoomLevel() - zoom) < 0.001
       check.conditions["zoom"] = zoomIn && zoomOut
       check.conditions["menu_zoom"] = zoomIn && zoomOut
       let menu = header.makeMenu().items.filter { !$0.isSeparatorItem }
@@ -221,12 +224,12 @@ extension Runtime {
       let enabled = domain == "127.0.0.1" && menu[3].isEnabled && menu[4].isEnabled && menu[4].toolTip == "Clears cookies for 127.0.0.1"
       // B3: the header's two site commands go through the menu item, the path the app header
       // really uses (onHeaderCommand → performWorkspaceCommand), not host.runCommand.
-      let cache = header.checkPerformMenuItem("Clear Cache")
-      let cookies = header.checkPerformMenuItem("Clear Cookies")
+      let cache = header.checkPerformMenuItem("clear_cache_site")
+      let cookies = header.checkPerformMenuItem("clear_cookies_site")
       check.conditions["clear"] = enabled && cache && cookies
       check.conditions["clear_via_menu"] = enabled && cache && cookies
       check.navigation = tab.navigationCount
-      check.conditions["force_reload"] = header.checkPerformMenuItem("Force Reload")
+      check.conditions["force_reload"] = header.checkPerformMenuItem("force_reload")
       browserCheckPhase = 8
     case 8:
       let results = host.checkSiteClearResults()

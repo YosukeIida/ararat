@@ -6,7 +6,8 @@ import Darwin
 public final class SidebarHeaderView: NSView {
     public var onCommand: ((String) -> Void)?
     public var siteDomain: (() -> String?)?
-    var toggleBinding: (() -> KeyCombination?)?
+    var keyBindings: () -> [KeyBinding] = { defaultKeyBindings() }
+    var mainMenu: () -> NSMenu? = { NSApp?.mainMenu }
     weak var menuDelegate: NSMenuDelegate?
     public var canGoBack = false { didSet { back.isEnabled = canGoBack } }
     public var canGoForward = false { didSet { forward.isEnabled = canGoForward } }
@@ -61,8 +62,7 @@ public final class SidebarHeaderView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     private var currentToggleKey: KeyCombination? {
-        if let toggleBinding { return toggleBinding() }
-        return defaultKeyBindings().first { $0.command == "toggle_sidebar" }?.key
+        keyBindings().first { $0.command == "toggle_sidebar" }?.key
     }
 
     public var checkControls: [String] { buttons.filter { !$0.isHidden }.compactMap { $0.identifier?.rawValue } }
@@ -100,10 +100,10 @@ public final class SidebarHeaderView: NSView {
         return true
     }
     /// p4checks: runs a menu item's own action, what the open menu's click runs.
-    public func checkPerformMenuItem(_ title: String) -> Bool {
+    public func checkPerformMenuItem(_ command: String) -> Bool {
         let menu = makeMenu()
         menu.update()
-        guard let item = menu.items.first(where: { $0.title == title }), item.isEnabled, let action = item.action else { return false }
+        guard let item = menu.items.first(where: { $0.representedObject as? String == command }), item.isEnabled, let action = item.action else { return false }
         return NSApp.sendAction(action, to: item.target, from: item)
     }
     func clearKeys() {
@@ -190,9 +190,49 @@ public final class SidebarHeaderView: NSView {
             else if !["toggle_sidebar", "settings"].contains(command) { item.isEnabled = hasTab }
             menu.addItem(item)
         }
+        addShortcutLabels(to: menu)
         menu.autoenablesItems = false
         return menu
     }
+
+    private func addShortcutLabels(to menu: NSMenu) {
+        // Chromium's menu tags (chrome/app/chrome_command_ids.h) also work with localized titles.
+        let chromeTags = ["reload": 33002, "find": 37000, "zoom_in": 38001, "zoom_out": 38003, "print": 35003]
+        func chromeItem(_ tag: Int, in menu: NSMenu?) -> NSMenuItem? {
+            guard let menu else { return nil }
+            if let item = menu.item(withTag: tag), !item.isHidden { return item }
+            return menu.items.lazy.filter { !$0.isHidden }.compactMap { chromeItem(tag, in: $0.submenu) }.first
+        }
+
+        let appMenu = mainMenu()
+        let bindings = keyBindings()
+        let labels: [(NSMenuItem, String)] = menu.items.compactMap { item in
+            guard let command = item.representedObject as? String else { return nil }
+            let caps: [String]
+            if let tag = chromeTags[command], let source = chromeItem(tag, in: appMenu) {
+                caps = SidebarTooltip.keycaps(for: source).map(\.stringValue)
+            } else if ["force_reload", "toggle_sidebar", "settings"].contains(command),
+                      let key = bindings.first(where: { $0.command == command })?.key {
+                caps = SidebarTooltip.caps(for: key)
+            } else {
+                return nil
+            }
+            return caps.isEmpty ? nil : (item, caps.joined().replacingOccurrences(of: "-", with: "−"))
+        }
+        guard !labels.isEmpty else { return }
+        let font: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0)]
+        let titleWidth = menu.items.map { $0.title.size(withAttributes: font).width }.max() ?? 0
+        let shortcutWidth = labels.map { $0.1.size(withAttributes: font).width }.max() ?? 0
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: ceil(titleWidth + shortcutWidth) + 20)]
+        var attributes = font
+        attributes[.paragraphStyle] = paragraph
+        // A real keyEquivalent could invoke the popup's action while AppKit tracks it.
+        for (item, shortcut) in labels {
+            item.attributedTitle = NSAttributedString(string: "\(item.title)\t\(shortcut)", attributes: attributes)
+        }
+    }
+
     @objc private func menuPressed(_ sender: NSMenuItem) { if let command = sender.representedObject as? String { onCommand?(command) } }
     override public func mouseDown(with event: NSEvent) {
         windowDrag = WindowDrag.Held(in: self, with: event)

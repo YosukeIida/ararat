@@ -39,6 +39,7 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "base/threading/thread_restrictions.h"
+#include "components/favicon/core/fallback_url_util.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
@@ -4443,6 +4444,11 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
       url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
   return base::SysUTF8ToNSString(domain.empty() ? url.host() : domain);
+}
+
+- (NSString*)favoriteIconText:(NSString*)url {
+  auto text = favicon::GetFallbackIconText(GURL(base::SysNSStringToUTF8(url)));
+  return text.empty() ? nil : base::SysUTF16ToNSString(text);
 }
 
 - (double)checkZoomLevel {

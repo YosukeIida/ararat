@@ -665,9 +665,9 @@ func dockSpaceMenuActionsAndAvailability() throws {
     let menu = f.sidebar.spaceMenu(spaceID: "space-work")
     f.sidebar.update(snapshot: f.snapshot)
     #expect(descendants(f.sidebar).contains { $0 === cell })
-    #expect(menu.items.map(\.title) == ["Rename Space…", "Edit Look…", "Space Settings…", "New Folder", "Delete Space…"])
+    #expect(menu.items.map { $0.isSeparatorItem ? nil : $0.title } == ["Rename Space…", "Edit Look…", "Space Settings…", nil, "New Folder", nil, "Delete Space…"])
     #expect(f.sidebar.dockMenuItems(for: "space-work").map(\.title) == menu.items.map(\.title))
-    #expect(menu.items.allSatisfy { $0.isEnabled })
+    #expect(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.isEnabled })
     var settings: String?
     f.sidebar.onSpaceSettings = { settings = $0 }
     try invoke(menu, "Space Settings…")
@@ -682,11 +682,11 @@ func dockSpaceMenuActionsAndAvailability() throws {
     try invoke(menu, "New Folder")
     #expect(f.edits.count == 1)
     let missing = f.sidebar.spaceMenu(spaceID: "missing")
-    #expect(missing.items.allSatisfy { !$0.isEnabled })
+    #expect(missing.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
     var snapshot = f.snapshot
     snapshot.spaces = [f.space]
     f.sidebar.update(snapshot: snapshot)
-    #expect(!f.sidebar.spaceMenu(spaceID: "space-work").items[4].isEnabled)
+    #expect(f.sidebar.spaceMenu(spaceID: "space-work").item(withTitle: "Delete Space…")?.isEnabled == false)
 }
 
 @Test @MainActor

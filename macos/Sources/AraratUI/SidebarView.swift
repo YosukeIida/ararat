@@ -339,11 +339,13 @@ public final class SidebarView: NSView {
     }
     private var scrollGeneration = 0
     private var isScrollPreview = false
+    private let favoriteIconText: (String) -> String?
     private var laidOutSidebarWidth: CGFloat = 0
     private var spacePagePitch: Double { Double(bounds.width) }
 
-    public init(snapshot: WorkspaceSnapshot) {
+    public init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
         self.snapshot = snapshot
+        self.favoriteIconText = favoriteIconText
         self.selectedID = Self.sidebarSelection(snapshot)
         self.spaceIndex = snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
         super.init(frame: .zero)
@@ -1754,14 +1756,20 @@ public final class SidebarView: NSView {
             let start = index * columns
             var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
                 guard let row else { return NSView() }
-                let tile = favoriteTiles[row.id] ?? FavoriteTile(row: row) { [weak self] row in self?.select(row) }
+                let iconText = row.url.flatMap(favoriteIconText)
+                let tile: FavoriteTile
+                if let existing = favoriteTiles[row.id] {
+                    tile = existing
+                    tile.update(row: row, iconText: iconText)
+                } else {
+                    tile = FavoriteTile(row: row, iconText: iconText) { [weak self] row in self?.select(row) }
+                }
                 favoriteTiles[row.id] = tile
                 wireDrag(tile)
                 tile.menuProvider = { [weak self, weak tile] in
                     guard let self, !self.isScrollPreview, let tile else { return nil }
                     return self.favoriteMenu(row: tile.row)
                 }
-                tile.update(row: row)
                 tile.refusesFirstResponder = isScrollPreview
                 return tile
             }
@@ -2281,7 +2289,7 @@ public final class SidebarView: NSView {
                 if prepared { return true }
                 prepared = true
             }
-            let preview = cached ?? SidebarView(snapshot: snapshot)
+            let preview = cached ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
             preview.isScrollPreview = true
             preview.snapshot = snapshot
             preview.selectedID = selectedID
@@ -2318,7 +2326,7 @@ public final class SidebarView: NSView {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
             traceSpaceWheelMotion("preview-row-rebuild", detail: "index=\(index)")
             let prepared = preparedScrollPreviews.removeValue(forKey: index)
-            let preview = prepared ?? SidebarView(snapshot: snapshot)
+            let preview = prepared ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
             traceSpaceWheelMotion("preview-source", detail: prepared == nil ? "cold" : "prepared")
             let reload = prepared == nil || preview.snapshot != snapshot || preview.spaceIndex != index || preview.selectedID != selectedID
             preview.isScrollPreview = true
@@ -3149,11 +3157,13 @@ extension SidebarView: NSMenuDelegate {
             SidebarMenuItem("Rename Space…", enabled: space != nil) { [weak self] in self?.renameSpace(spaceID) },
             SidebarMenuItem("Edit Look…", enabled: space != nil) { [weak self] in self?.editLook(spaceID, anchor: anchor) },
             SidebarMenuItem("Space Settings…", enabled: space != nil) { [weak self] in self?.onSpaceSettings?(spaceID) },
+            .separator(),
             SidebarMenuItem("New Folder", enabled: space != nil && snapshotSpace != nil) { [weak self] in
                 guard let self, let index = self.snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
                 if self.spaceIndex != index || self.libraryOpen || self.createSpaceOpen { self.dockClicked(self.dock.subviews[index] as! NSButton) }
                 self.newFolder(nil)
             },
+            .separator(),
             SidebarMenuItem("Delete Space…", enabled: space != nil && snapshot.spaces.count > 1) { [weak self] in self?.confirmSpaceDelete(spaceID) },
         ])
     }

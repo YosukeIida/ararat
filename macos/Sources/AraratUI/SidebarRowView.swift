@@ -955,45 +955,57 @@ final class FavoriteTile: NSButton {
     var onRenameEnd: (() -> Void)?
     private(set) var renameField: SidebarRenameField?
     private let onPress: (Row) -> Void
-    private let icon = NSImageView()
+    let glyphBox = NSView()
+    let glyphLabel = NSTextField(labelWithString: "")
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    init(row: Row, onPress: @escaping (Row) -> Void) {
+    init(row: Row, iconText: String? = nil, onPress: @escaping (Row) -> Void) {
         self.row = row
         self.onPress = onPress
         super.init(frame: .zero)
-        imagePosition = .imageOnly
         isBordered = false
+        imagePosition = .imageOnly
+        title = ""
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
-        icon.imageScaling = .scaleNone
-        icon.contentTintColor = .labelColor
-        icon.setAccessibilityHidden(true)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(icon)
+        glyphBox.wantsLayer = true
+        glyphBox.layer?.cornerRadius = 5
+        glyphBox.setAccessibilityHidden(true)
+        glyphBox.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glyphBox)
+        glyphLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        glyphLabel.setAccessibilityHidden(true)
+        glyphLabel.translatesAutoresizingMaskIntoConstraints = false
+        glyphBox.addSubview(glyphLabel)
         NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16),
+            glyphBox.widthAnchor.constraint(equalToConstant: 20),
+            glyphBox.heightAnchor.constraint(equalToConstant: 20),
+            glyphBox.centerXAnchor.constraint(equalTo: centerXAnchor),
+            glyphBox.centerYAnchor.constraint(equalTo: centerYAnchor),
+            glyphLabel.centerXAnchor.constraint(equalTo: glyphBox.centerXAnchor),
+            glyphLabel.centerYAnchor.constraint(equalTo: glyphBox.centerYAnchor),
         ])
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
         action = #selector(pressed)
-        update(row: row)
+        update(row: row, iconText: iconText)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func update(row: Row) {
+    func update(row: Row, iconText: String?) {
         self.row = row
-        icon.image = SidebarRowView.symbol(for: row.kind)
+        glyphLabel.stringValue = iconText ?? row.title.first?.uppercased() ?? ""
+        glyphBox.isHidden = glyphLabel.stringValue.isEmpty
+        image = glyphBox.isHidden ? SidebarRowView.symbol(for: .tab) : nil
         refreshForeground()
         toolTip = row.title
-        setAccessibilityLabel(row.title)
+        let label = row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "") : row.title
+        setAccessibilityTitle(label)
+        setAccessibilityLabel(label)
     }
 
     @objc private func pressed() { onPress(row) }
@@ -1040,19 +1052,29 @@ final class FavoriteTile: NSButton {
 
     func refreshForeground() {
         let opacity = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        guard let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor) else {
-            icon.contentTintColor = .labelColor
-            icon.alphaValue = opacity
-            return
+        let showsLetter = !glyphBox.isHidden
+        var backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
+        if showsLetter, let boxFill = glyphBox.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)), let underneath = backdrop {
+            backdrop = SidebarPanelView.mix(boxFill, boxFill, fraction: 0, base: underneath)
         }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop, minimum: 3)
+            let (color, alpha) = backdrop.map {
+                SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: $0, minimum: showsLetter ? 4.5 : 3)
+            } ?? (NSColor.labelColor, opacity)
+            let foreground = alpha == 1 ? color : color.withAlphaComponent(color.alphaComponent * alpha)
+            if showsLetter {
+                glyphLabel.textColor = foreground
+            } else {
+                contentTintColor = foreground
+            }
         }
     }
 
     private func updateFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            glyphBox.layer?.backgroundColor = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.16 : 0.10).cgColor
         }
     }
 }

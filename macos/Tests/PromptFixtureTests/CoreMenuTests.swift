@@ -125,6 +125,41 @@ func archiveActionsNeedANonemptyRegularArchive() throws {
 }
 
 @Test @MainActor
+func settingsRebindingUpdatesTheInstalledAppMenu() async throws {
+    _ = NSApplication.shared
+    let originalMenu = NSApp.mainMenu
+    defer { NSApp.mainMenu = originalMenu }
+    let menu = NSMenu()
+    let appMenu = NSMenu()
+    menu.addItem(withTitle: "Ararat", action: nil, keyEquivalent: "").submenu = appMenu
+    let item = appMenu.addItem(withTitle: "Settings…", action: NSSelectorFromString("showPreferences:"), keyEquivalent: ",")
+    NSApp.mainMenu = menu
+
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let runtime = Runtime(windowID: "settings-binding")
+    let session = WorkspaceSession()
+    try session.queue.sync { session.store = try WorkspaceStore.open(path: directory.appendingPathComponent("db").path) }
+    let bindings = KeyBindingsModel(adapter: WorkspaceAdapter(windowID: runtime.windowID, session: session))
+    runtime.keyBindings = bindings
+
+    let firstKey = KeyCombination(key: "s", command: true, control: false, option: false, shift: false)
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.set(command: "settings", key: firstKey) { continuation.resume(with: $0) }
+    }
+    runtime.installCoreMenu()
+    #expect(item.keyEquivalent == "s" && item.keyEquivalentModifierMask == [.command])
+
+    let key = KeyCombination(key: "y", command: false, control: true, option: false, shift: false)
+    try await withCheckedThrowingContinuation { continuation in
+        bindings.set(command: "settings", key: key) { continuation.resume(with: $0) }
+    }
+    #expect(item.keyEquivalent == "y")
+    #expect(item.keyEquivalentModifierMask == [.control])
+}
+
+@Test @MainActor
 func installingArchiveMenuKeepsEveryHistoryTagKnownToChromium() throws {
     _ = NSApplication.shared
     let originalMenu = NSApp.mainMenu

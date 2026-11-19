@@ -24,7 +24,7 @@ func headerControlsFollowPanelWidthAndMenuOrder() {
     header.siteDomain = { "example.com" }
     header.hasTab = true
     let items = header.makeMenu().items.filter { !$0.isSeparatorItem }
-    #expect(items.map(\.title) == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"])
+    #expect(items.map { $0.title.components(separatedBy: "\t")[0] } == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"])
     #expect(items[4].toolTip == "Clears cookies for example.com and its subdomains")
     for (domain, help) in [("127.0.0.1", "Clears cookies for 127.0.0.1"), ("[::1]", "Clears cookies for [::1]"), ("localhost", "Clears cookies for localhost and its subdomains"), ("intranet", "Clears cookies for intranet and its subdomains")] {
         header.siteDomain = { domain }
@@ -77,15 +77,61 @@ func headerToggleCapsAndPressedStateFollowRebinding() throws {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView?.addSubview(header)
     header.layout()
-    header.toggleBinding = { KeyCombination(key: "q", command: true, control: true, option: false, shift: false) }
+    header.keyBindings = {
+        var rows = defaultKeyBindings().filter { $0.command == "toggle_sidebar" }
+        rows[0].key = KeyCombination(key: "q", command: true, control: true, option: false, shift: false)
+        return rows
+    }
     #expect(header.checkTooltip("toggle_sidebar").1 == ["⌃", "⌘", "Q"])
     let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .control], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12))
     header.checkKeys(["Q"], event: event)
     #expect(header.checkPressed("toggle_sidebar"))
     header.checkKeys(["S"], event: event)
     #expect(!header.checkPressed("toggle_sidebar"))
-    header.toggleBinding = { nil }
+    header.keyBindings = { [] }
     #expect(header.checkTooltip("toggle_sidebar").1.isEmpty)
+}
+
+@Test @MainActor
+func headerOverflowDisplaysCurrentMenuShortcutsWithoutHandlingThem() throws {
+    let header = SidebarHeaderView(frame: .zero)
+    header.hasTab = true
+    let mainMenu = NSMenu()
+    let nested = NSMenu()
+    mainMenu.addItem(withTitle: "Commands", action: nil, keyEquivalent: "").submenu = nested
+    for (tag, key) in [(33002, "r"), (37000, "f"), (38001, "+"), (38003, "-"), (35003, "p")] {
+        let item = nested.addItem(withTitle: "Localized command \(tag)", action: nil, keyEquivalent: key)
+        item.tag = tag
+    }
+    header.mainMenu = { mainMenu }
+    var invoked: [String] = []
+    header.onCommand = { invoked.append($0) }
+    let menu = header.makeMenu()
+    let titles = menu.items.filter { !$0.isSeparatorItem }.map(\.attributedTitle)
+    #expect(titles.map { $0?.string.components(separatedBy: "\t").last } ==
+            ["⌘R", "⇧⌘R", "⌘F", nil, nil, "⌘S", "⌘+", "⌘−", "⌘P", "⌘,"])
+    #expect(menu.items.allSatisfy { $0.keyEquivalent.isEmpty })
+    let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+        timestamp: 0, windowNumber: 0, context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
+    #expect(!menu.performKeyEquivalent(with: event))
+    #expect(invoked.isEmpty)
+    menu.performActionForItem(at: 0)
+    #expect(invoked == ["reload"])
+
+    nested.item(withTag: 33002)?.keyEquivalent = "j"
+    header.keyBindings = {
+        defaultKeyBindings().map { row in
+            var row = row
+            if row.command == "settings" {
+                row.key = KeyCombination(key: "y", command: false, control: true, option: false, shift: false)
+            } else if row.command == "force_reload" { row.key = nil }
+            return row
+        }
+    }
+    let updated = header.makeMenu()
+    #expect(updated.item(withTitle: "Reload\t⌘J") != nil)
+    #expect(updated.item(withTitle: "Settings…\t⌃Y") != nil)
+    #expect(updated.item(withTitle: "Force Reload")?.attributedTitle == nil)
 }
 
 @Test @MainActor

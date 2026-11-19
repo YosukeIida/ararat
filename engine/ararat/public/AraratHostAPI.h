@@ -186,6 +186,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString*)activeItemId;
 - (BOOL)runCommand:(NSString*)command;
 - (nullable NSString*)currentSiteDomain;
+- (nullable NSString*)favoriteIconText:(NSString*)url;
 - (double)checkZoomLevel;
 - (NSDictionary<NSString*, id>*)checkSiteClearResults;
 - (void)close;

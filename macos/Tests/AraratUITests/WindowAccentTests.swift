@@ -344,7 +344,7 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
 }
 
 @Test @MainActor
-func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
+func favoriteTextAndBottomBarGlyphsMeetTheirContrastMinimums() throws {
     _ = NSApplication.shared
     var first = space("first", look: nil)
     first.favorites = first.today
@@ -357,7 +357,6 @@ func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
     let panel = try #require(sidebar.superview as? SidebarPanelView)
     let views = descendants(sidebar)
     let favorite = try #require(views.compactMap { $0 as? FavoriteTile }.first)
-    let icon = try #require(favorite.subviews.compactMap { $0 as? NSImageView }.first)
     let library = sidebar.libraryButton
     let plus = try #require(views.compactMap { $0 as? SidebarDockButton }.first { $0.accessibilityLabel() == "New Space menu" })
     let cells = views.compactMap { $0 as? SpaceDockButton }
@@ -376,18 +375,37 @@ func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
         panel.systemAppearance = { appearance }
         sidebar.previewLook(spaceID: first.id, look: preview)
         container.layoutSubtreeIfNeeded()
-        let favoriteTint = try #require(icon.contentTintColor)
+        let box = favorite.glyphBox
+        #expect(box.frame.size == NSSize(width: 20, height: 20))
+        // Auto Layout snaps the centre of an even-sized box in an odd-sized tile to a pixel.
+        #expect(abs(box.frame.midX - favorite.bounds.midX) <= 0.5)
+        #expect(abs(box.frame.midY - favorite.bounds.midY) <= 0.5)
+        #expect(box.layer?.cornerRadius == 5)
+        #expect(favorite.glyphLabel.font == .systemFont(ofSize: 11, weight: .semibold))
+        let boxFill = try #require(box.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))?.usingColorSpace(.sRGB))
+        #expect(abs(boxFill.alphaComponent - (scheme == .darkAqua ? 0.16 : 0.10)) < 0.001)
+        #expect(boxFill.redComponent == (scheme == .darkAqua ? 1 : 0))
+        #expect(boxFill.greenComponent == boxFill.redComponent && boxFill.blueComponent == boxFill.redComponent)
+        let tileBackdrop = try #require(SidebarPanelView.backdrop(behind: favorite, overlaidBy: favorite.layer?.backgroundColor))
+        let letterBackdrop = SidebarPanelView.mix(boxFill, boxFill, fraction: 0, base: tileBackdrop)
+        for unloaded in [false, true] {
+            var row = favorite.row
+            row.unloaded = unloaded
+            favorite.update(row: row, iconText: nil)
+            let favoriteTint = try #require(favorite.glyphLabel.textColor)
+            appearance.performAsCurrentDrawingAppearance {
+                let ratio = contrast(favoriteTint, over: letterBackdrop, quantized: true)
+                print("favorite-contrast \(name) unloaded=\(unloaded): \(String(format: "%.3f", ratio))")
+                #expect(ratio >= 4.5)
+            }
+        }
         if name != "brightest-dark" {
-            #expect(favoriteTint == .labelColor)
-            #expect(icon.alphaValue == 1)
             #expect(library.contentTintColor == nil)
             #expect(plus.contentTintColor == nil)
             #expect(cells.allSatisfy { $0.checkGlyphColor == .labelColor })
         }
         appearance.performAsCurrentDrawingAppearance {
-            let favoriteRGB = favoriteTint.usingColorSpace(.sRGB)!
             let glyphs: [(String, NSView, NSColor, CGColor?)] = [
-                ("favorite", icon, favoriteRGB.withAlphaComponent(favoriteRGB.alphaComponent * icon.alphaValue), favorite.layer?.backgroundColor),
                 ("library", library, library.contentTintColor ?? .labelColor, library.libraryFill.backgroundColor),
                 ("plus", plus, plus.contentTintColor ?? .labelColor, nil),
             ] + cells.enumerated().map { ("dock-\($0.offset)", $0.element, $0.element.checkGlyphColor, $0.element.checkFill?.cgColor) }

@@ -960,9 +960,9 @@ extension Runtime {
             let event = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
                                            windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
             guard let event, let menu = name.menu(for: event) else { return }
-            let titles = menu.items.map(\.title)
-            check.report("menu_items", titles == ["Rename Space…", "Edit Look…", "Space Settings…", "New Folder", "Delete Space…"])
-            check.report("menu_dock_same", titles == sidebar.dockMenuItems(for: space.id).map(\.title))
+            let titles = menu.items.map { $0.isSeparatorItem ? nil : $0.title }
+            check.report("menu_items", titles == ["Rename Space…", "Edit Look…", "Space Settings…", nil, "New Folder", nil, "Delete Space…"])
+            check.report("menu_dock_same", titles == sidebar.dockMenuItems(for: space.id).map { $0.isSeparatorItem ? nil : $0.title })
             // S4: the click above toggled rather than renaming, and the menu's item starts it.
             check.report("rename_menu_only", name.checkRenameFieldFrame == nil)
             if screen, let window = name.window {
