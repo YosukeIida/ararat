@@ -9,6 +9,7 @@ final class HeaderCheck {
   var capturing = false
   var id = ""
   var live = ""
+  var headerTab: LiveTab?
   var navigation: UInt = 0
   var conditions: [String: Bool] = [:]
   var images: [String: String] = [:]
@@ -16,6 +17,12 @@ final class HeaderCheck {
   var lastWait = ""
   /// p4checks: the sidebar state before the header's toggle button, and what it pressed through.
   var sidebarBefore = ""
+  func seedHeaderWait(loading: Bool, liveId: String, url: String) -> String? {
+    guard !loading, headerTab?.item == id, headerTab?.liveId == liveId, headerTab?.url == url else {
+      return "header showing the loaded seed tab"
+    }
+    return nil
+  }
   func diagnostics(screen: Bool) -> [String: Any] {
     let names = Self.names + (screen ? ["capture"] : [])
     return ["conditions": conditions, "failed_conditions": names.filter { conditions[$0] != true }, "images": images, "details": details, "item": id, "live": live, "wait": lastWait, "unverified": ["Print preview and cancellation", "Force Reload network cache bypass", "Clear Cache and Cookies data isolation"]]
@@ -24,7 +31,6 @@ final class HeaderCheck {
 
 extension Runtime {
   func headerCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
-    if headerCheck == nil { headerCheck = HeaderCheck() }
     guard let check = headerCheck, !check.capturing, let container, let sidebar else { return }
     let header = container.header
     func wait(_ name: String) {
@@ -47,6 +53,10 @@ extension Runtime {
       guard snapshot.selectedId == check.id, host.activeItemId() == check.id,
             let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id }), !tab.isLoading, tab.navigationCount > 0,
             !screen || (host.window().isVisible && host.window().isKeyWindow) else { wait("active seed tab and key window"); return }
+      if let reason = check.seedHeaderWait(loading: header.loading, liveId: tab.liveId, url: tab.url) {
+        wait(reason)
+        return
+      }
       check.live = tab.liveId
       check.conditions["seed"] = true
       let initialMenu = header.makeMenu().items.filter { !$0.isSeparatorItem }
