@@ -635,7 +635,10 @@ private func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).ma
     #expect(window.firstResponder === content)
     #expect(!(window.firstResponder is NSControl))
     #expect(popover.library.acceptsFirstResponder)
-    // A reused popover window is reset the same way when it is shown again.
+    // A reused popover window is reset the same way when it is shown again: focus the button
+    // first, as a previous showing could have left it there.
+    #expect(window.makeFirstResponder(popover.library))
+    #expect(window.firstResponder === popover.library)
     popover.popoverDidShow(Notification(name: NSPopover.didShowNotification))
     #expect(popover.isOpen)
     #expect(window.initialFirstResponder === content)
