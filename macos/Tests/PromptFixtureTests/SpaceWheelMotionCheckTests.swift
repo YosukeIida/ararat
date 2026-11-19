@@ -104,6 +104,72 @@ func wheelMotionCheckContinuesAfterDrawnFailuresAndGatesOnlyPresentationAndRepla
     #expect(!check.result(presentation: [:], drawnReport: [:]).ok)
 }
 
+@Test(arguments: [true, false])
+@MainActor
+func wheelMotionCheckFinishesPromptlyWhenCaptureResponds(landed: Bool) async {
+    let check = SpaceWheelMotionCheck()
+    check.sent = 1
+    check.expected = 1
+    check.switches = [.init(time: 1, source: 4, target: 3, pitch: 260)]
+    let presentation = ["first_frame_full_offset": true, "monotone_approach": true, "no_late_jump": true, "landed": landed]
+    let drawnReport = ["frames": 12]
+
+    let started = ContinuousClock.now
+    await check.prepareCapture(timeout: .seconds(10)) {}
+    let result = await check.finish(presentation: presentation, timeout: .seconds(10), stopCapture: {},
+                                    drawnReport: { drawnReport })
+    let elapsed = ContinuousClock.now - started
+
+    #expect(elapsed < .seconds(1))
+    #expect(result.values["capture_timeout"] as? Bool == false)
+    #expect(result.values["capture_stage"] as? String == "stop")
+    #expect(result.values["drawn_report_only"] as? [String: Int] == drawnReport)
+    #expect(result.ok == landed)
+}
+
+@Test(arguments: ["start", "stop"], [true, false])
+@MainActor
+func wheelMotionCheckFinishesOnPresentationWhileCaptureIsSuspended(stage: String, landed: Bool) async throws {
+    let check = SpaceWheelMotionCheck()
+    let presentation = ["first_frame_full_offset": true, "monotone_approach": true, "no_late_jump": true, "landed": landed]
+    var suspended: CheckedContinuation<Void, Never>?
+    var releaseCapture = false
+    var result: (ok: Bool, values: [String: Any])?
+    var readDrawnReport = false
+    let run = Task { @MainActor in
+        await check.prepareCapture(timeout: .milliseconds(20)) {
+            if stage == "start", !releaseCapture { await withCheckedContinuation { suspended = $0 } }
+        }
+        check.sent = 1
+        check.expected = 1
+        check.switches = [.init(time: 1, source: 4, target: 3, pitch: 260)]
+        result = await check.finish(presentation: presentation, timeout: .milliseconds(20), stopCapture: {
+            if stage == "stop", !releaseCapture { await withCheckedContinuation { suspended = $0 } }
+        }, drawnReport: {
+            readDrawnReport = true
+            return [:]
+        })
+    }
+
+    let deadline = ContinuousClock.now + .seconds(1)
+    while result == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    let finishedWhileSuspended = result
+    let pendingCapture = suspended
+    releaseCapture = true
+    pendingCapture?.resume()
+    await run.value
+
+    #expect(pendingCapture != nil)
+    let finished = try #require(finishedWhileSuspended)
+    #expect(finished.ok == landed)
+    #expect(finished.values["failed_conditions"] as? [String] == (landed ? [] : ["landed"]))
+    #expect(finished.values["capture_stage"] as? String == stage)
+    #expect(finished.values["capture_timeout"] as? Bool == true)
+    #expect(finished.values["drawn_report_only"] is NSNull)
+    #expect(!readDrawnReport)
+    _ = try JSONSerialization.data(withJSONObject: finished.values)
+}
+
 @Test @MainActor
 func presentationGateRejectsTheEarlyStartCurveEvenWhenDrawnResultsAreAbsent() {
     let check = SpaceWheelMotionCheck()

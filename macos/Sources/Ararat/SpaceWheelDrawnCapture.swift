@@ -69,6 +69,7 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
     @MainActor
     func start(window: NSWindow, row: NSRect) async throws {
         let content = try await SCShareableContent.current
+        try Task.checkCancellation()
         guard let selected = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else {
             throw SpaceWheelMotionCheck.Failure(description: "drawn_capture_window missing id=\(window.windowNumber)")
         }
@@ -97,6 +98,7 @@ final class SpaceWheelDrawnCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "ararat.wheel-drawn-frames"))
         self.stream = stream
         try await stream.startCapture()
+        try Task.checkCancellation()
         for _ in 0..<200 {
             if !samples().isEmpty { return }
             if let error = stoppedError() { throw error }

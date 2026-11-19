@@ -3637,6 +3637,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "look" || mode == "screen-look" {
         timeoutValues.merge(lookCheckDiagnostics(screen: mode == "screen-look")) { _, new in new }
       }
+      if mode == "screen-space-wheel-motion" {
+        timeoutValues.merge((spaceWheelMotionCheck ?? SpaceWheelMotionCheck()).diagnostics) { _, new in new }
+      }
       if sidebarCheckMode(mode) != nil {
         timeoutValues.merge(sidebarCheckDiagnostics(mode: mode, screen: mode.hasPrefix("screen-"))) { _, new in new }
       }

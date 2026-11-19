@@ -92,15 +92,78 @@ final class SpaceWheelMotionCheck {
     var expected = 0
     var failed = false
     var done = false
+    var replayScheduled = false
     var timer: Timer?
     var capture: SpaceWheelDrawnCapture?
     var finishing = false
     var switches: [SpaceWheelDrawnCapture.Switch] = []
     var captureError: String?
+    private var captureStage = "not_started"
+    private var captureTimeout = false
 
-    func prepareCapture(_ operation: () async throws -> Void) async {
-        do { try await operation() }
-        catch { captureError = String(describing: error) }
+    private enum CaptureOutcome {
+        case finished(String?)
+        case timedOut
+    }
+
+    var diagnostics: [String: Any] {
+        ["capture_stage": captureStage, "capture_timeout": captureTimeout,
+         "replay_scheduled": replayScheduled, "events_sent": sent, "events_expected": expected, "replay_done": done]
+    }
+
+    func prepareCapture(timeout: Duration = .seconds(4), _ operation: @escaping @MainActor () async throws -> Void) async {
+        await captureWithinDeadline(stage: "start", timeout: timeout) {
+            defer {
+                if Task.isCancelled, let capture = self.capture {
+                    Task { await capture.stop() }
+                }
+            }
+            try await operation()
+        }
+    }
+
+    func finish(presentation: [String: Bool], timeout: Duration = .seconds(1),
+                stopCapture: @escaping @MainActor () async -> Void,
+                drawnReport: () -> [String: Any]) async -> (ok: Bool, values: [String: Any]) {
+        var verdict = result(presentation: presentation, drawnReport: [:])
+        if !captureTimeout { await captureWithinDeadline(stage: "stop", timeout: timeout, operation: stopCapture) }
+        verdict.values["capture_stage"] = captureStage
+        verdict.values["capture_timeout"] = captureTimeout
+        verdict.values["drawn_report_only"] = captureTimeout ? NSNull() : drawnReport()
+        return verdict
+    }
+
+    private func captureWithinDeadline(stage: String, timeout: Duration,
+                                       operation: @escaping @MainActor () async throws -> Void) async {
+        captureStage = stage
+        let deadline = ContinuousClock.now + timeout
+        let (outcomes, output) = AsyncStream<CaptureOutcome>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        // Why not a task group: leaving it would still wait for an unresponsive capture.
+        let capture = Task { @MainActor in
+            do {
+                try await operation()
+                output.yield(.finished(nil))
+            } catch {
+                output.yield(.finished(String(describing: error)))
+            }
+        }
+        let timer = Task { @MainActor in
+            do { try await ContinuousClock().sleep(until: deadline) }
+            catch { return }
+            output.yield(.timedOut)
+        }
+        var pending = outcomes.makeAsyncIterator()
+        switch await pending.next() {
+        case .finished(let error):
+            if let error { captureError = error }
+        case .timedOut:
+            captureTimeout = true
+        case nil:
+            break
+        }
+        output.finish()
+        capture.cancel()
+        timer.cancel()
     }
 
     func result(presentation: [String: Bool], drawnReport: [String: Any]) -> (ok: Bool, values: [String: Any]) {
@@ -127,18 +190,22 @@ extension Runtime {
             guard check.done, !check.finishing else { return }
             check.finishing = true
             check.timer?.invalidate()
+            sidebar.checkFinishSpaceWheelMotion()
+            let counts = sidebar.checkSpaceWheelMotionCounts
+            let presentation = sidebar.checkSpaceWheelMotionConditions
             Task { @MainActor [self, sidebar, check] in
-                await check.capture?.stop()
-                sidebar.checkFinishSpaceWheelMotion()
-                let counts = sidebar.checkSpaceWheelMotionCounts
-                let drawn = SpaceWheelDrawnCapture.report(check.capture?.samples() ?? [], switches: check.switches)
-                var report = check.capture?.diagnostics(source: check.switches.first?.source ?? sidebar.spaceShown,
-                    pitch: Int(sidebar.bounds.width), directory: SpaceWheelDrawnCapture.resultDirectory()) ?? [:]
-                report["conditions"] = drawn.conditions
-                report["switches"] = drawn.switches
-                report["capture_error"] = check.captureError as Any? ?? NSNull()
-                report["drawn_marker"] = sidebar.checkSpaceWheelDrawnDiagnostics
-                let result = check.result(presentation: sidebar.checkSpaceWheelMotionConditions, drawnReport: report)
+                let result = await check.finish(presentation: presentation, stopCapture: {
+                    await check.capture?.stop()
+                }, drawnReport: {
+                    let drawn = SpaceWheelDrawnCapture.report(check.capture?.samples() ?? [], switches: check.switches)
+                    var report = check.capture?.diagnostics(source: check.switches.first?.source ?? sidebar.spaceShown,
+                        pitch: Int(sidebar.bounds.width), directory: SpaceWheelDrawnCapture.resultDirectory()) ?? [:]
+                    report["conditions"] = drawn.conditions
+                    report["switches"] = drawn.switches
+                    report["capture_error"] = check.captureError as Any? ?? NSNull()
+                    report["drawn_marker"] = sidebar.checkSpaceWheelDrawnDiagnostics
+                    return report
+                })
                 var values = result.values
                 values["samples"] = counts
                 finishBrowserCheck(ok: result.ok, values: values)
@@ -181,6 +248,7 @@ extension Runtime {
                         throw SpaceWheelMotionCheck.Failure(description: "drawn_pattern_baseline source=\(sidebar.spaceShown) width=\(capture.width)")
                     }
                 }
+                check.replayScheduled = true
                 let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated { self?.sidebar?.checkSampleSpaceWheelMotion() }
                 }
