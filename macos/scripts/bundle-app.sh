@@ -49,6 +49,11 @@ elif [[ ! -x "$exe" ]]; then
 fi
 [[ -x "$exe" ]] || die "no Ararat executable: run swift build -c release in $package_dir"
 
+ent_dir="$engine_src/chrome/app"
+for name in app-entitlements helper-renderer-entitlements helper-gpu-entitlements; do
+  [[ -r "$ent_dir/$name.plist" ]] || die "missing $ent_dir/$name.plist"
+done
+
 products_dir="$(cd -- "$(dirname -- "$exe")" && pwd -P)"
 sparkle="$products_dir/Sparkle.framework"
 [[ -d "$sparkle" ]] || die "missing Sparkle.framework in $products_dir"
@@ -108,5 +113,48 @@ if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
   plutil -replace SUSignedFeedFailureExpirationInterval -integer 0 "$plist"
 fi
 
-"$script_dir/sign-release.sh" --identity - "$engine_app" "$app"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bundle-app.XXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
+
+entitlements() {
+  local name="$1"
+  local dst="$scratch/$name.plist" keys key value drop
+  cp -- "$ent_dir/$name.plist" "$dst" || return 1
+  keys="$(plutil -convert xml1 -o - "$dst" | sed -n 's/^[[:space:]]<key>\(.*\)<\/key>$/\1/p')" || return 1
+  # Without a team, ad-hoc signing cannot carry these entitlements.
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    drop=0
+    case "$key" in
+      com.apple.application-identifier|keychain-access-groups|\
+com.apple.developer.web-browser.public-key-credential|\
+com.apple.developer.associated-domains*)
+        drop=1 ;;
+      *)
+        value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$dst")" || return 1
+        if [[ "$value" == *TeamIdentifierPrefix* || "$value" == *'${CHROMIUM_TEAM_ID}'* ]]; then
+          drop=1
+        fi
+        ;;
+    esac
+    if [[ "$drop" == 1 ]]; then
+      /usr/libexec/PlistBuddy -c "Delete :$key" "$dst" || return 1
+      printf 'bundle-app: dropped %s from %s\n' "$key" "$name" >&2
+    fi
+  done <<< "$keys"
+  printf '%s\n' "$dst"
+}
+
+sign() {
+  local path="$1" name="${2:-}" ent_file
+  if [[ -n "$name" ]]; then
+    ent_file="$(entitlements "$name")"
+    codesign --force --sign - --entitlements "$ent_file" "$path"
+  else
+    codesign --force --sign - "$path"
+  fi
+}
+
+. "$script_dir/sign-bundle.sh"
+sign_bundle "$app"
 printf 'bundle-app: %s ready\n' "$app"

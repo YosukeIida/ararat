@@ -47,6 +47,10 @@ git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$out/ararat"
 printf '%s\n' "$commit" >"$out/REVISION"
 cp -- "$out/ararat/engine/scripts/reproduce-source" "$out/reproduce.sh"
 
+cat >"$out/Sparkle-source.tar.gz.sha256" <<'EOF'
+d7e5599d56ddb917cddbb4a719fb534ad5d2d7e80a653446d0eea6a38920b302  Sparkle-source.tar.gz
+EOF
+
 cat >"$out/README.md" <<'EOF'
 # Ararat Corresponding Source
 
@@ -65,6 +69,16 @@ parent already exists. This fetches the pinned Chromium tag and DEPS,
 applies the release series and copies the Ararat layer. It compares the
 resulting manifest with the recorded `ararat/engine/patch-state.sha256`.
 The reproduced tree is at `<new-build-root>/src`.
+
+Fetch the source archive for Sparkle 2.10.1 at the revision pinned in
+`ararat/macos/Package.resolved`. From the directory containing this README,
+download it and verify its SHA-256:
+
+```sh
+curl --fail --location --output Sparkle-source.tar.gz \
+  https://codeload.github.com/sparkle-project/Sparkle/tar.gz/ab7d71291238df6e0492143b120c9b696a35f603
+shasum -a 256 -c Sparkle-source.tar.gz.sha256
+```
 
 Use the Xcode and SDK versions and the arm64 target pinned in
 `ararat/engine/build-inputs.toml`. From the directory containing this

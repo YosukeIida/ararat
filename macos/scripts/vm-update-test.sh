@@ -32,9 +32,9 @@ plist="$app/Contents/Info.plist"
 [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 1000 ]]
 
 # Stage the update for install on quit so Sparkle does not relaunch Chromium without --use-mock-keychain.
-plutil -replace SUEnableAutomaticChecks -bool true "$plist"
-plutil -replace SUAutomaticallyUpdate -bool true "$plist"
-"$scripts/sign-release.sh" --identity - "$1" "$app"
+CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SUEnableAutomaticChecks -bool true
+CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SUAutomaticallyUpdate -bool true
+CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SULastCheckTime -date '2000-01-01 00:00:00 +0000'
 ditto -c -k --keepParent "$scratch/candidate/Ararat.app" "$scratch/feed/Ararat-1001.zip"
 CFFIXED_USER_HOME="$scratch/home" "$scripts/make-appcast.sh" --key-file "$scratch/private-key" nightly 1001 "$scratch/feed"
 rm -- "$scratch/private-key"
@@ -50,9 +50,8 @@ done
 curl --fail --silent --show-error "$ARARAT_FEED_URL" | cmp - "$scratch/feed/appcast.xml"
 
 cat <<'STEPS'
-Wait for the background download to finish. Choose Check for Updates… to see
-the staged update, select Install on Quit, then quit Ararat with Command-Q.
-Use Install on Quit so the app never launches without the mock Keychain flag.
+Wait for Sparkle to download and stage the update in the background.
+Then quit with Command-Q to install it without relaunching Ararat.
 STEPS
 CFFIXED_USER_HOME="$scratch/home" "$app/Contents/MacOS/Ararat" --use-mock-keychain \
   --user-data-dir="$scratch/profile" --ararat-db="$scratch/workspace.sqlite" > "$scratch/browser.log" 2>&1
