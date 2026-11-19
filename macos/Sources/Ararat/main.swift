@@ -9757,6 +9757,9 @@ var callbacks = AraratCallbacks(
         try value.start()
         value.restoreRemainingWindows()
         Launcher.runtime = value
+        if let appMenu = NSApp.mainMenu?.items.first?.submenu {
+          AppUpdates.install(in: appMenu, owner: NSApp.delegate, info: Bundle.main.infoDictionary ?? [:])
+        }
         LittleWindowGlobalShortcut.install(value)
         value.openURLs(Launcher.pendingURLs)
         Launcher.pendingURLs.removeAll()
