@@ -1,4 +1,5 @@
 import AppKit
+import AraratKit
 import XCTest
 @testable import AraratUI
 
@@ -36,10 +37,20 @@ final class MockParityTests: XCTestCase {
         let data = try Data(contentsOf: root.appendingPathComponent("docs/research/mock-values.json"))
         let entries = try JSONDecoder().decode([Entry].self, from: data)
         let values: [String: Value] = [
+            "CommandBarMetrics.backdropFill": .color(CommandBarMetrics.backdropFill),
             "CommandBarMetrics.fieldHeight": .number(CommandBarMetrics.fieldHeight),
+            "CommandBarMetrics.hintFill": .color(CommandBarMetrics.hintFill),
+            "CommandBarMetrics.hintFontSize": .number(CommandBarMetrics.hintFontSize),
+            "CommandBarMetrics.hintGap": .number(CommandBarMetrics.hintGap),
+            "CommandBarMetrics.hintOffset": .number(CommandBarMetrics.hintOffset),
+            "CommandBarMetrics.hintPaddingX": .number(CommandBarMetrics.hintPaddingX),
+            "CommandBarMetrics.hintPaddingY": .number(CommandBarMetrics.hintPaddingY),
+            "CommandBarMetrics.hintRadius": .number(CommandBarMetrics.hintRadius),
             "CommandBarMetrics.rowGap": .number(CommandBarMetrics.rowGap),
             "CommandBarMetrics.rowHeight": .number(CommandBarMetrics.rowHeight),
             "CommandBarMetrics.rowInset": .number(CommandBarMetrics.rowInset),
+            "CommandBarMetrics.topInset": .number(CommandBarMetrics.topInset),
+            "CreateSpaceView.primaryFill": .color(CreateSpaceView.primaryFill),
             "DownloadsPopover.rowHeight": .number(DownloadsPopover.rowHeight),
             "DownloadsPageView.contentInset": .number(DownloadsPageView.contentInset),
             "DownloadsPageView.rowHeight": .number(DownloadsPageView.rowHeight),
@@ -78,6 +89,7 @@ final class MockParityTests: XCTestCase {
             "SettingsMetrics.hitRadius": .number(SettingsMetrics.hitRadius),
             "SettingsMetrics.hitRowHeight": .number(SettingsMetrics.hitRowHeight),
             "SettingsMetrics.separatorInset": .number(SettingsMetrics.separatorInset),
+            "SettingsColor.darkAccent": .color(SettingsColor.darkAccent),
             "SidebarClearButton.labelFontSize": .number(SidebarClearButton.labelFontSize),
             "SidebarMetrics.cornerRadius": .number(SidebarMetrics.cornerRadius),
             "SidebarMetrics.defaultWidth": .number(SidebarMetrics.defaultWidth),
@@ -126,6 +138,8 @@ final class MockParityTests: XCTestCase {
             "SiteControlsContent.pillRadius": .number(SiteControlsContent.pillRadius),
             "SiteControlsContent.width": .number(SiteControlsContent.width),
             "SpaceDockButton.dotAlpha": .number(SpaceDockButton.dotAlpha),
+            "SpaceAccent.privateColor": .color(SpaceAccent.privateColor),
+            "SpaceAccent.teal": .color(SpaceAccent.teal),
             "TooltipKeycap.gap": .number(TooltipKeycap.gap),
             "TooltipKeycap.size": .number(TooltipKeycap.size),
         ]

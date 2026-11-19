@@ -111,5 +111,20 @@
   {"source": "A-Layout.dc.html:111", "selector": ".pg", "property": "left", "css": "240px", "swift": "SidebarMetrics.defaultWidth", "expected": 240.0},
   {"source": "A-Layout.dc.html:85", "selector": ".tile", "property": "border-radius", "css": "11px", "swift": "SidebarMetrics.cornerRadius", "expected": 11.0},
   {"source": "A-Layout.dc.html:90", "selector": ".tile.is-off>*", "property": "opacity", "css": ".45", "swift": "SidebarMetrics.unloadedOpacity", "expected": 0.45},
-  {"source": "E-Sync.dc.html:54", "selector": ".hd .ic", "property": "height", "css": "56px", "swift": "not built", "reason": "Sync is planned (mock-decisions.md:100)."}
+  {"source": "E-Sync.dc.html:54", "selector": ".hd .ic", "property": "height", "css": "56px", "swift": "not built", "reason": "Sync is planned (mock-decisions.md:100)."},
+  {"source": "CommandBar.dc.html:50", "selector": "<div style>", "property": "background", "css": "rgba(20,20,24,0.28)", "swift": "CommandBarMetrics.backdropFill", "expected": [0.0784313725490196, 0.0784313725490196, 0.09411764705882353, 0.28]},
+  {"source": "CommandBar.dc.html:52", "selector": "<div style>", "property": "top", "css": "180px", "swift": "CommandBarMetrics.topInset", "expected": 180},
+  {"source": "CommandBar.dc.html:94", "selector": "<div style>", "property": "top", "css": "506px", "swift": "CommandBarMetrics.hintOffset", "expected": 16, "note": "The panel ends at 490 px (top 180 px, field 60 px, five 50 px rows); the 506 px hint row starts 16 px below it."},
+  {"source": "D-CommandBar.dc.html:14", "selector": ".d-l", "property": "--accent", "css": "#2F6F73", "swift": "SpaceAccent.teal", "expected": [0.1843137254901961, 0.43529411764705883, 0.45098039215686275, 1]},
+  {"source": "D-CommandBar.dc.html:16", "selector": ".d-priv", "property": "--accent", "css": "#6E6E78", "swift": "SpaceAccent.privateColor", "expected": [0.43137254901960786, 0.43137254901960786, 0.47058823529411764, 1]},
+  {"source": "D-CommandBar.dc.html:47", "selector": ".d-hint", "property": "gap", "css": "20px", "swift": "CommandBarMetrics.hintGap", "expected": 20},
+  {"source": "D-CommandBar.dc.html:47", "selector": ".d-hint", "property": "font-size", "css": "12px", "swift": "CommandBarMetrics.hintFontSize", "expected": 12},
+  {"source": "D-CommandBar.dc.html:48", "selector": ".d-hint span", "property": "background", "css": "rgba(20,20,24,0.62)", "swift": "CommandBarMetrics.hintFill", "expected": [0.0784313725490196, 0.0784313725490196, 0.09411764705882353, 0.62]},
+  {"source": "D-CommandBar.dc.html:48", "selector": ".d-hint span", "property": "padding", "css": "4px 10px", "swift": "CommandBarMetrics.hintPaddingY", "expected": 4},
+  {"source": "D-CommandBar.dc.html:48", "selector": ".d-hint span", "property": "padding", "css": "4px 10px", "swift": "CommandBarMetrics.hintPaddingX", "expected": 10},
+  {"source": "D-CommandBar.dc.html:48", "selector": ".d-hint span", "property": "border-radius", "css": "6px", "swift": "CommandBarMetrics.hintRadius", "expected": 6},
+  {"source": "E-Controls.dc.html:22", "selector": ".L", "property": "--acc", "css": "#2F6F73", "swift": "SpaceAccent.teal", "expected": [0.1843137254901961, 0.43529411764705883, 0.45098039215686275, 1]},
+  {"source": "E-Controls.dc.html:23", "selector": ".D", "property": "--acc", "css": "#5FB3B8", "swift": "SettingsColor.darkAccent", "expected": [0.37254901960784315, 0.7019607843137254, 0.7215686274509804, 1]},
+  {"source": "A-BottomDock.dc.html:21", "selector": ".light", "property": "--accent", "css": "#2F6F73", "swift": "SpaceAccent.teal", "expected": [0.1843137254901961, 0.43529411764705883, 0.45098039215686275, 1]},
+  {"source": "B-CreateSpaceStates.dc.html:18", "selector": "<button style>", "property": "background", "css": "#1D1D1F", "swift": "CreateSpaceView.primaryFill", "expected": [0.11372549019607843, 0.11372549019607843, 0.12156862745098039, 1]}
 ]

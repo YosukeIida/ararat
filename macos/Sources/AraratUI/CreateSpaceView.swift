@@ -2,6 +2,7 @@ import AppKit
 
 @MainActor
 final class CreateSpaceView: NSView, NSTextFieldDelegate {
+    static let primaryFill = NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 1)
     var onCreate: ((String) -> Void)?
     var onCancel: (() -> Void)?
     private let name = CreateSpaceNameField()
@@ -64,12 +65,13 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         form.alignment = .leading
         form.spacing = SidebarMetrics.createSpaceGap
         create.bezelStyle = .rounded
+        create.bezelColor = Self.primaryFill
         create.keyEquivalent = "\r"
         create.target = self
         create.action = #selector(submit)
         create.setAccessibilityLabel("Create Space")
         cancel.isBordered = false
-        cancel.contentTintColor = .linkColor
+        cancel.contentTintColor = .labelColor
         cancel.target = self
         cancel.action = #selector(cancelCreation)
         cancel.setAccessibilityLabel("Cancel space creation")

@@ -18,10 +18,12 @@ public final class TabSwitcher {
     private var awaitingRows = true
     private var commitPending = false
     private let favicon: (String) -> NSImage?
+    private let accent: NSColor
 
-    public init(parent: NSWindow, backwards: Bool, favicon: @escaping (String) -> NSImage?) {
+    public init(parent: NSWindow, backwards: Bool, accent: NSColor, favicon: @escaping (String) -> NSImage?) {
         self.parent = parent
         self.favicon = favicon
+        self.accent = accent
         offset = backwards ? -1 : 0
         panel.isFloatingPanel = true
         panel.level = .floating
@@ -101,12 +103,12 @@ public final class TabSwitcher {
             tile.identifier = NSUserInterfaceItemIdentifier("tab-switcher-tile")
             tile.wantsLayer = true
             tile.layer?.cornerRadius = 10
-            tile.layer?.backgroundColor = (index == selectedIndex ? NSColor.selectedContentBackgroundColor : NSColor.clear).cgColor
+            tile.layer?.backgroundColor = (index == selectedIndex ? accent : NSColor.clear).cgColor
             let icon = NSImageView(frame: NSRect(x: 56, y: 54, width: 32, height: 32))
             if case .tab(let id, _) = row.target { icon.image = favicon(id) }
             if icon.image == nil { icon.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) }
             let title = NSTextField(labelWithString: row.title)
-            title.textColor = index == selectedIndex ? .alternateSelectedControlTextColor : .labelColor
+            title.textColor = index == selectedIndex ? SpaceAccent.foreground(on: accent) : .labelColor
             title.alignment = .center
             title.lineBreakMode = .byTruncatingTail
             title.frame = NSRect(x: 8, y: 17, width: 128, height: 24)

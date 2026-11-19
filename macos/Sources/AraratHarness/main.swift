@@ -599,12 +599,8 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         return nil
     }
 
-    /// Selection fill: the shown space's colour [Arc, D:121], or the selection grey with no look [ours].
-    func commandBarHighlight() -> NSColor {
-        guard let shown = shownSpaceID, let space = snapshot.spaces.first(where: { $0.id == shown }), let color = space.look?.colors.first else {
-            return .selectedContentBackgroundColor
-        }
-        return NSColor(red: color.red, green: color.green, blue: color.blue, alpha: 0.4)
+    private var spaceAccent: NSColor {
+        SpaceAccent.resolve(snapshot.shownLook)
     }
 
     func openCommandBar(_ mode: CommandBarMode) {
@@ -612,7 +608,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if commandBar != nil { closeCommandBar() }
         let selected = selectedTabRow
         let spec = CommandBarController.openSpec(mode: mode, selectedTabURL: selected.flatMap { mockLiveURLs[$0.id] ?? $0.url })
-        let presenter = CommandBarPresenter(parent: window, visible: true, bindings: menuCommandBindings, highlight: commandBarHighlight())
+        let presenter = CommandBarPresenter(parent: window, pageCard: card, visible: true, bindings: menuCommandBindings, highlight: spaceAccent)
         commandPresenter = presenter
         commandBar = presenter.controller
         commandPanel = presenter.panel
@@ -643,14 +639,6 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 presenter.close()
             }
         }
-    }
-
-    /// Sets the panel's frame for `controller`'s current rows: centred, the field put, rows
-    /// hanging below (the note's formula). Internal for the tests.
-    func positionCommandPanel(_ controller: CommandBarController) {
-        guard let window, let commandPanel else { return }
-        commandPanel.setFrame(CommandBarMetrics.panelFrame(windowFrame: window.frame, width: controller.panelWidth,
-                                                           rows: controller.result.rows.count), display: true)
     }
 
     private func closeCommandBar() {
@@ -698,7 +686,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if let tabSwitcher, tabSwitcher.isOpen { tabSwitcher.advance(backwards: backwards); return }
         guard let window, !terminating else { return }
         let space = shownSpaceID
-        let switcher = TabSwitcher(parent: window, backwards: backwards, favicon: { _ in nil })
+        let switcher = TabSwitcher(parent: window, backwards: backwards, accent: spaceAccent, favicon: { _ in nil })
         tabSwitcher = switcher
         switcher.onClose = { [weak self, weak switcher] in
             if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
