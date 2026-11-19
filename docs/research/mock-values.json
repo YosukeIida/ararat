@@ -65,6 +65,7 @@
   {"source": "E-Frame.dc.html:63", "selector": ".rw.hit", "property": "min-height", "css": "48px", "swift": "SettingsMetrics.hitRowHeight", "expected": 48.0},
   {"source": "E-Frame.dc.html:69", "selector": ".gc", "property": "margin", "css": "18px 0 -4px 12px", "swift": "SettingsMetrics.groupHeadingInset", "expected": 12.0},
   {"source": "C-Downloads.dc.html:126", "selector": ".c7-dl", "property": "height", "css": "48px", "swift": "DownloadsPopover.rowHeight", "expected": 48.0},
+  {"source": "C-Downloads.dc.html:126", "selector": ".c7-dl", "property": "height", "css": "48px", "swift": "DownloadsPageView.rowHeight", "expected": 56.0, "reason": "The mock declares the popover height. The Library page keeps the 56 pt Arc row pitch measured in docs/research/arc-sidebar-layout.md:19."},
   {"source": "C-Downloads.dc.html:126", "selector": ".c7-dl", "property": "padding", "css": "0 6px", "swift": "DownloadRowMetrics.inset", "expected": 6.0, "reason": "owner: mock-decisions.md:31 (spacing grid)"},
   {"source": "C-Downloads.dc.html:126", "selector": ".c7-dl", "property": "gap", "css": "10px", "swift": "DownloadRowMetrics.gap", "expected": 10.0, "reason": "owner: mock-decisions.md:31 (spacing grid)"},
   {"source": "F-Onboarding.dc.html:39", "selector": ".ob-btn", "property": "height", "css": "30px", "swift": "OnboardingMetrics.buttonHeight", "reason": "decision overrides: mock-decisions.md:48 (32 pt under the owner's part-height rule)."},

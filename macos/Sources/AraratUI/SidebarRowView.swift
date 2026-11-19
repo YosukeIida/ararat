@@ -708,11 +708,11 @@ final class SidebarRowView: NSView {
 
     private func updateFill() {
         let alpha: CGFloat
-        if pressed {
+        if dragSource || dragCopy || selected {
+            alpha = SidebarMetrics.rowSelectedFillAlpha
+        } else if pressed {
             alpha = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 ? SidebarMetrics.rowPressedFillAlphaDark : SidebarMetrics.rowPressedFillAlphaLight
-        } else if dragSource || dragCopy || selected {
-            alpha = SidebarMetrics.rowSelectedFillAlpha
         } else {
             alpha = hovered || dropHovered ? SidebarMetrics.rowHoverFillAlpha(for: effectiveAppearance) : 0
         }

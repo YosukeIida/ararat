@@ -290,7 +290,7 @@ extension Runtime {
                     check.details["chooser_cg_window"] = cgWindow
                     check.details["chooser_on_screen_at_capture"] = stillOnScreen
                     FileHandle.standardError.write(Data("ararat-trace: folder-upload capture evidence on_screen=\(stillOnScreen) changed=\(changed) difference=\(check.details["image_difference"] ?? "nil") before=\(check.images["before-chooser"] ?? "nil") after=\(check.images["chooser"] ?? "nil")\n".utf8))
-                    check.mark("capture_chooser", captured && stillOnScreen && changed)
+                    check.mark("capture_chooser", captured && stillOnScreen && changed && check.images["before-chooser"] != nil)
                 }
             }
             // Cancel through the panel's own action (its Cancel button's selector), the answer

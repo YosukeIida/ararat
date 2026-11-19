@@ -4,7 +4,7 @@ The source is the owner's U20 project under `~/.config/herdr-agent-team/ararat/r
 
 ## Token and structure checks
 
-The [reviewed token table](research/mock-values.json) has 89 entries. The Swift suite compares 77 entries and all match. The other 12 carry reasons in the table, including owner spacing decisions and the selected-row shadow pending in selshadow. Two table entries can refer to the same declaration when the two appearances resolve a CSS variable differently.
+The [reviewed token table](research/mock-values.json) has 90 entries. The Swift suite compares 77 entries and all match. The other 13 carry reasons in the table, including owner spacing decisions, the Library Downloads row pitch and the selected-row shadow pending in selshadow. Two table entries can refer to the same declaration when the two appearances resolve a CSS variable differently.
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 88 have a reviewed disposition and 27,694 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
 
@@ -114,7 +114,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `D-FindBarPage` | Find bar over a page | `header-find-bar`, `keyboard-find-count` | not reviewed | The Keyboard capture shows the find bar and its result count over the fixture page. |
 | `D-LittleWindow` | Bar, Open in menu, profile menu and command bar | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | not reviewed | The token table records the 48 pt bar height and compares the mapped colours and controls. |
 | `D-PrivateWindow` | Private window and URL-field mask | `private-window` | not reviewed | The screen mode captures a private browser window. |
-| `D-PrivateWindowEmpty` | Empty private window | `private-window-empty` | not reviewed | After checking a fresh incognito workspace, the capture temporarily shows its existing empty view. Closing the last private tab normally closes the window. |
+| `D-PrivateWindowEmpty` | Empty private window | — | differs | The product closes the private window with its last tab. The mock draws an empty private window. Owner decision pending. |
 | `D-SadTab` | Crashed Today tab and pin | `errorpages-today-crash`, `errorpages-pin-crash` | not reviewed | The two captures exercise Archive Tab and Close Tab respectively. |
 | `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | not reviewed | The commandbar check verifies switching and cancellation without a PNG. |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | not reviewed | The history failure uses a per-profile banner (decision 56). |

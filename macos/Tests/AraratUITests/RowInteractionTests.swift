@@ -108,6 +108,23 @@ func hoverMasksTheTitleWithoutChangingItsFrame() throws {
 }
 
 @Test @MainActor
+func selectedSidebarRowKeepsItsFillDuringPressAndDrag() throws {
+    let (window, sidebar) = interactionWindow()
+    defer { window.contentView = nil }
+    let row = try #require(interactionRows(sidebar).first { $0.row.id == "pin" })
+    let fill = try #require(row.subviews.first)
+    let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+    row.pointerLocation = { point }
+    row.mouseDown(with: try rowEvent(.leftMouseDown, point: point))
+    #expect(row.pressed)
+    #expect(fill.layer?.backgroundColor?.alpha == SidebarMetrics.rowSelectedFillAlpha)
+    row.dragSource = true
+    #expect(row.pressed)
+    #expect(fill.layer?.backgroundColor?.alpha == SidebarMetrics.rowSelectedFillAlpha)
+    #expect(!window.isVisible && !window.isKeyWindow)
+}
+
+@Test @MainActor
 func slightMovementClicksWithoutReorderingAndPressTracksStillPointer() throws {
     let (window, sidebar) = interactionWindow()
     defer { window.contentView = nil }

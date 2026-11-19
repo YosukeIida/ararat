@@ -4,7 +4,7 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 89 件あり、このうち Swift との比較対象は 77 件で、全件一致した。残る 12 件は、オーナーの寸法規則や selshadow で扱う選択行の影など、照合表に理由を記載した項目である。CSS 変数の値がライトとダークで異なる場合は、一つの宣言に二つの照合項目が対応することがある。
+[照合表](research/mock-values.json)には 90 件あり、このうち Swift との比較対象は 77 件で、全件一致した。残る 13 件は、オーナーの寸法規則、Library の Downloads の行間隔、selshadow で扱う選択行の影など、照合表に理由を記載した項目である。CSS 変数の値がライトとダークで異なる場合は、一つの宣言に二つの照合項目が対応することがある。
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、88 件を確認し、27,694 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
 
@@ -104,8 +104,8 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControls` | 縦長キャプチャ、翻訳、拡張機能グリッド、未実装の設定 | — | 未実装 | 対象の機能は §7 と §14 で実装を見送っている。 |
 | `C-SiteControlsStates` | ポップオーバーの各状態の寸法 | `site-controls-popover`, `site-controls-overlay`, `site-controls-toast` | 未レビュー | 幅、パディング、間隔、ボタン寸法はトークンテストの対象である。 |
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
-| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違 | IP のホストが、余白があるのに「127.0....」と切れる。後続の作業 urlip で直す。ボタンは常に出ており、図のとおりである。VM の実行 mp2。 |
-| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違 | 先頭は薄く消えるが末尾も切れ（「…example.inva...」）、登録ドメインが残らない。後続の作業 urlip で直す。VM の実行 mp2。 |
+| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | IP のホストが、余白があるのに「127.0....」と切れる。後続の作業 urlip で直す。ボタンは常に出ており、図のとおりである。VM の実行 mp2。 |
+| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | 先頭は薄く消えるが末尾も切れ（「…example.inva...」）、登録ドメインが残らない。後続の作業 urlip で直す。VM の実行 mp2。 |
 | `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 未レビュー | 通常のコマンドパネルについて、検索時と、入力欄が空で最近のタブを表示する状態を撮影する。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 未レビュー | 検索結果の先頭行と、ループバックのテストページの閲覧履歴を撮影する。 |
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
@@ -115,7 +115,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `D-FindBarPage` | ページ上の検索バー | `header-find-bar`, `keyboard-find-count` | 未レビュー | keyboard の画像には、テストページと、件数を表示するページ内検索バーが写る。 |
 | `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 未レビュー | 対応表はバーの高さ 48 pt の例外を記録し、色とコントロールの値を照合する。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 未レビュー | プライベートブラウザのウィンドウを撮影する。 |
-| `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | `private-window-empty` | 未レビュー | 新しく開いたプライベートワークスペースの検査後、既存の空状態のビューを一時的に表示して撮影する。通常は最後のタブを閉じるとウィンドウも閉じる。 |
+| `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違あり | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 未レビュー | Archive Tab と Close Tab の状態を個別に撮影する。 |
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |

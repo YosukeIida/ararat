@@ -8820,13 +8820,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       }
       return nil
     }
-    func movePointer(to point: NSPoint) -> Bool {
-      guard let top = NSScreen.screens.first?.frame.maxY,
-            CGWarpMouseCursorPosition(CGPoint(x: point.x, y: top - point.y)) == .success,
-            let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: point),
-              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-              context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
-      NSApp.sendEvent(event)
+    func warpPointer(to point: NSPoint) -> Bool {
+      guard let top = NSScreen.screens.first?.frame.maxY else { return false }
+      return CGWarpMouseCursorPosition(CGPoint(x: point.x, y: top - point.y)) == .success
+    }
+    func samplePointer(at point: NSPoint, in container: SidebarContainerView) -> Bool {
+      guard warpPointer(to: point) else { return false }
+      // CGWarpMouseCursorPosition emits no event, so sample through the sidebar's own pointer path.
+      container.samplePointerForCheck()
       return true
     }
     func capture(_ name: String) {
@@ -8893,7 +8894,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       fullscreenResults["menu_toggle"] = true
       fullscreenResults["appkit_lights"] = true
       let edge = NSPoint(x: window.frame.minX + 2, y: window.frame.midY)
-      guard movePointer(to: edge) else { return }
+      guard warpPointer(to: edge),
+            let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: edge),
+              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+              context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
+      NSApp.sendEvent(event)
       browserCheckPhase = 8
     case 8:
       guard full, !page, let container, container.sidebarState == "floating", !container.sidebarAnimating,
@@ -8930,28 +8935,28 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard fullscreenElement == false, container?.pageFullscreen == false else { return }
       fullscreenResults["green_button_exit"] = true
       fullscreenResults["stock_browsers"] = host.checkStockBrowsers()
-      fullscreenResults["fullscreen_checks_ok"] = host.checkStockBrowsers() == 0
+      guard host.checkStockBrowsers() == 0 else { finishBrowserCheck(ok: false, values: fullscreenResults); return }
       window.appearance = NSAppearance(named: .darkAqua)
       if let container, container.sidebarState != "docked" { container.toggleSidebar() }
       browserCheckPhase = 71
     case 71:
       guard let container, container.sidebarState == "docked", !container.sidebarAnimating,
             container.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-            movePointer(to: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY)) else { return }
+            samplePointer(at: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY), in: container) else { return }
       capture("dark-docked")
       container.toggleSidebar()
       browserCheckPhase = 72
     case 72:
       guard let container, container.sidebarState == "hidden", !container.sidebarAnimating else { return }
       capture("floating-before-reveal")
-      guard movePointer(to: NSPoint(x: window.frame.minX + 2, y: window.frame.midY)) else {
+      guard samplePointer(at: NSPoint(x: window.frame.minX + 2, y: window.frame.midY), in: container) else {
         finishBrowserCheck(ok: false, values: fullscreenResults); return
       }
       browserCheckPhase = 73
     case 73:
       guard let container, container.sidebarState == "floating", !container.sidebarAnimating else { return }
       capture("dark-floating")
-      guard movePointer(to: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY)) else {
+      guard samplePointer(at: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY), in: container) else {
         finishBrowserCheck(ok: false, values: fullscreenResults); return
       }
       browserCheckPhase = 74
@@ -8960,7 +8965,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       capture("floating-after-hide")
       let capturesOK = ["dark-docked", "floating-before-reveal", "dark-floating", "floating-after-hide"]
         .allSatisfy { fullscreenResults["\($0)_screenshot"] != nil }
-      finishBrowserCheck(ok: fullscreenResults["fullscreen_checks_ok"] as? Bool == true && capturesOK, values: fullscreenResults)
+      finishBrowserCheck(ok: capturesOK, values: fullscreenResults)
     default: break
     }
   }

@@ -782,6 +782,8 @@ public final class SidebarContainerView: NSView {
         processPointer()
     }
 
+    public func samplePointerForCheck() { processPointer() }
+
     func processPointer() {
         guard !pageFullscreen else { return }
         guard let window else { return }

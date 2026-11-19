@@ -332,10 +332,11 @@ extension Runtime {
       check.points["target"] = left
       browserCheckPhase = 13
     case 13:
-      if container.paneDropForCheck != nil, sidebar.dragStateForCheck.drop == "split" { check.indicatorSeen = true }
+      let indicatorVisible = container.paneDropForCheck != nil && sidebar.dragStateForCheck.drop == "split"
+      if indicatorVisible { check.indicatorSeen = true }
       guard ready("drop indicator", check.indicatorSeen) else { return }
       check.mark("drag_indicator")
-      capture("drop-target")
+      if indicatorVisible { capture("drop-target") }
       guard let left = check.points["target"] else { fail("no drop point"); return }
       _ = sidebar.releaseDragForCheck(at: left)
       browserCheckPhase = 14

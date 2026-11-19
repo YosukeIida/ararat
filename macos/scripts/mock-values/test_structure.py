@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
 import unittest
 
 from check_structure import check
@@ -9,6 +14,27 @@ def view(name, x=0, y=0, children=(), hidden=False, **attributes):
 
 
 class StructureTests(unittest.TestCase):
+    def check_folder_capture(self, name):
+        with TemporaryDirectory() as directory:
+            sidecar = Path(directory) / "capture.json"
+            sidecar.write_text(json.dumps({"screen": "folder-empty", "name": name,
+                                           "windows": [{"root": view("NSView")}]}))
+            script = Path(__file__).with_name("check_structure.py")
+            return subprocess.run([sys.executable, "-B", str(script), "--screen", "folder-empty", str(sidecar)],
+                                  capture_output=True, text=True, check=False)
+
+    def test_missing_capture_exits_one(self):
+        result = self.check_folder_capture("folder-empty-other")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("FAIL folder-empty-line count", result.stdout)
+        self.assertIn("missing capture", result.stdout)
+
+    def test_count_mismatch_exits_one(self):
+        result = self.check_folder_capture("folder-empty-line")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("FAIL folder-empty-line count SidebarNoTabsRow", result.stdout)
+        self.assertNotIn("missing capture", result.stdout)
+
     def test_refusal_requires_the_message_and_hides_the_recorder(self):
         rule = {"kind": "contains", "members": [{"identifier": "message"}], "absent": [{"identifier": "recorder"}]}
         message = view("NSView", identifier="message")

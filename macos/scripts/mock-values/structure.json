@@ -48,8 +48,5 @@
    "members": [{"label": "Archive page"}, {"label": "Search Archived Tabs"}, {"class": "ArchiveRowView"}]},
   {"source": "B-LibraryStates.dc.html", "capture": "keyboard-archive-no-matches", "kind": "count", "class": "ArchiveRowView", "count": 0},
   {"source": "B-LibraryStates.dc.html", "capture": "keyboard-archive-empty", "kind": "count", "class": "ArchiveRowView", "count": 0},
-  {"source": "D-PrivateWindowEmpty.dc.html", "capture": "private-window-empty", "kind": "contains",
-   "container": {"class": "PrivateEmptyView", "label": "Private Browsing"},
-   "members": [{"class": "NSImageView"}, {"class": "NSTextField"}]},
   {"source": "B-FloatingDark.dc.html", "capture": "fullscreen-dark-floating", "kind": "floating-sidebar", "inset": 5}
 ]

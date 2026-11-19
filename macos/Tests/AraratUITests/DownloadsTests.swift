@@ -156,6 +156,13 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(popover.library.alignment == .left)
 }
 
+@Test @MainActor func downloadsPageAndPopoverKeepTheirOwnRowHeights() {
+    _ = NSApplication.shared
+    let page = DownloadsPageView(frame: .zero)
+    #expect(page.table.rowHeight == 56)
+    #expect(DownloadsPopover.rowHeight == 48)
+}
+
 @Test @MainActor func downloadsPageUsesAvailableWidthForStatus() throws {
     _ = NSApplication.shared
     let model = DownloadsModel()
