@@ -8,7 +8,7 @@ The [reviewed token table](research/mock-values.json) has 134 entries. The Swift
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
-The ledger below has 109 element rows. Counting each row once by status gives 43 matches, 24 open differences (one of them an owner item), 24 fixes awaiting a VM recheck, 4 accepted differences, 3 that cannot be judged, and 11 unbuilt.
+The ledger below has 109 element rows. Counting each row once by status gives 42 matches, 24 open differences (one of them an owner item), 25 fixes awaiting a VM recheck, 4 accepted differences, 3 that cannot be judged, and 11 unbuilt.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
