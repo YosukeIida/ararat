@@ -89,6 +89,7 @@ source_set("entry") {
     "//components/content_settings/browser",
     "//components/content_settings/core/browser",
     "//components/dom_distiller/core",
+    "//components/favicon/content",
     "//components/favicon/core",
     "//components/page_info",
     "//components/security_state/core",

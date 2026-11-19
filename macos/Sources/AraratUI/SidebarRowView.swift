@@ -239,6 +239,7 @@ final class SidebarRowView: NSView {
     var onClose: ((String) -> Void)?
     var onMute: ((String, Bool) -> Void)?
     var status: EngineAdapter.RowState? { didSet { updateStatus() } }
+    var favicon: NSImage? { didSet { updateIcon() } }
     private let spinner = NSProgressIndicator()
     private let audioButton = NSButton()
     private var audioTitleTrailing: NSLayoutConstraint!
@@ -419,8 +420,6 @@ final class SidebarRowView: NSView {
         self.selected = selected
         title.stringValue = row.kind == .split && row.title.isEmpty ? "Split" : row.title
         toolTip = row.url ?? row.title
-        icon.image = row.kind == .folder ? Self.folderSymbol(collapsed: row.collapsed)
-            : crashed ? Self.tabIcon(crashed: true) : Self.symbol(for: row.kind)
         if !pinned || !selected || row.kind != .tab {
             hideRenameHint(!pinned ? "not-pinned" : !selected ? "not-selected" : "not-tab")
         }
@@ -465,8 +464,6 @@ final class SidebarRowView: NSView {
         row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "Untitled") : row.title
     }
 
-    // The glyph a tab row draws, so a split's segment draws the same one: the globe, or the
-    // warning when that pane's renderer died.
     static func tabIcon(crashed: Bool) -> NSImage {
         crashed ? symbol(for: .tab, name: "exclamationmark.triangle.fill", description: "Crashed") : symbol(for: .tab)
     }
@@ -487,19 +484,26 @@ final class SidebarRowView: NSView {
         audioButton.image = NSImage(systemSymbolName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
         audioButton.setAccessibilityLabel(muted ? "Unmute Tab" : "Mute Tab")
         audioButton.toolTip = muted ? "Unmute Tab" : "Mute Tab"
-        if row.kind == .folder {
-            icon.image = Self.folderSymbol(collapsed: row.collapsed)
-        } else if crashed {
-            icon.image = Self.tabIcon(crashed: true)
-        } else {
-            icon.image = Self.symbol(for: row.kind)
-        }
+        updateIcon()
         // The states a sighted reader sees, said in words (6b).
         let states = [crashed ? "Crashed" : nil, row.unloaded ? "Unloaded" : nil, unread ? "Unread" : nil, loading ? "Loading" : nil, !audioButton.isHidden && muted ? "Muted" : nil, !audioButton.isHidden && status?.audible == true && !muted ? "Playing audio" : nil].compactMap { $0 }
         setAccessibilityValue(states.isEmpty ? nil : states.joined(separator: ", "))
         updateCloseButton()
         refreshForeground()
         unreadDot.isHidden = !unread || !closeButton.isHidden
+    }
+
+    private func updateIcon() {
+        icon.imageScaling = row.kind == .tab && !crashed && favicon != nil ? .scaleProportionallyUpOrDown : .scaleNone
+        if row.kind == .folder {
+            icon.image = Self.folderSymbol(collapsed: row.collapsed)
+        } else if crashed {
+            icon.image = Self.tabIcon(crashed: true)
+        } else if row.kind == .tab, let favicon {
+            icon.image = favicon
+        } else {
+            icon.image = Self.symbol(for: row.kind)
+        }
     }
 
     func showRenameHint() {
@@ -957,6 +961,10 @@ final class FavoriteTile: NSButton {
     private let onPress: (Row) -> Void
     let glyphBox = NSView()
     let glyphLabel = NSTextField(labelWithString: "")
+    let faviconView = NSImageView()
+    let audioMark = NSImageView()
+    let unreadDot = NSView()
+    var accent = SpaceAccent.teal { didSet { refreshForeground() } }
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     init(row: Row, iconText: String? = nil, onPress: @escaping (Row) -> Void) {
@@ -978,6 +986,17 @@ final class FavoriteTile: NSButton {
         glyphLabel.setAccessibilityHidden(true)
         glyphLabel.translatesAutoresizingMaskIntoConstraints = false
         glyphBox.addSubview(glyphLabel)
+        for view in [faviconView, audioMark, unreadDot] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.setAccessibilityHidden(true)
+            view.isHidden = true
+            addSubview(view)
+        }
+        faviconView.imageScaling = .scaleProportionallyUpOrDown
+        audioMark.imageScaling = .scaleProportionallyDown
+        unreadDot.wantsLayer = true
+        unreadDot.layer?.cornerRadius = 5
+        unreadDot.layer?.borderWidth = 1.5
         NSLayoutConstraint.activate([
             glyphBox.widthAnchor.constraint(equalToConstant: 20),
             glyphBox.heightAnchor.constraint(equalToConstant: 20),
@@ -985,6 +1004,18 @@ final class FavoriteTile: NSButton {
             glyphBox.centerYAnchor.constraint(equalTo: centerYAnchor),
             glyphLabel.centerXAnchor.constraint(equalTo: glyphBox.centerXAnchor),
             glyphLabel.centerYAnchor.constraint(equalTo: glyphBox.centerYAnchor),
+            faviconView.widthAnchor.constraint(equalTo: glyphBox.widthAnchor),
+            faviconView.heightAnchor.constraint(equalTo: glyphBox.heightAnchor),
+            faviconView.centerXAnchor.constraint(equalTo: glyphBox.centerXAnchor),
+            faviconView.centerYAnchor.constraint(equalTo: glyphBox.centerYAnchor),
+            audioMark.widthAnchor.constraint(equalToConstant: 12),
+            audioMark.heightAnchor.constraint(equalToConstant: 12),
+            audioMark.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            audioMark.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            unreadDot.widthAnchor.constraint(equalToConstant: 10),
+            unreadDot.heightAnchor.constraint(equalToConstant: 10),
+            unreadDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7.5),
+            unreadDot.topAnchor.constraint(equalTo: topAnchor, constant: 6.5),
         ])
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
@@ -999,13 +1030,30 @@ final class FavoriteTile: NSButton {
     func update(row: Row, iconText: String?) {
         self.row = row
         glyphLabel.stringValue = iconText ?? row.title.first?.uppercased() ?? ""
-        glyphBox.isHidden = glyphLabel.stringValue.isEmpty
-        image = glyphBox.isHidden ? SidebarRowView.symbol(for: .tab) : nil
-        refreshForeground()
+        updateGlyph()
         toolTip = row.title
         let label = row.title.isEmpty ? (row.url.flatMap { URL(string: $0)?.host } ?? "") : row.title
         setAccessibilityTitle(label)
         setAccessibilityLabel(label)
+    }
+
+    func updateStatus(favicon: NSImage?, status: EngineAdapter.RowState?, unread: Bool) {
+        if favicon != nil || status?.loading != true { faviconView.image = favicon }
+        let muted = status?.muted == true
+        let hasAudio = muted || status?.audible == true
+        audioMark.isHidden = !hasAudio
+        audioMark.image = hasAudio ? NSImage(systemSymbolName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                             accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) : nil
+        unreadDot.isHidden = !unread
+        setAccessibilityValue(hasAudio ? (muted ? "Muted" : "Playing audio") : nil)
+        updateGlyph()
+    }
+
+    private func updateGlyph() {
+        faviconView.isHidden = faviconView.image == nil
+        glyphBox.isHidden = !faviconView.isHidden || glyphLabel.stringValue.isEmpty
+        image = faviconView.isHidden && glyphBox.isHidden ? SidebarRowView.symbol(for: .tab) : nil
+        refreshForeground()
     }
 
     @objc private func pressed() { onPress(row) }
@@ -1053,12 +1101,23 @@ final class FavoriteTile: NSButton {
     func refreshForeground() {
         let opacity = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
         let showsLetter = !glyphBox.isHidden
-        var backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
-        if showsLetter, let boxFill = glyphBox.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)), let underneath = backdrop {
-            backdrop = SidebarPanelView.mix(boxFill, boxFill, fraction: 0, base: underneath)
+        let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
+        faviconView.alphaValue = opacity
+        if !unreadDot.isHidden {
+            unreadDot.layer?.backgroundColor = (backdrop.map { SpaceAccent.visible(accent, on: $0) } ?? accent).cgColor
+            unreadDot.layer?.borderColor = backdrop?.cgColor
         }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let (color, alpha) = backdrop.map {
+            if !audioMark.isHidden {
+                audioMark.contentTintColor = backdrop.map {
+                    SpaceAccent.readableForeground(.secondaryLabelColor, opacity: 1, on: $0, minimum: 3).0
+                } ?? .secondaryLabelColor
+            }
+            let glyphBackdrop = backdrop.map { underneath in
+                guard showsLetter, let boxFill = glyphBox.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)) else { return underneath }
+                return SidebarPanelView.mix(boxFill, boxFill, fraction: 0, base: underneath)
+            }
+            let (color, alpha) = glyphBackdrop.map {
                 SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: $0, minimum: showsLetter ? 4.5 : 3)
             } ?? (NSColor.labelColor, opacity)
             let foreground = alpha == 1 ? color : color.withAlphaComponent(color.alphaComponent * alpha)

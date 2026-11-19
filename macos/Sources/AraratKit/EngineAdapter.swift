@@ -77,6 +77,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         public let muted: Bool
         public let canGoBack: Bool
         public let canGoForward: Bool
+
+        public init(loading: Bool, audible: Bool, muted: Bool, canGoBack: Bool, canGoForward: Bool) {
+            self.loading = loading
+            self.audible = audible
+            self.muted = muted
+            self.canGoBack = canGoBack
+            self.canGoForward = canGoForward
+        }
     }
     public private(set) var rowStates: [String: RowState] = [:]
     public func setMuted(_ muted: Bool, item: String) { host?.setTabMuted(muted, itemId: item) }

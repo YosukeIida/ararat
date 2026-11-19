@@ -57,7 +57,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。 |
 | `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違（承認済み） | VM capture design-rowcontrast-1, `dock-cells` と `dock-mid` で、現在のスペースの文字セルが残り、ほかがドットになることを確認した（決定 33）。オーナー承認済みの F 系ボードはライト 55%、ダーク 10% の背景と通常のラベル色を使い、A-BottomDock は 60%、13% とアクセント色の文字を描く。 |
 | `A-BottomDock` | 開いている Library の塗り | `keyboard-archive-list` | 一致 | 開いた時点のスペースの Look のアクセントで塗る（mock-decisions.md:33）。 |
-| `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 修正済み、VM 再確認待ち | favicon がないタイルはサイトの頭文字を表示する（決定 11）。favicon の画像と音声、ミュート、未読の印は実装待ちであり、読み込み中の状態は撮影待ちである（決定 12）。 |
+| `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite`、`organize-favorite-status` | 修正済み、VM 再確認待ち | タイルは 20 pt の favicon を表示し、読み込み中も保持する。favicon がない場合はサイトの頭文字を表示する。右下に再生・ミュートの印、右上に未読の点を置く（決定 11–12）。状態確認用の撮影では、フィクスチャで読み込み中の favicon、再生中のタイル、未読のタイルを表示する。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 一致 | `organize-empty-favorites` では空の領域が詰まり、プレースホルダーを挟まず URL 欄の下にスペース名が出る（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
 | `A-Header` | 幅に応じたナビゲーションとツールチップ | `header-240`, `header-232`, `header-231`, `header-200`, `header-199`, `header-164`, `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-loading`, `header-stopped` | 一致 | `header-240/232/231/200/199/164` とツールチップ、読み込み中の画像で、サイドバー切替の 232 pt、Reload の 200 pt、読み込み中の Stop、ショートカット付きのツールチップを確認した（決定 7–10）。 |
