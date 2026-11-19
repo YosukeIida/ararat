@@ -271,11 +271,13 @@ class Run(unittest.TestCase):
         ]
         pinned_cve = feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 157.0.8103.39 for Mac. CVE-2026-1234.")
         older_cve = feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 157.0.8103.79 for Mac. CVE-2026-1234.")
+        sentence_final_cve = feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 157.0.8103.79. CVE-2026-1234.")
         scenarios = [
             ("only pinned release has CVEs", [pinned_cve], "unknown"),
             ("all unpinned releases have no CVEs", stable_posts, False),
-            ("one release has no CVEs and the others are unknown", stable_posts[-1:], False),
+            ("one release has no CVEs and the others are unknown", stable_posts[-1:], "unknown"),
             ("older release has CVEs and newest is unknown", [older_cve], True),
+            ("older release version ends a sentence", [sentence_final_cve], True),
             ("older release has CVEs and newest has none", [stable_posts[0], older_cve], True),
         ]
         for label, entries, expected in scenarios:

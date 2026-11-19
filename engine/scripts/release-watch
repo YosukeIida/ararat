@@ -14,9 +14,9 @@ base_tag_latest the newest ungoogled-chromium version tag on GitHub.
 behind_days counts whole days since the earliest Mac stable release newer
 than the pin (0 if there are none). It is a lower bound if the chromiumdash
 page omits older unpinned releases.
-security is true if any desktop stable release note for these versions lists
-a CVE, false if at least one note matches and all matching notes list none,
-and "unknown" if no note matches.
+security is true if any of these versions has a desktop stable release note
+listing a CVE. Otherwise it is "unknown" if any version has no note or there
+are no unpinned releases, and false if every version has a note.
 
 Exit codes: 0 nothing is new, 10 the pin is behind in Chromium or in the base
 patch set, 2 the inputs could not be read or fetched or an argument was
@@ -42,7 +42,7 @@ FEED_URL = "https://chromereleases.googleblog.com/feeds/posts/default?alt=json&m
 STABLE_DESKTOP_POST = "Stable Channel Update for Desktop"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$")
-POST_VERSION_RE = re.compile(r"(?<![\d.])((\d+\.\d+\.\d+\.)\d+)(?:\s*/\s*\.(\d+))?(?![\d.])")
+POST_VERSION_RE = re.compile(r"(?<![\d.])((\d+\.\d+\.\d+\.)\d+)(?:\s*/\s*\.(\d+))?(?!\.?\d)")
 TAG_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)-(\d+)$")
 
 DEFAULT_BUILD_INPUTS = Path(__file__).resolve().parents[2] / "engine" / "build-inputs.toml"
@@ -152,7 +152,8 @@ def security_state(payload, versions):
     entries = feed.get("entry") if isinstance(feed, dict) else None
     if not isinstance(entries, list):
         raise WatchError("the Chrome Releases feed has no entry list")
-    state = "unknown"
+    known = set()
+    has_cves = False
     for entry in entries:
         if not isinstance(entry, dict):
             raise WatchError("the Chrome Releases feed has an invalid entry")
@@ -164,11 +165,20 @@ def security_state(payload, versions):
         if title["$t"] != STABLE_DESKTOP_POST:
             continue
         body = content["$t"]
+        mentioned = set()
         for version, prefix, extra_patch in POST_VERSION_RE.findall(body):
-            if version in versions or (extra_patch and prefix + extra_patch in versions):
-                state = state is True or "CVE-" in body
-                break
-    return state
+            mentioned.add(version)
+            if extra_patch:
+                mentioned.add(prefix + extra_patch)
+        matched = versions & mentioned
+        if matched:
+            known.update(matched)
+            has_cves = has_cves or "CVE-" in body
+    if has_cves:
+        return True
+    if versions and known == versions:
+        return False
+    return "unknown"
 
 
 def run(fetch, build_inputs_path, now=None):
