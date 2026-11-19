@@ -1404,9 +1404,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             view.removeFromSuperview()
         }
         guard !failures.isEmpty, let snapshot = supplied ?? queue.sync(execute: { store?.snapshot(windowId: windowID) }) else { return }
+        let accent = SpaceAccent.resolve(snapshot.shownLook, privateWindow: isPrivate)
         for tab in failures {
             guard let id = tab.itemId, let frame = frames[id] else { continue }
             let view = failureViews[id] ?? PageFailureView(frame: frame)
+            view.accent = accent
             let archive = snapshot.spaces.flatMap(\.today).contains { $0.id == id }
             view.frame = frame
             view.update(crashed: tab.crashed, error: Int(tab.networkError), host: URL(string: tab.url)?.host ?? tab.url, archive: archive)
@@ -1419,6 +1421,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func checkFailureState(item: String) -> [String: Any] { failureViews[item]?.checkState ?? [:] }
+    public func updateFailureAccent(_ accent: NSColor) {
+        for view in failureViews.values { view.accent = accent }
+    }
+
     public func checkFailurePress(item: String, secondary: Bool, screen: Bool) -> Bool {
         failureViews[item]?.checkPress(secondary: secondary, screen: screen) ?? false
     }

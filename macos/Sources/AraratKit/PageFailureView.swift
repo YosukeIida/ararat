@@ -13,6 +13,9 @@ public final class PageFailureView: NSView {
     private let secondary = NSButton(title: "", target: nil, action: nil)
     public var onReload: (() -> Void)?
     public var onClose: (() -> Void)?
+    public var accent = SpaceAccent.teal {
+        didSet { if oldValue != accent { primary.bezelColor = accent } }
+    }
     private weak var coveredPage: NSView?
     private var isCovering = false
     private var isFocusedPane = false
@@ -36,8 +39,7 @@ public final class PageFailureView: NSView {
         code.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         code.textColor = .tertiaryLabelColor
         primary.bezelStyle = .rounded
-        primary.bezelColor = .controlAccentColor
-        primary.contentTintColor = .white
+        primary.bezelColor = accent
         primary.target = self
         primary.action = #selector(reload)
         primary.keyEquivalent = "\r"

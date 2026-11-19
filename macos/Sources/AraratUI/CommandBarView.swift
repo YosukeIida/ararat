@@ -1,7 +1,7 @@
 import AppKit
 import AraratKit
 
-/// The command bar panel: a wide translucent panel centred over the window, input row on top,
+/// The command bar panel: a wide translucent panel with the input row on top and
 /// up to five result rows below. Adapted from Cra's MIT
 /// `Sources/Cra/UI/CommandBar/CommandBarView.swift` (favicons and Site Search are left out
 /// until the engine brings them) and its CommandBarPanel.
@@ -186,11 +186,11 @@ final class CommandBarRowView: NSView {
     override var isFlipped: Bool { true }
 
     func show(_ suggestion: Suggestion, selected: Bool, highlight: NSColor, queryEmpty: Bool, dark: Bool) {
-        if let shown, shown.0 == suggestion, shown.1 == selected, shown.2 === highlight, shown.3 == queryEmpty, shown.4 == dark { return }
-        let sameContent = shown.map { $0.0 == suggestion && $0.3 == queryEmpty && $0.4 == dark } ?? false
+        if let shown, shown.0 == suggestion, shown.1 == selected, shown.2 == highlight, shown.3 == queryEmpty, shown.4 == dark { return }
         shown = (suggestion, selected, highlight, queryEmpty, dark)
         layer?.backgroundColor = (selected ? highlight : .clear).cgColor
-        guard !sameContent else { return }
+        let foreground = selected ? SpaceAccent.foreground(on: highlight) : .labelColor
+        let secondary = selected ? foreground : NSColor.secondaryLabelColor
         let isTab: Bool
         switch suggestion.target { case .tab: isTab = true; default: isTab = false }
         iconBox.layer?.backgroundColor = (dark ? NSColor.white.withAlphaComponent(0.14) : NSColor.black.withAlphaComponent(0.06)).cgColor
@@ -201,15 +201,16 @@ final class CommandBarRowView: NSView {
             icon.image = NSImage(systemSymbolName: Self.symbol(suggestion), accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
         }
-        icon.contentTintColor = .secondaryLabelColor
+        icon.contentTintColor = secondary
         // The title is 15 pt semibold, followed by a regular " — url" tail [Cra, V:301-302].
         let title = NSMutableAttributedString(string: suggestion.title, attributes: [
-            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: foreground,
         ])
         title.append(NSAttributedString(string: Self.detail(suggestion), attributes: [
-            .font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 15), .foregroundColor: secondary,
         ]))
         label.attributedStringValue = title
+        trailing.textColor = secondary
         if isTab {
             // "Switch to Tab" is 14 pt medium, with an arrow [Cra, V:305-307].
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
@@ -231,8 +232,8 @@ final class CommandBarRowView: NSView {
         }
         arrowBox.isHidden = !isTab
         arrow.isHidden = !isTab
-        arrow.contentTintColor = NSColor.labelColor.withAlphaComponent(0.8)
-        arrowBox.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.1).cgColor
+        arrow.contentTintColor = foreground
+        arrowBox.layer?.backgroundColor = foreground.withAlphaComponent(0.1).cgColor
         setAccessibilityLabel("\(suggestion.title)\(suggestion.subtitle.isEmpty ? "" : ", \(suggestion.subtitle)")")
         needsLayout = true
     }

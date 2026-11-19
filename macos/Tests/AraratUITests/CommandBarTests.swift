@@ -4,6 +4,23 @@ import Testing
 @testable import AraratUI
 @testable import AraratHarness
 
+@Test @MainActor
+func shownSpaceLookResolvesTheAccentIndependentlyOfAppearanceAndTintOpacity() {
+    let dark = LookColor(red: 0.1, green: 0.2, blue: 0.3, x: 0, y: 0)
+    let light = LookColor(red: 0.9, green: 0.8, blue: 0.7, x: 1, y: 1)
+    let look = Look(colors: [dark, light], opacity: 0.1, grain: 0, glass: false, appearance: .dark)
+    let accent = SpaceAccent.resolve(look)
+    #expect(accent == NSColor(srgbRed: 0.1, green: 0.2, blue: 0.3, alpha: 1))
+    #expect(SpaceAccent.foreground(on: accent) == .white)
+    let otherLook = Look(colors: [light], opacity: 0, grain: 0, glass: false, appearance: .light)
+    #expect(SpaceAccent.foreground(on: SpaceAccent.resolve(otherLook)) == .black)
+    #expect(SpaceAccent.resolve(nil) == SpaceAccent.teal)
+    #expect(SpaceAccent.resolve(nil, fallback: SettingsColor.darkAccent) == SettingsColor.darkAccent)
+    #expect(SpaceAccent.resolve(look, privateWindow: true) == SpaceAccent.privateColor)
+    let empty = Look(colors: [], opacity: 1, grain: 0, glass: false, appearance: .light)
+    #expect(SpaceAccent.resolve(empty) == SpaceAccent.teal)
+}
+
 // The command bar panel, field, keyboard and commits. Views are built
 // unordered and events are fed directly; nothing is posted, no ordered windows, no menus.
 @MainActor
@@ -220,15 +237,15 @@ func commandBarGeometryFollowsTheDesignFormula() throws {
     #expect(CommandBarMetrics.width == 766)
     #expect(CommandBarMetrics.cappedWidth(windowWidth: 2000) == 766)
     #expect(CommandBarMetrics.cappedWidth(windowWidth: 800) == 720)
-    // Centred, and the field stays put while shorter lists hang down: the top edge is fixed
-    // at the window's midY + full height / 2 + 40 [Cra, MainWindowController.swift:1835-1843].
+    // Centre over the page card and keep the field fixed while the rows hang below it.
     let windowFrame = NSRect(x: 100, y: 50, width: 1200, height: 800)
-    let full = CommandBarMetrics.panelFrame(windowFrame: windowFrame, width: 766, rows: 5)
-    let empty = CommandBarMetrics.panelFrame(windowFrame: windowFrame, width: 766, rows: 0)
-    #expect(full.maxY == windowFrame.midY + 338 / 2 + 40)
+    let pageFrame = NSRect(x: 340, y: 60, width: 950, height: 780)
+    let full = CommandBarMetrics.panelFrame(windowFrame: windowFrame, pageFrame: pageFrame, rows: 5, privateWindow: false, hintHeight: 24)
+    let empty = CommandBarMetrics.panelFrame(windowFrame: windowFrame, pageFrame: pageFrame, rows: 0, privateWindow: false, hintHeight: 24)
+    #expect(full.maxY == windowFrame.maxY - 180)
     #expect(empty.maxY == full.maxY)
     #expect(full.height == 338 && empty.height == 60)
-    #expect(abs(full.midX - windowFrame.midX) < 0.001 && abs(empty.midX - windowFrame.midX) < 0.001)
+    #expect(full.midX == pageFrame.midX && empty.midX == pageFrame.midX)
 
     // The laid-out view: field row 60 tall, then rows 50 tall, 2 apart, inset 10.
     let store = FakeCommandBarStore()
@@ -606,41 +623,49 @@ func thePanelFollowsTheRowCountOnEveryQuery() throws {
     // observeCommandBar, M:1817-1843).
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
     defer { _ = window }
-    let controller = CommandBarController()
-    let view = CommandBarView(controller: controller)
-    let panel = CommandBarPanel()
-    panel.contentView = view
-    controller.panelWidth = 500
+    let root = try #require(window.contentView)
+    let page = NSView(frame: NSRect(x: 460, y: 10, width: 730, height: 780))
+    root.addSubview(page)
+    let presenter = CommandBarPresenter(parent: window, pageCard: page, visible: false, bindings: [], highlight: .clear)
+    let (controller, view, panel) = (presenter.controller, presenter.view, presenter.panel)
     let store = FakeCommandBarStore()
     store.results[""] = CommandBarResult(rows: [barRow("Recent", target: .tab(id: "t1", spaceId: nil))], privateWindow: false)
     let five = (1...5).map { barRow("Row \($0)", target: .tab(id: "t\($0)", spaceId: nil), url: "https://\($0).test/") }
     store.results["five"] = CommandBarResult(rows: five, privateWindow: false)
     store.results["one"] = CommandBarResult(rows: [barRow("Solo", target: .tab(id: "s1", spaceId: nil), url: "https://s.test/")], privateWindow: false)
-    let harness = HarnessDelegate(adapter: WorkspaceAdapter(windowID: "commandbar-position"))
-    harness.window = window
-    harness.commandPanel = panel
-    harness.commandBar = controller
-    controller.onRowsChange = { [weak harness, weak controller] in
-        guard let harness, let controller else { return }
-        harness.positionCommandPanel(controller)
-    }
     panel.makeFirstResponder(view.field)
     let editor = try #require(view.field.currentEditor())
-    controller.open(mode: .newTab, prefill: nil, store: store)
+    presenter.open(mode: .newTab, prefill: nil)
+    presenter.applyStore(store)
     #expect(!window.isVisible && !panel.isVisible) // never ordered
     // The open frame: the empty query's one recent tab.
     try #require(abs(panel.frame.height - CommandBarMetrics.height(forRows: 1)) < 0.5)
     let top = panel.frame.maxY
-    #expect(abs(panel.frame.midX - window.frame.midX) < 0.5)
+    let card = window.convertToScreen(page.convert(page.bounds, to: nil))
+    #expect(panel.frame.midX == card.midX && panel.frame.width == card.width)
+    let backdrop = try #require(root.subviews.first { $0.identifier?.rawValue == "command-bar-backdrop" })
+    let hints = try #require(backdrop.subviews.first as? NSStackView)
+    let labels = hints.arrangedSubviews.compactMap { $0 as? NSStackView }
+        .flatMap(\.arrangedSubviews).flatMap(\.subviews).compactMap { $0 as? NSTextField }
+    #expect(backdrop.frame == root.bounds && hints.orientation == .horizontal)
+    #expect(labels.map(\.stringValue) == ["↑↓ Select", "↩ Open", "⌘↩ Open in new tab", "Esc Close"])
+    let emptyHintTop = hints.frame.maxY
     // A query with five rows grows the panel: same top edge, rows hanging below the field.
     editor.insertText("five")
     #expect(abs(panel.frame.height - CommandBarMetrics.height(forRows: 5)) < 0.5)
-    #expect(abs(panel.frame.maxY - top) < 0.5 && abs(panel.frame.midX - window.frame.midX) < 0.5)
+    #expect(abs(panel.frame.maxY - top) < 0.5 && panel.frame.midX == card.midX)
+    #expect(abs(emptyHintTop - hints.frame.maxY - 208) < 0.5)
     // And a query with fewer rows shrinks it again, still without moving the field.
     editor.selectedRange = NSRange(location: 0, length: (view.field.stringValue as NSString).length)
     editor.insertText("one")
     #expect(abs(panel.frame.height - CommandBarMetrics.height(forRows: 1)) < 0.5)
-    #expect(abs(panel.frame.maxY - top) < 0.5 && abs(panel.frame.midX - window.frame.midX) < 0.5)
+    #expect(abs(panel.frame.maxY - top) < 0.5 && panel.frame.midX == card.midX)
+    page.frame.origin.x -= 40
+    #expect(panel.frame.midX == card.midX - 40)
+    window.setContentSize(NSSize(width: 260, height: 420))
+    #expect(hints.orientation == .vertical && backdrop.bounds.contains(hints.frame))
+    presenter.close()
+    #expect(backdrop.superview == nil)
 }
 
 @Test @MainActor

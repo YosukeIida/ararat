@@ -481,7 +481,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         guard let window, popup.host != nil, !opening else { return }
         presenter?.close(restoreFocus: false)
         let presenter = CommandBarPresenter(parent: window, visible: commandBarVisible, bindings: defaultKeyBindings(),
-                                            highlight: .selectedContentBackgroundColor,
+                                            highlight: SpaceAccent.teal,
                                             width: LittleWindowMetrics.commandBarWidth)
         presenter.onCommit = { [weak self, weak presenter] suggestion, mode, _ in
             FileHandle.standardError.write(Data("ararat-trace: little-window submit store_ready_at_submission=\(presenter?.controller.storeReadyAtSubmission == true)\n".utf8))

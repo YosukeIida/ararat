@@ -4,9 +4,9 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 94 件あり、このうち 85 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
+[照合表](research/mock-values.json)には 109 件あり、このうち 100 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
 
-76 ページから抽出した CSS 宣言の候補は 27,782 件で、88 件を確認し、27,694 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
+76 ページから抽出した CSS 宣言の候補は 27,782 件で、102 件を確認し、27,680 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -53,6 +53,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。 |
 | `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 一致 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2。 |
+| `A-BottomDock` | 開いている Library の塗り | `keyboard-archive-list` | 一致 | 開いた時点のスペースの Look のアクセントで塗る（mock-decisions.md:33）。 |
 | `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 未レビュー | 最初のタイルを撮影する。ほかの状態には個別のフレームが必要である。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 未レビュー | プレースホルダーを表示せず、領域をたたむ（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
@@ -72,7 +73,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TodayNewTab` | Clear 後の区切り線 | `today (cleared)` | 一致 | Today が空になると区切り線が消える。構造検査は PASS。VM の実行 mp2。 |
 | `A-TodayNewTab` | Appearance で New Tab を非表示 | `today-new-tab-hidden` | 未レビュー | ワークスペースの設定で New Tab の行を隠した状態を撮影する。 |
 | `B-CreateSpace` | スペース作成フォーム | `space-name-create-page` | 未レビュー | フォームはサイドバー内に表示する。 |
-| `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space-created`, `create-space-failure` | 未レビュー | 既存のチェックで成功と失敗を撮影する。 |
+| `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space-created`, `create-space-failure` | 一致 | 有効な Create Space ボタンにはモックのチャコール色を指定し、Cancel には標準のラベル色を使う。作成の失敗と成功を個別に撮影する。 |
 | `B-Drag` | サイドバーのドロップ位置、フォルダ上のホバー、拒否 | `organize-drop`, `organize-hover-open`, `dock-refused` | 未レビュー | 行のドラッグと、別プロファイルへのドロップ拒否を確認する。 |
 | `B-Drag` | 別プロファイルへのドロップ拒否 | `dock-refused` | 未レビュー | セルを暗くし、ポインタに拒否マークを付ける（決定 68）。 |
 | `B-DragPage` | 分割を作るページ上のドロップ領域 | `split-commands-drop-target` | 未レビュー | ドロップを確定する前に分割のインジケーターを撮影する。 |
@@ -106,25 +107,25 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
 | `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
 | `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。`cac6112` ではラベルにホスト名全体を収める幅を確保し、末尾が早く切れる問題を修正した。再撮影後に外観を確認する。 |
-| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 未レビュー | 通常のコマンドパネルについて、検索時と、入力欄が空で最近のタブを表示する状態を撮影する。 |
-| `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 未レビュー | 検索結果の先頭行と、ループバックのテストページの閲覧履歴を撮影する。 |
-| `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
+| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 一致 | ウィンドウ全体を暗くし、パネルをページカードの横中央に置く。ヒントには有効なキーを表示する。Tab による補完は U23 で廃止した。 |
+| `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 一致 | 検索が先頭に出て、その後に履歴が続く。選択行には表示中のスペースの Look のアクセントを使う。 |
+| `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 差異あり | 選択行には Look のアクセントを使う。最近のタブには「Switch to Tab」を表示する。検索優先の決定に従い、Edit URL では Open URL の 1 行を表示する。 |
 | `D-CommandBarRows` | 結果行の寸法、内側余白、行間 | — | 一致 | 対応表に記載した行と入力欄の寸法は一致した。行の外観は未確認である。 |
-| `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 未レビュー | ネイティブのエラーページを各状態で撮影する。 |
+| `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 差異あり | Try Again にはスペースのアクセントを使う。オフラインのテストページでは、サイドバーに Chromium の内部 URL が表示されることがある。 |
 | `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`, `keyboard-find-count` | 未レビュー | header では検索欄を開いた直後を、keyboard ではテストページで件数と選択中の一致箇所が確定した状態を撮影する。 |
 | `D-FindBarPage` | ページ上の検索バー | `header-find-bar`, `keyboard-find-count` | 未レビュー | keyboard の画像には、テストページと、件数を表示するページ内検索バーが写る。 |
 | `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 未レビュー | 対応表はバーの高さ 48 pt の例外を記録し、色とコントロールの値を照合する。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 未レビュー | プライベートブラウザのウィンドウを撮影する。 |
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違あり | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
-| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 未レビュー | Archive Tab と Close Tab の状態を個別に撮影する。 |
-| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
+| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 差異あり | Reload にはスペースのアクセントを使う。アイコンは点が並んだウィンドウを表示する。 |
+| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 差異あり | 選択タイルには Look のアクセントを使う。パネルはウィンドウの中央にあり、タイルにはアイコンとタイトルを表示する。サムネイルとキーヒントは未実装である。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 未レビュー | fullscreen チェックで通常サイズへ戻った後、サイドバーを固定したダークのウィンドウを撮影する。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 未レビュー | 2 枚目はルートを保存した後、Default destination のメニューを開く直前の画像である。 |
-| `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 未レビュー | Theme、Look、New Tab の行のスイッチ、Tooltips を実装している。Page zoom は未実装である。 |
-| `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 未レビュー | 行内に AppKit と SwiftUI のネイティブコントロールを使う。 |
+| `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 差異あり | SwiftUI のスイッチには Look のアクセントを指定し、色が無い場合はモックの青緑を使う。Page zoom は未実装である。 |
+| `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 差異あり | SwiftUI のコントロールとショートカットの記録欄には Look のアクセントを指定する。ネイティブのセグメントでシステムの色が使われる場合があり、モックのステッパーは未実装である。 |
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 未レビュー | インストール済み一覧は Chromium を通して取得する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
 | `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 未レビュー | グループカードの角丸と間隔は対応表の値と一致した。 |

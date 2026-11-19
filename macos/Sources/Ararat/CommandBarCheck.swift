@@ -49,7 +49,7 @@ extension Runtime {
       defer { commandBarCapturing = false }
       window.contentView?.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
-      commandBarImages[name] = promptScreenScreenshot(window, name: "commandbar-\(name)", withoutShadow: true)
+      commandBarImages[name] = promptScreenScreenshot(host.window(), name: "commandbar-\(name)", overlay: window)
     }
     func trace(_ name: String) { FileHandle.standardError.write(Data("ararat-trace: commandbar begin \(name)\n".utf8)) }
     func step(_ next: Int, _ name: String) {

@@ -4,9 +4,9 @@ The source is the owner's U20 project under `~/.config/herdr-agent-team/ararat/r
 
 ## Token and structure checks
 
-The [reviewed token table](research/mock-values.json) has 94 entries. The Swift suite compares 85 entries, including the selected shadow's offset, blur and opacity. The other 9 carry reasons in the table, including owner spacing decisions and the Library Downloads row pitch. One CSS declaration can map to several tokens or resolve differently in each appearance.
+The [reviewed token table](research/mock-values.json) has 109 entries. The Swift suite compares 100 entries, including the selected shadow's offset, blur and opacity. The other 9 carry reasons in the table, including owner spacing decisions and the Library Downloads row pitch. One CSS declaration can map to several tokens or resolve differently in each appearance.
 
-The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 88 have a reviewed disposition and 27,694 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
+The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 102 have a reviewed disposition and 27,680 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -52,6 +52,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library, add menu and space cells | `dock (cells)` | matches | Library and + sit in the dock; structure check library-dock PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | matches | Open space keeps its letter cell and the others become dots, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `A-BottomDock` | Library open fill | `keyboard-archive-list` | matches | The Library fill uses the opening space’s Look accent (mock-decisions.md:33). |
 | `A-FavouriteTiles` | Favicon tiles, loading, audio and unread marks | `organize-first-favorite` | not reviewed | This frame covers the first tile. The remaining states need separate frames. |
 | `A-FavouriteTiles` | Empty favourites area | `organize-empty-favorites` | not reviewed | The area collapses without a placeholder (decision 13). |
 | `A-Folders` | Expanded folder, empty line and row retention | `folder-empty (line, drop)` | matches | Empty folder shows the No tabs line; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
@@ -71,7 +72,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `A-TodayNewTab` | Divider after Clear | `today (cleared)` | matches | Divider absent once Today is empty; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `A-TodayNewTab` | New Tab hidden by Appearance | `today-new-tab-hidden` | not reviewed | The capture shows the sidebar with the row hidden by the workspace setting. |
 | `B-CreateSpace` | Create a Space form | `space-name-create-page` | not reviewed | The form appears as a sidebar page. |
-| `B-CreateSpaceStates` | Creation success and failure | `create-space-created`, `create-space-failure` | not reviewed | The existing check captures the success and failure fixtures. |
+| `B-CreateSpaceStates` | Creation success and failure | `create-space-created`, `create-space-failure` | matches | The enabled Create Space button uses the board’s charcoal bezel. Cancel uses the standard label color. The failed and created captures cover both states. |
 | `B-Drag` | Sidebar drop line, folder hover and refusal | `organize-drop`, `organize-hover-open`, `dock-refused` | not reviewed | The app check exercises row drag and cross-profile refusal. |
 | `B-Drag` | Cross-profile refusal | `dock-refused` | not reviewed | Decision 68 specifies the dimmed cell and refused pointer badge. |
 | `B-DragPage` | Page drop target for creating a split | `split-commands-drop-target` | not reviewed | The capture shows the split indicator before the simulated drag is released. |
@@ -105,25 +106,25 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `C-SiteControlsStates` | Certificate sheet | `site-controls-certificate` | not reviewed | The security footer opens the sheet (decision 5). |
 | `C-UrlField` | Host text, placeholder and trailing buttons | `urlfield (host, placeholder, internal, long-host)` | differs | VM run mp2 showed "127.0...." with room to spare. The buttons matched the mock. Main includes the URL host fix. Rerun the capture for visual review. MP2 sheets (646da87, 2026-11-19) are in design reports/design-mockparity-1/sheets. |
 | `C-UrlField` | Long and narrow host label | `urlfield (long-host, long-host-narrow)` | differs | VM run mp2 showed a faded start and clipped end ("…example.inva..."). Commit `cac6112` fixed the premature truncation by sizing the label for the full host. Rerun the captures for visual review. MP2 sheets (646da87, 2026-11-19) are in design reports/design-mockparity-1/sheets. |
-| `CommandBar` | Overview command panel | `commandbar-search`, `commandbar-recent` | not reviewed | The regular command panel shows the search and the empty-query recent-tabs states. |
-| `D-CommandBar` | Search-first entry and history | `commandbar-search` | not reviewed | The search frame includes the first-row search and a loopback history suggestion. |
-| `D-CommandBarPanels` | Command panel variants | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | not reviewed | The check captures the regular panel in five states. The Little Window panel has a separate capture. |
+| `CommandBar` | Overview command panel | `commandbar-search`, `commandbar-recent` | matches | The whole window is dimmed, the panel is horizontally centered over the page card, and the hints list supported keys. U23 removed Tab completion. |
+| `D-CommandBar` | Search-first entry and history | `commandbar-search` | matches | Search is first and history follows. The selected row takes the shown space’s Look accent. |
+| `D-CommandBarPanels` | Command panel variants | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | differs | The selection uses the Look accent. Recent tabs say “Switch to Tab” and Edit URL shows a single Open URL row under the search-first rule. |
 | `D-CommandBarRows` | Result row sizing, inset and gap | — | matches | The mapped row and field dimensions match in the token suite. Row appearance is pending. |
-| `D-ErrorPages` | Offline and DNS errors | `errorpages-offline`, `errorpages-dns` | not reviewed | The native page fixtures capture each failure. |
+| `D-ErrorPages` | Offline and DNS errors | `errorpages-offline`, `errorpages-dns` | differs | Try Again takes the space accent. The offline fixture can still expose Chromium’s internal URL in the sidebar. |
 | `D-FindBar` | Find bar and result counter | `header-find-bar`, `keyboard-find-count` | not reviewed | Header captures the open field. Keyboard captures the final match count and active match over the search fixture. |
 | `D-FindBarPage` | Find bar over a page | `header-find-bar`, `keyboard-find-count` | not reviewed | The Keyboard capture shows the find bar and its result count over the fixture page. |
 | `D-LittleWindow` | Bar, Open in menu, profile menu and command bar | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | not reviewed | The token table records the 48 pt bar height and compares the mapped colours and controls. |
 | `D-PrivateWindow` | Private window and URL-field mask | `private-window` | not reviewed | The screen mode captures a private browser window. |
 | `D-PrivateWindowEmpty` | Empty private window | — | differs | The product closes the private window with its last tab. The mock draws an empty private window. Owner decision pending. |
-| `D-SadTab` | Crashed Today tab and pin | `errorpages-today-crash`, `errorpages-pin-crash` | not reviewed | The two captures exercise Archive Tab and Close Tab respectively. |
-| `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | not reviewed | The commandbar check verifies switching and cancellation without a PNG. |
+| `D-SadTab` | Crashed Today tab and pin | `errorpages-today-crash`, `errorpages-pin-crash` | differs | Reload takes the space accent. The symbol still depicts a window with dots. |
+| `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | differs | The selected tile uses the Look accent. The window-centered panel still has icon and title tiles, without thumbnails or key hints. |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | not reviewed | The history failure uses a per-profile banner (decision 56). |
 | `D-Toasts` | Update ready with Restart | — | not built | The updater is planned for a later phase (§15). |
 | `Dark` | Dark browser overview | `fullscreen-dark-docked` | not reviewed | The fullscreen check captures the dark docked window after it has returned to normal size. |
 | `E-About` | About and update states | — | not built | The settings implementation has no About pane. |
 | `E-AirTraffic` | Routing rules and destination editor | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | not reviewed | The second frame shows the saved route before opening the Default destination menu. |
-| `E-Appearance` | Appearance controls | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | not reviewed | The pane implements Theme, Look, the New Tab row and Tooltips. Page zoom is pending. |
-| `E-Controls` | Settings controls and their interaction states | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | not reviewed | Rows include native AppKit and SwiftUI controls. |
+| `E-Appearance` | Appearance controls | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | differs | SwiftUI switches receive the Look tint, with the board’s teal fallback. Page zoom is pending. |
+| `E-Controls` | Settings controls and their interaction states | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | differs | SwiftUI controls receive the Look tint, and the recorder uses the same accent. Native segmented controls can use system styling, and the board’s stepper is absent. |
 | `E-Extensions` | Installed list, profile menu and review | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | not reviewed | The installed list is implemented through Chromium. |
 | `E-Extensions` | Add from Arc | — | not built | Extension import awaits source inventory and permission rules (§14). |
 | `E-Frame` | Settings toolbar, rail and content card | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | not reviewed | Grouped card radius and spacing match the mapped tokens. |

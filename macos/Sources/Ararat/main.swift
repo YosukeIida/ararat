@@ -1821,6 +1821,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func show(_ snapshot: WorkspaceSnapshot) {
     self.snapshot = snapshot
+    let accent = spaceAccent
+    commandPresenter?.controller.highlight = accent
+    adapter?.updateFailureAccent(accent)
     updatePageVisibility(snapshot)
     if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
     updateSidebar(snapshot)
@@ -2553,7 +2556,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     guard hasUsableHost, let host, let workspace else { return }
     commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), backwards: backwards) { [weak host] id in
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, accent: spaceAccent) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
@@ -2796,6 +2799,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  private var spaceAccent: NSColor {
+    SpaceAccent.resolve(snapshot.shownLook, privateWindow: isPrivateWindow)
+  }
+
   func openCommandBar(_ requested: CommandBarMode) {
     guard hasUsableHost, let host, let adapter, let workspace else { return }
     commandPresenter?.close()
@@ -2807,8 +2814,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let capturedItem = snapshot.selectedId
     let spec = CommandBarController.openSpec(mode: requested, selectedTabURL: target?["url"] as? String)
     let hidden = CommandLine.arguments.contains { $0.hasPrefix("--ararat-check=") }
-    let presenter = CommandBarPresenter(parent: host.window(), visible: !hidden,
-      bindings: keyBindings?.bindings ?? [], highlight: .selectedContentBackgroundColor)
+    let presenter = CommandBarPresenter(parent: host.window(), pageCard: container?.pageCard, visible: !hidden,
+      bindings: keyBindings?.bindings ?? [], highlight: spaceAccent)
     commandPresenter = presenter
     presenter.onClose = { [weak self, weak presenter] in
       if self?.commandPresenter === presenter { self?.commandPresenter = nil }
@@ -6742,13 +6749,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
-  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false, includeOverlays: Bool = false) -> String? {
+  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false, includeOverlays: Bool = false,
+                              overlay: NSWindow? = nil) -> String? {
     guard let temporary = ProcessInfo.processInfo.environment["TMPDIR"] else { return nil }
     let path = (temporary as NSString).appendingPathComponent("ararat-prompts-\(name)-\(UUID().uuidString).png")
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     task.arguments = ["-x"] + (withoutShadow ? ["-o"] : []) + ["-l\(window.windowNumber)", path]
-    if includeOverlays {
+    if includeOverlays || overlay != nil {
       guard let screen = window.screen, let top = NSScreen.screens.first?.frame.maxY else { return nil }
       let frame = window.frame.intersection(screen.frame).integral
       guard !frame.isEmpty else { return nil }
@@ -6756,7 +6764,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     do { try task.run(); task.waitUntilExit() } catch { return nil }
     guard task.terminationStatus == 0, FileManager.default.fileExists(atPath: path),
-          ScreenViewTree.write(nextTo: path, name: name, windows: [window]) else { return nil }
+          ScreenViewTree.write(nextTo: path, name: name, windows: [window] + (overlay.map { [$0] } ?? [])) else { return nil }
     return path
   }
 

@@ -738,6 +738,7 @@ public final class SidebarView: NSView {
         else if lookPreview?.spaceID == spaceID { lookPreview = nil }
         snapshot.spaces[index].look = look
         refreshLook()
+        updateDockSelection(offset: pagePresentationOffset)
     }
 
     private func keepingLookPreview(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot {
@@ -2304,7 +2305,9 @@ public final class SidebarView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            libraryFill.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
+            let look = libraryLookSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id } } ?? snapshotSpace
+            libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
+                .withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
         }
     }
 

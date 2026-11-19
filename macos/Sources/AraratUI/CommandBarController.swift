@@ -36,6 +36,15 @@ public enum CommandBarMetrics {
     public static let rowHeight: CGFloat = 50
     public static let rowGap: CGFloat = 2
     public static let rowInset: CGFloat = 10
+    static let backdropFill = NSColor(srgbRed: 20 / 255, green: 20 / 255, blue: 24 / 255, alpha: 0.28)
+    static let hintFill = backdropFill.withAlphaComponent(0.62)
+    static let hintGap: CGFloat = 20
+    static let topInset: CGFloat = 180
+    static let hintOffset: CGFloat = 16
+    static let hintRadius: CGFloat = 6
+    static let hintFontSize: CGFloat = 12
+    static let hintPaddingX: CGFloat = 10
+    static let hintPaddingY: CGFloat = 4
     /// At most 5 rows [Cra, SuggestionEngine.swift:62].
     public static let maxRows = 5
 
@@ -46,15 +55,17 @@ public enum CommandBarMetrics {
 
     /// Width capped at the window's width − 80 [Cra, Theme.swift:490].
     public static func cappedWidth(windowWidth: CGFloat) -> CGFloat {
-        min(width, windowWidth - 80)
+        max(0, min(width, windowWidth - 80))
     }
 
-    /// Centred horizontally; the field stays put and shorter lists hang down: the top edge sits
-    /// at the window's midY + full-height/2 + 40 [Cra, MainWindowController.swift:1835-1843].
-    public static func panelFrame(windowFrame: NSRect, width: CGFloat, rows: Int, privateWindow: Bool = false) -> NSRect {
-        let barHeight = height(forRows: rows) + (privateWindow ? 32 : 0)
-        let top = windowFrame.midY + height(forRows: maxRows) / 2 + 40
-        return NSRect(x: windowFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
+    /// The field stays put while shorter lists hang down [Cra, MainWindowController.swift:1835-1843].
+    static func panelFrame(windowFrame: NSRect, pageFrame: NSRect, rows: Int, privateWindow: Bool, hintHeight: CGFloat) -> NSRect {
+        let noteHeight: CGFloat = privateWindow ? 32 : 0
+        let barHeight = height(forRows: rows) + noteHeight
+        let reserve = height(forRows: maxRows) + noteHeight + hintOffset + hintHeight
+        let top = windowFrame.maxY - min(topInset, max(0, windowFrame.height - reserve))
+        let width = min(cappedWidth(windowWidth: windowFrame.width), pageFrame.width)
+        return NSRect(x: pageFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
     }
 
     /// U27h: a Little Window is short, so its ⌘L bar sits inside the window (the board puts it
@@ -86,10 +97,9 @@ public final class CommandBarController {
     /// Text shown in the field while arrowing through rows; nil shows what was typed.
     public var previewText: String?
     public var previewVersion = 0
-    /// Layout hints set before opening.
-    public var panelWidth: CGFloat = CommandBarMetrics.width
-    /// Selection fill: the shown space's colour, or the selection grey with no look [ours].
-    public var highlight = NSColor.selectedContentBackgroundColor
+    public var highlight = SpaceAccent.teal {
+        didSet { if oldValue != highlight { onChange() } }
+    }
     public var onCommit: (Suggestion?, CommandBarMode, Bool) -> Void = { _, _, _ in }
     public var onClose: () -> Void = {}
     /// Fires on every state change; the view syncs in here.

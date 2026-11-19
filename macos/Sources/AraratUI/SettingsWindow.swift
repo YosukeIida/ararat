@@ -374,6 +374,7 @@ private struct SettingsToolbarTitle: View {
 }
 
 enum SettingsColor {
+    static let darkAccent = NSColor(srgbRed: 95 / 255, green: 179 / 255, blue: 184 / 255, alpha: 1)
     static func grey(_ light: Double, _ dark: Double) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let value = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
@@ -457,6 +458,11 @@ private struct SettingsDetail: View {
     @State private var followedOffset = 0.0
     @State private var pageWidth = 580.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    private var accent: Color {
+        Color(nsColor: SpaceAccent.resolve(model.snapshot.shownLook,
+                                           fallback: colorScheme == .dark ? SettingsColor.darkAccent : SpaceAccent.teal))
+    }
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -545,6 +551,8 @@ private struct SettingsDetail: View {
                 .onChange(of: model.highlighted) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
                 .onChange(of: model.page) { _, _ in if let id = model.highlighted { proxy.scrollTo(id, anchor: .center) } else { proxy.scrollTo("header", anchor: .top) } }
         }.background(SettingsColor.page)
+            .tint(accent)
+            .accentColor(accent)
             .onGeometryChange(for: Double.self) { $0.size.width } action: { pageWidth = $0 }
             .background(SettingsScrollBridge { event in handleScroll(event) })
             .alert("Delete Space?", isPresented: Binding(get: { model.pendingDelete != nil }, set: { if !$0 { model.pendingDelete = nil } })) {
