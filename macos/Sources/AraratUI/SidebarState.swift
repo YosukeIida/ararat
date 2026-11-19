@@ -79,6 +79,14 @@ enum SidebarMetrics {
     // U20 board's `.split span` and `.split span.on`).
     static let rowHoverFillAlpha: CGFloat = 0.12
     static let rowSelectedFillAlpha: CGFloat = 0.22
+    // The board's selected-row shadow (`--selsh: 0 1px 2px rgba(0,0,0,.08)`, and `none` in dark)
+    // on the selected row's fill and on the focused segment of a split row: 1 pt down, 2 pt of
+    // CSS blur (Core Animation's radius is half of it). The y is the board's, down; the layer's
+    // own geometry decides the sign (`applySelectedShadow`).
+    static let rowSelectedShadowY: CGFloat = 1
+    static let rowSelectedShadowBlur: CGFloat = 2
+    static let rowSelectedShadowAlpha: CGFloat = 0.08
+    static let rowSelectedShadowAlphaDark: CGFloat = 0
     // The U20 board's split row (`.split`): 36 pt segments 2 pt apart, the row's 11 pt radius on
     // the first and last segment's outer end and 4 pt inside (middle segments 4 pt all round);
     // each pane's glyph 16 pt at 10 pt from the segment's left and its title 13 pt at 32 pt.

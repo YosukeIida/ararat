@@ -88,18 +88,22 @@ final class SplitSegmentButton: NSButton {
     }
 
     // The focused pane's segment takes the row's selected fill; every other segment keeps the
-    // row's hover fill (the board's `.split span.on` and `.split span`).
+    // row's hover fill (the board's `.split span.on` and `.split span`), and the focused one the
+    // board's selected-row shadow as well.
     func applyFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let alpha = active ? SidebarMetrics.rowSelectedFillAlpha : SidebarMetrics.rowHoverFillAlpha
             fill.fillColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
+        SidebarRowView.applySelectedShadow(fill, on: active, appearance: effectiveAppearance)
     }
 
     override func layout() {
         super.layout()
         fill.frame = bounds
         fill.path = Self.path(in: bounds, leading: leadingRadius, trailing: trailingRadius)
+        // The segment's shadow follows its rounded path, not the alpha of its drawing.
+        fill.shadowPath = fill.path
     }
 
     // One rounded rectangle with a radius per end; AppKit has no per-corner radius, and the
@@ -568,6 +572,8 @@ final class SidebarRowView: NSView {
     override func layout() {
         super.layout()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
+        // The fill's shadow follows its rounded fill, not the alpha of its drawing.
+        fill.layer?.shadowPath = CGPath(roundedRect: fill.bounds, cornerWidth: SidebarMetrics.cornerRadius, cornerHeight: SidebarMetrics.cornerRadius, transform: nil)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if !closeButton.isHidden && closeButton.frame.minX < title.frame.maxX {
@@ -621,7 +627,24 @@ final class SidebarRowView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
+        // The board's `--selsh` is on `.row.is-sel .fill` alone: hover, pressed and a drag source
+        // carry the selected fill's alpha but not its shadow. A drag copy is built selected.
+        Self.applySelectedShadow(fill.layer, on: selected, appearance: effectiveAppearance)
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
+    }
+
+    // The board's selected-row shadow: `0 1px 2px rgba(0,0,0,.08)` in light, none in dark, on the
+    // selected row's fill and on a split row's focused segment. The board's y offset is down, and
+    // a layer draws its shadow in its own coordinates: AppKit leaves these rows' layers unflipped
+    // (y up), so the offset takes the negative sign.
+    static func applySelectedShadow(_ layer: CALayer?, on: Bool, appearance: NSAppearance) {
+        guard let layer else { return }
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let down = layer.isGeometryFlipped ? SidebarMetrics.rowSelectedShadowY : -SidebarMetrics.rowSelectedShadowY
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: down)
+        layer.shadowRadius = SidebarMetrics.rowSelectedShadowBlur / 2
+        layer.shadowOpacity = Float(on ? (dark ? SidebarMetrics.rowSelectedShadowAlphaDark : SidebarMetrics.rowSelectedShadowAlpha) : 0)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
