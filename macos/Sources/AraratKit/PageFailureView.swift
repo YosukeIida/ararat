@@ -17,7 +17,7 @@ public final class PageFailureView: NSView {
         didSet {
             guard oldValue != accent else { return }
             primary.bezelColor = accent
-            primary.contentTintColor = SpaceAccent.foreground(on: accent)
+            setPrimaryTitle(primary.title)
         }
     }
     private weak var coveredPage: NSView?
@@ -44,7 +44,6 @@ public final class PageFailureView: NSView {
         code.textColor = .tertiaryLabelColor
         primary.bezelStyle = .rounded
         primary.bezelColor = accent
-        primary.contentTintColor = SpaceAccent.foreground(on: accent)
         primary.target = self
         primary.action = #selector(reload)
         primary.keyEquivalent = "\r"
@@ -127,11 +126,22 @@ public final class PageFailureView: NSView {
         message.stringValue = crashed
             ? "Something went wrong while showing \(host). Reloading usually brings it back."
             : "Ararat can’t reach \(host). Check your network connection and try again."
-        primary.title = crashed ? "Reload" : "Try Again"
+        setPrimaryTitle(crashed ? "Reload" : "Try Again")
         secondary.title = archive ? "Archive Tab" : "Close Tab"
         secondary.isHidden = !crashed
         code.stringValue = error == -106 ? "ERR_INTERNET_DISCONNECTED" : (error == -137 ? "ERR_NAME_RESOLUTION_FAILED" : "ERR_NAME_NOT_RESOLVED")
         code.isHidden = crashed
+    }
+
+    private func setPrimaryTitle(_ title: String) {
+        // contentTintColor only applies to borderless buttons.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        primary.attributedTitle = NSAttributedString(string: title, attributes: [
+            .foregroundColor: SpaceAccent.foreground(on: accent),
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .paragraphStyle: paragraph,
+        ])
     }
 
     @objc private func reload() { onReload?() }
