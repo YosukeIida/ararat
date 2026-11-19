@@ -570,8 +570,12 @@ func selectingSplitOpensSiblingInBackgroundAndProjectsBothFrames() async throws 
     engine.shutdown()
 }
 
-@Test @MainActor
-func offSpaceReactivationReturnsToTheWindowInTheStrip() async throws {
+enum ReactivationTarget: CaseIterable {
+    case current, gone, superseded
+}
+
+@Test(arguments: ReactivationTarget.allCases) @MainActor
+func offSpaceReactivationChecksTheWindowInTheStrip(target: ReactivationTarget) async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -608,11 +612,93 @@ func offSpaceReactivationReturnsToTheWindowInTheStrip() async throws {
     firstStrip["active"] = "live-previous"
     transaction["strips"] = try #require(transaction["strips"] as? [[String: Any]]) + [firstStrip]
     transaction["cause"] = "Chrome"
+    var resolutions: [String] = []
+    first.checkSelectionDispatch = { stage, _, resume in
+        if stage == "resolved" { resolutions.append("first") }
+        resume()
+    }
+    second.checkSelectionDispatch = { stage, _, resume in
+        if stage == "resolved" { resolutions.append("second") }
+        resume()
+    }
+    if target == .gone { first.shutdown() }
     second.windowHost(bHost, didReceiveTransaction: transaction)
-    try await matrixWait { lastApplied == 1 && (!a.activated.isEmpty || b.transferAttempts > 0) }
+    if target == .superseded { first.invalidateSelection() }
+    try await matrixWait { lastApplied == 1 }
+    if target != .current {
+        #expect(a.activated.isEmpty)
+        #expect(b.activated.isEmpty)
+        if target == .gone { first.attach(aHost) }
+        transaction["rev"] = NSNumber(value: 2)
+        second.windowHost(bHost, didReceiveTransaction: transaction)
+        try await matrixWait { lastApplied == 2 }
+    }
+    try await matrixWait { !a.activated.isEmpty || b.transferAttempts > 0 }
     #expect(a.active == item)
     #expect(a.activated.count == 1)
     #expect(b.transferAttempts == 0)
+    #expect(resolutions == ["first"])
+}
+
+@Test @MainActor
+func closeSuccessorDoesNotDispatchOverAnInFlightClick() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "close-race", card: NSView(), session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    defer { engine.shutdown() }
+
+    let url = "about:blank"
+    let (clicked, successor, closed) = try session.queue.sync {
+        let store = try #require(session.store)
+        let clicked = try #require(store.createTab(windowId: "close-race", url: url + "?clicked").selectedId)
+        let successor = try #require(store.createTab(windowId: "close-race", url: url + "?successor").selectedId)
+        let closed = try #require(store.createTab(windowId: "close-race", url: url + "?closed").selectedId)
+        return (clicked, successor, closed)
+    }
+    fake.entries = [clicked, successor, closed].map { MatrixFakeTab(item: $0, live: "live-\($0)", profile: "Default", owner: fake) }
+    fake.active = closed
+    var lastApplied: UInt64?
+    engine.onTransaction = { if $1 { lastApplied = $0.rev } }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "close-race", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { lastApplied == 0 }
+
+    var heldClick: (() -> Void)?
+    var clickCommand: String?
+    var resolved: [String] = []
+    engine.checkSelectionDispatch = { stage, command, resume in
+        if stage == "registered" {
+            clickCommand = command
+            heldClick = resume
+        } else {
+            resolved.append(command)
+            resume()
+        }
+    }
+    engine.select(id: clicked, url: url + "?clicked")
+    try await matrixWait { heldClick != nil }
+
+    fake.entries.removeAll { $0.itemId == closed }
+    fake.active = nil
+    var close = matrixTransaction(fake, window: "close-race", epoch: 1, rev: 1, command: nil)
+    close["cause"] = "Chrome"
+    engine.windowHost(host, didReceiveTransaction: close)
+    try await matrixWait { lastApplied == 1 }
+    #expect(session.queue.sync { session.store?.selectedItem(windowId: "close-race") } == successor)
+
+    let command = try #require(clickCommand)
+    let resume = try #require(heldClick)
+    resume()
+    try await matrixWait { fake.activated.contains(command) }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "close-race", epoch: 1, rev: 2, command: command))
+    try await matrixWait { lastApplied == 2 }
+    #expect(session.queue.sync { session.store?.selectedItem(windowId: "close-race") } == clicked)
+    #expect(fake.active == clicked)
+    #expect(fake.activated == [command])
+    #expect(resolved == [command])
 }
 
 @Test @MainActor

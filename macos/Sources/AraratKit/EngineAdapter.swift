@@ -1183,10 +1183,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 } : []
                 if let error = outcome.persistenceError { self.report(CoreError.Store(message: error)) }
                 let reactivations = outcome.commands.compactMap { command -> (LiveCommand, EngineAdapter, Int)? in
-                    guard let window = command.targetWindow else {
-                        if command.kind == .activate || command.kind == .open { self.pendingSelectionCommands.insert(command.id) }
-                        return nil
-                    }
+                    guard let window = command.targetWindow else { return nil }
                     guard let (target, generation) = selections.first(where: { $0.0.windowID == window }) else {
                         _ = store.liveCancel(commandId: command.id)
                         return nil
@@ -1212,7 +1209,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                         self.endLittleWindowHandoff()
                     }
                     for (command, target, generation) in reactivations {
-                        guard target.selectionGeneration == generation else {
+                        // Replaying a close successor after the click would replace the user's selection.
+                        guard target.selectionGeneration == generation,
+                              target.selectionRequest.map({ $0.item == command.item }) ?? true else {
                             target.cancelSelectionCommand(command)
                             continue
                         }
@@ -1227,7 +1226,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     for adopted in outcome.adopted {
                         self.tab(adopted.liveId)?.itemId = adopted.item
                     }
-                    for command in outcome.commands where command.targetWindow == nil { self.execute(command) }
+                    for command in outcome.commands where command.kind == .close { self.execute(command) }
                     if case .command(let id) = transaction.cause {
                         self.restoringSplitCommands.remove(id)
                         if self.restoringTargetCommand == id { self.restoringTargetCommand = nil }
@@ -1836,7 +1835,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                   self.selectionGeneration == context.generation && current.profileDirectory() == context.profile &&
                   self.queue.sync { self.store?.snapshot(windowId: self.windowID).shownSpaceId == context.space }
               }) ?? true,
-              command.targetWindow == nil || selectionRequest == nil || selectionRequest?.item == command.item,
               queue.sync(execute: {
                   guard let store = self.store, store.liveTab(item: command.item) == live,
                         self.pendingSelectionCommands.contains(command.id) else { return false }
