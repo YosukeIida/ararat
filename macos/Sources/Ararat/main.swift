@@ -1397,7 +1397,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       EngineDownloadSettingsHost.apply(device)
     }
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []),
-                              favoriteIconText: { [weak self] in self?.host?.favoriteIconText($0) })
+                              siteIconText: { [weak self] in self?.host?.favoriteIconText($0) })
     sidebar.privateWindow = isPrivateWindow
     sidebar.observeHistoryFailures(running)
     let downloads = DownloadsModel()

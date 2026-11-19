@@ -162,6 +162,33 @@ func splitSegmentsSelectTheirPane() {
     #expect(drawn.map(\.active) == [false, true, false])
 }
 
+@Test @MainActor
+func splitSegmentsUpdateFromTheSharedFaviconMap() throws {
+    let split = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "split", title: "",
+                    url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
+    let members = ["site", "blank"].map { id in
+        Row(folderHasTabs: false, parentId: split.id, siblingIndex: 0, collapsed: false, id: id, title: "",
+            url: id == "site" ? "https://news.example.com/" : nil, depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    }
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "pinned", todayId: "today",
+                              favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .default,
+                              id: "space", title: "Work", icon: nil, look: nil, favorites: [], pinned: [], today: [split] + members)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: "site", spaces: [space]),
+                              siteIconText: { $0 == "https://news.example.com/" ? "E" : nil })
+    let segments = descendants(of: sidebar).compactMap { $0 as? SplitSegmentButton }
+    let site = try #require(segments.first { $0.pane.id == "site" })
+    let blank = try #require(segments.first { $0.pane.id == "blank" })
+    #expect(!site.iconLetter.isHidden && site.iconLetter.stringValue == "E" && site.iconView.image == nil)
+    #expect(blank.iconLetter.isHidden && blank.iconView.image?.symbolConfiguration != nil)
+
+    let favicon = NSImage(size: NSSize(width: 16, height: 16))
+    sidebar.favicons["site"] = favicon
+    #expect(site.iconView.image === favicon && site.iconLetter.isHidden)
+    #expect(descendants(of: sidebar).contains { $0 === site })
+    sidebar.favicons.removeAll()
+    #expect(site.iconView.image == nil && !site.iconLetter.isHidden)
+}
+
 // The U20 board's split row: one segment per pane from the row's own left inset to its right
 // inset, nothing of the row's own behind them, and the focused pane in the row's selected fill.
 @Test(arguments: [NSAppearance.Name.aqua, .darkAqua]) @MainActor
