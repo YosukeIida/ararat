@@ -25,6 +25,5 @@ import Testing
     let overlay = container.subviews.first
     #expect(abs((overlay?.layer?.backgroundColor?.alpha ?? 0) - 0.06) < 0.001)
     container.appearance = NSAppearance(named: .darkAqua)
-    dim.update("tab", container: container, frame: .zero, visible: true)
     #expect(abs((overlay?.layer?.backgroundColor?.alpha ?? 0) - 0.25) < 0.001)
 }
