@@ -158,6 +158,63 @@ func recorderRestoresAndTransfersACoreDefaultHeldByChromium() async throws {
 }
 
 @Test @MainActor
+func recorderRecordsAllArrowKeys() async throws {
+    try await checkFunctionKeyRecording([
+        (126, "\u{F700}"), (125, "\u{F701}"), (123, "\u{F702}"), (124, "\u{F703}"),
+    ], flags: .numericPad)
+}
+
+@Test @MainActor
+func recorderRecordsHomeEndAndPageKeys() async throws {
+    try await checkFunctionKeyRecording([
+        (115, "\u{F729}"), (119, "\u{F72B}"), (116, "\u{F72C}"), (121, "\u{F72D}"),
+    ])
+}
+
+@Test @MainActor
+func recorderRecordsF1AndF12() async throws {
+    try await checkFunctionKeyRecording([(122, "\u{F704}"), (111, "\u{F70F}")])
+}
+
+@MainActor
+private func checkFunctionKeyRecording(_ keys: [(UInt16, String)], flags: NSEvent.ModifierFlags = []) async throws {
+    _ = NSApplication.shared
+    let directory = try testTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (adapter, _) = try await openedBindings(directory)
+    let menu = NSMenu()
+    let bindings = KeyBindingsModel(adapter: adapter, mainMenu: { menu })
+    let recorder = ShortcutsRecorderView()
+    recorder.bindings = bindings
+    try await bindingValue { bindings.load(completion: $0) }
+    let command = "toggle_sidebar"
+    let modifiers: NSEvent.ModifierFlags = [.control, .option, .shift]
+
+    for (code, character) in keys {
+        let before = bindings.binding(command: command)?.key
+        let key = recorderBinding(key: character, control: true, option: true, shift: true)
+        let event = try recorderKeyEvent(keyCode: code, characters: character, charactersIgnoringModifiers: character,
+                                         flags: flags.union(modifiers).union(.function))
+        let item = menu.addItem(withTitle: "Browser Command", action: nil, keyEquivalent: character)
+        item.keyEquivalentModifierMask = modifiers
+        bindings.toggleRecording(command)
+        #expect(recorder.performKeyEquivalent(with: event))
+        #expect(bindings.error == "This shortcut is used by Browser Command.")
+        let afterRefusal = try await bindingValue { adapter.keyBindings(completion: $0) }
+        #expect(afterRefusal.first { $0.command == command }?.key == before)
+
+        item.keyEquivalentModifierMask = modifiers.subtracting(.shift)
+        bindings.toggleRecording(command)
+        #expect(recorder.performKeyEquivalent(with: event))
+        try await waitUntil { bindings.error != nil || bindings.binding(command: command)?.key != before }
+        #expect(bindings.error == nil)
+        #expect(bindings.binding(command: command)?.key == key)
+        menu.removeItem(item)
+    }
+    _ = try await bindingValue { adapter.shutdown(completion: $0) }
+}
+
+@Test @MainActor
 func recorderAcceptsItsChromiumAliasAndAFreeShortcut() async throws {
     _ = NSApplication.shared
     let directory = try testTemporaryDirectory()

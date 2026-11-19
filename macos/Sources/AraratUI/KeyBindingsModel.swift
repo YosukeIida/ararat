@@ -140,9 +140,9 @@ public final class KeyBindingsModel: ObservableObject {
             return true
         }
         let menuCharacters = event.charactersIgnoringModifiers
-        // Stripping modifiers would turn the pane shortcuts' arrow keys into C0 control characters.
-        let characters = switch menuCharacters {
-        case "\u{F702}", "\u{F703}": menuCharacters
+        // Stripping modifiers can replace AppKit function-key characters with C0 control characters.
+        let characters = switch menuCharacters?.unicodeScalars.first?.value {
+        case let value? where (0xF700...0xF8FF).contains(value): menuCharacters
         default: event.characters(byApplyingModifiers: [])
         }
         guard let characters, characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first else { return true }
