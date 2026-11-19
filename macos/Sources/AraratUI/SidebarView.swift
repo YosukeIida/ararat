@@ -3098,11 +3098,13 @@ extension SidebarView: NSMenuDelegate {
             SidebarMenuItem("Rename Space…", enabled: space != nil) { [weak self] in self?.renameSpace(spaceID) },
             SidebarMenuItem("Edit Look…", enabled: space != nil) { [weak self] in self?.editLook(spaceID, anchor: anchor) },
             SidebarMenuItem("Space Settings…", enabled: space != nil) { [weak self] in self?.onSpaceSettings?(spaceID) },
+            .separator(),
             SidebarMenuItem("New Folder", enabled: space != nil && snapshotSpace != nil) { [weak self] in
                 guard let self, let index = self.snapshot.spaces.firstIndex(where: { $0.id == spaceID }) else { return }
                 if self.spaceIndex != index || self.libraryOpen || self.createSpaceOpen { self.dockClicked(self.dock.subviews[index] as! NSButton) }
                 self.newFolder(nil)
             },
+            .separator(),
             SidebarMenuItem("Delete Space…", enabled: space != nil && snapshot.spaces.count > 1) { [weak self] in self?.confirmSpaceDelete(spaceID) },
         ])
     }

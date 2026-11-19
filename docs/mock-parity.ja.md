@@ -56,14 +56,14 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。 |
 | `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違（承認済み） | VM capture design-rowcontrast-1, `dock-cells` と `dock-mid` で、現在のスペースの文字セルが残り、ほかがドットになることを確認した（決定 33）。オーナー承認済みの F 系ボードはライト 55%、ダーク 10% の背景と通常のラベル色を使い、A-BottomDock は 60%、13% とアクセント色の文字を描く。 |
 | `A-BottomDock` | 開いている Library の塗り | `keyboard-archive-list` | 一致 | 開いた時点のスペースの Look のアクセントで塗る（mock-decisions.md:33）。 |
-| `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 相違 | `organize-first-favorite` では favicon がないサイトに地球のアイコンが出る（決定 11 は頭文字）。読み込み中、音声、ミュート、未読の各状態は撮影待ちである（決定 12）。 |
+| `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 修正済み、VM 再確認待ち | favicon がないタイルはサイトの頭文字を表示する（決定 11）。favicon の画像と音声、ミュート、未読の印は実装待ちであり、読み込み中の状態は撮影待ちである（決定 12）。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 一致 | `organize-empty-favorites` では空の領域が詰まり、プレースホルダーを挟まず URL 欄の下にスペース名が出る（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
 | `A-Header` | 幅に応じたナビゲーションとツールチップ | `header-240`, `header-232`, `header-231`, `header-200`, `header-199`, `header-164`, `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-loading`, `header-stopped` | 一致 | `header-240/232/231/200/199/164` とツールチップ、読み込み中の画像で、サイドバー切替の 232 pt、Reload の 200 pt、読み込み中の Stop、ショートカット付きのツールチップを確認した（決定 7–10）。 |
 | `A-Header` | ショートカット押下中と狭い幅でのオーバーフロー | `header-command`, `header-command-r`, `header-command-r-narrow`, `header-command-w` | 一致 | `header-command`、`header-command-r-narrow`、`header-command-w` で、キーとボタンの押下表示、狭幅時の … の押下背景、行の閉じるボタンの押下表示を確認した（決定 9–10）。 |
-| `A-Header` | ヘッダーのオーバーフローメニュー | `header-overflow-menu` | 相違 | `header-overflow-menu` の項目、順序、区切り線は決定 6 に一致する。A-Header に描かれたショートカット表記がない。 |
+| `A-Header` | ヘッダーのオーバーフローメニュー | `header-overflow-menu` | 修正済み、VM 再確認待ち | オーバーフローメニューは A-Header に描かれた 8 項目の現在のショートカットを表示する。 |
 | `A-Layout` | サイドバーの配置 | `header-240` | 一致 | `header-240` で 240 pt のサイドバー、URL 欄、スペース名、Clear の手前で終わる Today の区切り線、New Tab、dock を確認した（決定 118）。お気に入りとピン留めのブロックは撮影待ちである。 |
-| `A-SpaceName` | 名前、シェブロン、メニュー、ピンの折りたたみ | `space-name-hover`, `space-name-collapsed`, `space-name-menu`, `space-name-renamed` | 相違 | `space-name-hover` と `space-name-collapsed` ではシェブロンが名前の中心より約 9 pt 下にある。`space-name-menu` の項目は決定 72 に一致するが、New Folder と Delete Space… の前に区切り線がない。 |
+| `A-SpaceName` | 名前、シェブロン、メニュー、ピンの折りたたみ | `space-name-hover`, `space-name-collapsed`, `space-name-menu`, `space-name-renamed` | 修正済み、VM 再確認待ち | シェブロンは名前の文字に中央揃えとし、メニューは New Folder と Delete Space… の前に区切り線を表示する（決定 72）。 |
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 一致 | `sidebar-rows-*` で読み込み済みピンの −、favicon の位置のスピナー、未読ドット、45% のクラッシュ行、音声とミュートのマークを確認した（決定 15、16、19、32）。カードは選択行の背景と影の行を参照。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
@@ -88,7 +88,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 相違 | `toasts-banner` の失敗時は B-History と同じテキストとボタンである。再試行中、成功時、ダーク外観は撮影待ちである。 |
 | `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違 | VM capture design-rowcontrast-1, `downloads-library` で、アイコンの下にラベルを置くレールと選択タイルを確認した。`keyboard-archive-list` の判定は維持し、Archive の選択タイルと Phase 5 の Clear Archive… フッターに dock が重ならないことは再撮影で確認する。 |
 | `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違 | `keyboard-archive-search`、`keyboard-archive-no-matches`、`keyboard-archive-empty` のリスト状態は一致し、旧画像では Phase 5 の Clear Archive… フッターに + が重なる。design-rowcontrast-1 に Archive の画像がなく、フッターとライト・ダーク外観の選択タイルは再確認待ちである。 |
-| `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 相違 | `sidebar-rows-tab-menu` には Phase 5 のショートカット付き Add Split View がある。スペースと分割のメニュー項目は決定 65、72 に一致するが、`space-name-menu` には区切り線がない。 |
+| `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 修正済み、VM 再確認待ち | スペースのメニューに区切り線が 2 本ある（決定 72）。Today のメニューには Phase 5 の Add Split View があり、分割のメニューは決定 65 に従う。 |
 | `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | VM capture design-rowcontrast-1, `dock-cells` と `create-space-created` で、空のページカードに ⌘T New Tab と ⇧⌘L Open Library が出ることを確認した（決定 61）。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 一致 | `dock-mid` ではヘッダー、URL 欄、下部バーを固定したまま内容がスライドし、現在のスペースのセルのみが残り、ほかはドットになる（決定 33）。クロスフェードは計測待ちである（決定 69）。 |
 | `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | VM capture design-rowcontrast-1, `split-focus-a` と `split-focus-b` で、ペイン間の Look 色のフォーカスリングの移動、サイドバーの共通操作部、各ペインに対応するセグメントを確認した（決定 17、65）。 |

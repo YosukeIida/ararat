@@ -955,29 +955,16 @@ final class FavoriteTile: NSButton {
     var onRenameEnd: (() -> Void)?
     private(set) var renameField: SidebarRenameField?
     private let onPress: (Row) -> Void
-    private let icon = NSImageView()
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     init(row: Row, onPress: @escaping (Row) -> Void) {
         self.row = row
         self.onPress = onPress
         super.init(frame: .zero)
-        imagePosition = .imageOnly
         isBordered = false
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
-        icon.imageScaling = .scaleNone
-        icon.contentTintColor = .labelColor
-        icon.setAccessibilityHidden(true)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(icon)
-        NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16),
-        ])
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
@@ -990,7 +977,8 @@ final class FavoriteTile: NSButton {
 
     func update(row: Row) {
         self.row = row
-        icon.image = SidebarRowView.symbol(for: row.kind)
+        let host = row.url.flatMap { URL(string: $0)?.host }
+        title = (host?.first ?? row.title.first)?.uppercased() ?? ""
         refreshForeground()
         toolTip = row.title
         setAccessibilityLabel(row.title)
@@ -1040,13 +1028,16 @@ final class FavoriteTile: NSButton {
 
     func refreshForeground() {
         let opacity = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        guard let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor) else {
-            icon.contentTintColor = .labelColor
-            icon.alphaValue = opacity
-            return
-        }
+        let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop, minimum: 3)
+            let (color, alpha) = backdrop.map {
+                SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: $0, minimum: 3)
+            } ?? (NSColor.labelColor, opacity)
+            let glyph = NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: 15, weight: .regular),
+                .foregroundColor: alpha == 1 ? color : color.withAlphaComponent(color.alphaComponent * alpha),
+            ])
+            if attributedTitle != glyph { attributedTitle = glyph }
         }
     }
 

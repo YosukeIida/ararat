@@ -1355,13 +1355,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     self.workspace = workspace
     self.airTraffic = AirTrafficModel(adapter: workspace)
-    let bindings = KeyBindingsModel(adapter: workspace)
-    self.keyBindings = bindings
-    bindings.onChange = { [weak sidebar, weak bindings] in
-      if let bindings { sidebar?.keyBindings = bindings.bindings }
-    }
-    bindings.load { [weak self] result in
-      if case .failure(let error) = result { self?.report(error) }
+    if let bindings = root?.keyBindings ?? keyBindings {
+      keyBindings = bindings
+      sidebar.keyBindings = bindings.bindings
+    } else {
+      let bindings = KeyBindingsModel(adapter: workspace)
+      keyBindings = bindings
+      bindings.onChange = { [weak self, weak bindings] in
+        guard let self, let bindings else { return }
+        for runtime in [self] + self.children {
+          runtime.sidebar?.keyBindings = bindings.bindings
+        }
+      }
+      bindings.load { [weak self] result in
+        if case .failure(let error) = result { self?.report(error) }
+      }
     }
     sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
     self.sidebar = sidebar
@@ -2420,14 +2428,17 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     let ids = Self.coreMenuCommandIDs
     let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
-    if let settingsItem = menu.items.first?.submenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
+    let appMenu = menu.items.first?.submenu
+    if let settingsItem = appMenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
        let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
       settingsItem.target = self
       settingsItem.action = #selector(coreMenuCommand(_:))
       settingsItem.representedObject = "settings"
+      settingsItem.identifier = NSUserInterfaceItemIdentifier("settings")
       KeyBindingsModel.setCoreMenuShortcut(binding.key, on: settingsItem)
     }
     displacedMenuItems = KeyBindingsModel.clearCollisions(bindings + defaultKeyBindings().filter { $0.command == "reopen_closed_tab" }, in: menu)
+    if let appMenu { keyBindings?.register(appMenu) }
     let core = NSMenu(title: "Ararat Commands")
     for binding in bindings {
       let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")

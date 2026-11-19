@@ -212,6 +212,7 @@ func theSpaceNameRowChevronMenuAndRenameFollowTheMock() throws {
     }
     let nameRow = sidebar.spaceNameRow
     let name = try #require(u25Descendants(nameRow).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Work" })
+    let chevron = try #require(nameRow.subviews.compactMap { $0 as? NSButton }.first { $0 !== nameRow.moreButton })
     func nameX() -> CGFloat {
         nameRow.layoutSubtreeIfNeeded()
         let rect = name.alignmentRect(forFrame: name.frame)
@@ -222,11 +223,13 @@ func theSpaceNameRowChevronMenuAndRenameFollowTheMock() throws {
     nameRow.hovered = true
     sidebar.layoutSubtreeIfNeeded()
     #expect(abs(nameX() - 40) < 0.5)
+    #expect(abs(chevron.frame.midY - (nameRow.bounds.maxY - name.font!.capHeight / 2)) < 0.5)
     nameRow.hovered = false
     // The flag rides in the space snapshot: a collapsed snapshot shows the chevron at rest.
     sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [u25Collapsed(space)]))
     sidebar.layoutSubtreeIfNeeded()
     #expect(abs(nameX() - 40) < 0.5)
+    #expect(abs(chevron.frame.midY - (nameRow.bounds.maxY - name.font!.capHeight / 2)) < 0.5)
     // S2: a click on the row toggles the section through the core edit.
     sidebar.update(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]))
     sidebar.layoutSubtreeIfNeeded()
@@ -244,8 +247,8 @@ func theSpaceNameRowChevronMenuAndRenameFollowTheMock() throws {
     let menuEvent = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [],
                                                     timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     let menu = try #require(nameRow.menu(for: menuEvent))
-    #expect(menu.items.map(\.title) == ["Rename Space…", "Edit Look…", "Space Settings…", "New Folder", "Delete Space…"])
-    #expect(menu.items.map(\.title) == sidebar.dockMenuItems(for: space.id).map(\.title))
+    #expect(menu.items.map { $0.isSeparatorItem ? nil : $0.title } == ["Rename Space…", "Edit Look…", "Space Settings…", nil, "New Folder", nil, "Delete Space…"])
+    #expect(menu.items.map(\.isSeparatorItem) == sidebar.dockMenuItems(for: space.id).map(\.isSeparatorItem))
     // S4: a click never starts a rename; the menu item does, with the 24 pt field.
     #expect(nameRow.renameField == nil)
     let rename = try #require(menu.items.first { $0.title == "Rename Space…" })
@@ -254,6 +257,18 @@ func theSpaceNameRowChevronMenuAndRenameFollowTheMock() throws {
     let field = try #require(nameRow.renameField)
     #expect(field.frame.height == 24)
     #expect(name.isHidden)
+}
+
+@Test @MainActor
+func aFavoriteWithoutAFaviconShowsTheSiteInitial() {
+    var row = u25Row("wikipedia")
+    row.title = "My reading"
+    let tile = FavoriteTile(row: row) { _ in }
+    #expect(tile.attributedTitle.string == "W")
+    #expect(tile.accessibilityLabel() == "My reading")
+    row.url = "about:blank"
+    tile.update(row: row)
+    #expect(tile.attributedTitle.string == "M")
 }
 
 @Test @MainActor

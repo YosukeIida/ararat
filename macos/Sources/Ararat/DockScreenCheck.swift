@@ -259,8 +259,8 @@ extension Runtime {
             let space = current.spaces[sidebar.spaceShown]
             check.selectedSpace = space.id
             let items = sidebar.dockMenuItems(for: space.id)
-            let names = items.map(\.title)
-            check.report("menu", names == ["Rename Space…", "Edit Look…", "Space Settings…", "New Folder", "Delete Space…"])
+            let names = items.map { $0.isSeparatorItem ? nil : $0.title }
+            check.report("menu", names == ["Rename Space…", "Edit Look…", "Space Settings…", nil, "New Folder", nil, "Delete Space…"])
             guard let item = items.first(where: { $0.title == "New Folder" }), item.isEnabled, let action = item.action else { end("new_folder", false); return }
             check.folderCount = Int(space.pinnedCount)
             FileHandle.standardError.write(Data("ararat-trace: dock invoke New Folder\n".utf8))

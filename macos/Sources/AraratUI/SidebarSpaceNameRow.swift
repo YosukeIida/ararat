@@ -53,7 +53,7 @@ public final class SidebarSpaceNameRow: NSView {
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: SidebarMetrics.spaceRowHeight),
             chevron.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SidebarMetrics.spaceChevronLeading),
-            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.centerYAnchor.constraint(equalTo: name.firstBaselineAnchor, constant: -name.font!.capHeight / 2),
             chevron.widthAnchor.constraint(equalToConstant: SidebarMetrics.spaceChevronSize),
             chevron.heightAnchor.constraint(equalToConstant: SidebarMetrics.spaceChevronSize),
             nameLeading,

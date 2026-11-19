@@ -294,7 +294,7 @@ public final class SidebarContainerView: NSView {
         }
         panel.addSubview(header)
         header.menuDelegate = sidebar
-        header.toggleBinding = { [weak sidebar] in sidebar?.keyBindings.first { $0.command == "toggle_sidebar" }?.key }
+        header.keyBindings = { [weak sidebar] in sidebar?.keyBindings ?? [] }
         header.onCommand = { [weak self] command in
             if command == "toggle_sidebar" { self?.toggleSidebar() }
             else { self?.onHeaderCommand?(command) }

@@ -196,7 +196,6 @@ func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
     sidebar.layoutSubtreeIfNeeded()
     let row = try #require(adapterDescendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == "p" })
     let tile = try #require(adapterDescendants(sidebar).compactMap { $0 as? FavoriteTile }.first)
-    let icon = try #require(tile.subviews.compactMap { $0 as? NSImageView }.first)
     let frame = row.frame
     pinned.unloaded = true; favorite.unloaded = true
     sidebar.applyClose(id: "p", snapshot: snapshot([pinned], [favorite]))
@@ -206,16 +205,14 @@ func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
     #expect(row.layer?.animation(forKey: "row.close.move") == nil)
     #expect(try #require(row.subviews.compactMap { $0 as? NSImageView }.first).alphaValue == SidebarMetrics.unloadedOpacity)
     #expect(try #require(row.subviews.compactMap { $0 as? NSTextField }.first).alphaValue == SidebarMetrics.unloadedOpacity)
-    let favicon = NSImage(size: NSSize(width: 16, height: 16))
-    favicon.isTemplate = false
-    icon.image = favicon
-    #expect(icon.alphaValue == SidebarMetrics.unloadedOpacity)
-    #expect(icon.image?.isTemplate == false)
+    let unloadedGlyph = try #require(tile.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
     #expect(tile.alphaValue == 1)
     pinned.unloaded = false; favorite.unloaded = false
     sidebar.applySelection(snapshot: snapshot([pinned], [favorite]))
     #expect(!row.row.unloaded && !tile.row.unloaded)
-    #expect(icon.alphaValue == 1)
+    let loadedGlyph = try #require(tile.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+    #expect(loadedGlyph == .labelColor)
+    #expect(abs(unloadedGlyph.alphaComponent - loadedGlyph.alphaComponent * SidebarMetrics.unloadedOpacity) < 0.001)
 }
 
 @Test @MainActor

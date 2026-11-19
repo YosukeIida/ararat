@@ -357,7 +357,6 @@ func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
     let panel = try #require(sidebar.superview as? SidebarPanelView)
     let views = descendants(sidebar)
     let favorite = try #require(views.compactMap { $0 as? FavoriteTile }.first)
-    let icon = try #require(favorite.subviews.compactMap { $0 as? NSImageView }.first)
     let library = sidebar.libraryButton
     let plus = try #require(views.compactMap { $0 as? SidebarDockButton }.first { $0.accessibilityLabel() == "New Space menu" })
     let cells = views.compactMap { $0 as? SpaceDockButton }
@@ -376,18 +375,16 @@ func favoriteAndBottomBarGlyphsKeepThreeToOne() throws {
         panel.systemAppearance = { appearance }
         sidebar.previewLook(spaceID: first.id, look: preview)
         container.layoutSubtreeIfNeeded()
-        let favoriteTint = try #require(icon.contentTintColor)
+        let favoriteTint = try #require(favorite.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
         if name != "brightest-dark" {
             #expect(favoriteTint == .labelColor)
-            #expect(icon.alphaValue == 1)
             #expect(library.contentTintColor == nil)
             #expect(plus.contentTintColor == nil)
             #expect(cells.allSatisfy { $0.checkGlyphColor == .labelColor })
         }
         appearance.performAsCurrentDrawingAppearance {
-            let favoriteRGB = favoriteTint.usingColorSpace(.sRGB)!
             let glyphs: [(String, NSView, NSColor, CGColor?)] = [
-                ("favorite", icon, favoriteRGB.withAlphaComponent(favoriteRGB.alphaComponent * icon.alphaValue), favorite.layer?.backgroundColor),
+                ("favorite", favorite, favoriteTint, favorite.layer?.backgroundColor),
                 ("library", library, library.contentTintColor ?? .labelColor, library.libraryFill.backgroundColor),
                 ("plus", plus, plus.contentTintColor ?? .labelColor, nil),
             ] + cells.enumerated().map { ("dock-\($0.offset)", $0.element, $0.element.checkGlyphColor, $0.element.checkFill?.cgColor) }
