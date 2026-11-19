@@ -5,6 +5,8 @@ public enum SpaceAccent {
     public static let privateColor = NSColor(srgbRed: 110 / 255, green: 110 / 255, blue: 120 / 255, alpha: 1)
     // Why not 3.0: 8-bit quantization can push an exact 3.0 below 3:1.
     private static let minimumContrast: CGFloat = 3.1
+    // Why not the exact floor for a restyled colour: tint rasterization and view opacity add rounding.
+    private static let drawingContrastMargin: CGFloat = 0.1
 
     public static func resolve(_ look: Look?, privateWindow: Bool = false, fallback: NSColor = teal) -> NSColor {
         if privateWindow { return privateColor }
@@ -50,9 +52,39 @@ public enum SpaceAccent {
         return color(towardTarget: upper)
     }
 
-    private static func luminance(_ rgb: NSColor) -> CGFloat {
+    public static func readableForeground(_ preferred: NSColor, opacity: CGFloat, on backdrop: NSColor, minimum: CGFloat) -> (color: NSColor, opacity: CGFloat) {
+        let base = backdrop.usingColorSpace(.sRGB)!
+        let original = preferred.usingColorSpace(.sRGB)!
+        let background = luminance(base, quantized: true)
+        let originalAlpha = original.alphaComponent * opacity
+
+        func contrast(_ color: NSColor, alpha: CGFloat) -> CGFloat {
+            let blended = NSColor(srgbRed: color.redComponent * alpha + base.redComponent * (1 - alpha),
+                                  green: color.greenComponent * alpha + base.greenComponent * (1 - alpha),
+                                  blue: color.blueComponent * alpha + base.blueComponent * (1 - alpha), alpha: 1)
+            let foreground = luminance(blended, quantized: true)
+            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
+        }
+
+        if contrast(original, alpha: originalAlpha) >= minimum { return (preferred, opacity) }
+        let fallback: NSColor = background > 0.179 ? .black : .white
+        let target = fallback.usingColorSpace(.sRGB)!
+        let targetContrast = min(minimum + drawingContrastMargin, contrast(target, alpha: 1))
+        if contrast(target, alpha: originalAlpha) >= targetContrast { return (fallback, originalAlpha) }
+        var lower = originalAlpha
+        var upper: CGFloat = 1
+        for _ in 0..<12 {
+            let middle = (lower + upper) / 2
+            if contrast(target, alpha: middle) >= targetContrast { upper = middle }
+            else { lower = middle }
+        }
+        return (fallback, upper)
+    }
+
+    private static func luminance(_ rgb: NSColor, quantized: Bool = false) -> CGFloat {
         func linear(_ channel: CGFloat) -> CGFloat {
-            channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+            let value = quantized ? (channel * 255).rounded() / 255 : channel
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
         }
         return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
     }

@@ -108,10 +108,14 @@ public final class SidebarView: NSView {
     private(set) var spaceAccent = SpaceAccent.teal
     func refreshRowColors() {
         for row in rowViews.values {
-            row.refreshSelectedForeground()
+            row.refreshForeground()
             row.refreshUnreadAccent()
         }
-        dragCopyView?.refreshSelectedForeground()
+        for row in noTabsRows.values { row.refreshForeground() }
+        for tile in favoriteTiles.values { tile.refreshForeground() }
+        refreshBottomGlyphs()
+        for case let cell as SpaceDockButton in dock.subviews { cell.refreshGlyph() }
+        dragCopyView?.refreshForeground()
         for preview in scrollPreviews { preview.refreshRowColors() }
     }
 
@@ -1374,6 +1378,7 @@ public final class SidebarView: NSView {
         wheelDrawnRow?.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
         library.frame = bounds
         libraryButton.libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
+        refreshBottomGlyphs()
         creation.frame = bounds
         pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
@@ -2340,6 +2345,17 @@ public final class SidebarView: NSView {
                 .withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
         }
         libraryButton.refreshAccent()
+        refreshBottomGlyphs()
+    }
+
+    private func refreshBottomGlyphs() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            for (button, fill) in [(libraryButton as NSButton, libraryButton.libraryFill.backgroundColor), (plusButton, nil)] {
+                guard let backdrop = SidebarPanelView.backdrop(behind: button, overlaidBy: fill) else { continue }
+                let (color, opacity) = SpaceAccent.readableForeground(.labelColor, opacity: 1, on: backdrop, minimum: 3)
+                button.contentTintColor = color == .labelColor ? nil : color.withAlphaComponent(opacity)
+            }
+        }
     }
 
     private var pageView: NSView { libraryOpen ? library : createSpaceOpen ? creation : spaceColumn }
@@ -2672,7 +2688,7 @@ extension SidebarView {
         frame.origin.x += position.x - state.origin.x
         frame.origin.y += position.y - state.origin.y
         dragCopyView?.frame = nativeDragRect(frame)
-        dragCopyView?.refreshSelectedForeground()
+        dragCopyView?.refreshForeground()
         resolveDrag()
     }
 
