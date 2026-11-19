@@ -52,7 +52,15 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         caption.font = .systemFont(ofSize: SidebarMetrics.createSpaceCaptionSize)
         caption.textColor = .secondaryLabelColor
         profile.font = .systemFont(ofSize: SidebarMetrics.createSpaceBodySize)
-        let profileLabels = NSStackView(views: [caption, profile])
+        let person = NSImageView()
+        person.image = NSImage(systemSymbolName: "person", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: SidebarMetrics.createSpaceBodySize, weight: .regular))
+        person.contentTintColor = .secondaryLabelColor
+        person.setAccessibilityHidden(true)
+        let profileValue = NSStackView(views: [person, profile])
+        profileValue.alignment = .centerY
+        profileValue.spacing = SidebarMetrics.createSpaceGap
+        let profileLabels = NSStackView(views: [caption, profileValue])
         profileLabels.orientation = .vertical
         profileLabels.alignment = .leading
         profileLabels.spacing = SidebarMetrics.createSpaceGap

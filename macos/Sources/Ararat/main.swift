@@ -362,7 +362,7 @@ func checkWindowSelection(_ rows: [[String]]?, windowID: String) -> String? {
 final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   let rootView = NSView()
   let card = NSView()
-  private let permissionDim = PermissionDim()
+  private let pageDialogDim = PageDialogDim()
   let findBar = FindBarView()
   var findPageRect = NSRect.zero
   var host: (any ARWindowHostAPI)?
@@ -377,9 +377,9 @@ final class PopupHost: NSObject, @preconcurrency ARWindowHostDelegate {
   var checkFailureState: [String: Any] { failureView?.checkState ?? [:] }
   deinit { if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) } }
   func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
-  func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,
-                  container: NSView, frame: NSRect, visible: Bool) {
-    permissionDim.update(identifier, container: container, frame: frame, visible: visible)
+  func windowHost(_ host: any ARWindowHostAPI, pageDialogDim identifier: String,
+                  container: NSView?, frame: NSRect, visible: Bool) {
+    pageDialogDim.update(identifier, container: container, frame: frame, visible: visible)
   }
   func windowHost(_ host: any ARWindowHostAPI, didReceiveTransaction transaction: [String: Any]) {
     littleWindow?.update()
@@ -6926,17 +6926,19 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 9
     case 9:
       guard tab.checkPermissionShownCount() >= 3, !tab.checkPermissionWidgetVisible() else { return }
-      dialogsScreenChecks["javascript_before_permission"] = true
-      guard let step = capture("javascript") else { return }
+      guard let javascript = host.window().childWindows?.first(where: { $0.isVisible }),
+            let step = capture("javascript", dialog: javascript) else { return }
+      let dimmed = adapter?.checkPageDialogDim(tab.liveId) == true
       dialogsScreenSteps["javascript"] = step
       guard tab.checkAcceptJavaScriptDialog("") else { return }
+      dialogsScreenChecks["javascript_before_permission"] = dimmed && !javascript.isVisible
       browserCheckPhase = 10
     case 10:
       guard tab.checkPermissionWidgetVisible(),
             let dialog = tab.checkPermissionBlockButton()["window"] as? NSWindow, dialog.isKeyWindow,
             let step = capture("queued-permission", dialog: dialog) else { return }
       dialogsScreenSteps["queued_permission"] = step
-      dialogsScreenChecks["permission_after_javascript"] = true
+      dialogsScreenChecks["permission_after_javascript"] = adapter?.checkPageDialogDim(tab.liveId) == true
       promptScreenKey(dialog, code: 53, characters: "\u{1b}")
       browserCheckPhase = 11
     case 11:
@@ -7067,13 +7069,13 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         let destination = children.last?.host
         let moved = (destination?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID })
         let state = moved?.checkPermissionWidgetState() ?? [:]
-        FileHandle.standardError.write(Data("ararat-trace: dialogs transfer wait item=\(dialogsScreenTransferID) selected=\(children.last?.snapshot.selectedId ?? "nil") active=\(destination?.activeItemId() ?? "nil") pending=\(moved?.checkPermissionPending() ?? false) modal=\(moved?.checkIsDialogActive() ?? false) host_ours=\(moved?.checkDialogHostIsOurs() ?? false) window=\(destination?.window().windowNumber ?? -1) window_visible=\(destination?.window().isVisible ?? false) sheet=\(state["window_number"] ?? -1) parent=\(state["parent_window_number"] ?? -1) delegate_visible=\(state["delegate_visible"] ?? false) widget=\(moved?.checkPermissionWidgetVisible() ?? false) dim=\(moved.map { children.last?.adapter?.checkPermissionDim($0.liveId) == true } ?? false)\n".utf8))
+        FileHandle.standardError.write(Data("ararat-trace: dialogs transfer wait item=\(dialogsScreenTransferID) selected=\(children.last?.snapshot.selectedId ?? "nil") active=\(destination?.activeItemId() ?? "nil") pending=\(moved?.checkPermissionPending() ?? false) modal=\(moved?.checkIsDialogActive() ?? false) host_ours=\(moved?.checkDialogHostIsOurs() ?? false) window=\(destination?.window().windowNumber ?? -1) window_visible=\(destination?.window().isVisible ?? false) sheet=\(state["window_number"] ?? -1) parent=\(state["parent_window_number"] ?? -1) delegate_visible=\(state["delegate_visible"] ?? false) widget=\(moved?.checkPermissionWidgetVisible() ?? false) dim=\(moved.map { children.last?.adapter?.checkPageDialogDim($0.liveId) == true } ?? false)\n".utf8))
       }
       guard let child = children.last, let destination = child.host,
             let moved = (destination.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == dialogsScreenTransferID }),
             child.snapshot.selectedId == moved.itemId, destination.activeItemId() == moved.itemId,
             moved.checkPermissionPending(), moved.checkIsDialogActive(), moved.checkDialogHostIsOurs(),
-            moved.checkPermissionWidgetVisible(), child.adapter?.checkPermissionDim(moved.liveId) == true,
+            moved.checkPermissionWidgetVisible(), child.adapter?.checkPageDialogDim(moved.liveId) == true,
             let sheet = moved.checkPermissionBlockButton()["window"] as? NSWindow,
             sheet.parent === destination.window(),
             moved.checkPermissionWidgetState()["delegate_visible"] as? Bool == true else { return }

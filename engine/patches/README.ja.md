@@ -55,6 +55,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/keyboard-ime-diagnostics.patch` | 独自 |
 | `ararat/find-close-command.patch` | 独自 |
 | `ararat/hidden-dialog-containment.patch` | 独自 |
+| `ararat/page-dialog-queue.patch` | 独自 |
 | `ararat/history-deletion-hook.patch` | 独自 |
 | `ararat/crash-lock-abandon.patch` | 独自 |
 | `ararat/history-retention.patch` | 独自 |
@@ -87,6 +88,8 @@ mode 1 の検査は `DeleteURLs` を要求し、ファイル用シーケンス�
 `ararat/keyboard-ime-diagnostics.patch` は keyboard check の browser 側の対象と転送を件数制限付きで記録する。入力テキストは記録しない。
 
 `ararat/hidden-dialog-containment.patch` は hidden check の予期しない通常の JavaScript dialog を拒否し、beforeunload の開始と完了を WebContents の境界で検証できるようにする。
+
+`ararat/page-dialog-queue.patch` は Ararat のページダイアログを閉じるとき、Chromium がキューの次のダイアログを表示する前に現在のウィジェットを隠す。
 
 `ararat/find-close-command.patch` は検索セッションの終了後、検索 UI が非アクティブになった時点でコマンドの状態を更新する。
 

@@ -664,7 +664,7 @@ final class SidebarRowView: NSView {
         setAccessibilityCustomActions(rowActions)
         if closeButton.accessibilityLabel() != label { closeButton.toolTip = label }
         closeButton.setAccessibilityLabel(label)
-        closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || (!hovered && !shortcutPressed)))
+        closeButton.isHidden = row.kind != .tab || dragCopy || !acceptsKeyboardFocus || (!hovered && !shortcutPressed)
         hintCloseTrailing.isActive = !closeButton.isHidden
         unreadDot.isHidden = !unread || !closeButton.isHidden
         refreshUnreadAccent()

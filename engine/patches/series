@@ -39,6 +39,7 @@ ararat/ssl-interstitial-layout.patch
 ararat/keyboard-ime-diagnostics.patch
 ararat/find-close-command.patch
 ararat/hidden-dialog-containment.patch
+ararat/page-dialog-queue.patch
 ararat/history-deletion-hook.patch
 ararat/crash-lock-abandon.patch
 ararat/history-retention.patch

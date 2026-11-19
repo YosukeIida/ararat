@@ -1,0 +1,25 @@
+--- a/components/web_modal/web_contents_modal_dialog_host.h
++++ b/components/web_modal/web_contents_modal_dialog_host.h
+@@ -24,6 +24,8 @@
+
+   // Returns the maximum dimensions a dialog can have.
+   virtual gfx::Size GetMaximumDialogSize() = 0;
++
++  virtual bool ShouldHideDialogBeforeClosing() const { return false; }
+ };
+
+ }  // namespace web_modal
+--- a/components/constrained_window/native_web_contents_modal_dialog_manager_views.cc
++++ b/components/constrained_window/native_web_contents_modal_dialog_manager_views.cc
+@@ -171,6 +171,11 @@
+
+ void NativeWebContentsModalDialogManagerViews::OnWidgetClosing(
+     views::Widget* widget) {
++  if (host_ && host_->ShouldHideDialogBeforeClosing() && widget->IsVisible()) {
++    // WillClose can show the next dialog before the native close begins.
++    widget->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
++    widget->Hide();
++  }
+   WidgetClosing(widget);
+ }
+

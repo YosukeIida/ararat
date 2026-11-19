@@ -33,7 +33,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
     let windowID: String
     private let card: NSView
-    private let permissionDim = PermissionDim()
+    private let pageDialogDim = PageDialogDim()
     weak var host: (any ARWindowHostAPI)?
     private let closeStateLock = NSLock()
     private var closeStarted = false
@@ -988,11 +988,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         onWindowTitle?(pageTitle)
     }
 
-    public func checkPermissionDim(_ identifier: String) -> Bool { permissionDim.isVisible(identifier) }
+    public func checkPageDialogDim(_ identifier: String) -> Bool { pageDialogDim.isVisible(identifier) }
 
-    public func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,
-                           container: NSView, frame: NSRect, visible: Bool) {
-        permissionDim.update(identifier, container: container, frame: frame, visible: visible)
+    public func windowHost(_ host: any ARWindowHostAPI, pageDialogDim identifier: String,
+                           container: NSView?, frame: NSRect, visible: Bool) {
+        pageDialogDim.update(identifier, container: container, frame: frame, visible: visible)
     }
 
     public func windowHost(_ host: any ARWindowHostAPI, pageFullscreenChanged fullscreen: Bool) {

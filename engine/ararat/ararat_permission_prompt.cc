@@ -1,7 +1,6 @@
 #include "ararat/core/ararat_permission_prompt.h"
 
 #include <memory>
-#include <map>
 #include <cstdio>
 #include <optional>
 #include <tuple>
@@ -38,10 +37,6 @@ namespace {
 
 enum class Decision { kAllow, kOnce, kBlock, kDismiss };
 class AraratPermissionPrompt;
-std::map<const void*, base::WeakPtr<AraratPermissionPrompt>>& Prompts() {
-  static base::NoDestructor<std::map<const void*, base::WeakPtr<AraratPermissionPrompt>>> prompts;
-  return *prompts;
-}
 struct CheckState {
   base::WeakPtr<AraratPermissionPrompt> prompt;
   base::WeakPtr<content::WebContents> contents;
@@ -68,7 +63,7 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
                                public views::WidgetObserver {
  public:
   AraratPermissionPrompt(content::WebContents* contents, Delegate* delegate)
-      : delegate_(delegate->GetWeakPtr()), contents_(contents) {
+      : delegate_(delegate->GetWeakPtr()) {
     auto builder = ui::DialogModel::Builder();
     builder.SetTitle(u"Site permissions");
     auto origin = std::make_unique<views::Label>(
@@ -109,10 +104,8 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
     dialog->set_esc_should_cancel_dialog_override(false);
     dialog->set_fixed_width(340);
     widget_ = constrained_window::ShowWebModalDialogViews(dialog.release(), contents);
-    Prompts()[contents_] = weak_factory_.GetWeakPtr();
     if (widget_) {
       widget_->AddObserver(this);
-      if (widget_->IsVisible()) AraratSetPermissionDim(contents_, true);
       TraceWidget("created");
     }
     if (IsPermissionCheck()) {
@@ -123,9 +116,6 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
     delegate->SetPromptShown();
   }
   ~AraratPermissionPrompt() override {
-    AraratSetPermissionDim(contents_, false);
-    auto it = Prompts().find(contents_);
-    if (it != Prompts().end() && it->second.get() == this) Prompts().erase(it);
     if (widget_) {
       widget_->RemoveObserver(this);
       block_button_ = nullptr;
@@ -148,19 +138,14 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
     return std::nullopt;
   }
   void OnWidgetDestroying(views::Widget* widget) override {
-    AraratSetPermissionDim(contents_, false);
     widget->RemoveObserver(this);
     widget_ = nullptr;
     block_button_ = nullptr;
     origin_label_ = nullptr;
     Choose(Decision::kDismiss);
   }
-  void OnWidgetVisibilityChanged(views::Widget*, bool visible) override {
-    AraratSetPermissionDim(contents_, visible);
+  void OnWidgetVisibilityChanged(views::Widget*, bool) override {
     TraceWidget("visibility");
-  }
-  void OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) override {
-    if (widget->IsVisible()) AraratSetPermissionDim(contents_, true);
   }
   bool CheckDecision(int decision) {
     if (decision < 0 || decision > 3 || answered_) return false;
@@ -174,9 +159,6 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
   bool CheckOriginWrapped() {
     return origin_label_ && origin_label_->GetRequiredLines() > 1 &&
            !origin_label_->IsDisplayTextTruncated();
-  }
-  void RefreshDim() {
-    if (widget_ && widget_->IsVisible()) AraratSetPermissionDim(contents_, true);
   }
 
  private:
@@ -229,7 +211,6 @@ class AraratPermissionPrompt : public permissions::PermissionPrompt,
     }
   }
   base::WeakPtr<Delegate> delegate_;
-  const void* contents_;
   raw_ptr<views::Widget> widget_ = nullptr;
   raw_ptr<views::MdTextButton> block_button_ = nullptr;
   raw_ptr<views::Label> origin_label_ = nullptr;
@@ -251,11 +232,6 @@ std::unique_ptr<permissions::PermissionPrompt> CreatePrompt(
 
 void AraratInstallPermissionPrompt() {
   g_ararat_create_permission_prompt = &CreatePrompt;
-}
-
-void AraratRefreshPermissionDim(content::WebContents* contents) {
-  auto it = Prompts().find(contents);
-  if (it != Prompts().end() && it->second) it->second->RefreshDim();
 }
 
 unsigned AraratCheckPermissionShownCount() {
