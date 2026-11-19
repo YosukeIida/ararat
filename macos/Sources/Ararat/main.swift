@@ -502,20 +502,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let event = NSAppleEventManager.shared().currentAppleEvent
     let quitEvent = event?.eventClass == kCoreEventClass && event?.eventID == kAEQuitApplication ? event : nil
     let reason = quitEvent?.paramDescriptor(forKeyword: kAEQuitReason)?.enumCodeValue
-    let senderPID = quitEvent?.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
-    let sender = senderPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
     let checkBypass = !checksQuitConfirmation && CommandLine.arguments.contains {
       $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") || $0.hasPrefix("--ararat-measure=")
     }
     let source = QuitConfirmation.source(poweringOff: poweringOff, quitReason: reason,
-                                         senderBundleID: sender, checkBypass: checkBypass)
+                                         sparkleRelaunching: AppUpdates.isRelaunching(owner: NSApp.delegate),
+                                         checkBypass: checkBypass)
     if source != .user {
       quitConfirmation.cancel()
       return false
     }
     if repeatKey, quitEvent == nil { return true }
     if quitConfirmation.isPending {
-      if quitEvent == nil && QuitConfirmation.confirmsWithShortcut(shortcut: shortcut, repeatKey: repeatKey) {
+      if quitEvent == nil, shortcut, let event = NSApp.currentEvent,
+         QuitConfirmation.shortcutAction(for: event, binding: keyBindings?.binding(command: "quit")?.key) == .confirm {
         quitConfirmation.answer(.OK)
       }
       return true
@@ -550,6 +550,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       inspect = nil
     }
     quitConfirmation.show(over: owner, message: QuitConfirmation.message(for: browserWindows.map { $0.1 }),
+                          quitBinding: { [weak self] in self?.keyBindings?.binding(command: "quit")?.key },
                           onModal: inspect) { [weak self] accepted, checked in
       guard let self else { return }
       if self.checksQuitConfirmation, !accepted, self.quitConfirmationChecks.count == 1, let host = self.host {

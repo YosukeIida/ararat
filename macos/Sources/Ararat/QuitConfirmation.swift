@@ -1,4 +1,6 @@
 import AppKit
+import AraratKit
+import AraratUI
 import Carbon.HIToolbox
 import SwiftUI
 
@@ -11,13 +13,13 @@ enum QuitConfirmation {
         case regular, privateWindow, littleWindow
     }
 
-    static func source(poweringOff: Bool, quitReason: OSType?, senderBundleID: String?,
+    static func source(poweringOff: Bool, quitReason: OSType?, sparkleRelaunching: Bool,
                        checkBypass: Bool) -> Source {
         if poweringOff || quitReason == kAEReallyLogOut || quitReason == kAELogOut
             || quitReason == kAEShutDown || quitReason == kAERestart {
             return .sessionEnd
         }
-        if senderBundleID == "org.sparkle-project.Sparkle.Updater" { return .sparkle }
+        if sparkleRelaunching { return .sparkle }
         return checkBypass ? .check : .user
     }
 
@@ -32,8 +34,15 @@ enum QuitConfirmation {
         return open.allSatisfy { $0 == .privateWindow } ? privateWindows : regular + "\n" + privateWindows
     }
 
-    static func confirmsWithShortcut(shortcut: Bool, repeatKey: Bool) -> Bool {
-        shortcut && !repeatKey
+    enum ShortcutAction {
+        case pass, consumeRepeat, confirm
+    }
+
+    static func shortcutAction(for event: NSEvent, binding: KeyCombination?) -> ShortcutAction {
+        guard event.type == .keyDown, let binding, WorkspaceCommands.matches(binding, event: event) else {
+            return .pass
+        }
+        return event.isARepeat ? .consumeRepeat : .confirm
     }
 
     static func disablesWarning(accepted: Bool, checked: Bool) -> Bool {
@@ -58,7 +67,8 @@ final class QuitConfirmationPanel {
         NSApp.stopModal(withCode: response)
     }
 
-    func show(over window: NSWindow, message: String, onModal: ((NSPanel) -> Void)?,
+    func show(over window: NSWindow, message: String, quitBinding: @escaping () -> KeyCombination?,
+              onModal: ((NSPanel) -> Void)?,
               completion: @escaping (Bool, Bool) -> Void) {
         let ticket = UUID()
         pending = ticket
@@ -92,14 +102,14 @@ final class QuitConfirmationPanel {
                 ))
                 self.panel = panel
                 let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                    let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-                    guard modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "q" else {
-                        return event
-                    }
-                    if QuitConfirmation.confirmsWithShortcut(shortcut: true, repeatKey: event.isARepeat) {
+                    let binding = MainActor.assumeIsolated { quitBinding() }
+                    switch QuitConfirmation.shortcutAction(for: event, binding: binding) {
+                    case .pass: return event
+                    case .consumeRepeat: return nil
+                    case .confirm:
                         MainActor.assumeIsolated { self.answer(.OK) }
+                        return nil
                     }
-                    return nil
                 }
                 let inspection = onModal.map { inspect in
                     let timer = Timer(timeInterval: 0.05, repeats: false) { _ in

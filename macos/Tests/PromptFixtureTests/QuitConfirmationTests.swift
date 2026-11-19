@@ -1,3 +1,5 @@
+import AppKit
+import AraratKit
 import Carbon.HIToolbox
 import Testing
 @testable import Ararat
@@ -10,21 +12,19 @@ import Testing
     #expect(!QuitConfirmation.shouldAsk(source: .user, warn: false, visible: [.regular]))
 }
 
-@Test func warnsForDockButSkipsSystemAndUpdateQuits() {
-    let cases: [(Bool, OSType?, String?, Bool, QuitConfirmation.Source)] = [
-        (false, nil, nil, false, .user),
-        (false, nil, "com.apple.dock", false, .user),
-        (true, nil, nil, false, .sessionEnd),
-        (false, kAEReallyLogOut, nil, false, .sessionEnd),
-        (false, kAELogOut, nil, false, .sessionEnd),
-        (false, kAERestart, nil, false, .sessionEnd),
-        (false, kAEShutDown, nil, false, .sessionEnd),
-        (false, nil, "org.sparkle-project.Sparkle.Updater", false, .sparkle),
-        (false, nil, nil, true, .check),
+@Test func warnsForUserQuitsButSkipsSystemAndCheckQuits() {
+    let cases: [(Bool, OSType?, Bool, QuitConfirmation.Source)] = [
+        (false, nil, false, .user),
+        (true, nil, false, .sessionEnd),
+        (false, kAEReallyLogOut, false, .sessionEnd),
+        (false, kAELogOut, false, .sessionEnd),
+        (false, kAERestart, false, .sessionEnd),
+        (false, kAEShutDown, false, .sessionEnd),
+        (false, nil, true, .check),
     ]
-    for (poweringOff, reason, sender, check, expected) in cases {
+    for (poweringOff, reason, check, expected) in cases {
         let source = QuitConfirmation.source(poweringOff: poweringOff, quitReason: reason,
-                                             senderBundleID: sender, checkBypass: check)
+                                             sparkleRelaunching: false, checkBypass: check)
         #expect(source == expected)
         #expect(QuitConfirmation.shouldAsk(source: source, warn: true, visible: [.regular]) == (expected == .user))
     }
@@ -40,10 +40,25 @@ import Testing
     #expect(QuitConfirmation.message(for: [.privateWindow, .littleWindow]) == regular + "\n" + privateWindows)
 }
 
-@Test func onlyDeliberateQuitShortcutConfirmsAndOnlyQuitDisablesWarning() {
-    #expect(QuitConfirmation.confirmsWithShortcut(shortcut: true, repeatKey: false))
-    #expect(!QuitConfirmation.confirmsWithShortcut(shortcut: true, repeatKey: true))
-    #expect(!QuitConfirmation.confirmsWithShortcut(shortcut: false, repeatKey: false))
+@Test @MainActor func theReboundQuitShortcutConfirmsAndItsRepeatIsConsumed() throws {
+    let rebound = KeyCombination(key: "k", command: true, control: false, option: false, shift: true)
+    let original = try #require(defaultKeyBindings().first { $0.command == "quit" }?.key)
+    func key(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags, repeats: Bool = false) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                    windowNumber: 0, context: nil, characters: characters,
+                                    charactersIgnoringModifiers: characters, isARepeat: repeats, keyCode: code))
+    }
+    let oldKey = try key("q", code: 12, flags: .command)
+    let newKey = try key("K", code: 40, flags: [.command, .shift])
+    let repeatKey = try key("K", code: 40, flags: [.command, .shift], repeats: true)
+    #expect(QuitConfirmation.shortcutAction(for: oldKey, binding: original) == .confirm)
+    #expect(QuitConfirmation.shortcutAction(for: oldKey, binding: rebound) == .pass)
+    #expect(QuitConfirmation.shortcutAction(for: newKey, binding: rebound) == .confirm)
+    #expect(QuitConfirmation.shortcutAction(for: repeatKey, binding: rebound) == .consumeRepeat)
+    #expect(QuitConfirmation.shortcutAction(for: oldKey, binding: nil) == .pass)
+}
+
+@Test func onlyAcceptedQuitDisablesWarning() {
     #expect(!QuitConfirmation.disablesWarning(accepted: false, checked: true))
     #expect(!QuitConfirmation.disablesWarning(accepted: true, checked: false))
     #expect(QuitConfirmation.disablesWarning(accepted: true, checked: true))
