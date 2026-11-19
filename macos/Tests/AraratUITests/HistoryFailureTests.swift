@@ -125,7 +125,7 @@ func toastLabelsPassHitsAndUndoButtonReceivesThem() {
     container.layoutSubtreeIfNeeded()
     container.showLinkCopied()
     #expect(!container.toastIcon.isHidden && container.toastIcon.image != nil)
-    #expect(container.toastIcon.alignmentRect(forFrame: container.toastIcon.frame).size == NSSize(width: 16, height: 16))
+    #expect(container.toastIcon.alignmentRect(forFrame: container.toastIcon.frame).size == NSSize(width: 14, height: 14))
     #expect(container.checkToastHits().labelPasses)
     container.showTabsCleared(undo: {})
     #expect(container.toastIcon.isHidden)
@@ -134,7 +134,7 @@ func toastLabelsPassHitsAndUndoButtonReceivesThem() {
 }
 
 @Test @MainActor
-func failedHistoryCardShowsWarningCopyAndKeepsBothActions() {
+func failedHistoryCardShowsWarningCopyAndKeepsBothActions() throws {
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
     sidebar.frame = NSRect(x: 0, y: 0, width: 164, height: 600)
     sidebar.showHistoryFailure(true)
@@ -148,7 +148,17 @@ func failedHistoryCardShowsWarningCopyAndKeepsBothActions() {
     ])
     #expect(labels.allSatisfy { card.bounds.contains(card.convert($0.bounds, from: $0)) })
     #expect((labels.last?.bounds.height ?? 0) > 24)
-    #expect(card.subviews.contains { ($0 as? NSImageView)?.image != nil })
+    let warning = try #require(card.subviews.compactMap { $0 as? NSImageView }.first)
+    #expect(warning.image != nil)
+    for (name, expected) in [
+        (NSAppearance.Name.aqua, NSColor(srgbRed: 178 / 255, green: 80 / 255, blue: 0, alpha: 1)),
+        (.darkAqua, NSColor(srgbRed: 1, green: 179 / 255, blue: 64 / 255, alpha: 1)),
+    ] {
+        sidebar.appearance = try #require(NSAppearance(named: name))
+        warning.effectiveAppearance.performAsCurrentDrawingAppearance {
+            #expect(warning.contentTintColor?.usingColorSpace(.sRGB) == expected)
+        }
+    }
     #expect(card.subviews.contains { ($0 as? NSButton)?.accessibilityLabel() == "Dismiss" })
     var actions: [String] = []
     sidebar.onRetryHistory = { actions.append("retry") }

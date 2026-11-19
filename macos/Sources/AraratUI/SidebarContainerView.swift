@@ -17,7 +17,7 @@ public final class SidebarContainerView: NSView {
     private let toast = ToastView()
     private let toastLabel = NSTextField(labelWithString: "Link copied")
     let toastIcon = NSImageView()
-    private static let toastIconSize: CGFloat = 16
+    private static let toastIconSize: CGFloat = 14
     private static let toastIconGap: CGFloat = 8
     private let toastUndo = NSButton(title: "Undo", target: nil, action: nil)
     private var toastAction: (() -> Void)?

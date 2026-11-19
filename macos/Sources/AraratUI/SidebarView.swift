@@ -17,6 +17,11 @@ public final class SidebarView: NSView {
             ? NSColor(srgbRed: 59 / 255, green: 57 / 255, blue: 68 / 255, alpha: 1)
             : .white
     }
+    private static let historyWarningTint = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1, green: 179 / 255, blue: 64 / 255, alpha: 1)
+            : NSColor(srgbRed: 178 / 255, green: 80 / 255, blue: 0, alpha: 1)
+    }
     var historyFailureVisible: Bool { !historyBanner.isHidden }
     public var checkHistoryVisible: Bool { !historyBanner.isHidden }
     public var checkHistoryContext: (space: String?, profileID: String?, profile: String?, message: String) {
@@ -1175,7 +1180,7 @@ public final class SidebarView: NSView {
         historyDismissButton.action = #selector(dismissHistory)
         let warning = NSImageView()
         warning.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
-        warning.contentTintColor = .systemOrange
+        warning.contentTintColor = Self.historyWarningTint
         warning.setAccessibilityHidden(true)
         historyTitle.font = .systemFont(ofSize: 12, weight: .semibold)
         let historyMessage = NSTextField(wrappingLabelWithString: "Some history files could not be removed. Ararat will try again.")

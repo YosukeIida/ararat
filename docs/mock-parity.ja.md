@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 42 件、修正済みで VM 再確認待ち 6 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 44 件、修正済みで VM 再確認待ち 4 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -99,7 +99,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `C-DialogHost` | ページカード上のダイアログ | `permission`, `permission-dialog`, `javascript`, `javascript-dialog`, `dialogs-permission`, `dialogs-permission-dialog`, `dialogs-long-origin`, `dialogs-long-origin-dialog`, `dialogs-javascript`, `dialogs-javascript-dialog`, `dialogs-queued-permission`, `dialogs-queued-permission-dialog`, `dialogs-split`, `dialogs-split-dialog` | 相違 | `permission*` と `dialogs-*` は上端中央に出る（決定 80、82）。JavaScript アラートでページが暗くならず、権限シートの暗転は強く、`dialogs-permission-behind` では待機中のシートがアラートに重なる。 |
 | `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 修正済み、VM 再確認待ち | ポップオーバーに見出しと行ごとの進捗を表示する。Library は Arc 実測の 56 pt の行間隔で、狭い行の補助ステータスを中央で省略する。 |
 | `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 一致 | `downloads-ring` と `downloads-flight` で進捗リングと飛び始めのファイルアイコンを確認した（決定 81）。軌道と所要時間は動画または計測での確認が必要である。 |
-| `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 修正済み、VM 再確認待ち | 見出しに Downloads と Open in Library を表示する。行には進捗、容量と残り時間、または完了時の容量とホストを表示する。完了行には既存の Finder 表示、開く、削除を常時表示する。モックはホバー時に 2 ボタンを表示する。 |
+| `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 相違 | 見出し、進捗、ステータスは VM 再確認待ちである。dlpopover で実装した Chromium が許可する操作を維持する。処理中の行には Finder 表示が出ることがあり、完了行には Finder 表示、開く、削除を常時表示する。モックは処理中に一時停止とキャンセル、完了行のホバー時に Finder 表示と削除を表示する。 |
 | `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 修正済み、VM 再確認待ち | Arc 実測の 56 pt の行間隔で、狭い行の補助ステータスをセル内の中央で省略する。 |
 | `C-Extensions` | URL 欄のピン留め拡張機能とオーバーフロー行 | `ext-actions-action`, `ext-actions-overflow`, `ext-actions-three-actions` | 相違 | `ext-actions-action` は Copy Link の前に固定アクションを表示する（決定 42、47）。`ext-actions-overflow` は 16 pt のアイコンのみで、モックではお気に入りの列にそろえた高さ 32 pt のタイルを描く（決定 46、51）。 |
 | `C-Extensions` | 拡張機能アクションのオーバーフロー | `ext-actions-overflow`, `ext-actions-three-actions` | 相違 | `ext-actions-overflow` にはタイルの背景がない。`ext-actions-three-actions` は比較画像に含まれておらず、複数アクションの配置は確認待ちである。 |
@@ -122,7 +122,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違 | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 相違 | VM capture design-rowcontrast-1, `errorpages-today-crash` と `errorpages-pin-crash` で、アクセント色の Reload と、行種別に対応する Archive Tab / Close Tab を確認した（決定 87）。クラッシュのアイコンは悲しい顔の代わりに点付きのウィンドウを使う。 |
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 相違 | VM capture design-rowcontrast-1, `commandbar-tab-switcher` でアクセント色の選択タイルを確認した。パネルはページ中央より左にあり、タイルにアイコンとタイトルを表示し、サムネイルとキーヒントがない（決定 85 は切替動作を規定）。 |
-| `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 修正済み、VM 再確認待ち | ページ下部の Link copied にリンクアイコンを表示し、履歴の削除に失敗すると警告カードを表示する。Undo と更新準備完了は撮影待ちである。 |
+| `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
