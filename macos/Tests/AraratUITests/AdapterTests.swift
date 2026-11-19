@@ -205,12 +205,12 @@ func unloadedRowsAndTilesDimWithoutLeavingTheirLayout() throws {
     #expect(row.layer?.animation(forKey: "row.close.move") == nil)
     #expect(try #require(row.subviews.compactMap { $0 as? NSImageView }.first).alphaValue == SidebarMetrics.unloadedOpacity)
     #expect(try #require(row.subviews.compactMap { $0 as? NSTextField }.first).alphaValue == SidebarMetrics.unloadedOpacity)
-    let unloadedGlyph = try #require(tile.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+    let unloadedGlyph = try #require(tile.glyphLabel.textColor)
     #expect(tile.alphaValue == 1)
     pinned.unloaded = false; favorite.unloaded = false
     sidebar.applySelection(snapshot: snapshot([pinned], [favorite]))
     #expect(!row.row.unloaded && !tile.row.unloaded)
-    let loadedGlyph = try #require(tile.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+    let loadedGlyph = try #require(tile.glyphLabel.textColor)
     #expect(loadedGlyph == .labelColor)
     #expect(abs(unloadedGlyph.alphaComponent - loadedGlyph.alphaComponent * SidebarMetrics.unloadedOpacity) < 0.001)
 }

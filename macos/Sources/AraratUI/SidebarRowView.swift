@@ -955,30 +955,51 @@ final class FavoriteTile: NSButton {
     var onRenameEnd: (() -> Void)?
     private(set) var renameField: SidebarRenameField?
     private let onPress: (Row) -> Void
+    let glyphBox = NSView()
+    let glyphLabel = NSTextField(labelWithString: "")
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
-    init(row: Row, onPress: @escaping (Row) -> Void) {
+    init(row: Row, iconText: String? = nil, onPress: @escaping (Row) -> Void) {
         self.row = row
         self.onPress = onPress
         super.init(frame: .zero)
         isBordered = false
+        imagePosition = .imageOnly
         wantsLayer = true
         layer?.cornerRadius = 11
         layer?.cornerCurve = .continuous
+        glyphBox.wantsLayer = true
+        glyphBox.layer?.cornerRadius = 5
+        glyphBox.setAccessibilityHidden(true)
+        glyphBox.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glyphBox)
+        glyphLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        glyphLabel.setAccessibilityHidden(true)
+        glyphLabel.translatesAutoresizingMaskIntoConstraints = false
+        glyphBox.addSubview(glyphLabel)
+        NSLayoutConstraint.activate([
+            glyphBox.widthAnchor.constraint(equalToConstant: 20),
+            glyphBox.heightAnchor.constraint(equalToConstant: 20),
+            glyphBox.centerXAnchor.constraint(equalTo: centerXAnchor),
+            glyphBox.centerYAnchor.constraint(equalTo: centerYAnchor),
+            glyphLabel.centerXAnchor.constraint(equalTo: glyphBox.centerXAnchor),
+            glyphLabel.centerYAnchor.constraint(equalTo: glyphBox.centerYAnchor),
+        ])
         updateFill()
         heightAnchor.constraint(equalToConstant: 47).isActive = true
         target = self
         action = #selector(pressed)
-        update(row: row)
+        update(row: row, iconText: iconText)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func update(row: Row) {
+    func update(row: Row, iconText: String?) {
         self.row = row
-        let host = row.url.flatMap { URL(string: $0)?.host }
-        title = (host?.first ?? row.title.first)?.uppercased() ?? ""
+        glyphLabel.stringValue = iconText ?? row.title.first?.uppercased() ?? ""
+        glyphBox.isHidden = glyphLabel.stringValue.isEmpty
+        image = glyphBox.isHidden ? SidebarRowView.symbol(for: .tab) : nil
         refreshForeground()
         toolTip = row.title
         setAccessibilityLabel(row.title)
@@ -1028,22 +1049,29 @@ final class FavoriteTile: NSButton {
 
     func refreshForeground() {
         let opacity = row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
+        let showsLetter = !glyphBox.isHidden
+        var backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: layer?.backgroundColor)
+        if showsLetter, let boxFill = glyphBox.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)), let underneath = backdrop {
+            backdrop = SidebarPanelView.mix(boxFill, boxFill, fraction: 0, base: underneath)
+        }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let (color, alpha) = backdrop.map {
-                SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: $0, minimum: 3)
+                SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: $0, minimum: showsLetter ? 4.5 : 3)
             } ?? (NSColor.labelColor, opacity)
-            let glyph = NSAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: 15, weight: .regular),
-                .foregroundColor: alpha == 1 ? color : color.withAlphaComponent(color.alphaComponent * alpha),
-            ])
-            if attributedTitle != glyph { attributedTitle = glyph }
+            let foreground = alpha == 1 ? color : color.withAlphaComponent(color.alphaComponent * alpha)
+            if showsLetter {
+                glyphLabel.textColor = foreground
+            } else {
+                contentTintColor = foreground
+            }
         }
     }
 
     private func updateFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            glyphBox.layer?.backgroundColor = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.16 : 0.10).cgColor
         }
     }
 }

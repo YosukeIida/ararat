@@ -1315,7 +1315,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if session == nil, let device = themeSession.queue.sync(execute: { themeSession.store?.downloadDevice() }) {
       EngineDownloadSettingsHost.apply(device)
     }
-    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []),
+                              favoriteIconText: { [weak self] in self?.host?.favoriteIconText($0) })
     sidebar.privateWindow = isPrivateWindow
     sidebar.observeHistoryFailures(running)
     let downloads = DownloadsModel()

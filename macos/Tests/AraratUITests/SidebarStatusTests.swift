@@ -35,7 +35,7 @@ func sidebarRowReportsLoadingAndAudioAndSpeakerDoesNotSelect() {
         #expect(!view.loadingVisible && view.audioLabel == nil)
     }
     let favorite = FavoriteTile(row: row(.tab)) { _ in }
-    #expect(favorite.attributedTitle.string == "I")
+    #expect(favorite.glyphLabel.stringValue == "I")
     #expect(!favorite.subviews.contains { $0 is NSProgressIndicator })
     view.update(row: row(.tab), selected: false)
     view.crashed = true

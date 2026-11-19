@@ -260,15 +260,42 @@ func theSpaceNameRowChevronMenuAndRenameFollowTheMock() throws {
 }
 
 @Test @MainActor
-func aFavoriteWithoutAFaviconShowsTheSiteInitial() {
-    var row = u25Row("wikipedia")
-    row.title = "My reading"
-    let tile = FavoriteTile(row: row) { _ in }
-    #expect(tile.attributedTitle.string == "W")
-    #expect(tile.accessibilityLabel() == "My reading")
-    row.url = "about:blank"
-    tile.update(row: row)
-    #expect(tile.attributedTitle.string == "M")
+func aFavoriteWithoutAFaviconUsesTheEngineMonogramOrTitle() throws {
+    // Chromium's components/favicon/core/fallback_url_util_unittest.cc pins
+    // GetFallbackIconText's registrable domain, IDN, IP, and single-label host rules.
+    let engineText = [
+        "https://www.example.com/": "E",
+        "https://xn--hq1bm8jm9l.com/": "도",
+        "http://127.0.0.1/": "IP",
+        "http://[2001:4860:4860::8888]/": "IP",
+        "http://localhost/": "L",
+    ]
+    let cases = engineText.sorted { $0.key < $1.key }.map { (url: $0.key, title: "My reading", glyph: $0.value) } +
+        [(url: "file:///tmp/report.pdf", title: "Report", glyph: "R"),
+         (url: "about:blank", title: "My reading", glyph: "M"),
+         (url: "about:blank", title: "", glyph: "")]
+    let rows = cases.enumerated().map { index, fixture in
+        var row = u25Row("favorite-\(index)")
+        row.url = fixture.url
+        row.title = fixture.title
+        return row
+    }
+    let space = u25Space(favorites: rows)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space]),
+                              favoriteIconText: { engineText[$0] })
+    let tiles = u25Descendants(sidebar).compactMap { $0 as? FavoriteTile }
+    for (row, fixture) in zip(rows, cases) {
+        let tile = try #require(tiles.first { $0.row.id == row.id })
+        #expect(tile.glyphLabel.stringValue == fixture.glyph, "\(fixture.url)")
+        #expect(tile.glyphBox.isHidden == fixture.glyph.isEmpty)
+        if fixture.glyph.isEmpty {
+            #expect(tile.image?.isValid == true)
+            #expect(tile.image?.size == SidebarRowView.symbol(for: .tab).size)
+        } else {
+            #expect(tile.image == nil)
+            #expect(tile.accessibilityLabel() == fixture.title)
+        }
+    }
 }
 
 @Test @MainActor
