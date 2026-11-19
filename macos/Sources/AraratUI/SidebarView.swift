@@ -949,6 +949,11 @@ public final class SidebarView: NSView {
         return label.minX < 0 && abs(label.maxX - hostClip.bounds.width) < 0.5
     }
     public var urlFieldHostHasLeadingFade: Bool { hostClip.checkHasFade }
+    public var checkHostLabelFits: Bool {
+        guard let cell = host.cell, !host.isHidden else { return false }
+        let label = hostClip.checkLabelFrame
+        return cell.cellSize.width <= label.width && hostClip.bounds.contains(label) && !hostClip.checkHasFade
+    }
     public var checkHostLabelFrame: NSRect { hostClip.convert(hostClip.checkLabelFrame, to: nil) }
     public var checkHostClipFrame: NSRect { hostClip.convert(hostClip.bounds, to: nil) }
     public var checkHostLabelIntrinsicWidth: CGFloat { hostClip.checkLabelIntrinsicWidth }

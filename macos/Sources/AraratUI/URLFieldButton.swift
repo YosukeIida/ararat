@@ -254,10 +254,9 @@ public final class URLFieldGlyphView: NSImageView {
     public override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 }
 
-/// The field's text area. The label keeps its intrinsic width; a host wider than the area is
-/// anchored at the trailing edge (its start off the leading edge, under a 16 pt gradient) so the
-/// registrable domain stays visible. A long file name or internal URL keeps its start and is
-/// clipped at the tail (D6).
+/// The field's text area. A host wider than the area keeps its full drawing width and is anchored
+/// at the trailing edge with a 16 pt leading fade. A long file name or internal URL keeps its start
+/// and is truncated at the tail (D6).
 @MainActor
 public final class URLFieldTextClipView: NSView {
     /// The text area's height; the field's constraint uses it, so the labels centre on a value
@@ -307,13 +306,12 @@ public final class URLFieldTextClipView: NSView {
         }
         let intrinsic = visible.intrinsicContentSize
         let height = min(Self.height, intrinsic.height)
-        let fades = fadesStart && intrinsic.width > bounds.width + 0.5
-        // A fading host keeps its intrinsic width and is anchored at the trailing edge. Anything
-        // else (the placeholder, a long file name or internal URL) never draws past the text area,
-        // so the field's `.byTruncatingTail` cuts the tail with an ellipsis instead of the clip
-        // container cutting it without one (U25a2).
-        let width = fades ? intrinsic.width : min(intrinsic.width, bounds.width)
-        let x = fades ? bounds.width - intrinsic.width : 0
+        // The field's intrinsic width omits the cell's horizontal drawing padding.
+        let cellWidth = visible.cell?.cellSize.width ?? intrinsic.width
+        let fades = fadesStart && cellWidth > bounds.width
+        let fullWidth = fadesStart ? ceil(cellWidth) : intrinsic.width
+        let width = fades ? fullWidth : min(fullWidth, bounds.width)
+        let x = fades ? bounds.width - fullWidth : 0
         let frame = NSRect(x: x, y: (Self.height - height) / 2, width: width, height: height)
         visible.frame = frame
         // The hidden label keeps the visible label's frame, so an incremental update and a fresh

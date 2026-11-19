@@ -58,7 +58,12 @@ public struct URLFieldContent: Equatable {
             kind = .file(name.isEmpty ? url : name)
         default:
             if let host = parsed.host, !host.isEmpty {
-                kind = .host(host)
+                if host.contains(":"), !host.hasPrefix("["),
+                   URLComponents(url: parsed, resolvingAgainstBaseURL: false)?.percentEncodedHost?.hasPrefix("[") == true {
+                    kind = .host("[\(host)]")
+                } else {
+                    kind = .host(host)
+                }
             } else {
                 // blob:, view-source: and any other scheme without an authority: no site, so the
                 // field behaves like the other internal pages rather than showing nothing.
