@@ -15,6 +15,8 @@ enum SidebarMetrics {
     static let createSpaceCardInset: CGFloat = 10
     static let createSpaceCardRadius: CGFloat = 11
     static let createSpaceCancelHeight: CGFloat = 24
+    static let createSpaceSpinnerSize: CGFloat = 14
+    static let createSpaceSpinnerGap: CGFloat = 7
     static let createSpacePlusTrailing: CGFloat = 10
     static let libraryWidthIncrease: CGFloat = 70
     static let libraryButtonSize: CGFloat = 32

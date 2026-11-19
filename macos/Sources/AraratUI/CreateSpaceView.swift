@@ -3,6 +3,8 @@ import AppKit
 @MainActor
 final class CreateSpaceView: NSView, NSTextFieldDelegate {
     static let primaryFill = NSColor(srgbRed: 29 / 255, green: 29 / 255, blue: 31 / 255, alpha: 1)
+    /// The button's title while the core runs; the mock's wording.
+    static let creatingTitle = "Creating…"
     var onCreate: ((String) -> Void)?
     var onCancel: (() -> Void)?
     private let name = CreateSpaceNameField()
@@ -10,6 +12,8 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
     private let profileCard = NSView()
     private let nameCard = CreateSpaceNameCard()
     private let create = SidebarDockButton(title: "Create Space", target: nil, action: nil)
+    private let spinner = NSProgressIndicator()
+    private var spinnerTrailing: NSLayoutConstraint!
     private let cancel = SidebarDockButton(title: "Cancel", target: nil, action: nil)
     private let error = NSTextField(wrappingLabelWithString: "")
     private(set) var submitting = false
@@ -84,6 +88,14 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         cancel.action = #selector(cancelCreation)
         cancel.setAccessibilityLabel("Cancel space creation")
         for button in [create, cancel] { button.font = .systemFont(ofSize: SidebarMetrics.createSpaceBodySize) }
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.isHidden = true
+        spinner.setAccessibilityHidden(true)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        create.addSubview(spinner)
+        spinnerTrailing = spinner.trailingAnchor.constraint(equalTo: create.centerXAnchor)
         for view in [heading, subtitle, form, create, cancel] { addSubview(view) }
         for view in [heading, subtitle, form, nameCard, name, profileCard, profileLabels, error, create, cancel] { view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
@@ -114,6 +126,10 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
             cancel.centerXAnchor.constraint(equalTo: centerXAnchor),
             cancel.heightAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceCancelHeight),
             cancel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -SidebarMetrics.createSpaceInset),
+            spinner.centerYAnchor.constraint(equalTo: create.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceSpinnerSize),
+            spinner.heightAnchor.constraint(equalToConstant: SidebarMetrics.createSpaceSpinnerSize),
+            spinnerTrailing,
         ])
         refresh()
         updateFill()
@@ -140,6 +156,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         cancel.isEnabled = true
         error.stringValue = message ?? ""
         error.isHidden = message == nil
+        setCreating(false)
         refresh()
     }
 
@@ -151,6 +168,7 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
         submitting = true
         name.isEditable = false
         cancel.isEnabled = false
+        setCreating(true)
         refresh()
         onCreate?(value)
     }
@@ -158,6 +176,23 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
     override func cancelOperation(_ sender: Any?) { cancelCreation() }
     override func hitTest(_ point: NSPoint) -> NSView? { active ? super.hitTest(point) : nil }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
+
+    /// The mock's submitting state, drawn: the button keeps its disabled fill and shows a small
+    /// spinner 7 pt before "Creating…". Cancel is disabled too — `cancelCreation` refuses while
+    /// the core runs, so leaving it enabled would offer a path that does nothing.
+    private func setCreating(_ creating: Bool) {
+        if creating {
+            create.title = Self.creatingTitle
+            let width = (Self.creatingTitle as NSString).size(withAttributes: [.font: create.font ?? .systemFont(ofSize: SidebarMetrics.createSpaceBodySize)]).width
+            spinnerTrailing.constant = -(width / 2 + SidebarMetrics.createSpaceSpinnerGap)
+            spinner.isHidden = false
+            spinner.startAnimation(nil)
+        } else {
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+            create.title = "Create Space"
+        }
+    }
 
     // MARK: P4 item 6 check seams
 
@@ -170,6 +205,12 @@ final class CreateSpaceView: NSView, NSTextFieldDelegate {
     func checkType(_ text: String) {
         name.stringValue = text
         refresh()
+    }
+
+    /// The submitting state as the mock draws it: the button's title, whether the spinner is up,
+    /// and whether Cancel is still offered. The state that drives it is `checkState.submitting`.
+    var checkCreating: (title: String, spinnerShown: Bool, cancelEnabled: Bool) {
+        (create.title, !spinner.isHidden, cancel.isEnabled)
     }
 
     /// The same path a Return takes (the button's key equivalent and the field's action), so a
