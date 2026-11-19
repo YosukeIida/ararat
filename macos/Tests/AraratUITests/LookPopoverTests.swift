@@ -595,6 +595,38 @@ func lookPopoverHostsOffscreenAndDropsAnUnfinishedGestureOnClose() async throws 
 }
 
 @Test @MainActor
+func lookPopoverOpensOnItsFocusCatcherNotOnAControl() async throws {
+    let fixture = try await LookFixture()
+    let anchor = LookPopoverAnchor(settings: fixture.settings, space: fixture.settings.snapshot.spaces[0])
+    anchor.preparePopover()
+    let catcher = try #require(anchor.focusCatcher)
+    let host = try #require(anchor.popover.contentViewController?.view)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 288, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    defer { window.contentView = nil }
+    host.layoutSubtreeIfNeeded()
+    // The popover opens on its content view, not on a control, so no focus ring shows at once
+    // (Arc shows none). The controls stay reachable from the keyboard.
+    #expect(catcher.acceptsFirstResponder)
+    #expect(window.initialFirstResponder === catcher)
+    #expect(window.firstResponder === catcher)
+    #expect(!(window.firstResponder is NSControl))
+    // A popover window that makes its hosted SwiftUI content first responder is reset on show.
+    window.makeFirstResponder(host)
+    anchor.popoverDidShow(Notification(name: NSPopover.didShowNotification, object: anchor.popover))
+    #expect(window.initialFirstResponder === catcher)
+    #expect(window.firstResponder === catcher)
+    let probe = LookCheckProbe(popover: anchor.popover, editor: { anchor.editor })
+    #expect(!probe.hasFocus("Transparency") && !probe.hasFocus("Grain"))
+    // Tab hands the key walk to SwiftUI, which owns the popover's focusable controls.
+    let tab = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+    catcher.keyDown(with: tab)
+    #expect(window.firstResponder === host)
+    anchor.popover.contentViewController = nil
+    try await fixture.close()
+}
+
+@Test @MainActor
 func settingsPaletteInsertionBeforeOrAfterStoredIconKeepsTheNewGrapheme() {
     #expect(SettingsModel.iconDraft("😀🔬", stored: "🔬") == "😀")
     #expect(SettingsModel.iconDraft("🔬😀", stored: "🔬") == "😀")

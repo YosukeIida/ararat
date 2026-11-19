@@ -22,12 +22,32 @@ struct LookPopoverButton: NSViewRepresentable {
     }
 }
 
+/// The popover opens on this view, not on a control: Arc shows no focus ring when the popover
+/// appears. Being first responder, Tab hands the key to SwiftUI's own focus walk, which is where
+/// the popover's controls are.
+@MainActor
+final class LookPopoverFocusCatcher: NSView {
+    override var acceptsFirstResponder: Bool { true }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        window.initialFirstResponder = self
+        window.makeFirstResponder(self)
+    }
+    override func keyDown(with event: NSEvent) {
+        guard event.keyCode == 48, let host = superview else { return super.keyDown(with: event) }
+        window?.makeFirstResponder(host)
+        host.keyDown(with: event)
+    }
+}
+
 @MainActor
 final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
     let settings: SettingsModel
     var space: SpaceSnapshot
     let popover = NSPopover()
     private(set) var editor: LookEditorModel?
+    private(set) var focusCatcher: LookPopoverFocusCatcher?
     init(settings: SettingsModel, space: SpaceSnapshot) {
         self.settings = settings
         self.space = space
@@ -60,7 +80,11 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
         let space = settings.snapshot.spaces.first { $0.id == self.space.id } ?? space
         let editor = LookEditorModel(settings: settings, space: space)
         self.editor = editor
-        popover.contentViewController = NSHostingController(rootView: LookPopoverView(model: editor))
+        let host = NSHostingController(rootView: LookPopoverView(model: editor))
+        let catcher = LookPopoverFocusCatcher(frame: .zero)
+        host.view.addSubview(catcher)
+        focusCatcher = catcher
+        popover.contentViewController = host
     }
     @objc private func openLook(_ sender: Any?) {
         if popover.isShown { popover.performClose(nil); return }
@@ -68,6 +92,11 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
         popover.show(relativeTo: bounds, of: self, preferredEdge: .minX)
     }
     func popoverWillClose(_ notification: Notification) { editor?.dismiss() }
+    func popoverDidShow(_ notification: Notification) {
+        guard let catcher = focusCatcher, let window = catcher.window else { return }
+        window.initialFirstResponder = catcher
+        if window.firstResponder !== catcher { window.makeFirstResponder(catcher) }
+    }
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil { popover.performClose(nil) }
         super.viewWillMove(toWindow: newWindow)
