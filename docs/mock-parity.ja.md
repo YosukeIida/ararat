@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 48 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 44 件、修正済みで VM 再確認待ち 4 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -84,8 +84,8 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `B-FloatingDark` | ダークのフローティングサイドバー | `fullscreen-dark-floating` | 相違 | `973f57e` の `fullscreen-dark-floating` は実測の黒に近い色 (22, 15, 31) に対して中間の灰色であった。現行コードは実測色を使うが、design-rowcontrast-1 に全画面の画像がなく、フローティング時の合成結果は再確認待ちである。 |
 | `B-FloatingMotion` | 端からの表示、待機時間、非表示 | `fullscreen-floating-before-reveal`, `fullscreen-dark-floating`, `fullscreen-floating-after-hide` | 一致 | `fullscreen-floating-before-reveal`、`fullscreen-dark-floating`、`fullscreen-floating-after-hide` で表示前・表示中・非表示後の静止状態を確認した。待機時間と動作時間は計測待ちである。 |
 | `B-Fullscreen` | ページとブラウザの全画面表示、端からの表示 | `fullscreen-page`, `fullscreen-browser`, `fullscreen-edge` | 相違 | `fullscreen-page` の Chromium の終了メッセージと `fullscreen-edge` の端からの表示は一致する。`fullscreen-browser` にも Chromium のメッセージが出るが、B-Fullscreen の第 1 図にはない。 |
-| `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 相違 | `toasts-banner` はサイドバーのテキストと Retry / Dismiss で表示され、警告カードのアイコン、見出し、本文、Try Again、✕ がない。配置は決定 56 に一致し、内容は決定 88 と異なる。 |
-| `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 相違 | `toasts-banner` の失敗時は B-History と同じテキストとボタンである。再試行中、成功時、ダーク外観は撮影待ちである。 |
+| `B-History` | 履歴削除のエラーバナーと Retry | `toasts-banner` | 修正済み、VM 再確認待ち | プロファイル内の警告カードに警告アイコン、見出し、本文、Try Again、閉じるボタンを表示する。 |
+| `B-HistoryStates` | 履歴ストアの失敗と再試行 | `toasts-banner` | 修正済み、VM 再確認待ち | 失敗時は警告カードを表示する。再試行中、成功時、ダーク外観は撮影待ちである。 |
 | `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違 | VM capture design-rowcontrast-1, `downloads-library` で、アイコンの下にラベルを置くレールと選択タイルを確認した。`keyboard-archive-list` の判定は維持し、Archive の選択タイルと Phase 5 の Clear Archive… フッターに dock が重ならないことは再撮影で確認する。 |
 | `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違 | `keyboard-archive-search`、`keyboard-archive-no-matches`、`keyboard-archive-empty` のリスト状態は一致し、旧画像では Phase 5 の Clear Archive… フッターに + が重なる。design-rowcontrast-1 に Archive の画像がなく、フッターとライト・ダーク外観の選択タイルは再確認待ちである。 |
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 相違 | `sidebar-rows-tab-menu` には Phase 5 のショートカット付き Add Split View がある。スペースと分割のメニュー項目は決定 65、72 に一致するが、`space-name-menu` には区切り線がない。 |
@@ -97,10 +97,10 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-command`, `header-command-r`, `header-command-w` | 一致 | `header-tooltip-back/-forward/-reload` と `header-command` で名称、キー、押下表示を確認した（決定 9）。`header-command-w` は行の ✕ の押下を示し、行のツールチップは撮影待ちである（決定 29）。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag-sidebar` | 判定不能 | `window-drag-sidebar` では標準幅のアクティブ時の外枠が一致する。非アクティブ時の色と信号ボタン、狭幅・広幅のサイドバー、最小ウィンドウ幅は撮影待ちである（決定 71）。 |
 | `C-DialogHost` | ページカード上のダイアログ | `permission`, `permission-dialog`, `javascript`, `javascript-dialog`, `dialogs-permission`, `dialogs-permission-dialog`, `dialogs-long-origin`, `dialogs-long-origin-dialog`, `dialogs-javascript`, `dialogs-javascript-dialog`, `dialogs-queued-permission`, `dialogs-queued-permission-dialog`, `dialogs-split`, `dialogs-split-dialog` | 相違 | `permission*` と `dialogs-*` は上端中央に出る（決定 80、82）。JavaScript アラートでページが暗くならず、権限シートの暗転は強く、`dialogs-permission-behind` では待機中のシートがアラートに重なる。 |
-| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 相違 | VM capture design-rowcontrast-1, `downloads-ring`、`downloads-popover`、`downloads-library` で入口と進捗リング（決定 81）、変更後の Library の配置を確認した。ポップオーバーには下の行に示す差異があり、全履歴は Arc 実測の 56 pt の行間隔を使う。 |
+| `C-Downloads` | Library の進捗、ポップオーバー、全履歴 | `downloads-flight`, `downloads-ring`, `downloads-popover`, `downloads-library`, `downloads-popover-complete` | 修正済み、VM 再確認待ち | ポップオーバーに見出しと行ごとの進捗を表示する。Library は Arc 実測の 56 pt の行間隔で、狭い行の補助ステータスを中央で省略する。 |
 | `C-Downloads` | 進捗リングとファイルアイコンの移動 | `downloads-ring`, `downloads-flight` | 一致 | `downloads-ring` と `downloads-flight` で進捗リングと飛び始めのファイルアイコンを確認した（決定 81）。軌道と所要時間は動画または計測での確認が必要である。 |
-| `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 相違 | `downloads-popover` と `downloads-popover-complete` は半透明のパネルに Open Library の行を表示する。タイトル、進捗バー、容量と残り時間、完了時の容量とホストの表示が異なり、完了後の操作はアイコンで常時表示される。 |
-| `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 相違 | VM capture design-rowcontrast-1, `downloads-library` で、タイトルに重なりがなく、ファイル名が独立した行に出て、Clear All がフッターにあることを確認した。狭い行の補助ステータスは省略され、行間隔は Arc 実測の 56 pt を使う。 |
+| `C-Downloads` | 処理中と完了後のポップオーバー | `downloads-popover`, `downloads-popover-complete` | 相違 | 見出し、進捗、ステータスは VM 再確認待ちである。dlpopover で実装した Chromium が許可する操作を維持する。処理中の行には Finder 表示が出ることがあり、完了行には Finder 表示、開く、削除を常時表示する。モックは処理中に一時停止とキャンセル、完了行のホバー時に Finder 表示と削除を表示する。 |
+| `C-Downloads` | Library のダウンロード履歴 | `downloads-library` | 修正済み、VM 再確認待ち | Arc 実測の 56 pt の行間隔で、狭い行の補助ステータスをセル内の中央で省略する。 |
 | `C-Extensions` | URL 欄のピン留め拡張機能とオーバーフロー行 | `ext-actions-action`, `ext-actions-overflow`, `ext-actions-three-actions` | 相違 | `ext-actions-action` は Copy Link の前に固定アクションを表示する（決定 42、47）。`ext-actions-overflow` は 16 pt のアイコンのみで、モックではお気に入りの列にそろえた高さ 32 pt のタイルを描く（決定 46、51）。 |
 | `C-Extensions` | 拡張機能アクションのオーバーフロー | `ext-actions-overflow`, `ext-actions-three-actions` | 相違 | `ext-actions-overflow` にはタイルの背景がない。`ext-actions-three-actions` は比較画像に含まれておらず、複数アクションの配置は確認待ちである。 |
 | `C-Permissions` | 権限の確認とブロック済みサイトの表示 | `permission-dialog`, `site-controls-popover` | 相違 | `permission-dialog` の上端中央の配置と `permission` の赤いブロック表示は一致する（決定 80、83）。シートはオリジンと権限のテキスト、枠付きボタン 3 個を表示し、アイコン、説明、Remember のチェックボックスがない。ブロック時のツールチップは撮影待ちである。 |
@@ -122,8 +122,8 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違 | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 相違 | VM capture design-rowcontrast-1, `errorpages-today-crash` と `errorpages-pin-crash` で、アクセント色の Reload と、行種別に対応する Archive Tab / Close Tab を確認した（決定 87）。クラッシュのアイコンは悲しい顔の代わりに点付きのウィンドウを使う。 |
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 相違 | VM capture design-rowcontrast-1, `commandbar-tab-switcher` でアクセント色の選択タイルを確認した。パネルはページ中央より左にあり、タイルにアイコンとタイトルを表示し、サムネイルとキーヒントがない（決定 85 は切替動作を規定）。 |
-| `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | `toasts-toast` の Link copied はページ下部に出てリンクアイコンがなく、`toasts-banner` の履歴削除失敗は B-History と同じテキスト表示である（決定 88）。Undo と更新準備完了は撮影待ちである。 |
-| `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
+| `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
+| `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 一致 | VM capture design-rowcontrast-1, `settings-air-traffic-settings-air-traffic` で空のルート一覧、既定の行き先、テスト欄、アクセント色のステッパーを確認した。ルート行と行き先の開いたメニューは比較画像待ちである。 |

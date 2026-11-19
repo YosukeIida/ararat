@@ -152,8 +152,7 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     #expect(metrics["title_font"] as? CGFloat == 13)
     #expect((metrics["title_height"] as? CGFloat ?? 0) >= 13)
     #expect(metrics["rows_leading_and_status_fit"] as? Bool == true)
-    #expect(metrics["library_fills"] as? Bool == true)
-    #expect(popover.library.alignment == .left)
+    #expect(metrics["header_layout"] as? Bool == true)
 }
 
 @Test @MainActor func downloadsPageAndPopoverKeepTheirOwnRowHeights() {
@@ -203,6 +202,7 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
         #expect(page.actionButtonsFit)
         #expect(page.rowsLeadingAndStatusFit)
         #expect(row.statusTruncates)
+        #expect(status.cell?.lineBreakMode == .byTruncatingMiddle)
         if width >= 197 { #expect(name.bounds.width >= name.intrinsicContentSize.width) }
     }
 }
@@ -501,21 +501,67 @@ private func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).ma
     #expect(!button.isHovering && button.fillAlpha == 0 && fill() == 0)
 }
 
-@Test @MainActor func popoverHeaderTextStartsAtTheRowsFileNameInset() throws {
+@Test @MainActor func popoverHeaderShowsTitleBeforeTheAvailableAction() throws {
     let model = DownloadsModel()
     model.update([download("a")])
     let (popover, window) = try preparedPopover(model)
     defer { popover.close(); window.contentView = nil }
-    let metrics = popover.checkMetrics
-    #expect(popover.library.title == "Open Library")
+    #expect(popover.title.stringValue == "Downloads")
+    #expect(popover.library.title == "Open in Library")
+    #expect(popover.checkMetrics["header_layout"] as? Bool == true)
+    popover.showsLibrary = false
+    #expect(popover.library.isHidden)
+    #expect(!popover.clear.isHidden)
     #expect(popover.clear.title == "Clear All")
-    #expect(popover.library.titleInset == DownloadRowMetrics.textLeading)
-    #expect(popover.clear.titleInset == DownloadRowMetrics.textLeading)
-    #expect((metrics["library_title_inset"] as? CGFloat) == DownloadRowMetrics.textLeading)
-    #expect(metrics["library_fills"] as? Bool == true)
+    #expect(popover.checkMetrics["header_layout"] as? Bool == true)
+}
+
+@Test @MainActor func popoverRowsShowTransferProgressAndCompletionDetails() throws {
+    let model = DownloadsModel()
+    var item = download("a", running: true, received: 31_000_000, total: 96_000_000, actions: ["pause", "cancel"])
+    item["secondsRemaining"] = 20
+    model.update([item])
+    let (popover, window) = try preparedPopover(model)
+    defer { popover.close(); window.contentView = nil }
     let row = try #require(popover.rows["a"])
-    let name = try #require(labels(row).first { $0.stringValue == "a" })
-    #expect(abs(name.frame.minX - DownloadRowMetrics.textLeading) <= 0.5)
+    let received = ByteCountFormatter.string(fromByteCount: 31_000_000, countStyle: .file)
+    let total = ByteCountFormatter.string(fromByteCount: 96_000_000, countStyle: .file)
+    #expect(row.status.stringValue == "\(received) of \(total) · 20 s left")
+    #expect(!row.progress.isHidden)
+    row.layoutSubtreeIfNeeded()
+    #expect(row.progress.frame.height == 3)
+    #expect(row.progress.frame.minY > row.status.frame.maxY)
+    let fill = try #require(row.progress.layer?.sublayers?.first)
+    #expect(abs(fill.frame.width / row.progress.bounds.width - 31.0 / 96.0) < 0.001)
+
+    item["total"] = Int64(0)
+    item["secondsRemaining"] = -1
+    row.update(item: try #require(DownloadEntry(item)))
+    row.layoutSubtreeIfNeeded()
+    #expect(row.status.stringValue == received)
+    #expect(fill.frame.width == 0)
+
+    item["total"] = Int64(96_000_000)
+    item["paused"] = true
+    item["running"] = false
+    item["actions"] = ["resume", "cancel"]
+    row.update(item: try #require(DownloadEntry(item)))
+    #expect(!row.progress.isHidden)
+    #expect(row.status.stringValue == "Paused · \(received) of \(total)")
+
+    item["state"] = 1
+    item["paused"] = false
+    item["url"] = "https://docs.example.org/file"
+    item["actions"] = ["show", "open", "remove"]
+    row.update(item: try #require(DownloadEntry(item)))
+    #expect(row.progress.isHidden)
+    #expect(row.status.stringValue == "\(received) · docs.example.org")
+    #expect(row.actionButtons.map(\.downloadAction) == ["show", "open", "remove"])
+
+    item["status"] = "Blocked: unsafe file"
+    item["actions"] = ["discard", "remove"]
+    row.update(item: try #require(DownloadEntry(item)))
+    #expect(row.status.stringValue == "Blocked: unsafe file")
 }
 
 @Test @MainActor func downloadActionButtonTracksHoverWhileThePopoverIsNotKey() throws {

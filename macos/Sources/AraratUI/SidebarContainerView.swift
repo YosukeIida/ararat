@@ -16,6 +16,9 @@ public final class SidebarContainerView: NSView {
     private let emptyPageHints = EmptyPageHints()
     private let toast = ToastView()
     private let toastLabel = NSTextField(labelWithString: "Link copied")
+    let toastIcon = NSImageView()
+    private static let toastIconSize: CGFloat = 14
+    private static let toastIconGap: CGFloat = 8
     private let toastUndo = NSButton(title: "Undo", target: nil, action: nil)
     private var toastAction: (() -> Void)?
     private var toastLabelLeading: NSLayoutConstraint!
@@ -262,11 +265,22 @@ public final class SidebarContainerView: NSView {
         toastLabel.textColor = .white
         toastLabel.translatesAutoresizingMaskIntoConstraints = false
         toast.addSubview(toastLabel)
+        toastIcon.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Self.toastIconSize, weight: .regular))
+        toastIcon.contentTintColor = .white
+        toastIcon.setAccessibilityHidden(true)
+        toastIcon.isHidden = true
+        toastIcon.translatesAutoresizingMaskIntoConstraints = false
+        toast.addSubview(toastIcon)
         toastLabelLeading = toastLabel.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 16)
         toastLabelCenter = toastLabel.centerXAnchor.constraint(equalTo: toast.centerXAnchor)
         NSLayoutConstraint.activate([
             toastLabelCenter,
             toastLabel.centerYAnchor.constraint(equalTo: toast.centerYAnchor),
+            toastIcon.trailingAnchor.constraint(equalTo: toastLabel.leadingAnchor, constant: -Self.toastIconGap),
+            toastIcon.centerYAnchor.constraint(equalTo: toastLabel.centerYAnchor),
+            toastIcon.widthAnchor.constraint(equalToConstant: Self.toastIconSize),
+            toastIcon.heightAnchor.constraint(equalToConstant: Self.toastIconSize),
         ])
         toastUndo.translatesAutoresizingMaskIntoConstraints = false
         toastUndo.bezelStyle = .inline
@@ -448,7 +462,7 @@ public final class SidebarContainerView: NSView {
     }
 
     public func showLinkCopied() {
-        showToast("Link copied", seconds: 2, action: nil)
+        showToast("Link copied", seconds: 2, action: nil, showsLinkIcon: true)
     }
 
     /// U26e pass 4: the same host for one more message ("Screenshot copied"), without Undo.
@@ -486,9 +500,11 @@ public final class SidebarContainerView: NSView {
         return (labelHit === page || labelHit?.isDescendant(of: page) == true, !toastUndo.isHidden && buttonHit === toastUndo)
     }
 
-    private func showToast(_ message: String, seconds: TimeInterval, action: (() -> Void)?) {
+    private func showToast(_ message: String, seconds: TimeInterval, action: (() -> Void)?, showsLinkIcon: Bool = false) {
         toastAction = action
         toastLabel.stringValue = message
+        toastIcon.isHidden = !showsLinkIcon
+        toastLabelCenter.constant = showsLinkIcon ? (Self.toastIconSize + Self.toastIconGap) / 2 : 0
         toastUndo.isHidden = action == nil
         NSLayoutConstraint.deactivate(toastUndoConstraints)
         toastLabelCenter.isActive = action == nil
@@ -532,7 +548,7 @@ public final class SidebarContainerView: NSView {
         // on the 8 pt grid, with the Undo button's extra room when it is shown.
         let text = toastLabel.fittingSize.width
         let minimum: CGFloat = toastUndo.isHidden ? 144 : 200
-        let extra: CGFloat = toastUndo.isHidden ? 32 : 88
+        let extra: CGFloat = toastUndo.isHidden ? 32 + (toastIcon.isHidden ? 0 : Self.toastIconSize + Self.toastIconGap) : 88
         let width = max(minimum, ceil((text + extra) / 8) * 8)
         toast.frame = NSRect(x: page.frame.midX - width / 2, y: page.frame.maxY - 56, width: width, height: 40)
     }

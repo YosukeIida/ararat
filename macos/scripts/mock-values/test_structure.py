@@ -70,8 +70,8 @@ class StructureTests(unittest.TestCase):
                 self.assertEqual(check(rule, {"windows": [{"root": view("NSView", children=children)}]}), expected)
 
     def test_required_parts_without_a_container_use_the_window_root(self):
-        rule = {"kind": "contains", "members": [{"label": "Open Library"}, {"class": "DownloadRowView"}]}
-        header = view("DownloadsHeaderButton", label="Open Library")
+        rule = {"kind": "contains", "members": [{"label": "Downloads"}, {"label": "Open in Library"}, {"class": "DownloadRowView"}]}
+        header = view("NSStackView", children=[view("NSTextField", label="Downloads"), view("NSButton", label="Open in Library")])
         row = view("DownloadRowView")
         self.assertTrue(check(rule, {"windows": [{"root": view("NSView", children=[header, row])}]}))
         self.assertFalse(check(rule, {"windows": [{"root": header}, {"root": row}]}))

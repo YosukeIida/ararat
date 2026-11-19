@@ -13,6 +13,7 @@
 #include "base/no_destructor.h"
 #include "base/scoped_observation.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/download_core_service.h"
@@ -140,6 +141,7 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
     for (const auto& [guid, item] : items_) {
       DownloadItemModel model(item);
       if (!model.ShouldShowInUi()) continue;
+      base::TimeDelta remaining;
       [result addObject:@{ @"profile": profile, @"private": @(profile_->IsOffTheRecord()),
         @"id": base::SysUTF8ToNSString(guid),
         @"restored": @(item->GetDownloadCreationType() == Item::TYPE_HISTORY_IMPORT),
@@ -153,6 +155,7 @@ class AraratDownloads::Impl : public content::DownloadManager::Observer, public 
         @"running": @(item->GetState() == Item::IN_PROGRESS && !item->IsPaused() && !model.IsDangerous() && !model.IsInsecure() && !IsScanning(item)),
         @"insecure": @(item->GetInsecureDownloadStatus()),
         @"scanning": @(IsScanning(item)),
+        @"secondsRemaining": @(item->TimeRemaining(&remaining) ? remaining.InSeconds() : -1),
         @"status": base::SysUTF16ToNSString(model.GetStatusText()),
         @"actions": Actions(item, model) }];
     }

@@ -124,8 +124,46 @@ func toastLabelsPassHitsAndUndoButtonReceivesThem() {
     container.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
     container.layoutSubtreeIfNeeded()
     container.showLinkCopied()
+    #expect(!container.toastIcon.isHidden && container.toastIcon.image != nil)
+    #expect(container.toastIcon.alignmentRect(forFrame: container.toastIcon.frame).size == NSSize(width: 14, height: 14))
     #expect(container.checkToastHits().labelPasses)
     container.showTabsCleared(undo: {})
+    #expect(container.toastIcon.isHidden)
     let hits = container.checkToastHits()
     #expect(hits.labelPasses && hits.undoReceives)
+}
+
+@Test @MainActor
+func failedHistoryCardShowsWarningCopyAndKeepsBothActions() throws {
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []))
+    sidebar.frame = NSRect(x: 0, y: 0, width: 164, height: 600)
+    sidebar.showHistoryFailure(true)
+    sidebar.layoutSubtreeIfNeeded()
+    let card = sidebar.historyBanner
+    #expect(!card.isHidden)
+    #expect(abs(card.frame.width - 148) < 1)
+    let labels = card.arrangedSubviews.compactMap { $0 as? NSTextField }
+    #expect(labels.map(\.stringValue) == [
+        "History not fully deleted", "Some history files could not be removed. Ararat will try again.",
+    ])
+    #expect(labels.allSatisfy { card.bounds.contains(card.convert($0.bounds, from: $0)) })
+    #expect((labels.last?.bounds.height ?? 0) > 24)
+    let warning = try #require(card.subviews.compactMap { $0 as? NSImageView }.first)
+    #expect(warning.image != nil)
+    for (name, expected) in [
+        (NSAppearance.Name.aqua, NSColor(srgbRed: 178 / 255, green: 80 / 255, blue: 0, alpha: 1)),
+        (.darkAqua, NSColor(srgbRed: 1, green: 179 / 255, blue: 64 / 255, alpha: 1)),
+    ] {
+        sidebar.appearance = try #require(NSAppearance(named: name))
+        warning.effectiveAppearance.performAsCurrentDrawingAppearance {
+            #expect(warning.contentTintColor?.usingColorSpace(.sRGB) == expected)
+        }
+    }
+    #expect(card.subviews.contains { ($0 as? NSButton)?.accessibilityLabel() == "Dismiss" })
+    var actions: [String] = []
+    sidebar.onRetryHistory = { actions.append("retry") }
+    sidebar.onDismissHistory = { actions.append("dismiss") }
+    sidebar.checkClickHistoryRetry()
+    sidebar.checkClickHistoryDismiss()
+    #expect(actions == ["retry", "dismiss"])
 }

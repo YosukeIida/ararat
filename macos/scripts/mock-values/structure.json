@@ -24,7 +24,7 @@
    "container": {"class": "LittleWindowBarView"},
    "members": [{"label": "Profile"}, {"label": "Address"}, {"label": "Copy Link"}, {"label": "Extensions"}, {"label": "Open in"}, {"label": "Choose a space"}]},
   {"source": "C-Downloads.dc.html", "capture": "downloads-popover-complete", "kind": "contains",
-   "members": [{"class": "DownloadsHeaderButton", "label": "Open Library"}, {"class": "DownloadRowView"}]},
+   "members": [{"class": "NSTextField", "label": "Downloads"}, {"class": "NSButton", "label": "Open in Library"}, {"class": "DownloadRowView"}]},
   {"source": "mock-decisions.md:91", "capture": "settings-general-general", "kind": "contains",
    "members": [{"identifier": "row-default-browser"}, {"identifier": "row-startup"}, {"identifier": "row-downloads-card"},
                {"identifier": "row-downloads-folder"}, {"identifier": "row-downloads-ask"}]},
