@@ -164,13 +164,14 @@ func splitSegmentsSelectTheirPane() {
 
 // The U20 board's split row: one segment per pane from the row's own left inset to its right
 // inset, nothing of the row's own behind them, and the focused pane in the row's selected fill.
-@Test @MainActor
-func splitRowDrawsASegmentPerPane() {
+@Test(arguments: [NSAppearance.Name.aqua, .darkAqua]) @MainActor
+func splitRowDrawsASegmentPerPane(appearance: NSAppearance.Name) {
     let split = Row(folderHasTabs: false, parentId: "today", siblingIndex: 0, collapsed: false, id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
     let members = ["a", "b"].map { id in
         Row(folderHasTabs: false, parentId: "split", siblingIndex: 0, collapsed: false, id: id, title: id, url: "https://\(id).example", depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil)
     }
     let view = SidebarRowView(row: split, selected: true, action: { _ in })
+    view.appearance = NSAppearance(named: appearance)
     view.frame = NSRect(x: 0, y: 0, width: 224, height: 41)
     view.updateSegments(members, active: "a")
     view.layoutSubtreeIfNeeded()
@@ -210,17 +211,18 @@ func splitRowDrawsASegmentPerPane() {
     // The focused pane takes the row's selected fill, the other the row's hover fill.
     let tabRow = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let selectedRow = SidebarRowView(row: tabRow, selected: true, action: { _ in })
+    let inactiveAlpha: CGFloat = appearance == .aqua ? 0.06 : 0.08
     let alpha: (CGColor?) -> CGFloat = { colour in colour.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? -1 }
     let rowAlpha = alpha(selectedRow.subviews[0].layer?.backgroundColor)
     #expect(abs(rowAlpha - SidebarMetrics.rowSelectedFillAlpha) < 0.001)
     #expect(abs(alpha(segments[0].fill.fillColor) - rowAlpha) < 0.001)
-    #expect(abs(alpha(segments[1].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha) < 0.001)
+    #expect(abs(alpha(segments[1].fill.fillColor) - inactiveAlpha) < 0.001)
     // The focus moves with the workspace's selection.
     view.updateSegments(members, active: "b")
     view.layoutSubtreeIfNeeded()
     let again = view.subviews.compactMap { $0 as? NSStackView }.first!.arrangedSubviews.compactMap { $0 as? SplitSegmentButton }
     #expect(abs(alpha(again[1].fill.fillColor) - rowAlpha) < 0.001)
-    #expect(abs(alpha(again[0].fill.fillColor) - SidebarMetrics.rowHoverFillAlpha) < 0.001)
+    #expect(abs(alpha(again[0].fill.fillColor) - inactiveAlpha) < 0.001)
 }
 
 @Test @MainActor

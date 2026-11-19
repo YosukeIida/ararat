@@ -166,8 +166,11 @@ public final class SidebarHeaderView: NSView {
     @objc private func pressed(_ sender: NSButton) {
         tooltip.dismiss()
         guard let command = sender.identifier?.rawValue else { return }
-        if command == "menu" { makeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY), in: sender) }
+        if command == "menu" { showMenu(makeMenu()) }
         else { onCommand?(command == "reload" && loading ? "stop" : command) }
+    }
+    public func showMenu(_ menu: NSMenu) {
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: more.bounds.minY), in: more)
     }
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()

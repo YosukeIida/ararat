@@ -24,6 +24,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
         layer?.cornerRadius = 8
         field.placeholderString = "Find in page"
         field.setAccessibilityLabel("Find in page")
+        count.identifier = NSUserInterfaceItemIdentifier("find-match-count")
         field.delegate = self
         previous.setAccessibilityLabel("Previous match")
         next.setAccessibilityLabel("Next match")

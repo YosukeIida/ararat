@@ -74,10 +74,14 @@ enum SidebarMetrics {
     static let spaceWheelPause = 0.250
     static let momentumQuiet: TimeInterval = 0.150
     static let unloadedOpacity: CGFloat = 0.45
-    // The row fill's two looks, both of the label colour: hovered 0.12, pressed or selected 0.22.
-    // A split's segments are drawn in the first and the focused pane's segment in the second (the
-    // U20 board's `.split span` and `.split span.on`).
-    static let rowHoverFillAlpha: CGFloat = 0.12
+    static let rowHoverFillAlphaLight: CGFloat = 0.06
+    static let rowHoverFillAlphaDark: CGFloat = 0.08
+    static let rowPressedFillAlphaLight: CGFloat = 0.12
+    static let rowPressedFillAlphaDark: CGFloat = 0.195
+
+    static func rowHoverFillAlpha(for appearance: NSAppearance) -> CGFloat {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? rowHoverFillAlphaDark : rowHoverFillAlphaLight
+    }
     static let rowSelectedFillAlpha: CGFloat = 0.22
     // The board's selected-row shadow (`--selsh: 0 1px 2px rgba(0,0,0,.08)`, and `none` in dark)
     // on the selected row's fill and on the focused segment of a split row: 1 pt down, 2 pt of
@@ -103,7 +107,7 @@ enum SidebarMetrics {
     // U25b: an open, empty folder's line, the Today divider block with its Clear button, the
     // New Tab row, and the space name row (D10).
     static let noTabsRowHeight: CGFloat = 24
-    // The sidebar's secondary text size (the No tabs line, the Clear button's label, tooltips).
+    // The sidebar's secondary text size for the No tabs line.
     static let secondaryFontSize: CGFloat = 12
     static let todayDividerHeight: CGFloat = 16
     // Sidebar x 18 to 80 from the edge; the rows column insets this block by 8.
@@ -121,8 +125,8 @@ enum SidebarMetrics {
     static let spaceChevronSize: CGFloat = 16
     static let spaceMoreTrailing: CGFloat = 16
     static let spaceMoreSize: CGFloat = 24
-    static let unreadDotSize: CGFloat = 6
-    // 16 is the multiples-of-8 rule (12 is not a value we may choose); the 6 pt dot is visual.
+    static let unreadDotSize: CGFloat = 7
+    // 16 is the multiples-of-8 rule (12 is not a value we may choose); the 7 pt dot is visual.
     static let unreadDotTrailing: CGFloat = 16
 }
 

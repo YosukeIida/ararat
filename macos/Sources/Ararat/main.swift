@@ -690,6 +690,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var commandPresenter: CommandBarPresenter?
   var tabSwitcher: TabSwitcher?
   var commandBarConditions: [String: Bool] = [:]
+  var commandBarImages: [String: String] = [:]
+  var commandBarCapturing = false
   var commandBarFixtureID: String?
   var commandBarSearchID: String?
   var commandBarInitialID: String?
@@ -732,10 +734,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var organizeHoverStarted: TimeInterval = 0
   /// p4checks: the resolver's answer for the first-favourite drop, scored only once it lands.
   var organizeFirstFavoriteTarget = false
-  var organizeImage: String?
+  var organizeImages: [String: String] = [:]
+  var organizeCapturing = false
   weak var settingsOwner: Runtime?
   var displacedMenuItems: [String: NSMenuItem] = [:]
   var keyboardResults: [String: Any] = [:]
+  var keyboardCapturing = false
   var keyboardSidebarBefore = ""
   var keyboardLibraryBefore = false
   var profileFocusEventCount = 0
@@ -1057,6 +1061,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var fullscreenFocusTraceDropped = 0
   var fullscreenMenuDispatch: [String: Any] = [:]
   var fullscreenPhase4Observed = false
+  var fullscreenParityCapturing = false
 
   func recordFullscreenFocus(_ event: String, window: NSWindow) {
     guard fullscreenFocusTrace.count < 64 else { fullscreenFocusTraceDropped += 1; return }
@@ -3628,6 +3633,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
     let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions", "onboarding", "screen-onboarding", "window-drag", "screen-window-drag", "create-space", "screen-create-space"].contains(mode) || SettingsScreenCheck.Mode.mode(mode) != nil ? 900 : 300
     if browserCheckAttempts > limit {
+      if mode == "screen-keyboard", let condition = keyboardCaptureCondition {
+        timeoutValues["capture_wait"] = condition
+        timeoutValues["failed_conditions"] = [condition]
+        timeoutValues[condition] = false
+      }
       if mode == "download-close", !errorPageConditions.isEmpty {
         browserCheckMode = CommandLine.arguments.contains("--ararat-screen=errorpages") ? "screen-errorpages" : "errorpages"
       }
@@ -4528,7 +4538,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     NSApp.sendEvent(event)
   }
 
+  var keyboardCaptureCondition: String? {
+    switch browserCheckPhase {
+    case 36411: "no_tab_state"
+    case 3657: "archive_empty_state"
+    default: nil
+    }
+  }
+
   func keyboardCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
+    guard !keyboardCapturing else { return }
     if CommandLine.arguments.contains("--ararat-space-matrix-check") {
       commandSpaceMatrixTick(host, screen: screen)
       return
@@ -4576,7 +4595,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let c2OK = !c2 || (keyboardResults["c2_page_attachment"] as? Bool == true &&
         keyboardResults["c2_find_attachment"] as? Bool == true && keyboardResults["c2_find_resized_attachment"] as? Bool == true &&
         (!screen || (keyboardResults["c2_page_input_hit"] as? Bool == true && keyboardResults["c2_find_stacking_input"] as? Bool == true)))
-      let caseOK = requiredOK && modeOK && c2OK && stock == 0
+      let capturesOK = !screen || ["find-count", "no-tab", "archive-list", "archive-search", "archive-no-matches", "archive-empty"]
+        .allSatisfy { keyboardResults["\($0)_screenshot"] != nil }
+      let caseOK = requiredOK && modeOK && c2OK && capturesOK && stock == 0
       keyboardResults["hidden_window_safe"] = hiddenWindowSafe
       keyboardResults["unverified_reach"] = ["core_menu_and_suggestion_reach",
         "page_only_menu_actions", "find_lifetime_and_geometry"]
@@ -4599,6 +4620,24 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       keyboardResults["error"] = reason
       keyboardResults["phase"] = browserCheckPhase
       finishBrowserCheck(ok: false, values: keyboardResults)
+    }
+    func capture(_ name: String) {
+      guard screen else { return }
+      keyboardCapturing = true
+      defer { keyboardCapturing = false }
+      let window = host.window()
+      window.contentView?.layoutSubtreeIfNeeded()
+      window.displayIfNeeded()
+      keyboardResults["\(name)_screenshot"] = promptScreenScreenshot(window, name: "keyboard-\(name)", withoutShadow: true)
+    }
+    func captureStateReady(_ ready: Bool) -> Bool {
+      guard let condition = keyboardCaptureCondition else { return false }
+      if !ready, keyboardResults["capture_wait"] == nil {
+        FileHandle.standardError.write(Data("ararat-trace: keyboard wait=\(condition)\n".utf8))
+      }
+      keyboardResults["capture_wait"] = ready ? nil : condition
+      keyboardResults[condition] = ready
+      return ready
     }
     func bubbleNearAnchor(_ state: [String: Any], frame: NSRect) -> Bool {
       guard let x = state["anchor_x"] as? CGFloat else { return false }
@@ -5014,6 +5053,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard let find = container?.findBar, find.matches == 3, find.ordinal > 0, find.requestID > keyboardFindRequest, find.finalUpdate else { return }
       keyboardResults["find_count"] = find.matches
       keyboardResults["find_initial"] = find.ordinal
+      capture("find-count")
       host.findAction("next", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
       browserCheckPhase = 14
     case 14:
@@ -5479,12 +5519,30 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       browserCheckPhase = 100
       switchWorkspaceSpace(keyboardArchiveSiblingSpace) { [weak self] in self?.browserCheckPhase = 36411 }
     case 36411:
-      guard snapshot.shownSpaceId == keyboardArchiveSiblingSpace, snapshot.shownSpaceId != "named",
-            host.profileDirectory() == "Profile 1", let sidebar, !sidebar.libraryOpen else { return }
+      let adjacentShown = snapshot.shownSpaceId == keyboardArchiveSiblingSpace && snapshot.shownSpaceId != "named"
+        && host.profileDirectory() == "Profile 1" && sidebar?.libraryOpen == false
+      if screen {
+        let emptySpaceShown = snapshot.spaces.enumerated().contains { index, space in
+          space.id == keyboardArchiveSiblingSpace && sidebar?.spaceShown == index
+            && space.today.isEmpty && space.pinned.isEmpty && space.favorites.isEmpty
+        }
+        guard captureStateReady(adjacentShown && emptySpaceShown && snapshot.selectedId == nil && !host.hasActiveTab()
+          && !(host.tabs() as? [any ARTabAPI] ?? []).contains(where: {
+            host.checkPagePresentation($0.liveId)["presented"] as? Bool == true
+          })) else { return }
+      }
+      guard adjacentShown, let sidebar else { return }
+      capture("no-tab")
       sidebar.setLibraryOpen(true)
       browserCheckPhase = 3642
     case 3642:
       guard let sidebar, sidebar.libraryOpen, !keyboardLibraryDeleteItem.isEmpty else { return }
+      if screen {
+        capture("archive-list")
+        if sidebar.searchArchive("?restore") > 0 { capture("archive-search") }
+        if sidebar.searchArchive("ararat-no-such-archive-entry") == 0 { capture("archive-no-matches") }
+        _ = sidebar.searchArchive("")
+      }
       // The Library row's own delete button: the closure the app wires to deleteArchive.
       guard sidebar.checkPressArchiveRowButton(id: keyboardLibraryDeleteItem, restore: false) else {
         keyboardResults["library_delete_press"] = false
@@ -5592,6 +5650,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 3657:
       keyboardResults["reopen_empty_archive"] = !Self.archiveActionsEnabled(self) && snapshot.archive.isEmpty
         && !(host.tabs() as? [any ARTabAPI] ?? []).contains { $0.itemId == keyboardRestoreItem || $0.itemId == keyboardArchivePaneID }
+      if screen {
+        guard captureStateReady(snapshot.archive.isEmpty && sidebar?.checkArchiveEmptyStateVisible == true) else { return }
+        capture("archive-empty")
+      }
       sidebar?.setLibraryOpen(false)
       browserCheckPhase = 100
       workspace?.deleteSpace(id: keyboardArchiveSiblingSpace) { [weak self] result in
@@ -6670,14 +6732,38 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
-  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false) -> String? {
+  func promptScreenScreenshot(_ window: NSWindow, name: String, withoutShadow: Bool = false, includeOverlays: Bool = false) -> String? {
     guard let temporary = ProcessInfo.processInfo.environment["TMPDIR"] else { return nil }
     let path = (temporary as NSString).appendingPathComponent("ararat-prompts-\(name)-\(UUID().uuidString).png")
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     task.arguments = ["-x"] + (withoutShadow ? ["-o"] : []) + ["-l\(window.windowNumber)", path]
+    if includeOverlays {
+      guard let screen = window.screen, let top = NSScreen.screens.first?.frame.maxY else { return nil }
+      let frame = window.frame.intersection(screen.frame).integral
+      guard !frame.isEmpty else { return nil }
+      task.arguments = ScreenViewTree.regionArguments(frame: frame, screenTop: top, path: path)
+    }
     do { try task.run(); task.waitUntilExit() } catch { return nil }
-    return task.terminationStatus == 0 && FileManager.default.fileExists(atPath: path) ? path : nil
+    guard task.terminationStatus == 0, FileManager.default.fileExists(atPath: path),
+          ScreenViewTree.write(nextTo: path, name: name, windows: [window]) else { return nil }
+    return path
+  }
+
+  func promptScreenMenuScreenshot(_ menu: NSMenu, window: NSWindow, name: String, show: () -> Void) -> String? {
+    var path: String?
+    let captureMenu: @MainActor @Sendable () -> Void = { [weak self, weak menu] in
+      guard let menu else { return }
+      defer { menu.cancelTracking() }
+      path = self?.promptScreenScreenshot(window, name: name, includeOverlays: true)
+    }
+    let timer = Timer(timeInterval: 0.2, repeats: false) { _ in
+      MainActor.assumeIsolated { captureMenu() }
+    }
+    RunLoop.main.add(timer, forMode: .eventTracking)
+    show()
+    timer.invalidate()
+    return path
   }
 
   func rectFields(_ r: NSRect) -> [String: Double] {
@@ -8599,11 +8685,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
-    guard let sidebar, let session = adapter?.session else { return }
+    guard !organizeCapturing, let sidebar, let session = adapter?.session else { return }
     let current = session.queue.sync { session.store?.snapshot(windowId: windowID) }
     guard let current, let space = current.spaces.first(where: { $0.id == "organize-work" }),
           let other = current.spaces.first(where: { $0.id == "organize-other" }) else { return }
@@ -8614,14 +8700,20 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckIdle, let id = row(name)?.id else { return false }
       return sidebar.organizeCheckBegin(id: id, destination: destination)
     }
+    func capture(_ name: String) {
+      guard screen else { return }
+      organizeCapturing = true
+      defer { organizeCapturing = false }
+      organizeImages[name] = promptScreenScreenshot(host.window(), name: "organize-\(name)", withoutShadow: true)
+    }
     switch browserCheckPhase {
     case 0:
       guard space.favorites.count == 2, space.today.count == 1, space.pinned.contains(where: { $0.id == "organize-inner" }) else { return }
       organizeConditions["seed"] = true
       guard begin("today", "organize-outer") else { return }
       organizeConditions["drop_line_image"] = !screen || sidebar.organizeCheckDropLine
-      if screen, sidebar.organizeCheckDropLine { organizeImage = promptScreenScreenshot(host.window(), name: "organize-drop", withoutShadow: true) }
-      if screen { organizeConditions["drop_line_image"] = organizeImage != nil }
+      if sidebar.organizeCheckDropLine { capture("drop") }
+      if screen { organizeConditions["drop_line_image"] = organizeImages["drop"] != nil }
       browserCheckPhase = 1
     case 1:
       guard sidebar.organizeCheckEnd() else { return }
@@ -8680,6 +8772,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 81:
       guard current.shownSpaceId == "organize-first", sidebar.organizeCheckIdle,
             let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
+      if first.favorites.isEmpty { capture("empty-favorites") }
       guard begin("first", "favorites") else { return }
       let point = sidebar.dragCheckPoint
       let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("first")?.id ?? "")
@@ -8688,9 +8781,6 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       // a stall here leaves it unset rather than true.
       organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && first.favoritesId == nil
       FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(first.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
-      if screen, let image = promptScreenScreenshot(host.window(), name: "organize-first-favorite", withoutShadow: true) {
-        organizeImage = image
-      }
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 82
     case 82:
@@ -8698,6 +8788,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
             let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
       let landed = first.favorites.contains { $0.url == "about:blank?organize-first" }
       organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && first.favoritesId != nil
+      if landed { capture("first-favorite") }
+      if screen { organizeConditions["favorite_images"] = organizeImages["empty-favorites"] != nil && organizeImages["first-favorite"] != nil }
       FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(first.favoritesId ?? "nil") parent=\(row("first")?.parentId ?? "nil")\n".utf8))
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
@@ -8720,7 +8812,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if innerOpen && (target?.kind == "folder" || target?.kind == "insert") && target?.container == "organize-inner" {
         FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover opened target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop)\n".utf8))
         organizeConditions["folder_hover_opens"] = true
-        if screen { organizeImage = promptScreenScreenshot(host.window(), name: "organize-hover-open", withoutShadow: true) ?? organizeImage }
+        capture("hover-open")
         guard sidebar.organizeCheckEnd() else { return }
         browserCheckPhase = 86
         return
@@ -8738,20 +8830,19 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["hover_drop"] = row("today")?.parentId == "organize-inner"
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
-      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed]
-      if let organizeImage { values["image"] = organizeImage }
+      let values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed, "images": organizeImages]
       finishBrowserCheck(ok: failed.isEmpty, values: values)
     case 87:
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
-      var values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed,
+      let values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed, "images": organizeImages,
                                   "hover_wait": ProcessInfo.processInfo.systemUptime - organizeHoverStarted]
-      if let organizeImage { values["image"] = organizeImage }
       finishBrowserCheck(ok: false, values: values)
     default: break
     }
   }
 
   func fullscreenScreenTick(_ host: any ARWindowHostAPI, tabs: [any ARTabAPI], state: [String: Any]) {
+    guard !fullscreenParityCapturing else { return }
     let window = host.window()
     let full = state["window"] as? Bool == true
     let page = state["tab"] as? Bool == true
@@ -8769,6 +8860,21 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         if let found = fullscreenMenu(item.submenu) { return found }
       }
       return nil
+    }
+    func warpPointer(to point: NSPoint) -> Bool {
+      guard let top = NSScreen.screens.first?.frame.maxY else { return false }
+      return CGWarpMouseCursorPosition(CGPoint(x: point.x, y: top - point.y)) == .success
+    }
+    func samplePointer(at point: NSPoint, in container: SidebarContainerView) -> Bool {
+      guard warpPointer(to: point) else { return false }
+      // CGWarpMouseCursorPosition emits no event, so sample through the sidebar's own pointer path.
+      container.samplePointerForCheck()
+      return true
+    }
+    func capture(_ name: String) {
+      fullscreenParityCapturing = true
+      defer { fullscreenParityCapturing = false }
+      fullscreenResults["\(name)_screenshot"] = promptScreenScreenshot(window, name: "fullscreen-\(name)", withoutShadow: true)
     }
     switch browserCheckPhase {
     case 0:
@@ -8828,9 +8934,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       fullscreenResults["browser_screenshot"] = image
       fullscreenResults["menu_toggle"] = true
       fullscreenResults["appkit_lights"] = true
-      guard let screen = NSScreen.screens.first else { return }
       let edge = NSPoint(x: window.frame.minX + 2, y: window.frame.midY)
-      guard CGWarpMouseCursorPosition(CGPoint(x: edge.x, y: screen.frame.maxY - edge.y)) == .success,
+      guard warpPointer(to: edge),
             let event = NSEvent.mouseEvent(with: .mouseMoved, location: window.convertPoint(fromScreen: edge),
               modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
               context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
@@ -8871,7 +8976,37 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard fullscreenElement == false, container?.pageFullscreen == false else { return }
       fullscreenResults["green_button_exit"] = true
       fullscreenResults["stock_browsers"] = host.checkStockBrowsers()
-      finishBrowserCheck(ok: host.checkStockBrowsers() == 0, values: fullscreenResults)
+      guard host.checkStockBrowsers() == 0 else { finishBrowserCheck(ok: false, values: fullscreenResults); return }
+      window.appearance = NSAppearance(named: .darkAqua)
+      if let container, container.sidebarState != "docked" { container.toggleSidebar() }
+      browserCheckPhase = 71
+    case 71:
+      guard let container, container.sidebarState == "docked", !container.sidebarAnimating,
+            container.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
+            samplePointer(at: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY), in: container) else { return }
+      capture("dark-docked")
+      container.toggleSidebar()
+      browserCheckPhase = 72
+    case 72:
+      guard let container, container.sidebarState == "hidden", !container.sidebarAnimating else { return }
+      capture("floating-before-reveal")
+      guard samplePointer(at: NSPoint(x: window.frame.minX + 2, y: window.frame.midY), in: container) else {
+        finishBrowserCheck(ok: false, values: fullscreenResults); return
+      }
+      browserCheckPhase = 73
+    case 73:
+      guard let container, container.sidebarState == "floating", !container.sidebarAnimating else { return }
+      capture("dark-floating")
+      guard samplePointer(at: NSPoint(x: window.frame.maxX - 24, y: window.frame.midY), in: container) else {
+        finishBrowserCheck(ok: false, values: fullscreenResults); return
+      }
+      browserCheckPhase = 74
+    case 74:
+      guard let container, container.sidebarState == "hidden", !container.sidebarAnimating else { return }
+      capture("floating-after-hide")
+      let capturesOK = ["dark-docked", "floating-before-reveal", "dark-floating", "floating-after-hide"]
+        .allSatisfy { fullscreenResults["\($0)_screenshot"] != nil }
+      finishBrowserCheck(ok: capturesOK, values: fullscreenResults)
     default: break
     }
   }
@@ -9040,8 +9175,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result.merge(littleWindowCheckDiagnostics(screen: browserCheckMode == "screen-little-window")) { _, new in new }
     }
     if browserCheckMode == "commandbar" || browserCheckMode == "screen-commandbar" {
-      result["conditions"] = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
-      result["failed_conditions"] = commandBarConditionNames.filter { commandBarConditions[$0] != true }
+      result.merge(commandBarCheckResult(screen: browserCheckMode == "screen-commandbar")) { _, new in new }
     }
     if browserCheckMode == "look" || browserCheckMode == "screen-look" {
       lookCheck?.stopWatchingMenu()
@@ -9053,6 +9187,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let names = organizeConditionNames(screen: browserCheckMode == "screen-organize")
       result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, organizeConditions[$0] == true) })
       result["failed_conditions"] = names.filter { organizeConditions[$0] != true }
+      result["images"] = organizeImages
     }
     if browserCheckMode == "incognito" {
       result.merge(incognitoResultIdentity(check: "incognito", arguments: CommandLine.arguments)) { _, new in new }

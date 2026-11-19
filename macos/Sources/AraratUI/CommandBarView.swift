@@ -174,6 +174,9 @@ final class CommandBarRowView: NSView {
         arrow.imageScaling = .scaleNone
         label.lineBreakMode = .byTruncatingMiddle // middle truncation [Cra, V:265]
         trailing.textColor = .secondaryLabelColor
+        icon.identifier = NSUserInterfaceItemIdentifier("command-result-icon")
+        label.identifier = NSUserInterfaceItemIdentifier("command-result-title")
+        trailing.identifier = NSUserInterfaceItemIdentifier("command-result-detail")
         for view in [iconBox, icon, label, trailing, arrowBox, arrow] as [NSView] { addSubview(view) }
     }
 

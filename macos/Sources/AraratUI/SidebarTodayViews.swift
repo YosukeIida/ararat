@@ -50,6 +50,8 @@ final class SidebarTodayDivider: NSView {
 
 @MainActor
 final class SidebarClearButton: NSButton {
+    static let labelFontSize: CGFloat = 11
+
     private let fill = NSView()
     private var hovered = false { didSet { updateFill() } }
     private(set) var pressed = false { didSet { updateFill() } }
@@ -60,7 +62,7 @@ final class SidebarClearButton: NSButton {
         super.init(frame: frameRect)
         isBordered = false
         title = "Clear"
-        font = .systemFont(ofSize: 12, weight: .medium)
+        font = .systemFont(ofSize: Self.labelFontSize, weight: .medium)
         contentTintColor = .secondaryLabelColor
         target = self
         action = #selector(press)

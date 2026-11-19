@@ -46,11 +46,6 @@ final class FolderUploadCheckState {
 
     static func conditionNames(screen: Bool) -> [String] { names + (screen ? screens : []) }
 
-    static func chooserCaptureArguments(frame: NSRect, screenTop: CGFloat, path: String) -> [String] {
-        let region = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height).integral
-        return ["-x", "-R\(Int(region.minX)),\(Int(region.minY)),\(Int(region.width)),\(Int(region.height))", path]
-    }
-
     static func chooserWindow(frame: NSRect, screenTop: CGFloat, windows: [[String: Any]], excluding: Set<Int>) -> [String: Any]? {
         let target = NSRect(x: frame.minX, y: screenTop - frame.maxY, width: frame.width, height: frame.height)
         return windows.first { row in
@@ -150,7 +145,7 @@ extension Runtime {
                 $0.isVisible && !check.windowsBefore.contains($0.windowNumber)
             }
         }
-        func capture(_ name: String, frame: NSRect) -> Bool {
+        func capture(_ name: String, frame: NSRect, window target: NSWindow) -> Bool {
             guard screen else { return true }
             check.capturing = true; defer { check.capturing = false }
             guard let screenTop = NSScreen.screens.first?.frame.maxY, !frame.isEmpty else {
@@ -161,7 +156,7 @@ extension Runtime {
             let task = Process()
             let error = Pipe()
             task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            task.arguments = FolderUploadCheckState.chooserCaptureArguments(frame: frame, screenTop: screenTop, path: path)
+            task.arguments = ScreenViewTree.regionArguments(frame: frame, screenTop: screenTop, path: path)
             task.standardError = error
             check.details["capture"] = ["way": "region", "frame": NSStringFromRect(frame), "arguments": task.arguments ?? []]
             do { try task.run(); task.waitUntilExit() } catch {
@@ -174,7 +169,7 @@ extension Runtime {
             FileHandle.standardError.write(Data("ararat-trace: folder-upload capture way=region frame=\(frame) screen_top=\(screenTop) status=\(task.terminationStatus) written=\(written) error=\(message)\n".utf8))
             check.details["capture_status"] = task.terminationStatus
             check.details["capture_error"] = message
-            guard written else { return false }
+            guard written, ScreenViewTree.write(nextTo: path, name: "folder-upload-\(name)", windows: [target]) else { return false }
             check.images[name] = path
             return true
         }
@@ -224,7 +219,7 @@ extension Runtime {
             if screen {
                 check.beforeFrame = NSScreen.screens.map(\.frame).reduce(NSRect.null) { $0.union($1) }.integral
                 check.details["before_frame"] = NSStringFromRect(check.beforeFrame)
-                guard capture("before-screen", frame: check.beforeFrame) else { check.mark("capture_chooser", false); finish(); return }
+                guard capture("before-screen", frame: check.beforeFrame, window: pageWindow) else { check.mark("capture_chooser", false); finish(); return }
                 check.cgWindowsBefore = Set(cgWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
             }
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
@@ -273,7 +268,7 @@ extension Runtime {
                     return
                 }
                 if settled {
-                    let captured = capture("chooser", frame: frame)
+                    let captured = capture("chooser", frame: frame, window: panel)
                     let stillOnScreen = chooserWindow(frame)?[kCGWindowNumber as String] as? Int == cgWindow?[kCGWindowNumber as String] as? Int
                         && panel.frame == frame && panel.alphaValue == 1
                     var changed = false
@@ -284,7 +279,9 @@ extension Runtime {
                         let path = FileManager.default.temporaryDirectory.appendingPathComponent("ararat-folder-upload-before-\(UUID().uuidString).png")
                         do {
                             try data.write(to: path)
-                            check.images["before-chooser"] = path.path
+                            if ScreenViewTree.write(nextTo: path.path, name: "folder-upload-before-chooser", windows: [window]) {
+                                check.images["before-chooser"] = path.path
+                            }
                             check.details["image_difference"] = difference.value
                             check.details["image_difference_threshold"] = 0.01
                             changed = difference.changed
@@ -293,7 +290,7 @@ extension Runtime {
                     check.details["chooser_cg_window"] = cgWindow
                     check.details["chooser_on_screen_at_capture"] = stillOnScreen
                     FileHandle.standardError.write(Data("ararat-trace: folder-upload capture evidence on_screen=\(stillOnScreen) changed=\(changed) difference=\(check.details["image_difference"] ?? "nil") before=\(check.images["before-chooser"] ?? "nil") after=\(check.images["chooser"] ?? "nil")\n".utf8))
-                    check.mark("capture_chooser", captured && stillOnScreen && changed)
+                    check.mark("capture_chooser", captured && stillOnScreen && changed && check.images["before-chooser"] != nil)
                 }
             }
             // Cancel through the panel's own action (its Cancel button's selector), the answer

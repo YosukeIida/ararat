@@ -25,7 +25,7 @@ public enum LittleWindowMetrics {
     public static let buttonHoverFill = NSColor(white: 1, alpha: 0.2)
     public static let buttonPressedFill = NSColor(white: 1, alpha: 0.3)
     public static let disabledFill = NSColor(white: 1, alpha: 0.07)
-    public static let disabledText = NSColor(white: 1, alpha: 0.4)
+    public static let disabledText = NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 235 / 255, alpha: 0.4)
     public static let hairline = NSColor(white: 1, alpha: 0.08)
     public static let contentRadius: CGFloat = 10
     public static let toastHeight: CGFloat = 36

@@ -32,7 +32,7 @@ func reusedHoverMatchesAFreshLayoutAfterReorder() throws {
     let point = original.convert(NSPoint(x: 20, y: 20), to: nil)
     for row in hoverRows(sidebar) { row.pointerLocation = { point }; row.refreshHover() }
     #expect(original.hovered)
-    #expect(abs(try #require(original.subviews[0].layer?.backgroundColor?.alpha) - 0.12) < 0.000001)
+    #expect(abs(try #require(original.subviews[0].layer?.backgroundColor?.alpha) - SidebarMetrics.rowHoverFillAlpha(for: original.effectiveAppearance)) < 0.000001)
     sidebar.update(snapshot: hoverSnapshot(["b", "c", "a"]))
     sidebar.layoutSubtreeIfNeeded()
     window.displayIfNeeded()
@@ -56,7 +56,7 @@ func closingARowRechecksHoverForTheRowsThatMoveUp() throws {
     let point = moving.convert(NSPoint(x: 20, y: 20), to: nil)
     for row in hoverRows(sidebar) { row.pointerLocation = { point }; row.refreshHover() }
     #expect(moving.hovered)
-    #expect(abs(try #require(moving.subviews[0].layer?.backgroundColor?.alpha) - 0.12) < 0.000001)
+    #expect(abs(try #require(moving.subviews[0].layer?.backgroundColor?.alpha) - SidebarMetrics.rowHoverFillAlpha(for: moving.effectiveAppearance)) < 0.000001)
     sidebar.applyClose(id: "b", snapshot: hoverSnapshot(["a", "c"]))
     window.displayIfNeeded()
     #expect(hoverRows(sidebar).first { $0.row.id == "c" } === moving)

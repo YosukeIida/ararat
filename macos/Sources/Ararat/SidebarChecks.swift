@@ -333,6 +333,12 @@ extension Runtime {
             guard info.closeLabel == "Close Tab" else {
                 note("pin label is \(info.closeLabel ?? "-"), expected Close Tab"); return
             }
+            if screen {
+                _ = capture("selected")
+                let hover = sidebar.captureRowPointerState(id: pin.id, pressed: false) { capture("hover") }
+                let pressed = sidebar.captureRowPointerState(id: pin.id, pressed: true) { capture("pressed") }
+                check.conditions["capture"] = check.conditions["capture"] == true && hover && pressed
+            }
             trace("press the loaded pin's close")
             let action = sidebar.pressRowCloseForCheck(id: pin.id)
             trace("close action for \(pin.id): \(action.map { $0 == .archive ? "archive" : "close" } ?? "no target")")
@@ -407,6 +413,20 @@ extension Runtime {
                 return
             }
             check.report("close_caps_current", true)
+            if screen {
+                check.capturing = true
+                let image = sidebar.tabMenuForCheck(id: todayB.id).flatMap { menu in
+                    sidebar.rowFrameForCheck(todayB.id).flatMap { frame in
+                        let point = sidebar.convert(NSPoint(x: frame.midX, y: frame.midY), from: nil)
+                        return promptScreenMenuScreenshot(menu, window: host.window(), name: "sidebar-rows-tab-menu") {
+                            menu.popUp(positioning: nil, at: point, in: sidebar)
+                        }
+                    }
+                }
+                check.capturing = false
+                check.images["tab-menu"] = image
+                check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+            }
             check.commandWId = todayB.id
             sidebar.closeSelectedTab(nil)
             step(6)
@@ -752,6 +772,7 @@ extension Runtime {
         case 3:
             guard sidebar.newTabRowForCheck == nil else { return }
             check.report("new_tab_setting_hides", true)
+            _ = capture("new-tab-hidden")
             if let store = adapter?.session.store {
                 _ = adapter?.session.queue.sync { try? store.setNewTabRowShown(windowId: windowID, shown: true) }
             }
@@ -944,6 +965,16 @@ extension Runtime {
             check.report("menu_dock_same", titles == sidebar.dockMenuItems(for: space.id).map(\.title))
             // S4: the click above toggled rather than renaming, and the menu's item starts it.
             check.report("rename_menu_only", name.checkRenameFieldFrame == nil)
+            if screen, let window = name.window {
+                check.capturing = true
+                let point = NSPoint(x: name.bounds.midX, y: name.bounds.midY)
+                let image = promptScreenMenuScreenshot(menu, window: window, name: "space-name-menu") {
+                    menu.popUp(positioning: nil, at: point, in: name)
+                }
+                check.capturing = false
+                check.images["menu"] = image
+                check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+            }
             guard let rename = menu.items.first(where: { $0.title == "Rename Space…" }), let action = rename.action else {
                 check.report("rename_field_height", false); step(4); return
             }

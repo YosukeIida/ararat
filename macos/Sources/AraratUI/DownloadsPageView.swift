@@ -3,6 +3,8 @@ import AraratKit
 
 @MainActor
 final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+    static let rowHeight: CGFloat = 56
+
     let search = NSSearchField()
     let clear = NSButton(title: "Clear All", target: nil, action: nil)
     private let title = NSTextField(labelWithString: "Downloads")
@@ -72,7 +74,7 @@ final class DownloadsPageView: NSView, NSTableViewDataSource, NSTableViewDelegat
         table.style = .plain
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .none
-        table.rowHeight = DownloadsPopover.rowHeight
+        table.rowHeight = Self.rowHeight
         table.intercellSpacing = .zero
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.autoresizingMask = [.width]

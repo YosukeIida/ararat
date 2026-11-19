@@ -69,11 +69,11 @@ func chooserImageEvidenceRejectsUnchangedAndTinyPixelDifferences() throws {
 
 @Test @MainActor
 func chooserCaptureUsesThePanelRegionInGlobalTopDownPoints() {
-    #expect(FolderUploadCheckState.chooserCaptureArguments(frame: NSRect(x: 100, y: 200, width: 600, height: 400), screenTop: 1080, path: "chooser.png")
+    #expect(ScreenViewTree.regionArguments(frame: NSRect(x: 100, y: 200, width: 600, height: 400), screenTop: 1080, path: "chooser.png")
         == ["-x", "-R100,480,600,400", "chooser.png"])
-    #expect(FolderUploadCheckState.chooserCaptureArguments(frame: NSRect(x: -500, y: 1100, width: 400, height: 300), screenTop: 1080, path: "chooser.png")
+    #expect(ScreenViewTree.regionArguments(frame: NSRect(x: -500, y: 1100, width: 400, height: 300), screenTop: 1080, path: "chooser.png")
         == ["-x", "-R-500,-320,400,300", "chooser.png"])
-    #expect(FolderUploadCheckState.chooserCaptureArguments(frame: NSRect(x: 100.5, y: 200.5, width: 600, height: 400), screenTop: 1080, path: "chooser.png")
+    #expect(ScreenViewTree.regionArguments(frame: NSRect(x: 100.5, y: 200.5, width: 600, height: 400), screenTop: 1080, path: "chooser.png")
         == ["-x", "-R100,479,601,401", "chooser.png"])
 }
 

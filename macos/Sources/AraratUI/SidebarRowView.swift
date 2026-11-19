@@ -150,7 +150,7 @@ final class SplitSegmentButton: NSButton {
     // board's selected-row shadow as well.
     func applyFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let alpha = active ? SidebarMetrics.rowSelectedFillAlpha : SidebarMetrics.rowHoverFillAlpha
+            let alpha = active ? SidebarMetrics.rowSelectedFillAlpha : SidebarMetrics.rowHoverFillAlpha(for: effectiveAppearance)
             fill.fillColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
         applyShadow()
@@ -558,6 +558,24 @@ final class SidebarRowView: NSView {
         if pressed != nextPressed { pressed = nextPressed }
     }
 
+    func capturePointerState(pressed: Bool, capture: () -> Bool) -> Bool {
+        let previousPointer = pointerLocation
+        let previousPress = trackingPress
+        let rect = bounds.intersection(visibleRect)
+        guard !rect.isEmpty else { return false }
+        let point = convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        pointerLocation = { point }
+        trackingPress = pressed
+        refreshHover()
+        window?.displayIfNeeded()
+        defer {
+            pointerLocation = previousPointer
+            trackingPress = previousPress
+            refreshHover()
+        }
+        return hovered && self.pressed == pressed && capture()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshHover()
@@ -689,13 +707,19 @@ final class SidebarRowView: NSView {
     }
 
     private func updateFill() {
-        let alpha: CGFloat = dragSource || dragCopy || pressed || selected ? SidebarMetrics.rowSelectedFillAlpha
-            : hovered || dropHovered ? SidebarMetrics.rowHoverFillAlpha : 0
+        let alpha: CGFloat
+        if dragSource || dragCopy || selected {
+            alpha = SidebarMetrics.rowSelectedFillAlpha
+        } else if pressed {
+            alpha = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? SidebarMetrics.rowPressedFillAlphaDark : SidebarMetrics.rowPressedFillAlphaLight
+        } else {
+            alpha = hovered || dropHovered ? SidebarMetrics.rowHoverFillAlpha(for: effectiveAppearance) : 0
+        }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
-        // The board's `--selsh` is on `.row.is-sel .fill` alone: hover, pressed and a drag source
-        // carry the selected fill's alpha but not its shadow. A drag copy is built selected.
+        // The board applies `--selsh` only to the selected fill. A drag copy is built selected.
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
     }

@@ -9,6 +9,7 @@ public final class TabSwitcher {
     public var onSelect: (Suggestion) -> Void = { _ in }
     public var onClose: () -> Void = {}
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    public var visibleWindow: NSWindow? { panel.isVisible ? panel : nil }
     private weak var parent: NSWindow?
     private var monitor: Any?
     private var deactivate: NSObjectProtocol?
@@ -97,6 +98,7 @@ public final class TabSwitcher {
         background.layer?.masksToBounds = true
         for (index, row) in rows.enumerated() {
             let tile = NSView(frame: NSRect(x: 12 + CGFloat(index) * 152, y: 12, width: 144, height: 112))
+            tile.identifier = NSUserInterfaceItemIdentifier("tab-switcher-tile")
             tile.wantsLayer = true
             tile.layer?.cornerRadius = 10
             tile.layer?.backgroundColor = (index == selectedIndex ? NSColor.selectedContentBackgroundColor : NSColor.clear).cgColor

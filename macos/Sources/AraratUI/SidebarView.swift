@@ -56,6 +56,10 @@ public final class SidebarView: NSView {
 
     public func expectRowClose(id: String) { requestedCloses.insert(id) }
     let tooltip = SidebarTooltip()
+    public func captureRowPointerState(id: String, pressed: Bool, capture: () -> Bool) -> Bool {
+        rowViews[id]?.capturePointerState(pressed: pressed, capture: capture) ?? false
+    }
+
     public func checkClosePressed(id: String) -> Bool {
         guard let row = rowViews[id] else { return false }
         return row.shortcutPressed && !row.closeButton.isHidden
@@ -1531,6 +1535,7 @@ public final class SidebarView: NSView {
     public func checkLibraryRowPresent(id: String) -> Bool {
         library.filteredEntries.contains { $0.id == id }
     }
+    public var checkArchiveEmptyStateVisible: Bool { libraryOpen && library.archiveEmptyStateVisible }
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateDockSelection()

@@ -139,7 +139,7 @@ func theShadowLayerIsHiddenWheneverTheShadowIsOff() throws {
     inAppearance(selected, .aqua)
     #expect(!selected.fillShadow.layer.isHidden)
 
-    // Hover, press and a drag source carry the selected fill's alpha without its shadow.
+    // Hover, press and drag do not add a shadow to an unselected row.
     let hovered = shadowRow("tab", selected: false)
     inAppearance(hovered, .aqua)
     hovered.pointerLocation = { NSPoint(x: 10, y: 10) }

@@ -8,6 +8,16 @@ extension Runtime {
     ["search_first", "search_return", "settings_second", "history", "private_history", "open_url_first", "return_opens_url", "recent_space", "force_reload", "switch_previous", "switch_cancel", "url_click"]
   }
 
+  func commandBarCheckResult(screen: Bool) -> [String: Any] {
+    var conditions = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
+    if screen {
+      conditions["capture"] = ["search", "settings", "open-url", "recent", "edit-url", "tab-switcher"]
+        .allSatisfy { commandBarImages[$0] != nil }
+    }
+    return ["conditions": conditions, "failed_conditions": conditions.keys.sorted().filter { conditions[$0] != true },
+            "images": commandBarImages]
+  }
+
   func commandBarCheckDiagnostics() -> [String: Any] {
     let bar = commandPresenter?.controller
     let keyWindow = NSApp.keyWindow
@@ -31,8 +41,16 @@ extension Runtime {
   }
 
   func commandBarCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
-    guard let port = promptFixturePort, let adapter, let workspace else { return }
+    guard !commandBarCapturing, let port = promptFixturePort, let adapter, let workspace else { return }
     let url = "http://127.0.0.1:\(port)/keyboard"
+    func capture(_ name: String, _ window: NSWindow?) {
+      guard screen, let window, window.isVisible else { return }
+      commandBarCapturing = true
+      defer { commandBarCapturing = false }
+      window.contentView?.layoutSubtreeIfNeeded()
+      window.displayIfNeeded()
+      commandBarImages[name] = promptScreenScreenshot(window, name: "commandbar-\(name)", withoutShadow: true)
+    }
     func trace(_ name: String) { FileHandle.standardError.write(Data("ararat-trace: commandbar begin \(name)\n".utf8)) }
     func step(_ next: Int, _ name: String) {
       FileHandle.standardError.write(Data("ararat-trace: commandbar \(name)\n".utf8))
@@ -86,6 +104,7 @@ extension Runtime {
       guard rows.contains(where: { if case .history = $0.target { return $0.url == url }; return false }) else { return }
       if case .search = first.target { commandBarConditions["search_first"] = true }
       commandBarConditions["history"] = true
+      capture("search", presenter.panel)
       trace("return runs search")
       if screen { key(36, chars: "\r") } else { presenter.controller.commit(forceNewTab: false) }
       step(51, "return runs search")
@@ -111,11 +130,13 @@ extension Runtime {
       guard rows.count >= 2 else { return }
       if case .command(let id) = rows[1].target { commandBarConditions["settings_second"] = id == "settings" }
       commandBarConditions["private_history"] = privateResult.privateWindow && !privateResult.rows.contains { if case .history = $0.target { return true }; return false }
+      capture("settings", presenter.panel)
       guard setQuery(url, presenter) else { return }
       step(7, "enter fixture URL")
     case 7:
       guard let presenter = commandPresenter, let row = presenter.controller.result.rows.first else { return }
       if case .openUrl = row.target { commandBarConditions["open_url_first"] = true } else { return }
+      capture("open-url", presenter.panel)
       trace("return opens URL")
       if screen { key(36, chars: "\r") } else { presenter.controller.commit(forceNewTab: false) }
       step(8, "return opens URL")
@@ -135,6 +156,7 @@ extension Runtime {
         if case .tab(let id, let space) = row.target { return id != commandBarFixtureID && space == snapshot.shownSpaceId }
         return false
       }
+      capture("recent", presenter.panel)
       presenter.close()
       commandBarReloadCount = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == commandBarFixtureID })?.navigationCount ?? 0
       trace("force reload")
@@ -156,6 +178,7 @@ extension Runtime {
       step(11, "control tab")
     case 11:
       guard let switcher = tabSwitcher, !switcher.rows.isEmpty else { return }
+      capture("tab-switcher", switcher.visibleWindow)
       if screen { key(59, chars: "", type: .flagsChanged, post: true) } else { switcher.commit() }
       step(12, "release control")
     case 12:
@@ -187,9 +210,10 @@ extension Runtime {
     case 14:
       guard let presenter = commandPresenter else { return }
       commandBarConditions["url_click"] = presenter.controller.mode == .editURL
+      capture("edit-url", presenter.panel)
       presenter.close()
-      let failed = commandBarConditionNames.filter { commandBarConditions[$0] != true }
-      finishBrowserCheck(ok: failed.isEmpty, values: ["conditions": commandBarConditions, "failed_conditions": failed])
+      let result = commandBarCheckResult(screen: screen)
+      finishBrowserCheck(ok: (result["failed_conditions"] as? [String])?.isEmpty == true, values: result)
     default: break
     }
   }

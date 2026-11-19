@@ -81,6 +81,15 @@ extension Runtime {
       container.resizeHandle.sidebarWidth = 240
       container.layoutSubtreeIfNeeded()
       check.conditions["menu"] = header.makeMenu().items.filter { !$0.isSeparatorItem }.map(\.title) == ["Reload", "Force Reload", "Find in Page…", "Clear Cache", "Clear Cookies", "Toggle Sidebar", "Zoom In", "Zoom Out", "Print…", "Settings…"]
+      if screen {
+        check.capturing = true
+        let menu = header.makeMenu()
+        check.images["overflow-menu"] = promptScreenMenuScreenshot(menu, window: host.window(), name: "header-overflow-menu") {
+          header.showMenu(menu)
+        }
+        check.capturing = false
+        capturesOK = capturesOK && check.images["overflow-menu"] != nil
+      }
       var capsOK = true
       check.details["tooltips_shown"] = header.tooltipsShown
       check.details["loading"] = header.loading
@@ -193,6 +202,13 @@ extension Runtime {
             let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == check.id && $0.liveId == check.live }) else { wait("find bar"); return }
       check.conditions["find"] = true
       check.conditions["menu_find"] = true
+      if screen {
+        check.capturing = true
+        let image = promptScreenScreenshot(host.window(), name: "header-find-bar", withoutShadow: true)
+        check.capturing = false
+        check.conditions["capture"] = check.conditions["capture"] == true && image != nil
+        check.images["find-bar"] = image
+      }
       host.findAction("close", text: "", selection: NSRange(location: 0, length: 0), liveId: check.live, profile: host.profileDirectory())
       // p4checks: Zoom In and Zoom Out are the … menu's own items.
       let zoom = host.checkZoomLevel()
