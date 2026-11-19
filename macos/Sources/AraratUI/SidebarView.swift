@@ -113,11 +113,13 @@ public final class SidebarView: NSView {
 
     private var lookPreview: (spaceID: String, look: Look?)?
     private let shortcutMenus = NSHashTable<NSMenu>.weakObjects()
+    var onKeyBindingsChanged: (() -> Void)?
     public var keyBindings = defaultKeyBindings() {
         didSet {
             for menu in shortcutMenus.allObjects { KeyBindingsModel.apply(keyBindings, to: menu) }
             let caps = closeCaps
             for view in rowViews.values { view.closeCaps = caps }
+            onKeyBindingsChanged?()
         }
     }
 

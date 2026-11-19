@@ -167,6 +167,7 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     _ = NSApplication.shared
     let model = DownloadsModel()
     var item = download("a", actions: ["show", "cancel"])
+    item["name"] = "sidebar-measurements.csv"
     item["status"] = "4.0/1,024 KB, 9 minutes left"
     model.update([item])
     let page = DownloadsPageView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
@@ -180,12 +181,15 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
     row.layoutSubtreeIfNeeded()
     func labels(_ view: NSView) -> [NSTextField] { (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(labels) }
     let status = try #require(labels(row).first { $0.stringValue == "4.0/1,024 KB, 9 minutes left" })
+    let name = try #require(labels(row).first { $0.stringValue == "sidebar-measurements.csv" })
+    let title = try #require(labels(page).first { $0.stringValue == "Downloads" })
+    #expect(title.frame.minY >= SidebarMetrics.libraryContentTop)
     #expect(row.bounds.width > 300)
     #expect(status.bounds.width > 250)
     #expect(page.actionButtonsFit)
     #expect(row.actionButtons.allSatisfy { $0.image != nil && $0.accessibilityLabel()?.contains("a") == true })
     let clip = try #require(page.table.enclosingScrollView?.contentView)
-    for width: CGFloat in [198, 164, 400] {
+    for width: CGFloat in [197, 164, 400] {
         window.setContentSize(NSSize(width: width, height: 400))
         page.layoutSubtreeIfNeeded()
         page.table.layoutSubtreeIfNeeded()
@@ -199,6 +203,7 @@ private func download(_ id: String, start: Double = 0, running: Bool = false, re
         #expect(page.actionButtonsFit)
         #expect(page.rowsLeadingAndStatusFit)
         #expect(row.statusTruncates)
+        if width >= 197 { #expect(name.bounds.width >= name.intrinsicContentSize.width) }
     }
 }
 
