@@ -719,8 +719,7 @@ final class SidebarRowView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
-        // The board's `--selsh` is on `.row.is-sel .fill` alone: hover, pressed and a drag source
-        // carry the selected fill's alpha but not its shadow. A drag copy is built selected.
+        // The board applies `--selsh` only to the selected fill. A drag copy is built selected.
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
     }

@@ -4,7 +4,7 @@ The source is the owner's U20 project under `~/.config/herdr-agent-team/ararat/r
 
 ## Token and structure checks
 
-The [reviewed token table](research/mock-values.json) has 90 entries. The Swift suite compares 77 entries and all match. The other 13 carry reasons in the table, including owner spacing decisions, the Library Downloads row pitch and the selected-row shadow pending in selshadow. Two table entries can refer to the same declaration when the two appearances resolve a CSS variable differently.
+The [reviewed token table](research/mock-values.json) has 94 entries. The Swift suite compares 85 entries, including the selected shadow's offset, blur and opacity. The other 9 carry reasons in the table, including owner spacing decisions and the Library Downloads row pitch. One CSS declaration can map to several tokens or resolve differently in each appearance.
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 88 have a reviewed disposition and 27,694 still need triage. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown. The census checks that each reviewed CSS selector, property and value is still present at the recorded line.
 
@@ -63,7 +63,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `A-TabRows` | Pinned and Today rows, spinner, unread, crash and audio | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | not reviewed | The hover and pressed PNGs show an unselected loaded pin. The selected PNG shows the adjacent Today row. |
 | `A-TabRows` | Split segment geometry and unfocused fill | `split-focus (a), split-commands (vertical, split)` | matches | The token suite and the offscreen row test verify the mapped geometry and both unfocused fills. |
 | `A-TabRows` | Multi-selection | — | not built | Multi-selection is deferred past Phase 5 (§7). |
-| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | not reviewed | The selected-row shadow is tracked in selshadow. Compare the Today row and the selected split segment. |
+| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | not reviewed | The token suite checks the light shadow and zero opacity in dark. Compare the Today row and the selected split segment visually. |
 | `A-TabRows` | Loading and crashed glyphs | `sidebar-rows-loading`, `sidebar-rows-crashed` | not reviewed | Decision 15 puts the loading spinner in the favicon's place. |
 | `A-TabRows` | Unread and muted rows | `sidebar-rows-unread`, `sidebar-rows-muted` | not reviewed | The dot follows title changes on hidden loaded tabs (decisions 19 and 24). |
 | `A-TabRows` | Row archive and close controls | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | not reviewed | The action depends on the kind and loading state of the row (decisions 29 and 32). |
@@ -103,8 +103,8 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `C-SiteControls` | Portrait capture, translate, extension grid and planned controls | — | not built | These controls are deferred in §7 and §14. |
 | `C-SiteControlsStates` | Popover state geometry | `site-controls-popover`, `site-controls-overlay`, `site-controls-toast` | not reviewed | The suite verifies width, padding, gap and the button dimension tokens. |
 | `C-SiteControlsStates` | Certificate sheet | `site-controls-certificate` | not reviewed | The security footer opens the sheet (decision 5). |
-| `C-UrlField` | Host text, placeholder and trailing buttons | `urlfield (host, placeholder, internal, long-host)` | differs | An IP host shows as "127.0...." with room to spare; follow-up unit urlip. Buttons always shown, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
-| `C-UrlField` | Long and narrow host label | `urlfield (long-host, long-host-narrow)` | differs | The start fades but the end is also cut ("…example.inva..."), so the registrable domain does not stay; follow-up unit urlip. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `C-UrlField` | Host text, placeholder and trailing buttons | `urlfield (host, placeholder, internal, long-host)` | differs | VM run mp2 showed "127.0...." with room to spare. The buttons matched the mock. Main includes the URL host fix. Rerun the capture for visual review. MP2 sheets (646da87, 2026-11-19) are in design reports/design-mockparity-1/sheets. |
+| `C-UrlField` | Long and narrow host label | `urlfield (long-host, long-host-narrow)` | differs | VM run mp2 showed a faded start and clipped end ("…example.inva..."). Main includes the leading-fade fix. Rerun the captures for visual review. MP2 sheets (646da87, 2026-11-19) are in design reports/design-mockparity-1/sheets. |
 | `CommandBar` | Overview command panel | `commandbar-search`, `commandbar-recent` | not reviewed | The regular command panel shows the search and the empty-query recent-tabs states. |
 | `D-CommandBar` | Search-first entry and history | `commandbar-search` | not reviewed | The search frame includes the first-row search and a loopback history suggestion. |
 | `D-CommandBarPanels` | Command panel variants | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | not reviewed | The check captures the regular panel in five states. The Little Window panel has a separate capture. |

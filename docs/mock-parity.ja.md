@@ -4,7 +4,7 @@
 
 ## トークンテストと構造検査
 
-[照合表](research/mock-values.json)には 90 件あり、このうち Swift との比較対象は 77 件で、全件一致した。残る 13 件は、オーナーの寸法規則、Library の Downloads の行間隔、selshadow で扱う選択行の影など、照合表に理由を記載した項目である。CSS 変数の値がライトとダークで異なる場合は、一つの宣言に二つの照合項目が対応することがある。
+[照合表](research/mock-values.json)には 94 件あり、このうち 85 件を Swift と比較する。選択行の影については、オフセット、ぼかし、不透明度を検査する。残る 9 件は、オーナーの寸法規則や Library の Downloads の行間隔など、照合表に理由を記載した項目である。一つの CSS 宣言が複数のトークンに対応したり、外観によって異なる値になったりする場合がある。
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、88 件を確認し、27,694 件の分類が残った。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。集計時に、照合表の各セレクタ、プロパティ名、値が記載の行にあることも検査する。
 
@@ -64,7 +64,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
-| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 未レビュー | 選択行の影は selshadow で扱う。Today の行と選択された分割セグメントを確認する。 |
+| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 未レビュー | トークンテストではライトの影とダークの不透明度 0 を検査する。Today の行と選択された分割セグメントの外観を確認する。 |
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows-loading`, `sidebar-rows-crashed` | 未レビュー | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
 | `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
 | `A-TabRows` | 行のアーカイブと閉じるボタン | `header-command-w`, `sidebar-rows-hover`, `sidebar-rows-pressed` | 未レビュー | 行の種類と読み込み状態に応じてアクションが変わる（決定 29、32）。 |
@@ -104,8 +104,8 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControls` | 縦長キャプチャ、翻訳、拡張機能グリッド、未実装の設定 | — | 未実装 | 対象の機能は §7 と §14 で実装を見送っている。 |
 | `C-SiteControlsStates` | ポップオーバーの各状態の寸法 | `site-controls-popover`, `site-controls-overlay`, `site-controls-toast` | 未レビュー | 幅、パディング、間隔、ボタン寸法はトークンテストの対象である。 |
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
-| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | IP のホストが、余白があるのに「127.0....」と切れる。後続の作業 urlip で直す。ボタンは常に出ており、図のとおりである。VM の実行 mp2。 |
-| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | 先頭は薄く消えるが末尾も切れ（「…example.inva...」）、登録ドメインが残らない。後続の作業 urlip で直す。VM の実行 mp2。 |
+| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
+| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。main に先頭のフェードの修正が入ったため、再撮影後に外観を確認する。 |
 | `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 未レビュー | 通常のコマンドパネルについて、検索時と、入力欄が空で最近のタブを表示する状態を撮影する。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 未レビュー | 検索結果の先頭行と、ループバックのテストページの閲覧履歴を撮影する。 |
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
