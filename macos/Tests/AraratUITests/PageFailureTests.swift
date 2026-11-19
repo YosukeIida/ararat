@@ -9,6 +9,9 @@ import Testing
     let buttons = descendants(view).compactMap { $0 as? NSButton }
     let reload = try #require(buttons.first)
     let close = try #require(buttons.last)
+    let defaultTint = reload.contentTintColor
+    view.accent = NSColor(srgbRed: 0.95, green: 0.9, blue: 0.85, alpha: 1)
+    #expect(defaultTint == .white && reload.contentTintColor == .black)
     var reloaded = false
     var closed = false
     view.onReload = { reloaded = true }

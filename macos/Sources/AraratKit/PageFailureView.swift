@@ -14,7 +14,11 @@ public final class PageFailureView: NSView {
     public var onReload: (() -> Void)?
     public var onClose: (() -> Void)?
     public var accent = SpaceAccent.teal {
-        didSet { if oldValue != accent { primary.bezelColor = accent } }
+        didSet {
+            guard oldValue != accent else { return }
+            primary.bezelColor = accent
+            primary.contentTintColor = SpaceAccent.foreground(on: accent)
+        }
     }
     private weak var coveredPage: NSView?
     private var isCovering = false
@@ -40,6 +44,7 @@ public final class PageFailureView: NSView {
         code.textColor = .tertiaryLabelColor
         primary.bezelStyle = .rounded
         primary.bezelColor = accent
+        primary.contentTintColor = SpaceAccent.foreground(on: accent)
         primary.target = self
         primary.action = #selector(reload)
         primary.keyEquivalent = "\r"

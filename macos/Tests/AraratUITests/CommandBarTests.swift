@@ -648,7 +648,7 @@ func thePanelFollowsTheRowCountOnEveryQuery() throws {
     let labels = hints.arrangedSubviews.compactMap { $0 as? NSStackView }
         .flatMap(\.arrangedSubviews).flatMap(\.subviews).compactMap { $0 as? NSTextField }
     #expect(backdrop.frame == root.bounds && hints.orientation == .horizontal)
-    #expect(labels.map(\.stringValue) == ["↑↓ Select", "↩ Open", "⌘↩ Open in new tab", "Esc Close"])
+    #expect(labels.map(\.stringValue) == ["↑ ↓ Select", "↩ Open", "⌘↩ Open in new tab", "Esc Close"])
     let emptyHintTop = hints.frame.maxY
     // A query with five rows grows the panel: same top edge, rows hanging below the field.
     editor.insertText("five")

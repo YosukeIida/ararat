@@ -107,7 +107,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
 | `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
 | `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。`cac6112` ではラベルにホスト名全体を収める幅を確保し、末尾が早く切れる問題を修正した。再撮影後に外観を確認する。 |
-| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 一致 | ウィンドウ全体を暗くし、パネルをページカードの横中央に置く。ヒントには有効なキーを表示する。Tab による補完は U23 で廃止した。 |
+| `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 差異あり | ヒントには Return で選択行を開く操作を表示する。Tab による補完は U23 で廃止した（mock-decisions.md:84）。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 一致 | 検索が先頭に出て、その後に履歴が続く。選択行には表示中のスペースの Look のアクセントを使う。 |
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 差異あり | 選択行には Look のアクセントを使う。最近のタブには「Switch to Tab」を表示する。検索優先の決定に従い、Edit URL では Open URL の 1 行を表示する。 |
 | `D-CommandBarRows` | 結果行の寸法、内側余白、行間 | — | 一致 | 対応表に記載した行と入力欄の寸法は一致した。行の外観は未確認である。 |

@@ -44,7 +44,7 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
                 group.spacing = CommandBarMetrics.hintGap
                 hints.addArrangedSubview(group)
             }
-            for (index, title) in ["↑↓ Select", "↩ Open", "⌘↩ Open in new tab", "Esc Close"].enumerated() {
+            for (index, title) in ["↑ ↓ Select", "↩ Open", "⌘↩ Open in new tab", "Esc Close"].enumerated() {
                 let label = NSTextField(labelWithString: title)
                 label.font = .systemFont(ofSize: CommandBarMetrics.hintFontSize)
                 label.textColor = .white
