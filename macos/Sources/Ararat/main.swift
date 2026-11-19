@@ -520,13 +520,15 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       return true
     }
-    let browserWindows: [(NSWindow, QuitConfirmation.BrowserWindow)] = windowTree.flatMap { runtime in
-      let windows = runtime.littleWindows.compactMap { little in
-        little.window.map { ($0, QuitConfirmation.BrowserWindow.littleWindow) }
-      }
-      guard runtime.hasUsableHost, let window = runtime.host?.window() else { return windows }
-      return [(window, runtime.isPrivateWindow ? .privateWindow : .regular)] + windows
+    let fullWindows: [(NSWindow, QuitConfirmation.BrowserWindow)] = windowTree.compactMap { runtime in
+      guard runtime.hasUsableHost, let window = runtime.host?.window() else { return nil }
+      return (window, runtime.isPrivateWindow ? .privateWindow : .regular)
     }
+    // A Little Window can outlive the browser window that opened it.
+    let littleWindows = popups.compactMap { popup in
+      popup.littleWindow?.window.map { ($0, QuitConfirmation.BrowserWindow.littleWindow) }
+    }
+    let browserWindows = fullWindows + littleWindows
     let visible = browserWindows.filter { $0.0.isVisible && !$0.0.isMiniaturized }
     let ordered = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 } + NSApp.orderedWindows
     guard let owner = ordered.first(where: { window in visible.contains { $0.0 === window } })
