@@ -1390,6 +1390,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
     adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
+    adapter.onWindowTitle = { [weak self] pageTitle in
+      self.flatMap { Self.workspaceWindowTitle(pageTitle: pageTitle, snapshot: $0.snapshot) }
+    }
     if SpaceWheelMotionCheck.enabled {
       adapter.onSnapshotTrace = { [weak sidebar] in sidebar?.traceSpaceWheelMotion($0) }
     }
@@ -1819,6 +1822,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
+  static func workspaceWindowTitle(pageTitle: String?, snapshot: WorkspaceSnapshot) -> String? {
+    pageTitle ?? snapshot.spaces.first { $0.id == snapshot.shownSpaceId }?.title
+  }
+
   func updatePageVisibility(_ snapshot: WorkspaceSnapshot) {
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-measure=") }) {
       host?.setWorkspacePageHidden(false)
@@ -1828,6 +1835,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let rows = space.map { $0.today + $0.pinned + $0.favorites } ?? []
     let visible = snapshot.selectedId.map { id in rows.contains { $0.id == splitOwner(id, rows: rows) } } ?? false
     host?.setWorkspacePageHidden(!visible)
+    host?.refreshWorkspaceWindowTitle()
   }
 
   func splitCheckPagesPresented(_ host: any ARWindowHostAPI) -> Bool {
@@ -4091,14 +4099,32 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func emptyCheckTick(_ host: any ARWindowHostAPI) {
     if browserCheckPhase == 0, let tab = (host.tabs() as? [any ARTabAPI])?.first,
+       let item = tab.itemId,
+       let row = snapshot.spaces.flatMap(\.today).first(where: { $0.id == item && $0.url != nil }),
        let data = tab.title.data(using: .utf8),
        let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
        report["windows"] as? Int == 1, report["tabs"] as? Int == 0 {
       emptyProbe = report
+      browserCheckPhase = 11
+      selectCheckSeed(row)
+    } else if browserCheckPhase == 11, let tab = (host.tabs() as? [any ARTabAPI])?.first,
+              let item = tab.itemId, snapshot.selectedId == item, host.activeItemId() == item, host.hasActiveTab() {
+      let title = host.window().title
+      guard title == tab.title else {
+        finishBrowserCheck(ok: false, values: ["selected_page_window_title": title, "expected_title": tab.title])
+        return
+      }
       browserCheckPhase = 1
       host.checkCloseAllTabs()
-    } else if browserCheckPhase == 1, !host.hasBrowser() {
+    } else if browserCheckPhase == 1, !host.hasBrowser(),
+              let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
+      let title = host.window().title
+      guard title == space.title else {
+        finishBrowserCheck(ok: false, values: ["empty_window_title": title, "expected_title": space.title])
+        return
+      }
       emptyRestore = host.checkEmptySessionRestore()
+      emptyRestore["empty_window_title"] = title
       browserCheckPhase = 10
     } else if browserCheckPhase == 10,
               let symbol = dlsym(Launcher.handle, "AraratBrowserCount") {

@@ -78,6 +78,7 @@ class AraratWindowHostCore {
   const std::string& profile_name() const { return profile_name_; }
   void SetProfileName(std::string name) { profile_name_ = std::move(name); }
   void SetTitle(const std::u16string& title);
+  bool UpdateWorkspaceTitle(BrowserWindowInterface* source);
   void SetPageFullscreen(bool fullscreen);
   void SetWindowFullscreen(bool fullscreen);
   bool IsFullscreen() const;

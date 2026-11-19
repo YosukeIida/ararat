@@ -127,6 +127,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
     public private(set) var crashedItems: Set<String> = []
     public var onSnapshot: (@MainActor (WorkspaceSnapshot) -> Void)?
+    public var onWindowTitle: ((String?) -> String?)?
     public var onTransaction: (@MainActor (LiveTransaction, Bool) -> Void)?
     public var canPublishSnapshot: (@MainActor () -> Bool)?
     public var onSnapshotTrace: (@MainActor (String) -> Void)?
@@ -983,6 +984,10 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
+    public func windowHost(_ host: any ARWindowHostAPI, windowTitleForPresentedPage pageTitle: String?) -> String? {
+        onWindowTitle?(pageTitle)
+    }
+
     public func checkPermissionDim(_ identifier: String) -> Bool { permissionDim.isVisible(identifier) }
 
     public func windowHost(_ host: any ARWindowHostAPI, permissionDim identifier: String,

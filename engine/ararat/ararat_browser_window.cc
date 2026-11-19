@@ -347,6 +347,7 @@ void AraratBrowserWindow::UpdateTitleBar() {
     host_->SetTitle(contents ? contents->GetTitle() : std::u16string());
     return;
   }
+  if (host_->UpdateWorkspaceTitle(browser_)) return;
   host_->SetTitle(
       WindowMetadataController::From(browser_)->GetWindowTitleForCurrentTab(
           true));

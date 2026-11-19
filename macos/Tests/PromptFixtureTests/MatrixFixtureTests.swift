@@ -72,6 +72,7 @@ private final class MatrixFakeHost: NSObject {
     @objc func activeItemId() -> String? { active }
     @objc func tabs() -> [Any] { entries }
     @objc func setWorkspacePageHidden(_ value: Bool) { hidden = value }
+    @objc func refreshWorkspaceWindowTitle() {}
     @objc(setWorkspaceRemote:) func setWorkspaceRemote(_ value: Bool) { remotePlaceholder = value }
     @objc func hasActiveTab() -> Bool { !hidden && active != nil }
     @objc func navigationTarget() -> [String: Any]? { hasActiveTab() ? ["item": active!] : nil }
