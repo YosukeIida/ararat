@@ -87,6 +87,27 @@ enum DownloadRowMetrics {
     static let textLeading: CGFloat = inset + iconSize + gap
 }
 
+/// The popover opens on this view, not on a control: Arc shows no focus ring when the popover
+/// appears. Being first responder, Tab still walks into the header's buttons.
+@MainActor
+final class DownloadsPopoverContentView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        window.initialFirstResponder = self
+        window.makeFirstResponder(self)
+    }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48 {
+            if event.modifierFlags.contains(.shift) { window?.selectPreviousKeyView(self) }
+            else { window?.selectNextKeyView(self) }
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
 @MainActor
 final class DownloadsPopover: NSObject, NSPopoverDelegate {
     static let rowHeight: CGFloat = 48
@@ -134,7 +155,7 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
         stack.addArrangedSubview(header)
         header.heightAnchor.constraint(equalToConstant: Self.headerHeight).isActive = true
         let controller = NSViewController()
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
+        let content = DownloadsPopoverContentView(frame: NSRect(x: 0, y: 0, width: SidebarMetrics.defaultWidth, height: Self.headerHeight))
         content.addSubview(stack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: content.leadingAnchor), stack.trailingAnchor.constraint(equalTo: content.trailingAnchor), stack.topAnchor.constraint(equalTo: content.topAnchor), stack.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
@@ -143,6 +164,7 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     }
     var isShown: Bool { popover.isShown }
     var checkWindow: NSWindow? { popover.contentViewController?.view.window }
+    var checkContentView: NSView? { popover.contentViewController?.view }
     var checkMetrics: [String: Any] {
         let content = popover.contentViewController?.view
         content?.layoutSubtreeIfNeeded()
@@ -168,6 +190,12 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     func popoverDidShow(_ notification: Notification) {
         guard !isOpen else { return }
         isOpen = true
+        // The popover reuses its window across showings, so reset the first responder here too:
+        // no control is focused when it opens.
+        if let content = popover.contentViewController?.view, let window = content.window {
+            window.initialFirstResponder = content
+            if window.firstResponder !== content { window.makeFirstResponder(content) }
+        }
         onShow?()
     }
     /// Every close path lands here, a transient dismissal included.
@@ -176,7 +204,7 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
     }
     func close() { popover.performClose(nil) }
     static func edge(flipped: Bool) -> NSRectEdge { flipped ? .minY : .maxY }
-    func show(focus: Bool = false, present: Bool = true) {
+    func show(present: Bool = true) {
         guard model.hasSessionDownloads, let window = anchor.window else { return }
         let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let available = max(0, window.frame.maxY - anchorRect.maxY - 16)
@@ -191,7 +219,6 @@ final class DownloadsPopover: NSObject, NSPopoverDelegate {
             let frame = panel.frame
             panel.setFrameOrigin(NSPoint(x: min(max(frame.minX, window.frame.minX), window.frame.maxX - frame.width), y: frame.minY))
         }
-        if focus { popover.contentViewController?.view.window?.makeFirstResponder(showsLibrary ? library : clear) }
     }
     func refresh(limit: Int) {
         clear.isEnabled = !model.clearableItems.isEmpty
