@@ -390,6 +390,28 @@ enum SettingsColor {
     static let foreground = grey(35, 235)
     /// The hairline between a grouped card's rows (`--sep` on the boards).
     static let separator = grey(235, 57)
+    /// The keycap and space-icon-tile grey (`--kc` on the boards).
+    static let keycap = grey(231, 68)
+    /// The boards' destructive red, `--red`: #B3261E on a light background and #FF8A80 on a dark
+    /// one (E-SpacePage, E-Websites), not `systemRed`, which is about 3.5:1 on white.
+    static let destructiveColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0xFF / 255, green: 0x8A / 255, blue: 0x80 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
+    }
+    static let destructive = Color(nsColor: destructiveColor)
+}
+
+/// The Spaces list's icon letter on the board's 24 pt tile (`.gl`): the keycap grey in a rounded
+/// square, the letter 13 pt semibold, so short and long names keep one column.
+struct SettingsSpaceIconTile: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .frame(width: 24, height: 24)
+            .background(RoundedRectangle(cornerRadius: 7).fill(SettingsColor.keycap))
+    }
 }
 
 private struct SettingsRail: View {
@@ -479,7 +501,8 @@ private struct SettingsDetail: View {
                                 Text("24 hours").tag(ArchiveAfter.hours24)
                                 Text("7 days").tag(ArchiveAfter.days7)
                                 Text("30 days").tag(ArchiveAfter.days30)
-                            }.labelsHidden()
+                            }.labelsHidden().fixedSize()
+                                .background(SettingsMarker(id: SettingsModel.archiveMenuMarker))
                         }
                     case .shortcuts:
                         SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
@@ -504,13 +527,19 @@ private struct SettingsDetail: View {
                                     Button { model.navigate(.space(space.id)) } label: {
                                         HStack {
                                             Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                                            Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
-                                            Text(space.title)
-                                            Spacer()
+                                            SettingsSpaceIconTile(text: space.icon ?? String(space.title.prefix(1)))
+                                                .background(SettingsMarker(id: SettingsModel.spaceIconMarker(space.id)))
+                                            Text(space.title).lineLimit(1)
+                                            Spacer(minLength: 12)
                                             Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
-                                            if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
+                                                .frame(width: SettingsMetrics.spaceCountColumn, alignment: .trailing)
+                                                .background(SettingsMarker(id: SettingsModel.spaceCountMarker(space.id)))
+                                            SettingsKeycaps(keys: model.spaceKeys[index] ?? [], id: SettingsModel.spaceKeysMarker(space.id))
+                                                .frame(minWidth: SettingsMetrics.spaceKeysColumn, alignment: .trailing)
+                                                .fixedSize(horizontal: true, vertical: false)
                                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                        }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
+                                        }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                            .contentShape(Rectangle())
                                     }.buttonStyle(.plain)
                                         .background { if model.highlighted == space.id { SettingsHitFill() } }
                                         .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
@@ -624,7 +653,10 @@ private struct SettingsDetail: View {
             }
             card("profile", title: "Profile", subtitle: "Read-only · This space") { Text(space.profileName).foregroundStyle(.secondary) }
             card("delete", title: "Delete Space", subtitle: model.snapshot.spaces.count == 1 ? "The last space cannot be deleted." : "Move pinned and Today tabs to the Archive.") {
-                Button("Delete Space", role: .destructive) { model.requestDelete(space.id) }.disabled(model.snapshot.spaces.count == 1)
+                Button("Delete Space", role: .destructive) { model.requestDelete(space.id) }
+                    .foregroundStyle(SettingsColor.destructive)
+                    .background(SettingsMarker(id: SettingsModel.spaceDeleteButtonMarker))
+                    .disabled(model.snapshot.spaces.count == 1)
             }
         }
     }
@@ -1255,7 +1287,9 @@ private struct SettingsKeycaps: NSViewRepresentable {
         return stack
     }
     func updateNSView(_ stack: NSStackView, context: Context) {
-        stack.setAccessibilityLabel("Shortcut " + keys.joined())
+        // An empty column (a space with no ⌃N) has nothing to read, so it is not an element.
+        stack.setAccessibilityElement(!keys.isEmpty)
+        stack.setAccessibilityLabel(keys.isEmpty ? "" : "Shortcut " + keys.joined())
         stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
         stack.orientation = caption == nil ? .horizontal : .vertical
         stack.alignment = caption == nil ? .centerY : .trailing

@@ -147,6 +147,73 @@ func theImportWritesTheStoreAtTheGivenPath() throws {
     #expect(snapshot.spaces.map(\.profileName) == ["University", "Default", "Default"])
 }
 
+/// The done screen's report lines stay inside the card and each row is the height its text needs:
+/// 31 pt for one line and 48 for two, as F-Import's "Imported differently" card draws them.
+@Test @MainActor
+func theCompletionReportRowsWrapInsideTheCardAndSizeToTheirText() throws {
+    let (model, directory) = try onboardingTestModel()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    runImport(model)
+    let controller = OnboardingWindowController(model: model)
+    controller.checkRender()
+    let probe = try #require(controller.checkProbe())
+    probe.render()
+    probe.layout()
+    #expect(!model.lines.isEmpty)
+    var frames: [(row: NSRect, title: NSRect)] = []
+    for line in model.lines {
+        let rowID = "onboarding-line-\(line.id)"
+        let row = try #require(probe.frame(rowID))
+        let title = try #require(probe.titleFrame(of: rowID))
+        // The drawn label, not a string measurement, says how many lines it took.
+        let wraps = title.height > 17
+        #expect(abs(title.width - (row.width - 32)) <= 1)
+        #expect(title.maxX <= row.maxX - 15, "the line stops inside the card: \(title) in \(row)")
+        #expect(abs(title.minX - (row.minX + 16)) <= 1)
+        #expect(abs(title.minY - (row.minY + 7)) <= 1, "the text starts at the board's 7 pt padding")
+        // The row and the label are the board's heights for the line count the text needs.
+        #expect(abs(row.height - (wraps ? OnboardingRowView.twoLineHeight : OnboardingRowView.oneLineHeight)) <= 1,
+                "\(line.id): \(row.height) for \(wraps ? 2 : 1) line(s)")
+        #expect(abs(title.height - (wraps ? 34 : 17)) <= 1)
+        frames.append((row, title))
+    }
+    // The rows share edges inside the card, so no gap and no overlap is left between them.
+    #expect(zip(frames, frames.dropFirst()).allSatisfy { abs($0.row.maxY - $1.row.minY) <= 1 })
+    let longest = try #require(model.lines.max { $0.text.count < $1.text.count })
+    let longestIndex = try #require(model.lines.firstIndex { $0.id == longest.id })
+    #expect(frames[longestIndex].row.height == OnboardingRowView.twoLineHeight, "the longest line wraps onto a second line")
+    #expect(frames.contains { $0.row.height == OnboardingRowView.oneLineHeight }, "a short line keeps the one-line row")
+}
+
+/// A row whose string just fits its label still wraps, because the cell breaks earlier than the
+/// string's own width: the row height has to come from the cell, or the second line is clipped.
+@Test @MainActor
+func aReportRowAtTheCellsWrapPointTakesTheTwoLineHeight() throws {
+    _ = NSApplication.shared
+    let text = "2 folders were open in one Arc window and closed in another. Here they follow the first window."
+    let stringWidth = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width
+    var wrapped = 0
+    for extra in stride(from: CGFloat(0), through: 4, by: 0.5) {
+        let fieldWidth = stringWidth + extra
+        let row = OnboardingRowView(id: "band", title: text, subtitle: "", dimmed: false, wraps: true)
+        let rowWidth = fieldWidth + 32
+        row.frame = NSRect(x: 0, y: 0, width: rowWidth, height: row.height(forWidth: rowWidth))
+        row.layoutSubtreeIfNeeded()
+        let field = try #require(row.subviews.compactMap { $0 as? NSTextField }.first)
+        // The cell's own answer for this width is the independent measure the row must follow.
+        let cellHeight = field.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: fieldWidth,
+                                                               height: .greatestFiniteMagnitude)).height ?? 0
+        let wraps = cellHeight > 17
+        if wraps { wrapped += 1 }
+        #expect(abs(row.bounds.height - (wraps ? OnboardingRowView.twoLineHeight : OnboardingRowView.oneLineHeight)) <= 1,
+                "extra \(extra): row \(row.bounds.height), cell \(cellHeight)")
+        #expect(abs(field.frame.height - (wraps ? 34 : 17)) <= 1, "extra \(extra): field \(field.frame.height)")
+        #expect(field.frame.maxY <= row.bounds.maxY - 7 + 1, "extra \(extra): the field stays inside the row")
+    }
+    // The band exists: inside the first 4 pt past the string's width the cell already wraps.
+    #expect(wrapped > 0)
+}
+
 /// The done screen's rows each have a producer: the showcase fixture produces exactly four, the
 /// sign-in line (O5) and the unread-look line (no unknown look here) are dropped.
 @Test @MainActor

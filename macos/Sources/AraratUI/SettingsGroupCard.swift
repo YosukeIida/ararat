@@ -13,6 +13,10 @@ public enum SettingsMetrics {
     public static let hitRowHeight: CGFloat = 48
     public static let groupHeadingInset: CGFloat = 12
     public static let separatorInset: CGFloat = 10
+    /// The Spaces list's two trailing columns (E-Spaces): the tab count and the ⌃N keycaps line up
+    /// down the list instead of following each name.
+    public static let spaceCountColumn: CGFloat = 56
+    public static let spaceKeysColumn: CGFloat = 44
 }
 
 /// The hit's fill. A view of its own so tests can render it alone and read where the grey

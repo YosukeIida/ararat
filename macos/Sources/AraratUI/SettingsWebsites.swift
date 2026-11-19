@@ -166,6 +166,7 @@ struct SettingsSitePage: View {
                         Text("Signs you out of \(SiteOrigin.display(origin))").font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Button("Clear…", role: .destructive) { model.clearSiteData(origin: origin, profile: profile) }
+                        .foregroundStyle(SettingsColor.destructive)
                         .background(SettingsMarker(id: SettingsModel.siteClearButtonMarker))
                 }.id(SettingsModel.siteClearRowID)
             }

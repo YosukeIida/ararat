@@ -370,6 +370,14 @@ public final class SettingsModel: ObservableObject {
     public static let noResultsMarker = "no-results"
     /// The Spaces pane's segmented control, found by the screen check through its marker.
     public static let spaceScrollControlMarker = "space-scroll-control"
+    /// The Spaces list's icon tile, tab count and ⌃N keycaps, and the space page's Delete Space
+    /// button: each row has its own icon, count and keycaps, so those markers carry the space id.
+    public static func spaceIconMarker(_ spaceID: String) -> String { "space-icon-\(spaceID)" }
+    public static func spaceCountMarker(_ spaceID: String) -> String { "space-count-\(spaceID)" }
+    public static func spaceKeysMarker(_ spaceID: String) -> String { "space-keys-\(spaceID)" }
+    public static let spaceDeleteButtonMarker = "space-delete-button"
+    /// The Tabs pane's auto-archive pop-up.
+    public static let archiveMenuMarker = "archive-after-menu"
     public static let headerIconMarker = "header-icon"
     public static let headerTitleMarker = "header-title"
     public static let headerSubtitleMarker = "header-subtitle"

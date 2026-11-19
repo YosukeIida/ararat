@@ -146,6 +146,9 @@ public final class OnboardingCheckProbe {
     public var buttons: [String] { content.markers(prefix: "onboarding-").filter { content.button($0.id) != nil }.map(\.id) }
 
     public func frame(_ id: String) -> NSRect? { content.markerFrame(id) }
+    /// The title field inside a row marker, in the content's coordinates: the completion report's
+    /// check reads it to see the wrapped line stay inside the card.
+    public func titleFrame(of rowID: String) -> NSRect? { content.titleFrame(rowID: rowID) }
     public func layout() { content.layoutSubtreeIfNeeded() }
     public func render() { controller.checkRender() }
 
@@ -259,7 +262,7 @@ final class OnboardingContentView: NSView {
                 heading.frame = NSRect(x: OnboardingMetrics.margin + 12, y: y, width: contentWidth - 12, height: 16)
                 addSubview(heading)
                 y += 20
-                addSubview(card(rows: model.lines.map { lineRow($0) }, x: OnboardingMetrics.margin, y: y, width: contentWidth, rowHeight: 28))
+                addSubview(card(rows: model.lines.map { lineRow($0) }, x: OnboardingMetrics.margin, y: y, width: contentWidth))
             }
         case .siblingFile(let message):
             title("One file could not be read", width: width, y: &y)
@@ -415,22 +418,28 @@ final class OnboardingContentView: NSView {
         return row
     }
 
-    private func card(rows: [NSView], x: CGFloat, y: CGFloat, width: CGFloat, rowHeight: CGFloat = OnboardingMetrics.rowHeight) -> NSView {
-        let height = CGFloat(rows.count) * rowHeight + 2
+    /// The card stacks its rows at the height each one asks for: a report line is 31 pt for one
+    /// line and 48 pt for two, as F-Import's "Imported differently" card draws them, and the fixed
+    /// rows keep the board's 40 pt.
+    private func card(rows: [NSView], x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        let heights = rows.map { ($0 as? OnboardingRowView)?.height(forWidth: width) ?? OnboardingMetrics.rowHeight }
+        let height = heights.reduce(0, +) + 2
         let card = OnboardingFlippedView(frame: NSRect(x: x, y: y, width: width, height: height))
         card.wantsLayer = true
         card.layer?.backgroundColor = OnboardingColor.card.cgColor
         card.layer?.cornerRadius = OnboardingMetrics.cardRadius
         card.layer?.masksToBounds = true
+        var top: CGFloat = 1
         for (index, row) in rows.enumerated() {
-            row.frame = NSRect(x: 0, y: 1 + CGFloat(index) * rowHeight, width: width, height: rowHeight)
+            row.frame = NSRect(x: 0, y: top, width: width, height: heights[index])
             card.addSubview(row)
             if index > 0 {
-                let hairline = NSView(frame: NSRect(x: 12, y: 1 + CGFloat(index) * rowHeight, width: width - 24, height: 1))
+                let hairline = NSView(frame: NSRect(x: 12, y: top, width: width - 24, height: 1))
                 hairline.wantsLayer = true
                 hairline.layer?.backgroundColor = OnboardingColor.hairline.cgColor
                 card.addSubview(hairline)
             }
+            top += heights[index]
         }
         return card
     }
@@ -488,6 +497,12 @@ final class OnboardingContentView: NSView {
         return view.convert(view.bounds, to: self)
     }
 
+    func titleFrame(rowID: String) -> NSRect? {
+        guard let row = descendants(of: self).first(where: { $0.identifier?.rawValue == rowID }),
+              let field = row.subviews.compactMap({ $0 as? NSTextField }).first else { return nil }
+        return field.convert(field.bounds, to: self)
+    }
+
     func dotIsFilled(_ id: String) -> Bool { dotFilled.contains(id) }
 
     private func descendants(of view: NSView) -> [NSView] {
@@ -496,36 +511,75 @@ final class OnboardingContentView: NSView {
 }
 
 /// A 40 pt list row: title, optional 11 pt subtitle, the board's 16 pt inset. Flipped, so the
-/// title sits above the subtitle and a card's rows run top-down in the order it is given.
+/// title sits above the subtitle and a card's rows run top-down in the order it is given. A row
+/// that wraps (the completion report's lines) takes the row's whole width and the height its text
+/// needs — 31 pt for one line, 48 for two — so a long line breaks inside the card instead of
+/// running past its edge.
 @MainActor
 final class OnboardingRowView: NSView {
     override var isFlipped: Bool { true }
+    private let titleField: NSTextField
+    private let subtitleField: NSTextField?
+    private let wraps: Bool
+    private static let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    /// The card's two heights for a report line, from F-Import's "Imported differently" card
+    /// (padding 7, line height 17).
+    static let oneLineHeight: CGFloat = 31
+    static let twoLineHeight: CGFloat = 48
 
     init(id: String, title: String, subtitle: String, dimmed: Bool, wraps: Bool = false) {
+        self.wraps = wraps
+        titleField = NSTextField(wrappingLabelWithString: title)
+        subtitleField = subtitle.isEmpty ? nil : NSTextField(wrappingLabelWithString: subtitle)
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(id)
         alphaValue = dimmed ? 0.45 : 1
-        let titleField = NSTextField(wrappingLabelWithString: title)
-        titleField.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleField.font = Self.titleFont
         titleField.textColor = OnboardingColor.foreground
         titleField.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
         titleField.maximumNumberOfLines = wraps ? 2 : 1
-        titleField.frame = NSRect(x: 16, y: subtitle.isEmpty ? 12 : 4, width: 232, height: 17)
-        titleField.autoresizingMask = [.width]
         addSubview(titleField)
-        if !subtitle.isEmpty {
-            let subtitleField = NSTextField(wrappingLabelWithString: subtitle)
+        if let subtitleField {
             subtitleField.font = .systemFont(ofSize: 11)
             subtitleField.textColor = OnboardingColor.secondary
             subtitleField.maximumNumberOfLines = 1
-            subtitleField.frame = NSRect(x: 16, y: 21, width: 232, height: 14)
-            subtitleField.autoresizingMask = [.width]
             addSubview(subtitleField)
         }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// The row's height in a card of this width: a wrapping row is one line tall until its text
+    /// needs a second line, then two.
+    func height(forWidth width: CGFloat) -> CGFloat {
+        guard wraps else { return OnboardingMetrics.rowHeight }
+        return wrapsToTwoLines(in: width) ? Self.twoLineHeight : Self.oneLineHeight
+    }
+
+    /// Whether the label's own cell lays the text out on more than one line at this row width.
+    /// The cell wraps a few points before the string's own width because of its inset, so the
+    /// height must come from the cell rather than from a string measurement.
+    private func wrapsToTwoLines(in width: CGFloat) -> Bool {
+        let bounds = NSRect(x: 0, y: 0, width: max(0, width - 32), height: .greatestFiniteMagnitude)
+        return (titleField.cell?.cellSize(forBounds: bounds).height ?? 0) > 17
+    }
+
+    override func layout() {
+        super.layout()
+        // The fields take the row's width less the board's 16 pt inset, so their frames never
+        // depend on the order the card sets the row's frame in.
+        let width = max(0, bounds.width - 32)
+        if wraps {
+            let twoLines = wrapsToTwoLines(in: bounds.width)
+            titleField.frame = NSRect(x: 16, y: 7, width: width, height: twoLines ? 34 : 17)
+        } else if subtitleField == nil {
+            titleField.frame = NSRect(x: 16, y: 12, width: width, height: 17)
+        } else {
+            titleField.frame = NSRect(x: 16, y: 4, width: width, height: 17)
+            subtitleField?.frame = NSRect(x: 16, y: 21, width: width, height: 14)
+        }
+    }
 }
 
 /// A top-down container for the cards and the error/warning box.
