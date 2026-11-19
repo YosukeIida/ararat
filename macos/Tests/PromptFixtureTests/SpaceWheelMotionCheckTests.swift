@@ -104,6 +104,29 @@ func wheelMotionCheckContinuesAfterDrawnFailuresAndGatesOnlyPresentationAndRepla
     #expect(!check.result(presentation: [:], drawnReport: [:]).ok)
 }
 
+@Test(arguments: [true, false])
+@MainActor
+func wheelMotionCheckFinishesPromptlyWhenCaptureResponds(landed: Bool) async {
+    let check = SpaceWheelMotionCheck()
+    check.sent = 1
+    check.expected = 1
+    check.switches = [.init(time: 1, source: 4, target: 3, pitch: 260)]
+    let presentation = ["first_frame_full_offset": true, "monotone_approach": true, "no_late_jump": true, "landed": landed]
+    let drawnReport = ["frames": 12]
+
+    let started = ContinuousClock.now
+    await check.prepareCapture(timeout: .seconds(10)) {}
+    let result = await check.finish(presentation: presentation, timeout: .seconds(10), stopCapture: {},
+                                    drawnReport: { drawnReport })
+    let elapsed = ContinuousClock.now - started
+
+    #expect(elapsed < .seconds(1))
+    #expect(result.values["capture_timeout"] as? Bool == false)
+    #expect(result.values["capture_stage"] as? String == "stop")
+    #expect(result.values["drawn_report_only"] as? [String: Int] == drawnReport)
+    #expect(result.ok == landed)
+}
+
 @Test(arguments: ["start", "stop"], [true, false])
 @MainActor
 func wheelMotionCheckFinishesOnPresentationWhileCaptureIsSuspended(stage: String, landed: Bool) async throws {
