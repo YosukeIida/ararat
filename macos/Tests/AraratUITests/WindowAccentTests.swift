@@ -231,6 +231,97 @@ func sidebarAccentPartsHaveThreeToOneContrastOnTheLook() throws {
 }
 
 @Test @MainActor
+func unselectedSidebarRowsKeepReadableForegrounds() throws {
+    _ = NSApplication.shared
+    func row(_ title: String, parent: String, kind: RowKind = .tab, depth: UInt32 = 0, unloaded: Bool = false) -> Row {
+        Row(folderHasTabs: title != "Empty Folder", parentId: parent, siblingIndex: 0, collapsed: false,
+            id: title, title: title, url: nil, depth: depth,
+            kind: kind, unloaded: unloaded, lastSelectedAt: nil)
+    }
+    var first = space("rowcontrast", look: nil)
+    first.today = [row("Today", parent: "today"), row("Dimmed", parent: "today", unloaded: true),
+                   row("Split", parent: "today", kind: .split), row("Pane", parent: "Split", depth: 1, unloaded: true)]
+    first.pinned = [row("Pinned", parent: "pinned"), row("Folder", parent: "pinned", kind: .folder),
+                    row("Nested", parent: "Folder", depth: 1), row("Empty Folder", parent: "pinned", kind: .folder),
+                    row("No tabs", parent: "Empty Folder", kind: .noTabs, depth: 1)]
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: first.id, selectedId: nil, spaces: [first]))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    container.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    let panel = try #require(sidebar.superview as? SidebarPanelView)
+    let views = descendants(sidebar)
+    let rows = views.compactMap { $0 as? SidebarRowView }.filter { $0.row.kind != .split }
+    #expect(Set(rows.map(\.row.id)) == ["Today", "Dimmed", "Pinned", "Folder", "Nested", "Empty Folder"])
+    let segment = try #require(views.compactMap { $0 as? SplitSegmentButton }.first)
+    let empty = try #require(views.compactMap { $0 as? SidebarNoTabsRow }.first)
+    let emptyLabel = try #require(empty.subviews.first as? NSTextField)
+
+    let editorColor = LookEditorModel.defaultLook.colors[0]
+    let brightest = LookEditorModel.fieldColor(x: 1.0 / 6, y: 0)
+    for (name, mode, color, opacity) in [
+        ("brightest-dark", Appearance.dark, brightest, 1.0),
+        ("editor-default-light", .light, editorColor, 0.45),
+        ("editor-default-dark", .dark, editorColor, 0.45),
+    ] {
+        let appearance = try #require(NSAppearance(named: mode == .dark ? .darkAqua : .aqua))
+        container.appearance = appearance
+        panel.systemAppearance = { appearance }
+        sidebar.previewLook(spaceID: first.id, look: Look(colors: [color], opacity: opacity, grain: 0, glass: false, appearance: mode))
+        container.layoutSubtreeIfNeeded()
+        let segmentFill = try #require(segment.fill.fillColor.flatMap(NSColor.init(cgColor:)))
+        let effectiveFill = segmentFill.withAlphaComponent(segmentFill.alphaComponent * CGFloat(segment.fill.opacity))
+        let segmentBackdrop = try #require(SidebarPanelView.backdrop(behind: segment, overlaidBy: effectiveFill.cgColor))
+        let emptyBackdrop = try #require(SidebarPanelView.backdrop(behind: empty))
+        appearance.performAsCurrentDrawingAppearance {
+            let paneTitle = segment.titleField.textColor!.usingColorSpace(.sRGB)!
+            let paneIcon = segment.iconView.contentTintColor!.usingColorSpace(.sRGB)!
+            let emptyTitle = emptyLabel.textColor!.usingColorSpace(.sRGB)!
+            #expect(contrast(paneTitle.withAlphaComponent(paneTitle.alphaComponent * segment.titleField.alphaValue), over: segmentBackdrop, quantized: true) >= 4.5)
+            #expect(contrast(paneIcon.withAlphaComponent(paneIcon.alphaComponent * segment.iconView.alphaValue), over: segmentBackdrop, quantized: true) >= 4.5)
+            #expect(contrast(emptyTitle.withAlphaComponent(emptyTitle.alphaComponent * emptyLabel.alphaValue), over: emptyBackdrop, quantized: true) >= 4.5)
+        }
+        for row in rows {
+            let title = try #require(row.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == row.row.title })
+            let icon = try #require(row.subviews.compactMap { $0 as? NSImageView }.first)
+            if row.row.kind == .tab {
+                row.status = EngineAdapter.RowState(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false)
+            }
+            let audio = row.subviews.compactMap { $0 as? NSButton }.first { !$0.isHidden && $0.accessibilityLabel() == "Mute Tab" }
+            if row.row.kind == .tab { #expect(audio != nil) }
+            for hovered in [false, true] {
+                row.pointerLocation = { hovered ? row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil) : nil }
+                row.refreshHover()
+                #expect(row.hovered == hovered)
+                let backdrop = try #require(SidebarPanelView.backdrop(behind: row, overlaidBy: row.subviews.first?.layer?.backgroundColor))
+                let baseOpacity = row.row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+                if row.row.unloaded { #expect(title.alphaValue < 1) }
+                let state = hovered ? "hovered" : "plain"
+                appearance.performAsCurrentDrawingAppearance {
+                    @MainActor func check(_ part: String, _ color: NSColor, _ opacity: CGFloat, preferred: NSColor, preferredOpacity: CGFloat) {
+                        let resolved = color.usingColorSpace(.sRGB)!
+                        let baseline = preferred.usingColorSpace(.sRGB)!
+                        let ratio = contrast(resolved.withAlphaComponent(resolved.alphaComponent * opacity), over: backdrop, quantized: true)
+                        let original = contrast(baseline.withAlphaComponent(baseline.alphaComponent * preferredOpacity), over: backdrop, quantized: true)
+                        print("rowcontrast \(name) \(row.row.id) \(state) \(part): \(String(format: "%.3f -> %.3f", original, ratio))")
+                        #expect(ratio >= 4.5, "\(name) \(row.row.id) \(state) \(part)")
+                        if original >= 4.5 {
+                            #expect(resolved == baseline)
+                            #expect(opacity == preferredOpacity)
+                        }
+                    }
+                    check("title", title.textColor!, title.alphaValue, preferred: .labelColor, preferredOpacity: baseOpacity)
+                    check("icon", icon.contentTintColor!, icon.alphaValue, preferred: .secondaryLabelColor, preferredOpacity: baseOpacity)
+                    if let audio {
+                        check("audio", audio.contentTintColor ?? .labelColor, 1, preferred: .labelColor, preferredOpacity: 1)
+                    }
+                }
+            }
+            row.pointerLocation = nil
+            row.refreshHover()
+        }
+    }
+}
+
+@Test @MainActor
 func sidebarAccentOnlyUsesOpaqueFallbackWhenItsAlphaCannotReachThreeToOne() {
     let base = NSColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
     #expect(SpaceAccent.visible(SpaceAccent.teal, on: .white) == SpaceAccent.teal)

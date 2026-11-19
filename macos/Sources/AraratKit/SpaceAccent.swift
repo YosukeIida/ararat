@@ -50,9 +50,38 @@ public enum SpaceAccent {
         return color(towardTarget: upper)
     }
 
-    private static func luminance(_ rgb: NSColor) -> CGFloat {
+    public static func readableForeground(_ preferred: NSColor, opacity: CGFloat, on backdrop: NSColor) -> (color: NSColor, opacity: CGFloat) {
+        let base = backdrop.usingColorSpace(.sRGB)!
+        let original = preferred.usingColorSpace(.sRGB)!
+        let background = luminance(base, quantized: true)
+        let originalAlpha = original.alphaComponent * opacity
+
+        func passes(_ color: NSColor, alpha: CGFloat) -> Bool {
+            let blended = NSColor(srgbRed: color.redComponent * alpha + base.redComponent * (1 - alpha),
+                                  green: color.greenComponent * alpha + base.greenComponent * (1 - alpha),
+                                  blue: color.blueComponent * alpha + base.blueComponent * (1 - alpha), alpha: 1)
+            let foreground = luminance(blended, quantized: true)
+            return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05) >= 4.5
+        }
+
+        if passes(original, alpha: originalAlpha) { return (preferred, opacity) }
+        let fallback: NSColor = background > 0.179 ? .black : .white
+        let target = fallback.usingColorSpace(.sRGB)!
+        if passes(target, alpha: originalAlpha) { return (fallback, originalAlpha) }
+        var lower = originalAlpha
+        var upper: CGFloat = 1
+        for _ in 0..<12 {
+            let middle = (lower + upper) / 2
+            if passes(target, alpha: middle) { upper = middle }
+            else { lower = middle }
+        }
+        return (fallback, upper)
+    }
+
+    private static func luminance(_ rgb: NSColor, quantized: Bool = false) -> CGFloat {
         func linear(_ channel: CGFloat) -> CGFloat {
-            channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+            let value = quantized ? (channel * 255).rounded() / 255 : channel
+            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
         }
         return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
     }

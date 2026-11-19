@@ -108,10 +108,11 @@ public final class SidebarView: NSView {
     private(set) var spaceAccent = SpaceAccent.teal
     func refreshRowColors() {
         for row in rowViews.values {
-            row.refreshSelectedForeground()
+            row.refreshForeground()
             row.refreshUnreadAccent()
         }
-        dragCopyView?.refreshSelectedForeground()
+        for row in noTabsRows.values { row.refreshForeground() }
+        dragCopyView?.refreshForeground()
         for preview in scrollPreviews { preview.refreshRowColors() }
     }
 
@@ -2672,7 +2673,7 @@ extension SidebarView {
         frame.origin.x += position.x - state.origin.x
         frame.origin.y += position.y - state.origin.y
         dragCopyView?.frame = nativeDragRect(frame)
-        dragCopyView?.refreshSelectedForeground()
+        dragCopyView?.refreshForeground()
         resolveDrag()
     }
 

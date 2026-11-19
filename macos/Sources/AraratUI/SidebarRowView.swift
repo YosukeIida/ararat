@@ -82,13 +82,15 @@ final class SplitSegmentButton: NSButton {
     let fillShadow = SelectedRowShadow(name: "split-segment-shadow")
     let iconView = NSImageView()
     let titleField = NSTextField(labelWithString: "")
+    let preferredOpacity: CGFloat
     private(set) var active: Bool
 
     var paneTitle: String { titleField.stringValue }
 
-    init(pane: Row, title: String, index: Int, count: Int, active: Bool) {
+    init(pane: Row, title: String, index: Int, count: Int, active: Bool, crashed: Bool) {
         self.pane = pane
         self.active = active
+        preferredOpacity = pane.unloaded || crashed ? SidebarMetrics.unloadedOpacity : 1
         let outer = SidebarMetrics.cornerRadius
         let inner = SidebarMetrics.splitSegmentRadius
         let radii: (leading: CGFloat, trailing: CGFloat) = count <= 1 ? (outer, outer)
@@ -102,6 +104,7 @@ final class SplitSegmentButton: NSButton {
         // own title stays empty and draws nothing.
         self.title = ""
         isBordered = false
+        alphaValue = preferredOpacity
         wantsLayer = true
         fill.name = "split-segment-fill"
         layer?.insertSublayer(fillShadow.layer, at: 0)
@@ -156,10 +159,24 @@ final class SplitSegmentButton: NSButton {
         applyShadow()
     }
 
-    func applySelectedForeground(_ color: NSColor) {
-        guard active else { return }
-        titleField.textColor = color
-        iconView.contentTintColor = color
+    func refreshForeground() {
+        if active {
+            let backdrop = SidebarPanelView.backdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
+            let selectedFill = SidebarMetrics.rowSelectedFill(for: effectiveAppearance)
+            let composite = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: backdrop)
+            let color = SpaceAccent.foreground(on: composite)
+            titleField.textColor = color
+            iconView.contentTintColor = color
+        } else if let rowFill = fill.fillColor.flatMap(NSColor.init(cgColor:)),
+                  let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: rowFill.withAlphaComponent(rowFill.alphaComponent * preferredOpacity).cgColor) {
+            // Keep the hover fill dimmed when a title needs more opacity.
+            alphaValue = 1
+            fill.opacity = Float(preferredOpacity)
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                (titleField.textColor, titleField.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: preferredOpacity, on: backdrop)
+                (iconView.contentTintColor, iconView.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: preferredOpacity, on: backdrop)
+            }
+        }
     }
 
     // The shadow follows the segment's rounded path, on a layer behind the fill.
@@ -229,7 +246,6 @@ final class SidebarRowView: NSView {
     var audioLabel: String? { audioButton.isHidden ? nil : audioButton.accessibilityLabel() }
     func pressAudioForCheck() { audioButton.performClick(nil) }
     let closeButton = NSButton()
-    // A dying renderer (R5) draws a warning glyph at 45 %, like an unloaded row.
     var crashed = false { didSet { updateStatus() } }
     // The unread dot (R7) is app state from the live strip, never stored in the row.
     var unread = false { didSet { updateStatus() } }
@@ -428,14 +444,14 @@ final class SidebarRowView: NSView {
         fill.isHidden = drawing
         for (index, member) in members.enumerated() {
             let name = Self.paneName(member)
-            let button = SplitSegmentButton(pane: member, title: name, index: index, count: members.count, active: member.id == active)
+            let paneCrashed = crashed.contains(member.id)
+            let button = SplitSegmentButton(pane: member, title: name, index: index, count: members.count,
+                                            active: member.id == active, crashed: paneCrashed)
             button.rowView = self
             button.tag = index
             button.target = self
             button.action = #selector(segmentClicked(_:))
-            let paneCrashed = crashed.contains(member.id)
             button.iconView.image = Self.tabIcon(crashed: paneCrashed)
-            button.alphaValue = member.unloaded || paneCrashed ? SidebarMetrics.unloadedOpacity : 1
             button.setAccessibilityLabel("Pane \(index + 1) of \(members.count): \(name)")
             segments.addArrangedSubview(button)
         }
@@ -460,8 +476,6 @@ final class SidebarRowView: NSView {
         action(segmentRows[sender.tag])
     }
 
-    // R5: crashed and unloaded rows draw at 45 %; R7: the dot marks a title change the window
-    // has not shown. Both are view state, so the core's row never carries them.
     private func updateStatus() {
         let loading = status?.loading == true && row.kind == .tab && !crashed
         // A split's segments carry its panes' glyphs, so the row keeps its own one hidden.
@@ -473,9 +487,6 @@ final class SidebarRowView: NSView {
         audioButton.image = NSImage(systemSymbolName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
         audioButton.setAccessibilityLabel(muted ? "Unmute Tab" : "Mute Tab")
         audioButton.toolTip = muted ? "Unmute Tab" : "Mute Tab"
-        let opacity = crashed || row.unloaded ? SidebarMetrics.unloadedOpacity : 1
-        title.alphaValue = opacity
-        icon.alphaValue = opacity
         if row.kind == .folder {
             icon.image = Self.folderSymbol(collapsed: row.collapsed)
         } else if crashed {
@@ -487,6 +498,7 @@ final class SidebarRowView: NSView {
         let states = [crashed ? "Crashed" : nil, row.unloaded ? "Unloaded" : nil, unread ? "Unread" : nil, loading ? "Loading" : nil, !audioButton.isHidden && muted ? "Muted" : nil, !audioButton.isHidden && status?.audible == true && !muted ? "Playing audio" : nil].compactMap { $0 }
         setAccessibilityValue(states.isEmpty ? nil : states.joined(separator: ", "))
         updateCloseButton()
+        refreshForeground()
         unreadDot.isHidden = !unread || !closeButton.isHidden
     }
 
@@ -661,7 +673,7 @@ final class SidebarRowView: NSView {
 
     override func layout() {
         super.layout()
-        refreshSelectedForeground()
+        refreshForeground()
         refreshUnreadAccent()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
         // The fill's shadow follows its rounded fill, not the alpha of its drawing.
@@ -715,11 +727,6 @@ final class SidebarRowView: NSView {
 
     private func updateFill() {
         let drawsSelection = dragSource || dragCopy || selected
-        if !drawsSelection {
-            title.textColor = .labelColor
-            icon.contentTintColor = .secondaryLabelColor
-            audioButton.contentTintColor = nil
-        }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             if drawsSelection {
                 fill.layer?.backgroundColor = SidebarMetrics.rowSelectedFill(for: effectiveAppearance).cgColor
@@ -737,7 +744,7 @@ final class SidebarRowView: NSView {
         // The board applies `--selsh` only to the selected fill. A drag copy is built selected.
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
-        refreshSelectedForeground()
+        refreshForeground()
         refreshUnreadAccent()
     }
 
@@ -747,20 +754,34 @@ final class SidebarRowView: NSView {
         unreadDot.layer?.backgroundColor = (backdrop.map { SpaceAccent.visible(accent, on: $0) } ?? accent).cgColor
     }
 
-    func refreshSelectedForeground() {
+    func refreshForeground() {
         let drawsSelection = dragSource || dragCopy || selected
-        guard drawsSelection || !segmentRows.isEmpty else { return }
-        let selectedFill = SidebarMetrics.rowSelectedFill(for: effectiveAppearance)
-        let backdrop = SidebarPanelView.backdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
-        let composite = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: backdrop)
-        let foreground = SpaceAccent.foreground(on: composite)
+        let opacity = crashed || row.unloaded ? SidebarMetrics.unloadedOpacity : 1
+        for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.refreshForeground() }
+        guard !fill.isHidden else { return }
         if drawsSelection {
+            let selectedFill = SidebarMetrics.rowSelectedFill(for: effectiveAppearance)
+            let backdrop = SidebarPanelView.backdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
+            let composite = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: backdrop)
+            let foreground = SpaceAccent.foreground(on: composite)
             title.textColor = foreground
             icon.contentTintColor = foreground
             audioButton.contentTintColor = foreground
-        }
-        for case let segment as SplitSegmentButton in segments.arrangedSubviews {
-            segment.applySelectedForeground(foreground)
+            title.alphaValue = opacity
+            icon.alphaValue = opacity
+        } else if let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: fill.layer?.backgroundColor) {
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                (title.textColor, title.alphaValue) = SpaceAccent.readableForeground(.labelColor, opacity: opacity, on: backdrop)
+                (icon.contentTintColor, icon.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: opacity, on: backdrop)
+                let (audio, _) = SpaceAccent.readableForeground(.labelColor, opacity: 1, on: backdrop)
+                audioButton.contentTintColor = audio == .labelColor ? nil : audio
+            }
+        } else {
+            title.textColor = .labelColor
+            icon.contentTintColor = .secondaryLabelColor
+            audioButton.contentTintColor = nil
+            title.alphaValue = opacity
+            icon.alphaValue = opacity
         }
     }
 
@@ -898,8 +919,18 @@ final class SidebarNoTabsRow: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        refreshForeground()
+    }
+
+    override func layout() {
+        super.layout()
+        refreshForeground()
+    }
+
+    func refreshForeground() {
+        guard let backdrop = SidebarPanelView.backdrop(behind: self) else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            label.textColor = .secondaryLabelColor
+            (label.textColor, label.alphaValue) = SpaceAccent.readableForeground(.secondaryLabelColor, opacity: 1, on: backdrop)
         }
     }
 
