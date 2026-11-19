@@ -1,8 +1,10 @@
 # Our in-tree layer. engine/scripts/apply copies this directory to
-# //ararat/core. Three targets:
-#   hooks  the hook declarations Chrome's patched files include
-#   core   the version stamp
-#   entry  the browser process's entry point and the extra parts the hook adds
+# //ararat/core. Five targets:
+#   hooks                    the hook declarations Chrome's patched files include
+#   core                     the version stamp
+#   history_files            per-row history files, keyed by profile and item id
+#   history_files_unittests  their unit test
+#   entry                    the browser process's entry point and the extra parts the hook adds
 # The exports config rides all_dependent_configs so the target that links the
 # layer's objects (chrome_dll, see patches/ararat/link-ararat-layer.patch)
 # exports our symbols on the same link line as chrome's framework.exports.

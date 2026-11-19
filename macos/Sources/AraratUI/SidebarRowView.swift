@@ -9,6 +9,62 @@ enum PinHintTrace {
         || CommandLine.arguments.contains("--ararat-screen=organize")
 }
 
+/// The U20 board's selected shadow (`--selsh`), drawn the way CSS draws `box-shadow`: outside the
+/// fill alone. A layer's own shadow lands under its contents, so with a translucent fill it shows
+/// through and darkens it; this casts the shadow on a layer of its own and masks that layer to
+/// everything outside the fill's rounded path.
+@MainActor
+final class SelectedRowShadow {
+    // The shadow reaches 1 pt down plus three sigma of its 1 pt blur radius.
+    private static let margin: CGFloat = 4
+    /// The layer that casts the shadow; its mask keeps only what lies outside the fill.
+    let layer = CAShapeLayer()
+    private let outside = CAShapeLayer()
+
+    init(name: String) {
+        layer.name = name
+        // Why not a filled shape: the fill and the mask's hole would share one path, so an edge
+        // pixel covered c by the fill and kept 1 - c by the mask gets black at c(1 - c), a ring of
+        // up to a quarter at every corner. A clear fill draws nothing; only the shadow the window
+        // server casts from `shadowPath` shows, and the even-odd mask keeps it outside the fill.
+        layer.fillColor = NSColor.clear.cgColor
+        outside.fillRule = .evenOdd
+        layer.mask = outside
+    }
+
+    /// `rect` is the fill's frame in its superlayer and `path` its rounded path in the fill's own
+    /// coordinates. `flipped` is the flip of the view whose layer holds the shadow layer, not the
+    /// fill's: a flipped view's shape layer sits in y-down coordinates while its own flag is false.
+    func apply(rect: CGRect, path: CGPath?, flipped: Bool, on: Bool, appearance: NSAppearance, scale: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let path, !path.isEmpty else { layer.shadowOpacity = 0; layer.isHidden = true; return }
+        let box = path.boundingBoxOfPath
+        layer.bounds = CGRect(origin: .zero, size: CGSize(width: box.width + 2 * Self.margin, height: box.height + 2 * Self.margin))
+        layer.position = CGPoint(x: rect.midX, y: rect.midY)
+        layer.contentsScale = scale
+        outside.frame = layer.bounds
+        let shaped = CGMutablePath()
+        shaped.addPath(path, transform: CGAffineTransform(translationX: Self.margin - box.minX, y: Self.margin - box.minY))
+        layer.shadowPath = shaped
+        let masked = CGMutablePath()
+        masked.addRect(layer.bounds)
+        masked.addPath(shaped)
+        outside.path = masked
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let alpha = on ? (dark ? SidebarMetrics.rowSelectedShadowAlphaDark : SidebarMetrics.rowSelectedShadowAlpha) : 0
+        layer.shadowColor = NSColor.black.cgColor
+        // The board draws 1 pt down; a y-up layer takes the negative offset and a flipped one the
+        // positive.
+        layer.shadowOffset = CGSize(width: 0, height: flipped ? SidebarMetrics.rowSelectedShadowY : -SidebarMetrics.rowSelectedShadowY)
+        layer.shadowRadius = SidebarMetrics.rowSelectedShadowBlur / 2
+        layer.shadowOpacity = Float(alpha)
+        // An off shadow hides the layer rather than leaving one more thing to draw.
+        layer.isHidden = alpha == 0
+    }
+}
+
 /// U20 board: a split is one row with a segment per pane. The segment draws its pane's glyph,
 /// its title and its own background, so a split row draws no row-level glyph, fill or title
 /// (`updateSegments`). The board's `.split`: 36 pt tall with a 2 pt gap, the row's 11 pt radius on
@@ -23,6 +79,7 @@ final class SplitSegmentButton: NSButton {
     let leadingRadius: CGFloat
     let trailingRadius: CGFloat
     let fill = CAShapeLayer()
+    let fillShadow = SelectedRowShadow(name: "split-segment-shadow")
     let iconView = NSImageView()
     let titleField = NSTextField(labelWithString: "")
     private(set) var active: Bool
@@ -47,7 +104,8 @@ final class SplitSegmentButton: NSButton {
         isBordered = false
         wantsLayer = true
         fill.name = "split-segment-fill"
-        layer?.insertSublayer(fill, at: 0)
+        layer?.insertSublayer(fillShadow.layer, at: 0)
+        layer?.insertSublayer(fill, at: 1)
         iconView.imageScaling = .scaleNone
         iconView.contentTintColor = .secondaryLabelColor
         iconView.setAccessibilityHidden(true)
@@ -88,18 +146,27 @@ final class SplitSegmentButton: NSButton {
     }
 
     // The focused pane's segment takes the row's selected fill; every other segment keeps the
-    // row's hover fill (the board's `.split span.on` and `.split span`).
+    // row's hover fill (the board's `.split span.on` and `.split span`), and the focused one the
+    // board's selected-row shadow as well.
     func applyFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let alpha = active ? SidebarMetrics.rowSelectedFillAlpha : SidebarMetrics.rowHoverFillAlpha
             fill.fillColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
+        applyShadow()
+    }
+
+    // The shadow follows the segment's rounded path, on a layer behind the fill.
+    private func applyShadow() {
+        fillShadow.apply(rect: fill.frame, path: fill.path, flipped: isFlipped, on: active,
+                         appearance: effectiveAppearance, scale: layer?.contentsScale ?? 1)
     }
 
     override func layout() {
         super.layout()
         fill.frame = bounds
         fill.path = Self.path(in: bounds, leading: leadingRadius, trailing: trailingRadius)
+        applyShadow()
     }
 
     // One rounded rectangle with a radius per end; AppKit has no per-corner radius, and the
@@ -192,6 +259,7 @@ final class SidebarRowView: NSView {
     private let titleMask = CAGradientLayer()
     private var selected: Bool
     private let fill = NSView()
+    let fillShadow = SelectedRowShadow(name: "row-selected-shadow")
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let segments = NSStackView()
@@ -226,6 +294,9 @@ final class SidebarRowView: NSView {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        // The selected shadow sits on its own layer, masked outside the fill, so the translucent
+        // fill does not show it through.
+        layer?.insertSublayer(fillShadow.layer, at: 0)
         segments.orientation = .horizontal
         segments.isHidden = true
         segments.distribution = .fillEqually
@@ -568,6 +639,8 @@ final class SidebarRowView: NSView {
     override func layout() {
         super.layout()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
+        // The fill's shadow follows its rounded fill, not the alpha of its drawing.
+        applySelectedShadow()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if !closeButton.isHidden && closeButton.frame.minX < title.frame.maxX {
@@ -621,7 +694,21 @@ final class SidebarRowView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(alpha).cgColor
         }
+        // The board's `--selsh` is on `.row.is-sel .fill` alone: hover, pressed and a drag source
+        // carry the selected fill's alpha but not its shadow. A drag copy is built selected.
+        applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
+    }
+
+    // The board's selected-row shadow: `0 1px 2px rgba(0,0,0,.08)` in light, none in dark, on the
+    // selected row's fill and on a split row's focused segment.
+    private func applySelectedShadow() {
+        let path = CGPath(roundedRect: fill.bounds, cornerWidth: SidebarMetrics.cornerRadius, cornerHeight: SidebarMetrics.cornerRadius, transform: nil)
+        // A split row draws its own fill hidden and its segments instead, so the row-level shadow
+        // goes with it. The shadow layer is a sublayer of the row's, so its y direction is the
+        // row's.
+        fillShadow.apply(rect: fill.frame, path: path, flipped: isFlipped, on: selected && !fill.isHidden,
+                         appearance: effectiveAppearance, scale: layer?.contentsScale ?? 1)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
