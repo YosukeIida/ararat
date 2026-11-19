@@ -62,8 +62,9 @@ jobs:
             echo
             echo '`pinned` and `base_tag_pinned` come from `engine/build-inputs.toml`,'
             echo '`stable` and `base_tag_latest` from upstream today. `behind_days`'
-            echo 'counts from the stable release, the unit the patch-lag limits use.'
-            echo '`security` stays `unknown` until the release notes list the CVEs.'
+            echo 'counts whole days from the earliest unpinned Mac stable release on the ChromiumDash page.'
+            echo '`security` reports whether any matching desktop stable release notes list CVEs.'
+            echo 'It stays `unknown` until at least one set of notes matches an unpinned release.'
           } >"$body"
           number="$(gh issue list --state all --limit 500 --json number,title \
             --jq "map(select(.title == \"$title\"))|.[0].number // empty")"

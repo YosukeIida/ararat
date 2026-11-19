@@ -3,18 +3,16 @@
 
 Run: uv run --no-project python engine/scripts/tests/test_release_watch.py
 
-The fixtures under fixtures/ are responses recorded on 2026-11-19 from the URLs
-the script asks, with the page sizes below so the files stay small:
+The fixtures under fixtures/ were recorded on 2026-11-19:
 
   build-inputs.toml         a copy of engine/build-inputs.toml at the recording
   chromiumdash-stable.json  .../fetch_releases?channel=Stable&platform=Mac&num=6
   ungoogled-tags.json       api.github.com/repos/ungoogled-software/ungoogled-chromium/tags?per_page=20
   chromereleases-feed.json  chromereleases.googleblog.com/feeds/posts/default?alt=json&max-results=6
 
-No test reaches the network. The recorded feed stops before the desktop stable
-post, which runs to 400 KB of CVE table, so the branch that reads a CVE list is
-fed hand-written entries in the recorded shape instead; the recorded feed covers
-the "unknown" answer an early stable release gives.
+No test reaches the network. The script requests max-results=20. The six-entry
+fixture keeps the same feed shape and omits the older desktop stable post and
+its large CVE table. Hand-written entries cover the matching desktop posts.
 """
 
 import importlib.machinery
@@ -23,8 +21,11 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -39,6 +40,7 @@ rw = importlib.util.module_from_spec(_spec)
 _loader.exec_module(rw)
 
 RECORDED_STABLE_TIME = 1795028027121  # 2026-11-18, from the chromiumdash fixture
+FIRST_UNPINNED_TIME = 1794426661554  # 157.0.8103.79
 
 
 def fixture(name):
@@ -57,14 +59,15 @@ def feed_entry(title, body, published="2026-11-17T10:00:00.000-08:00"):
 class FakeFetch:
     """Answers the script's URLs from the fixtures; fails on anything else."""
 
-    def __init__(self, feed=None):
+    def __init__(self, feed=None, releases=None):
         self.feed = feed
+        self.releases = releases
         self.urls = []
 
     def __call__(self, url):
         self.urls.append(url)
         if url == rw.STABLE_URL:
-            return fixture("chromiumdash-stable.json")
+            return json.dumps(self.releases) if self.releases is not None else fixture("chromiumdash-stable.json")
         if url == rw.TAGS_URL:
             return fixture("ungoogled-tags.json")
         if url == rw.FEED_URL:
@@ -98,26 +101,23 @@ class Versions(unittest.TestCase):
 
 
 class Stable(unittest.TestCase):
-    def test_takes_the_highest_version_in_the_recorded_page(self):
-        version, when = rw.pick_stable(json.loads(fixture("chromiumdash-stable.json")))
-        self.assertEqual(version, "159.0.8154.13")
-        self.assertEqual(when, RECORDED_STABLE_TIME)
-
-    def test_list_order_does_not_decide(self):
-        payload = json.loads(fixture("chromiumdash-stable.json"))
-        self.assertEqual(rw.pick_stable(list(reversed(payload)))[0], "159.0.8154.13")
-
     def test_ignores_another_platform_or_channel(self):
         payload = [
             {"channel": "Stable", "platform": "Linux", "version": "160.0.1.1", "time": 1},
             {"channel": "Beta", "platform": "Mac", "version": "160.0.1.2", "time": 1},
             {"channel": "Stable", "platform": "Mac", "version": "159.0.8154.13", "time": 2},
         ]
-        self.assertEqual(rw.pick_stable(payload), ("159.0.8154.13", 2))
+        self.assertEqual(rw.stable_releases(payload), [("159.0.8154.13", 2)])
 
     def test_refuses_a_page_without_a_stable_mac_release(self):
         with self.assertRaises(rw.WatchError):
-            rw.pick_stable([{"channel": "Beta", "platform": "Mac", "version": "160.0.1.2", "time": 1}])
+            rw.stable_releases([{"channel": "Beta", "platform": "Mac", "version": "160.0.1.2", "time": 1}])
+
+    def test_refuses_an_older_stable_release_without_a_time(self):
+        releases = json.loads(fixture("chromiumdash-stable.json"))
+        del releases[-1]["time"]
+        with self.assertRaisesRegex(rw.WatchError, "no valid time"):
+            rw.stable_releases(releases)
 
 
 class Tags(unittest.TestCase):
@@ -138,11 +138,11 @@ class Security(unittest.TestCase):
         # the recorded feed names 159.0.8154.13 only in the early stable post,
         # which carries no CVE list
         feed = json.loads(fixture("chromereleases-feed.json"))
-        self.assertEqual(rw.security_state(feed, "159.0.8154.13"), "unknown")
+        self.assertEqual(rw.security_state(feed, {"159.0.8154.13"}), "unknown")
 
     def test_a_version_the_feed_has_left_behind_is_unknown(self):
         feed = json.loads(fixture("chromereleases-feed.json"))
-        self.assertEqual(rw.security_state(feed, "156.0.8078.80"), "unknown")
+        self.assertEqual(rw.security_state(feed, {"156.0.8078.80"}), "unknown")
 
     def test_a_stable_post_with_cves_is_true(self):
         feed = {
@@ -157,7 +157,7 @@ class Security(unittest.TestCase):
                 ]
             }
         }
-        self.assertIs(rw.security_state(feed, "157.0.8103.39"), True)
+        self.assertIs(rw.security_state(feed, {"157.0.8103.39"}), True)
 
     def test_a_stable_post_without_cves_is_false(self):
         feed = {
@@ -171,7 +171,17 @@ class Security(unittest.TestCase):
                 ]
             }
         }
-        self.assertIs(rw.security_state(feed, "157.0.8103.39"), False)
+        self.assertIs(rw.security_state(feed, {"157.0.8103.39"}), False)
+
+    def test_a_mac_patch_in_slash_notation_matches(self):
+        feed = {"feed": {"entry": [
+            feed_entry(
+                rw.STABLE_DESKTOP_POST,
+                "The Stable channel has been updated to 142.0.7444.175/.176 for Windows/Mac. "
+                "CVE-2026-1234.",
+            ),
+        ]}}
+        self.assertIs(rw.security_state(feed, {"142.0.7444.176"}), True)
 
     def test_a_post_for_another_version_is_not_read(self):
         feed = {
@@ -185,7 +195,7 @@ class Security(unittest.TestCase):
                 ]
             }
         }
-        self.assertEqual(rw.security_state(feed, "157.0.8103.39"), "unknown")
+        self.assertEqual(rw.security_state(feed, {"157.0.8103.39"}), "unknown")
 
     def test_a_beta_post_for_the_version_is_not_read(self):
         feed = {
@@ -198,7 +208,7 @@ class Security(unittest.TestCase):
                 ]
             }
         }
-        self.assertEqual(rw.security_state(feed, "157.0.8103.39"), "unknown")
+        self.assertEqual(rw.security_state(feed, {"157.0.8103.39"}), "unknown")
 
     def test_a_release_whose_version_run_on_is_not_a_match(self):
         feed = {
@@ -211,7 +221,7 @@ class Security(unittest.TestCase):
                 ]
             }
         }
-        self.assertEqual(rw.security_state(feed, "157.0.8103.39"), "unknown")
+        self.assertEqual(rw.security_state(feed, {"157.0.8103.39"}), "unknown")
 
 
 class Run(unittest.TestCase):
@@ -227,7 +237,9 @@ class Run(unittest.TestCase):
 
     def test_behind_in_chromium_on_the_recorded_responses(self):
         fetch = FakeFetch()
-        report, code = rw.run(fetch, FIXTURES / "build-inputs.toml", now=self.two_days_later())
+        now = self.two_days_later()
+        first_unpinned = datetime.fromtimestamp(FIRST_UNPINNED_TIME / 1000, tz=timezone.utc)
+        report, code = rw.run(fetch, FIXTURES / "build-inputs.toml", now=now)
         self.assertEqual(code, 10)
         self.assertEqual(
             report,
@@ -236,11 +248,41 @@ class Run(unittest.TestCase):
                 "stable": "159.0.8154.13",
                 "base_tag_pinned": "157.0.8103.38-1",
                 "base_tag_latest": "157.0.8103.78-1",
-                "behind_days": 2,
+                "behind_days": (now - first_unpinned).days,
                 "security": "unknown",
             },
         )
         self.assertEqual(fetch.urls, [rw.STABLE_URL, rw.TAGS_URL, rw.FEED_URL])
+
+    def test_a_new_release_does_not_reset_the_lag(self):
+        releases = json.loads(fixture("chromiumdash-stable.json"))
+        inputs = FIXTURES / "build-inputs.toml"
+        before, _ = rw.run(FakeFetch(releases=releases[1:]), inputs, now=self.two_days_later())
+        after, _ = rw.run(FakeFetch(releases=releases[::-1]), inputs, now=self.two_days_later())
+        self.assertEqual(before["stable"], "158.0.8127.37")
+        self.assertEqual(after["stable"], "159.0.8154.13")
+        self.assertEqual(before["behind_days"], after["behind_days"])
+
+    def test_security_includes_older_unpinned_releases(self):
+        releases = json.loads(fixture("chromiumdash-stable.json"))
+        stable_posts = [
+            feed_entry(rw.STABLE_DESKTOP_POST, f"Updated to {entry['version']} for Mac.")
+            for entry in releases
+        ]
+        pinned_cve = feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 157.0.8103.39 for Mac. CVE-2026-1234.")
+        older_cve = feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 157.0.8103.79 for Mac. CVE-2026-1234.")
+        scenarios = [
+            ("only pinned release has CVEs", [pinned_cve], "unknown"),
+            ("all unpinned releases have no CVEs", stable_posts, False),
+            ("one release has no CVEs and the others are unknown", stable_posts[-1:], False),
+            ("older release has CVEs and newest is unknown", [older_cve], True),
+            ("older release has CVEs and newest has none", [stable_posts[0], older_cve], True),
+        ]
+        for label, entries, expected in scenarios:
+            with self.subTest(label):
+                fetch = FakeFetch({"feed": {"entry": entries}})
+                report, _ = rw.run(fetch, FIXTURES / "build-inputs.toml")
+                self.assertEqual(report["security"], expected)
 
     def test_nothing_new_is_zero(self):
         report, code = rw.run(
@@ -248,6 +290,7 @@ class Run(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(report["behind_days"], 0)
+        self.assertEqual(report["security"], "unknown")
 
     def test_a_newer_base_tag_alone_is_ten(self):
         report, code = rw.run(
@@ -279,6 +322,46 @@ class Run(unittest.TestCase):
     def test_a_response_that_is_not_json_is_refused(self):
         with self.assertRaises(rw.WatchError):
             rw.load_json("<html>not found</html>", rw.STABLE_URL)
+
+    def test_malformed_feeds_exit_two_with_a_message(self):
+        malformed = [
+            [],
+            {"feed": []},
+            {"feed": {}},
+            {"feed": {"entry": {}}},
+            {"feed": {"entry": [None]}},
+            {"feed": {"entry": [{"title": "bad", "content": {"$t": "body"}}]}},
+            {"feed": {"entry": [{"title": {"$t": rw.STABLE_DESKTOP_POST}, "content": "bad"}]}},
+            {"feed": {"entry": [feed_entry(1, "body")]}},
+            {"feed": {"entry": [feed_entry(rw.STABLE_DESKTOP_POST, None)]}},
+            {"feed": {"entry": [
+                feed_entry(rw.STABLE_DESKTOP_POST, "Updated to 159.0.8154.13 for Mac. CVE-2026-1234."),
+                {},
+            ]}},
+        ]
+        for feed in malformed:
+            with self.subTest(feed):
+                error = StringIO()
+                with (
+                    patch.object(rw, "http_get", FakeFetch(feed)),
+                    patch.dict(rw.os.environ, {"ARARAT_BUILD_INPUTS": str(FIXTURES / "build-inputs.toml")}),
+                    redirect_stderr(error),
+                    redirect_stdout(StringIO()) as output,
+                ):
+                    self.assertEqual(rw.main([]), 2)
+                self.assertIn("Chrome Releases feed", error.getvalue())
+                self.assertEqual(output.getvalue(), "")
+
+    def test_invalid_utf8_exits_two_with_a_message(self):
+        error = StringIO()
+        with (
+            patch.object(rw.urllib.request, "urlopen") as urlopen,
+            patch.dict(rw.os.environ, {"ARARAT_BUILD_INPUTS": str(FIXTURES / "build-inputs.toml")}),
+            redirect_stderr(error),
+        ):
+            urlopen.return_value.__enter__.return_value.read.return_value = b"\xff"
+            self.assertEqual(rw.main([]), 2)
+        self.assertIn("UTF-8", error.getvalue())
 
 
 if __name__ == "__main__":

@@ -11,12 +11,12 @@ prints one JSON line:
 pinned is build-inputs.toml's chromium_version, stable the newest Chromium
 stable for Mac on chromiumdash, base_tag_pinned its ungoogled_tag and
 base_tag_latest the newest ungoogled-chromium version tag on GitHub.
-behind_days is how long the current stable has gone without a pin of it (0
-when the pin is not behind), the unit the patch-lag limits in §4.9 count in.
-security is true when the Chrome Releases "Stable Channel Update for Desktop"
-post that names that stable version lists a CVE, false when it lists none,
-and "unknown" while no such post names the version yet (an early stable
-release has no CVE list), which is also what an aged-out feed reports.
+behind_days counts whole days since the earliest Mac stable release newer
+than the pin (0 if there are none). It is a lower bound if the chromiumdash
+page omits older unpinned releases.
+security is true if any desktop stable release note for these versions lists
+a CVE, false if at least one note matches and all matching notes list none,
+and "unknown" if no note matches.
 
 Exit codes: 0 nothing is new, 10 the pin is behind in Chromium or in the base
 patch set, 2 the inputs could not be read or fetched or an argument was
@@ -37,13 +37,12 @@ from pathlib import Path
 
 STABLE_URL = "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Mac&num=6"
 TAGS_URL = "https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tags?per_page=20"
-# one post per release plus a few per day of other channels: 20 covers about a
-# week, and only a release younger than that is worth the CVE list
 FEED_URL = "https://chromereleases.googleblog.com/feeds/posts/default?alt=json&max-results=20"
 
 STABLE_DESKTOP_POST = "Stable Channel Update for Desktop"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$")
+POST_VERSION_RE = re.compile(r"(?<![\d.])((\d+\.\d+\.\d+\.)\d+)(?:\s*/\s*\.(\d+))?(?![\d.])")
 TAG_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)-(\d+)$")
 
 DEFAULT_BUILD_INPUTS = Path(__file__).resolve().parents[2] / "engine" / "build-inputs.toml"
@@ -52,9 +51,9 @@ USAGE = """usage: release-watch [-h|--help]
 
 Prints one JSON line saying whether the engine pin in engine/build-inputs.toml
 is behind the current Chromium stable for Mac or the newest ungoogled-chromium
-tag, and whether that stable release's notes list security fixes. Exits 0 when
-nothing is new, 10 when the pin is behind, 2 when the inputs cannot be read or
-fetched. Reads only; the tree is never written.
+tag, and whether the unpinned stable release notes list security fixes.
+Exits 0 when nothing is new, 10 when the pin is behind, 2 when the inputs
+cannot be read or fetched. Reads only.
 
 The pin is read from ARARAT_BUILD_INPUTS when that is set, engine/
 build-inputs.toml otherwise. Run it through uv, which is not on the engine
@@ -103,6 +102,8 @@ def http_get(url):
         raise WatchError(f"{url}: HTTP {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise WatchError(f"{url}: {getattr(exc, 'reason', exc)}") from exc
+    except UnicodeDecodeError as exc:
+        raise WatchError(f"{url}: response is not UTF-8") from exc
 
 
 def load_json(text, source):
@@ -112,13 +113,8 @@ def load_json(text, source):
         raise WatchError(f"{source} did not answer JSON: {exc}") from exc
 
 
-def pick_stable(payload):
-    """The newest Stable/Mac release on chromiumdash, and its publication time.
-
-    chromiumdash lists the stable channel's recent releases for a platform, and
-    the order is not the release order (an early stable and the milestone it
-    replaces can share a timestamp), so the highest version wins.
-    """
+def stable_releases(payload):
+    """The Stable/Mac versions and publication times on the chromiumdash page."""
     if not isinstance(payload, list):
         raise WatchError("chromiumdash answered something other than a list")
     entries = [
@@ -131,11 +127,10 @@ def pick_stable(payload):
     ]
     if not entries:
         raise WatchError("chromiumdash lists no Stable/Mac release")
-    best = max(entries, key=lambda entry: version_key(entry["version"]))
     try:
-        return best["version"], int(best["time"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise WatchError("chromiumdash's stable release carries no time") from exc
+        return [(entry["version"], int(entry["time"])) for entry in entries]
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise WatchError("a chromiumdash stable release has no valid time") from exc
 
 
 def pick_latest_tag(payload):
@@ -152,26 +147,28 @@ def pick_latest_tag(payload):
     return max(tags, key=tag_key)
 
 
-def security_state(feed, version):
-    """True/False from the stable post naming the version, else "unknown".
-
-    Only the desktop stable channel's post carries the full CVE list; an early
-    stable post names the version days before that list exists, and a feed that
-    no longer reaches back to the release says nothing either way.
-    """
-    entries = feed.get("feed", {}).get("entry", []) if isinstance(feed, dict) else []
+def security_state(payload, versions):
+    feed = payload.get("feed") if isinstance(payload, dict) else None
+    entries = feed.get("entry") if isinstance(feed, dict) else None
     if not isinstance(entries, list):
         raise WatchError("the Chrome Releases feed has no entry list")
-    pattern = re.compile(r"(?<![\d.])" + re.escape(version) + r"(?![\d.])")
+    state = "unknown"
     for entry in entries:
         if not isinstance(entry, dict):
+            raise WatchError("the Chrome Releases feed has an invalid entry")
+        title, content = entry.get("title"), entry.get("content")
+        if not (isinstance(title, dict) and isinstance(title.get("$t"), str)):
+            raise WatchError("the Chrome Releases feed has an invalid entry title")
+        if not (isinstance(content, dict) and isinstance(content.get("$t"), str)):
+            raise WatchError("the Chrome Releases feed has invalid entry content")
+        if title["$t"] != STABLE_DESKTOP_POST:
             continue
-        if entry.get("title", {}).get("$t", "") != STABLE_DESKTOP_POST:
-            continue
-        body = entry.get("content", {}).get("$t", "")
-        if pattern.search(body):
-            return "CVE-" in body
-    return "unknown"
+        body = content["$t"]
+        for version, prefix, extra_patch in POST_VERSION_RE.findall(body):
+            if version in versions or (extra_patch and prefix + extra_patch in versions):
+                state = state is True or "CVE-" in body
+                break
+    return state
 
 
 def run(fetch, build_inputs_path, now=None):
@@ -184,14 +181,15 @@ def run(fetch, build_inputs_path, now=None):
     if not base_pinned:
         raise WatchError(f"no ungoogled_tag in {build_inputs_path}")
 
-    stable, stable_time = pick_stable(load_json(fetch(STABLE_URL), STABLE_URL))
-    base_latest = pick_latest_tag(load_json(fetch(TAGS_URL), TAGS_URL))
-    security = security_state(load_json(fetch(FEED_URL), FEED_URL), stable)
-
     pinned_key = version_key(pinned)
-    stable_key = version_key(stable)
+    releases = stable_releases(load_json(fetch(STABLE_URL), STABLE_URL))
+    stable = max((version for version, _ in releases), key=version_key)
+    unpinned = [(version, when) for version, when in releases if version_key(version) > pinned_key]
     now_ms = int(((now or datetime.now(timezone.utc)).timestamp()) * 1000)
-    behind_days = max(0, (now_ms - stable_time) // 86_400_000) if stable_key > pinned_key else 0
+    first_unpinned = min((when for _, when in unpinned), default=now_ms)
+    behind_days = max(0, (now_ms - first_unpinned) // 86_400_000)
+    base_latest = pick_latest_tag(load_json(fetch(TAGS_URL), TAGS_URL))
+    security = security_state(load_json(fetch(FEED_URL), FEED_URL), {version for version, _ in unpinned})
 
     report = {
         "pinned": pinned,
@@ -201,7 +199,7 @@ def run(fetch, build_inputs_path, now=None):
         "behind_days": behind_days,
         "security": security,
     }
-    behind = stable_key > pinned_key or tag_key(base_latest) > tag_key(base_pinned)
+    behind = bool(unpinned) or tag_key(base_latest) > tag_key(base_pinned)
     return report, (10 if behind else 0)
 
 
