@@ -27,9 +27,32 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     #expect(sidebar.frame.width == 417)
     #expect(container.resizeHandle.sidebarWidth == 347)
     #expect(sidebar.libraryPage == "Archive")
+    let library = try #require(libraryDescendants(sidebar).compactMap { $0 as? LibraryView }.first)
+    library.appearance = NSAppearance(named: .aqua)
+    let plus = try #require(libraryDescendants(sidebar).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "New Space menu" })
+    #expect(!sidebar.convert(library.clearArchiveButton.bounds, from: library.clearArchiveButton).intersects(plus.frame))
+    let archive = try #require(libraryDescendants(library).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Archive page" })
+    #expect(archive.imagePosition == .imageAbove && archive.image != nil)
+    #expect(library.downloadsButton.imagePosition == .imageAbove && library.downloadsButton.image != nil)
+    #expect(archive.accessibilityValue() as? String == "selected")
+    #expect(archive.layer?.backgroundColor == LibraryView.lightSelectedTileFill.cgColor)
+    library.showDownloads()
+    #expect(archive.accessibilityValue() == nil && archive.layer?.backgroundColor == nil)
+    #expect(library.downloadsButton.layer?.backgroundColor == LibraryView.lightSelectedTileFill.cgColor)
+    library.showArchive()
+    #expect(sidebar.libraryOpenFraction == 1)
+    let fill = try #require(button.layer?.sublayers?.first { $0.backgroundColor?.alpha ?? 0 > 0 })
+    button.effectiveAppearance.performAsCurrentDrawingAppearance {
+        let expected = NSColor.controlAccentColor.withAlphaComponent(
+            SpaceDockButton.fillAlpha(fraction: 1, appearance: button.effectiveAppearance)
+        )
+        #expect(fill.backgroundColor == expected.cgColor)
+    }
     sidebar.cancelOperation(nil)
     container.layoutSubtreeIfNeeded()
     #expect(!sidebar.libraryOpen && sidebar.frame.width == 347)
+    #expect(sidebar.libraryOpenFraction == 0)
+    #expect(fill.backgroundColor?.alpha == 0)
     button.performClick(nil)
     button.performClick(nil)
     #expect(!sidebar.libraryOpen && sidebar.libraryPage == "Archive")
@@ -47,6 +70,34 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     #expect(restored == "closed")
     #expect(!sidebar.libraryOpen && sidebar.selectedRowID == "closed")
     #expect(sidebar.frame.width == 347 && container.resizeHandle.sidebarWidth == 347)
+}
+
+@Test @MainActor
+func emptyPageShowsTheCurrentShortcutsUntilATabIsSelected() throws {
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "tab", title: "Tab", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let space = SpaceSnapshot(pinnedCount: 0, todayCount: 1, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .default, id: "home", title: "Home", icon: nil, look: nil, favorites: [], pinned: [], today: [row])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: "home", selectedId: nil, spaces: [space]))
+    let page = NSView()
+    let container = SidebarContainerView(sidebar: sidebar, page: page)
+    container.frame = NSRect(x: 0, y: 0, width: 1000, height: 720)
+    container.layoutSubtreeIfNeeded()
+    func keycaps() -> [String] {
+        libraryDescendants(container).compactMap { $0 as? TooltipKeycap }
+            .filter { !$0.isHiddenOrHasHiddenAncestor }.map(\.stringValue)
+    }
+    #expect(page.layer?.backgroundColor != nil)
+    #expect(keycaps() == ["⌘", "T", "⇧", "⌘", "L"])
+    let newTab = try #require(sidebar.keyBindings.firstIndex { $0.command == "new_tab" })
+    let binding = try #require(sidebar.keyBindings[newTab].key)
+    var rebound = binding
+    rebound.key = "y"
+    sidebar.keyBindings[newTab].key = rebound
+    #expect(keycaps() == ["⌘", "Y", "⇧", "⌘", "L"])
+    sidebar.keyBindings[newTab].key = nil
+    #expect(keycaps() == ["⇧", "⌘", "L"])
+    #expect(sidebar.selectRow(id: row.id))
+    container.selectionChanged()
+    #expect(keycaps().isEmpty)
 }
 
 @Test @MainActor

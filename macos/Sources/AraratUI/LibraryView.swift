@@ -3,6 +3,12 @@ import AraratKit
 
 @MainActor
 final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    static let railTileHeight: CGFloat = 80
+    static let railTileIconSize: CGFloat = 22
+    static let railTileGap: CGFloat = 20
+    static let lightSelectedTileFill = NSColor.white
+    static let darkSelectedTileFill = NSColor.white.withAlphaComponent(0.13)
+
     enum Page: String { case archive = "Archive", downloads = "Downloads" }
     private(set) var page = Page.archive
     var onRestore: ((String) -> Void)?
@@ -66,22 +72,23 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         clearArchiveButton.isEnabled = false
         archiveButton.target = self
         archiveButton.action = #selector(showArchive)
-        archiveButton.isBordered = false
-        archiveButton.alignment = .left
-        archiveButton.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
-        archiveButton.setAccessibilityLabel("Archive page")
-        archiveButton.setAccessibilityValue("selected")
         archiveContent.setAccessibilityLabel("Archive")
         archiveContent.setAccessibilityElement(true)
         archiveContent.setAccessibilityRole(.group)
-        rail.addSubview(archiveButton)
         downloadsButton.target = self
         downloadsButton.action = #selector(showDownloads)
-        downloadsButton.isBordered = false
-        downloadsButton.alignment = .left
-        downloadsButton.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
-        downloadsButton.setAccessibilityLabel("Downloads page")
-        rail.addSubview(downloadsButton)
+        for (button, symbol) in [(archiveButton, "archivebox"), (downloadsButton, "arrow.down.to.line")] {
+            button.isBordered = false
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: Self.railTileIconSize, weight: .regular))
+            button.imagePosition = .imageAbove
+            button.alignment = .center
+            button.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
+            button.wantsLayer = true
+            button.layer?.cornerRadius = SidebarMetrics.cornerRadius
+            button.setAccessibilityLabel("\(button.title) page")
+            rail.addSubview(button)
+        }
         let divider = NSView()
         divider.wantsLayer = true
         divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -176,9 +183,10 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             archiveButton.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: SidebarMetrics.libraryContentInset),
             archiveButton.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -SidebarMetrics.libraryContentInset),
             archiveButton.topAnchor.constraint(equalTo: rail.topAnchor, constant: SidebarMetrics.libraryContentTop),
-            archiveButton.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
+            archiveButton.heightAnchor.constraint(equalToConstant: Self.railTileHeight),
             downloadsButton.leadingAnchor.constraint(equalTo: archiveButton.leadingAnchor), downloadsButton.trailingAnchor.constraint(equalTo: archiveButton.trailingAnchor),
-            downloadsButton.topAnchor.constraint(equalTo: archiveButton.bottomAnchor, constant: 8), downloadsButton.heightAnchor.constraint(equalToConstant: 32),
+            downloadsButton.topAnchor.constraint(equalTo: archiveButton.bottomAnchor, constant: Self.railTileGap),
+            downloadsButton.heightAnchor.constraint(equalTo: archiveButton.heightAnchor),
             search.leadingAnchor.constraint(equalTo: list.leadingAnchor, constant: SidebarMetrics.libraryContentInset),
             search.trailingAnchor.constraint(equalTo: list.trailingAnchor, constant: -SidebarMetrics.libraryContentInset),
             search.topAnchor.constraint(equalTo: list.topAnchor, constant: SidebarMetrics.libraryContentTop),
@@ -191,9 +199,10 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             emptyState.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             emptyState.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveHeadingHeight),
             clearArchiveButton.trailingAnchor.constraint(equalTo: search.trailingAnchor),
+            clearArchiveButton.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor),
             clearArchiveButton.centerYAnchor.constraint(equalTo: back.centerYAnchor),
             back.leadingAnchor.constraint(equalTo: search.leadingAnchor),
-            back.bottomAnchor.constraint(equalTo: list.bottomAnchor, constant: -SidebarMetrics.libraryContentInset),
+            back.bottomAnchor.constraint(equalTo: list.bottomAnchor, constant: -SidebarMetrics.libraryFooterInset),
             back.heightAnchor.constraint(equalToConstant: SidebarMetrics.archiveBackHeight),
             back.widthAnchor.constraint(equalToConstant: SidebarMetrics.archiveBackHeight),
         ])
@@ -479,13 +488,13 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     }
     @objc func showArchive() {
         page = .archive; archiveContent.isHidden = false; downloadsPage.isHidden = true
-        archiveButton.setAccessibilityValue("selected"); downloadsButton.setAccessibilityValue(nil)
+        updateFill()
         downloadsButton.nextKeyView = search
         if !isHidden { window?.makeFirstResponder(search) }
     }
     @objc func showDownloads() {
         page = .downloads; archiveContent.isHidden = true; downloadsPage.isHidden = false
-        archiveButton.setAccessibilityValue(nil); downloadsButton.setAccessibilityValue("selected")
+        updateFill()
         downloadsButton.nextKeyView = downloadsPage.search
         downloadsPage.focusFirst()
     }
@@ -495,6 +504,16 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             rail.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let fill = dark ? Self.darkSelectedTileFill : Self.lightSelectedTileFill
+            for (button, selected) in [(archiveButton, page == .archive), (downloadsButton, page == .downloads)] {
+                button.setAccessibilityValue(selected ? "selected" : nil)
+                button.layer?.backgroundColor = selected ? fill.cgColor : nil
+                button.layer?.shadowColor = NSColor.black.cgColor
+                button.layer?.shadowOffset = CGSize(width: 0, height: -SidebarMetrics.rowSelectedShadowY)
+                button.layer?.shadowRadius = SidebarMetrics.rowSelectedShadowBlur
+                button.layer?.shadowOpacity = selected && !dark ? Float(SidebarMetrics.rowSelectedShadowAlpha) : 0
+            }
         }
     }
 }

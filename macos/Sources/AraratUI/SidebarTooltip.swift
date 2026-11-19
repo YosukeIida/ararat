@@ -149,10 +149,10 @@ final class SidebarTooltip {
         let modifiers = modifierFlags()
         var x = label.frame.width + (label.keycaps.isEmpty ? 10 : 18)
         for cap in label.keycaps {
-            cap.frame = NSRect(x: x, y: 5, width: max(18, cap.intrinsicContentSize.width + 6), height: 18)
+            cap.frame = NSRect(x: x, y: 5, width: max(TooltipKeycap.size, cap.intrinsicContentSize.width + 6), height: TooltipKeycap.size)
             label.addSubview(cap)
             cap.setPressed(cap.modifier.isEmpty ? pressedKeys.contains(cap.stringValue) : modifiers.contains(cap.modifier))
-            x += cap.frame.width + 3
+            x += cap.frame.width + TooltipKeycap.gap
         }
         let size = NSSize(width: min(root.bounds.width, label.keycaps.isEmpty ? x + 10 : x + 7), height: 28)
         let cursor = root.convert(point, from: nil)
@@ -231,6 +231,8 @@ private final class TooltipLabel: NSTextField {
 
 @MainActor
 final class TooltipKeycap: NSTextField {
+    static let size: CGFloat = 18
+    static let gap: CGFloat = 3
     let modifier: NSEvent.ModifierFlags
     private(set) var pressed = false
 

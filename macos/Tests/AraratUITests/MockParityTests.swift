@@ -41,6 +41,19 @@ final class MockParityTests: XCTestCase {
             "CommandBarMetrics.rowHeight": .number(CommandBarMetrics.rowHeight),
             "CommandBarMetrics.rowInset": .number(CommandBarMetrics.rowInset),
             "DownloadsPopover.rowHeight": .number(DownloadsPopover.rowHeight),
+            "DownloadsPageView.contentInset": .number(DownloadsPageView.contentInset),
+            "DownloadsPageView.rowHeight": .number(DownloadsPageView.rowHeight),
+            "DownloadsPageView.searchHeight": .number(DownloadsPageView.searchHeight),
+            "DownloadRowView.libraryActionCenterY": .number(DownloadRowView.libraryActionCenterY),
+            "DownloadRowView.libraryCompactWidth": .number(DownloadRowView.libraryCompactWidth),
+            "EmptyPageHints.hintGap": .number(EmptyPageHints.hintGap),
+            "EmptyPageHints.labelSize": .number(EmptyPageHints.labelSize),
+            "EmptyPageHints.lightCardFill": .color(EmptyPageHints.lightCardFill),
+            "LibraryView.darkSelectedTileFill": .color(LibraryView.darkSelectedTileFill),
+            "LibraryView.lightSelectedTileFill": .color(LibraryView.lightSelectedTileFill),
+            "LibraryView.railTileGap": .number(LibraryView.railTileGap),
+            "LibraryView.railTileHeight": .number(LibraryView.railTileHeight),
+            "LibraryView.railTileIconSize": .number(LibraryView.railTileIconSize),
             "LittleWindowMetrics.barBackground": .color(LittleWindowMetrics.barBackground),
             "LittleWindowMetrics.barText": .color(LittleWindowMetrics.barText),
             "LittleWindowMetrics.buttonFill": .color(LittleWindowMetrics.buttonFill),
@@ -68,6 +81,8 @@ final class MockParityTests: XCTestCase {
             "SidebarClearButton.labelFontSize": .number(SidebarClearButton.labelFontSize),
             "SidebarMetrics.cornerRadius": .number(SidebarMetrics.cornerRadius),
             "SidebarMetrics.defaultWidth": .number(SidebarMetrics.defaultWidth),
+            "SidebarMetrics.libraryContentTop": .number(SidebarMetrics.libraryContentTop),
+            "SidebarMetrics.libraryFooterInset": .number(SidebarMetrics.libraryFooterInset),
             "SidebarMetrics.newTabRowHeight": .number(SidebarMetrics.newTabRowHeight),
             "SidebarMetrics.noTabsRowHeight": .number(SidebarMetrics.noTabsRowHeight),
             "SidebarMetrics.rowFillHeight": .number(SidebarMetrics.rowFillHeight),
@@ -111,6 +126,8 @@ final class MockParityTests: XCTestCase {
             "SiteControlsContent.pillRadius": .number(SiteControlsContent.pillRadius),
             "SiteControlsContent.width": .number(SiteControlsContent.width),
             "SpaceDockButton.dotAlpha": .number(SpaceDockButton.dotAlpha),
+            "TooltipKeycap.gap": .number(TooltipKeycap.gap),
+            "TooltipKeycap.size": .number(TooltipKeycap.size),
         ]
         XCTAssertFalse(entries.isEmpty)
         var checked = Set<String>()
@@ -118,7 +135,7 @@ final class MockParityTests: XCTestCase {
             let context = "\(entry.source) \(entry.selector) \(entry.property): \(entry.css)\(entry.appearance.map { " [\($0)]" } ?? "") → \(entry.swift)"
             if let reason = entry.reason {
                 XCTAssertFalse(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, context)
-                continue
+                if values[entry.swift] == nil { continue }
             }
             checked.insert(entry.swift)
             switch (entry.expected, values[entry.swift]) {

@@ -23,6 +23,7 @@ enum SidebarMetrics {
     static let libraryButtonBottom: CGFloat = 9
     static let libraryContentTop: CGFloat = 46
     static let libraryContentInset: CGFloat = 12
+    static let libraryFooterInset = libraryButtonSize + libraryButtonBottom + libraryContentInset
     static let archiveSearchHeight: CGFloat = 36
     static let archiveRowPitch: CGFloat = 56
     static let archiveListWidth: CGFloat = 304

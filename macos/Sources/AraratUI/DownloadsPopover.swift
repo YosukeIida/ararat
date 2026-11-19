@@ -244,6 +244,8 @@ private final class DownloadsHeaderCell: NSButtonCell {
 
 @MainActor
 final class DownloadRowView: NSView, NSDraggingSource {
+    static let libraryCompactWidth: CGFloat = 264
+    static let libraryActionCenterY: CGFloat = 16
     private var dragStart: NSPoint?
     func draggingItem() -> NSDraggingItem? {
         guard let url = model.dragFileURL(id: itemID) else { return nil }
@@ -266,6 +268,7 @@ final class DownloadRowView: NSView, NSDraggingSource {
 
     private(set) var itemID: String
     private let model: DownloadsModel
+    private let libraryPage: Bool
     private(set) var actionButtons: [DownloadActionButton] = []
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
@@ -294,9 +297,10 @@ final class DownloadRowView: NSView, NSDraggingSource {
         else { super.keyDown(with: event) }
     }
 
-    init(item: DownloadEntry, model: DownloadsModel) {
+    init(item: DownloadEntry, model: DownloadsModel, libraryPage: Bool = false) {
         itemID = item.id
         self.model = model
+        self.libraryPage = libraryPage
         super.init(frame: .zero)
         icon.setAccessibilityHidden(true)
         name.font = .systemFont(ofSize: 13); name.lineBreakMode = .byTruncatingMiddle
@@ -304,7 +308,7 @@ final class DownloadRowView: NSView, NSDraggingSource {
         status.maximumNumberOfLines = 1; status.lineBreakMode = .byTruncatingTail
         status.cell?.usesSingleLineMode = true; status.cell?.isScrollable = false; status.cell?.wraps = false; status.cell?.lineBreakMode = .byTruncatingTail
         for view in [icon, name, status] { addSubview(view) }
-        heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true
+        if !libraryPage { heightAnchor.constraint(equalToConstant: DownloadsPopover.rowHeight).isActive = true }
         update(item: item)
     }
     /// The name and status take the width left of the action buttons; the buttons hug the row's
@@ -314,11 +318,13 @@ final class DownloadRowView: NSView, NSDraggingSource {
         let inset = DownloadRowMetrics.inset
         let gap = DownloadRowMetrics.gap
         let size = DownloadRowMetrics.actionSize
-        icon.frame = NSRect(x: inset, y: (bounds.height - DownloadRowMetrics.iconSize) / 2,
+        let compact = libraryPage && bounds.width < Self.libraryCompactWidth && !actionButtons.isEmpty
+        let actionCenterY = compact ? Self.libraryActionCenterY : bounds.midY
+        icon.frame = NSRect(x: inset, y: actionCenterY - DownloadRowMetrics.iconSize / 2,
                             width: DownloadRowMetrics.iconSize, height: DownloadRowMetrics.iconSize)
         var trailing = bounds.width - inset
         for button in actionButtons.reversed() {
-            button.frame = NSRect(x: trailing - size, y: (bounds.height - size) / 2, width: size, height: size)
+            button.frame = NSRect(x: trailing - size, y: actionCenterY - size / 2, width: size, height: size)
             trailing -= size + gap
         }
         let leading = DownloadRowMetrics.textLeading
@@ -326,8 +332,11 @@ final class DownloadRowView: NSView, NSDraggingSource {
         let nameHeight = name.intrinsicContentSize.height
         let statusHeight = status.intrinsicContentSize.height
         let top = ((bounds.height - nameHeight - statusHeight) / 2).rounded()
-        name.frame = NSRect(x: leading, y: top + statusHeight, width: width, height: nameHeight)
-        status.frame = NSRect(x: leading, y: top, width: width, height: statusHeight)
+        let nameLeading = compact ? inset : leading
+        let nameWidth = compact ? max(0, bounds.width - 2 * inset) : width
+        let nameY = compact ? actionCenterY + size / 2 : top + statusHeight
+        name.frame = NSRect(x: nameLeading, y: nameY, width: nameWidth, height: nameHeight)
+        status.frame = NSRect(x: leading, y: compact ? actionCenterY - statusHeight / 2 : top, width: width, height: statusHeight)
     }
     func update(item: DownloadEntry) {
         itemID = item.id
