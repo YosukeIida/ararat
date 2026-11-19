@@ -24,6 +24,7 @@ final class MockParityTests: XCTestCase {
         let selector: String
         let property: String
         let css: String
+        let appearance: String?
         let swift: String
         let expected: Value?
         let reason: String?
@@ -107,7 +108,7 @@ final class MockParityTests: XCTestCase {
         XCTAssertFalse(entries.isEmpty)
         var checked = Set<String>()
         for entry in entries {
-            let context = "\(entry.source) \(entry.selector) \(entry.property): \(entry.css) → \(entry.swift)"
+            let context = "\(entry.source) \(entry.selector) \(entry.property): \(entry.css)\(entry.appearance.map { " [\($0)]" } ?? "") → \(entry.swift)"
             if let reason = entry.reason {
                 XCTAssertFalse(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, context)
                 continue

@@ -5,6 +5,8 @@
   {"source": "A-TabRows.dc.html:78", "selector": ".split", "property": "height", "css": "36px", "swift": "SidebarMetrics.rowFillHeight", "expected": 36.0},
   {"source": "A-TabRows.dc.html:78", "selector": ".split", "property": "gap", "css": "2px", "swift": "SidebarMetrics.splitSegmentGap", "expected": 2.0},
   {"source": "A-TabRows.dc.html:79", "selector": ".split span", "property": "border-radius", "css": "4px", "swift": "SidebarMetrics.splitSegmentRadius", "expected": 4.0},
+  {"source": "A-TabRows.dc.html:79", "selector": ".split span", "property": "background", "css": "var(--hover)", "appearance": "Light", "swift": "SidebarMetrics.rowHoverFillAlphaLight", "expected": 0.06},
+  {"source": "A-TabRows.dc.html:79", "selector": ".split span", "property": "background", "css": "var(--hover)", "appearance": "Dark", "swift": "SidebarMetrics.rowHoverFillAlphaDark", "expected": 0.08},
   {"source": "A-TabRows.dc.html:80", "selector": ".split span:first-child", "property": "border-radius", "css": "11px 4px 4px 11px", "swift": "SidebarMetrics.cornerRadius", "expected": 11.0},
   {"source": "A-TabRows.dc.html:81", "selector": ".split span:last-child", "property": "border-radius", "css": "4px 11px 11px 4px", "swift": "SidebarMetrics.cornerRadius", "expected": 11.0},
   {"source": "A-TabRows.dc.html:83", "selector": ".split svg,.split .lf", "property": "left", "css": "10px", "swift": "SidebarMetrics.rowIconInset", "expected": 10.0},
