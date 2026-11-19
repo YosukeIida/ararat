@@ -43,12 +43,95 @@ func findOverlayRemainsAboveASeparateHostedPage() {
 }
 
 @Test @MainActor
-func findResultsExposeRequestAndFinalUpdate() {
-    let view = FindBarView()
+func findResultsShowTheTrailingCountAndDisableButtonsOnlyForConfirmedZero() throws {
+    let view = FindBarView(frame: NSRect(x: 0, y: 0, width: 380, height: 36))
+    view.layoutSubtreeIfNeeded()
+    let count = try #require(view.subviews.compactMap { $0 as? NSTextField }
+        .first { $0.identifier?.rawValue == "find-match-count" })
+    let spinner = try #require(view.subviews.compactMap { $0 as? NSProgressIndicator }.first)
+    let buttons = view.subviews.compactMap { $0 as? NSButton }
+    #expect(buttons.count == 3)
+    #expect(buttons.allSatisfy { $0.image != nil && $0.imagePosition == .imageOnly })
+    #expect(!view.field.isBezeled && !view.field.drawsBackground)
+    #expect(count.alignment == .left)
+    #expect(view.field.frame.maxX <= count.frame.minX)
+    #expect(count.frame.maxX <= buttons[0].frame.minX)
+    #expect(view.bounds.contains(count.frame))
+    #expect(spinner.isHidden)
+    view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 0, "final_update": false])
+    #expect(spinner.isHidden)
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": false])
     #expect(view.requestID == 7 && !view.finalUpdate)
+    #expect(spinner.isHidden)
+    #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
     view.update(state: ["visible": true, "text": "needle", "matches": 0, "request_id": 7, "final_update": true])
     #expect(view.requestID == 7 && view.finalUpdate && view.matches == 0)
+    #expect(spinner.isHidden)
+    #expect(count.stringValue == "Not found" && count.textColor == .systemRed)
+    #expect(buttons.map(\.isEnabled) == [false, false, true])
+    view.field.stringValue = "need"
+    view.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: view.field))
+    #expect(count.stringValue.isEmpty && count.textColor == .secondaryLabelColor)
+    #expect(buttons.map(\.isEnabled) == [true, true, true])
+    view.update(state: ["visible": true, "text": "need", "matches": 0, "request_id": 7, "final_update": true])
+    #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
+    view.update(state: ["visible": true, "text": "need", "matches": 2, "request_id": 6, "final_update": false])
+    #expect(spinner.isHidden && count.stringValue.isEmpty)
+    view.update(state: ["visible": true, "text": "need", "matches": 2, "request_id": 8, "final_update": false])
+    #expect(spinner.isHidden && count.stringValue.isEmpty)
+    view.update(state: ["visible": true, "text": "need", "matches": 12, "ordinal": 3, "request_id": 8, "final_update": true])
+    #expect(spinner.isHidden)
+    #expect(count.stringValue == "3 of 12" && count.textColor == .secondaryLabelColor)
+    #expect(buttons.map(\.isEnabled) == [true, true, true])
+    view.update(state: ["visible": true, "text": "", "matches": 0, "request_id": 9, "final_update": true])
+    #expect(count.stringValue.isEmpty && buttons.map(\.isEnabled) == [true, true, true])
+}
+
+@Test @MainActor
+func findSpinnerWaitsForAnUnfinishedRequest() throws {
+    let view = FindBarView()
+    let spinner = try #require(view.subviews.compactMap { $0 as? NSProgressIndicator }.first)
+    var starts: [DispatchWorkItem] = []
+    view.scheduleSpinnerStart = { delay, work in
+        #expect(delay == 0.25)
+        starts.append(work)
+    }
+    func update(_ request: Int, final: Bool = false, visible: Bool = true) {
+        view.update(state: ["visible": visible, "text": "needle", "request_id": request, "final_update": final])
+    }
+    func takeStart() throws -> DispatchWorkItem {
+        let work = starts.popLast()
+        return try #require(work)
+    }
+
+    update(7)
+    #expect(spinner.isHidden)
+    let fast = try takeStart()
+    update(7, final: true)
+    #expect(fast.isCancelled)
+    fast.perform()
+    #expect(spinner.isHidden)
+
+    update(8)
+    let first = try takeStart()
+    update(8)
+    #expect(!first.isCancelled)
+    #expect(starts.isEmpty)
+    first.perform()
+    #expect(!spinner.isHidden)
+    update(8, final: true)
+    #expect(spinner.isHidden)
+
+    update(9)
+    let superseded = try takeStart()
+    update(10)
+    #expect(superseded.isCancelled)
+    let pending = try takeStart()
+    update(10, visible: false)
+    #expect(pending.isCancelled)
+    pending.perform()
+    #expect(spinner.isHidden)
+    #expect(starts.isEmpty)
 }
 
 @Test @MainActor

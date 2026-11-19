@@ -10,6 +10,7 @@
 
 下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 44 件、修正済みで VM 再確認待ち 4 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
 
+
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
 direnv exec . env -u DEVELOPER_DIR -u SDKROOT swift test --package-path macos --no-parallel --filter MockParityTests
@@ -115,13 +116,13 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 相違 | VM capture design-rowcontrast-1, `commandbar-search`、`commandbar-settings`、`commandbar-open-url`、`commandbar-recent`、`commandbar-edit-url` で各状態の選択行にアクセント色を確認した。最近のタブは Today ではなく Switch to Tab と表示し、Edit URL は検索優先ルール（決定 84）に従って Open URL の 1 行を表示する。 |
 | `D-CommandBarRows` | 結果行の寸法、内側余白、行間 | — | 一致 | 対応表に記載した行と入力欄の寸法は一致した。行の外観は未確認である。 |
 | `D-ErrorPages` | オフラインと DNS のエラー | `errorpages-offline`, `errorpages-dns` | 相違 | VM capture design-rowcontrast-1, `errorpages-offline` と `errorpages-dns` で、両方の Try Again にアクセント色を確認した。オフラインでは URL 欄とタブ行に内部の network-error アドレスが出るが、DNS エラーではホスト名が残る（決定 87）。 |
-| `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`, `keyboard-find-count` | 相違 | `header-find-bar` と `keyboard-find-count` では件数が入力欄の外にあり、矢印ボタンと灰色の 0 of 0 が出る。モックは欄内の件数、シェブロン、赤い Not found と無効な移動ボタンを指定する。 |
-| `D-FindBarPage` | ページ上の検索バー | `header-find-bar`, `keyboard-find-count` | 相違 | `header-find-bar` と `keyboard-find-count` でページカード右上の配置を確認した。件数、移動ボタン、該当なしの表示には D-FindBar と同じ差異がある。 |
+| `D-FindBar` | ページ内検索バーと件数 | `header-find-bar`、`keyboard-find-count`、`keyboard-find-no-match` | 修正済み、VM 再確認待ち | 入力欄の右端の表示枠に件数を左揃えで表示する。現在の検索の途中結果が届くとスピナーを表示し、0 件が確定すると赤い Not found を表示してシェブロンを無効にする。 |
+| `D-FindBarPage` | ページ上の検索バー | `header-find-bar`、`keyboard-find-count`、`keyboard-find-no-match` | 修正済み、VM 再確認待ち | ページの右上に、欄内の件数、シェブロン、0 件確定時の表示を備えた検索バーを出す。 |
 | `D-LittleWindow` | バー、Open in メニュー、プロファイルメニュー、コマンドバー | `little-window-bar`, `little-window-profile-menu`, `little-window-space-menu`, `little-window-command-bar` | 相違 | `little-window-bar` とプロファイル・スペースのメニューでは、アドレスが中央にあり、プロファイルメニューが小さく、スペースメニューが右寄せで余分な縦線がある（決定 89）。VM capture design-rowcontrast-1, `little-window-command-bar` では選択行のアクセント色を確認したが、モックのダークパネルに対しライトパネルである。 |
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 相違 | `private-window` のダーク外観、マスク、Private 表示は一致する（決定 86）。サイドバーには Today、Clear、Library、+ があり、New Tab と表示され、終了時の削除を説明する脚注がない。 |
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違 | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
-| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 相違 | VM capture design-rowcontrast-1, `errorpages-today-crash` と `errorpages-pin-crash` で、アクセント色の Reload と、行種別に対応する Archive Tab / Close Tab を確認した（決定 87）。クラッシュのアイコンは悲しい顔の代わりに点付きのウィンドウを使う。 |
-| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 相違 | VM capture design-rowcontrast-1, `commandbar-tab-switcher` でアクセント色の選択タイルを確認した。パネルはページ中央より左にあり、タイルにアイコンとタイトルを表示し、サムネイルとキーヒントがない（決定 85 は切替動作を規定）。 |
+| `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 修正済み、VM 再確認待ち | ページには悲しい顔のウィンドウを表示する。サイドバーの行には A-TabRows で指定された警告アイコンを使う（決定 16）。 |
+| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 相違（オーナー判断待ち。タイルの寸法とサムネイル） | 切り替え画面をウィンドウの中央に置き、現在のキー割り当てを表示する。タイルの寸法とサムネイルはオーナーの判断を待つ。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |

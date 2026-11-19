@@ -4,13 +4,20 @@ import AppKit
 public final class FindBarView: NSView, NSTextFieldDelegate {
     public let field = NSTextField()
     private let count = NSTextField(labelWithString: "")
-    private let previous = NSButton(title: "↑", target: nil, action: nil)
-    private let next = NSButton(title: "↓", target: nil, action: nil)
-    private let close = NSButton(title: "×", target: nil, action: nil)
+    private let spinner = NSProgressIndicator()
+    private let previous = NSButton()
+    private let next = NSButton()
+    private let close = NSButton()
     public var onAction: (String, String, NSRange, String, String) -> Void = { _, _, _, _, _ in }
+    var scheduleSpinnerStart: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    private var pendingSpinnerStart: (requestID: Int, work: DispatchWorkItem)?
+    private var spinningRequest: Int?
     private var updating = false
     private var live = ""
     private var profile = ""
+    private var editedAfterRequest = 0
     public private(set) var matches = 0
     public private(set) var ordinal = 0
     public private(set) var requestID = 0
@@ -20,37 +27,75 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     public override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         layer?.cornerRadius = 8
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
         field.placeholderString = "Find in page"
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
         field.setAccessibilityLabel("Find in page")
         count.identifier = NSUserInterfaceItemIdentifier("find-match-count")
+        count.font = .systemFont(ofSize: 12)
+        count.alignment = .left
+        count.lineBreakMode = .byTruncatingTail
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.isHidden = true
+        spinner.setAccessibilityLabel("Searching")
         field.delegate = self
-        previous.setAccessibilityLabel("Previous match")
-        next.setAccessibilityLabel("Next match")
-        close.setAccessibilityLabel("Close find")
-        for button in [previous, next, close] { button.target = self; button.isBordered = false }
+        for (button, symbol, label) in [(previous, "chevron.up", "Previous match"),
+                                        (next, "chevron.down", "Next match"), (close, "xmark", "Close find")] {
+            let configuration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?.withSymbolConfiguration(configuration)
+            button.imagePosition = .imageOnly
+            button.setAccessibilityLabel(label)
+            button.toolTip = label
+            button.target = self
+            button.isBordered = false
+        }
         previous.action = #selector(previousMatch)
         next.action = #selector(nextMatch)
         close.action = #selector(closeFind)
-        for view in [field, count, previous, next, close] as [NSView] { addSubview(view) }
+        for view in [field, count, spinner, previous, next, close] as [NSView] { addSubview(view) }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
     public override func layout() {
         super.layout()
-        field.frame = NSRect(x: 8, y: 6, width: max(0, bounds.width - 166), height: 24)
-        count.frame = NSRect(x: bounds.width - 153, y: 8, width: 64, height: 20)
-        previous.frame = NSRect(x: bounds.width - 88, y: 6, width: 25, height: 24)
-        next.frame = NSRect(x: bounds.width - 61, y: 6, width: 25, height: 24)
-        close.frame = NSRect(x: bounds.width - 34, y: 6, width: 25, height: 24)
+        let inset: CGFloat = bounds.width < 168 ? 4 : 8
+        let buttonWidth = min(25, max(0, (bounds.width - 2 * inset) / 5))
+        let controlsX = bounds.width - inset - (3 * buttonWidth + 4)
+        let countWidth = min(64, max(0, (controlsX - inset) / 2))
+        let countX = controlsX - countWidth - 2
+        let fieldHeight = field.intrinsicContentSize.height
+        let countHeight = count.intrinsicContentSize.height
+        field.frame = NSRect(x: inset, y: (bounds.height - fieldHeight) / 2,
+                             width: max(0, countX - inset - 4), height: fieldHeight)
+        count.frame = NSRect(x: countX, y: (bounds.height - countHeight) / 2, width: countWidth, height: countHeight)
+        let spinnerSize = min(14, countWidth)
+        spinner.frame = NSRect(x: countX, y: (bounds.height - spinnerSize) / 2, width: spinnerSize, height: spinnerSize)
+        for (index, button) in [previous, next, close].enumerated() {
+            button.frame = NSRect(x: controlsX + CGFloat(index) * (buttonWidth + 2), y: 6, width: buttonWidth, height: 24)
+        }
     }
 
     public func update(state: [String: Any]) {
-        live = state["live"] as? String ?? ""
-        profile = state["profile"] as? String ?? ""
+        let nextLive = state["live"] as? String ?? ""
+        let nextProfile = state["profile"] as? String ?? ""
+        if live != nextLive || profile != nextProfile { editedAfterRequest = 0 }
+        live = nextLive
+        profile = nextProfile
         isHidden = !(state["visible"] as? Bool ?? false)
         let marked = (field.currentEditor() as? NSTextView)?.hasMarkedText() == true
         if !marked, let text = state["text"] as? String, field.stringValue != text {
@@ -58,11 +103,14 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
             field.stringValue = text
             updating = false
         }
-        matches = state["matches"] as? Int ?? 0
-        ordinal = state["ordinal"] as? Int ?? 0
-        requestID = state["request_id"] as? Int ?? 0
-        finalUpdate = state["final_update"] as? Bool ?? false
-        count.stringValue = matches > 0 ? "\(max(0, ordinal)) of \(matches)" : "0 of 0"
+        let resultRequest = state["request_id"] as? Int ?? 0
+        if resultRequest == 0 || resultRequest > editedAfterRequest {
+            matches = state["matches"] as? Int ?? 0
+            ordinal = state["ordinal"] as? Int ?? 0
+            requestID = resultRequest
+            finalUpdate = state["final_update"] as? Bool ?? false
+        }
+        updateResultPresentation()
         if !isHidden && (state["focus"] as? Bool ?? false) {
             window?.makeFirstResponder(field)
             if !marked, let editor = field.currentEditor(), let start = state["start"] as? Int,
@@ -73,7 +121,44 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }
 
     public func controlTextDidChange(_ obj: Notification) {
-        if !updating { send("change") }
+        guard !updating else { return }
+        editedAfterRequest = max(editedAfterRequest, requestID)
+        matches = 0
+        ordinal = 0
+        finalUpdate = false
+        updateResultPresentation()
+        send("change")
+    }
+
+    private var searching: Bool {
+        !isHidden && !field.stringValue.isEmpty && requestID > editedAfterRequest && !finalUpdate
+    }
+
+    private func updateResultPresentation() {
+        let hasQuery = !field.stringValue.isEmpty
+        let notFound = hasQuery && matches == 0 && finalUpdate
+        count.stringValue = notFound ? "Not found" : (hasQuery && !searching && matches > 0 ? "\(max(0, ordinal)) of \(matches)" : "")
+        count.textColor = notFound ? .systemRed : .secondaryLabelColor
+        previous.isEnabled = !notFound
+        next.isEnabled = !notFound
+        if searching, pendingSpinnerStart?.requestID == requestID { return }
+        pendingSpinnerStart?.work.cancel()
+        pendingSpinnerStart = nil
+        if let spinningRequest, !searching || spinningRequest != requestID {
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+            self.spinningRequest = nil
+        }
+        guard searching, spinningRequest == nil else { return }
+        let start = DispatchWorkItem { [weak self, requestID] in
+            guard let self, self.requestID == requestID, self.searching else { return }
+            self.pendingSpinnerStart = nil
+            self.spinningRequest = requestID
+            self.spinner.isHidden = false
+            self.spinner.startAnimation(nil)
+        }
+        pendingSpinnerStart = (requestID, start)
+        scheduleSpinnerStart(0.25, start)
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {

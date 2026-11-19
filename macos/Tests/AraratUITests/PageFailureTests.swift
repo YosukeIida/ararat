@@ -7,6 +7,7 @@ import Testing
     let view = PageFailureView(frame: NSRect(x: 0, y: 0, width: 680, height: 380))
     func descendants(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
     let buttons = descendants(view).compactMap { $0 as? NSButton }
+    let imageView = try #require(descendants(view).compactMap { $0 as? NSImageView }.first)
     let reload = try #require(buttons.first)
     let close = try #require(buttons.last)
     func titleColor() -> NSColor? {
@@ -19,6 +20,9 @@ import Testing
     view.onReload = { reloaded = true }
     view.onClose = { closed = true }
     view.update(crashed: true, error: 0, host: "example.test", archive: true)
+    let sadWindow = try #require(imageView.image)
+    #expect(sadWindow.size == NSSize(width: 44, height: 44))
+    #expect(sadWindow.isTemplate)
     #expect(reload.title == "Reload")
     #expect(titleColor() == .white)
     view.accent = NSColor(srgbRed: 0.95, green: 0.9, blue: 0.85, alpha: 1)
@@ -34,6 +38,7 @@ import Testing
     view.update(crashed: true, error: 0, host: "example.test", archive: false)
     #expect(close.title == "Close Tab")
     view.update(crashed: false, error: -106, host: "example.test", archive: false)
+    #expect(imageView.image !== sadWindow)
     #expect(reload.title == "Try Again" && close.isHidden)
     #expect(titleColor() == .black)
     for (error, expected) in [(-105, "ERR_NAME_NOT_RESOLVED"), (-137, "ERR_NAME_RESOLUTION_FAILED")] {

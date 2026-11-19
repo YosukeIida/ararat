@@ -5,6 +5,32 @@ private final class FailurePrimaryButton: NSButton {
 }
 
 public final class PageFailureView: NSView {
+    private static let sadWindow: NSImage = {
+        let image = NSImage(size: NSSize(width: 44, height: 44), flipped: true) { _ in
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            let transform = NSAffineTransform()
+            transform.scale(by: 2.75)
+            transform.concat()
+            NSColor.black.set()
+            let outline = NSBezierPath(roundedRect: NSRect(x: 1.6, y: 3, width: 12.8, height: 10.4), xRadius: 2, yRadius: 2)
+            outline.move(to: NSPoint(x: 1.6, y: 6))
+            outline.line(to: NSPoint(x: 14.4, y: 6))
+            outline.move(to: NSPoint(x: 6, y: 11.4))
+            outline.curve(to: NSPoint(x: 10, y: 11.4), controlPoint1: NSPoint(x: 7.2, y: 10.4), controlPoint2: NSPoint(x: 8.8, y: 10.4))
+            outline.lineWidth = 1.1
+            outline.lineCapStyle = .round
+            outline.stroke()
+            let eyeRadius: CGFloat = 0.85
+            for x: CGFloat in [6, 10] {
+                NSBezierPath(ovalIn: NSRect(x: x - eyeRadius, y: 8.6 - eyeRadius, width: 2 * eyeRadius, height: 2 * eyeRadius)).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }()
+
     private let image = NSImageView()
     private let heading = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
@@ -121,7 +147,7 @@ public final class PageFailureView: NSView {
 
     public func update(crashed: Bool, error: Int, host: String, archive: Bool) {
         let host = host.isEmpty ? "this page" : host
-        image.image = NSImage(systemSymbolName: crashed ? "macwindow" : "wifi.slash", accessibilityDescription: nil)
+        image.image = crashed ? Self.sadWindow : NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
         heading.stringValue = crashed ? "This page crashed" : (error == -106 ? "You’re offline" : "This site can’t be reached")
         message.stringValue = crashed
             ? "Something went wrong while showing \(host). Reloading usually brings it back."

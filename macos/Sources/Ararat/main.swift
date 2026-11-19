@@ -2557,7 +2557,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     guard hasUsableHost, let host, let workspace else { return }
     commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, accent: spaceAccent) { [weak host] id in
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent) { [weak host] id in
       (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
     }
     tabSwitcher = switcher
@@ -4613,7 +4613,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       let c2OK = !c2 || (keyboardResults["c2_page_attachment"] as? Bool == true &&
         keyboardResults["c2_find_attachment"] as? Bool == true && keyboardResults["c2_find_resized_attachment"] as? Bool == true &&
         (!screen || (keyboardResults["c2_page_input_hit"] as? Bool == true && keyboardResults["c2_find_stacking_input"] as? Bool == true)))
-      let capturesOK = !screen || ["find-count", "no-tab", "archive-list", "archive-search", "archive-no-matches", "archive-empty"]
+      let capturesOK = !screen || ["find-count", "find-no-match", "no-tab", "archive-list", "archive-search", "archive-no-matches", "archive-empty"]
         .allSatisfy { keyboardResults["\($0)_screenshot"] != nil }
       let caseOK = requiredOK && modeOK && c2OK && capturesOK && stock == 0
       keyboardResults["hidden_window_safe"] = hiddenWindowSafe
@@ -5064,6 +5064,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 130:
       guard let find = container?.findBar, find.matches == 0, find.requestID > keyboardFindRequest, find.finalUpdate else { return }
       keyboardResults["find_zero"] = true
+      capture("find-no-match")
       keyboardFindRequest = find.requestID
       host.findAction("change", text: "ararat-find", selection: NSRange(location: 11, length: 0), liveId: tab.liveId, profile: host.profileDirectory())
       browserCheckPhase = 13
