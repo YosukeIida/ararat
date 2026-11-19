@@ -149,7 +149,7 @@ public final class KeyBindingsModel: ObservableObject {
         let candidate = KeyCombination(key: String(scalar), command: modifiers.contains(.command), control: modifiers.contains(.control), option: modifiers.contains(.option), shift: modifiers.contains(.shift))
         let coreHolder = bindings.first { $0.key == candidate && !$0.conflicting }
         let checkNonMenu = coreHolder == nil && candidate != binding(command: command)?.defaultKey
-        if let holder = menuShortcutHolder(in: mainMenu(), event: event, candidate: candidate, command: command)
+        if let holder = menuShortcutHolder(in: mainMenu(), event: event, candidate: candidate, command: command, coreHolder: coreHolder?.command)
             ?? (checkNonMenu ? nonMenuShortcutHolder(event) : nil) {
             errorCommand = command
             error = String(localized: "This shortcut is used by \(holder).")
@@ -170,14 +170,14 @@ public final class KeyBindingsModel: ObservableObject {
         return true
     }
 
-    private func menuShortcutHolder(in menu: NSMenu?, event: NSEvent, candidate: KeyCombination, command: String) -> String? {
+    private func menuShortcutHolder(in menu: NSMenu?, event: NSEvent, candidate: KeyCombination, command: String, coreHolder: String?) -> String? {
         guard let menu, let key = event.charactersIgnoringModifiers else { return nil }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let shifted = candidate.shift && key != candidate.key
         for item in menu.items {
             if item.tag == 0x4152434d { continue } // Ararat Commands
             if let submenu = item.submenu {
-                if let holder = menuShortcutHolder(in: submenu, event: event, candidate: candidate, command: command) { return holder }
+                if let holder = menuShortcutHolder(in: submenu, event: event, candidate: candidate, command: command, coreHolder: coreHolder) { return holder }
                 continue
             }
             if let id = item.identifier?.rawValue, binding(command: id) != nil { continue }
@@ -197,7 +197,7 @@ public final class KeyBindingsModel: ObservableObject {
             case 39001: alias = "edit_url" // IDC_FOCUS_LOCATION
             default: alias = nil
             }
-            if alias != command { return item.title }
+            guard let alias, alias == command || alias == coreHolder else { return item.title }
         }
         return nil
     }
