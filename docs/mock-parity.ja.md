@@ -105,7 +105,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `C-SiteControlsStates` | ポップオーバーの各状態の寸法 | `site-controls-popover`, `site-controls-overlay`, `site-controls-toast` | 未レビュー | 幅、パディング、間隔、ボタン寸法はトークンテストの対象である。 |
 | `C-SiteControlsStates` | 証明書シート | `site-controls-certificate` | 未レビュー | セキュリティ表示から開く（決定 5）。 |
 | `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違あり | VM 実行 mp2 では、余白があっても IP ホストが「127.0....」と切れた。ボタンはモックどおり。main にホスト名の修正が入ったため、再撮影後に外観を確認する。 |
-| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。main に先頭のフェードの修正が入ったため、再撮影後に外観を確認する。 |
+| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違あり | VM 実行 mp2 では、先頭のフェードに加え末尾も切れた（「…example.inva...」）。`cac6112` ではラベルにホスト名全体を収める幅を確保し、末尾が早く切れる問題を修正した。再撮影後に外観を確認する。 |
 | `CommandBar` | 概要のコマンドパネル | `commandbar-search`, `commandbar-recent` | 未レビュー | 通常のコマンドパネルについて、検索時と、入力欄が空で最近のタブを表示する状態を撮影する。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `commandbar-search` | 未レビュー | 検索結果の先頭行と、ループバックのテストページの閲覧履歴を撮影する。 |
 | `D-CommandBarPanels` | コマンドパネルの各状態 | `commandbar-search`, `commandbar-settings`, `commandbar-open-url`, `commandbar-recent`, `commandbar-edit-url` | 未レビュー | 通常のパネルは 5 状態を撮影する。Little Window のパネルには別の画像がある。 |
