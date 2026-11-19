@@ -82,6 +82,7 @@ source_set("entry") {
     "//chrome/browser/download/bubble",
     "//chrome/browser/download/bubble:impl",
     "//chrome/browser/extensions",
+    "//chrome/browser/favicon",
     "//chrome/browser/history",
     "//chrome/browser/content_settings:content_settings_factory",
     "//chrome/browser/ssl",

@@ -286,6 +286,15 @@ public final class SidebarView: NSView {
             dragCopyView?.updateFavicons(favicons)
         }
     }
+    public var onFaviconRowsChanged: (() -> Void)?
+
+    public func faviconRows(in spaceID: String) -> [Row] {
+        guard snapshotSpace?.id == spaceID else { return [] }
+        let list = rows.arrangedSubviews.compactMap { ($0 as? SidebarRowView)?.row }
+        return favoriteTiles.values.map(\.row) + list.flatMap { row in
+            row.kind == .split ? paneRows(of: row.id) : [row]
+        }
+    }
     public var onMute: ((String, Bool) -> Void)?
     public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
@@ -1732,6 +1741,7 @@ public final class SidebarView: NSView {
         }
         tooltip.capture(in: self)
         showPendingPinHint()
+        onFaviconRowsChanged?()
     }
 
     private func reloadFavorites() {

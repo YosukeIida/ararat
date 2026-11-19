@@ -187,6 +187,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)runCommand:(NSString*)command;
 - (nullable NSString*)currentSiteDomain;
 - (nullable NSString*)favoriteIconText:(NSString*)url;
+- (BOOL)faviconForPageURL:(NSString*)url
+        profileDirectory:(NSString*)directory
+               completion:(void (^)(NSImage* _Nullable))completion
+    NS_SWIFT_NAME(favicon(forPageURL:profileDirectory:completion:));
 - (double)checkZoomLevel;
 - (NSDictionary<NSString*, id>*)checkSiteClearResults;
 - (void)close;
