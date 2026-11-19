@@ -89,7 +89,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `B-Library` | Library のレールとアーカイブ一覧 | `keyboard-archive-list` | 相違あり。Clear Archive… は Ararat が [Phase 5](architecture.ja.md) で追加した操作である。Downloads は [Arc の Library レールの実測](research/arc-sidebar-layout.ja.md)に従って表示する。 | レールのタイルはラベルの上にアイコンを置き、ライト表示では選択中のタイルを白で塗る。フッターは dock の上に置く。Library を開いている間、dock のボタンは開いた時点のスペースの Look のアクセントで塗る。表示は Archive の撮影で確認する。 |
 | `B-LibraryStates` | アーカイブ一覧の状態 | `keyboard-archive-list`, `keyboard-archive-search`, `keyboard-archive-no-matches`, `keyboard-archive-empty` | 相違あり。Ararat が [Phase 5](architecture.ja.md) で追加した Clear Archive… を dock の上に置く。 | 一覧、URL での絞り込み、検索結果なし、空一覧の各撮影でフッターを確認する。ライトとダークの両方でレールの選択表示を確認する。 |
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `sidebar-rows-tab-menu`, `space-name-menu`, `split-commands-menu-open` | 未レビュー | Today のタブ、スペース名、左ペインのネイティブメニューを開いて撮影する。ほかの行種別とメニューの派生状態は別途撮影が必要である。 |
-| `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | 空のカードと既定の 2 つの案内をオフスクリーンテストで確認した。カードの表示は keyboard チェックの撮影で確認する。 |
+| `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | 空のカードと既定の 2 つの案内をオフスクリーンテストで確認した。VM の keyboard の撮影（merge/mockfix f9246dc、2026-11-19）で、カードと 2 つの案内の表示を確認した。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 未レビュー | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
 | `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 |
 | `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 未レビュー | 説明文は Swift が連続した仕切り線を描くとする。SplitDividerView はホバー中とドラッグ中にグリップを描画する。 |
