@@ -47,22 +47,27 @@ func windowAccentFollowsLookPreviewSpaceSwitchAndPrivateMode() throws {
     let drop = try #require(descendants(container).compactMap { $0 as? PaneDropIndicator }.first)
 
     func check(_ accent: NSColor) throws {
-        #expect(progress.ring.strokeColor == accent.cgColor)
+        let progressBackdrop = try #require(SidebarPanelView.backdrop(behind: progress, overlaidBy: progress.libraryFill.backgroundColor))
+        #expect(progress.ring.strokeColor == SpaceAccent.visible(accent, on: progressBackdrop).cgColor)
         for button in buttons {
             let ring = try #require(button.layer?.sublayers?.first { $0.borderWidth == 3 })
+            let fill = button === sidebar.urlField ? nil : sidebar.urlField.layer?.backgroundColor
+            let backdrop = try #require(SidebarPanelView.backdrop(behind: button, overlaidBy: fill))
             #expect(!ring.isHidden)
-            #expect(ring.borderColor == accent.withAlphaComponent(0.55).cgColor)
+            #expect(ring.borderColor == SpaceAccent.visible(accent.withAlphaComponent(0.55), on: backdrop).cgColor)
         }
         pull.update(excess: 100)
-        #expect(pull.circle.fillColor == accent.cgColor)
+        let pullBackdrop = try #require(SidebarPanelView.backdrop(behind: pull))
+        #expect(pull.circle.fillColor == SpaceAccent.visible(accent, on: pullBackdrop).cgColor)
         pull.update(excess: SidebarMetrics.spaceCreateThreshold)
-        #expect(pull.plus.strokeColor == accent.cgColor)
+        #expect(pull.plus.strokeColor == SpaceAccent.visible(accent, on: .white).cgColor)
         pull.update(excess: 0)
         let row = try #require(descendants(sidebar).compactMap { $0 as? SidebarRowView }.first)
         sidebar.unreadItems = [row.row.id]
         #expect(row.unreadDotVisible)
         let dot = try #require(row.subviews.first { $0.layer?.cornerRadius == SidebarMetrics.unreadDotSize / 2 })
-        #expect(dot.layer?.backgroundColor == accent.cgColor)
+        let dotBackdrop = try #require(SidebarPanelView.backdrop(behind: dot, overlaidBy: row.subviews.first?.layer?.backgroundColor))
+        #expect(dot.layer?.backgroundColor == SpaceAccent.visible(accent, on: dotBackdrop).cgColor)
         let dropLayer = try #require(drop.subviews.first?.layer)
         #expect(dropLayer.borderColor == accent.withAlphaComponent(0.9).cgColor)
         #expect(dropLayer.backgroundColor == accent.withAlphaComponent(0.08).cgColor)
@@ -154,4 +159,89 @@ private func expectPixel(of view: NSView, at point: (Int, Int), matches color: N
     #expect(abs(pixel.redComponent - color.redComponent) < 0.015)
     #expect(abs(pixel.greenComponent - color.greenComponent) < 0.015)
     #expect(abs(pixel.blueComponent - color.blueComponent) < 0.015)
+}
+
+@Test @MainActor
+func sidebarAccentPartsHaveThreeToOneContrastOnTheLook() throws {
+    _ = NSApplication.shared
+    let editorColor = LookEditorModel.defaultLook.colors[0]
+    let hue = NSColor(deviceRed: editorColor.red, green: editorColor.green, blue: editorColor.blue, alpha: 1).hueComponent
+    let first = space("contrast", look: nil)
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: first.id, selectedId: nil, spaces: [first]))
+    let container = SidebarContainerView(sidebar: sidebar, page: NSView())
+    let panel = try #require(sidebar.superview as? SidebarPanelView)
+    let row = try #require(descendants(sidebar).compactMap { $0 as? SidebarRowView }.first)
+    let dot = try #require(row.subviews.first { $0.layer?.cornerRadius == SidebarMetrics.unreadDotSize / 2 })
+    let pull = try #require(descendants(sidebar).compactMap { $0 as? SpacePullIndicator }.first)
+    let progress = sidebar.libraryButton
+    let buttons: [NSButton] = [sidebar.urlField, sidebar.urlFieldCopyButton, sidebar.urlFieldSiteControlsButton]
+    sidebar.unreadItems = [row.row.id]
+    progress.progress = .fraction(0.25)
+
+    for (name, mode, opacity) in [
+        ("editor-default-light", Appearance.light, 0.45),
+        ("editor-default-dark", .dark, 0.45),
+        ("opaque", .dark, 1.0),
+    ] {
+        let appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)!
+        container.appearance = appearance
+        panel.systemAppearance = { appearance }
+        sidebar.previewLook(spaceID: first.id, look: Look(colors: [editorColor], opacity: opacity, grain: 0, glass: false, appearance: mode))
+        pull.update(excess: 100)
+        let fieldFill = try #require(sidebar.urlField.checkFill)
+        let fieldBackdrop = panel.rowBackdrop(behind: sidebar.urlField)
+        var samples: [(String, CGColor?, NSColor)] = [
+            ("unread", dot.layer?.backgroundColor, panel.rowBackdrop(behind: dot)),
+            ("pull", pull.circle.fillColor, panel.rowBackdrop(behind: pull)),
+            ("downloads", progress.ring.strokeColor, panel.rowBackdrop(behind: progress)),
+        ]
+        for (index, button) in buttons.enumerated() {
+            let ring = try #require(button.layer?.sublayers?.first { $0.borderWidth == 3 })
+            let backdrop = index == 0 ? fieldBackdrop :
+                SidebarPanelView.mix(fieldFill, fieldFill, fraction: 0, base: panel.rowBackdrop(behind: button))
+            samples.append(("focus-\(index)", ring.borderColor, backdrop))
+        }
+
+        for (part, color, backdrop) in samples {
+            let foreground = try #require(color.flatMap(NSColor.init(cgColor:)))
+            let measured = contrast(foreground, over: backdrop)
+            let ratio = String(format: "%.3f", measured)
+            print("mockfix-d-2 \(name) \(part): \(ratio)")
+            #expect(measured >= 3, "\(name) \(part)")
+            let rgb = try #require(foreground.usingColorSpace(.sRGB))
+            let hsv = NSColor(deviceRed: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent, alpha: 1)
+            if hsv.saturationComponent == 0 {
+                #expect(hsv.brightnessComponent == 0 || hsv.brightnessComponent == 1)
+                #expect(rgb.alphaComponent == 1)
+            } else {
+                #expect(abs(hsv.hueComponent - hue) < 0.0001, "\(name) \(part)")
+            }
+        }
+        sidebar.updateSelection(id: row.row.id)
+        let selectedFill = try #require(row.subviews.first?.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+        let selectedBackdrop = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: panel.rowBackdrop(behind: dot))
+        let selectedDot = try #require(dot.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+        #expect(contrast(selectedDot, over: selectedBackdrop) >= 3)
+        sidebar.updateSelection(id: nil)
+        pull.update(excess: 0)
+    }
+}
+
+@Test @MainActor
+func sidebarAccentOnlyUsesOpaqueFallbackWhenItsAlphaCannotReachThreeToOne() {
+    let base = NSColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    #expect(SpaceAccent.visible(SpaceAccent.teal, on: .white) == SpaceAccent.teal)
+    #expect(SpaceAccent.visible(SpaceAccent.teal.withAlphaComponent(0.01), on: base) == .black)
+}
+
+@MainActor
+private func contrast(_ color: NSColor, over backdrop: NSColor) -> CGFloat {
+    func luminance(_ color: NSColor) -> CGFloat {
+        let rgb = color.usingColorSpace(.sRGB)!
+        func linear(_ value: CGFloat) -> CGFloat { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
+    }
+    let foreground = luminance(SidebarPanelView.mix(color, color, fraction: 0, base: backdrop))
+    let background = luminance(backdrop)
+    return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
 }

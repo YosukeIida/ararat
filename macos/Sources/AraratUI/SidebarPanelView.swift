@@ -168,7 +168,19 @@ final class SidebarPanelView: NSView {
         coating.isHidden = hasLook ? !active : unthemed.alphaComponent == 0
         CATransaction.commit()
         backdropBase = base
-        for case let sidebar as SidebarView in subviews { sidebar.refreshSelectedRowForegrounds() }
+        for case let sidebar as SidebarView in subviews {
+            sidebar.refreshRowColors()
+            sidebar.refreshAccentColors()
+        }
+    }
+
+    static func backdrop(behind view: NSView, overlaidBy fill: CGColor? = nil) -> NSColor? {
+        let panel = view.superview.flatMap {
+            sequence(first: $0, next: \.superview).first { $0 is SidebarPanelView } as? SidebarPanelView
+        }
+        guard let backdrop = panel?.rowBackdrop(behind: view) else { return nil }
+        guard let fill = fill.flatMap(NSColor.init(cgColor:)) else { return backdrop }
+        return mix(fill, fill, fraction: 0, base: backdrop)
     }
 
     func rowBackdrop(behind row: NSView) -> NSColor {

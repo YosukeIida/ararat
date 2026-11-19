@@ -96,7 +96,6 @@ public final class SidebarView: NSView {
     private var downloadsHoverFired = false
     var downloadsPopover: DownloadsPopover?
     public var checkLibraryButtonFrame: NSRect { convert(libraryButton.bounds, from: libraryButton) }
-    private let libraryFill = CALayer()
     private var refusedDockIndex: Int?
     var dockCursor: (Bool) -> Void = { refused in (refused ? NSCursor.operationNotAllowed : NSCursor.arrow).set() }
     public private(set) var libraryOpenFraction: CGFloat = 0
@@ -107,10 +106,21 @@ public final class SidebarView: NSView {
     var onLookChanged: ((Look?, Look?, Double) -> Void)?
     var onSpaceAccentChanged: ((NSColor) -> Void)?
     private(set) var spaceAccent = SpaceAccent.teal
-    func refreshSelectedRowForegrounds() {
-        for row in rowViews.values { row.refreshSelectedForeground() }
+    func refreshRowColors() {
+        for row in rowViews.values {
+            row.refreshSelectedForeground()
+            row.refreshUnreadAccent()
+        }
         dragCopyView?.refreshSelectedForeground()
-        for preview in scrollPreviews { preview.refreshSelectedRowForegrounds() }
+        for preview in scrollPreviews { preview.refreshRowColors() }
+    }
+
+    func refreshAccentColors() {
+        urlField.refreshFocusColor()
+        copyLinkButton.refreshFocusColor()
+        siteControlsButton.refreshFocusColor()
+        pullIndicator.refreshAccent()
+        libraryButton.refreshAccent()
     }
     var wheelMotionTrace = SpaceWheelMotionTrace.enabled ? SpaceWheelMotionTrace() : nil
     var wheelDrawnRow = CommandLine.arguments.contains("--ararat-screen=space-wheel-motion") ? SpaceWheelDrawnRow() : nil
@@ -1109,7 +1119,7 @@ public final class SidebarView: NSView {
         scroll.onRevealEnd = { [weak self] in self?.notifyAutoArchiveReady() }
         scroll.onBoundsChanged = { [weak self] in
             guard let self else { return }
-            self.refreshSelectedRowForegrounds()
+            self.refreshRowColors()
             self.refreshPointer()
             if self.drag?.active == true && !self.dragSettling { self.resolveDrag() }
         }
@@ -1246,8 +1256,6 @@ public final class SidebarView: NSView {
         libraryButton.imagePosition = .imageOnly
         libraryButton.isBordered = false
         libraryButton.wantsLayer = true
-        libraryFill.cornerRadius = 6
-        libraryButton.layer?.insertSublayer(libraryFill, at: 0)
         libraryButton.target = self
         libraryButton.action = #selector(libraryButtonClicked(_:))
         libraryButton.toolTip = "Library"
@@ -1365,7 +1373,7 @@ public final class SidebarView: NSView {
         super.layout()
         wheelDrawnRow?.frame = NSRect(x: 0, y: spaceColumn.bounds.midY, width: spaceColumn.bounds.width, height: 4)
         library.frame = bounds
-        libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
+        libraryButton.libraryFill.frame = CGRect(x: 0, y: (libraryButton.bounds.height - 24) / 2, width: libraryButton.bounds.width, height: 24)
         creation.frame = bounds
         pullIndicator.frame = bounds
         dock.layoutSubtreeIfNeeded()
@@ -2328,9 +2336,10 @@ public final class SidebarView: NSView {
         defer { CATransaction.commit() }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let look = libraryLookSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id } } ?? snapshotSpace
-            libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
+            libraryButton.libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)
                 .withAlphaComponent(SpaceDockButton.fillAlpha(fraction: fraction, appearance: effectiveAppearance)).cgColor
         }
+        libraryButton.refreshAccent()
     }
 
     private var pageView: NSView { libraryOpen ? library : createSpaceOpen ? creation : spaceColumn }

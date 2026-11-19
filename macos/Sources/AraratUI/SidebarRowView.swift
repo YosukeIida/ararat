@@ -234,7 +234,7 @@ final class SidebarRowView: NSView {
     // The unread dot (R7) is app state from the live strip, never stored in the row.
     var unread = false { didSet { updateStatus() } }
     var unreadDotVisible: Bool { !unreadDot.isHidden }
-    var accent = SpaceAccent.teal { didSet { unreadDot.layer?.backgroundColor = accent.cgColor } }
+    var accent = SpaceAccent.teal { didSet { refreshUnreadAccent() } }
     var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
     // D11: the row’s ⌘W caps are explicit (the app menu’s item is not the lookup’s action), and
     // they follow the close_tab binding; R2 shows them on the current tab only.
@@ -655,12 +655,14 @@ final class SidebarRowView: NSView {
         closeButton.isHidden = row.kind != .tab || (!dragCopy && (!acceptsKeyboardFocus || (!hovered && !shortcutPressed)))
         hintCloseTrailing.isActive = !closeButton.isHidden
         unreadDot.isHidden = !unread || !closeButton.isHidden
+        refreshUnreadAccent()
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
         refreshSelectedForeground()
+        refreshUnreadAccent()
         renameField?.frame = NSRect(x: title.frame.minX, y: bounds.midY - 11, width: max(1, bounds.width - title.frame.minX - 8), height: 22)
         // The fill's shadow follows its rounded fill, not the alpha of its drawing.
         applySelectedShadow()
@@ -736,16 +738,20 @@ final class SidebarRowView: NSView {
         applySelectedShadow()
         for case let segment as SplitSegmentButton in segments.arrangedSubviews { segment.applyFill() }
         refreshSelectedForeground()
+        refreshUnreadAccent()
+    }
+
+    func refreshUnreadAccent() {
+        guard !unreadDot.isHidden else { return }
+        let backdrop = SidebarPanelView.backdrop(behind: unreadDot, overlaidBy: fill.layer?.backgroundColor)
+        unreadDot.layer?.backgroundColor = (backdrop.map { SpaceAccent.visible(accent, on: $0) } ?? accent).cgColor
     }
 
     func refreshSelectedForeground() {
         let drawsSelection = dragSource || dragCopy || selected
         guard drawsSelection || !segmentRows.isEmpty else { return }
         let selectedFill = SidebarMetrics.rowSelectedFill(for: effectiveAppearance)
-        let panel = superview.flatMap {
-            sequence(first: $0, next: \.superview).first { $0 is SidebarPanelView } as? SidebarPanelView
-        }
-        let backdrop = panel?.rowBackdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
+        let backdrop = SidebarPanelView.backdrop(behind: self) ?? SidebarPanelView.defaultDarkBackground
         let composite = SidebarPanelView.mix(selectedFill, selectedFill, fraction: 0, base: backdrop)
         let foreground = SpaceAccent.foreground(on: composite)
         if drawsSelection {

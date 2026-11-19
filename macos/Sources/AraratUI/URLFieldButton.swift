@@ -87,6 +87,7 @@ public final class URLFieldBackgroundButton: NSButton {
         CATransaction.setDisableActions(true)
         focusLayer.frame = bounds.insetBy(dx: -3, dy: -3)
         CATransaction.commit()
+        refreshFocusColor()
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -99,8 +100,15 @@ public final class URLFieldBackgroundButton: NSButton {
         appearance.performAsCurrentDrawingAppearance {
             let alpha = Self.fillAlpha(pressed: isPressed, hovered: isHovered, appearance: appearance)
             layer?.backgroundColor = NSColor.white.withAlphaComponent(alpha).cgColor
-            focusLayer.borderColor = accent.withAlphaComponent(Self.focusRingAlpha).cgColor
         }
+        refreshFocusColor()
+        for case let button as URLFieldButton in subviews { button.refreshFocusColor() }
+    }
+
+    func refreshFocusColor() {
+        let color = accent.withAlphaComponent(Self.focusRingAlpha)
+        let backdrop = SidebarPanelView.backdrop(behind: self)
+        focusLayer.borderColor = (backdrop.map { SpaceAccent.visible(color, on: $0) } ?? color).cgColor
     }
 
     private func updateFocusRing() {
@@ -209,6 +217,7 @@ public class URLFieldButton: NSButton {
         CATransaction.setDisableActions(true)
         focusLayer.frame = bounds.insetBy(dx: -3, dy: -3)
         CATransaction.commit()
+        refreshFocusColor()
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -235,8 +244,14 @@ public class URLFieldButton: NSButton {
         let alpha: CGFloat = isPressed ? 0.14 : isHovered ? 0.07 : 0
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = alpha == 0 ? nil : NSColor.labelColor.withAlphaComponent(alpha).cgColor
-            focusLayer.borderColor = accent.withAlphaComponent(URLFieldBackgroundButton.focusRingAlpha).cgColor
         }
+        refreshFocusColor()
+    }
+
+    func refreshFocusColor() {
+        let color = accent.withAlphaComponent(URLFieldBackgroundButton.focusRingAlpha)
+        let backdrop = SidebarPanelView.backdrop(behind: self, overlaidBy: superview?.layer?.backgroundColor)
+        focusLayer.borderColor = (backdrop.map { SpaceAccent.visible(color, on: $0) } ?? color).cgColor
     }
 
     private func updateFocusRing() {
