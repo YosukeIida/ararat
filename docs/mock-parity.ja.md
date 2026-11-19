@@ -47,11 +47,11 @@ VM チェック欄はチェック名と対象の段階を示す。「一致」�
 
 | モックページ | 要素 | VM チェック | 状態 | 根拠または確認事項 |
 | --- | --- | --- | --- | --- |
-| `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 未撮影 | VM ではセルとドロップ拒否を確認する。 |
-| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 未撮影 | 表示中のスペースが変わると選択背景がクロスフェードする（決定 69）。 |
+| `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。 |
+| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 一致 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2。 |
 | `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize (first-favorite)` | 未撮影 | 最初のタイルを撮影する。ほかの状態には個別のフレームが必要である。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | — | 未撮影 | プレースホルダーを表示せず、領域をたたむ（決定 13）。 |
-| `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 未撮影 | 空行の高さ 24 pt と文字サイズ 12 pt はトークンテストで一致した。 |
+| `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
 | `A-Header` | 幅に応じたナビゲーションとツールチップ | `header (widths, tooltip, loading, stopped)` | 未撮影 | Reload は 200 pt、サイドバー切り替えは 232 pt で表示する（決定 7–10）。 |
 | `A-Header` | ショートカット押下中と狭い幅でのオーバーフロー | `header (command-r, command-r-narrow, command-w)` | 未撮影 | コントロールとキーキャップの押下時の表示を比較する（決定 9–10）。 |
 | `A-Header` | ヘッダーのオーバーフローメニュー | — | 未撮影 | 項目は header チェックで検査する。ネイティブメニューの外観は別途撮影する。 |
@@ -64,8 +64,8 @@ VM チェック欄はチェック名と対象の段階を示す。「一致」�
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows (loading, crashed)` | 未撮影 | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
 | `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows (unread, muted)` | 未撮影 | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
 | `A-TabRows` | 行のアーカイブと閉じるボタン | `header (command-w), sidebar-rows (rows)` | 未撮影 | 行の種類と読み込み状態に応じてアクションが変わる（決定 29、32）。 |
-| `A-TodayNewTab` | Today の区切り線、Clear、New Tab | `today (today, cleared, new-tab-row)` | 未撮影 | 区切り線と Clear の表示は Today の内容で決まる（決定 39）。 |
-| `A-TodayNewTab` | Clear 後の区切り線 | `today (cleared)` | 未撮影 | Today が空になった後に区切り線が消えることを構造検査で確認する。 |
+| `A-TodayNewTab` | Today の区切り線、Clear、New Tab | `today (today, cleared, new-tab-row)` | 一致 | 区切り線と Clear が Today の上にあり、New Tab が先頭にある。構造検査は PASS。VM の実行 mp2。 |
+| `A-TodayNewTab` | Clear 後の区切り線 | `today (cleared)` | 一致 | Today が空になると区切り線が消える。構造検査は PASS。VM の実行 mp2。 |
 | `A-TodayNewTab` | Appearance で New Tab を非表示 | — | 未撮影 | 設定は Today チェックで操作する。new-tab-row の PNG は再度表示した後の状態である。 |
 | `B-CreateSpace` | スペース作成フォーム | `space-name (create-page)` | 未撮影 | フォームはサイドバー内に表示する。 |
 | `B-CreateSpaceStates` | スペース作成の成功と失敗 | `create-space (created, failure)` | 未撮影 | 既存のチェックで成功と失敗を撮影する。 |
@@ -83,9 +83,9 @@ VM チェック欄はチェック名と対象の段階を示す。「一致」�
 | `B-Menus` | 行、スペース、分割のネイティブメニュー | `split-commands (menu)` | 未撮影 | VM チェックは分割メニューの項目とアイコンを検査する。サイドバーのメニューの外観は未確認である。 |
 | `B-NoTab` | 空のページカードとショートカット案内 | — | 未撮影 | サイドバーを表示した空のワークスペースの撮影が必要である。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock (mid)` | 未撮影 | ホイールによるページ切り替えのタイミングは別のチェックで記録する。 |
-| `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 未撮影 | ナビゲーションはサイドバーに置く（決定 65）。このページのサイドバー図では背面の塗りが行全体で一つになっている。 |
+| `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | 2 ペイン、フォーカス中のペインにアクセントのリング、ペインごとのバーは無い。サイドバーは 1 行にペインごとのセグメントを並べる（A-TabRows に従い、このページの一つの塗りには従わない）。VM の実行 mp2。 |
 | `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands (vertical, split), split-focus (frozen, release), dialogs (transfer)` | 未撮影 | 説明文は Swift が連続した仕切り線を描くとする。SplitDividerView はホバー中とドラッグ中にグリップを描画する。 |
-| `B-SplitStates` | 一つのサイドバー行に並ぶ 3 ペイン | `split-commands (vertical)` | 未撮影 | ページを縦に並べた状態でもサイドバーの三つのセグメントは横並びとする。 |
+| `B-SplitStates` | 一つのサイドバー行に並ぶ 3 ペイン | `split-commands (vertical)` | 一致 | 縦の split でもセグメントは三つ横に並ぶ。構造検査は PASS。VM の実行 mp2。 |
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header (tooltip, command-w)` | 未撮影 | 同じキーと配置でも AppKit と CSS の描画には差が出る。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag (sidebar)` | 未撮影 | ドラッグの画像はサイドバーを撮影する。非アクティブ時の色は別途撮影する。 |
 | `C-DialogHost` | ページカード上のダイアログ | `prompts, dialogs` | 未撮影 | ホストの PNG と別に出力されるダイアログの PNG を使う。 |
@@ -100,8 +100,8 @@ VM チェック欄はチェック名と対象の段階を示す。「一致」�
 | `C-SiteControls` | 縦長キャプチャ、翻訳、拡張機能グリッド、未実装の設定 | — | 未実装 | 対象の機能は §7 と §14 で実装を見送っている。 |
 | `C-SiteControlsStates` | ポップオーバーの各状態の寸法 | `site-controls (popover, overlay, toast)` | 未撮影 | 幅、パディング、間隔、ボタン寸法はトークンテストの対象である。 |
 | `C-SiteControlsStates` | 証明書シート | `site-controls (certificate)` | 未撮影 | セキュリティ表示から開く（決定 5）。 |
-| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 未撮影 | ページ選択時に二つのボタンが URL 欄の子であることを構造検査で確認する。 |
-| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 未撮影 | 二つの幅でホスト名の省略とボタンの表示を比較する。 |
+| `C-UrlField` | ホスト名、プレースホルダー、末尾のボタン | `urlfield (host, placeholder, internal, long-host)` | 相違 | IP のホストが、余白があるのに「127.0....」と切れる。後続の作業 urlip で直す。ボタンは常に出ており、図のとおりである。VM の実行 mp2。 |
+| `C-UrlField` | 長いホスト名と狭い URL 欄 | `urlfield (long-host, long-host-narrow)` | 相違 | 先頭は薄く消えるが末尾も切れ（「…example.inva...」）、登録ドメインが残らない。後続の作業 urlip で直す。VM の実行 mp2。 |
 | `CommandBar` | 概要のコマンドパネル | — | 未撮影 | commandbar モードは条件の結果を出力するが、PNG は出力しない。 |
 | `D-CommandBar` | 検索を先頭に出す入力欄と履歴 | `little-window (command-bar)` | 未撮影 | Little Window で撮影するのは Edit URL である。通常ウィンドウの検索パネルには別の撮影が必要である。 |
 | `D-CommandBarPanels` | コマンドパネルの各状態 | — | 未撮影 | commandbar チェックは複数のモードで結果を検査する。 |

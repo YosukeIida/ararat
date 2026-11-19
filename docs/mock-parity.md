@@ -44,11 +44,11 @@ The capture column lists the VM check name and any relevant phase names. `Matche
 
 | Mock page | Element | VM check | Status | Evidence or follow-up |
 | --- | --- | --- | --- | --- |
-| `A-BottomDock` | Library, add menu and space cells | `dock (cells)` | not captured | The VM fixture exercises the cells and the refusal state. |
-| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | not captured | The selected fill cross-fades when the visible space changes (decision 69). |
+| `A-BottomDock` | Library, add menu and space cells | `dock (cells)` | matches | Library and + sit in the dock; structure check library-dock PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | matches | Open space keeps its letter cell and the others become dots, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `A-FavouriteTiles` | Favicon tiles, loading, audio and unread marks | `organize (first-favorite)` | not captured | This frame covers the first tile. The remaining states need separate frames. |
 | `A-FavouriteTiles` | Empty favourites area | — | not captured | The area collapses without a placeholder (decision 13). |
-| `A-Folders` | Expanded folder, empty line and row retention | `folder-empty (line, drop)` | not captured | The token suite verifies the 24 pt empty line and 12 pt type. |
+| `A-Folders` | Expanded folder, empty line and row retention | `folder-empty (line, drop)` | matches | Empty folder shows the No tabs line; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `A-Header` | Width-dependent navigation and tooltips | `header (widths, tooltip, loading, stopped)` | not captured | The width thresholds are 200 pt for Reload and 232 pt for the sidebar toggle (decisions 7–10). |
 | `A-Header` | Shortcut held and overflow at narrow width | `header (command-r, command-r-narrow, command-w)` | not captured | These phases compare the pressed states of the control and keycaps (decisions 9–10). |
 | `A-Header` | Header overflow menu | — | not captured | Menu contents are checked by the header mode. Native menu appearance needs its own frame. |
@@ -61,8 +61,8 @@ The capture column lists the VM check name and any relevant phase names. `Matche
 | `A-TabRows` | Loading and crashed glyphs | `sidebar-rows (loading, crashed)` | not captured | Decision 15 puts the loading spinner in the favicon's place. |
 | `A-TabRows` | Unread and muted rows | `sidebar-rows (unread, muted)` | not captured | The dot follows title changes on hidden loaded tabs (decisions 19 and 24). |
 | `A-TabRows` | Row archive and close controls | `header (command-w), sidebar-rows (rows)` | not captured | The action depends on the kind and loading state of the row (decisions 29 and 32). |
-| `A-TodayNewTab` | Today divider, Clear and New Tab | `today (today, cleared, new-tab-row)` | not captured | The divider and Clear depend on Today contents (decision 39). |
-| `A-TodayNewTab` | Divider after Clear | `today (cleared)` | not captured | The checker requires the divider to be absent once Today is empty. |
+| `A-TodayNewTab` | Today divider, Clear and New Tab | `today (today, cleared, new-tab-row)` | matches | Divider with Clear above Today and New Tab first; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `A-TodayNewTab` | Divider after Clear | `today (cleared)` | matches | Divider absent once Today is empty; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `A-TodayNewTab` | New Tab hidden by Appearance | — | not captured | The setting is exercised by the Today check. Its new-tab-row PNG shows the row after it is enabled again. |
 | `B-CreateSpace` | Create a Space form | `space-name (create-page)` | not captured | The form appears as a sidebar page. |
 | `B-CreateSpaceStates` | Creation success and failure | `create-space (created, failure)` | not captured | The existing check captures the success and failure fixtures. |
@@ -80,9 +80,9 @@ The capture column lists the VM check name and any relevant phase names. `Matche
 | `B-Menus` | Native row, space and split menus | `split-commands (menu)` | not captured | The VM check asserts split menu items and icons. Sidebar menu appearance still needs review. |
 | `B-NoTab` | Empty page card and keyboard hints | — | not captured | Use an empty workspace capture with the sidebar visible. |
 | `B-SpacePaging` | Paging and dock cross-fade | `dock (mid)` | not captured | The wheel-motion check records timing separately. |
-| `B-Split` | Two panes, focus ring and shared chrome | `split-focus (a, b)` | not captured | Decision 65 puts navigation in the sidebar. The mock's sidebar drawing still uses one combined row fill. |
+| `B-Split` | Two panes, focus ring and shared chrome | `split-focus (a, b)` | matches | Two panes, accent ring on the focused pane, no per-pane bar, one sidebar row with a segment per pane (per A-TabRows, not this page's single fill). VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `B-SplitStates` | Multiple panes, divider, drag and transfer | `split-commands (vertical, split), split-focus (frozen, release), dialogs (transfer)` | not captured | The caption describes a continuous separator line in Swift. SplitDividerView only paints the grip on hover or drag. |
-| `B-SplitStates` | Three panes in a single sidebar row | `split-commands (vertical)` | not captured | The checker expects three side-by-side segments even when the pages stack vertically. |
+| `B-SplitStates` | Three panes in a single sidebar row | `split-commands (vertical)` | matches | Three segments side by side for a vertical split; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `B-Tooltips` | Button and row tooltips with keycaps | `header (tooltip, command-w)` | not captured | Native drawing can differ from the board's CSS even with the same keys and placement. |
 | `B-WindowStates` | Window chrome, minimum width and inactivity | `window-drag (sidebar)` | not captured | The drag image covers the sidebar. The inactive tint needs its own frame. |
 | `C-DialogHost` | Dialogs over the page card | `prompts, dialogs` | not captured | Use the separate dialog PNGs alongside the host screenshot. |
@@ -97,8 +97,8 @@ The capture column lists the VM check name and any relevant phase names. `Matche
 | `C-SiteControls` | Portrait capture, translate, extension grid and planned controls | — | not built | These controls are deferred in §7 and §14. |
 | `C-SiteControlsStates` | Popover state geometry | `site-controls (popover, overlay, toast)` | not captured | The suite verifies width, padding, gap and the button dimension tokens. |
 | `C-SiteControlsStates` | Certificate sheet | `site-controls (certificate)` | not captured | The security footer opens the sheet (decision 5). |
-| `C-UrlField` | Host text, placeholder and trailing buttons | `urlfield (host, placeholder, internal, long-host)` | not captured | The checker asserts both buttons are children of the URL field when a page is selected. |
-| `C-UrlField` | Long and narrow host label | `urlfield (long-host, long-host-narrow)` | not captured | Use both widths to compare clipping and button retention. |
+| `C-UrlField` | Host text, placeholder and trailing buttons | `urlfield (host, placeholder, internal, long-host)` | differs | An IP host shows as "127.0...." with room to spare; follow-up unit urlip. Buttons always shown, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
+| `C-UrlField` | Long and narrow host label | `urlfield (long-host, long-host-narrow)` | differs | The start fades but the end is also cut ("…example.inva..."), so the registrable domain does not stay; follow-up unit urlip. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
 | `CommandBar` | Overview command panel | — | not captured | The commandbar mode reports conditions and currently emits no PNG. |
 | `D-CommandBar` | Search-first entry and history | `little-window (command-bar)` | not captured | Little Window exercises Edit URL. The regular typed-search panel needs a separate capture. |
 | `D-CommandBarPanels` | Command panel variants | — | not captured | The commandbar check asserts results in multiple modes. |
