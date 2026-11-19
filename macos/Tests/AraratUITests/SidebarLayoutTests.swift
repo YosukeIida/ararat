@@ -215,7 +215,7 @@ func splitRowDrawsASegmentPerPane(appearance: NSAppearance.Name) throws {
     let inactiveAlpha: CGFloat = appearance == .aqua ? 0.06 : 0.08
     let alpha: (CGColor?) -> CGFloat = { colour in colour.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? -1 }
     let selectedFill = try #require(selectedRow.subviews[0].layer?.backgroundColor)
-    #expect(selectedFill.alpha == 1)
+    #expect(abs(selectedFill.alpha - (appearance == .aqua ? 1 : SidebarMetrics.rowSelectedFillAlphaDark)) < 0.001)
     #expect(segments[0].fill.fillColor == selectedFill)
     #expect(abs(alpha(segments[1].fill.fillColor) - inactiveAlpha) < 0.001)
     // The focus moves with the workspace's selection.

@@ -83,10 +83,12 @@ enum SidebarMetrics {
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? rowHoverFillAlphaDark : rowHoverFillAlphaLight
     }
     static let rowSelectedFillLight = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
-    static let rowSelectedFillDark = NSColor(srgbRed: 67.0 / 255, green: 63.0 / 255, blue: 75.0 / 255, alpha: 1)
+    // A-TabRows.dc.html:27 draws rgb(67,63,75) over rgb(22,15,31). White at this alpha reproduces the measured fill within one code value and preserves other dark Look hues.
+    static let rowSelectedFillAlphaDark: CGFloat = 0.195
 
     static func rowSelectedFill(for appearance: NSAppearance) -> NSColor {
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? rowSelectedFillDark : rowSelectedFillLight
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? rowSelectedFillLight.withAlphaComponent(rowSelectedFillAlphaDark) : rowSelectedFillLight
     }
     // The board's selected-row shadow (`--selsh: 0 1px 2px rgba(0,0,0,.08)`, and `none` in dark)
     // on the selected row's fill and on the focused segment of a split row: 1 pt down, 2 pt of

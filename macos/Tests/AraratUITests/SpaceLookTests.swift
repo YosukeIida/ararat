@@ -73,7 +73,7 @@ func autoLookUpdatesSidebarControlsAndSelectionOffscreen() throws {
             let red = try #require(resolved).redComponent
             #expect(expected == .darkAqua ? red > 0.5 : red < 0.5)
         }
-        let selected = expected == .darkAqua ? SidebarMetrics.rowSelectedFillDark : SidebarMetrics.rowSelectedFillLight
+        let selected = SidebarMetrics.rowSelectedFill(for: rowView.effectiveAppearance)
         #expect(fill.backgroundColor == selected.cgColor)
         #expect(dock.checkFill?.alphaComponent == (expected == .darkAqua ? 0.10 : 0.55))
     }

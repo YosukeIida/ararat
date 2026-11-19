@@ -51,7 +51,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | Mock page | Element | VM check | Status | Evidence or follow-up |
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library, add menu and space cells | `dock (cells)` | matches | Library and + sit in the dock; structure check library-dock PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
-| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | differs | The open cell uses the F boards’ owner-approved 55% light and 10% dark overlay and normal label colour. The A board shows 60% and 13% with an accent glyph. |
+| `A-BottomDock` | Current space cell and other space dots | `dock (cells, mid)` | differs | The open space keeps its letter cell and the others become dots, as drawn. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. The open cell uses the F boards’ owner-approved 55% light and 10% dark overlay and normal label colour. The A board shows 60% and 13% with an accent glyph. |
 | `A-FavouriteTiles` | Favicon tiles, loading, audio and unread marks | `organize-first-favorite` | not reviewed | This frame covers the first tile. The remaining states need separate frames. |
 | `A-FavouriteTiles` | Empty favourites area | `organize-empty-favorites` | not reviewed | The area collapses without a placeholder (decision 13). |
 | `A-Folders` | Expanded folder, empty line and row retention | `folder-empty (line, drop)` | matches | Empty folder shows the No tabs line; structure check PASS. VM run mp2 (646da87, 2026-11-19), sheets in design reports/design-mockparity-1/sheets. |
@@ -63,7 +63,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `A-TabRows` | Pinned and Today rows, spinner, unread, crash and audio | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | not reviewed | The hover and pressed PNGs show an unselected loaded pin. The selected PNG shows the adjacent Today row. |
 | `A-TabRows` | Split segment geometry and unfocused fill | `split-focus (a), split-commands (vertical, split)` | matches | The token suite and the offscreen row test verify the mapped geometry and both unfocused fills. |
 | `A-TabRows` | Multi-selection | — | not built | Multi-selection is deferred past Phase 5 (§7). |
-| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | matches | The opaque white and sRGB (67, 63, 75) fills and the light-only shadow match the component tokens. The Today row and the focused segment use the same fill. |
+| `A-TabRows` | Selected row and segment shadows | `sidebar-rows-selected`, `split-focus-a` | matches | The Today row and focused segment use the same fill. In light appearance, the opaque white card and shadow match the board. In dark appearance, the 19.5% white overlay matches the board’s sRGB (67, 63, 75) within one 8-bit code value per channel on the default backdrop and preserves other dark Looks’ hues. |
 | `A-TabRows` | Multiple selected rows | — | differs | The sidebar currently has one selected row. Each row marked selected uses the same fill rule. |
 | `A-TabRows` | Loading and crashed glyphs | `sidebar-rows-loading`, `sidebar-rows-crashed` | not reviewed | Decision 15 puts the loading spinner in the favicon's place. |
 | `A-TabRows` | Unread and muted rows | `sidebar-rows-unread`, `sidebar-rows-muted` | not reviewed | The dot follows title changes on hidden loaded tabs (decisions 19 and 24). |
@@ -120,7 +120,7 @@ The capture column lists the check and phase for reviewed entries and the exact 
 | `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | not reviewed | The commandbar check verifies switching and cancellation without a PNG. |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | not reviewed | The history failure uses a per-profile banner (decision 56). |
 | `D-Toasts` | Update ready with Restart | — | not built | The updater is planned for a later phase (§15). |
-| `Dark` | Dark browser overview | `fullscreen-dark-docked` | matches | The default dark backdrop and selected row use measured sRGB (22, 15, 31) and (67, 63, 75). Verify their composition in the docked capture. |
+| `Dark` | Dark browser overview | `fullscreen-dark-docked` | matches | The default backdrop uses measured sRGB (22, 15, 31). The selected row composites to within one 8-bit code value per channel of (67, 63, 75) on that backdrop. Verify their composition in the docked capture. |
 | `E-About` | About and update states | — | not built | The settings implementation has no About pane. |
 | `E-AirTraffic` | Routing rules and destination editor | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | not reviewed | The second frame shows the saved route before opening the Default destination menu. |
 | `E-Appearance` | Appearance controls | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | not reviewed | The pane implements Theme, Look, the New Tab row and Tooltips. Page zoom is pending. |

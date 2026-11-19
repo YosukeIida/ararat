@@ -76,7 +76,7 @@ final class MockParityTests: XCTestCase {
             "SidebarMetrics.rowIconInset": .number(SidebarMetrics.rowIconInset),
             "SidebarMetrics.rowPressedFillAlphaDark": .number(SidebarMetrics.rowPressedFillAlphaDark),
             "SidebarMetrics.rowPressedFillAlphaLight": .number(SidebarMetrics.rowPressedFillAlphaLight),
-            "SidebarMetrics.rowSelectedFillDark": .color(SidebarMetrics.rowSelectedFillDark),
+            "SidebarMetrics.rowSelectedFillAlphaDark": .number(SidebarMetrics.rowSelectedFillAlphaDark),
             "SidebarMetrics.rowSelectedFillLight": .color(SidebarMetrics.rowSelectedFillLight),
             "SidebarMetrics.rowSelectedShadowAlpha": .number(SidebarMetrics.rowSelectedShadowAlpha),
             "SidebarMetrics.rowSelectedShadowAlphaDark": .number(SidebarMetrics.rowSelectedShadowAlphaDark),

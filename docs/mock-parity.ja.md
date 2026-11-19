@@ -52,7 +52,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | モックページ | 要素 | VM チェック | 状態 | 根拠または確認事項 |
 | --- | --- | --- | --- | --- |
 | `A-BottomDock` | Library、追加メニュー、スペースセル | `dock (cells)` | 一致 | Library と + は dock にある。構造検査 library-dock は PASS。VM の実行 mp2（646da87、2026-11-19）。 |
-| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違 | 開いているセルは、オーナーが承認した F ボードの白いオーバーレイ（ライト 55%、ダーク 10%）と通常のラベル色を使う。A ボードは 60% と 13% のオーバーレイとアクセント色のグリフを描く。 |
+| `A-BottomDock` | 現在のスペースセルと他スペースのドット | `dock (cells, mid)` | 相違 | 開いているスペースは文字のセルを保ち、他はドットになる。図のとおりである。VM の実行 mp2（646da87、2026-11-19）。比較画像は Design の reports/design-mockparity-1/sheets にある。開いているセルは、オーナーが承認した F ボードの白いオーバーレイ（ライト 55%、ダーク 10%）と通常のラベル色を使う。A ボードは 60% と 13% のオーバーレイとアクセント色のグリフを描く。 |
 | `A-FavouriteTiles` | ファビコンタイル、読み込み、音声、未読マーク | `organize-first-favorite` | 未レビュー | 最初のタイルを撮影する。ほかの状態には個別のフレームが必要である。 |
 | `A-FavouriteTiles` | お気に入りが空のときの領域 | `organize-empty-favorites` | 未レビュー | プレースホルダーを表示せず、領域をたたむ（決定 13）。 |
 | `A-Folders` | 展開したフォルダ、空行、現在の行の保持 | `folder-empty (line, drop)` | 一致 | 空のフォルダに No tabs の行が出る。構造検査は PASS。VM の実行 mp2。 |
@@ -64,7 +64,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `A-TabRows` | ピンと Today の行、スピナー、未読、クラッシュ、音声 | `sidebar-rows-selected`, `sidebar-rows-hover`, `sidebar-rows-pressed`, `sidebar-rows-rows`, `sidebar-rows-loading`, `sidebar-rows-unread`, `sidebar-rows-crashed`, `sidebar-rows-muted` | 未レビュー | ホバーと押下の画像では、選択されていない読み込み済みのピンを対象とする。選択時の画像では、隣の Today の行を対象とする。 |
 | `A-TabRows` | 分割セグメントの寸法と非フォーカス時の背景 | `split-focus (a), split-commands (vertical, split)` | 一致 | 対応表に載せた寸法と両外観の非フォーカス時の背景は、トークンテストとオフスクリーンテストで一致した。 |
 | `A-TabRows` | 複数選択 | — | 未実装 | 複数選択はフェーズ 5 より後に実装する（§7）。 |
-| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | 不透明な白と sRGB (67, 63, 75) の背景、およびライトだけに描く影はボードのトークンと一致する。Today の選択行と分割行のフォーカス中のセグメントは同じ色で描く。 |
+| `A-TabRows` | 選択行と選択セグメントの影 | `sidebar-rows-selected`, `split-focus-a` | 一致 | Today の選択行と分割行のフォーカス中のセグメントは同じ塗りを使う。ライトでは不透明な白と影がボードと一致する。ダークでは白を不透明度 19.5% で重ねる。既定の背景上ではボードの sRGB (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致し、他のダーク Look では背景の色相が残る。 |
 | `A-TabRows` | 複数行の選択 | — | 相違 | 現在のサイドバーでは選択行は 1 行。選択状態の描画には全行で共通の規則を使う。 |
 | `A-TabRows` | 読み込み中とクラッシュのアイコン | `sidebar-rows-loading`, `sidebar-rows-crashed` | 未レビュー | 読み込み中はファビコンの位置にスピナーを表示する（決定 15）。 |
 | `A-TabRows` | 未読の行とミュートした行 | `sidebar-rows-unread`, `sidebar-rows-muted` | 未レビュー | 未読ドットは、読み込み済みで非表示のタブのタイトル変更を契機に付く（決定 19、24）。 |
@@ -121,7 +121,7 @@ VM チェック欄には、レビュー済みの行ではチェック名と撮�
 | `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 未レビュー | commandbar チェックは切り替えと取り消しを検査する。PNG は出力しない。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 未レビュー | 履歴削除の失敗時はプロファイル内のウィンドウにバナーを表示する（決定 56）。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は後のフェーズで実装する（§15）。 |
-| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 一致 | ダークの既定背景と選択行は実測値 sRGB (22, 15, 31) と (67, 63, 75) を使う。画面上の合成結果は固定サイドバーの再撮影で確認する。 |
+| `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 一致 | ダークの既定背景は実測値 sRGB (22, 15, 31) を使う。その上で描く選択行は (67, 63, 75) に 8 ビットの各チャンネルで 1 階調以内に一致する。画面上の合成結果は固定サイドバーの再撮影で確認する。 |
 | `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 未レビュー | 2 枚目はルートを保存した後、Default destination のメニューを開く直前の画像である。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 未レビュー | Theme、Look、New Tab の行のスイッチ、Tooltips を実装している。Page zoom は未実装である。 |
