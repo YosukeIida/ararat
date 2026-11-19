@@ -147,6 +147,36 @@ func theImportWritesTheStoreAtTheGivenPath() throws {
     #expect(snapshot.spaces.map(\.profileName) == ["University", "Default", "Default"])
 }
 
+/// The done screen's report lines stay inside the card: a long folder-state line wraps onto a
+/// second line instead of running past the card's edge (F-Onboarding).
+@Test @MainActor
+func theCompletionReportsLinesWrapInsideTheCard() throws {
+    let (model, directory) = try onboardingTestModel()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    runImport(model)
+    let controller = OnboardingWindowController(model: model)
+    controller.checkRender()
+    let probe = try #require(controller.checkProbe())
+    probe.render()
+    probe.layout()
+    #expect(!model.lines.isEmpty)
+    for line in model.lines {
+        let rowID = "onboarding-line-\(line.id)"
+        let row = try #require(probe.frame(rowID))
+        let title = try #require(probe.titleFrame(of: rowID))
+        #expect(abs(title.width - (row.width - 32)) <= 1)
+        #expect(title.maxX <= row.maxX - 15, "the line stops inside the card: \(title) in \(row)")
+        #expect(abs(title.minX - (row.minX + 16)) <= 1)
+    }
+    let longest = try #require(model.lines.max { $0.text.count < $1.text.count })
+    let rowID = "onboarding-line-\(longest.id)"
+    let row = try #require(probe.frame(rowID))
+    let title = try #require(probe.titleFrame(of: rowID))
+    let singleLine = (longest.text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width
+    #expect(singleLine > title.width, "the longest report line wraps at the card's width")
+    #expect(title.height >= 30 && title.height <= row.height - 8, "the row gives the second line room")
+}
+
 /// The done screen's rows each have a producer: the showcase fixture produces exactly four, the
 /// sign-in line (O5) and the unread-look line (no unknown look here) are dropped.
 @Test @MainActor

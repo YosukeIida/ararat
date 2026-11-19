@@ -146,6 +146,9 @@ public final class OnboardingCheckProbe {
     public var buttons: [String] { content.markers(prefix: "onboarding-").filter { content.button($0.id) != nil }.map(\.id) }
 
     public func frame(_ id: String) -> NSRect? { content.markerFrame(id) }
+    /// The title field inside a row marker, in the content's coordinates: the completion report's
+    /// check reads it to see the wrapped line stay inside the card.
+    public func titleFrame(of rowID: String) -> NSRect? { content.titleFrame(rowID: rowID) }
     public func layout() { content.layoutSubtreeIfNeeded() }
     public func render() { controller.checkRender() }
 
@@ -259,7 +262,7 @@ final class OnboardingContentView: NSView {
                 heading.frame = NSRect(x: OnboardingMetrics.margin + 12, y: y, width: contentWidth - 12, height: 16)
                 addSubview(heading)
                 y += 20
-                addSubview(card(rows: model.lines.map { lineRow($0) }, x: OnboardingMetrics.margin, y: y, width: contentWidth, rowHeight: 28))
+                addSubview(card(rows: model.lines.map { lineRow($0) }, x: OnboardingMetrics.margin, y: y, width: contentWidth, rowHeight: 44))
             }
         case .siblingFile(let message):
             title("One file could not be read", width: width, y: &y)
@@ -488,6 +491,12 @@ final class OnboardingContentView: NSView {
         return view.convert(view.bounds, to: self)
     }
 
+    func titleFrame(rowID: String) -> NSRect? {
+        guard let row = descendants(of: self).first(where: { $0.identifier?.rawValue == rowID }),
+              let field = row.subviews.compactMap({ $0 as? NSTextField }).first else { return nil }
+        return field.convert(field.bounds, to: self)
+    }
+
     func dotIsFilled(_ id: String) -> Bool { dotFilled.contains(id) }
 
     private func descendants(of view: NSView) -> [NSView] {
@@ -496,36 +505,53 @@ final class OnboardingContentView: NSView {
 }
 
 /// A 40 pt list row: title, optional 11 pt subtitle, the board's 16 pt inset. Flipped, so the
-/// title sits above the subtitle and a card's rows run top-down in the order it is given.
+/// title sits above the subtitle and a card's rows run top-down in the order it is given. A row
+/// that wraps (the completion report's lines) takes the row's whole width, two lines tall, so a
+/// long line breaks inside the card instead of running past its edge.
 @MainActor
 final class OnboardingRowView: NSView {
     override var isFlipped: Bool { true }
+    private let titleField: NSTextField
+    private let subtitleField: NSTextField?
+    private let wraps: Bool
 
     init(id: String, title: String, subtitle: String, dimmed: Bool, wraps: Bool = false) {
+        self.wraps = wraps
+        titleField = NSTextField(wrappingLabelWithString: title)
+        subtitleField = subtitle.isEmpty ? nil : NSTextField(wrappingLabelWithString: subtitle)
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(id)
         alphaValue = dimmed ? 0.45 : 1
-        let titleField = NSTextField(wrappingLabelWithString: title)
         titleField.font = .systemFont(ofSize: 13, weight: .semibold)
         titleField.textColor = OnboardingColor.foreground
         titleField.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
         titleField.maximumNumberOfLines = wraps ? 2 : 1
-        titleField.frame = NSRect(x: 16, y: subtitle.isEmpty ? 12 : 4, width: 232, height: 17)
-        titleField.autoresizingMask = [.width]
         addSubview(titleField)
-        if !subtitle.isEmpty {
-            let subtitleField = NSTextField(wrappingLabelWithString: subtitle)
+        if let subtitleField {
             subtitleField.font = .systemFont(ofSize: 11)
             subtitleField.textColor = OnboardingColor.secondary
             subtitleField.maximumNumberOfLines = 1
-            subtitleField.frame = NSRect(x: 16, y: 21, width: 232, height: 14)
-            subtitleField.autoresizingMask = [.width]
             addSubview(subtitleField)
         }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layout() {
+        super.layout()
+        // The fields take the row's width less the board's 16 pt inset, so their frames never
+        // depend on the order the card sets the row's frame in.
+        let width = max(0, bounds.width - 32)
+        if wraps {
+            titleField.frame = NSRect(x: 16, y: 5, width: width, height: 34)
+        } else if subtitleField == nil {
+            titleField.frame = NSRect(x: 16, y: 12, width: width, height: 17)
+        } else {
+            titleField.frame = NSRect(x: 16, y: 4, width: width, height: 17)
+            subtitleField?.frame = NSRect(x: 16, y: 21, width: width, height: 14)
+        }
+    }
 }
 
 /// A top-down container for the cards and the error/warning box.

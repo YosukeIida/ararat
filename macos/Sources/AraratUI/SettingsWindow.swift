@@ -390,6 +390,22 @@ enum SettingsColor {
     static let foreground = grey(35, 235)
     /// The hairline between a grouped card's rows (`--sep` on the boards).
     static let separator = grey(235, 57)
+    /// The keycap and space-icon-tile grey (`--kc` on the boards).
+    static let keycap = grey(231, 68)
+    /// A destructive button's label: the system red the boards draw Delete Space and Clear… in.
+    static let destructive = Color(nsColor: .systemRed)
+}
+
+/// The Spaces list's icon letter on the board's 24 pt tile (`.gl`): the keycap grey in a rounded
+/// square, the letter 13 pt semibold, so short and long names keep one column.
+struct SettingsSpaceIconTile: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .frame(width: 24, height: 24)
+            .background(RoundedRectangle(cornerRadius: 7).fill(SettingsColor.keycap))
+    }
 }
 
 private struct SettingsRail: View {
@@ -479,7 +495,8 @@ private struct SettingsDetail: View {
                                 Text("24 hours").tag(ArchiveAfter.hours24)
                                 Text("7 days").tag(ArchiveAfter.days7)
                                 Text("30 days").tag(ArchiveAfter.days30)
-                            }.labelsHidden()
+                            }.labelsHidden().fixedSize()
+                                .background(SettingsMarker(id: SettingsModel.archiveMenuMarker))
                         }
                     case .shortcuts:
                         SettingsShortcutsSection(model: model, keyBindings: model.keyBindings)
@@ -504,13 +521,18 @@ private struct SettingsDetail: View {
                                     Button { model.navigate(.space(space.id)) } label: {
                                         HStack {
                                             Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                                            Text(space.icon ?? String(space.title.prefix(1))).frame(width: 24)
-                                            Text(space.title)
-                                            Spacer()
+                                            SettingsSpaceIconTile(text: space.icon ?? String(space.title.prefix(1)))
+                                                .background(SettingsMarker(id: SettingsModel.spaceIconMarker(space.id)))
+                                            Text(space.title).lineLimit(1)
+                                            Spacer(minLength: 12)
                                             Text(model.tabCountLabel(space)).foregroundStyle(.secondary)
-                                            if let keys = model.spaceKeys[index] { SettingsKeycaps(keys: keys) }
+                                                .frame(width: SettingsMetrics.spaceCountColumn, alignment: .trailing)
+                                                .background(SettingsMarker(id: SettingsModel.spaceCountMarker(space.id)))
+                                            SettingsKeycaps(keys: model.spaceKeys[index] ?? [], id: SettingsModel.spaceKeysMarker(space.id))
+                                                .frame(width: SettingsMetrics.spaceKeysColumn, alignment: .trailing)
                                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                        }.padding(.horizontal, 12).frame(height: 44).contentShape(Rectangle())
+                                        }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                            .contentShape(Rectangle())
                                     }.buttonStyle(.plain)
                                         .background { if model.highlighted == space.id { SettingsHitFill() } }
                                         .background(SettingsMarker(id: SettingsModel.rowMarker("space-\(space.id)")))
@@ -624,7 +646,10 @@ private struct SettingsDetail: View {
             }
             card("profile", title: "Profile", subtitle: "Read-only · This space") { Text(space.profileName).foregroundStyle(.secondary) }
             card("delete", title: "Delete Space", subtitle: model.snapshot.spaces.count == 1 ? "The last space cannot be deleted." : "Move pinned and Today tabs to the Archive.") {
-                Button("Delete Space", role: .destructive) { model.requestDelete(space.id) }.disabled(model.snapshot.spaces.count == 1)
+                Button("Delete Space", role: .destructive) { model.requestDelete(space.id) }
+                    .foregroundStyle(SettingsColor.destructive)
+                    .background(SettingsMarker(id: SettingsModel.spaceDeleteButtonMarker))
+                    .disabled(model.snapshot.spaces.count == 1)
             }
         }
     }

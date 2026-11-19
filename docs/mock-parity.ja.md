@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、未解決の相違 48 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 43 件、修正済み（VM 再確認待ち）4 件、未解決の相違 44 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -140,11 +140,11 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |
 | `E-Shortcuts` | ショートカット一覧、入力、競合の表示 | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder`, `settings-shortcuts-shortcuts-conflict`, `settings-shortcuts-shortcuts-refusal` | 一致 | `settings-shortcuts-*` でキーまたは None、入力欄、競合表示、システムによる拒否表示を確認した。検索欄と次・前のペインへ移動する行（決定 103）は画面外である。 |
-| `E-SpacePage` | スペース個別の設定 | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | 相違 | `settings-spaces-space-page`、`dock-space-settings`、`settings-appearance-look-space-page` の見出し、ページ切替、各行は一致する。Delete Space は黒文字で、モックは赤文字である。 |
-| `E-Spaces` | スペース一覧とスクロール方向 | `settings-spaces-spaces` | 相違 | `settings-spaces-spaces` ではタブ数とキーが名前の隣にあり、アイコンの文字にタイルがない。ドラッグハンドル、シェブロン、Natural / Reversed は一致する（決定 95）。 |
+| `E-SpacePage` | スペース個別の設定 | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | 修正済み・VM 再確認待ち | `settings-spaces-space-page`、`dock-space-settings`、`settings-appearance-look-space-page` の見出し、ページ切替、各行は一致する。Delete Space はモックと同じシステムの赤で描き、オフスクリーンのテストが描画後の画素を読む。 |
+| `E-Spaces` | スペース一覧とスクロール方向 | `settings-spaces-spaces` | 修正済み・VM 再確認待ち | `settings-spaces-spaces` ではタブ数と ⌃N を固定幅の右側列に置いて一覧で縦に揃え、アイコンの文字をモックの 24 pt タイルに載せる。どちらもオフスクリーンのテストで確認する。ドラッグハンドル、シェブロン、Natural / Reversed は一致する（決定 95）。 |
 | `E-Sync` | 同期設定とデバイス | — | 未実装 | 同期はフェーズ 8 で実装予定である（決定 100）。 |
-| `E-Tabs` | タブ設定とスペースへの移動 | `settings-tabs-settings-tabs`, `settings-spaces-space-page` | 相違 | `settings-tabs-settings-tabs` に 2 行ともある。Archive Today’s tabs after のポップアップは約 310 pt 幅に広がり、モックでは右寄せの小さいコントロールである。 |
-| `E-Websites` | 既定とサイト別の権限 | `settings-websites-websites`, `settings-websites-site-row`, `settings-websites-site-page` | 相違 | `settings-websites-websites` の既定値の一覧は一致する。`settings-websites-site-page` は上書きした Camera のみを表示し、Clear… は通常色である。モックは全権限を並べ、Clear… を赤にする（決定 94）。 |
+| `E-Tabs` | タブ設定とスペースへの移動 | `settings-tabs-settings-tabs`, `settings-spaces-space-page` | 修正済み・VM 再確認待ち | `settings-tabs-settings-tabs` に 2 行ともある。Archive Today’s tabs after のポップアップは内容に合わせた幅（モックでは 110 pt）で、行の右端に他の右寄せコントロールと同じく揃う。幅と位置はオフスクリーンのテストで確認する。 |
+| `E-Websites` | 既定とサイト別の権限 | `settings-websites-websites`, `settings-websites-site-row`, `settings-websites-site-page` | 相違 | `settings-websites-websites` の既定値の一覧は一致する。`settings-websites-site-page` は上書きした Camera のみを表示する（モックは全権限を並べる。決定 94）。Clear… はモックと同じシステムの赤になり、オフスクリーンのテストが描画後の画素を読む。 |
 | `Extensions` | ピン留めした拡張機能の概要 | `ext-actions-action`, `ext-actions-overflow` | 一致 | `ext-actions-action` では固定アクションが URL 欄にあり、ヘッダーにはない（決定 42）。概要図のアクションメニューと権限プロンプトは撮影待ちである。 |
 | `F-Import` | インポート対象の選択、進捗、完了 | `onboarding (what-to-import, progress, done)` | 相違 | フィクスチャを使うフローでは、ログイン状態、パスワード、履歴、アーカイブの行を省いている（§7）。 |
 | `F-Import` | ログイン状態の引き継ぎとキーチェーン権限 | — | 未実装 | キーチェーンを使うフローにはインポートの調査が必要である（決定 105–106）。 |
@@ -153,11 +153,11 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `F-LookPopover` | Look ポップオーバーと色の入力欄 | `look-55-popover`, `look-glass-popover` | 相違 | `look-55-popover` と `look-glass-popover` で決定 109、113 の操作部と色選択欄を確認した。アプリの幅は約 272 pt、モックのソースは 380 × 564 pt を指定し、描画には未展開のテンプレートが残る。 |
 | `F-LookSidebar` | 設定値ごとのスペース色とサイドバー | `look-55-sidebar`, `look-detent-sidebar`, `look-glass-sidebar` | 一致 | `look-55-sidebar`、`look-detent-sidebar`、`look-glass-sidebar` で透明度に応じた着色と、スペース名を起点とするポップオーバーを確認した。着色の強さの厳密な一致は確認待ちである（決定 111）。 |
 | `F-LookStates` | カラーピッカー、プリセット、粒状感の各状態 | `look-55-popover`, `look-grain0-sidebar`, `look-grain5-sidebar`, `look-grain50-sidebar`, `look-grain100-sidebar` | 一致 | VM capture design-rowcontrast-1, `look-grain0-sidebar`、`look-grain5-sidebar`、`look-grain50-sidebar`、`look-grain100-sidebar` で、細かい粒状ノイズと紺の Look 上での Auto の明るい文字を確認した（決定 112、114）。ダーク外観で最も明るい不透明色とグラデーションの Look は VM で再確認待ちで、ユニットテストでは確認済みである。 |
-| `F-Onboarding` | ようこそ、ソース、対象選択、既定ブラウザ、進捗、完了、二つのエラー | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | 相違 | `onboarding-*` で決定 106 の流れとボタンを確認した。インポート項目に不足があり、完了報告の一部が切れる。キーチェーンの手順 3a は撮影待ちである。 |
+| `F-Onboarding` | ようこそ、ソース、対象選択、既定ブラウザ、進捗、完了、二つのエラー | `onboarding-welcome`, `onboarding-source`, `onboarding-what-to-import`, `onboarding-default-browser`, `onboarding-progress`, `onboarding-done`, `onboarding-error`, `onboarding-sibling-file` | 相違 | `onboarding-*` で決定 106 の流れとボタンを確認した。インポート項目に不足がある。完了報告の切れは修正済み（当該行を参照）。キーチェーンの手順 3a は撮影待ちである。 |
 | `F-Onboarding` | ようこそとインポート元の検出 | `onboarding-welcome`, `onboarding-source` | 一致 | `onboarding-welcome` と `onboarding-source` で見出し、ボタン、ページドット、検索結果を確認した（決定 106）。Arc の行にはモックのラジオマークがない。 |
 | `F-Onboarding` | インポート対象と既定ブラウザの設定 | `onboarding-what-to-import`, `onboarding-default-browser` | 相違 | `onboarding-what-to-import` にはチェックボックス、未選択の Travel 2025、Archive、Sign-in state、Passwords、History がない（決定 106）。`onboarding-default-browser` は一致する。 |
 | `F-Onboarding` | キーチェーンのアクセス要求 | — | 未実装 | 3a はログイン状態を引き継げるか確認した後に実装する（決定 106）。 |
-| `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 相違 | `onboarding-progress` は一致する。`onboarding-done` ではフォルダーの状態に関する報告行がカードの端で切れ、モックではカード内で折り返す。 |
+| `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 修正済み・VM 再確認待ち | `onboarding-progress` は一致する。`onboarding-done` では報告行を 2 行分の高さの行でカード内に折り返し、モックと同じくカードの端を越えない。最も長いフォルダー状態の行の幅と高さをオフスクリーンのテストで確認する。 |
 | `F-Onboarding` | インポートエラーと関連ファイルの警告 | `onboarding-error`, `onboarding-sibling-file` | 一致 | `onboarding-error` と `onboarding-sibling-file` で、エラーと警告の文言、重大度を示す色、各ボタンの一致を確認した（決定 106）。 |
 | `Floating` | フローティングサイドバーの概要 | `fullscreen-edge` | 相違 | `fullscreen-edge` のパネル配置は一致するが、中立灰色の箇所が青緑に着色され、ブラウザー全画面で Chromium の Esc 長押しメッセージが出る。非全画面の概要は撮影待ちである。 |
 | `Main` | メインウィンドウの概要 | `header-240` | 一致 | VM capture design-rowcontrast-1, `header-240` で白い選択 Today カード、ヘッダー、Today の区切り線、dock を確認した。Main のモック画像ではお気に入りがページに並ぶため、選択カードは A-TabRows を参照し、Main の細部の照合には正常なモック画像が必要である。 |
