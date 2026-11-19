@@ -3644,7 +3644,9 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       if mode == "private-downloads" { timeoutValues.merge(privateDownloadsCheck?.diagnostics() ?? [:]) { _, new in new } }
       if mode == "split-focus" || mode == "screen-split-focus" { timeoutValues.merge((splitFocusCheck ?? SplitFocusCheck()).diagnostics(screen: mode == "screen-split-focus")) { _, new in new } }
       if mode == "split-commands" || mode == "screen-split-commands" { timeoutValues.merge((splitCommandsCheck ?? SplitCommandsCheck()).diagnostics(screen: mode == "screen-split-commands")) { _, new in new } }
-      if mode == "header" || mode == "screen-header" { timeoutValues.merge((headerCheck ?? HeaderCheck()).diagnostics(screen: mode == "screen-header")) { _, new in new } }
+      if mode == "header" || mode == "screen-header", let headerCheck {
+        timeoutValues.merge(headerCheck.diagnostics(screen: mode == "screen-header")) { _, new in new }
+      }
       if mode == "urlfield" || mode == "screen-urlfield" { timeoutValues.merge((urlFieldCheck ?? URLFieldCheckState()).diagnostics(screen: mode == "screen-urlfield")) { _, new in new } }
       if mode == "site-controls" || mode == "screen-site-controls" { timeoutValues.merge((siteControlsCheck ?? SiteControlsCheck()).diagnostics(screen: mode == "screen-site-controls")) { _, new in new } }
     if mode == "window-drag" || mode == "screen-window-drag" { timeoutValues.merge((windowDragCheck ?? WindowDragCheckState()).diagnostics(screen: mode == "screen-window-drag")) { _, new in new } }
