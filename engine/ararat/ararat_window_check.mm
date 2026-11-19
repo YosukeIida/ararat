@@ -4,8 +4,10 @@
 #import <AppKit/AppKit.h>
 
 #include <iostream>
+#include <memory>
 
 #include "ararat/core/public/AraratEngine.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -14,8 +16,22 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
+#include "net/base/net_errors.h"
+#include "url/gurl.h"
 
 namespace {
+class OfflineCheckThrottle final : public content::NavigationThrottle {
+ public:
+  using NavigationThrottle::NavigationThrottle;
+  ThrottleCheckResult WillStartRequest() override {
+    return {CANCEL, net::ERR_INTERNET_DISCONNECTED};
+  }
+  const char* GetNameForLogging() override { return "AraratOfflineCheck"; }
+};
+
 ARWindowHost* g_check_host;
 NSView* g_check_view;
 bool g_check_passed = true;
@@ -40,6 +56,17 @@ void WaitForClose(int remaining) {
       base::Milliseconds(100));
 }
 }  // namespace
+
+void AraratCheckAddNavigationThrottle(content::NavigationThrottleRegistry& registry) {
+  const auto& command = *base::CommandLine::ForCurrentProcess();
+  if (command.GetSwitchValueASCII("ararat-check") != "errorpages" &&
+      command.GetSwitchValueASCII("ararat-screen") != "errorpages")
+    return;
+  auto& handle = registry.GetNavigationHandle();
+  if (handle.IsInPrimaryMainFrame() &&
+      handle.GetURL() == GURL("https://docs.example.org/"))
+    registry.AddThrottle(std::make_unique<OfflineCheckThrottle>(registry));
+}
 
 bool AraratWindowCheckPassed() {
   return g_check_passed;

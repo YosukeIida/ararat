@@ -3,6 +3,8 @@ import AraratEngineAPI
 import AraratKit
 
 extension Runtime {
+  static let offlineCheckURL = "https://docs.example.org/"
+
   var errorPageConditionNames: [String] {
     ["offline", "offline_retry", "dns", "dns_retry", "certificate_code_not_overlaid", "today_reload", "today_archive", "pin_reload", "pin_close", "private_offline", "download_close", "no_stock_browsers"]
   }
@@ -38,10 +40,12 @@ extension Runtime {
     case 1:
       guard let tab, !tab.isLoading, tab.navigationCount > 0 else { return }
       trace("simulate offline error")
-      host.checkNavigate("chrome://network-error/-106", disposition: "current")
+      host.checkNavigate(Self.offlineCheckURL, disposition: "current")
       browserCheckPhase = 2
     case 2:
-      guard let tab, tab.networkError == -106, state["heading"] as? String == "You’re offline", state["primary"] as? String == "Try Again" else { return }
+      guard let tab, tab.networkError == -106, tab.url == Self.offlineCheckURL,
+            state["heading"] as? String == "You’re offline", state["primary"] as? String == "Try Again" else { return }
+      if screen, sidebar?.checkURLFieldAccessibilityValue != "docs.example.org" { return }
       guard capture("offline") else { return }
       errorPageConditions["offline"] = true
       errorPageNavigationCount = tab.navigationCount
@@ -50,7 +54,7 @@ extension Runtime {
       browserCheckPhase = 3
     case 3:
       guard let tab, tab.navigationCount > errorPageNavigationCount, !tab.isLoading else { return }
-      errorPageConditions["offline_retry"] = tab.networkError == -106
+      errorPageConditions["offline_retry"] = tab.networkError == -106 && tab.url == Self.offlineCheckURL
       trace("navigate nonexistent domain")
       host.checkNavigate("http://ararat-check.invalid/", disposition: "current")
       browserCheckPhase = 4

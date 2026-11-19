@@ -2,7 +2,7 @@ import AppKit
 import AraratKit
 
 /// A toolbar action's button. Chromium renders the badge into the icon, so the button draws the
-/// icon alone; the badge text and colours travel as accessibility information and for checks.
+/// icon; the badge text and colours travel as accessibility information and for checks.
 @MainActor
 public final class ExtensionActionButton: NSButton {
     public private(set) var item: ExtensionActionItem
@@ -39,6 +39,17 @@ public final class ExtensionActionButton: NSButton {
     }
 
     public var checkIconSize: NSSize { image?.size ?? .zero }
+
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateTileFill()
+    }
+
+    fileprivate func updateTileFill() {
+        guard wantsLayer else { return }
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = NSColor(white: 1, alpha: dark ? 0.08 : 0.55).cgColor
+    }
 
     /// The action-specific anchor the engine's popup uses, in window coordinates. Passed
     /// immediately before every menu command and action invocation.
@@ -157,6 +168,9 @@ public final class ExtensionActionsRow: NSView {
                 button.update(item: item)
             } else {
                 let button = ExtensionActionButton(item: item, size: 32)
+                button.wantsLayer = true
+                button.layer?.cornerRadius = 8
+                button.updateTileFill()
                 button.menuProvider = { [weak self] item, button in self?.onMenu?(item, button) }
                 button.onOpen = { [weak self] item, button in self?.onOpen?(item, button) }
                 addSubview(button)

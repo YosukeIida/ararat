@@ -97,6 +97,7 @@ func littleWindowBarLaysOutTheBoardsBand() {
     // The chip starts clear of the traffic lights and the buttons end at the trailing inset.
     let frames = bar.checkButtonFrames
     #expect((frames["profile"]?.minX ?? 0) >= 80)
+    #expect(abs((frames["glyph"]?.minX ?? 0) - (frames["profile"]?.maxX ?? 0) - LittleWindowMetrics.addressGap) <= 1)
     #expect(abs((frames["chevron"]?.maxX ?? 0) - (640 - LittleWindowMetrics.trailingInset)) <= 1)
     #expect((frames["open"]?.maxX ?? 0) <= (frames["chevron"]?.minX ?? 0))
     #expect((frames["copy"]?.maxX ?? 0) <= (frames["open"]?.minX ?? 0))
@@ -161,6 +162,7 @@ func littleWindowBarButtonsDrawOnlyTheirIntendedText() {
 @Test @MainActor
 func littleWindowSpaceSearchKeepsTextAfterItsSearchButton() {
     let panel = LittleWindowMenuPanel(width: LittleWindowMetrics.menuWidth, rows: [], showsSearch: true)
+    panel.layoutSubtreeIfNeeded()
     let field = panel.checkSearchField
     #expect(field.placeholderString == "Search spaces")
     for text in ["", "per"] {
@@ -181,8 +183,8 @@ func littleWindowMenuPanelFiltersItsRows() {
     ], showsSearch: true)
     panel.layoutSubtreeIfNeeded()
     #expect(panel.checkWidth == 210)
-    #expect(panel.checkRowTitles.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "✓ ")) } == ["Work", "Personal", "Reading"])
-    #expect(panel.checkHeight > 0)
+    #expect(panel.checkRowTitles == ["Work", "Personal", "Reading"])
+    #expect(panel.checkHeight == 118)
     var selected: String?
     panel.onSelect = { selected = $0 }
     panel.checkClickRow("reading")
@@ -191,6 +193,23 @@ func littleWindowMenuPanelFiltersItsRows() {
     panel.onSearch = { query = $0 }
     panel.checkTypeSearch("per")
     #expect(query == "per")
+    panel.rows = []
+    panel.layoutSubtreeIfNeeded()
+    #expect(panel.checkHeight == 42)
+}
+
+@Test @MainActor
+func littleWindowProfileMenuUsesItsEntireHeightForRows() throws {
+    let panel = LittleWindowMenuPanel(width: LittleWindowMetrics.profileMenuWidth, rows: [
+        .init(id: "default", title: "Default", selected: true),
+        .init(id: "client", title: "Client work"),
+    ], showsSearch: false)
+    panel.layoutSubtreeIfNeeded()
+    let stack = try #require(panel.subviews.compactMap { $0 as? NSStackView }.first)
+    #expect(panel.checkSearchField.superview == nil)
+    #expect(panel.checkHeight == 60)
+    #expect(stack.frame == NSRect(x: 5, y: 5, width: 190, height: 50))
+    #expect(stack.arrangedSubviews.allSatisfy { $0.frame.width == 190 && $0.frame.height == 24 })
 }
 
 /// The ⌘L bar sits inside the Little Window (the board's 78 pt below the top, rounded to 80)
@@ -205,4 +224,10 @@ func littleWindowCommandBarSitsInsideTheWindow() {
     #expect(frame.minY >= window.minY)
     #expect(CommandBarMetrics.littleWindowPanelFrame(windowFrame: window, width: 504, rows: 5).height
             == CommandBarMetrics.height(forRows: 5))
+
+    let parent = NSWindow(contentRect: window, styleMask: [.titled], backing: .buffered, defer: false)
+    parent.appearance = NSAppearance(named: .aqua)
+    let presenter = CommandBarPresenter(parent: parent, visible: false, bindings: [], highlight: .systemBlue,
+                                        width: LittleWindowMetrics.commandBarWidth)
+    #expect(presenter.panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
 }

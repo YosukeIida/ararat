@@ -77,59 +77,64 @@ final class LookPopoverAnchor: NSButton, NSPopoverDelegate {
 struct LookPopoverView: View {
     /// The popover content's designed width; the space-name check asserts the popped-up
     /// content matches it (and that the open animation has finished).
-    static let width: CGFloat = 288
-    static let contentPadding: CGFloat = 11
+    static let width: CGFloat = 380
+    static let contentPadding: CGFloat = 20
     @ObservedObject var model: LookEditorModel
     @State private var dragging: Int?
     var body: some View {
         VStack(spacing: 10) {
-            ZStack(alignment: .top) {
-                field.padding(.top, 12)
-                HStack(spacing: 4) {
-                    mode("Auto", .auto, "sparkles")
-                    mode("Light", .light, "sun.max")
-                    mode("Dark", .dark, "moon")
-                    Spacer(minLength: 0)
-                    Menu {
-                        Button("Use for All Spaces") { model.useForAll() }
-                        Button("Reset Look") { model.reset() }
-                    } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
-                    .menuStyle(.borderlessButton).fixedSize().background(LookTrackProbe(model: model, target: .menu)).accessibilityLabel("Look options")
-                }.padding(.horizontal, 5)
+            HStack(spacing: 6) {
+                mode("Auto", .auto, "sparkles")
+                mode("Light", .light, "sun.max")
+                mode("Dark", .dark, "moon")
+                Spacer(minLength: 0)
+                Menu {
+                    Button("Use for All Spaces") { model.useForAll() }
+                    Button("Reset Look") { model.reset() }
+                } label: { Image(systemName: "ellipsis").frame(width: 32, height: 32) }
+                .menuStyle(.borderlessButton).fixedSize().background(LookTrackProbe(model: model, target: .menu)).accessibilityLabel("Look options")
             }
-            HStack {
-                Button { model.remove() } label: { Image(systemName: "minus") }.disabled(model.look.colors.count == 1).accessibilityLabel("Remove selected colour")
-                Button { model.add() } label: { Image(systemName: "plus") }.disabled(model.look.colors.count == 3).accessibilityLabel("Add colour")
+            field
+            HStack(spacing: 8) {
+                Button { model.remove() } label: { Image(systemName: "minus").frame(width: 28, height: 28) }.disabled(model.look.colors.count == 1).accessibilityLabel("Remove selected colour")
+                Button { model.add() } label: { Image(systemName: "plus").frame(width: 28, height: 28) }.disabled(model.look.colors.count == 3).accessibilityLabel("Add colour")
                 Spacer()
                 Text("\(model.look.colors.count) of 3 colours").font(.caption).foregroundStyle(.secondary)
             }
-            HStack(spacing: 3) {
-                Button { model.chipPage = max(0, model.chipPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.chipPage == 0).accessibilityLabel("Previous presets")
+            HStack(spacing: 6) {
+                Button { model.chipPage = max(0, model.chipPage - 1) } label: { Image(systemName: "chevron.left").frame(width: 22, height: 28) }.disabled(model.chipPage == 0).accessibilityLabel("Previous presets")
                 ForEach(0..<9) { index in
                     let chip = LookEditorModel.chipPages[model.chipPage][index]
                     Button { model.applyChip(page: model.chipPage, index: index) } label: {
                         Circle().fill(LinearGradient(colors: LookEditorModel.chipSwatch(model.chipPage, chip).map(Self.swatch),
                                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 20, height: 20).overlay(Circle().strokeBorder(.primary.opacity(0.15)))
+                            .frame(width: 26, height: 26).overlay(Circle().strokeBorder(.primary.opacity(0.15)))
                     }.accessibilityLabel("\(model.chipPage == 0 ? "Split" : "Analogous") preset \(index + 1)")
                         .accessibilityValue(model.isChipApplied(chip) ? "Selected" : "Not selected")
                 }
-                Button { model.chipPage = min(1, model.chipPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.chipPage == 1).accessibilityLabel("Next presets")
+                Button { model.chipPage = min(1, model.chipPage + 1) } label: { Image(systemName: "chevron.right").frame(width: 22, height: 28) }.disabled(model.chipPage == 1).accessibilityLabel("Next presets")
             }.buttonStyle(.plain)
-            TransparencyControl(model: model)
-            GrainControl(model: model)
+            Text(model.chipPage == 0 ? "Opposing hues — contrast at the edges" : "Neighbouring hues — one cohesive tint")
+                .font(.caption).foregroundStyle(.secondary).padding(.top, -6)
+            HStack(spacing: 16) {
+                TransparencyControl(model: model).frame(width: 208)
+                Spacer(minLength: 0)
+                GrainControl(model: model)
+            }
             if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).accessibilityLabel("Look error: " + error) }
-        }.padding(11).frame(width: Self.width).buttonStyle(.borderless)
+        }.padding(.horizontal, Self.contentPadding).padding(.vertical, 16)
+            .frame(width: Self.width).frame(minHeight: 564, alignment: .top).buttonStyle(.borderless)
     }
     private func mode(_ label: String, _ mode: Appearance, _ symbol: String) -> some View {
         Button { model.change { $0.appearance = mode } } label: {
-            Label(label, systemImage: symbol).font(.caption).padding(.horizontal, 5).frame(height: 24)
-                .background(model.look.appearance == mode ? Color.accentColor.opacity(0.25) : Color(nsColor: .windowBackgroundColor), in: Capsule())
+            Image(systemName: symbol).frame(width: 32, height: 32)
+                .background(model.look.appearance == mode ? Color.accentColor.opacity(0.25) : Color(nsColor: .windowBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 8))
         }.accessibilityLabel(label + " appearance").accessibilityValue(model.look.appearance == mode ? "Selected" : "Not selected")
     }
     static func swatch(_ color: LookColor) -> Color { Color(red: color.red, green: color.green, blue: color.blue) }
     /// The polar field: hue around the circle, lightness along the radius (white at the rim, black at
-    /// the centre, the mock's ramp), dots on an 8 pt lattice inside the 116 pt inscribed circle, one spoke
+    /// the centre, the mock's ramp), dots on an 8 pt lattice inside the inscribed circle, one spoke
     /// and one handle per colour. The handles share one radius and turn together.
     private var field: some View {
         ZStack {
@@ -183,7 +188,7 @@ struct LookPopoverView: View {
             }
         }.coordinateSpace(name: "lookField").frame(width: LookEditorModel.fieldCanvasSize.width, height: LookEditorModel.fieldCanvasSize.height)
             .background(LookFieldProbe(model: model))
-            .background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color(nsColor: LookFieldColors.field), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -250,7 +255,7 @@ struct TransparencyControl: View {
                     Circle().fill(.ultraThinMaterial).overlay(Circle().strokeBorder(interaction.detent || model.look.glass ? Color.accentColor : .secondary, lineWidth: 2))
                         .frame(width: 20, height: 20).offset(x: width + 14)
                     Circle().fill(Color.primary).frame(width: 12, height: 12).offset(x: thumb - 6)
-                }.frame(width: geometry.size.width, height: 30, alignment: .leading)
+                }.frame(width: geometry.size.width, height: 40, alignment: .leading)
                     .background(LookTrackProbe(model: model, target: .transparency, focus: { keyboardFocused = true }, focused: { keyboardFocused })).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         dragging = true
@@ -258,7 +263,7 @@ struct TransparencyControl: View {
                         interaction.drag(value.location.x / width, model: model)
                         model.checkTransparencyTag = interaction.label(model)
                     }.onEnded { _ in dragging = false; model.checkTransparencyTag = nil; interaction.detent = false; interaction.previousPosition = nil; model.end() })
-            }.frame(height: 30)
+            }.frame(height: 40)
         }
         .accessibilityElement(children: .ignore).accessibilityLabel("Transparency")
         .accessibilityValue(model.look.glass ? "Liquid Glass" : "\(Int(model.transparency.rounded())) percent")
@@ -352,19 +357,19 @@ struct GrainControl: View {
     @FocusState private var keyboardFocused: Bool
     @State private var interaction = GrainInteraction()
     var body: some View {
-        HStack {
+        VStack(spacing: 0) {
             GeometryReader { geometry in
                 ZStack {
                     Circle().stroke(.secondary.opacity(0.4), lineWidth: 2)
                     Circle().fill(Color(nsColor: .controlBackgroundColor)).padding(5)
                     Circle().fill(Color.primary).frame(width: 4, height: 4)
-                        .offset(y: -12).rotationEffect(.degrees(model.look.grain * 360))
+                        .offset(y: -20).rotationEffect(.degrees(model.look.grain * 360))
                 }.contentShape(Circle()).gesture(DragGesture(minimumDistance: 0).onChanged { event in
                     interaction.drag(GrainInteraction.value(at: event.location, size: geometry.size), model: model)
                 }.onEnded { _ in interaction.previous = nil; model.end() })
-            }.frame(width: 36, height: 36).background(LookTrackProbe(model: model, target: .grain, focus: { keyboardFocused = true }, focused: { keyboardFocused }))
+            }.frame(width: 56, height: 56).background(LookTrackProbe(model: model, target: .grain, focus: { keyboardFocused = true }, focused: { keyboardFocused }))
+                .frame(width: 80, height: 80)
             Text("Grain \(Int((model.look.grain * 100).rounded()))%").font(.caption)
-            Spacer()
         }.accessibilityElement(children: .ignore).accessibilityLabel("Grain")
             .accessibilityValue("\(Int((model.look.grain * 100).rounded())) percent")
             .accessibilityAdjustableAction { direction in

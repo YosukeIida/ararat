@@ -41,6 +41,19 @@ private func barRow(_ title: String, target: SuggestionTarget, url: String? = ni
     Suggestion(title: title, subtitle: "", url: url, key: nil, target: target, score: score)
 }
 
+@Test @MainActor
+func recentCommandRowShowsLocationAndSearchMatchShowsAction() throws {
+    let row = CommandBarRowView(frame: .zero)
+    let suggestion = Suggestion(title: "Test", subtitle: "Today", url: nil, key: nil,
+                                target: .tab(id: "tab", spaceId: "space"), score: 0)
+    let detail = try #require(row.subviews.compactMap { $0 as? NSTextField }
+        .first { $0.identifier?.rawValue == "command-result-detail" })
+    row.show(suggestion, selected: true, highlight: .systemBlue, queryEmpty: true, dark: true)
+    #expect(detail.stringValue == "Today")
+    row.show(suggestion, selected: true, highlight: .systemBlue, queryEmpty: false, dark: true)
+    #expect(detail.stringValue == "Switch to Tab")
+}
+
 @MainActor
 private final class FakeCommandBarStore: CommandBarStore {
     var results: [String: CommandBarResult] = [:]

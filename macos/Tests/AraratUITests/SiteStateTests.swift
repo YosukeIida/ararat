@@ -146,6 +146,13 @@ func extensionActionButtonsDrawTheEngineIconAtItsRequestedSize() throws {
     row.layoutSubtreeIfNeeded()
     #expect(row.checkButton("a0")?.checkIconSize == NSSize(width: 16, height: 16))
     #expect(row.checkButton("a0")?.image === item.icon)
+    #expect(strip.checkButton("a0")?.layer?.backgroundColor == nil)
+    let tile = try #require(row.checkButton("a0"))
+    #expect(tile.layer?.cornerRadius == 8)
+    tile.appearance = NSAppearance(named: .aqua)
+    #expect(tile.layer?.backgroundColor?.alpha == 0.55)
+    tile.appearance = NSAppearance(named: .darkAqua)
+    #expect(tile.layer?.backgroundColor?.alpha == 0.08)
 }
 
 @Test @MainActor

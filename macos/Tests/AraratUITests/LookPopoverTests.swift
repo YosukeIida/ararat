@@ -116,19 +116,20 @@ func lookCoordinatesAndTransparencyKeepArcTermsAndRoundForDisplay() {
 
 // The polar field: hue around the circle, the radial coordinate in from the rim (0) to the centre
 // (1), and the same mapping back; a point past the rim keeps its hue at the maximum radius. The
-// handle radius runs 0…108 pt over stored y 0.95…0.05, so a mid lightness sits half way out.
+// A mid lightness sits half way out.
 @Test @MainActor
 func thePolarFieldMapsHuesAndRadiiBothWays() {
     let centre = LookEditorModel.fieldCentre
-    #expect(LookEditorModel.fieldCanvasSize == CGSize(width: 264, height: 232))
-    #expect(centre == CGPoint(x: 132, y: 116))
-    #expect(LookEditorModel.fieldMaxRadius == 100)
-    #expect(LookEditorModel.fieldPoint(x: 0, y: 0) == CGPoint(x: 232, y: 116))
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).x - 132) < 0.000001)
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).y - 216) < 0.000001)
+    #expect(LookPopoverView.width == 380)
+    #expect(LookEditorModel.fieldCanvasSize == CGSize(width: 340, height: 300))
+    #expect(centre == CGPoint(x: 170, y: 150))
+    #expect(LookEditorModel.fieldMaxRadius == 134)
+    #expect(LookEditorModel.fieldPoint(x: 0, y: 0) == CGPoint(x: 304, y: 150))
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).x - 170) < 0.000001)
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.25, y: 0).y - 284) < 0.000001)
     #expect(LookEditorModel.fieldPoint(x: 0.5, y: 1) == centre)
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).x - 32) < 0.000001)
-    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).y - 116) < 0.000001)
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).x - 36) < 0.000001)
+    #expect(abs(LookEditorModel.fieldPoint(x: 0.5, y: 0).y - 150) < 0.000001)
     for (x, y) in [(0.0, 0.0), (0.13, 0.3), (0.5, 0.6), (0.79, 0.95), (0.999, 0.5)] {
         let back = LookEditorModel.fieldPosition(LookEditorModel.fieldPoint(x: x, y: y))
         #expect(abs(back.x - LookEditorModel.wrapped(x)) < 0.000001)
@@ -139,9 +140,9 @@ func thePolarFieldMapsHuesAndRadiiBothWays() {
     #expect(abs(far.x - 0.875) < 0.000001)
     #expect(far.y == 0)
     #expect(abs(LookEditorModel.radius(of: 0.95)) < 0.000001)
-    #expect(LookEditorModel.radius(of: 0.05) == 100)
-    #expect(abs(LookEditorModel.storedY(radius: 50) - 0.5) < 0.000001)
-    #expect(LookEditorModel.fieldY(radius: 100) == 0 && LookEditorModel.fieldY(radius: 200) == 0)
+    #expect(LookEditorModel.radius(of: 0.05) == 134)
+    #expect(abs(LookEditorModel.storedY(radius: 67) - 0.5) < 0.000001)
+    #expect(LookEditorModel.fieldY(radius: 134) == 0 && LookEditorModel.fieldY(radius: 200) == 0)
     // The centre has no hue of its own; it answers the first one instead of a NaN.
     #expect(LookEditorModel.fieldPosition(centre) == (x: 0, y: 1))
 }
@@ -153,7 +154,7 @@ func theDotLatticeIsCentredAndCoversTheHandleReach() {
     let dots = LookEditorModel.dotCentres()
     let centre = LookEditorModel.fieldCentre
     #expect(LookEditorModel.fieldDotPitch == 8 && LookEditorModel.fieldDotSize == 4)
-    #expect(LookEditorModel.fieldDotDiscRadius == 116)
+    #expect(LookEditorModel.fieldDotDiscRadius == 150)
     #expect(dots.count > 300)
     var maximum = 0.0
     for dot in dots {
@@ -168,7 +169,7 @@ func theDotLatticeIsCentredAndCoversTheHandleReach() {
     #expect(maximum >= Double(LookEditorModel.fieldMaxRadius))
     #expect(!dots.contains { hypot(Double($0.x - centre.x), Double($0.y - centre.y)) < 2 })
     // The derived sizes: a dragged 32 pt handle at the maximum radius stays inside the inscribed
-    // circle (100 + 16 = 116), a resting 24 pt handle leaves 4 pt.
+    // circle, a resting 24 pt handle leaves 4 pt.
     #expect(Double(LookEditorModel.fieldMaxRadius) + 16 == Double(LookEditorModel.fieldDotDiscRadius))
     #expect(Double(LookEditorModel.fieldMaxRadius) + 12 < Double(LookEditorModel.fieldDotDiscRadius))
     #expect(Double(LookEditorModel.fieldMaxRadius) <= Double(min(LookEditorModel.fieldCanvasSize.width, LookEditorModel.fieldCanvasSize.height) / 2) - 16)
@@ -582,7 +583,7 @@ func lookPopoverHostsOffscreenAndDropsAnUnfinishedGestureOnClose() async throws 
     let host = controller.view
     host.layoutSubtreeIfNeeded()
     await Task.yield()
-    #expect(abs(host.fittingSize.width - 288) < 1)
+    #expect(abs(host.fittingSize.width - 380) < 1)
     #expect(!anchor.popover.isShown && host.window?.isVisible != true)
     let count = try await fixture.writes()
     editor.movePoint(0, translatedBy: lookDrag(from: lookGrip(editor.look.colors[0]), to: 0.3, 0.3))
@@ -935,17 +936,17 @@ func lookCheckHapticSeamCountsAlignmentFeedback() async throws {
 func lookTrackProbeMeasuresTheActualTrackWithoutAccessibility() async throws {
     let fixture = try await LookFixture()
     let host = NSHostingView(rootView: LookPopoverView(model: fixture.editor))
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 288, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 564), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
     let track = try #require(fixture.editor.checkTrackView)
     #expect(track.window === window)
-    #expect(track.bounds.width == 266 && track.bounds.height == 30)
+    #expect(track.bounds.width == 208 && track.bounds.height == 40)
     #expect(track.hitTest(NSPoint(x: 10, y: 10)) == nil)
     #expect(!track.isAccessibilityElement())
     let field = try #require(fixture.editor.checkFieldView)
     #expect(field.window === window)
-    #expect(field.bounds.width == 264 && field.bounds.height == 232)
+    #expect(field.bounds.width == 340 && field.bounds.height == 300)
     #expect(field.hitTest(NSPoint(x: 10, y: 10)) == nil)
     #expect(!field.isAccessibilityElement())
     window.contentView = nil
@@ -956,7 +957,7 @@ func lookTrackProbeMeasuresTheActualTrackWithoutAccessibility() async throws {
 func lookCheckFocusProbesRouteArrowKeysToTheControls() async throws {
     let fixture = try await LookFixture()
     let host = NSHostingView(rootView: LookPopoverView(model: fixture.editor))
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 288, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 564), styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = host
     host.layoutSubtreeIfNeeded()
     let track = try #require(fixture.editor.checkTrackView)

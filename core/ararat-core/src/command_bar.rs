@@ -445,7 +445,7 @@ pub fn recent_tabs(ws: &Workspace, window: &str, limit: usize) -> Vec<Suggestion
                     || current_split.as_ref().is_some_and(|split| ws.outermost_split(&item.id).as_ref() == Some(split)) { continue; }
                 rows.push((ws.last_selected.get(&item.id).copied(), Suggestion {
                     title: item.display_title().into(),
-                    subtitle: if pinned { format!("{} · Pinned", space.title) } else { space.title.clone() },
+                    subtitle: if pinned { "Pinned" } else { "Today" }.into(),
                     url: Some(url.clone()), key: None,
                     target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) },
                     score: 0.0,

@@ -33,7 +33,7 @@ extension Runtime {
       }
       if !errorPageConditions.isEmpty {
         trace("simulate private offline error")
-        popup.checkNavigate("chrome://network-error/-106", disposition: "current")
+        popup.checkNavigate(Self.offlineCheckURL, disposition: "current")
         browserCheckPhase = 21
       } else {
         startDownload(popup, port: port)
