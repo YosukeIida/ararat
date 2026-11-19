@@ -19,8 +19,18 @@ public final class KeyBindingsModel: ObservableObject {
     public var onChange: (() -> Void)?
     private let adapter: WorkspaceAdapter
     private let menus = NSHashTable<NSMenu>.weakObjects()
+    private let mainMenu: () -> NSMenu?
+    private let nonMenuShortcutHolder: (NSEvent) -> String?
 
-    public init(adapter: WorkspaceAdapter) { self.adapter = adapter }
+    public init(
+        adapter: WorkspaceAdapter,
+        mainMenu: @escaping () -> NSMenu? = { NSApp?.mainMenu },
+        nonMenuShortcutHolder: @escaping (NSEvent) -> String? = { _ in nil }
+    ) {
+        self.adapter = adapter
+        self.mainMenu = mainMenu
+        self.nonMenuShortcutHolder = nonMenuShortcutHolder
+    }
 
     public func register(_ menu: NSMenu) {
         menus.add(menu)
@@ -129,9 +139,24 @@ public final class KeyBindingsModel: ObservableObject {
             recording = nil
             return true
         }
-        guard let characters = event.characters(byApplyingModifiers: []), characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first else { return true }
+        let menuCharacters = event.charactersIgnoringModifiers
+        // Stripping modifiers can replace AppKit function-key characters with C0 control characters.
+        let characters = switch menuCharacters?.unicodeScalars.first?.value {
+        case let value? where (0xF700...0xF8FF).contains(value): menuCharacters
+        default: event.characters(byApplyingModifiers: [])
+        }
+        guard let characters, characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first else { return true }
         let candidate = KeyCombination(key: String(scalar), command: modifiers.contains(.command), control: modifiers.contains(.control), option: modifiers.contains(.option), shift: modifiers.contains(.shift))
-        if let holder = bindings.first(where: { $0.key == candidate && $0.conflicting == false && $0.command != command }) {
+        let coreHolder = bindings.first { $0.key == candidate && !$0.conflicting }
+        let checkNonMenu = coreHolder == nil && candidate != binding(command: command)?.defaultKey
+        if let holder = menuShortcutHolder(in: mainMenu(), event: event, candidate: candidate, command: command)
+            ?? (checkNonMenu ? nonMenuShortcutHolder(event) : nil) {
+            errorCommand = command
+            error = String(localized: "This shortcut is used by \(holder).")
+            recording = nil
+            return true
+        }
+        if let holder = coreHolder, holder.command != command {
             if recording?.candidate == candidate {
                 set(command: command, key: candidate)
                 recording = nil
@@ -143,6 +168,38 @@ public final class KeyBindingsModel: ObservableObject {
             recording = nil
         }
         return true
+    }
+
+    private func menuShortcutHolder(in menu: NSMenu?, event: NSEvent, candidate: KeyCombination, command: String) -> String? {
+        guard let menu, let key = event.charactersIgnoringModifiers else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let shifted = candidate.shift && key != candidate.key
+        for item in menu.items {
+            if item.tag == 0x4152434d { continue } // Ararat Commands
+            if let submenu = item.submenu {
+                if let holder = menuShortcutHolder(in: submenu, event: event, candidate: candidate, command: command) { return holder }
+                continue
+            }
+            if let id = item.identifier?.rawValue, binding(command: id) != nil { continue }
+            let equivalent = item.keyEquivalent
+            guard !equivalent.isEmpty else { continue }
+            let itemModifiers = item.keyEquivalentModifierMask
+            let matches = equivalent == key && (itemModifiers == modifiers || (shifted && itemModifiers == modifiers.subtracting(.shift)))
+            let deleteMatches = (key == "\u{7F}" && equivalent == "\u{08}") || (key == "\u{F728}" && equivalent == "\u{7F}")
+            guard matches || (deleteMatches && itemModifiers == modifiers) else { continue }
+            // Chromium swaps Close Tab and Close Window while Settings has focus.
+            let alias: String?
+            switch item.tag {
+            case 34012 where key == "w" && modifiers == .command: alias = "close_tab" // IDC_CLOSE_WINDOW
+            case 34014: alias = "new_tab" // IDC_NEW_TAB
+            case 34015: alias = "close_tab" // IDC_CLOSE_TAB
+            case 34031: alias = "quit" // IDC_EXIT
+            case 39001: alias = "edit_url" // IDC_FOCUS_LOCATION
+            default: alias = nil
+            }
+            if alias != command { return item.title }
+        }
+        return nil
     }
 
     private func receive(_ result: Result<[KeyBinding], Error>, command: String? = nil, completion: WorkspaceAdapter.Completion<Void>) {
