@@ -54,7 +54,9 @@ final class SidebarFaviconCache {
                 }
                 if !accepted { entries.removeValue(forKey: url) }
             }
-            if case .resolved(let image)? = entries[url] { images[row.id] = image }
+        }
+        for (id, url) in unloadedItems {
+            if case .resolved(let image?)? = entries[url] { images[id] = image }
         }
         return images
     }

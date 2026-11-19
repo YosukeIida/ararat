@@ -73,6 +73,26 @@ struct SidebarFaviconCacheTests {
         #expect(requests.changes == 1)
     }
 
+    @Test func returnsCachedIconsForNeighbourAndDeferredSpaceRows() throws {
+        let requests = FaviconRequests()
+        let current = faviconRow("current", "https://current.test/")
+        let neighbour = faviconRow("neighbour", "https://neighbour.test/")
+        let existing = [current, neighbour]
+        let icon = NSImage(size: NSSize(width: 16, height: 16))
+
+        _ = requests.images(existing, shown: [neighbour])
+        let neighbourReply = try #require(requests.replies.first)
+        neighbourReply(icon)
+        _ = requests.images(existing, shown: [current])
+        let currentReply = try #require(requests.replies.dropFirst().first)
+        currentReply(nil)
+        let urls = requests.urls
+
+        #expect(requests.images(existing, shown: [current])[neighbour.id] === icon)
+        #expect(requests.images(existing, shown: [])[neighbour.id] === icon)
+        #expect(requests.urls == urls)
+    }
+
     @Test func cachesNilUntilTheItemGoesLive() {
         let requests = FaviconRequests()
         let row = faviconRow()

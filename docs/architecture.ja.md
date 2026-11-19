@@ -503,7 +503,7 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 | 項目 | 選択肢 | 現時点の方向 |
 |---|---|---|
-| favorites をプロファイルごと（Arc）に共有するか、space ごと（Cra）に共有するか | プロファイル / space | owner の mock（B-SpacePaging、2026-11-11）は space ごとに別の favorites を持たせ、U21 はプロファイルごとに 1 つの favorites のコンテナを作った。favorites のタイルを作る前に owner がどちらかを確かめる |
+| favorites をプロファイルごと（Arc）に共有するか、space ごと（Cra）に共有するか | プロファイル / space | favorites のタイルは U21 で作ったプロファイルごとのコンテナを使う。B-SpacePaging の mock（2026-11-11）のように、favorites を space ごとに持つ形に変更するかは owner の判断を待つ。 |
 | セキュリティのための Chromium の milestone の更新（フルビルド）を事前承認するか | する / 毎回確認する | する。4.9 のパッチの遅延の上限の範囲内で |
 | DRM | Google の VMP 署名付きの Widevine / DRM を要するサイト向けに第 2 のエンジンとして WebKit（Ardia）/ 当初はなし | phase 6 の前に決定する |
 | コンテンツブロッカー | 2026-11-15 に決定: 組み込まない（利用者が拡張を入れる）。選択肢は uBlock Origin（MV2、Ardia）/ uBlock Origin Lite（MV3）/ 寛容なライセンスのリストを用いた Chromium の subresource filter / 組み込まない | 以前の記録: owner はサイトの設定と Privacy に Block Ads & Trackers を置きたいが、よく考えずに既定でブロッカーを組み込むことは望まない（2026-11-11）。design の比較（2026-11-11）では、uBlock Origin Lite を component extension として入れ、サイトごとのスイッチのための patch を 1 つ当てる案を推す。なお Chromium の subresource filter は既にビルドに入っていて既定で有効であり（`subresource_filter_features.cc`）、悪質な広告のサイトだけを止め、サイトごとの Ads の設定を持つ。これは Block Ads & Trackers には当たらない 。U27p は 設定 › Privacy を Protection のカードなし、無効の行なしで出したので、行はこの判断とともに来る |
