@@ -140,11 +140,11 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |
 | `E-Shortcuts` | ショートカット一覧、入力、競合の表示 | `settings-shortcuts-shortcuts`, `settings-shortcuts-shortcuts-recorder`, `settings-shortcuts-shortcuts-conflict`, `settings-shortcuts-shortcuts-refusal` | 一致 | `settings-shortcuts-*` でキーまたは None、入力欄、競合表示、システムによる拒否表示を確認した。検索欄と次・前のペインへ移動する行（決定 103）は画面外である。 |
-| `E-SpacePage` | スペース個別の設定 | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | 修正済み・VM 再確認待ち | `settings-spaces-space-page`、`dock-space-settings`、`settings-appearance-look-space-page` の見出し、ページ切替、各行は一致する。Delete Space はモックと同じシステムの赤で描き、オフスクリーンのテストが描画後の画素を読む。 |
+| `E-SpacePage` | スペース個別の設定 | `settings-spaces-space-page`, `dock-space-settings`, `settings-appearance-look-space-page` | 修正済み・VM 再確認待ち | `settings-spaces-space-page`、`dock-space-settings`、`settings-appearance-look-space-page` の見出し、ページ切替、各行は一致する。Delete Space の文字はボードの赤（`--red`: ライト #B3261E、ダーク #FF8A80。コントラストを上げた設定ではそれぞれ濃い値と薄い値）で、オフスクリーンのテストが描画後の画素と解決した色を読む。 |
 | `E-Spaces` | スペース一覧とスクロール方向 | `settings-spaces-spaces` | 修正済み・VM 再確認待ち | `settings-spaces-spaces` ではタブ数と ⌃N を固定幅の右側列に置いて一覧で縦に揃え、アイコンの文字をモックの 24 pt タイルに載せる。どちらもオフスクリーンのテストで確認する。ドラッグハンドル、シェブロン、Natural / Reversed は一致する（決定 95）。 |
 | `E-Sync` | 同期設定とデバイス | — | 未実装 | 同期はフェーズ 8 で実装予定である（決定 100）。 |
 | `E-Tabs` | タブ設定とスペースへの移動 | `settings-tabs-settings-tabs`, `settings-spaces-space-page` | 修正済み・VM 再確認待ち | `settings-tabs-settings-tabs` に 2 行ともある。Archive Today’s tabs after のポップアップは内容に合わせた幅（モックでは 110 pt）で、行の右端に他の右寄せコントロールと同じく揃う。幅と位置はオフスクリーンのテストで確認する。 |
-| `E-Websites` | 既定とサイト別の権限 | `settings-websites-websites`, `settings-websites-site-row`, `settings-websites-site-page` | 相違 | `settings-websites-websites` の既定値の一覧は一致する。`settings-websites-site-page` は上書きした Camera のみを表示する（モックは全権限を並べる。決定 94）。Clear… はモックと同じシステムの赤になり、オフスクリーンのテストが描画後の画素を読む。 |
+| `E-Websites` | 既定とサイト別の権限 | `settings-websites-websites`, `settings-websites-site-row`, `settings-websites-site-page` | 相違 | `settings-websites-websites` の既定値の一覧は一致する。`settings-websites-site-page` は上書きした Camera のみを表示する（モックは全権限を並べる。決定 94）。Clear… は Delete Space と同じボードの赤になり、オフスクリーンのテストが描画後の画素を読む。 |
 | `Extensions` | ピン留めした拡張機能の概要 | `ext-actions-action`, `ext-actions-overflow` | 一致 | `ext-actions-action` では固定アクションが URL 欄にあり、ヘッダーにはない（決定 42）。概要図のアクションメニューと権限プロンプトは撮影待ちである。 |
 | `F-Import` | インポート対象の選択、進捗、完了 | `onboarding (what-to-import, progress, done)` | 相違 | フィクスチャを使うフローでは、ログイン状態、パスワード、履歴、アーカイブの行を省いている（§7）。 |
 | `F-Import` | ログイン状態の引き継ぎとキーチェーン権限 | — | 未実装 | キーチェーンを使うフローにはインポートの調査が必要である（決定 105–106）。 |
@@ -157,7 +157,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `F-Onboarding` | ようこそとインポート元の検出 | `onboarding-welcome`, `onboarding-source` | 一致 | `onboarding-welcome` と `onboarding-source` で見出し、ボタン、ページドット、検索結果を確認した（決定 106）。Arc の行にはモックのラジオマークがない。 |
 | `F-Onboarding` | インポート対象と既定ブラウザの設定 | `onboarding-what-to-import`, `onboarding-default-browser` | 相違 | `onboarding-what-to-import` にはチェックボックス、未選択の Travel 2025、Archive、Sign-in state、Passwords、History がない（決定 106）。`onboarding-default-browser` は一致する。 |
 | `F-Onboarding` | キーチェーンのアクセス要求 | — | 未実装 | 3a はログイン状態を引き継げるか確認した後に実装する（決定 106）。 |
-| `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 修正済み・VM 再確認待ち | `onboarding-progress` は一致する。`onboarding-done` では報告行を 2 行分の高さの行でカード内に折り返し、モックと同じくカードの端を越えない。最も長いフォルダー状態の行の幅と高さをオフスクリーンのテストで確認する。 |
+| `F-Onboarding` | 進捗と完了報告 | `onboarding-progress`, `onboarding-done` | 修正済み・VM 再確認待ち | `onboarding-progress` は一致する。`onboarding-done` では報告行を文字に合わせた高さの行（1 行 31 pt、2 行 48 pt）でカード内に折り返し、モックと同じくカードの端を越えない。各行の高さと、最も長いフォルダー状態の行が折り返すことをオフスクリーンのテストで確認する。 |
 | `F-Onboarding` | インポートエラーと関連ファイルの警告 | `onboarding-error`, `onboarding-sibling-file` | 一致 | `onboarding-error` と `onboarding-sibling-file` で、エラーと警告の文言、重大度を示す色、各ボタンの一致を確認した（決定 106）。 |
 | `Floating` | フローティングサイドバーの概要 | `fullscreen-edge` | 相違 | `fullscreen-edge` のパネル配置は一致するが、中立灰色の箇所が青緑に着色され、ブラウザー全画面で Chromium の Esc 長押しメッセージが出る。非全画面の概要は撮影待ちである。 |
 | `Main` | メインウィンドウの概要 | `header-240` | 一致 | VM capture design-rowcontrast-1, `header-240` で白い選択 Today カード、ヘッダー、Today の区切り線、dock を確認した。Main のモック画像ではお気に入りがページに並ぶため、選択カードは A-TabRows を参照し、Main の細部の照合には正常なモック画像が必要である。 |

@@ -392,8 +392,24 @@ enum SettingsColor {
     static let separator = grey(235, 57)
     /// The keycap and space-icon-tile grey (`--kc` on the boards).
     static let keycap = grey(231, 68)
-    /// A destructive button's label: the system red the boards draw Delete Space and Clear… in.
-    static let destructive = Color(nsColor: .systemRed)
+    /// The boards' destructive red, `--red`: #B3261E on a light background and #FF8A80 on a dark
+    /// one (E-SpacePage, E-Websites), not `systemRed`, which is about 3.5:1 on white. Increase
+    /// Contrast takes a darker light value and a lighter dark one, so 13 pt text stays readable.
+    static func destructiveRed(dark: Bool, highContrast: Bool) -> NSColor {
+        switch (dark, highContrast) {
+        case (false, false): NSColor(srgbRed: 0xB3 / 255, green: 0x26 / 255, blue: 0x1E / 255, alpha: 1)
+        case (false, true): NSColor(srgbRed: 0x7A / 255, green: 0x0B / 255, blue: 0x06 / 255, alpha: 1)
+        case (true, false): NSColor(srgbRed: 0xFF / 255, green: 0x8A / 255, blue: 0x80 / 255, alpha: 1)
+        case (true, true): NSColor(srgbRed: 0xFF / 255, green: 0xC1 / 255, blue: 0xBA / 255, alpha: 1)
+        }
+    }
+    static let destructiveColor = NSColor(name: nil) { appearance in
+        let highContrast = appearance.name == .accessibilityHighContrastAqua
+            || appearance.name == .accessibilityHighContrastDarkAqua
+        return destructiveRed(dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
+                              highContrast: highContrast)
+    }
+    static let destructive = Color(nsColor: destructiveColor)
 }
 
 /// The Spaces list's icon letter on the board's 24 pt tile (`.gl`): the keycap grey in a rounded
@@ -529,7 +545,8 @@ private struct SettingsDetail: View {
                                                 .frame(width: SettingsMetrics.spaceCountColumn, alignment: .trailing)
                                                 .background(SettingsMarker(id: SettingsModel.spaceCountMarker(space.id)))
                                             SettingsKeycaps(keys: model.spaceKeys[index] ?? [], id: SettingsModel.spaceKeysMarker(space.id))
-                                                .frame(width: SettingsMetrics.spaceKeysColumn, alignment: .trailing)
+                                                .frame(minWidth: SettingsMetrics.spaceKeysColumn, alignment: .trailing)
+                                                .fixedSize(horizontal: true, vertical: false)
                                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                         }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                             .contentShape(Rectangle())
@@ -1280,7 +1297,9 @@ private struct SettingsKeycaps: NSViewRepresentable {
         return stack
     }
     func updateNSView(_ stack: NSStackView, context: Context) {
-        stack.setAccessibilityLabel("Shortcut " + keys.joined())
+        // An empty column (a space with no ⌃N) has nothing to read, so it is not an element.
+        stack.setAccessibilityElement(!keys.isEmpty)
+        stack.setAccessibilityLabel(keys.isEmpty ? "" : "Shortcut " + keys.joined())
         stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
         stack.orientation = caption == nil ? .horizontal : .vertical
         stack.alignment = caption == nil ? .centerY : .trailing

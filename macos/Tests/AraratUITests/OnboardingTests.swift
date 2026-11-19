@@ -147,10 +147,10 @@ func theImportWritesTheStoreAtTheGivenPath() throws {
     #expect(snapshot.spaces.map(\.profileName) == ["University", "Default", "Default"])
 }
 
-/// The done screen's report lines stay inside the card: a long folder-state line wraps onto a
-/// second line instead of running past the card's edge (F-Onboarding).
+/// The done screen's report lines stay inside the card and each row is the height its text needs:
+/// 31 pt for one line and 48 for two, as F-Import's "Imported differently" card draws them.
 @Test @MainActor
-func theCompletionReportsLinesWrapInsideTheCard() throws {
+func theCompletionReportRowsWrapInsideTheCardAndSizeToTheirText() throws {
     let (model, directory) = try onboardingTestModel()
     defer { try? FileManager.default.removeItem(at: directory) }
     runImport(model)
@@ -160,21 +160,30 @@ func theCompletionReportsLinesWrapInsideTheCard() throws {
     probe.render()
     probe.layout()
     #expect(!model.lines.isEmpty)
+    var frames: [(row: NSRect, title: NSRect)] = []
     for line in model.lines {
         let rowID = "onboarding-line-\(line.id)"
         let row = try #require(probe.frame(rowID))
         let title = try #require(probe.titleFrame(of: rowID))
+        let textWidth = title.width
+        let oneLine = (line.text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width
+        let wraps = oneLine > textWidth
         #expect(abs(title.width - (row.width - 32)) <= 1)
         #expect(title.maxX <= row.maxX - 15, "the line stops inside the card: \(title) in \(row)")
         #expect(abs(title.minX - (row.minX + 16)) <= 1)
+        #expect(abs(title.minY - (row.minY + 7)) <= 1, "the text starts at the board's 7 pt padding")
+        // The row and the label are the board's heights for the line count the text needs.
+        #expect(abs(row.height - (wraps ? OnboardingRowView.twoLineHeight : OnboardingRowView.oneLineHeight)) <= 1,
+                "\(line.id): \(row.height) for \(wraps ? 2 : 1) line(s)")
+        #expect(abs(title.height - (wraps ? 34 : 17)) <= 1)
+        frames.append((row, title))
     }
+    // The rows share edges inside the card, so no gap and no overlap is left between them.
+    #expect(zip(frames, frames.dropFirst()).allSatisfy { abs($0.row.maxY - $1.row.minY) <= 1 })
     let longest = try #require(model.lines.max { $0.text.count < $1.text.count })
-    let rowID = "onboarding-line-\(longest.id)"
-    let row = try #require(probe.frame(rowID))
-    let title = try #require(probe.titleFrame(of: rowID))
-    let singleLine = (longest.text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width
-    #expect(singleLine > title.width, "the longest report line wraps at the card's width")
-    #expect(title.height >= 30 && title.height <= row.height - 8, "the row gives the second line room")
+    let longestIndex = try #require(model.lines.firstIndex { $0.id == longest.id })
+    #expect(frames[longestIndex].row.height == OnboardingRowView.twoLineHeight, "the longest line wraps onto a second line")
+    #expect(frames.contains { $0.row.height == OnboardingRowView.oneLineHeight }, "a short line keeps the one-line row")
 }
 
 /// The done screen's rows each have a producer: the showcase fixture produces exactly four, the
