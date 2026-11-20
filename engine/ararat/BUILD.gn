@@ -75,7 +75,6 @@ source_set("passwords") {
     "//content/public/common",
     "//url",
   ]
-  configs += [ "//build/config/compiler:enable_arc" ]
 }
 
 source_set("passwords_unit_tests") {
@@ -93,7 +92,6 @@ source_set("passwords_unit_tests") {
     "//testing/gtest",
     "//url",
   ]
-  configs += [ "//build/config/compiler:enable_arc" ]
 }
 
 source_set("entry") {
@@ -246,6 +244,5 @@ source_set("entry") {
     "//extensions/common:extension_features",
     "//net",
     "//services/network/public/mojom:cookies_mojom",
-    "//url",
   ]
 }
