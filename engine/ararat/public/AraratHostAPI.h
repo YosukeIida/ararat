@@ -430,6 +430,7 @@ void AraratCheckDeleteHistory(NSString* profile, NSInteger mode, void (^completi
 __attribute__((visibility("default")))
 id<ARPasswordsAPI> _Nullable AraratPasswords(
     NSString* profile, void (^_Nullable loaded)(id<ARPasswordsAPI> _Nullable));
+typedef __typeof__(&AraratPasswords) AraratPasswordsFunction;
 __attribute__((visibility("default")))
 NSUInteger AraratBrowserCount(void);
 __attribute__((visibility("default")))
