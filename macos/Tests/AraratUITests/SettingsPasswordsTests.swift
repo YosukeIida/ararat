@@ -160,6 +160,8 @@ struct SettingsPasswordsTests {
         text.withUnsafeBufferPointer { reply($0.baseAddress, UInt($0.count)) }
         #expect(model.showingPassword)
         #expect(model.revealed.stringValue == "fixture")
+        let editor = try #require(model.revealed.cell?.fieldEditor(for: model.revealed))
+        #expect(editor.writingToolsBehavior == .none)
         model.lock()
         #expect(!model.showingPassword)
         #expect(model.revealed.stringValue.isEmpty)

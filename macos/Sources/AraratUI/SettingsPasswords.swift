@@ -512,6 +512,7 @@ private final class RevealedPasswordCell: NSTextFieldCell {
 
     override func fieldEditor(for controlView: NSView) -> NSTextView? {
         editor.isFieldEditor = true
+        editor.writingToolsBehavior = .none
         editor.allowsUndo = false
         editor.isContinuousSpellCheckingEnabled = false
         editor.isAutomaticSpellingCorrectionEnabled = false
