@@ -267,8 +267,8 @@ final class TabSwitcherScreenCheck {
         }
         func assertHeld() throws {
             try check("held_once_without_fade", presentations.count == 1 && presentations[0].visible &&
-                      presentations[0].elapsed >= 0.145 && presentations[0].elapsed < 0.7 && presentations[0].noAnimation,
-                      reason: "expected one visible transition at 145–700 ms without animation, got \(presentations)")
+                      presentations[0].elapsed >= 0.145 && presentations[0].elapsed < 0.3 && presentations[0].noAnimation,
+                      reason: "expected one visible transition at 145–300 ms without animation, got \(presentations)")
         }
         func assertClosed(_ name: String, sent: TimeInterval, selection: String) throws {
             try check(name, presentations.map(\.visible) == [true, false] &&
