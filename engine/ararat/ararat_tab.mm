@@ -130,20 +130,28 @@ TabFaviconKind ClassifyTabFavicon(content::NavigationEntry* visible,
 }
 
 void TraceSwitcherThumbnail(ARWindowHost* host, NSString* live, const char* source,
-                            const char* status, const char* reason, int viz_error, double ms) {
+                            const char* status, const char* reason, int viz_error, double ms,
+                            bool retry = false) {
   const auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch("ararat-check") && !command->HasSwitch("ararat-screen")) return;
-  std::fprintf(stderr, "ararat-trace: switcher-thumbnail %s live=%s source=%s reason=%s viz_error=%d elapsed_ms=%.1f\n",
-               status, live.UTF8String, source, reason, viz_error, ms);
+  std::fprintf(stderr, "ararat-trace: switcher-thumbnail %s live=%s source=%s%s reason=%s viz_error=%d elapsed_ms=%.1f\n",
+               status, live.UTF8String, source, retry ? " retry=1" : "", reason, viz_error, ms);
   id<ARWindowHostDelegate> delegate = host.delegate;
   if ([delegate respondsToSelector:@selector(windowHost:switcherThumbnailTrace:)])
     [delegate windowHost:host switcherThumbnailTrace:@{@"status": @(status), @"live": live,
-        @"source": @(source), @"reason": @(reason), @"viz_error": @(viz_error), @"elapsed_ms": @(ms)}];
+        @"source": @(source), @"retry": @(retry ? 1 : 0), @"reason": @(reason),
+        @"viz_error": @(viz_error), @"elapsed_ms": @(ms)}];
 }
 
 class SwitcherReserveStamp : public content::PageUserData<SwitcherReserveStamp> {
  public:
   base::TimeTicks last_request;
+  bool retry_scheduled = false;
+
+  double DelayUntilNextRequest() const {
+    return last_request.is_null() ? 0
+        : std::max(0.0, (last_request + base::Seconds(2) - base::TimeTicks::Now()).InSecondsF());
+  }
 
  private:
   explicit SwitcherReserveStamp(content::Page& page) : PageUserData(page) {}
@@ -908,9 +916,7 @@ static void CopyTabSurface(content::WebContents* contents,
   id<ARWindowHostDelegate> delegate = host.delegate;
   if (![delegate respondsToSelector:@selector(windowHost:reserveSwitcherThumbnailForTab:afterDelay:)]) return;
   const auto* stamp = SwitcherReserveStamp::GetForPage(contents_->GetPrimaryPage());
-  const double delay = stamp && !stamp->last_request.is_null()
-      ? std::max(0.0, (stamp->last_request + base::Seconds(2) - base::TimeTicks::Now()).InSecondsF()) : 0;
-  [delegate windowHost:host reserveSwitcherThumbnailForTab:self afterDelay:delay];
+  [delegate windowHost:host reserveSwitcherThumbnailForTab:self afterDelay:stamp ? stamp->DelayUntilNextRequest() : 0];
 }
 
 - (void)checkStopSwitcherNavigation {
@@ -918,14 +924,17 @@ static void CopyTabSurface(content::WebContents* contents,
     contents_->Stop();
 }
 
-- (void)captureSwitcherThumbnailForReserve:(BOOL)reserve completion:(void (^)(NSImage*))completion {
+- (void)captureSwitcherThumbnailForReserve:(BOOL)reserve
+                                    retry:(BOOL)retry
+                               completion:(BOOL (^)(NSImage*, NSNumber*))completion {
   const base::TimeTicks start = base::TimeTicks::Now();
   NSString* live = live_id_;
+  NSString* item = self.itemId;
   __weak ARWindowHost* weak_host = host_;
   const char* source = reserve ? "reserve" : "prehide";
   void (^event)(const char*, const char*, int) = ^(const char* status, const char* reason, int viz_error) {
     TraceSwitcherThumbnail(weak_host, live, source, status, reason, viz_error,
-                           (base::TimeTicks::Now() - start).InMillisecondsF());
+                           (base::TimeTicks::Now() - start).InMillisecondsF(), retry);
   };
   auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
   const gfx::Size viewport = view ? view->GetVisibleViewportSize() : gfx::Size();
@@ -943,6 +952,7 @@ static void CopyTabSurface(content::WebContents* contents,
   if (!skip && reserve) {
     auto* stamp = SwitcherReserveStamp::GetOrCreateForPage(contents_->GetPrimaryPage());
     if (!stamp) skip = "error";
+    else if (retry && !stamp->retry_scheduled) skip = "stale-document";
     else if (!stamp->last_request.is_null() && start - stamp->last_request < base::Seconds(2))
       skip = "rate-limited";
     else
@@ -950,7 +960,7 @@ static void CopyTabSurface(content::WebContents* contents,
   }
   if (skip) {
     event("skipped", skip, -1);
-    completion(nil);
+    completion(nil, nil);
     return;
   }
   const gfx::Rect crop((viewport.width() - units * 3) / 2, 0, units * 3, units * 2);
@@ -964,7 +974,25 @@ static void CopyTabSurface(content::WebContents* contents,
     if (stale) image = nil;
     event(image ? "completed" : "failed", image ? "none" : (stale ? "stale-document" : failure), viz_error);
     image.size = NSMakeSize(156, 104);
-    completion(image);
+    base::WeakPtr<content::Page> retry_page;
+    NSNumber* retry_delay = nil;
+    if (!image && reserve && !retry && !stale && tab->contents_ && weak_host &&
+        tab->host_ == weak_host && [tab.itemId isEqualToString:item] &&
+        tab->contents_->GetVisibility() == content::Visibility::VISIBLE) {
+      auto* showing_view = tab->contents_->GetRenderWidgetHostView();
+      if (showing_view && showing_view->IsShowing()) {
+        auto& page = tab->contents_->GetPrimaryPage();
+        const auto* stamp = SwitcherReserveStamp::GetForPage(page);
+        if (stamp && !stamp->retry_scheduled) {
+          retry_page = page.GetWeakPtr();
+          retry_delay = @(stamp->DelayUntilNextRequest());
+        }
+      }
+    }
+    if (completion(image, retry_delay) && retry_page) {
+      if (auto* stamp = SwitcherReserveStamp::GetForPage(*retry_page))
+        stamp->retry_scheduled = true;
+    }
   });
 }
 
