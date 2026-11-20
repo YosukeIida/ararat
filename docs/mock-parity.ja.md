@@ -21,7 +21,7 @@ VM では次のチェックを `--ararat-screen=<name>` で実行する。[画�
 
 - サイドバーとウィンドウは `organize`、`header`、`space-name`、`sidebar-rows`、`today`、`folder-empty`、`create-space`、`dock`、`split-commands`、`split-focus`、`fullscreen`、`window-drag`、`urlfield`。
 - ページとパネルは `keyboard`、`prompts`、`dialogs`、`downloads`、`ext-actions`、`site-controls`、`commandbar`、`errorpages`、`little-window`、`private-window`、`toasts`。
-- 設定とオンボーディングは `settings-about`、`settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
+- 設定とオンボーディングは `settings-about`、`settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-passwords`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
 
 ページ内検索と Archive の撮影には、keyboard のメインチェックを `--ararat-keyboard-main-scope` 付きで実行する。
 
@@ -136,8 +136,8 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
-| `E-Passwords` | プロファイルごとのスイッチ、保存済みパスワードと認証 | `passwords` | 修正済み、VM 再確認待ち | 検索欄と追加ボタンは一覧カードの上に置き、一覧が空なら追加ボタンを残す。Chromium が生体認証の利用を記録すると Fill passwords を表示し、変更のたびに端末認証を求める。VM 用の検査は認証を模擬し、実機の Touch ID は未確認である。 |
-| `E-Passwords` | ログイン情報の詳細 | `passwords` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
+| `E-Passwords` | プロファイルごとのスイッチ、保存済みパスワードと認証 | `settings-passwords-locked`、`settings-passwords-search` | 修正済み、VM 再確認待ち | 検索欄と追加ボタンは一覧カードの上に置き、一覧が空なら追加ボタンを残す。Chromium が生体認証の利用を記録すると Fill passwords を表示し、変更のたびに端末認証を求める。VM 用の検査は認証を模擬し、実機の Touch ID は未確認である。 |
+| `E-Passwords` | ログイン情報の詳細 | `settings-passwords-detail` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
 | `E-Passwords` | Save Changes | — | 相違（承認済み） | ユーザー名かパスワードを編集すると Save Changes が表示される。モックではこのボタンが省かれている。 |
 | `E-Passwords` | Import from Arc | — | 相違 | Arc からのパスワード取り込みは単位 (c) で追加する。 |
 | `E-Passwords` | 保存・更新の確認 | — | 相違 | Offer to save は Chromium の設定値を変更する。保存・更新の確認は単位 (d) で実装する。 |

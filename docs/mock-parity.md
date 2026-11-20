@@ -20,7 +20,7 @@ Run the checks below as `--ararat-screen=<name>` on the VM. Use the bundled app 
 
 - Sidebar and window: `organize`, `header`, `space-name`, `sidebar-rows`, `today`, `folder-empty`, `create-space`, `dock`, `split-commands`, `split-focus`, `fullscreen`, `window-drag` and `urlfield`.
 - Page and panels: `keyboard`, `prompts`, `dialogs`, `downloads`, `ext-actions`, `site-controls`, `commandbar`, `errorpages`, `little-window`, `private-window` and `toasts`.
-- Settings and onboarding: `settings-about`, `settings-air-traffic`, `settings-appearance`, `settings-extensions`, `settings-frame`, `settings-toolbar`, `settings-general`, `settings-little-window`, `settings-privacy`, `settings-search`, `settings-shortcuts`, `settings-spaces`, `settings-tabs`, `settings-websites`, `look` and `onboarding`.
+- Settings and onboarding: `settings-about`, `settings-air-traffic`, `settings-appearance`, `settings-extensions`, `settings-passwords`, `settings-frame`, `settings-toolbar`, `settings-general`, `settings-little-window`, `settings-privacy`, `settings-search`, `settings-shortcuts`, `settings-spaces`, `settings-tabs`, `settings-websites`, `look` and `onboarding`.
 
 Run the Keyboard main check with `--ararat-keyboard-main-scope` for the Find and Archive captures.
 
@@ -134,8 +134,8 @@ The VM check column gives the check and phase or the capture name, with the file
 | `E-General` | Default browser, startup and downloads | `settings-general-general` | differs | `settings-general-general` has Warn before quitting and lacks the Search and Language groups, the path in the Downloads row and the trailing default-browser action/state (decision 91). |
 | `E-General` | Remaining general preferences | — | not built | Suggestions, search-engine and spelling rows are deferred in §7. |
 | `E-LittleWindow` | Shortcut, destination, closing and frame memory | `settings-little-window-little-window` | matches | `settings-little-window-little-window` shows the five rows and controls in decision 99 order. The shortcut and switch states come from the fixture. |
-| `E-Passwords` | Per-profile switches, saved passwords and device authentication | `passwords` | fixed, VM recheck pending | Search and Add sit above the list card. The empty state keeps Add. Fill passwords appears after Chromium records biometric availability and requires fresh device authentication to change. The VM check fakes authentication. Real Touch ID is unverified. |
-| `E-Passwords` | Sign-in detail | `passwords` | fixed, VM recheck pending | User name and password are edited inline. The revealed password can be selected for standard macOS copying. Website opens in the profile and Delete removes the sign-in. |
+| `E-Passwords` | Per-profile switches, saved passwords and device authentication | `settings-passwords-locked`, `settings-passwords-search` | fixed, VM recheck pending | Search and Add sit above the list card. The empty state keeps Add. Fill passwords appears after Chromium records biometric availability and requires fresh device authentication to change. The VM check fakes authentication. Real Touch ID is unverified. |
+| `E-Passwords` | Sign-in detail | `settings-passwords-detail` | fixed, VM recheck pending | User name and password are edited inline. The revealed password can be selected for standard macOS copying. Website opens in the profile and Delete removes the sign-in. |
 | `E-Passwords` | Save Changes | — | differs (accepted) | Save Changes appears after editing either field. The board omits this button. |
 | `E-Passwords` | Import from Arc | — | differs | Unit (c) adds Arc password import. |
 | `E-Passwords` | Save and update prompt | — | differs | Offer to save writes the Chromium preference. Unit (d) implements the prompt. |

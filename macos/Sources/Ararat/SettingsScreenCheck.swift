@@ -23,6 +23,7 @@ final class SettingsScreenCheck {
         case spaces = "settings-spaces"
         case littleWindow = "settings-little-window"
         case websites = "settings-websites"
+        case passwords = "settings-passwords"
         case privacy = "settings-privacy"
         case extensions = "settings-extensions"
         case about = "settings-about"
@@ -32,7 +33,7 @@ final class SettingsScreenCheck {
         var paneID: String {
             switch self {
             case .frame, .search, .tabs, .toolbar: "tabs"
-            case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .privacy, .general, .about: String(rawValue.dropFirst("settings-".count))
+            case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .passwords, .privacy, .general, .about: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
             case .extensions: "extensions"
             }
@@ -57,6 +58,7 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .about: ["rows"]
+            case .passwords: ["fake_auth", "fixtures", "locked", "search", "detail"]
             case .airTraffic: ["rows"] + SettingsATCInput.conditions
             case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
@@ -213,6 +215,7 @@ final class SettingsScreenCheck {
     var shortcutSidebarBefore = ""
     var shortcutNewKey = KeyCombination(key: "k", command: false, control: true, option: true, shift: false)
     var panePhaseStart = -1
+    var passwordSnapshotPending = false
 
     func report(_ name: String, _ ok: Bool) {
         conditions[name] = ok
@@ -378,7 +381,11 @@ extension Runtime {
             note("workspace not ready spaces=\(snapshot.spaces.count)")
             return
         }
-        if owner.settings == nil { owner.openSettings() }
+        if owner.settings == nil {
+            let profile = mode == .passwords
+                ? snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.profileName : nil
+            owner.openSettings(passwordsProfile: profile)
+        }
         guard let settings = owner.settings, let probe = settings.checkProbe() else {
             note("settings window missing")
             return
@@ -391,7 +398,9 @@ extension Runtime {
             // The window opens on the shown space's page; the check needs the pane's own page,
             // so it drives the same open path a settings command does and then names the pane.
             guard probe.isVisible, probe.pageID == mode.paneID else {
-                settings.checkOpen(paneID: mode.paneID, shownSpaceID: snapshot.shownSpaceId)
+                if mode != .passwords {
+                    settings.checkOpen(paneID: mode.paneID, shownSpaceID: snapshot.shownSpaceId)
+                }
                 note("opening on \(mode.paneID) (page=\(probe.pageID) visible=\(probe.isVisible))")
                 return
             }
@@ -438,6 +447,8 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
+        case .passwords:
+            settingsPasswordsTick(probe, check: check, note: note, step: step, end: end, finish: finish, capture: capture)
         case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar, .about:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
@@ -765,7 +776,7 @@ extension Runtime {
                 return
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow, .websites, .general, .privacy, .extensions:
+            case .frame, .search, .appearance, .littleWindow, .websites, .passwords, .general, .privacy, .extensions:
                 return
             }
             guard capture(mode == .about ? "about" : mode.rawValue) else { end("capture", false); return }

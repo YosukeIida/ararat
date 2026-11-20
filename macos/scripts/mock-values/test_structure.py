@@ -35,6 +35,23 @@ class StructureTests(unittest.TestCase):
         self.assertIn("FAIL folder-empty-line count SidebarNoTabsRow", result.stdout)
         self.assertNotIn("missing capture", result.stdout)
 
+    def test_passwords_captures_require_their_own_state_markers(self):
+        rules = json.loads(Path(__file__).with_name("structure.json").read_text())
+        rules = [rule for rule in rules if rule["capture"].startswith("settings-passwords-")]
+        self.assertEqual(len(rules), 3)
+        states = {
+            "settings-passwords-locked": ("row-password-fill", "passwords-unlock"),
+            "settings-passwords-search": ("row-password-fill", "passwords-search", "passwords-result"),
+            "settings-passwords-detail": ("passwords-revealed",),
+        }
+        self.assertEqual({rule["capture"] for rule in rules}, set(states))
+        for rule in rules:
+            for name, identifiers in states.items():
+                with self.subTest(capture=rule["capture"], identifiers=identifiers):
+                    children = [view("SettingsMarkerView", identifier=name) for name in identifiers]
+                    self.assertEqual(check(rule, {"windows": [{"root": view("NSView", children=children)}]}),
+                                     rule["capture"] == name)
+
     def test_refusal_requires_the_message_and_hides_the_recorder(self):
         rule = {"kind": "contains", "members": [{"identifier": "message"}], "absent": [{"identifier": "recorder"}]}
         message = view("NSView", identifier="message")

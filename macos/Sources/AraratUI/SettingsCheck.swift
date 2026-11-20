@@ -45,6 +45,29 @@ public final class SettingsCheckProbe: NSObject {
     public var groupPaneIDs: [String] { model.resultGroups.map { $0.pane.id.rawValue } }
     public var groupRowCounts: [Int] { model.resultGroups.map { $0.rows.count } }
     public var noResults: Bool { model.results.isEmpty }
+    public var passwordsLocked: Bool { model.passwords.page == .list && model.passwords.state == .locked }
+    public var passwordWebsites: [String]? {
+        let passwords = model.passwords
+        guard passwords.page == .list, passwords.state == .ready else { return nil }
+        return passwords.filtered.map(\.website)
+    }
+
+    public func refreshPasswordPreferences() { model.passwords.objectWillChange.send() }
+    public func unlockPasswords() { model.passwords.unlock() }
+    public func searchPasswords(_ query: String) { model.passwords.query = query }
+
+    public func revealPassword(for website: String) {
+        let passwords = model.passwords
+        guard let row = passwords.filtered.first(where: { $0.website == website }) else { return }
+        passwords.detail(row)
+        passwords.toggleReveal()
+    }
+
+    public func isShowingRevealedPassword(for website: String, matching fixture: String) -> Bool {
+        let passwords = model.passwords
+        return passwords.page == .detail && passwords.selected?.website == website && passwords.showingPassword
+            && (passwords.revealed.objectValue as? NSString)?.isEqual(to: fixture) == true
+    }
     public var selectedIndex: Int { model.searchIndex }
     public var selectedResultTitle: String? { model.selectedResult.map { model.resultTitle($0) } }
     public var selectedResultID: String? { model.selectedResult?.id }

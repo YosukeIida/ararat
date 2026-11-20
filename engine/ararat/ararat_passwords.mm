@@ -231,7 +231,8 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
     completion(ok);
   });
   const auto* command = base::CommandLine::ForCurrentProcess();
-  if (command->GetSwitchValueASCII("ararat-check") == "passwords" &&
+  if ((command->GetSwitchValueASCII("ararat-check") == "passwords" ||
+       command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
       command->HasSwitch("use-mock-keychain")) {
     g_browser_process->local_state()->SetBoolean(
         password_manager::prefs::kHadBiometricsAvailable, true);

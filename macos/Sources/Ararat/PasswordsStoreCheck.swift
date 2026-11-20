@@ -7,7 +7,8 @@ final class PasswordsStoreCheck {
         let roots = [NSTemporaryDirectory(), "/tmp"].map {
             URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/"
         }
-        return !args.contains("--") && args.filter { $0.hasPrefix("--ararat-check") } == ["--ararat-check=passwords"]
+        let modes = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") }
+        return !args.contains("--") && (modes == ["--ararat-check=passwords"] || modes == ["--ararat-screen=settings-passwords"])
             && args.contains("--use-mock-keychain") && ["--user-data-dir", "--ararat-db"].allSatisfy { name in
                 let matches = args.filter { $0 == name || $0.hasPrefix(name + "=") }
                 guard matches.count == 1, matches[0].hasPrefix(name + "=") else { return false }

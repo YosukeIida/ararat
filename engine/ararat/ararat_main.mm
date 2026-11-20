@@ -318,6 +318,7 @@ void CheckGuards(int argc, const char** argv) {
           std::string_view(arg + 16) == "settings-websites" ||
           std::string_view(arg + 16) == "settings-general" ||
           std::string_view(arg + 16) == "settings-privacy" ||
+          std::string_view(arg + 16) == "settings-passwords" ||
           std::string_view(arg + 16) == "settings-extensions" ||
           std::string_view(arg + 16) == "settings-about" ||
           std::string_view(arg + 16) == "settings-toolbar") {

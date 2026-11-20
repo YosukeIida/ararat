@@ -68,5 +68,10 @@ struct PasswordsBridgeTests {
         #expect(!PasswordsStoreCheck.validArguments(args + ["--user-data-dir=/Users/example/Profile"]))
         #expect(!PasswordsStoreCheck.validArguments(args + ["--ararat-check=downloads"]))
         #expect(!PasswordsStoreCheck.validArguments(args.filter { $0 != "--use-mock-keychain" }))
+        let screen = args.map { $0 == "--ararat-check=passwords" ? "--ararat-screen=settings-passwords" : $0 }
+        #expect(PasswordsStoreCheck.validArguments(screen))
+        #expect(!PasswordsStoreCheck.validArguments(screen + ["--ararat-check=passwords"]))
+        #expect(!PasswordsStoreCheck.validArguments(screen + ["--ararat-db=/Users/example/workspace"]))
+        #expect(!PasswordsStoreCheck.validArguments(screen.filter { $0 != "--use-mock-keychain" }))
     }
 }
