@@ -7,6 +7,7 @@
 #include "ararat/core/public/ARWindowHost.h"
 #include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_autofill_bubble_handler.h"
+#include "ararat/core/ararat_password_prompt.h"
 #include "ararat/core/ararat_window_host.h"
 #include "base/check.h"
 #include "base/command_line.h"
@@ -70,6 +71,8 @@
 #include "url/origin.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/focus/focus_manager.h"
+#include "ui/views/window/dialog_delegate.h"
 #include "ui/views/window/dialog_delegate.h"
 #include "ui/gfx/image/image.h"
 
@@ -471,6 +474,36 @@ class TabContentsObserver : public content::WebContentsObserver,
   return contents_ && AraratCheckAutofillBubble(contents_, card, decline);
 }
 
+- (BOOL)checkSubmitPasswordFixture {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+                        "ararat-screen") != "password-prompt") return NO;
+  const auto& url = contents_->GetLastCommittedURL();
+  if (!url.SchemeIs("http") || url.host() != "127.0.0.1" ||
+      url.path() != "/password-login") return NO;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"submitAraratPasswordFixture()", base::NullCallback(),
+      content::ISOLATED_WORLD_ID_GLOBAL);
+  return YES;
+}
+
+- (NSWindow*)checkPasswordPromptWindow {
+  auto* widget = contents_ ? AraratCheckPasswordPromptWidget(contents_) : nullptr;
+  return widget && widget->IsVisible() ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
+}
+
+- (BOOL)checkPasswordPromptAction:(NSString*)action {
+  auto* widget = contents_ ? AraratCheckPasswordPromptWidget(contents_) : nullptr;
+  if (!widget || !widget->IsVisible()) return NO;
+  if ([action isEqualToString:@"never"]) return AraratCheckNeverSavePassword(contents_);
+  if ([action isEqualToString:@"escape"]) {
+    return widget->GetFocusManager()->ProcessAccelerator(
+        ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+  }
+  if (![action isEqualToString:@"accept"]) return NO;
+  widget->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  return YES;
+}
+
 - (NSDictionary<NSString*, id>*)checkAutofillState {
   if (!contents_ || (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") != "autofill" && !IsPromptScreen())) return @{};
   if (!IsPromptScreen()) {
@@ -595,7 +628,8 @@ class TabContentsObserver : public content::WebContentsObserver,
 
 - (BOOL)checkIsDialogActive {
   const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
-  if (!contents_ || (check != "permissions" && check != "dialogs" && check != "protocol" && check != "autofill" && check != "keyboard" && base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "keyboard" && !IsPromptScreen())) return NO;
+  const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
+  if (!contents_ || (check != "permissions" && check != "dialogs" && check != "protocol" && check != "autofill" && check != "keyboard" && screen != "keyboard" && screen != "password-prompt" && !IsPromptScreen())) return NO;
   auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(contents_);
   return manager && manager->IsDialogActive();
 }

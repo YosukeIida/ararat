@@ -584,6 +584,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var openingExternalURL = false
   var atcRoutingCheck: ATCRoutingCheck?
   var passwordsStoreCheck: PasswordsStoreCheck?
+  var passwordPromptCheck: PasswordPromptCheck?
 
   enum ExternalDestination: Equatable {
     case space(String, String)
@@ -1189,7 +1190,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil, restoringWindow: KeptWindow? = nil) throws {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
-    let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
+    let guardedOptions = PasswordsStoreCheck.guardOptions(arguments)
+    let passwordPromptScreen = session == nil && guardedOptions.contains("--ararat-screen=password-prompt")
+    let screenName = passwordPromptScreen ? "password-prompt" :
+      arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
     if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
@@ -1207,6 +1211,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "links" { browserCheckMode = "screen-links" }
       if screenName == "profiles" { browserCheckMode = "screen-profiles" }
       if screenName == "prompts" { browserCheckMode = "screen-prompts" }
+      if passwordPromptScreen { browserCheckMode = "screen-password-prompt" }
       if screenName == "dialogs" { browserCheckMode = "screen-dialogs" }
       if screenName == "devtools" { browserCheckMode = "screen-devtools" }
       if screenName == "extensions" { browserCheckMode = "screen-extensions" }
@@ -1240,7 +1245,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // U27a: one launch per settings pane, plus the frame and the search. The argument
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
+      if passwordPromptScreen || ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1284,7 +1289,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     typealias UserData = @convention(c) () -> UnsafeMutableRawPointer?
     let userData = unsafeBitCast(pathSymbol, to: UserData.self)
-    let requested = arguments.first { $0.hasPrefix("--ararat-db=") }.map { String($0.dropFirst(12)) }
+    let requested = (passwordPromptScreen ? guardedOptions : arguments)
+      .first { $0.hasPrefix("--ararat-db=") }.map { String($0.dropFirst(12)) }
     let organize = browserCheckMode == "organize" || browserCheckMode == "screen-organize"
     let wheelMotionCheckActive = browserCheckMode == "screen-space-wheel-motion"
     let dockCheckMode = browserCheckMode == "dock" || browserCheckMode == "screen-dock"
@@ -1766,7 +1772,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
-    } else if browserCheckMode != nil {
+    } else if browserCheckMode != nil && !passwordPromptScreen {
       if browserCheckMode == "atc-routing" || browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-space-wheel-motion" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-tab-switcher" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "window-drag" || browserCheckMode == "screen-window-drag" || browserCheckMode == "create-space" || browserCheckMode == "screen-create-space" || browserCheckMode == "folder-upload" || browserCheckMode == "screen-folder-upload" || liveBatchCheckActive || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
@@ -1809,12 +1815,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       quitTimer = timer
       RunLoop.main.add(timer, forMode: .common)
-    } else if check {
+    } else if check && !passwordPromptScreen {
       sliceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
         MainActor.assumeIsolated { self?.sliceTick(card: card) }
       }
     } else if session == nil {
       host.window().makeKeyAndOrderFront(nil)
+    }
+    if passwordPromptScreen {
+      passwordPromptCheck = PasswordPromptCheck()
+      let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+        MainActor.assumeIsolated { self?.browserCheckTick() }
+      }
+      browserCheckTimer = timer
+      RunLoop.main.add(timer, forMode: .common)
     }
   }
 
@@ -3542,6 +3556,16 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
+    if mode == "screen-password-prompt", let check = passwordPromptCheck {
+      browserCheckAttempts += 1
+      if browserCheckAttempts > 300 || promptFixtureError != nil {
+        finishBrowserCheck(ok: false, values: check.results().merging(
+          ["error": promptFixtureError ?? "timeout"]) { _, new in new })
+      } else if let host {
+        check.tick(self, host: host)
+      }
+      return
+    }
     if mode == "passwords" {
       browserCheckAttempts += 1
       if browserCheckAttempts > 120 {
@@ -9430,6 +9454,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if browserCheckMode == "screen-links" { result["screen"] = "links" }
     if browserCheckMode == "screen-profiles" { result["screen"] = "profiles" }
     if browserCheckMode == "screen-prompts" { result["screen"] = "prompts" }
+    if browserCheckMode == "screen-password-prompt" { result["check"] = "password-prompt"; result["screen"] = "password-prompt" }
     if browserCheckMode == "screen-dialogs" { result["check"] = "dialogs"; result["screen"] = "dialogs" }
     if browserCheckMode == "screen-devtools" { result["screen"] = "devtools" }
     if browserCheckMode == "screen-extensions" { result["check"] = "extensions"; result["screen"] = "extensions" }

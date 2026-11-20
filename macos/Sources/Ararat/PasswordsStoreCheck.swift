@@ -3,9 +3,11 @@ import AraratEngineAPI
 
 @MainActor
 final class PasswordsStoreCheck {
-    private nonisolated static let modes: Set<String> = ["--ararat-check=passwords", "--ararat-screen=settings-passwords"]
+    private nonisolated static let modes: Set<String> = [
+        "--ararat-check=passwords", "--ararat-screen=settings-passwords", "--ararat-screen=password-prompt",
+    ]
 
-    private nonisolated static func guardOptions(_ arguments: [String]) -> [String] {
+    nonisolated static func guardOptions(_ arguments: [String]) -> [String] {
         let whitespace = CharacterSet(charactersIn: " \t\n\r\u{000B}\u{000C}")
         return arguments.dropFirst().map { argument in
             let option = argument.trimmingCharacters(in: whitespace)
@@ -24,6 +26,8 @@ final class PasswordsStoreCheck {
         }
         let selected = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") }
         return !args.contains("--") && selected.count == 1 && selected.contains(where: modes.contains)
+            && !(selected.contains("--ararat-screen=password-prompt")
+                && args.contains(where: { $0 == "--enable-automation" || $0.hasPrefix("--enable-automation=") }))
             && args.contains("--use-mock-keychain") && ["--user-data-dir", "--ararat-db"].allSatisfy { name in
                 let matches = args.filter { $0 == name || $0.hasPrefix(name + "=") }
                 guard matches.count == 1, matches[0].hasPrefix(name + "=") else { return false }

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ararat/core/ararat_hooks.h"
+#include "ararat/core/ararat_password_prompt.h"
 #include "ararat/core/ararat_passwords.h"
 #include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_tab_history.h"
@@ -316,6 +317,7 @@ void CheckGuards(int argc, const char** argv) {
       if (std::string_view(arg + 16) == "links" || std::string_view(arg + 16) == "profiles" || std::string_view(arg + 16) == "prompts" || std::string_view(arg + 16) == "devtools" || std::string_view(arg + 16) == "extensions" || std::string_view(arg + 16) == "fullscreen" || std::string_view(arg + 16) == "keyboard" || std::string_view(arg + 16) == "organize" || std::string_view(arg + 16) == "look" || std::string_view(arg + 16) == "dock" || std::string_view(arg + 16) == "commandbar" || std::string_view(arg + 16) == "sidebar-rows" || std::string_view(arg + 16) == "folder-empty" || std::string_view(arg + 16) == "today" || std::string_view(arg + 16) == "space-name" || std::string_view(arg + 16) == "site-controls" || std::string_view(arg + 16) == "ext-actions" || std::string_view(arg + 16) == "private-window" || std::string_view(arg + 16) == "little-window" || std::string_view(arg + 16) == "window-drag" || std::string_view(arg + 16) == "create-space") g_check_slice = true;
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "password-prompt") { valid_screen = true; g_check_slice = true; }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (screen_private) { valid_screen = true; g_check_slice = true; }
@@ -512,6 +514,7 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   g_trace_teardown = profiles && reverse;
   AraratInstallWindowFactory();
   AraratInstallPermissionPrompt();
+  AraratInstallPasswordPrompt();
   g_ararat_quit_confirmation = [](bool powering_off, bool shortcut, bool is_repeat,
                                   void (^continue_quit)(void)) {
     return g_ararat_callbacks.confirm_quit &&

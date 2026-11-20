@@ -76,7 +76,7 @@ struct PasswordsBridgeTests {
     }
 
     @Test func passwordsGuardRecognizesBothChromiumSwitchPrefixes() {
-        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords"] {
+        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords", "ararat-screen=password-prompt"] {
             for prefix in ["-", "--"] {
                 let launch = ["Ararat", prefix + mode, prefix + "use-mock-keychain"]
                 #expect(PasswordsStoreCheck.requiresScratchGuard(launch))
@@ -84,6 +84,9 @@ struct PasswordsBridgeTests {
                 let scratch = launch + [prefix + "user-data-dir=/tmp/pwswitch-test/profile",
                                         prefix + "ararat-db=/tmp/pwswitch-test/workspace"]
                 #expect(PasswordsStoreCheck.validArguments(scratch))
+                if mode == "ararat-screen=password-prompt" {
+                    #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "enable-automation"]))
+                }
                 #expect(!PasswordsStoreCheck.validArguments(scratch + ["-user-data-dir=/Users/example/Profile"]))
                 let afterTerminator = ["Ararat", "--", prefix + mode]
                 #expect(PasswordsStoreCheck.requiresScratchGuard(afterTerminator))

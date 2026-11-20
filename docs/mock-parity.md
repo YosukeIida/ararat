@@ -8,7 +8,7 @@ The [reviewed token table](research/mock-values.json) has 134 entries. The Swift
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
-The ledger below has 113 element rows. Counting each row once by status gives 42 matches, 24 open differences, 29 fixes awaiting a VM recheck, 6 accepted differences, 3 that cannot be judged, and 9 unbuilt.
+The ledger below has 113 element rows. Counting each row once by status gives 42 matches, 23 open differences, 29 fixes awaiting a VM recheck, 6 accepted differences, 3 that cannot be judged, 9 unbuilt, and 1 design decision with no board.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -138,7 +138,7 @@ The VM check column gives the check and phase or the capture name, with the file
 | `E-Passwords` | Sign-in detail | `settings-passwords-detail` | fixed, VM recheck pending | User name and password are edited inline. The revealed password can be selected for standard macOS copying. Website opens in the profile and Delete removes the sign-in. |
 | `E-Passwords` | Save Changes | — | differs (accepted) | Save Changes appears after editing either field. The board omits this button. |
 | `E-Passwords` | Import from Arc | — | differs | Unit (c) adds Arc password import. |
-| `E-Passwords` | Save and update prompt | — | differs | Offer to save writes the Chromium preference. Unit (d) implements the prompt. |
+| — | Password save and update prompt | `password-save`, `password-update` | no board, design decision | Unit (d) uses the save-card dialog style at the top centre of the page card. The VM check awaits execution. |
 | `E-Privacy` | Clear data, retention, cookie and privacy controls | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | differs | `settings-privacy-privacy` omits the open Protection features (decision 97). `settings-privacy-sheet` shows a filled Cancel, Clear in place of Clear Data, a static profile label and no Site permissions checkbox. |
 | `E-Privacy` | Blocker and dangerous-site warnings | — | not built | Design and sources are open (§14). |
 | `E-Search` | Search in Settings and highlighted result | `settings-search-search`, `settings-search-search-cleared` | matches | `settings-search-search` and `settings-search-search-cleared` show results replacing the rail, first-result selection and a grey highlight after scrolling to the target row. |

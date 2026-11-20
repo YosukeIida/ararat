@@ -15,6 +15,8 @@ namespace content { class WebContents; }
 namespace content { class NavigationThrottleRegistry; }
 extern void (*g_ararat_add_passwords_navigation_throttle)(
     content::NavigationThrottleRegistry&);
+extern bool (*g_ararat_password_prompt)(content::WebContents*, bool show,
+                                       bool user_action);
 extern void (*g_ararat_add_check_navigation_throttle)(
     content::NavigationThrottleRegistry&);
 namespace history { class HistoryService; }

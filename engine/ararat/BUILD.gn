@@ -82,18 +82,51 @@ source_set("passwords") {
 
 source_set("passwords_unit_tests") {
   testonly = true
-  sources = [ "ararat_passwords_unittest.mm" ]
+  sources = [ "ararat_password_prompt_unittest.cc", "ararat_passwords_unittest.mm" ]
   deps = [
+    ":password_prompt",
     ":passwords",
     "//base/test:test_support",
     "//chrome/browser/affiliations",
     "//chrome/browser/password_manager/factories",
+    "//chrome/browser/ui/passwords:test_support_ui",
     "//chrome/test:test_support",
+    "//chrome/test/base:chrome_render_view_host_test_harness",
     "//components/affiliations/core/browser:test_support",
     "//components/password_manager/core/browser/password_store:test_support",
+    "//components/password_manager/core/browser:test_support",
+    "//components/password_manager/core/browser:password_form",
     "//content/test:test_support",
+    "//testing/gmock",
     "//testing/gtest",
     "//url",
+  ]
+}
+
+source_set("password_prompt") {
+  sources = [ "ararat_password_prompt.cc", "ararat_password_prompt.h" ]
+  public = [ "ararat_password_prompt.h" ]
+  public_deps = [
+    "//base",
+    "//chrome/browser/ui/passwords/bubble_controllers",
+    "//components/password_manager/core/common",
+  ]
+  deps = [
+    ":hooks",
+    "//chrome/browser/password_manager",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/autofill",
+    "//chrome/browser/ui/browser_window:browser_window",
+    "//chrome/browser/ui/passwords",
+    "//chrome/browser/ui/passwords/bubble_controllers:impl",
+    "//components/constrained_window",
+    "//components/password_manager/core/browser:password_form",
+    "//components/prefs",
+    "//components/url_formatter",
+    "//components/web_modal",
+    "//content/public/browser",
+    "//ui/base",
+    "//ui/views",
   ]
 }
 
@@ -105,6 +138,7 @@ source_set("entry") {
     ":core",
     ":history_files",
     ":hooks",
+    ":password_prompt",
     ":passwords",
     "//base",
     "//base:i18n",

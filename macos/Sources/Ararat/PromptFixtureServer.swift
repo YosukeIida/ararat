@@ -39,10 +39,23 @@ final class PromptFixtureServer {
     connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { chunk, _, complete, error in
       var request = data
       if let chunk { request.append(chunk) }
-      if request.range(of: Data("\r\n\r\n".utf8)) != nil {
-        let line = String(decoding: request, as: UTF8.self).components(separatedBy: "\r\n").first ?? ""
+      if let headerEnd = request.range(of: Data("\r\n\r\n".utf8)) {
+        let headerLines = String(decoding: request[..<headerEnd.lowerBound], as: UTF8.self)
+          .components(separatedBy: "\r\n")
+        let line = headerLines.first ?? ""
         let target = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let path = String(target.split(separator: "?", maxSplits: 1).first ?? "")
+        if path == "/password-success", line.hasPrefix("POST ") {
+          let length = headerLines.dropFirst().first {
+            $0.lowercased().hasPrefix("content-length:")
+          }.flatMap { Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) }
+          guard let length, (1...4096).contains(length) else { connection.cancel(); return }
+          if request.count - headerEnd.upperBound < length {
+            if complete || error != nil { connection.cancel() }
+            else { self.receive(connection, data: request) }
+            return
+          }
+        }
         if path == "/switcher/slow" {
           self.pendingConnections.append(connection)
           return
@@ -84,6 +97,10 @@ final class PromptFixtureServer {
         }
         let (status, headers, body): (String, String, String)
         switch path {
+        case "/password-login":
+          status = "200 OK"; headers = ""; body = Self.passwordLoginPage
+        case "/password-success" where line.hasPrefix("POST "):
+          status = "200 OK"; headers = ""; body = "<!doctype html><title>Signed in</title><p>Fixture sign-in succeeded.</p>"
         case "/permissions":
           status = "200 OK"; headers = ""; body = Self.permissionsPage
         case "/dialogs":
@@ -132,6 +149,25 @@ final class PromptFixtureServer {
       DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { sendDownloadChunk(connection, remaining: remaining - 1024) }
     })
   }
+
+  private static let passwordLoginPage = """
+    <!doctype html><meta charset="utf-8"><title>Password fixture</title>
+    <form action="/password-success" method="post">
+      <label>User name <input id="username" name="username" autocomplete="username" required></label>
+      <label>Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <script>
+      function submitAraratPasswordFixture() {
+        const scenario = new URL(location.href).searchParams.get('case');
+        const known = scenario === 'save' || scenario === 'update';
+        document.getElementById('username').value = known ? 'fixture' : 'fixture-' + scenario;
+        document.getElementById('password').value =
+          scenario === 'update' ? 'fixture-updated-72' : 'fixture-initial-43';
+        document.querySelector('form button').click();
+      }
+    </script>
+    """
 
   private static let permissionsPage = """
     <!doctype html><title>Permissions fixture</title>

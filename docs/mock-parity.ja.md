@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 113 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件、修正済みで VM 再確認待ち 29 件、承認済みの相違 6 件、判定不能 3 件、未実装 9 件である。
+下の台帳には 113 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 23 件、修正済みで VM 再確認待ち 29 件、承認済みの相違 6 件、判定不能 3 件、未実装 9 件、ボードなしの設計判断 1 件である。
 
 
 ```sh
@@ -140,7 +140,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Passwords` | ログイン情報の詳細 | `settings-passwords-detail` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
 | `E-Passwords` | Save Changes | — | 相違（承認済み） | ユーザー名かパスワードを編集すると Save Changes が表示される。モックではこのボタンが省かれている。 |
 | `E-Passwords` | Import from Arc | — | 相違 | Arc からのパスワード取り込みは単位 (c) で追加する。 |
-| `E-Passwords` | 保存・更新の確認 | — | 相違 | Offer to save は Chromium の設定値を変更する。保存・更新の確認は単位 (d) で実装する。 |
+| — | パスワードの保存・更新の確認 | `password-save`、`password-update` | ボードなし、設計判断 | 単位 (d) ではカード保存と同じダイアログをページカード上辺の中央に置く。VM での検査は未実施。 |
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 相違 | `settings-privacy-privacy` には仕様検討中の Protection 機能がない（決定 97）。`settings-privacy-sheet` は Cancel に塗りがあり、Clear Data を Clear と表示し、プロファイルを固定ラベルで示し、Site permissions のチェックボックスがない。 |
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |
