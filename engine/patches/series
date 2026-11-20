@@ -48,3 +48,4 @@ ararat/command-line-urls-hook.patch
 ararat/native-editor-ime.patch
 ararat/password-manager.patch
 ararat/password-prompt.patch
+ararat/password-prompt-trace.patch

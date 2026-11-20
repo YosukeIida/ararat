@@ -1,5 +1,6 @@
 import AppKit
 import AraratEngineAPI
+import os
 
 @MainActor
 final class PasswordPromptCheck {
@@ -12,7 +13,7 @@ final class PasswordPromptCheck {
         }
     }
 
-    private enum Phase { case unlock, start, submit, wait, switchedAway, reshow, closed, store }
+    private enum Phase: String { case unlock, start, fill, submit, wait, switchedAway, reshow, closed, store }
     private var phase = Phase.unlock
     private var remaining = Scenario.allCases[...]
     private var tab: (any ARTabAPI)?
@@ -22,20 +23,63 @@ final class PasswordPromptCheck {
     private var notNowBeforeNavigation = 0
     private var conditions: [String: Bool] = [:]
     private var captures: [String: [String: Any]] = [:]
+    private var rendererForm = "unprobed"
+    private var details: [String: Any] = [:]
+    private nonisolated static let latestDetails = OSAllocatedUnfairLock(initialState: Data())
+
+    nonisolated static func watchdogDetails() -> [String: Any] {
+        let data = latestDetails.withLock { $0 }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [
+            "case": "save", "step": "startup", "controller_state": -1,
+            "dialog_exists": false, "fixture_page_state": "unavailable",
+        ]
+    }
+
+    private func updateDetails(_ target: (any ARTabAPI)?) {
+        let path = target.flatMap { URL(string: $0.url)?.path }
+        let page: String
+        if target?.isLoading == true {
+            page = "loading"
+        } else {
+            switch path {
+            case "/password-login": page = "login"
+            case "/password-success": page = "success"
+            case "/password-complete": page = "cross_host"
+            default: page = target == nil ? "unavailable" : "other"
+            }
+        }
+        let current: [String: Any] = [
+            "case": remaining.first?.rawValue ?? "done", "step": phase.rawValue,
+            "controller_state": target?.checkPasswordPromptState() ?? -1,
+            "dialog_exists": target?.checkHasPasswordPrompt() ?? false,
+            "dialog_visible": target?.checkPasswordPromptWindow() != nil,
+            "fixture_page_state": page, "renderer_form": rendererForm,
+            "callback_pending": pending,
+        ]
+        if !NSDictionary(dictionary: current).isEqual(to: details),
+           let data = try? JSONSerialization.data(withJSONObject: current, options: [.sortedKeys]) {
+            details = current
+            Self.latestDetails.withLock { $0 = data }
+            FileHandle.standardError.write(Data("ararat-trace: password-check ".utf8) + data + Data([10]))
+        }
+    }
 
     func results() -> [String: Any] {
-        ["conditions": conditions, "captures": captures,
+        ["conditions": conditions, "captures": captures, "details": details,
          "scenario": remaining.first?.rawValue ?? "done",
          "failed_conditions": Scenario.allCases.map(\.rawValue).filter { conditions[$0] != true }]
     }
 
     func tick(_ runtime: Runtime, host: any ARWindowHostAPI) {
-        guard !pending, let scenario = remaining.first, let port = runtime.promptFixturePort else { return }
+        guard let scenario = remaining.first, let port = runtime.promptFixturePort else { return }
         let fixture = "http://127.0.0.1:\(port)/password-login?case=\(scenario.rawValue)"
         let crossHostDestination = "http://localhost:\(port)/password-complete"
         let regularTabs = host.tabs() as? [any ARTabAPI] ?? []
         let privateHost = runtime.children.first(where: \.isPrivateWindow)?.host
         let privateTabs = privateHost?.tabs() as? [any ARTabAPI] ?? []
+        let tabs = scenario == .privateWindow ? privateTabs : regularTabs
+        updateDetails(tab ?? tabs.first(where: { $0.url == fixture }) ?? tabs.first)
+        guard !pending else { return }
 
         switch phase {
         case .unlock:
@@ -67,13 +111,30 @@ final class PasswordPromptCheck {
             default: disposition = "current"
             }
             host.checkNavigate(fixture, disposition: disposition)
-            phase = .submit
-        case .submit:
-            let tabs = scenario == .privateWindow ? privateTabs : regularTabs
-            guard let target = tabs.first(where: { $0.url == fixture && !$0.isLoading }),
-                  target.checkSubmitPasswordFixture() else { return }
+            phase = .fill
+        case .fill:
+            guard let target = tabs.first(where: { $0.url == fixture && !$0.isLoading }) else { return }
             tab = target
+            pending = true
+            let started = target.checkFillPasswordFixture { [weak self, weak runtime] result in
+                MainActor.assumeIsolated {
+                    guard let self, let runtime else { return }
+                    self.pending = false
+                    switch result {
+                    case "filled", "missing_form", "missing_field", "missing_script", "edit_failed", "no_renderer_result":
+                        self.rendererForm = result
+                    default: self.rendererForm = "unexpected_renderer_result"
+                    }
+                    self.updateDetails(self.tab)
+                    if result == "filled" { self.phase = .submit }
+                    else { self.record(false, runtime: runtime) }
+                }
+            }
+            if !started { pending = false }
+        case .submit:
+            guard let tab, tab.checkSubmitPasswordFixture() else { return }
             phase = .wait
+            updateDetails(tab)
         case .wait:
             guard let tab, !tab.isLoading, tab.url == "http://127.0.0.1:\(port)/password-success" else { return }
             let dialog = tab.checkPasswordPromptWindow()
@@ -192,6 +253,7 @@ final class PasswordPromptCheck {
             return
         }
         tab = nil
+        rendererForm = "unprobed"
         settled = 0
         phase = .start
     }

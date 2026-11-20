@@ -301,6 +301,10 @@ bool HandlePasswordPrompt(content::WebContents* contents,
   auto* manager = web_modal::WebContentsModalDialogManager::FromWebContents(
       contents);
   const State state = controller->GetState();
+  if (CheckMode()) {
+    std::fprintf(stderr, "ararat-trace: password-engine hook state=%d\n",
+                 static_cast<int>(state));
+  }
   if (user_action || !AraratPasswordPromptModel::Supports(state) || !manager ||
       !manager->delegate() ||
       !manager->delegate()->GetWebContentsModalDialogHost(contents) ||
@@ -319,6 +323,9 @@ bool HandlePasswordPrompt(content::WebContents* contents,
   auto* prompt = new Prompt(contents, controller->GetModelDelegateProxy());
   Prompts().emplace(contents, prompt);
   prompt->Show();
+  if (CheckMode()) {
+    std::fprintf(stderr, "ararat-trace: password-engine dialog_created\n");
+  }
   return true;
 }
 

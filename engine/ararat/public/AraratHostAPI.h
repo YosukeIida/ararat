@@ -104,7 +104,9 @@ NS_SWIFT_MAIN_ACTOR
 - (NSDictionary<NSString*, id>*)checkAutofillState;
 - (void)checkRefreshAutofillData;
 - (void)checkAutofillAction:(NSInteger)action;
+- (BOOL)checkFillPasswordFixture:(void (^)(NSString*))completion;
 - (BOOL)checkSubmitPasswordFixture;
+- (NSInteger)checkPasswordPromptState;
 - (nullable NSWindow*)checkPasswordPromptWindow;
 - (BOOL)checkPasswordPromptAction:(NSString*)action;
 - (NSInteger)checkPasswordPromptNotNowCount;

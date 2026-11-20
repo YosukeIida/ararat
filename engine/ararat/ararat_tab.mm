@@ -27,6 +27,7 @@
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.h"
+#include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -473,16 +474,39 @@ class TabContentsObserver : public content::WebContentsObserver,
   return contents_ && AraratCheckAutofillBubble(contents_, card, decline);
 }
 
-- (BOOL)checkSubmitPasswordFixture {
-  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-                        "ararat-screen") != "password-prompt") return NO;
-  const auto& url = contents_->GetLastCommittedURL();
-  if (!url.SchemeIs("http") || url.host() != "127.0.0.1" ||
-      url.path() != "/password-login") return NO;
+static bool IsPasswordLoginFixture(content::WebContents* contents) {
+  if (!contents || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+                       "ararat-screen") != "password-prompt") return false;
+  const auto& url = contents->GetLastCommittedURL();
+  return url.SchemeIs("http") && url.host() == "127.0.0.1" &&
+         url.path() == "/password-login";
+}
+
+- (BOOL)checkFillPasswordFixture:(void (^)(NSString*))completion {
+  if (!IsPasswordLoginFixture(contents_)) return NO;
   contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
-      u"submitAraratPasswordFixture()", base::NullCallback(),
+      u"typeof fillAraratPasswordFixture === 'function' ? "
+      u"fillAraratPasswordFixture() : 'missing_script'",
+      base::BindOnce(^(base::Value value) {
+        completion(value.is_string() ? base::SysUTF8ToNSString(value.GetString())
+                                     : @"no_renderer_result");
+      }), content::ISOLATED_WORLD_ID_GLOBAL);
+  return YES;
+}
+
+- (BOOL)checkSubmitPasswordFixture {
+  if (!IsPasswordLoginFixture(contents_)) return NO;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"document.querySelector('form')?.requestSubmit()", base::NullCallback(),
       content::ISOLATED_WORLD_ID_GLOBAL);
   return YES;
+}
+
+- (NSInteger)checkPasswordPromptState {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+                        "ararat-screen") != "password-prompt") return -1;
+  auto* controller = ManagePasswordsUIController::FromWebContents(contents_);
+  return controller ? static_cast<NSInteger>(controller->GetState()) : -1;
 }
 
 - (NSWindow*)checkPasswordPromptWindow {
