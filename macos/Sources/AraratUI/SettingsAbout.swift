@@ -14,8 +14,8 @@ public enum SettingsUpdateState: Equatable, Sendable {
         case .checking: ("Checking for updates…", nil, nil)
         case .available(let version): ("Ararat \(version) is available", nil, "Check for Updates")
         case .downloading(let version, _): ("Downloading Ararat \(version)…", nil, nil)
-        case .ready(let version): ("Ararat \(version) is ready", nil, "Restart to Update")
-        case .failed(let message): ("Couldn’t update Ararat", message, "Try Again")
+        case .ready(let version): ("Ararat \(version) is ready", "Restarting brings your windows back", "Restart to Update")
+        case .failed(let message): ("Couldn’t check for updates", message, "Try Again")
         }
     }
 }
@@ -78,7 +78,7 @@ struct SettingsAboutSection: View {
                  enabled: model.aboutSource != nil) {
                 if let url = model.aboutSource { NSWorkspace.shared.open(url) }
             }
-            link("about-acknowledgements", title: "Acknowledgements", detail: "Chromium and other open-source software") {
+            link("about-acknowledgements", title: "Acknowledgements", detail: "Chromium, Ardia, Cra and other open-source software") {
                 showsAcknowledgements = true
             }
         }
@@ -89,7 +89,7 @@ struct SettingsAboutSection: View {
                     showsAcknowledgements = false
                     model.openChromiumCredits?()
                 }.disabled(model.openChromiumCredits == nil)
-                ForEach(model.aboutNotices, id: \.name) { notice in
+                ForEach(SettingsModel.aboutNotices(), id: \.name) { notice in
                     Button(notice.name) { NSWorkspace.shared.open(notice.url) }
                 }
                 Button("Done") { showsAcknowledgements = false }

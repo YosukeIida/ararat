@@ -90,7 +90,7 @@ enum SettingsRegistry {
          SettingsModel.Row(id: "about-automatic", pane: .about, title: "Check for updates automatically", subtitle: ""),
          SettingsModel.Row(id: "about-licence", pane: .about, title: "Licence", subtitle: "GNU General Public License v3.0"),
          SettingsModel.Row(id: "about-source", pane: .about, title: "Source code", subtitle: "Corresponding Source"),
-         SettingsModel.Row(id: "about-acknowledgements", pane: .about, title: "Acknowledgements", subtitle: "Chromium and Sparkle")]
+         SettingsModel.Row(id: "about-acknowledgements", pane: .about, title: "Acknowledgements", subtitle: "Chromium, Ardia, Cra and other open-source software")]
     }
 
     static func generalRows(_ model: SettingsModel) -> [SettingsModel.Row] {

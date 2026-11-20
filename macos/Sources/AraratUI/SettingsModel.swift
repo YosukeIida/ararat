@@ -234,8 +234,16 @@ public final class SettingsModel: ObservableObject {
         let archive = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Ararat-source.tar.xz")
         return Bundle.main.bundleURL.pathExtension == "app" && FileManager.default.isReadableFile(atPath: archive.path) ? archive : nil
     }
-    var aboutNotices: [(name: String, url: URL)] {
-        Bundle.main.url(forResource: "Sparkle-LICENSE", withExtension: "txt").map { [("Sparkle Licence", $0)] } ?? []
+    static func aboutNotices(in bundle: Bundle = .main) -> [(name: String, url: URL)] {
+        [
+            ("Ardia GPL-3.0 Licence", "Ardia-LICENSE"),
+            ("Ardia Apache-2.0 Licence", "Ardia-LICENSE.Apache-2.0"),
+            ("Ardia NOTICE", "Ardia-NOTICE"),
+            ("Cra MIT Licence", "Cra-LICENSE"),
+            ("Sparkle Licence", "Sparkle-LICENSE"),
+        ].compactMap { name, resource in
+            bundle.url(forResource: resource, withExtension: "txt").map { (name, $0) }
+        }
     }
     var openChromiumCredits: (() -> Void)?
 
