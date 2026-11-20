@@ -223,7 +223,9 @@ final class TabSwitcherScreenCheck {
         guard let id = change.id else { throw CheckFailure(condition: "create_tab") }
         if !runtime.isPrivateWindow { scenarioItems.append(id) }
         runtime.showAndSelect(.success(change.snapshot), selectedItem: id)
-        try await wait("select \(url)") { runtime.host?.activeItemId() == id && self.tab(runtime, id) != nil }
+        try await wait("select \(url)", observed: { runtime.checkSelectionDiagnostics(item: id) }) {
+            runtime.host?.activeItemId() == id && self.tab(runtime, id) != nil
+        }
         return id
     }
 
@@ -864,6 +866,14 @@ final class TabSwitcherScreenCheck {
 
             await attempt("private_unpainted_globe", onFailure: privateContext) {
                 defer { child.tabSwitcher?.cancel() }
+                try await wait("private initial NTP selected", observed: {
+                    child.checkSelectionDiagnostics(item: child.snapshot.selectedId)
+                }) {
+                    guard privateHost.window().isKeyWindow, let item = child.snapshot.selectedId,
+                          privateHost.activeItemId() == item, let initial = tab(child, item),
+                          initial.url.hasPrefix("chrome://newtab/"), let adapter = child.adapter else { return false }
+                    return adapter.session.queue.sync { adapter.session.store?.liveTab(item: item) } == initial.liveId
+                }
                 let blank = try await open(child, url: "about:blank")
                 guard let target = tab(child, blank) else {
                     record("private_globe_target", ["item": blank, "tab_present": false])

@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 
 source = Path("engine/ararat/ararat_tab.mm").read_text()
-decision = source[source.index("bool IsBlankSwitcherURL"):source.index("void TraceSwitcherThumbnail")]
+decision = source[source.index("bool IsBlankSwitcherURL"):source.index("enum class TabFaviconKind")]
 reserve_start = source.index("- (void)reserveSwitcherThumbnail {")
 reserve_gate = source[source.index("  if (!contents_", reserve_start):source.index("  ARWindowHost* host", reserve_start)]
 capture_start = source.index("- (void)captureSwitcherThumbnailForReserve:")

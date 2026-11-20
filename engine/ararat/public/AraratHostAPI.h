@@ -58,7 +58,9 @@ NS_SWIFT_MAIN_ACTOR
 - (void)focus;
 - (void)checkFlushHistory:(void (^)(BOOL written))completion;
 - (void)captureSnapshot:(void (^)(NSImage* _Nullable image))completion;
-- (void)captureSwitcherThumbnailForReserve:(BOOL)reserve completion:(void (^)(NSImage* _Nullable image))completion;
+- (void)captureSwitcherThumbnailForReserve:(BOOL)reserve
+                                    retry:(BOOL)retry
+                               completion:(BOOL (^)(NSImage* _Nullable image, NSNumber* _Nullable retryDelay))completion;
 - (void)checkStopSwitcherNavigation;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;

@@ -16,6 +16,7 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var url = "about:blank"
     @objc dynamic var title = ""
     @objc dynamic var navigationCount: UInt = 0
+    var thumbnailVisible = true
     weak var owner: MatrixFakeHost?
     var profile: String
     init(item: String, live: String, profile: String, owner: MatrixFakeHost) {
@@ -27,9 +28,11 @@ private final class MatrixFakeTab: NSObject {
     }
     @objc(closeWithCommandId:) func close(_ command: String) { owner?.closed.append(command) }
     @objc(captureSnapshot:) func capture(_ completion: @escaping (NSImage?) -> Void) { owner?.captureCompletions.append(completion) }
-    @objc(captureSwitcherThumbnailForReserve:completion:)
-    func captureThumbnail(_ reserve: Bool, completion: @escaping (NSImage?) -> Void) {
-        owner?.thumbnailCompletions.append(completion)
+    @objc(captureSwitcherThumbnailForReserve:retry:completion:)
+    func captureThumbnail(_ reserve: Bool, retry: Bool, completion: @escaping (NSImage?, NSNumber?) -> Bool) {
+        owner?.thumbnailCompletions.append((retry, { image, failed in
+            completion(image, failed && reserve && self.thumbnailVisible ? 0 : nil)
+        }))
     }
 }
 
@@ -60,7 +63,7 @@ private final class MatrixFakeHost: NSObject {
     var handoffAttempts = 0
     var failHandoffAt = 0
     var captureCompletions: [(NSImage?) -> Void] = []
-    var thumbnailCompletions: [(NSImage?) -> Void] = []
+    var thumbnailCompletions: [(retry: Bool, finish: (NSImage?, Bool) -> Bool)] = []
     var remotePlaceholder = false
     var incognitoOpens = 0
     lazy var fakeWindow: MatrixFakeWindow = {
@@ -149,11 +152,8 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
     return (fake, fake as! any ARWindowHostAPI)
 }
 
-@Test @MainActor
-func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+@MainActor
+private func privateThumbnailFixture(in dir: URL) throws -> (EngineAdapter, MatrixFakeHost, any ARWindowHostAPI, MatrixFakeTab) {
     let session = WorkspaceSession()
     let window = "private-thumbnail"
     let live = "private-live"
@@ -172,7 +172,18 @@ func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async thr
     let tab = MatrixFakeTab(item: item, live: live, profile: "Default", owner: fake)
     fake.entries = [tab]
     adapter.attach(host)
+    return (adapter, fake, host, tab)
+}
+
+@Test @MainActor
+func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let (adapter, fake, host, tab) = try privateThumbnailFixture(in: dir)
     defer { adapter.shutdown() }
+    let item = try #require(tab.itemId)
+    let live = tab.liveId
     let tabAPI = try #require(tab as? any ARTabAPI)
     let image = NSImage(size: NSSize(width: 156, height: 104))
 
@@ -184,11 +195,11 @@ func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async thr
         try await Task.sleep(for: .milliseconds(10))
     }
     try #require(fake.thumbnailCompletions.count == 1)
-    fake.thumbnailCompletions.removeFirst()(image)
+    _ = fake.thumbnailCompletions.removeFirst().finish(image, false)
     #expect(adapter.switcherThumbnailSource(item: item, live: live) == "reserve")
     adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
     try #require(fake.thumbnailCompletions.count == 1)
-    fake.thumbnailCompletions.removeFirst()(nil)
+    _ = fake.thumbnailCompletions.removeFirst().finish(nil, false)
     #expect(adapter.switcherThumbnail(item: item, live: live) === image)
     #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
 
@@ -196,9 +207,59 @@ func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async thr
     adapter.windowHost(host, invalidateSwitcherThumbnailForTab: tabAPI)
     #expect(adapter.switcherThumbnail(item: item, live: live) == nil)
     try #require(fake.thumbnailCompletions.count == 1)
-    fake.thumbnailCompletions.removeFirst()(image)
+    _ = fake.thumbnailCompletions.removeFirst().finish(image, false)
     #expect(adapter.switcherThumbnail(item: item, live: live) == nil)
     #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
+}
+
+enum SwitcherReserveFailure: CaseIterable {
+    case visible, hidden, navigated, navigatedAfterScheduling, replacedAfterScheduling, cached, cachedAfterScheduling
+}
+
+@Test(arguments: SwitcherReserveFailure.allCases)
+@MainActor
+func switcherReserveRetriesOnlyWhileTheSameDocumentIsShownAndUncached(_ scenario: SwitcherReserveFailure) async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let (adapter, fake, host, tab) = try privateThumbnailFixture(in: dir)
+    defer { adapter.shutdown() }
+    let tabAPI = try #require(tab as? any ARTabAPI)
+
+    func cachePrehideImage() throws {
+        adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
+        try #require(fake.thumbnailCompletions.count == 1)
+        _ = fake.thumbnailCompletions.removeFirst().finish(NSImage(size: NSSize(width: 156, height: 104)), false)
+    }
+
+    adapter.windowHost(host, reserveSwitcherThumbnailForTab: tabAPI, afterDelay: 0)
+    try await matrixWait { fake.thumbnailCompletions.count == 1 }
+    let initial = fake.thumbnailCompletions.removeFirst()
+    #expect(!initial.retry)
+    if scenario == .hidden { tab.thumbnailVisible = false }
+    if scenario == .navigated { adapter.windowHost(host, invalidateSwitcherThumbnailForTab: tabAPI) }
+    if scenario == .cached { try cachePrehideImage() }
+    if scenario == .visible {
+        adapter.windowHost(host, reserveSwitcherThumbnailForTab: tabAPI, afterDelay: 0)
+    }
+    let scheduled = initial.finish(nil, true)
+    let expected: [SwitcherReserveFailure] = [.visible, .navigatedAfterScheduling, .replacedAfterScheduling, .cachedAfterScheduling]
+    #expect(scheduled == expected.contains(scenario))
+    if scenario == .navigatedAfterScheduling { adapter.windowHost(host, invalidateSwitcherThumbnailForTab: tabAPI) }
+    if scenario == .replacedAfterScheduling {
+        fake.entries = [MatrixFakeTab(item: try #require(tab.itemId), live: tab.liveId, profile: tab.profile, owner: fake)]
+    }
+    if scenario == .cachedAfterScheduling { try cachePrehideImage() }
+
+    try await Task.sleep(for: .milliseconds(2200))
+    guard scenario == .visible else {
+        #expect(fake.thumbnailCompletions.isEmpty)
+        return
+    }
+    try #require(fake.thumbnailCompletions.count == 1)
+    let retry = fake.thumbnailCompletions.removeFirst()
+    #expect(retry.retry)
+    #expect(!retry.finish(nil, true))
 }
 
 @Test @MainActor

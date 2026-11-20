@@ -27,7 +27,7 @@ struct SwitcherThumbnailCache {
     private var images: [String: Images] = [:]
     private var requests: [Capture: UUID] = [:]
     private var inFlight: Set<UUID> = []
-    private var scheduled: [Key: UUID] = [:]
+    private var scheduled: [Key: (id: UUID, retry: Bool)] = [:]
     private var lastReserve: [Key: TimeInterval] = [:]
 
     var hasImagesOrRequests: Bool { !images.isEmpty || !requests.isEmpty || !scheduled.isEmpty }
@@ -57,18 +57,24 @@ struct SwitcherThumbnailCache {
         return entry.reserve != nil ? Source.reserve.rawValue : "favicon"
     }
 
-    mutating func scheduleReserve(_ key: Key, now: TimeInterval, minimumDelay: TimeInterval = 0) -> (id: UUID, delay: TimeInterval)? {
-        guard scopes[key.item] == key.scope, scheduled[key] == nil else { return nil }
+    func canScheduleReserveRetry(_ key: Key, request: UUID) -> Bool {
+        requests[Capture(key: key, source: .reserve)] == request && image(item: key.item, live: key.live) == nil
+    }
+
+    mutating func scheduleReserve(_ key: Key, now: TimeInterval, minimumDelay: TimeInterval = 0,
+                                  retry: Bool = false) -> (id: UUID, delay: TimeInterval)? {
+        guard scopes[key.item] == key.scope, scheduled[key].map({ retry && !$0.retry }) ?? true else { return nil }
         let delay = max(minimumDelay, lastReserve[key].map { $0 + 2 - now } ?? 0)
         let id = UUID()
-        scheduled[key] = id
+        scheduled[key] = (id, retry)
         return (id, delay)
     }
 
     mutating func startReserve(_ key: Key, scheduled id: UUID, now: TimeInterval) -> UUID? {
-        guard scheduled[key] == id else { return nil }
+        guard let pending = scheduled[key], pending.id == id else { return nil }
         scheduled.removeValue(forKey: key)
-        guard lastReserve[key].map({ now - $0 >= 2 }) ?? true,
+        guard !pending.retry || image(item: key.item, live: key.live) == nil,
+              lastReserve[key].map({ now - $0 >= 2 }) ?? true,
               let request = begin(key, source: .reserve) else { return nil }
         lastReserve[key] = now
         return request

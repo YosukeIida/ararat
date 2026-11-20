@@ -17,7 +17,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         FileHandle.standardError.write(Data("ararat-trace: private-selection window=\(windowID) \(message())\n".utf8))
     }
     private func traceLittleWindow(_ message: @autoclosure () -> String) {
-        guard CommandLine.arguments.contains("--ararat-check=little-window") || CommandLine.arguments.contains("--ararat-screen=little-window") else { return }
+        guard CommandLine.arguments.contains("--ararat-check=little-window") ||
+            CommandLine.arguments.contains("--ararat-screen=little-window") ||
+            CommandLine.arguments.contains("--ararat-screen=tab-switcher") else { return }
         FileHandle.standardError.write(Data("ararat-trace: little-handoff window=\(windowID) \(message())\n".utf8))
     }
     private func traceToday(_ message: @autoclosure () -> String) {
@@ -470,34 +472,47 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         MainActor.assumeIsolated {
             guard !selectionClosed, (source as AnyObject) === (host as AnyObject?), let item = tab.itemId else { return }
             reconcileSwitcherThumbnails()
-            let now = ProcessInfo.processInfo.systemUptime
-            guard let key = switcherThumbnails.key(item: item, live: tab.liveId),
-                  let pending = switcherThumbnails.scheduleReserve(key, now: now, minimumDelay: delay) else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + pending.delay) { [weak self] in
-                guard let self, !self.selectionClosed else { return }
-                self.reconcileSwitcherThumbnails()
-                guard let request = self.switcherThumbnails.startReserve(key, scheduled: pending.id,
-                    now: ProcessInfo.processInfo.systemUptime) else { return }
-                guard let current = self.tab(key.live), current.itemId == item else {
-                    _ = self.switcherThumbnails.finish(key, request: request, image: nil, source: .reserve)
-                    return
-                }
-                self.captureSwitcherThumbnail(current, key: key, request: request, source: .reserve)
-            }
+            guard let key = switcherThumbnails.key(item: item, live: tab.liveId) else { return }
+            scheduleSwitcherReserve(key, delay: delay)
         }
+    }
+
+    @MainActor @discardableResult
+    private func scheduleSwitcherReserve(_ key: SwitcherThumbnailCache.Key, delay: TimeInterval = 0,
+                                         retryFor tab: (any ARTabAPI)? = nil) -> Bool {
+        let retry = tab != nil
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let pending = switcherThumbnails.scheduleReserve(key, now: now, minimumDelay: delay, retry: retry) else { return false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + pending.delay) { [weak self, weak tab] in
+            guard let self, !self.selectionClosed else { return }
+            self.reconcileSwitcherThumbnails()
+            guard let request = self.switcherThumbnails.startReserve(key, scheduled: pending.id,
+                now: ProcessInfo.processInfo.systemUptime) else { return }
+            guard let current = self.tab(key.live), current.itemId == key.item,
+                  !retry || current === tab else {
+                _ = self.switcherThumbnails.finish(key, request: request, image: nil, source: .reserve)
+                return
+            }
+            self.captureSwitcherThumbnail(current, key: key, request: request, source: .reserve, retry: retry)
+        }
+        return true
     }
 
     @MainActor
     private func captureSwitcherThumbnail(_ tab: any ARTabAPI, key: SwitcherThumbnailCache.Key,
-                                          request: UUID, source: SwitcherThumbnailCache.Source) {
-        tab.captureSwitcherThumbnail(forReserve: source == .reserve) { [weak self] image in
+                                          request: UUID, source: SwitcherThumbnailCache.Source, retry: Bool = false) {
+        tab.captureSwitcherThumbnail(forReserve: source == .reserve, retry: retry) { [weak self, weak tab] image, retryDelay in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self else { return false }
                 self.reconcileSwitcherThumbnails()
                 let current = self.tab(key.live)?.itemId == key.item
+                let shouldRetry = retryDelay != nil && source == .reserve && !retry && current && !self.selectionClosed &&
+                    self.switcherThumbnails.canScheduleReserveRetry(key, request: request)
                 if self.switcherThumbnails.finish(key, request: request, image: current ? image : nil, source: source) {
                     self.thumbnailImagesChanged([key.item])
                 }
+                guard shouldRetry, let tab, let retryDelay else { return false }
+                return self.scheduleSwitcherReserve(key, delay: retryDelay.doubleValue, retryFor: tab)
             }
         }
     }
@@ -1236,7 +1251,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             strips.append(LiveStrip(window: window, tabs: parsedTabs, active: active as? String))
         }
         let transaction = LiveTransaction(offTheRecord: offTheRecord, epoch: epoch.uint64Value, rev: rev.uint64Value, cause: cause, strips: strips)
-        traceLittleWindow("transaction-arrived epoch=\(epoch) rev=\(rev) cause=\(cause) tabs=\(strips.flatMap { strip in strip.tabs.map { "\(strip.window):\($0.item ?? "nil"):\($0.liveId)" } }.joined(separator: ","))")
+        traceLittleWindow("transaction-arrived epoch=\(epoch) rev=\(rev) cause=\(cause) strips=\(strips.map { strip in "\(strip.window):active=\(strip.active ?? "nil"):tabs=\(strip.tabs.map { "\($0.item ?? "nil"):\($0.liveId)" })" }) host_active=\(host.activeItemId() ?? "nil")")
         let hasClosingTabs = strips.contains { $0.window == windowID && !$0.tabs.isEmpty }
         tracePrivate("transaction received private=\(offTheRecord) epoch=\(epoch) rev=\(rev) cause=\(cause) strips=\(strips.map { "\($0.window):active=\($0.active ?? "nil"):tabs=\($0.tabs.map { "\($0.liveId):\($0.item ?? "nil")" })" }) active=\(host.activeItemId() ?? "nil") generation=\(selectionGeneration) closed=\(selectionClosed)")
         if hasClosingTabs && (selectionClosed || host.isClosing() || host.isClosingAll()) { tracePrivate("transaction rejected closing rev=\(rev)"); return }
@@ -1289,6 +1304,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     return (command, target, generation)
                 }
                 let snapshot = store.snapshot(windowId: self.windowID)
+                self.traceLittleWindow("transaction-selection rev=\(rev) before=\(before.selectedId ?? "nil") selected=\(snapshot.selectedId ?? "nil") commands=\(outcome.commands.map { "\($0.kind):\($0.id):\($0.item):\($0.targetWindow ?? "nil")" })")
                 self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) strips=\(transaction.strips.map { "\($0.window):active=\($0.active ?? "nil")" }) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
                 let movedLives = transaction.strips.flatMap { strip in strip.tabs.compactMap { tab -> (String, String)? in
                     guard let item = tab.item, let before = previousOwners[tab.liveId],
@@ -1463,6 +1479,9 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         if switcherThumbnails.hasImagesOrRequests { reconcileSwitcherThumbnails() }
         guard canPublishSnapshot?() != false else { tracePrivate("snapshot held"); needsSnapshotPublish = true; onSnapshotTrace?("snapshot-held"); return }
         needsSnapshotPublish = false
+        if displayedSelection != snapshot.selectedId {
+            traceLittleWindow("publish-selection before=\(displayedSelection ?? "nil") selected=\(snapshot.selectedId ?? "nil") host_active=\(host?.activeItemId() ?? "nil")")
+        }
         displayedSelection = snapshot.selectedId
         if dragBaseline == nil && !CommandLine.arguments.contains("--ararat-measure=split") {
             displayedSplit = snapshot.selectedId.flatMap { id in
@@ -1876,6 +1895,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     private func execute(_ command: LiveCommand, external: Bool? = nil, selection: SelectionContext? = nil, background: Bool = false) {
         precondition(Thread.isMainThread)
+        traceLittleWindow("execute command=\(command.id) kind=\(command.kind) item=\(command.item) requested=\(selectionRequest?.item ?? "nil") host_active=\(host?.activeItemId() ?? "nil")")
         tracePrivate("execute command=\(command.id) item=\(command.item) kind=\(command.kind) generation=\(selectionGeneration) expected=\(selection?.generation.description ?? "nil") background=\(background)")
         guard let host else {
             cancelSelectionCommand(command)
