@@ -140,7 +140,7 @@ open コマンドは項目のプロファイルを運ぶ。エンジンに届く
 - UI が必要とするサービス（パスワード、autofill、拡張、ズーム、検索エンジン、履歴、ブックマーク、ダウンロード）は、独自レイヤーから Chrome のサービスを直接呼び出す。`chrome://` の WebUI ページをスクリプトで操作することはしない（Ardia ledger 1.4）。
 
 - Settings › Passwords は、通常の Chromium プロファイルを対象とする `ARPasswords` ハンドルを使う。ハンドルは UI シーケンス上でプロファイルのパスワードストアと `SavedPasswordsPresenter` を扱う。スナップショットは読み込み中、失敗、取得済みを区別し、各行には不透明な ID、Web サイト、ユーザー名を含める。追加・更新・削除はエンジン内で行う。Settings を閉じるか対象プロファイルを切り替えると、ハンドルと ID は無効になる。
-- プロファイルごとの `ararat.password_manager_enabled` の初期値はオンとする。オフにすると Chromium 組み込みの保存と入力補完が停止し、既に開いているタブの入力補完キャッシュも無効になる。プライベートタブは元のプロファイルの設定を参照する。Chromium の保存、自動ログイン、生体認証の設定は個別に機能する。`chrome://password-manager` ホストへのトップレベル遷移が Chromium のブラウザ側のナビゲーション処理に達すると、Settings › Passwords を開く。Web ページから特権 URL へ遷移する場合は Chromium の既存の制限に従う。Password Manager の WebUI は無効とする。初期実装ではプロファイルのスイッチを提供し、保存済みパスワードの UI と端末認証は後続単位で実装する。
+- プロファイルごとの `ararat.password_manager_enabled` の初期値はオンとする。オフにすると Chromium 組み込みの保存、入力補完、生成が停止し、既に開いているタブの入力補完キャッシュも無効になる。プライベートタブは元のプロファイルの設定を参照する。Chromium の保存、自動ログイン、生体認証の設定は個別に機能する。`chrome://password-manager` をホストとする URL を直接入力するか、Ararat の UI から開くと、Settings › Passwords を表示する。Chromium は Web ページのリンクやスクリプトからの遷移を `CanDisplay` とレンダラの URL フィルタで遮断するため、Web ページからブラウザの設定画面は開けない。Password Manager の WebUI は無効とする。初期実装ではプロファイルのスイッチを提供し、保存済みパスワードの UI と端末認証は後続単位で実装する。
 - アプリとエンジンは同時に出荷する。互換性のための分岐は設けない。起動時に API のバージョンを 1 回検査し、不一致の場合は abort する。
 
 ### 4.5 プロセスと run loop

@@ -81,7 +81,6 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
   NSArray<id<ARPasswordRowAPI>>* rows_;
   void (^changed_)(void);
   BOOL started_;
-  BOOL loaded_;
   BOOL changePending_;
 }
 
@@ -150,7 +149,7 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
 - (ARPasswordsState)state {
   if (!profile_ || !presenter_)
     return ARPasswordsStateFailed;
-  if (!loaded_)
+  if (presenter_->IsWaitingForPasswordStore())
     return ARPasswordsStateLoading;
   return !presenter_->HasStoreReadError() &&
                  store_->GetError() == password_manager::ActionableError::kNoError
@@ -160,7 +159,6 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
 
 - (void)storeChanged {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  loaded_ = YES;
   credentials_.clear();
   rows_ = nil;
   if (changePending_)
