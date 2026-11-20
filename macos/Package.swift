@@ -31,9 +31,9 @@ let package = Package(
             dependencies: ["ararat_ffiFFI", "AraratEngineAPI"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
-        .target(name: "AraratUI", dependencies: ["AraratKit"]),
+        .target(name: "AraratUI", dependencies: ["AraratKit", "AraratEngineAPI"]),
         .target(name: "WindowGuard", path: "Tests/WindowGuard"),
-        .testTarget(name: "AraratUITests", dependencies: ["AraratUI", "AraratKit", "AraratHarness", "WindowGuard"]),
+        .testTarget(name: "AraratUITests", dependencies: ["AraratUI", "AraratKit", "AraratEngineAPI", "AraratHarness", "WindowGuard"]),
         .testTarget(name: "PromptFixtureTests", dependencies: ["Ararat", "WindowGuard"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(
             name: "AraratHarness",

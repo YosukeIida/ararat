@@ -72,13 +72,10 @@ public final class SettingsModel: ObservableObject {
     @Published var hotKeyRecording = false
     @Published var hotKeyMessage: String?
     var hotKeyCenter: LittleWindowHotKeyCenter?
+    let passwords = SettingsPasswordsModel()
+
     /// Hands the written values to the Little Windows already open, so a change applies there
     /// too (the bar's label, the next Open in and the frame the close writes).
-    @Published var passwordProfile: String?
-    @Published var passwordManagerEnabled: Bool?
-    var setPasswordManager: ((Bool) -> Bool?)?
-    var closePasswords: (() -> Void)?
-
     var littleWindowSettings: (LittleWindowOpenIn, Bool, Bool) -> Void = { _, _, _ in }
     /// U27w W1/W2: the Websites pane. The seven defaults are the synced core record; the engine
     /// is the source of the per-site exceptions, read on every open. The host is the app's
@@ -198,9 +195,11 @@ public final class SettingsModel: ObservableObject {
         // A recording does not survive leaving the pane (L8); with L1 it also re-registers the key.
         cancelLittleWindowHotKeyRecording()
         error = nil
+        if target == .passwords, highlight != nil { passwords.list() }
         highlighted = highlight
         headerProgress = 0
         if target != page {
+            if page == .passwords { passwords.lock() }
             history = Array(history.prefix(historyIndex + 1)) + [target]
             historyIndex = history.count - 1
             page = target
@@ -215,6 +214,7 @@ public final class SettingsModel: ObservableObject {
         highlighted = nil
         headerProgress = 0
         let target = history[index]
+        if page == .passwords, target != page { passwords.lock() }
         if case .space(let id) = target, !snapshot.spaces.contains(where: { $0.id == id }) { page = .spaces }
         else { page = target }
     }

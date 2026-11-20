@@ -17,16 +17,25 @@ typedef NS_ENUM(NSInteger, ARPasswordsState) {
 @property(nonatomic, readonly, copy) NSString* username;
 @end
 
+NS_SWIFT_MAIN_ACTOR
 @protocol ARPasswordsAPI <NSObject>
 @property(nonatomic, readonly) BOOL enabled;
+@property(nonatomic) BOOL offersToSave;
+@property(nonatomic) BOOL authenticatesBeforeFilling;
 - (BOOL)setManagerEnabled:(BOOL)enabled;
-- (void)snapshot:(void (^)(ARPasswordsState state, NSArray<id<ARPasswordRowAPI>>* rows))completion;
-- (void)setChangedHandler:(nullable void (^)(void))handler;
+- (void)authenticate:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL authorized))completion;
+- (void)cancelAuthentication;
+- (void)snapshot:(void (NS_SWIFT_MAIN_ACTOR ^)(ARPasswordsState state, NSArray<id<ARPasswordRowAPI>>* rows))completion;
+- (void)setChangedHandler:(nullable void (NS_SWIFT_MAIN_ACTOR ^)(void))handler;
 - (BOOL)addWebsite:(NSString*)website username:(NSString*)username
           password:(const unichar*)password length:(NSUInteger)length;
 - (BOOL)editRow:(NSString*)rowID username:(NSString*)username
        password:(const unichar* _Nullable)password length:(NSUInteger)length;
 - (BOOL)deleteRow:(NSString*)rowID;
+// The borrowed password buffer is cleared as soon as completion returns.
+- (void)revealRow:(NSString*)rowID
+       completion:(void (NS_SWIFT_MAIN_ACTOR ^)(const unichar* _Nullable password, NSUInteger length))completion NS_SWIFT_DISABLE_ASYNC;
+- (void)copyRow:(NSString*)rowID completion:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL copied))completion;
 - (void)invalidate;
 @end
 

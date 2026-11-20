@@ -3,16 +3,25 @@ import Testing
 import AraratEngineAPI
 @testable import Ararat
 
+@MainActor
 private final class TestPasswords: NSObject, ARPasswordsAPI {
     var enabled: Bool { true }
+    var offersToSave = true
+    var authenticatesBeforeFilling = false
     func setManagerEnabled(_ enabled: Bool) -> Bool { false }
-    func snapshot(_ completion: @escaping (ARPasswordsState, [any ARPasswordRowAPI]) -> Void) {
+    func authenticate(_ completion: @escaping @MainActor @Sendable (Bool) -> Void) { completion(false) }
+    func cancelAuthentication() {}
+    func snapshot(_ completion: @escaping @MainActor @Sendable (ARPasswordsState, [any ARPasswordRowAPI]) -> Void) {
         completion(.ready, [])
     }
-    func setChangedHandler(_ handler: (() -> Void)?) {}
+    func setChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) {}
     func addWebsite(_ website: String, username: String, password: UnsafePointer<unichar>, length: UInt) -> Bool { false }
     func editRow(_ rowID: String, username: String, password: UnsafePointer<unichar>?, length: UInt) -> Bool { false }
     func deleteRow(_ rowID: String) -> Bool { false }
+    func revealRow(_ rowID: String, completion: @escaping @MainActor @Sendable (UnsafePointer<unichar>?, UInt) -> Void) {
+        completion(nil, 0)
+    }
+    func copyRow(_ rowID: String, completion: @escaping @MainActor @Sendable (Bool) -> Void) { completion(false) }
     func invalidate() {}
 }
 
@@ -33,13 +42,28 @@ struct PasswordsBridgeTests {
 
         #expect(Runtime.openPasswords(symbol, profile: "Default", loaded: nil)?.enabled == true)
         var received: (any ARPasswordsAPI)?
-        #expect(Runtime.openPasswords(symbol, profile: "Profile 1", loaded: { received = $0 }) == nil)
+        var callbacks = 0
+        #expect(Runtime.openPasswords(symbol, profile: "Profile 1", loaded: {
+            received = $0
+            callbacks += 1
+        }) == nil)
         #expect(received == nil)
+        #expect(callbacks == 0)
         let passwords = TestPasswords()
         defer { Self.deferred = nil }
         Self.deferred?(nil)
         #expect(received == nil)
+        #expect(callbacks == 1)
         Self.deferred?(passwords)
         #expect(received === passwords)
+    }
+
+    @Test func storeCheckRequiresAnUnambiguousScratchProfileAndMockKeychain() {
+        let args = ["Ararat", "--ararat-check=passwords", "--use-mock-keychain",
+                    "--user-data-dir=/tmp/pwswitch-test/profile", "--ararat-db=/tmp/pwswitch-test/workspace"]
+        #expect(PasswordsStoreCheck.validArguments(args))
+        #expect(!PasswordsStoreCheck.validArguments(args + ["--user-data-dir=/Users/example/Profile"]))
+        #expect(!PasswordsStoreCheck.validArguments(args + ["--ararat-check=downloads"]))
+        #expect(!PasswordsStoreCheck.validArguments(args.filter { $0 != "--use-mock-keychain" }))
     }
 }

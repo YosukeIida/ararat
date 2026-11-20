@@ -64,8 +64,10 @@ enum SettingsRegistry {
                      page: .spaces, rows: spacesRows),
         SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled",
                      subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
-        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "Control password saving and autofill for this profile.", page: .passwords, rows: { _ in
-                         [.init(id: "password-manager", pane: .passwords, title: "Use Ararat’s password manager", subtitle: "")]
+        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "Saved sign-ins.", page: .passwords, rows: { _ in
+                         [.init(id: "password-manager", pane: .passwords, title: "Use Ararat’s password manager", subtitle: ""),
+                          .init(id: "password-save", pane: .passwords, title: "Offer to save passwords", subtitle: ""),
+                          .init(id: "password-fill", pane: .passwords, title: "Fill passwords", subtitle: "Ask for Touch ID before filling")]
                      }),
         SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised",
                      subtitle: "What Ararat keeps and what sites can see.", page: .privacy, rows: privacyRows),
