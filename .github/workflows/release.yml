@@ -73,6 +73,7 @@ jobs:
             exit 1
           fi
           export ARARAT_FEED_URL
+          export ARARAT_CORRESPONDING_SOURCE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/Ararat-source.tar.xz"
           swift build --package-path macos -c release
           engine="$RUNNER_TEMP/engine"
           stage="$RUNNER_TEMP/stage"

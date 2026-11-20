@@ -25,13 +25,14 @@ final class SettingsScreenCheck {
         case websites = "settings-websites"
         case privacy = "settings-privacy"
         case extensions = "settings-extensions"
+        case about = "settings-about"
         case toolbar = "settings-toolbar"
 
         /// The pane the window opens on. The frame and search checks both run on Tabs.
         var paneID: String {
             switch self {
             case .frame, .search, .tabs, .toolbar: "tabs"
-            case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .privacy, .general: String(rawValue.dropFirst("settings-".count))
+            case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .privacy, .general, .about: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
             case .extensions: "extensions"
             }
@@ -55,7 +56,7 @@ final class SettingsScreenCheck {
             switch self {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
-            case .tabs: ["rows"]
+            case .tabs, .about: ["rows"]
             case .airTraffic: ["rows"] + SettingsATCInput.conditions
             case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
@@ -413,7 +414,10 @@ extension Runtime {
             let pitches = zip(rows, rows.dropFirst()).map { $1.frame.minY - $0.frame.minY }
             check.report("pane_rows", rows.map(\.id) == expected
                 && rows.allSatisfy { abs($0.frame.height - 26) <= 2 }
-                && pitches.allSatisfy { abs($0 - 28) <= 2 })
+                && zip(pitches, rows.dropFirst()).allSatisfy { pitch, row in
+                    let startsGroup = ["rail-tabs", "rail-passwords", "rail-about"].contains(row.id)
+                    return abs(pitch - (startsGroup ? 42 : 28)) <= 2
+                })
             let icon = probe.marker(SettingsModel.headerIconMarker)
             check.report("header", icon.map { abs($0.height - 56) <= 2 } == true
                 && probe.marker(SettingsModel.headerTitleMarker) != nil
@@ -434,7 +438,7 @@ extension Runtime {
             settingsFrameTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .search:
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
-        case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar:
+        case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar, .about:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
                                          end: end, finish: finish, capture: capture)
@@ -726,10 +730,13 @@ extension Runtime {
                 guard pushSpace(0) else { note("no space to push"); return }
                 step(3)
                 return
-            case .tabs, .airTraffic:
+            case .tabs, .airTraffic, .about:
                 let markers: [String]
                 switch mode {
                 case .tabs: markers = ["width", "archive-after"].map(SettingsModel.rowMarker)
+                case .about:
+                    markers = ["about-updates", "about-automatic", "about-licence", "about-source",
+                               "about-acknowledgements"].map(SettingsModel.rowMarker)
                 default: markers = [SettingsModel.airTrafficCardId, "atc-test"].map(SettingsModel.rowMarker)
                 }
                 guard markers.allSatisfy({ probe.marker($0) != nil }) else {
@@ -761,7 +768,7 @@ extension Runtime {
             case .frame, .search, .appearance, .littleWindow, .websites, .general, .privacy, .extensions:
                 return
             }
-            guard capture(mode.rawValue) else { end("capture", false); return }
+            guard capture(mode == .about ? "about" : mode.rawValue) else { end("capture", false); return }
             finish()
         case 3:
             guard let id = probe.spaceIDs.first, probe.pageID == "space-\(id)" else {

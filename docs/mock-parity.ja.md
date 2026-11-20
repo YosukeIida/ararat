@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件（うち 1 件はオーナー判断待ち）、修正済みで VM 再確認待ち 25 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件（うち 1 件はオーナー判断待ち）、修正済みで VM 再確認待ち 26 件、承認済みの相違 4 件、判定不能 3 件、未実装 10 件である。
 
 
 ```sh
@@ -21,7 +21,7 @@ VM では次のチェックを `--ararat-screen=<name>` で実行する。[画�
 
 - サイドバーとウィンドウは `organize`、`header`、`space-name`、`sidebar-rows`、`today`、`folder-empty`、`create-space`、`dock`、`split-commands`、`split-focus`、`fullscreen`、`window-drag`、`urlfield`。
 - ページとパネルは `keyboard`、`prompts`、`dialogs`、`downloads`、`ext-actions`、`site-controls`、`commandbar`、`errorpages`、`little-window`、`private-window`、`toasts`。
-- 設定とオンボーディングは `settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
+- 設定とオンボーディングは `settings-about`、`settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
 
 ページ内検索と Archive の撮影には、keyboard のメインチェックを `--ararat-keyboard-main-scope` 付きで実行する。
 
@@ -93,7 +93,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `B-NoTab` | 空のページカードとショートカット案内 | `keyboard-no-tab` | 一致 | VM capture design-rowcontrast-1, `dock-cells` と `create-space-created` で、空のページカードに ⌘T New Tab と ⇧⌘L Open Library が出ることを確認した（決定 61）。 |
 | `B-SpacePaging` | ページ切り替えとドックのクロスフェード | `dock-mid` | 一致 | `dock-mid` ではヘッダー、URL 欄、下部バーを固定したまま内容がスライドし、現在のスペースのセルのみが残り、ほかはドットになる（決定 33）。クロスフェードは計測待ちである（決定 69）。 |
 | `B-Split` | 2 ペイン、フォーカスリング、共通のナビゲーション | `split-focus (a, b)` | 一致 | VM capture design-rowcontrast-1, `split-focus-a` と `split-focus-b` で、ペイン間の Look 色のフォーカスリングの移動、サイドバーの共通操作部、各ペインに対応するセグメントを確認した（決定 17、65）。 |
-| `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 相違 | `split-commands-horizontal` では約 120 pt 幅の 4 ペインにスクロールバーが出る。B-SplitStates の最小幅は 240 pt で、縦分割、10 pt の間隔、フォーカスリング、`split-divider-hover` のグリップは一致する。 |
+| `B-SplitStates` | 複数ペイン、仕切り、ドラッグ、移動 | `split-commands-vertical`, `split-commands-split`, `split-focus-frozen`, `split-focus-release`, `dialogs-transfer` | 相違（承認済み） | `split-commands-split` には約 120 pt 幅のペインが 4 枚写っている。ペインは Arc と同様に縮小する（オーナーの決定、2026-11-20）。縦分割、10 pt の間隔、フォーカスリング、`split-divider-hover` のグリップは一致する。 |
 | `B-SplitStates` | 一つのサイドバー行に並ぶ 3 ペイン | `split-commands (vertical)` | 一致 | 縦の split でもセグメントは三つ横に並ぶ。構造検査は PASS。VM の実行 mp2。 |
 | `B-Tooltips` | ボタンと行のツールチップ、キーキャップ | `header-tooltip-toggle_sidebar`, `header-tooltip-back`, `header-tooltip-forward`, `header-tooltip-reload`, `header-command`, `header-command-r`, `header-command-w` | 一致 | `header-tooltip-back/-forward/-reload` と `header-command` で名称、キー、押下表示を確認した（決定 9）。`header-command-w` は行の ✕ の押下を示し、行のツールチップは撮影待ちである（決定 29）。 |
 | `B-WindowStates` | ウィンドウ枠、最小幅、非アクティブ状態 | `window-drag-sidebar` | 判定不能 | `window-drag-sidebar` では標準幅のアクティブ時の外枠が一致する。非アクティブ時の色と信号ボタン、狭幅・広幅のサイドバー、最小ウィンドウ幅は撮影待ちである（決定 71）。 |
@@ -126,13 +126,13 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
-| `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
+| `E-About` | About と更新状態 | `settings-about-about` | 修正済み、VM 再確認待ち | About と Sparkle の各行を実装した。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 一致 | VM capture design-rowcontrast-1, `settings-air-traffic-settings-air-traffic` で空のルート一覧、既定の行き先、テスト欄、アクセント色のステッパーを確認した。ルート行と行き先の開いたメニューは比較画像待ちである。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 相違 | VM capture design-rowcontrast-1, `settings-appearance-appearance` と `settings-appearance-theme-dark` で選択部とスイッチに Look のアクセント色を確認した。Theme、Look、New Tab row、Tooltips は一致し、Page zoom は未実装である（決定 92）。 |
 | `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 一致 | VM capture design-rowcontrast-1, `settings-frame-frame`、`settings-appearance-appearance`、`settings-shortcuts-shortcuts-recorder` でステッパー、スイッチ、選択セグメント、録音欄のフォーカスリングのアクセント色が一致した（決定 104）。主要ボタンの押下時は比較画像待ちである。 |
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 相違 | `settings-extensions-extensions` と `settings-extensions-extensions-review` でプロファイル選択、インストール済みの行、Review… の状態を確認した（決定 102）。Add from Arc は下の未実装行に記録する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
-| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。レールにグループの間隔はない。現行のレジストリには撮影後に追加した Passwords が並ぶ。Sync と About は未実装である。 |
+| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。登録簿の 13 ペインのうち、レールには 12 ペインが並ぶ。Tabs、Passwords、About の直前に 14 pt の余白を置く。Sync のページは未実装である。VM での再確認待ち。 |
 | `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
