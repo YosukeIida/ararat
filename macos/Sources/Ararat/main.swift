@@ -2723,6 +2723,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       })
     tabSwitcher = switcher
     if let tabSwitcherScreenCheck {
+      tabSwitcherScreenCheck.trace("cycle-tabs current_control=\(NSApp.currentEvent?.modifierFlags.contains(.control) == true) hold_override=\(holdForCheck)")
+      switcher.onRevealTraceForCheck = { [weak tabSwitcherScreenCheck] message in
+        tabSwitcherScreenCheck?.trace(message)
+      }
       switcher.onPresentationForCheck = { [weak tabSwitcherScreenCheck] visible, elapsed, noAnimation in
         tabSwitcherScreenCheck?.presentationChanged(visible: visible, elapsed: elapsed, noAnimation: noAnimation)
       }
