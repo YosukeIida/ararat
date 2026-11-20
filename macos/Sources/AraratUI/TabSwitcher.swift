@@ -10,6 +10,7 @@ public final class TabSwitcher {
     public var onSelect: (Suggestion) -> Void = { _ in }
     public var onClose: () -> Void = {}
     public var onPresentationForCheck: ((Bool, TimeInterval, Bool) -> Void)?
+    public var onRevealTraceForCheck: ((String) -> Void)?
     private let started = ProcessInfo.processInfo.systemUptime
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     public var visibleWindow: NSWindow? { panel.isVisible ? panel : nil }
@@ -66,6 +67,7 @@ public final class TabSwitcher {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             guard let self, self.isOpen else { return event }
             if event.type == .flagsChanged && !event.modifierFlags.contains(.control) {
+                self.onRevealTraceForCheck?("control-release key=\(event.keyCode)")
                 self.commit()
                 return event
             }
@@ -73,13 +75,14 @@ public final class TabSwitcher {
             return event
         }
         resignKey = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: parent, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.cancel() }
+            MainActor.assumeIsolated { self?.onRevealTraceForCheck?("parent-resigned-key"); self?.cancel() }
         }
         deactivate = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.cancel() }
+            MainActor.assumeIsolated { self?.onRevealTraceForCheck?("app-deactivated"); self?.cancel() }
         }
         schedule(0.15) { [weak self] in
             guard let self else { return }
+            self.onRevealTraceForCheck?("reveal-timer elapsed_ms=\((ProcessInfo.processInfo.systemUptime - self.started) * 1000) open=\(self.isOpen) rows=\(self.rows.count) commit_pending=\(self.commitPending)")
             self.revealDelayElapsed = true
             self.revealIfReady()
         }
@@ -119,9 +122,12 @@ public final class TabSwitcher {
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         if let deactivate { NotificationCenter.default.removeObserver(deactivate); self.deactivate = nil }
         if let resignKey { NotificationCenter.default.removeObserver(resignKey); self.resignKey = nil }
+        let wasVisible = panel.isVisible
         if panel.parent != nil { parent?.removeChildWindow(panel) }
         if panel.isVisible {
             panel.orderOut(nil)
+        }
+        if wasVisible && !panel.isVisible {
             onPresentationForCheck?(false, ProcessInfo.processInfo.systemUptime - started, panel.animationBehavior == .none)
         }
         onClose()
@@ -160,11 +166,16 @@ public final class TabSwitcher {
     private func draw() {
         guard let parent else { cancel(); return }
         guard parent.isVisible, let overlay = makeOverlay() else { return }
+        let wasVisible = panel.isVisible
         panel.contentView = overlay.content
         panel.setFrame(overlay.frame, display: true)
         if panel.parent == nil { parent.addChildWindow(panel, ordered: .above) }
+        let visibleAfterAttach = panel.isVisible
         if !panel.isVisible {
             panel.orderFront(nil)
+        }
+        if !wasVisible {
+            onRevealTraceForCheck?("panel-order-in attached_visible=\(visibleAfterAttach) visible=\(panel.isVisible)")
             if panel.isVisible {
                 onPresentationForCheck?(true, ProcessInfo.processInfo.systemUptime - started, panel.animationBehavior == .none)
             }
