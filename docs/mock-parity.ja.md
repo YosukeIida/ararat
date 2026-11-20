@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件（うち 1 件はオーナー判断待ち）、修正済みで VM 再確認待ち 25 件、承認済みの相違 4 件、判定不能 3 件、未実装 11 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件（うち 1 件はオーナー判断待ち）、修正済みで VM 再確認待ち 26 件、承認済みの相違 4 件、判定不能 3 件、未実装 10 件である。
 
 
 ```sh
@@ -126,7 +126,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
-| `E-About` | About と更新状態 | `settings-about-about` | 修正済み | About と Sparkle の各行を実装した。VM での再確認待ち。 |
+| `E-About` | About と更新状態 | `settings-about-about` | 修正済み、VM 再確認待ち | About と Sparkle の各行を実装した。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 一致 | VM capture design-rowcontrast-1, `settings-air-traffic-settings-air-traffic` で空のルート一覧、既定の行き先、テスト欄、アクセント色のステッパーを確認した。ルート行と行き先の開いたメニューは比較画像待ちである。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 相違 | VM capture design-rowcontrast-1, `settings-appearance-appearance` と `settings-appearance-theme-dark` で選択部とスイッチに Look のアクセント色を確認した。Theme、Look、New Tab row、Tooltips は一致し、Page zoom は未実装である（決定 92）。 |
 | `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 一致 | VM capture design-rowcontrast-1, `settings-frame-frame`、`settings-appearance-appearance`、`settings-shortcuts-shortcuts-recorder` でステッパー、スイッチ、選択セグメント、録音欄のフォーカスリングのアクセント色が一致した（決定 104）。主要ボタンの押下時は比較画像待ちである。 |
