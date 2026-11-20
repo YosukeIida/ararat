@@ -18,6 +18,17 @@ final class TabSwitcherScreenCheck {
         var observed: [String: Any] = [:]
         var description: String { condition }
     }
+    enum CloseReadbackOrder: Equatable {
+        static let maxAttempts = 3
+        case exercised, retry, unverified
+
+        init(attempt: Int, statusAtClose: String?) {
+            switch statusAtClose {
+            case "failed", "completed": self = attempt < Self.maxAttempts ? .retry : .unverified
+            default: self = .exercised
+            }
+        }
+    }
     private var conditions: [String: Bool] = [:]
     private var failures: [String: String] = [:]
     private var skipped: [String: String] = [:]
@@ -25,6 +36,7 @@ final class TabSwitcherScreenCheck {
     private var events: [[String: Any]] = []
     private var presentations: [(visible: Bool, elapsed: TimeInterval, timestamp: TimeInterval, noAnimation: Bool)] = []
     private var images: [String: String] = [:]
+    private var unverified = ["drm_hover_card_parity"]
     private var waiting = "fixture"
     private var closeOnReadback: (() -> Void)?
     private var closeLive: String?
@@ -38,7 +50,7 @@ final class TabSwitcherScreenCheck {
             "condition_failures": failures, "skipped_conditions": skipped,
             "pending_conditions": Self.names.filter { conditions[$0] == nil && skipped[$0] == nil },
             "wait": waiting,
-            "details": details, "images": images, "readbacks": events, "unverified": ["drm_hover_card_parity"],
+            "details": details, "images": images, "readbacks": events, "unverified": unverified,
         ]
     }
 
@@ -743,34 +755,75 @@ final class TabSwitcherScreenCheck {
         }
 
         await scene("close_during_readback") {
-            let item = try await open(runtime, url: url("red") + "?close")
-            try await awaitPicture(runtime, item, "red")
-            guard let live = tab(runtime, item)?.liveId else { throw CheckFailure(condition: "closing tab missing") }
-            let mark = events.count
-            closeLive = live
-            defer { closeLive = nil; closeOnReadback = nil }
-            closeOnReadback = { [weak self, weak runtime] in
-                DispatchQueue.main.async {
-                    guard let self, let runtime, let retiring = self.tab(runtime, item),
-                          !self.hasEvent(mark: mark, live: live, source: "prehide", status: "completed"),
-                          !self.hasEvent(mark: mark, live: live, source: "prehide", status: "failed") else { return }
-                    self.trace("close while readback pending live=\(live)")
-                    retiring.close(withCommandId: "switcher-in-flight-close")
+            let name = "close_during_readback"
+            var attempts: [[String: Any]] = []
+            for attempt in 1...CloseReadbackOrder.maxAttempts {
+                let item = try await open(runtime, url: url("red") + "?close=\(attempt)")
+                try await awaitPicture(runtime, item, "red")
+                guard let live = tab(runtime, item)?.liveId else { throw CheckFailure(condition: "closing tab missing") }
+                let mark = events.count
+                @MainActor func terminalReadback() -> [String: Any]? {
+                    readbacks(for: [live], since: mark).first { event in
+                        let status = event["status"] as? String
+                        return event["source"] as? String == "prehide" && (status == "failed" || status == "completed")
+                    }
                 }
+                var terminalBeforeClose: [String: Any]?
+                var crashedAtClose: Bool?
+                closeLive = live
+                defer { closeLive = nil; closeOnReadback = nil }
+                closeOnReadback = {
+                    DispatchQueue.main.async {
+                        guard let retiring = self.tab(runtime, item) else { return }
+                        terminalBeforeClose = terminalReadback()
+                        crashedAtClose = retiring.crashed
+                        let status = terminalBeforeClose?["status"] as? String ?? "pending"
+                        self.trace("close readback_status=\(status) live=\(live) attempt=\(attempt)")
+                        retiring.close(withCommandId: "switcher-in-flight-close")
+                    }
+                }
+                _ = try await open(runtime, url: url("green"))
+                let closeDetails = {
+                    ["item": item, "live": live, "tab_present": self.tab(runtime, item) != nil,
+                     "readbacks": self.readbacks(for: [live], since: mark)] as [String: Any]
+                }
+                try await wait("tab closed after prehide request", observed: closeDetails) {
+                    crashedAtClose != nil && self.tab(runtime, item) == nil
+                }
+                let statusAtClose = terminalBeforeClose?["status"] as? String
+                let order = CloseReadbackOrder(attempt: attempt, statusAtClose: statusAtClose)
+                try await wait("closed tab readback resolved", observed: closeDetails) { terminalReadback() != nil }
+                var assertions = [
+                    "closed": tab(runtime, item) == nil,
+                    "no_crash": crashedAtClose == false,
+                    "no_image": adapter.switcherThumbnail(item: item, live: live) == nil,
+                    "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
+                ]
+                if statusAtClose != "completed" {
+                    assertions["prehide_did_not_complete"] = !hasEvent(mark: mark, live: live, source: "prehide", status: "completed")
+                }
+                if order == .exercised {
+                    assertions["stale_document"] = hasEvent(mark: mark, live: live, source: "prehide",
+                                                            status: "failed", reasons: ["stale-document"])
+                }
+                var observation = closeDetails()
+                observation["attempt"] = attempt
+                observation["order_exercised"] = order == .exercised
+                observation["status_at_close"] = statusAtClose ?? "pending"
+                if let terminal = terminalBeforeClose {
+                    observation["viz_error"] = terminal["viz_error"]
+                    observation["elapsed_ms"] = terminal["elapsed_ms"]
+                    assertions["readback_diagnostics"] = terminal["viz_error"] is Int && terminal["elapsed_ms"] is Double
+                }
+                observation["assertions"] = assertions
+                attempts.append(observation)
+                if order == .retry && assertions.values.allSatisfy({ $0 }) { continue }
+
+                observation["attempts"] = attempts
+                try checkNamed(name, assertions: assertions, observed: observation)
+                if order == .unverified { unverified.append(name) }
+                break
             }
-            _ = try await open(runtime, url: url("green"))
-            let closeDetails = {
-                ["item": item, "live": live, "tab_present": self.tab(runtime, item) != nil,
-                 "readbacks": self.readbacks(for: [live], since: mark)] as [String: Any]
-            }
-            try await wait("closed tab with readback pending", observed: closeDetails) { self.tab(runtime, item) == nil }
-            try await wait("closed tab readback reported failure", observed: closeDetails) {
-                self.hasEvent(mark: mark, live: live, source: "prehide", status: "failed", reasons: ["stale-document", "error"])
-            }
-            try checkNamed("close_during_readback", assertions: [
-                "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
-                "prehide_did_not_complete": !hasEvent(mark: mark, live: live, source: "prehide", status: "completed"),
-            ], observed: closeDetails())
         }
 
         await scene("private_previews", "private_unpainted_globe", "private_memory_only", "private_close_releases") {
