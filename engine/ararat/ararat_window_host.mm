@@ -2481,6 +2481,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       [screen isEqualToString:@"site-controls"] || [screen isEqualToString:@"ext-actions"] ||
       [screen isEqualToString:@"errorpages"] || [screen isEqualToString:@"dialogs"] ||
       [screen isEqualToString:@"little-window"] || [screen isEqualToString:@"folder-upload"] ||
+      [screen isEqualToString:@"password-prompt"] ||
       (([screen isEqualToString:@"profiles"] || [screen isEqualToString:@"links"] || [screen isEqualToString:@"extensions"]) &&
        command->HasSwitch("ararat-page-only-menu-check"));
   // A check that navigates after its last native tab closed has no browser to receive the
@@ -2499,6 +2500,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if ([disposition isEqualToString:@"current"]) params.disposition = WindowOpenDisposition::CURRENT_TAB;
   else if ([disposition isEqualToString:@"foreground"]) params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   else if ([disposition isEqualToString:@"background"]) params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
+  else if ([screen isEqualToString:@"password-prompt"] && [disposition isEqualToString:@"private"])
+    params.disposition = WindowOpenDisposition::OFF_THE_RECORD;
   else if ([disposition isEqualToString:@"split"]) params.disposition = WindowOpenDisposition::NEW_SPLIT_VIEW;
   else if ([disposition isEqualToString:@"window"]) params.disposition = WindowOpenDisposition::NEW_WINDOW;
   else if ([disposition isEqualToString:@"popup"]) params.disposition = WindowOpenDisposition::NEW_POPUP;

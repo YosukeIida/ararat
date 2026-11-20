@@ -41,6 +41,20 @@ func promptFixtureServesOnlyLoopbackPages() async throws {
     #expect(query.statusCode == 200)
     #expect(queryBody.contains("address-submit"))
 
+    let (login, form) = try await response("/password-login?case=save")
+    #expect(login.statusCode == 200)
+    #expect(form.contains("action=\"/password-success\" method=\"post\""))
+    #expect(form.contains("autocomplete=\"username\""))
+    #expect(form.contains("autocomplete=\"current-password\""))
+    let (successGET, _) = try await response("/password-success")
+    #expect(successGET.statusCode == 404)
+    var submission = URLRequest(url: try #require(URL(string: "http://127.0.0.1:\(port)/password-success")))
+    submission.httpMethod = "POST"
+    submission.httpBody = Data("username=fixture&password=fixture".utf8)
+    let (successPage, successPOST) = try await session.data(for: submission)
+    #expect((successPOST as? HTTPURLResponse)?.statusCode == 200)
+    #expect(!String(decoding: successPage, as: UTF8.self).contains("<form"))
+
     let (auth, authBody) = try await response("/auth")
     #expect(auth.statusCode == 401)
     #expect(auth.value(forHTTPHeaderField: "WWW-Authenticate") == "Basic realm=\"Ararat fixture\"")
