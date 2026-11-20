@@ -21,6 +21,45 @@ private func settingsTestSpace(_ id: String, title: String, today: [Row] = []) -
                   look: nil, favorites: [], pinned: [], today: today)
 }
 
+private let settingsPaneIDs = [
+    "general", "appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces",
+    "little-window", "passwords", "privacy", "extensions", "sync", "about",
+]
+private let builtSettingsPaneIDs = settingsPaneIDs.filter { $0 != "sync" }
+
+@Test @MainActor
+func passwordsSwitchUsesTheCurrentProfileAfterRetargeting() {
+    let model = settingsTestModel()
+    let settings = SettingsWindowController(model: model, orderWindowFront: { _ in })
+    var finishFirstLoad: (() -> Void)?
+    var firstClosed = false
+    settings.configurePasswords(profile: "Default") { ready in
+        finishFirstLoad = { ready(false, { _ in false }, { firstClosed = true }) }
+    }
+
+    var enabled = true
+    var secondClosed = false
+    settings.configurePasswords(profile: "Profile 1") { ready in
+        ready(enabled, {
+            enabled = $0
+            return enabled
+        }, { secondClosed = true })
+    }
+    finishFirstLoad?()
+    settings.prepare(shownSpaceID: nil, passwords: true)
+
+    #expect(settings.isShowingPasswords())
+    #expect(model.passwordProfile == "Profile 1")
+    #expect(model.passwordManagerEnabled == true)
+    #expect(model.setPasswordManager?(false) == false)
+    #expect(!enabled)
+    #expect(!firstClosed)
+
+    settings.configurePasswords(profile: nil) { _ in }
+    #expect(secondClosed)
+    #expect(model.passwordManagerEnabled == nil)
+}
+
 @Test @MainActor
 func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     _ = NSApplication.shared
@@ -37,12 +76,14 @@ func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     let probe = try #require(controller.checkProbe())
 
     try await waitUntil { probe.layout(); return probe.railRows.count == probe.railPanes.count }
-    #expect(probe.railRows.map(\.id) == ["rail-general", "rail-appearance", "rail-websites", "rail-tabs", "rail-shortcuts", "rail-air-traffic", "rail-spaces", "rail-little-window", "rail-privacy", "rail-extensions", "rail-about"])
+    #expect(probe.railRows.map(\.id) == builtSettingsPaneIDs.map { "rail-\($0)" })
     #expect(abs((probe.railWidth ?? 0) - 180) <= 1)
     #expect(probe.railRows.allSatisfy { abs($0.frame.height - 26) <= 2 })
     let pitches = zip(probe.railRows, probe.railRows.dropFirst()).map { $1.frame.minY - $0.frame.minY }
-    #expect(pitches.dropLast().allSatisfy { abs($0 - 28) <= 2 })
-    #expect(abs((pitches.last ?? 0) - 42) <= 2)
+    #expect(zip(pitches, probe.railRows.dropFirst()).allSatisfy { pitch, row in
+        let startsGroup = ["rail-tabs", "rail-passwords", "rail-about"].contains(row.id)
+        return abs(pitch - (startsGroup ? 42 : 28)) <= 2
+    })
     #expect(probe.marker(SettingsModel.headerIconMarker) != nil
         && probe.marker(SettingsModel.headerTitleMarker) != nil
         && probe.marker(SettingsModel.headerSubtitleMarker) != nil)
@@ -107,16 +148,15 @@ func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
 @Test @MainActor
 func thePaneRegistryDrawsTheBoardsOrderAndShowsOnlyBuiltPanes() {
     // The boards' order, General to About (D1): the rail draws this list, filtered by `built`.
-    #expect(SettingsRegistry.panes.map(\.id.rawValue) == ["general", "appearance", "websites", "tabs", "shortcuts",
-        "air-traffic", "spaces", "little-window", "passwords", "privacy", "extensions", "sync", "about"])
-    #expect(SettingsRegistry.built.map(\.id.rawValue) == ["general", "appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window", "privacy", "extensions", "about"])
+    #expect(SettingsRegistry.panes.map(\.id.rawValue) == settingsPaneIDs)
+    #expect(SettingsRegistry.built.map(\.id.rawValue) == builtSettingsPaneIDs)
     for pane in SettingsRegistry.panes {
         // A pane exists exactly when it has a page: no empty pane can reach the rail.
         #expect(pane.built == (pane.page != nil))
         #expect(pane.built == !pane.subtitle.isEmpty, "a built pane needs the header's line: \(pane.id)")
     }
     let model = settingsTestModel()
-    #expect(model.panes.map(\.id.rawValue) == ["general", "appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window", "privacy", "extensions", "about"])
+    #expect(model.panes.map(\.id.rawValue) == builtSettingsPaneIDs)
 }
 
 @Test @MainActor
@@ -130,7 +170,7 @@ func theSearchIndexFollowsTheRailOrderAndOnlyCoversBuiltPanes() {
     // Every row is a built pane's and the panes come in the rail's order.
     let order = rows.map { $0.pane.paneID.rawValue }
     let firstOfPane = order.enumerated().filter { index, pane in index == 0 || order[index - 1] != pane }
-    #expect(firstOfPane.map(\.element) == ["general", "appearance", "websites", "tabs", "shortcuts", "air-traffic", "spaces", "little-window", "privacy", "extensions", "about"])
+    #expect(firstOfPane.map(\.element) == builtSettingsPaneIDs)
     #expect(rows.allSatisfy { SettingsRegistry.pane(page: $0.pane).built })
     // The builders are the registry's own: a pane's rows are exactly what its closure returns.
     #expect(rows.filter { $0.pane == .appearance }.map(\.id) == [SettingsModel.themeRowId, SettingsModel.lookRowId,

@@ -5,6 +5,31 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+typedef NS_ENUM(NSInteger, ARPasswordsState) {
+  ARPasswordsStateLoading,
+  ARPasswordsStateReady,
+  ARPasswordsStateFailed,
+};
+
+@protocol ARPasswordRowAPI <NSObject>
+@property(nonatomic, readonly, copy) NSString* rowID;
+@property(nonatomic, readonly, copy) NSString* website;
+@property(nonatomic, readonly, copy) NSString* username;
+@end
+
+@protocol ARPasswordsAPI <NSObject>
+@property(nonatomic, readonly) BOOL enabled;
+- (BOOL)setManagerEnabled:(BOOL)enabled;
+- (void)snapshot:(void (^)(ARPasswordsState state, NSArray<id<ARPasswordRowAPI>>* rows))completion;
+- (void)setChangedHandler:(nullable void (^)(void))handler;
+- (BOOL)addWebsite:(NSString*)website username:(NSString*)username
+          password:(const unichar*)password length:(NSUInteger)length;
+- (BOOL)editRow:(NSString*)rowID username:(NSString*)username
+       password:(const unichar* _Nullable)password length:(NSUInteger)length;
+- (BOOL)deleteRow:(NSString*)rowID;
+- (void)invalidate;
+@end
+
 @protocol ARTabAPI <NSObject>
 @property(nonatomic, readonly, copy) NSString* liveId;
 @property(nonatomic, copy, nullable) NSString* itemId;
@@ -212,6 +237,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSUInteger)checkStockBrowsers;
 - (NSUInteger)checkBrowserViews;
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition;
+- (NSDictionary<NSString*, NSNumber*>*)checkPasswordGates;
 - (void)checkCreateDeferredBrowsers;
 - (void)checkMenuCommand:(BOOL)newWindow;
 - (BOOL)checkFocusSearch;
@@ -401,6 +427,9 @@ __attribute__((visibility("default")))
 void AraratCheckTabHistoryFile(NSString* profile, NSString* itemId, void (^completion)(NSDictionary* state));
 __attribute__((visibility("default")))
 void AraratCheckDeleteHistory(NSString* profile, NSInteger mode, void (^completion)(BOOL done));
+__attribute__((visibility("default")))
+id<ARPasswordsAPI> _Nullable AraratPasswords(
+    NSString* profile, void (^_Nullable loaded)(id<ARPasswordsAPI> _Nullable));
 __attribute__((visibility("default")))
 NSUInteger AraratBrowserCount(void);
 __attribute__((visibility("default")))

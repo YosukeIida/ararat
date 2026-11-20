@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ararat/core/ararat_hooks.h"
+#include "ararat/core/ararat_passwords.h"
 #include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_tab_history.h"
 #include "ararat/core/ararat_window_check.h"
@@ -18,6 +19,8 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/strings/sys_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/scoped_observation.h"
 #include "base/path_service.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -37,6 +40,9 @@
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/accelerators/platform_accelerator_cocoa.h"
 #import "ui/base/cocoa/nsmenuitem_additions.h"
@@ -51,6 +57,46 @@ extern "C" int ChromeMain(int argc, const char** argv);
 namespace {
 
 AraratCallbacks g_ararat_callbacks = {};
+
+class PasswordsNavigationThrottle final : public content::NavigationThrottle {
+ public:
+  using NavigationThrottle::NavigationThrottle;
+
+  ThrottleCheckResult WillStartRequest() override { return Redirect(); }
+  ThrottleCheckResult WillRedirectRequest() override { return Redirect(); }
+  ThrottleCheckResult WillCommitWithoutUrlLoader() override { return Redirect(); }
+  const char* GetNameForLogging() override { return "AraratPasswords"; }
+
+ private:
+  ThrottleCheckResult Redirect() {
+    auto* handle = navigation_handle();
+    if (!AraratIsPasswordsURL(handle->GetURL()))
+      return PROCEED;
+    if (handle->IsInPrimaryMainFrame() && g_ararat_callbacks.open_passwords) {
+      auto* contents = handle->GetWebContents();
+      auto* profile = Profile::FromBrowserContext(contents->GetBrowserContext())
+                          ->GetOriginalProfile();
+      const auto directory = profile->GetPath().BaseName().value();
+      __weak NSWindow* window =
+          contents->GetTopLevelNativeWindow().GetNativeNSWindow();
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(^{
+            if (g_ararat_callbacks.open_passwords)
+              g_ararat_callbacks.open_passwords(
+                  g_ararat_callbacks.ctx, (__bridge void*)window,
+                  directory.c_str());
+          }));
+    }
+    return CANCEL_AND_IGNORE;
+  }
+};
+
+void AddPasswordsNavigationThrottle(content::NavigationThrottleRegistry& registry) {
+  if (registry.GetNavigationHandle().IsInMainFrame() ||
+      AraratIsPasswordsURL(registry.GetNavigationHandle().GetURL())) {
+    registry.AddThrottle(std::make_unique<PasswordsNavigationThrottle>(registry));
+  }
+}
 // AraratQuit is callable from anywhere, including before the browser's task
 // executor exists; the request is honoured at the started stage when it is.
 std::atomic<bool> g_quit_requested{false};
@@ -307,7 +353,7 @@ void CheckGuards(int argc, const char** argv) {
       check_toasts = name == "toasts";
       bool browser_check = name == "newtab" || name == "popup" ||
                            name == "menu" || name == "empty" || name == "deferred" || name == "profiles" ||
-                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify" || name == "little-window" || name == "window-drag" || name == "create-space" || name == "folder-upload" || name == "atc-routing";
+                           name == "ext-windows" || name == "ext-popup" || name == "ext-windows-popup" || name == "incognito" || name == "permissions" || name == "dialogs" || name == "protocol" || name == "autofill" || name == "devtools" || name == "fullscreen" || name == "keyboard" || name == "organize" || name == "look" || name == "download-close" || name == "sidebar-rows" || name == "folder-empty" || name == "today" || name == "space-name" || name == "dock" || name == "commandbar" || name == "sadtab" || name == "relaunch-seed" || name == "relaunch-verify" || name == "history-clear" || name == "history-purge" || name == "site-controls" || name == "passwords" || name == "ext-actions" || name == "private-window" || name == "private-isolation" || name == "private-downloads" || name == "private-durability-seed" || name == "private-durability-verify" || name == "little-window" || name == "window-drag" || name == "create-space" || name == "folder-upload" || name == "atc-routing";
       browser_check = browser_check || name == "errorpages";
       // U27j's onboarding flow; the scratch database is required below, as for the slice checks.
       browser_check = browser_check || name == "onboarding";
@@ -424,6 +470,7 @@ void* AraratRequestHost(bool popup, bool off_the_record, void* profile,
 __attribute__((visibility("default"))) int AraratMain(int argc, const char** argv, const AraratCallbacks* callbacks) {
   g_ararat_callbacks = callbacks ? *callbacks : AraratCallbacks{};
   CheckGuards(argc, argv);
+  g_ararat_add_passwords_navigation_throttle = &AddPasswordsNavigationThrottle;
   g_ararat_add_check_navigation_throttle = &AraratCheckAddNavigationThrottle;
   content::g_ararat_reject_javascript_dialog = &AraratCheckRejectJavaScriptDialog;
   content::g_ararat_begin_beforeunload = &AraratCheckBeginBeforeUnload;

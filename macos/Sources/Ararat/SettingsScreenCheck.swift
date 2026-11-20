@@ -414,8 +414,9 @@ extension Runtime {
             let pitches = zip(rows, rows.dropFirst()).map { $1.frame.minY - $0.frame.minY }
             check.report("pane_rows", rows.map(\.id) == expected
                 && rows.allSatisfy { abs($0.frame.height - 26) <= 2 }
-                && zip(pitches, rows.dropFirst()).allSatisfy {
-                    abs($0 - ($1.id == SettingsModel.railMarker(id: "about") ? 42 : 28)) <= 2
+                && zip(pitches, rows.dropFirst()).allSatisfy { pitch, row in
+                    let startsGroup = ["rail-tabs", "rail-passwords", "rail-about"].contains(row.id)
+                    return abs(pitch - (startsGroup ? 42 : 28)) <= 2
                 })
             let icon = probe.marker(SettingsModel.headerIconMarker)
             check.report("header", icon.map { abs($0.height - 56) <= 2 } == true

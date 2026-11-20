@@ -27,6 +27,7 @@ typedef struct AraratCallbacks {
   // OTR profile is its parent's, which cannot tell two OTR profiles apart).
   void* (*create_host)(void* ctx, bool popup, bool off_the_record, void* profile, const char* profile_name, int x, int y, int width, int height);
   void (*open_urls)(void* ctx, void* urls);
+  void (*open_passwords)(void* ctx, void* window, const char* profile);
   bool (*confirm_quit)(void* ctx, bool powering_off, bool shortcut,
                        bool is_repeat, AraratContinueQuit continue_quit);
   void* ctx;

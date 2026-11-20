@@ -16,6 +16,7 @@ public final class SettingsWindowController: NSWindowController {
     /// P5b: the default-browser row's status is LaunchServices', and the user may change it in
     /// System Settings while Settings is open, so the app's activation reads it again.
     private var activationObserver: NSObjectProtocol?
+    private var passwordsRequest = UUID()
     /// U27x (design decision B): the pane's Remove… is our AppKit sheet, and this window owns it.
     private var removeSheet: NSAlert?
     private var removeSheetMonitor: Any?
@@ -48,6 +49,11 @@ public final class SettingsWindowController: NSWindowController {
             forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.model.cancelLittleWindowHotKeyRecording()
+                self?.passwordsRequest = UUID()
+                self?.model.closePasswords?()
+                self?.model.closePasswords = nil
+                self?.model.setPasswordManager = nil
+                self?.model.passwordManagerEnabled = nil
                 // A window closed with the Remove sheet up may not run the sheet's completion.
                 self?.dismissRemoveSheet()
             }
@@ -76,7 +82,27 @@ public final class SettingsWindowController: NSWindowController {
         model.retarget(snapshot: snapshot, adapter: adapter, publish: publish, resetWidth: resetWidth,
                        preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
-    public func prepare(shownSpaceID: String?) {
+    public func configurePasswords(
+        profile: String?, load: (@escaping (Bool, @escaping (Bool) -> Bool?, @escaping () -> Void) -> Void) -> Void
+    ) {
+        model.closePasswords?()
+        model.closePasswords = nil
+        model.setPasswordManager = nil
+        model.passwordManagerEnabled = nil
+        model.passwordProfile = profile
+        let request = UUID()
+        passwordsRequest = request
+        load { [weak self] enabled, write, close in
+            guard let self, self.passwordsRequest == request else { return }
+            self.model.passwordManagerEnabled = enabled
+            self.model.setPasswordManager = write
+            self.model.closePasswords = close
+        }
+    }
+
+    public func isShowingPasswords() -> Bool { model.page == .passwords }
+
+    public func prepare(shownSpaceID: String?, passwords: Bool = false) {
         // A recording never survives a close and reopen (L8).
         model.cancelLittleWindowHotKeyRecording()
         model.readShortcuts()
@@ -88,11 +114,11 @@ public final class SettingsWindowController: NSWindowController {
         model.readWebsites()
         model.readPrivacy(shownSpaceID: shownSpaceID)
         model.readExtensions(shownSpaceID: shownSpaceID)
-        model.navigate(shownSpaceID.map(SettingsModel.Page.space) ?? .spaces)
+        model.navigate(passwords ? .passwords : (shownSpaceID.map(SettingsModel.Page.space) ?? .spaces))
     }
-    public func open(shownSpaceID: String?) {
+    public func open(shownSpaceID: String?, passwords: Bool = false) {
         if !hasOpened { window?.center(); hasOpened = true }
-        prepare(shownSpaceID: shownSpaceID)
+        prepare(shownSpaceID: shownSpaceID, passwords: passwords)
         if let window { orderWindowFront(window) }
     }
 
@@ -450,7 +476,7 @@ private struct SettingsRail: View {
                     .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
             }.buttonStyle(.plain).accessibilityLabel(pane.title)
                 .background(SettingsMarker(id: pane.railMarker))
-                .padding(.top, pane.id == .about ? 14 : 0)
+                .padding(.top, pane.startsRailGroup ? 14 : 0)
         }
     }
 
@@ -525,6 +551,16 @@ private struct SettingsDetail: View {
                         SettingsSitePage(model: model, origin: origin, profile: profile)
                     case .extensions:
                         SettingsExtensionsSection(model: model)
+                    case .passwords:
+                        card("password-manager", title: "Use Ararat’s password manager",
+                             subtitle: model.passwordProfile.map { "Profile: " + $0 } ?? "Profile unavailable") {
+                            Toggle("Use Ararat’s password manager", isOn: Binding(
+                                get: { model.passwordManagerEnabled ?? false },
+                                set: { model.passwordManagerEnabled = model.setPasswordManager?($0) }))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .disabled(model.passwordManagerEnabled == nil)
+                        }
                     case .privacy:
                         SettingsPrivacySection(model: model)
                     case .littleWindow:

@@ -53,6 +53,7 @@
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "components/history/core/browser/history_service.h"
@@ -340,7 +341,7 @@ bool IsCloseCheck() {
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
   const auto check = command->GetSwitchValueASCII("ararat-check");
-  return check == "profiles" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" || check == "private-window" || check == "private-isolation" || check == "private-downloads" || check == "private-durability-seed" || check == "private-durability-verify" ||
+  return check == "profiles" || check == "passwords" || check == "ext-windows" || check == "incognito" || check == "download-close" || check == "downloads" || check == "errorpages" || check == "private-window" || check == "private-isolation" || check == "private-downloads" || check == "private-durability-seed" || check == "private-durability-verify" ||
          command->GetSwitchValueASCII("ararat-screen") == "profiles" || command->GetSwitchValueASCII("ararat-screen") == "downloads" || command->GetSwitchValueASCII("ararat-screen") == "errorpages" || command->GetSwitchValueASCII("ararat-screen") == "private-window";
 }
 
@@ -2447,6 +2448,22 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   if (!menu.IsCommandIdEnabled(IDC_CONTENT_CONTEXT_INSPECTELEMENT)) return NO;
   menu.ExecuteCommand(IDC_CONTENT_CONTEXT_INSPECTELEMENT, 0);
   return YES;
+}
+- (NSDictionary<NSString*, NSNumber*>*)checkPasswordGates {
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") !=
+          "passwords" ||
+      !browser_)
+    return @{};
+  auto* contents = browser_->GetTabStripModel()->GetActiveWebContents();
+  auto* client = contents ? ChromePasswordManagerClient::FromWebContents(contents) : nullptr;
+  if (!client)
+    return @{};
+  const auto origin = url::Origin::Create(GURL("https://ararat-check.test/"));
+  return @{
+    @"enabled": @(client->IsAraratPasswordManagerEnabled()),
+    @"fill": @(client->IsFillingEnabled(origin)),
+    @"save": @(client->IsSavingAndFillingEnabled(origin)),
+  };
 }
 - (void)checkNavigate:(NSString*)url disposition:(NSString*)disposition {
   auto* command = base::CommandLine::ForCurrentProcess();

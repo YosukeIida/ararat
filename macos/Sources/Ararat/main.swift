@@ -1184,10 +1184,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let arguments = CommandLine.arguments
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let screenName = arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -1351,7 +1351,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let liveBatchCheckActive = ["auto-archive", "delete-space-live"].contains(browserCheckMode ?? "")
     if session == nil && liveBatchCheckActive { try LiveBatchCheck.seed(running, path: path, window: windowID) }
     let check = session == nil && !liveBatchCheckActive && (arguments.contains("--ararat-check=slice") || quitMode != nil || browserCheckMode != nil)
-    let profileCheck = ["atc-routing", "profiles", "ext-windows", "incognito", "private-window", "private-isolation", "screen-private-window", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
+    let profileCheck = ["atc-routing", "passwords", "profiles", "ext-windows", "incognito", "private-window", "private-isolation", "screen-private-window", "screen-profiles", "keyboard", "screen-keyboard", "screen-dialogs", "downloads", "screen-downloads", "toasts", "screen-toasts", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands"].contains(browserCheckMode ?? "") || quitMode == "quit-cancel"
     let sidebarCheckActive = ["sidebar-rows", "folder-empty", "today", "space-name", "screen-sidebar-rows", "screen-folder-empty", "screen-today", "screen-space-name"].contains(browserCheckMode ?? "")
     self.sidebarChecksActive = sidebarCheckActive
     // U27a's settings screen checks seed their own three spaces (the search needs space rows, the
@@ -2425,11 +2425,24 @@ final class Runtime: NSObject, NSMenuItemValidation {
     key ?? regular.first ?? root
   }
 
-  func openSettings(spaceID: String? = nil) {
+  func passwordsHandle(profile: String, loaded: ((any ARPasswordsAPI) -> Void)? = nil) -> (any ARPasswordsAPI)? {
+    guard let symbol = dlsym(Launcher.handle, "AraratPasswords") else { return nil }
+    typealias Loaded = @convention(block) (AnyObject?) -> Void
+    typealias OpenPasswords = @convention(c) (NSString, Loaded?) -> Unmanaged<AnyObject>?
+    let callback: Loaded? = loaded.map { reply in
+      { object in
+        if let passwords = object as? any ARPasswordsAPI { reply(passwords) }
+      }
+    }
+    return unsafeBitCast(symbol, to: OpenPasswords.self)(profile as NSString, callback)?
+      .takeUnretainedValue() as? any ARPasswordsAPI
+  }
+
+  func openSettings(spaceID: String? = nil, passwordsProfile: String? = nil) {
     // Design: Settings opened from a private window is the normal Settings window acting on
     // the regular profile; nothing is written through the private workspace.
     if isPrivateWindow, let root, root !== self {
-      root.openSettings(spaceID: nil)
+      root.openSettings(spaceID: nil, passwordsProfile: passwordsProfile)
       return
     }
     guard let workspace, let keyBindings, let airTraffic else { return }
@@ -2445,6 +2458,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
                                preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     owner.settingsOwner = self
+    let shownProfile = (spaceID ?? snapshot.shownSpaceId).flatMap { id in
+      snapshot.spaces.first(where: { $0.id == id })?.profileName
+    }
+    let passwordProfile = passwordsProfile ?? shownProfile ?? host?.profileDirectory()
+    owner.settings?.configurePasswords(profile: passwordProfile) { ready in
+      guard let passwordProfile else { return }
+      let install: (any ARPasswordsAPI) -> Void = { passwords in
+        ready(passwords.enabled, { enabled in
+          _ = passwords.setManagerEnabled(enabled)
+          return passwords.enabled
+        }, { passwords.invalidate() })
+      }
+      if let passwords = passwordsHandle(profile: passwordProfile, loaded: install) { install(passwords) }
+    }
     owner.settings?.setAbout(updater: AppUpdates.attached(to: NSApp.delegate)) { [weak self] in
       guard let self, hasUsableHost, let host else { return }
       adapter?.openCommandURL("chrome://credits/", expectedSpace: snapshot.shownSpaceId, profile: host.profileDirectory())
@@ -2522,9 +2549,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       NSApp.appearance = theme.appearance
     })
     if CommandLine.arguments.contains(where: { $0.hasPrefix("--ararat-check=") && $0 != "--ararat-check=dock" }) {
-      owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
+      owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId, passwords: passwordsProfile != nil)
     } else {
-      owner.settings?.open(shownSpaceID: spaceID ?? snapshot.shownSpaceId)
+      owner.settings?.open(shownSpaceID: spaceID ?? snapshot.shownSpaceId, passwords: passwordsProfile != nil)
     }
   }
 
@@ -3489,6 +3516,15 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
 
   func browserCheckTick() {
     guard let mode = browserCheckMode else { return }
+    if mode == "passwords" {
+      browserCheckAttempts += 1
+      if browserCheckAttempts > 120 {
+        finishBrowserCheck(ok: false, values: ["check": mode, "timeout_phase": browserCheckPhase])
+      } else if let host {
+        passwordCheckTick(host)
+      }
+      return
+    }
     if mode == "atc-routing" {
       if atcRoutingCheck == nil { atcRoutingCheck = ATCRoutingCheck() }
       atcRoutingCheck?.tick(self)
@@ -8022,6 +8058,60 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     }
   }
 
+  func passwordCheckTick(_ host: any ARWindowHostAPI) {
+    switch browserCheckPhase {
+    case 0:
+      guard let row = snapshot.spaces.first(where: { $0.id == "default" })?.today.first else { return }
+      selectCheckSeed(row)
+      browserCheckPhase = 1
+    case 1:
+      guard let row = snapshot.spaces.first(where: { $0.id == "named" })?.today.first,
+            let url = row.url, host.checkPasswordGates()["enabled"]?.boolValue == true else { return }
+      adapter?.windowHost(host, showProfile: "Profile 1")
+      adapter?.select(id: row.id, url: url)
+      browserCheckPhase = 2
+    case 2:
+      guard host.profileDirectory() == "Profile 1", !host.checkPasswordGates().isEmpty,
+            let regular = passwordsHandle(profile: "Default"),
+            let other = passwordsHandle(profile: "Profile 1") else { return }
+      guard regular.enabled, other.enabled, regular.setManagerEnabled(false), other.enabled else {
+        finishBrowserCheck(ok: false, values: ["check": "passwords", "profile_independence": false])
+        return
+      }
+      adapter?.windowHost(host, showProfile: "Default")
+      host.checkActivateShownProfile()
+      browserCheckPhase = 3
+    case 3:
+      guard host.profileDirectory() == "Default", !host.checkPasswordGates().isEmpty else { return }
+      guard passwordGatesOff(host) else {
+        finishBrowserCheck(ok: false, values: ["check": "passwords", "regular_gates": false])
+        return
+      }
+      host.checkCreateIncognito()
+      browserCheckPhase = 4
+    case 4:
+      guard let child = children.first(where: { $0.isPrivateWindow })?.host,
+            !child.checkPasswordGates().isEmpty else { return }
+      guard passwordGatesOff(child) else {
+        finishBrowserCheck(ok: false, values: ["check": "passwords", "private_gates": false])
+        return
+      }
+      host.checkNavigate("chrome://password-manager/passwords", disposition: "current")
+      browserCheckPhase = 5
+    case 5:
+      guard (root ?? self).settings?.isShowingPasswords() == true else { return }
+      finishBrowserCheck(ok: true, values: ["check": "passwords", "profile_independence": true,
+        "regular_gates": true, "private_gates": true, "settings_redirect": true])
+    default:
+      break
+    }
+  }
+
+  private func passwordGatesOff(_ host: any ARWindowHostAPI) -> Bool {
+    let gates = host.checkPasswordGates()
+    return gates["enabled"]?.boolValue == false && gates["fill"]?.boolValue == false && gates["save"]?.boolValue == false
+  }
+
   func profileCheckTick(_ host: any ARWindowHostAPI) {
     func select(_ space: String) -> Bool {
       guard let row = snapshot.spaces.first(where: { $0.id == space })?.today.first, let url = row.url else { return false }
@@ -10241,6 +10331,18 @@ var callbacks = AraratCallbacks(
       }
       if let runtime = Launcher.runtime { runtime.openURLs(urls) }
       else { Launcher.pendingURLs.append(contentsOf: urls) }
+    }
+  },
+  open_passwords: { _, window, profile in
+    guard let profile else { return }
+    MainActor.assumeIsolated {
+      guard let root = Launcher.runtime else { return }
+      let target = window.flatMap { pointer in
+        root.windowTree.first { runtime in
+          runtime.host.map { Unmanaged.passUnretained($0.window()).toOpaque() == pointer } ?? false
+        }
+      } ?? root
+      target.openSettings(passwordsProfile: String(cString: profile))
     }
   },
   confirm_quit: { _, poweringOff, shortcut, repeatKey, continuation in

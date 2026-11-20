@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 23 件、修正済みで VM 再確認待ち 27 件、承認済みの相違 4 件、判定不能 3 件、未実装 10 件である。
+下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 23 件、修正済みで VM 再確認待ち 27 件、承認済みの相違 5 件、判定不能 3 件、未実装 9 件である。
 
 
 ```sh
@@ -132,11 +132,11 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 一致 | VM capture design-rowcontrast-1, `settings-frame-frame`、`settings-appearance-appearance`、`settings-shortcuts-shortcuts-recorder` でステッパー、スイッチ、選択セグメント、録音欄のフォーカスリングのアクセント色が一致した（決定 104）。主要ボタンの押下時は比較画像待ちである。 |
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 相違 | `settings-extensions-extensions` と `settings-extensions-extensions-review` でプロファイル選択、インストール済みの行、Review… の状態を確認した（決定 102）。Add from Arc は下の未実装行に記録する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
-| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。現行のレールには 11 ペインが並び、About の直前に余白がある。Tabs と Passwords グループ（現行では Privacy が先頭）の直前の余白は未実装である。Passwords と Sync は未実装である。VM での再確認待ち。 |
+| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。登録簿の 13 ペインのうち、レールには 12 ペインが並ぶ。Tabs、Passwords、About の直前に 14 pt の余白を置く。Sync のページは未実装である。VM での再確認待ち。 |
 | `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
-| `E-Passwords` | 保存済みパスワードと Touch ID | — | 未実装 | U20 のパスワード設定は計画段階にある。 |
+| `E-Passwords` | パスワードマネージャーのスイッチ、保存済みパスワード、Touch ID | `passwords` | 相違 | プロファイルごとのスイッチを実装した。一覧、詳細と Touch ID はネイティブペインの後続単位で実装する。Arc 取り込みは別単位とする。VM での確認待ち。 |
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 相違 | `settings-privacy-privacy` には仕様検討中の Protection 機能がない（決定 97）。`settings-privacy-sheet` は Cancel に塗りがあり、Clear Data を Clear と表示し、プロファイルを固定ラベルで示し、Site permissions のチェックボックスがない。 |
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |
