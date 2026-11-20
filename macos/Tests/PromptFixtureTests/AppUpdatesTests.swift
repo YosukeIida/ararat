@@ -43,3 +43,48 @@ func sparkleRelaunchDelegateBypassesQuitConfirmationUntilTheCycleEnds() {
     delegate.updater?(controller.updater, didFinishUpdateCycleFor: .updates, error: nil)
     #expect(shouldAsk())
 }
+
+@Test @MainActor
+func sparkleDelegateTracksCheckResultsAndInstallsThePendingUpdateOnce() throws {
+    let updates = AppUpdates(channels: [])
+    let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: updates, userDriverDelegate: nil)
+    let updater = controller.updater
+    let properties: [String: Any] = [
+        "title": "Ararat 1.2", "sparkle:version": "1.2",
+        "enclosure": ["url": "https://example.com/Ararat.zip"],
+    ]
+    let item = try #require(SUAppcastItem(dictionary: properties))
+
+    try updates.updater(updater, mayPerform: .updates)
+    #expect(updates.state == .checking)
+    updates.updater(updater, willDownloadUpdate: item, with: NSMutableURLRequest(url: try #require(item.fileURL)))
+    #expect(updates.state == .downloading("1.2", nil))
+
+    var installs = 0
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: item, immediateInstallationBlock: { installs += 1 }) == true)
+    #expect(updates.state == .ready("1.2"))
+    updates.restartToUpdate()
+    updates.restartToUpdate()
+    #expect(installs == 1)
+
+    var criticalProperties = properties
+    criticalProperties["sparkle:criticalUpdate"] = [String: String]()
+    let critical = try #require(SUAppcastItem(dictionary: criticalProperties))
+    #expect(!updates.updater(updater, willInstallUpdateOnQuit: critical, immediateInstallationBlock: {}))
+
+    let error = NSError(domain: SUSparkleErrorDomain, code: Int(SUError.downloadError.rawValue),
+                        userInfo: [NSLocalizedDescriptionKey: "Download failed"])
+    updates.updater(updater, didFinishUpdateCycleFor: .updates, error: error)
+    #expect(updates.state == .failed("Download failed"))
+
+    try updates.updater(updater, mayPerform: .updates)
+    let noUpdate = NSError(domain: SUSparkleErrorDomain, code: Int(SUError.noUpdateError.rawValue))
+    updates.updater(updater, didFinishUpdateCycleFor: .updates, error: noUpdate)
+    if case .upToDate = updates.state {} else { Issue.record("Expected the up-to-date state") }
+
+    let incompatible = NSError(domain: SUSparkleErrorDomain, code: Int(SUError.noUpdateError.rawValue),
+                               userInfo: [SPUNoUpdateFoundReasonKey: SPUNoUpdateFoundReason.systemIsTooOld.rawValue,
+                                          NSLocalizedRecoverySuggestionErrorKey: "Requires a newer macOS"])
+    updates.updater(updater, didFinishUpdateCycleFor: .updates, error: incompatible)
+    #expect(updates.state == .noCompatibleUpdate("Requires a newer macOS"))
+}

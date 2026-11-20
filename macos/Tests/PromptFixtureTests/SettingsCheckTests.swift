@@ -124,6 +124,9 @@ func settingsWheelsExpireThePauseBeforeReversedPaging() throws {
 @Test @MainActor
 func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.screenMode("settings-tabs") == .tabs)
+    #expect(SettingsScreenCheck.Mode.screenMode("settings-about") == .about)
+    #expect(SettingsScreenCheck.Mode.about.paneID == "about")
+    #expect(SettingsScreenCheck.conditionNames(.about).suffix(2) == ["rows", "capture"])
     #expect(SettingsScreenCheck.Mode.screenMode("settings-shortcuts") == .shortcuts)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-air-traffic") == .airTraffic)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-appearance") == .appearance)
