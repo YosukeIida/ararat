@@ -20,6 +20,7 @@ final class TabSwitcherScreenCheck {
     private var conditions: [String: Bool] = [:]
     private var failures: [String: String] = [:]
     private var skipped: [String: String] = [:]
+    private var details: [String: [String: Any]] = [:]
     private var events: [[String: Any]] = []
     private var presentations: [(visible: Bool, elapsed: TimeInterval, timestamp: TimeInterval, noAnimation: Bool)] = []
     private var images: [String: String] = [:]
@@ -36,7 +37,7 @@ final class TabSwitcherScreenCheck {
             "condition_failures": failures, "skipped_conditions": skipped,
             "pending_conditions": Self.names.filter { conditions[$0] == nil && skipped[$0] == nil },
             "wait": waiting,
-            "images": images, "readbacks": events, "unverified": ["drm_hover_card_parity"],
+            "details": details, "images": images, "readbacks": events, "unverified": ["drm_hover_card_parity"],
         ]
     }
 
@@ -76,16 +77,35 @@ final class TabSwitcherScreenCheck {
         trace("condition=\(name) ok=false reason=\(error)")
     }
 
+    private func record(_ name: String, _ values: [String: Any]) {
+        details[name] = values
+        if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) {
+            trace("details=\(name) \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
+    private func checkPrivate(_ name: String, assertions: [String: Bool], observed: [String: Any]) throws {
+        record(name, observed.merging(["assertions": assertions]) { _, assertions in assertions })
+        let failed = assertions.keys.filter { assertions[$0] != true }.sorted()
+        try check(name, failed.isEmpty, reason: "failed assertions: \(failed.joined(separator: ", "))")
+    }
+
     private func skip(_ name: String, because prerequisite: String) {
         let reason = "skipped because \(prerequisite) failed"
         skipped[name] = reason
         trace("condition=\(name) \(reason)")
     }
 
-    private func attempt(_ name: String, _ body: () async throws -> Void) async {
+    private func attempt(_ name: String, onFailure: (@MainActor () -> [String: Any])? = nil,
+                         _ body: () async throws -> Void) async {
         waiting = name
         do { try await body() }
-        catch { fail(name, error) }
+        catch {
+            if details[name] == nil, let onFailure {
+                record(name, onFailure().merging(["step": waiting, "error": String(describing: error)]) { _, diagnostic in diagnostic })
+            }
+            fail(name, error)
+        }
     }
 
     private func scenario(_ names: [String], runtime: Runtime, space: String,
@@ -222,6 +242,14 @@ final class TabSwitcherScreenCheck {
         guard let tile = panel.previewForCheck(item: item), tile.fillsPreview,
               let rep = bitmap(tile.image), rep.pixelsWide == 312, rep.pixelsHigh == 208 else { return false }
         return color(tile.image, name)
+    }
+
+    private func previewDetails(_ tile: (image: NSImage?, fillsPreview: Bool, size: NSSize)?) -> [String: Any] {
+        let pixels = bitmap(tile?.image)
+        return ["present": tile != nil, "fills_preview": tile?.fillsPreview as Any? ?? NSNull(),
+                "width_pt": tile?.size.width as Any? ?? NSNull(), "height_pt": tile?.size.height as Any? ?? NSNull(),
+                "has_image": tile?.image != nil,
+                "width_px": pixels?.pixelsWide as Any? ?? NSNull(), "height_px": pixels?.pixelsHigh as Any? ?? NSNull()]
     }
 
     private func awaitPicture(_ runtime: Runtime, _ item: String, _ name: String) async throws {
@@ -556,24 +584,94 @@ final class TabSwitcherScreenCheck {
                     child.host?.close()
                 }
             }
-            try await wait("private window foreground") {
-                runtime.children.contains { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }
+            do {
+                defer {
+                    record("private_window_foreground", [
+                        "windows": runtime.children.filter(\.isPrivateWindow).map {
+                            ["has_host": $0.host != nil, "key": $0.host?.window().isKeyWindow == true]
+                        },
+                    ])
+                }
+                try await wait("private window foreground") {
+                    runtime.children.contains { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }
+                }
             }
-            guard let child = runtime.children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+            guard let child = runtime.children.first(where: { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }),
                   let privateHost = child.host else { throw CheckFailure(condition: "private window missing") }
             child.tabSwitcherScreenCheck = self
             observe(child)
+            @MainActor func privateContext() -> [String: Any] {
+                ["key": child.host?.window().isKeyWindow == true,
+                 "active_item": child.host?.activeItemId() as Any? ?? NSNull(),
+                 "tabs": ((child.host?.tabs() as? [any ARTabAPI]) ?? []).map { tab in
+                    ["item": tab.itemId as Any? ?? NSNull(), "live": tab.liveId, "url": tab.url,
+                     "loading": tab.isLoading, "has_favicon": tab.favicon != nil,
+                     "source": tab.itemId.flatMap { child.adapter?.switcherThumbnailSource(item: $0, live: tab.liveId) } as Any? ?? NSNull()]
+                 }]
+            }
 
-            await attempt("private_unpainted_globe") {
+            await attempt("private_unpainted_globe", onFailure: privateContext) {
                 defer { child.tabSwitcher?.cancel() }
                 let blank = try await open(child, url: "about:blank")
+                guard let target = tab(child, blank) else {
+                    record("private_globe_target", ["item": blank, "tab_present": false])
+                    throw CheckFailure(condition: "private globe target tab missing")
+                }
+                let live = target.liveId
+                let mark = events.count
+                privateHost.checkNavigate(url("slow") + "?" + privateToken, disposition: "current")
+                do {
+                    defer {
+                        record("private_globe_target", [
+                            "item": blank, "live": live, "url": target.url,
+                            "loading": target.isLoading, "navigation_count": target.navigationCount,
+                            "has_live_favicon": target.favicon != nil, "has_thumbnail": picture(child, blank) != nil,
+                        ])
+                    }
+                    try await wait("private globe target loading with no thumbnail") {
+                        target.isLoading && self.picture(child, blank) == nil
+                    }
+                }
                 _ = try await open(child, url: url("green") + "?" + privateToken)
-                let panel = try await hold(child)
-                let globe = panel.previewForCheck(item: blank)
-                try check("private_unpainted_globe", globe?.fillsPreview == false && globe?.size.width == 22 &&
-                          globe?.image != nil && tab(child, blank)?.favicon == nil)
+                let panel: TabSwitcher
+                do {
+                    panel = try await hold(child)
+                } catch {
+                    record("private_globe_hold", ["item": blank, "switcher_open": child.tabSwitcher?.isOpen == true,
+                           "panel_visible": child.tabSwitcher?.visibleWindow != nil, "presentation_count": presentations.count])
+                    throw error
+                }
+                let tile = panel.previewForCheck(item: blank)
+                let rows = panel.rows.compactMap { row -> String? in
+                    if case .tab(let id, _) = row.target { return id }
+                    return nil
+                }
+                let expectedGlobe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?.tiffRepresentation
+                let matchesGlobe = expectedGlobe.map { tile?.image?.tiffRepresentation == $0 } ?? false
+                let liveTab = tab(child, blank)
+                let source = child.adapter?.switcherThumbnailSource(item: blank, live: live)
+                let prehideSkipped = hasEvent(mark: mark, live: live, source: "prehide", status: "skipped",
+                                              reasons: ["navigation-pending", "no-paint"])
+                let savedFavicon = child.switcherUnloadedFavicons[blank]
+                try checkPrivate("private_unpainted_globe", assertions: [
+                    "panel_visible": panel.visibleWindow != nil, "target_in_rows": rows.contains(blank),
+                    "target_is_live": liveTab?.liveId == live, "target_is_loading": liveTab?.isLoading == true,
+                    "target_prehide_skipped": prehideSkipped, "no_thumbnail": source == "favicon",
+                    "tile_present": tile != nil, "tile_not_filled": tile?.fillsPreview == false,
+                    "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_has_image": tile?.image != nil,
+                    "tile_is_globe": matchesGlobe, "no_live_favicon": liveTab?.favicon == nil,
+                    "no_saved_favicon": savedFavicon == nil,
+                ], observed: [
+                    "item": blank, "live": live, "current_live": liveTab?.liveId as Any? ?? NSNull(), "rows": rows,
+                    "panel_window": panel.visibleWindow?.windowNumber as Any? ?? NSNull(),
+                    "presentation_count": presentations.count, "source": source as Any? ?? NSNull(),
+                    "loading": liveTab?.isLoading as Any? ?? NSNull(), "tile": previewDetails(tile),
+                    "globe_reference_available": expectedGlobe != nil, "matches_globe": matchesGlobe,
+                    "has_live_favicon": liveTab?.favicon != nil, "saved_favicon_items": child.switcherUnloadedFavicons.keys.sorted(),
+                    "readbacks": events.dropFirst(mark).filter { $0["live"] as? String == live },
+                ])
             }
-            await attempt("private_previews") {
+            await attempt("private_previews", onFailure: privateContext) {
                 defer { child.tabSwitcher?.cancel() }
                 let red = try await open(child, url: url("red") + "?" + privateToken)
                 try await awaitPicture(child, red, "red")
@@ -581,7 +679,18 @@ final class TabSwitcherScreenCheck {
                 try await awaitPicture(child, blue, "blue")
                 _ = try await open(child, url: url("green") + "?" + privateToken)
                 let panel = try await hold(child)
-                try check("private_previews", real(panel, red, "red") && real(panel, blue, "blue"))
+                let redIsReal = real(panel, red, "red")
+                let blueIsReal = real(panel, blue, "blue")
+                try checkPrivate("private_previews", assertions: [
+                    "panel_visible": panel.visibleWindow != nil,
+                    "red_is_real": redIsReal, "blue_is_real": blueIsReal,
+                ], observed: [
+                    "panel_window": panel.visibleWindow?.windowNumber as Any? ?? NSNull(),
+                    "red_item": red, "red_tile": previewDetails(panel.previewForCheck(item: red)),
+                    "blue_item": blue, "blue_tile": previewDetails(panel.previewForCheck(item: blue)),
+                    "red_pixel_matches": color(panel.previewForCheck(item: red)?.image, "red"),
+                    "blue_pixel_matches": color(panel.previewForCheck(item: blue)?.image, "blue"),
+                ])
             }
             let cached: Result<(item: String, live: String, adapter: EngineAdapter), Error>
             do {
@@ -602,20 +711,33 @@ final class TabSwitcherScreenCheck {
             } catch {
                 closed = .failure(error)
             }
-            await attempt("private_close_releases") {
+            record("private_session_close", [
+                "remaining_host": child.host != nil, "remaining_sessions": PrivateWorkspaces.liveCount,
+                "cached_fixture": (try? cached.get().item) as Any? ?? NSNull(),
+            ])
+            await attempt("private_close_releases", onFailure: privateContext) {
                 let cached = try cached.get()
                 try closed.get()
-                try check("private_close_releases", cached.adapter.switcherThumbnail(item: cached.item, live: cached.live) == nil)
+                let retainsImage = cached.adapter.switcherThumbnail(item: cached.item, live: cached.live) != nil
+                try checkPrivate("private_close_releases", assertions: ["cache_released": !retainsImage],
+                                 observed: ["item": cached.item, "live": cached.live, "retains_image": retainsImage])
             }
-            await attempt("private_memory_only") {
+            await attempt("private_memory_only", onFailure: privateContext) {
                 _ = try cached.get()
                 try closed.get()
                 let before = try diskBefore.get()
                 let during = try diskDuring.get()
                 let after = try diskPreviewFiles()
                 let rows = runtime.captureCheckRows()
-                try check("private_memory_only", before == during && during == after && rows != nil &&
-                          rows?.contains(where: { $0.contains(where: { $0.contains(privateToken) }) }) == false)
+                let leaksToken = rows?.contains { $0.contains { $0.contains(privateToken) } }
+                try checkPrivate("private_memory_only", assertions: [
+                    "files_unchanged_during": before == during, "files_unchanged_after": during == after,
+                    "regular_rows_available": rows != nil, "private_token_absent": leaksToken == false,
+                ], observed: [
+                    "during_added": during.subtracting(before).sorted(), "during_removed": before.subtracting(during).sorted(),
+                    "after_added": after.subtracting(during).sorted(), "after_removed": during.subtracting(after).sorted(),
+                    "regular_row_count": rows?.count as Any? ?? NSNull(), "private_token_found": leaksToken as Any? ?? NSNull(),
+                ])
             }
         }
     }
