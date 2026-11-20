@@ -256,6 +256,7 @@ void CheckGuards(int argc, const char** argv) {
       if (screen_private) { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-focus") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "split-commands") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "tab-switcher") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "header") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "urlfield") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "space-wheel-motion") { valid_screen = true; g_check_slice = true; }

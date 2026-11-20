@@ -58,7 +58,7 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
-if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-general", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-about", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-general", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-about", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live", "--ararat-screen=tab-switcher"]].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
   func scratch(_ argument: String) -> Bool {
@@ -69,7 +69,7 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ara
   let downloads = args.contains(where: { $0.hasSuffix("=downloads") || $0.hasSuffix("=toasts") })
   // A settings screen check refused here names itself by its argument (`settings-tabs`), which is
   // the mode's raw value, so the refusal's `check` is the same name the run would have reported.
-  let settingsScreen = args.first { $0.hasPrefix("--ararat-screen=settings-") || $0 == "--ararat-screen=space-wheel-motion" }.map { String($0.dropFirst("--ararat-screen=".count)) }
+  let settingsScreen = args.first { $0.hasPrefix("--ararat-screen=settings-") || $0 == "--ararat-screen=space-wheel-motion" || $0 == "--ararat-screen=tab-switcher" }.map { String($0.dropFirst("--ararat-screen=".count)) }
   guard args.contains("--use-mock-keychain"), scratch("--user-data-dir="), scratch("--ararat-db="), !downloads || args.contains("--disable-features=SystemNotifications") else {
     let result: [String: Any] = ["check": settingsScreen ?? args.first(where: { ["--ararat-check=auto-archive", "--ararat-check=delete-space-live"].contains($0) }).map { String($0.dropFirst("--ararat-check=".count)) } ?? (args.contains(where: { $0.hasSuffix("=onboarding") }) ? "onboarding" : args.contains(where: { $0.hasSuffix("=split-commands") }) ? "split-commands" : args.contains(where: { $0.hasSuffix("=split-focus") }) ? "split-focus" : args.contains(where: { $0.hasSuffix("=header") }) ? "header" : args.contains(where: { $0.hasSuffix("=urlfield") }) ? "urlfield" : args.contains(where: { $0.hasSuffix("=toasts") }) ? "toasts" : downloads ? "downloads" : args.contains(where: { $0.hasSuffix("=look") }) ? "look" : args.contains(where: { $0.hasSuffix("=dock") }) ? "dock" : args.contains(where: { $0.hasSuffix("=folder-upload") }) ? "folder-upload" : "organize"), "ok": false, "error": downloads ? "scratch profile, database, mock keychain and notification flag required" : "scratch profile, database and mock keychain required", "conditions": [:], "failed_conditions": ["scratch_guard"]]
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
@@ -770,6 +770,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
   var adapter: EngineAdapter?
   let sidebarFaviconCache = SidebarFaviconCache()
+  var switcherUnloadedFavicons: [String: String] = [:]
   var isPrivateWindow = false
   var privatePointer: UInt?
   var privateProfile: String?
@@ -785,6 +786,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var seededNewTabRow: String?
   var commandPresenter: CommandBarPresenter?
   var tabSwitcher: TabSwitcher?
+  var tabSwitcherScreenCheck: TabSwitcherScreenCheck?
   var commandBarConditions: [String: Bool] = [:]
   var commandBarImages: [String: String] = [:]
   var commandBarCapturing = false
@@ -910,7 +912,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var incognitoPrivateLive = ""
   var incognitoPrivateProfile = ""
   var incognitoPrivateBrowser = ""
-  var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+  var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []) {
+    didSet {
+      guard let tabSwitcher else { return }
+      let previous = oldValue.spaces.first { $0.id == oldValue.shownSpaceId }
+      let shown = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+      if previous?.id != shown?.id || previous?.profile != shown?.profile { tabSwitcher.cancel() }
+    }
+  }
   // A check that owns this window's profile (relaunch-pins' isolation child) keeps the snapshot
   // delivery from setting it back to the space the window shows.
   var profilePinned = false
@@ -1202,6 +1211,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       if screenName == "space-wheel-motion" { browserCheckMode = "screen-space-wheel-motion" }
       if screenName == "dock" { browserCheckMode = "screen-dock" }
       if screenName == "commandbar" { browserCheckMode = "screen-commandbar" }
+      if screenName == "tab-switcher" { browserCheckMode = "screen-tab-switcher" }
       if screenName == "sidebar-rows" { browserCheckMode = "screen-sidebar-rows" }
       if screenName == "folder-empty" { browserCheckMode = "screen-folder-empty" }
       if screenName == "today" { browserCheckMode = "screen-today" }
@@ -1224,7 +1234,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // U27a: one launch per settings pane, plus the frame and the search. The argument
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
-      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
+      if ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
         let fixture = try PromptFixtureServer()
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1508,6 +1518,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       host?.setExtensionAnchor(rect)
     }
     adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
+    adapter.onSwitcherThumbnailsChanged = { [weak self] items in
+      self?.tabSwitcher?.refreshImages(items)
+    }
     adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
     adapter.onWindowTitle = { [weak self] pageTitle in
       self.flatMap { Self.workspaceWindowTitle(pageTitle: pageTitle, snapshot: $0.snapshot) }
@@ -1747,7 +1760,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if reopening {
       if quitMode == nil || quitMode == "screen-quit" { host.window().makeKeyAndOrderFront(nil) }
     } else if browserCheckMode != nil {
-      if browserCheckMode == "atc-routing" || browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-space-wheel-motion" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "window-drag" || browserCheckMode == "screen-window-drag" || browserCheckMode == "create-space" || browserCheckMode == "screen-create-space" || browserCheckMode == "folder-upload" || browserCheckMode == "screen-folder-upload" || liveBatchCheckActive || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
+      if browserCheckMode == "atc-routing" || browserCheckMode == "sidebar-rows" || browserCheckMode == "folder-empty" || browserCheckMode == "today" || browserCheckMode == "space-name" || browserCheckMode == "screen-links" || browserCheckMode == "screen-profiles" || browserCheckMode == "screen-prompts" || browserCheckMode == "screen-dialogs" || browserCheckMode == "screen-devtools" || browserCheckMode == "screen-extensions" || browserCheckMode == "screen-fullscreen" || browserCheckMode == "screen-keyboard" || browserCheckMode == "screen-organize" || browserCheckMode == "screen-look" || browserCheckMode == "look" || browserCheckMode == "screen-space-wheel-motion" || browserCheckMode == "screen-dock" || browserCheckMode == "screen-commandbar" || browserCheckMode == "screen-tab-switcher" || browserCheckMode == "screen-sidebar-rows" || browserCheckMode == "screen-folder-empty" || browserCheckMode == "screen-today" || browserCheckMode == "screen-space-name" || browserCheckMode == "screen-errorpages" || browserCheckMode == "downloads" || browserCheckMode == "screen-downloads" || browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "private-window" || browserCheckMode == "screen-private-window" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus" || browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands" || browserCheckMode == "header" || browserCheckMode == "screen-header" || browserCheckMode == "urlfield" || browserCheckMode == "screen-urlfield" || browserCheckMode == "site-controls" || browserCheckMode == "screen-site-controls" || browserCheckMode == "ext-actions" || browserCheckMode == "screen-ext-actions" || browserCheckMode == "little-window" || browserCheckMode == "screen-little-window" || browserCheckMode == "window-drag" || browserCheckMode == "screen-window-drag" || browserCheckMode == "create-space" || browserCheckMode == "screen-create-space" || browserCheckMode == "folder-upload" || browserCheckMode == "screen-folder-upload" || liveBatchCheckActive || browserCheckMode == "private-isolation" || browserCheckMode == "private-downloads" || SettingsScreenCheck.Mode.mode(browserCheckMode ?? "") != nil {
         if browserCheckMode == "screen-fullscreen" {
           let window = host.window()
           for (name, object) in [(NSApplication.didBecomeActiveNotification, NSApp as AnyObject), (NSApplication.didResignActiveNotification, NSApp as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject), (NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.willEnterFullScreenNotification, window as AnyObject), (NSWindow.willExitFullScreenNotification, window as AnyObject), (NSWindow.didExitFullScreenNotification, window as AnyObject)] {
@@ -2664,6 +2677,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func refreshSidebarFavicons() {
     guard hasUsableHost, let host, let sidebar else { return }
+    let before = sidebar.favicons
     var live: [String: NSImage?] = [:]
     for tab in (host.tabs() as? [any ARTabAPI]) ?? [] {
       if let id = tab.itemId { live.updateValue(tab.favicon, forKey: id) }
@@ -2671,19 +2685,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let profile = isPrivateWindow ? nil : space?.profileName
     sidebarFaviconCache.useProfile(profile)
-    guard let space, let profile else {
+    if let space, let profile {
+      let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
+        $0.favorites + $0.pinned + $0.today
+      }
+      sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
+                                                   live: live, switcher: switcherUnloadedFavicons, request: { url, completion in
+        host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
+      }, changed: { [weak self] in
+        DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
+      })
+    } else {
       sidebar.favicons = live.compactMapValues { $0 }
-      return
     }
-    let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
-      $0.favorites + $0.pinned + $0.today
-    }
-    sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
-                                                 live: live, request: { url, completion in
-      host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
-    }, changed: { [weak self] in
-      DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
-    })
+    tabSwitcher?.refreshImages(Set(before.keys).union(sidebar.favicons.keys).filter { before[$0] !== sidebar.favicons[$0] })
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
@@ -2691,13 +2706,33 @@ final class Runtime: NSObject, NSMenuItemValidation {
     guard hasUsableHost, let host, let workspace else { return }
     commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent) { [weak host] id in
-      (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
-    }
+    let tracePreview = ["screen-tab-switcher", "screen-commandbar", "commandbar"].contains(browserCheckMode ?? "")
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent,
+      thumbnail: { [weak self, weak host] id in
+        guard self?.snapshot.shownSpaceId == space else { return nil }
+        let tab = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })
+        if tracePreview || self?.tabSwitcherScreenCheck != nil {
+          let source = tab.flatMap { self?.adapter?.switcherThumbnailSource(item: id, live: $0.liveId) } ?? "favicon"
+          FileHandle.standardError.write(Data("ararat-trace: switcher-preview item=\(id) source=\(source)\n".utf8))
+        }
+        return tab.flatMap { self?.adapter?.switcherThumbnail(item: id, live: $0.liveId) }
+      }, favicon: { [weak self, weak host] id in
+        guard self?.snapshot.shownSpaceId == space else { return nil }
+        if let tab = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) { return tab.favicon }
+        return self?.sidebar?.favicons[id]
+      })
     tabSwitcher = switcher
+    if let tabSwitcherScreenCheck {
+      switcher.onPresentationForCheck = { [weak tabSwitcherScreenCheck] visible, elapsed, noAnimation in
+        tabSwitcherScreenCheck?.presentationChanged(visible: visible, elapsed: elapsed, noAnimation: noAnimation)
+      }
+    }
     commandBarTrace("cycle-tabs created")
     switcher.onClose = { [weak self, weak switcher] in
-      if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+      if self?.tabSwitcher === switcher {
+        self?.tabSwitcher = nil
+        self?.switcherUnloadedFavicons.removeAll()
+      }
       self?.commandBarTrace("cycle-tabs switcher closed")
     }
     switcher.onSelect = { [weak self] row in
@@ -2710,7 +2745,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
         switcher?.cancel()
         return
       }
-      let rows = (try? result.get()) ?? []
+      let recent = try? result.get()
+      self.switcherUnloadedFavicons = recent?.unloaded ?? [:]
+      if !self.switcherUnloadedFavicons.isEmpty { self.refreshSidebarFavicons() }
+      let rows = recent?.rows ?? []
       self.commandBarTrace("cycle-tabs rows=\(rows.count)")
       switcher.load(rows)
     }
@@ -3783,7 +3821,10 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
         }
       }
     }
-    let limit = ["keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions", "onboarding", "screen-onboarding", "window-drag", "screen-window-drag", "create-space", "screen-create-space"].contains(mode) || SettingsScreenCheck.Mode.mode(mode) != nil ? 900 : 300
+    if mode == "screen-tab-switcher", let check = tabSwitcherScreenCheck {
+      timeoutValues.merge(check.result()) { _, new in new }
+    }
+    let limit = ["screen-tab-switcher", "keyboard", "screen-keyboard", "errorpages", "screen-errorpages", "downloads", "screen-downloads", "toasts", "screen-toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "screen-split-focus", "split-commands", "screen-split-commands", "urlfield", "screen-urlfield", "site-controls", "screen-site-controls", "ext-actions", "screen-ext-actions", "onboarding", "screen-onboarding", "window-drag", "screen-window-drag", "create-space", "screen-create-space"].contains(mode) || SettingsScreenCheck.Mode.mode(mode) != nil ? 900 : 300
     if browserCheckAttempts > limit {
       if mode == "screen-keyboard", let condition = keyboardCaptureCondition {
         timeoutValues["capture_wait"] = condition
@@ -3946,6 +3987,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if sidebarCheckMode(mode) != nil { sidebarCheckTick(host, screen: mode.hasPrefix("screen-"), mode: mode); return }
     if mode == "organize" || mode == "screen-organize" { organizeCheckTick(host, screen: mode == "screen-organize"); return }
     if mode == "commandbar" || mode == "screen-commandbar" { commandBarCheckTick(host, screen: mode == "screen-commandbar"); return }
+    if mode == "screen-tab-switcher" { tabSwitcherScreenCheckTick(host); return }
     if mode == "keyboard" || mode == "screen-keyboard" { keyboardCheckTick(host, screen: mode == "screen-keyboard"); return }
     if mode == "screen-prompts" { promptScreenTick(host); return }
     if mode == "screen-dialogs" { dialogsScreenTick(host); return }
@@ -9282,6 +9324,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["failed_conditions"] = check.failed
     }
     if browserCheckMode == "screen-commandbar" { result["check"] = "commandbar"; result["screen"] = "commandbar" }
+    if browserCheckMode == "screen-tab-switcher" { result["check"] = "tab-switcher"; result["screen"] = "tab-switcher" }
     if let mode = sidebarCheckMode(browserCheckMode ?? ""), let check = sidebarCheck {
       let names = SidebarCheck.conditionNames(mode: mode, screen: browserCheckMode?.hasPrefix("screen-") == true)
       result["check"] = mode.rawValue

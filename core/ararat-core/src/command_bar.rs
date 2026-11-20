@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use crate::key_bindings::KeyCombination;
-use crate::model::{ItemKind, Lifecycle, Workspace};
+use crate::model::{Id, ItemKind, Lifecycle, Workspace};
 
 pub const SEARCH_URL: &str = "https://www.google.com/search?q=";
 
@@ -425,36 +425,63 @@ pub fn pasted_text(input: &str) -> String {
 
 /// The bar shows at most five rows, the typed row included (D1).
 pub const ROW_LIMIT: usize = 5;
+pub const SWITCHER_LIMIT: usize = 5;
 
 /// The empty query's list and the ⌃Tab switcher's list (D4): the shown space's most recently
 /// selected tabs, newest first, with the selected tab and the shown split's members left out.
 /// Unloaded tabs take part; favourites belong to the profile and do not.
 pub fn recent_tabs(ws: &Workspace, window: &str, limit: usize) -> Vec<Suggestion> {
-    let current = ws.selected(window);
+    ws.shown_space(window)
+        .and_then(|id| ws.spaces.iter().find(|space| space.id == id))
+        .map_or_else(Vec::new, |space| recent_tabs_in_space(ws, space, ws.selected(window), limit))
+}
+
+fn recent_tabs_in_space(
+    ws: &Workspace,
+    space: &crate::model::Space,
+    current: Option<&str>,
+    limit: usize,
+) -> Vec<Suggestion> {
     let current_split = current.and_then(|id| ws.outermost_split(id));
-    let shown_space = ws.shown_space(window);
     let mut rows: Vec<(Option<u64>, Suggestion)> = Vec::new();
-    for space in ws.spaces.iter().filter(|space| Some(space.id.as_str()) == shown_space) {
-        for (root, pinned) in [(&space.pinned, true), (&space.today, false)] {
-            let mut stack = ws.children(root).into_iter().rev().collect::<Vec<_>>();
-            while let Some(item) = stack.pop() {
-                if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue; }
-                stack.extend(ws.children(&item.id).into_iter().rev());
-                let ItemKind::Tab { url, .. } = &item.kind else { continue };
-                if Some(item.id.as_str()) == current
-                    || current_split.as_ref().is_some_and(|split| ws.outermost_split(&item.id).as_ref() == Some(split)) { continue; }
-                rows.push((ws.last_selected.get(&item.id).copied(), Suggestion {
-                    title: item.display_title().into(),
-                    subtitle: if pinned { "Pinned" } else { "Today" }.into(),
-                    url: Some(url.clone()), key: None,
-                    target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) },
-                    score: 0.0,
-                }));
-            }
+    for (root, pinned) in [(&space.pinned, true), (&space.today, false)] {
+        let mut stack = ws.children(root).into_iter().rev().collect::<Vec<_>>();
+        while let Some(item) = stack.pop() {
+            if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue; }
+            stack.extend(ws.children(&item.id).into_iter().rev());
+            let ItemKind::Tab { url, .. } = &item.kind else { continue };
+            if Some(item.id.as_str()) == current
+                || current_split.as_ref().is_some_and(|split| ws.outermost_split(&item.id).as_ref() == Some(split)) { continue; }
+            rows.push((ws.last_selected.get(&item.id).copied(), Suggestion {
+                title: item.display_title().into(),
+                subtitle: if pinned { "Pinned" } else { "Today" }.into(),
+                url: Some(url.clone()), key: None,
+                target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) },
+                score: 0.0,
+            }));
         }
     }
     rows.sort_by(|(a, _), (b, _)| b.cmp(a));
     rows.into_iter().take(limit).map(|(_, suggestion)| suggestion).collect()
+}
+
+pub fn switcher_thumbnail_items(ws: &Workspace, window: &str, space: &crate::model::Space) -> Vec<Id> {
+    let current = ws.selected(window).filter(|id| {
+        ws.list_for(id).is_some_and(|(root, _)| {
+            root == space.pinned || root == space.today
+                || (ws.shown_space(window) == Some(space.id.as_str())
+                    && ws.favorites.get(&space.profile).is_some_and(|id| id == root))
+        })
+    });
+    let limit = SWITCHER_LIMIT + usize::from(current.is_none());
+    let mut items: Vec<_> = recent_tabs_in_space(ws, space, current, limit)
+        .into_iter().filter_map(|row| match row.target {
+            Target::Tab { id, .. } => Some(id),
+            _ => None,
+        }).collect();
+    items.extend(current.filter(|id| ws.items.get(*id).is_some_and(
+        |item| item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. }))).map(str::to_owned));
+    items
 }
 
 pub fn rank(query: &str, sources: &[&dyn Source]) -> Vec<Suggestion> {

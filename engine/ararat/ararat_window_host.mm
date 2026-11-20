@@ -2454,6 +2454,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   BOOL allowed = command->HasSwitch("ararat-check") ||
       [screen isEqualToString:@"prompts"] || [screen isEqualToString:@"fullscreen"] ||
       [screen isEqualToString:@"keyboard"] || [screen isEqualToString:@"commandbar"] ||
+      [screen isEqualToString:@"tab-switcher"] ||
       [screen isEqualToString:@"sidebar-rows"] || [screen isEqualToString:@"folder-empty"] ||
       [screen isEqualToString:@"today"] || [screen isEqualToString:@"space-name"] ||
       [screen isEqualToString:@"downloads"] || [screen isEqualToString:@"toasts"] ||
@@ -2996,7 +2997,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 }
 
 - (void)checkCreateIncognito {
-  if (IsProfileCheck() && browser_) chrome::NewIncognitoWindow(browser_->GetProfile());
+  const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
+  if ((IsProfileCheck() || screen == "tab-switcher") && browser_)
+    chrome::NewIncognitoWindow(browser_->GetProfile());
 }
 
 // U26f: deterministic tab/window creation for checks, without the key-window command dispatch.
@@ -4020,6 +4023,25 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
   [self queueExtensionActionsChanged];
   NSView* card = [self.delegate pageCardForWindowHost:self];
+  const bool shared = AraratUsesSharedCompositor() && !core_->devtools();
+  auto will_present = [&](content::WebContents* contents, NSString* item) {
+    return card && (contents == active ||
+        (!shared && !workspace_page_hidden_ && item && split_frames_[item]));
+  };
+  id<ARWindowHostDelegate> delegate = self.delegate;
+  if ([delegate respondsToSelector:@selector(windowHost:captureSwitcherThumbnailsForTabs:)]) {
+    NSMutableArray<id<ARTabAPI>>* outgoing = [NSMutableArray array];
+    for (const auto& [name, window] : core_->windows()) {
+      TabStripModel* strip = window->browser()->GetTabStripModel();
+      for (int i = 0; i < strip->count(); ++i) {
+        auto* contents = strip->GetWebContentsAt(i);
+        if (contents->GetVisibility() != content::Visibility::VISIBLE) continue;
+        ARTab* tab = tabs_[[NSValue valueWithPointer:contents]];
+        if (tab && !will_present(contents, tab.itemId)) [outgoing addObject:tab];
+      }
+    }
+    if (outgoing.count) [delegate windowHost:self captureSwitcherThumbnailsForTabs:outgoing];
+  }
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;
   if (devtools_view_ != desired_devtools) {
@@ -4037,9 +4059,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         [card addSubview:page_position_view_];
       }
     }
-    if (AraratUsesSharedCompositor() && !core_->devtools()) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
+    if (shared) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
   }
-  if (AraratUsesSharedCompositor() && !core_->devtools()) {
+  if (shared) {
     if (!devtools_view_ || !card) {
       [devtools_clip_ removeFromSuperview];
       devtools_clip_ = nil;
@@ -4073,17 +4095,20 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       opening_item_ = nil;
       opening_stamp_ = 0;
     }
-    if (!tabs_[key]) tabs_[key] = [[ARTab alloc] initWithContents:contents liveId:identity->live_id host:self];
+    const bool new_tab = !tabs_[key];
+    if (new_tab) tabs_[key] = [[ARTab alloc] initWithContents:contents liveId:identity->live_id host:self];
+    const bool presenting = will_present(contents, identity->item_id);
+    const bool newly_presented = new_tab || contents->GetVisibility() == content::Visibility::HIDDEN;
     NSView* view = contents->GetNativeView().GetNativeNSView();
     content::WebContents* devtools = DevToolsWindow::GetInTabWebContents(contents, nullptr);
     if (devtools) {
       if (contents == active && card) devtools->WasShown();
       else devtools->WasHidden();
     }
-    if (AraratUsesSharedCompositor() && !core_->devtools()) {
-      if (contents == active && card) contents->WasShown();
+    if (shared) {
+      if (presenting) contents->WasShown();
       else contents->WasHidden();
-    } else if (card && (contents == active || (!workspace_page_hidden_ && identity->item_id && split_frames_[identity->item_id]))) {
+    } else if (presenting) {
       if (!split_frames_.count) for (NSView* child in [card.subviews copy]) if (child != view && child != page_position_view_ && child != devtools_view_) [child removeFromSuperview];
       if (!split_frozen_ && view.superview != card) [card addSubview:view];
       if (view.isHidden) view.hidden = NO;
@@ -4095,6 +4120,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       if (view.superview == card) [view removeFromSuperview];
       contents->WasHidden();
     }
+    if (presenting && newly_presented) [tabs_[key] reserveSwitcherThumbnail];
     if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") == "dialogs") {
       auto* permission = permissions::PermissionRequestManager::FromWebContents(contents);
       if ([identity->item_id isEqualToString:@"close-split-b"] || (permission && permission->IsRequestInProgress())) {

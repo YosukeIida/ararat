@@ -43,6 +43,16 @@ final class PromptFixtureServer {
         let line = String(decoding: request, as: UTF8.self).components(separatedBy: "\r\n").first ?? ""
         let target = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let path = String(target.split(separator: "?", maxSplits: 1).first ?? "")
+        if path == "/switcher/slow" {
+          self.pendingConnections.append(connection)
+          return
+        }
+        if path == "/switcher/icon.png" {
+          let icon = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGP4f06OJMQwqmFUw/DVAADoIOsQc8wSkwAAAABJRU5ErkJggg==")!
+          let header = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: \(icon.count)\r\nConnection: close\r\n\r\n"
+          connection.send(content: Data(header.utf8) + icon, completion: .contentProcessed { _ in connection.cancel() })
+          return
+        }
         if path == "/pending" {
           self.pendingConnections.append(connection)
           let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n<title>Pending</title>"
@@ -90,6 +100,15 @@ final class PromptFixtureServer {
           status = "200 OK"; headers = ""; body = Self.webauthnPage
         case "/folder-upload":
           status = "200 OK"; headers = ""; body = Self.folderUploadPage
+        case "/switcher/red", "/switcher/blue", "/switcher/green":
+          let name = String(path.split(separator: "/").last ?? "")
+          let colors = ["red": "#e12427", "blue": "#194bec", "green": "#13a238"]
+          status = "200 OK"; headers = ""
+          body = """
+            <!doctype html><title>Switcher \(name)</title><link rel="icon" href="/switcher/icon.png">
+            <style>body{margin:0;background:#111} header{background:\(colors[name] ?? "#111");height:44vh;color:#fff}</style>
+            <header>Switcher \(name)</header>
+            """
         case "/auth":
           status = "401 Unauthorized"; headers = "WWW-Authenticate: Basic realm=\"Ararat fixture\"\r\n"; body = "<!doctype html><title>Unauthorized</title><p>401 body</p><script>document.documentElement.dataset.auth = 'body';</script>"
         default:

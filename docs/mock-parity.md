@@ -8,7 +8,7 @@ The [reviewed token table](research/mock-values.json) has 134 entries. The Swift
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
-The ledger below has 109 element rows. Counting each row once by status gives 42 matches, 24 open differences (one of them an owner item), 26 fixes awaiting a VM recheck, 4 accepted differences, 3 that cannot be judged, and 10 unbuilt.
+The ledger below has 109 element rows. Counting each row once by status gives 42 matches, 23 open differences, 27 fixes awaiting a VM recheck, 4 accepted differences, 3 that cannot be judged, and 10 unbuilt.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -120,7 +120,7 @@ The VM check column gives the check and phase or the capture name, with the file
 | `D-PrivateWindow` | Private window and URL-field mask | `private-window` | differs | `private-window` matches the dark appearance, mask and Private label (decision 86). The sidebar retains Today, Clear, Library and +, uses New Tab, and lacks the mock’s deletion footnote. |
 | `D-PrivateWindowEmpty` | Empty private window | — | differs | The product closes the private window with its last tab. The mock draws an empty private window. Owner decision pending. |
 | `D-SadTab` | Crashed Today tab and pin | `errorpages-today-crash`, `errorpages-pin-crash` | fixed, VM recheck pending | The page shows a window with a sad face. Sidebar rows use the warning glyph specified for A-TabRows (decision 16). |
-| `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | differs (owner item: tile values and thumbnails) | The switcher is centred on the window with key hints from the active bindings. The owner’s decision on tile dimensions and thumbnails is pending. |
+| `D-TabSwitcher` | Control-Tab switcher | `commandbar-tab-switcher` | fixed, VM recheck pending | The window-centred switcher shows page thumbnails or large favicons and keeps hints from the active bindings. The owner approved 156 × 104 pt previews and a 150 ms hold (Arc measurements reported by Yab). |
 | `D-Toasts` | Link copied, Clear with Undo and failure banner | `toasts-toast`, `toasts-banner` | differs | Link copied has a 14 pt link icon and sits at the bottom of the page at 40 pt high. The mock shows a 36 pt toast in the sidebar. The link icon and history warning card await VM recheck. Undo and Update-ready still need captures. |
 | `D-Toasts` | Update ready with Restart | — | not built | Sparkle handles updates. The persistent Restart toast is unbuilt. |
 | `Dark` | Dark browser overview | `fullscreen-dark-docked` | differs | `fullscreen-dark-docked` at `973f57e` showed a mid-grey backdrop and light-grey selection. The code now uses the measured near-black backdrop and a 19.5% white selection overlay; visual recheck is pending because design-rowcontrast-1 has no docked dark fullscreen frame. |
