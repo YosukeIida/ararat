@@ -746,8 +746,15 @@ fn thumbnail_eligibility_tracks_the_recent_tabs_and_selection_until_close_or_arc
         ws.create_tab("one", &format!("https://tab-{index}.example/")).unwrap();
         tabs.push(ws.selected("one").unwrap().to_owned());
     }
+    ws.show_space("two", "space-home").unwrap();
+    let hidden_space = ws.spaces.iter().find(|space| space.id == "space-home").unwrap().clone();
+    let mut hidden_tabs = Vec::new();
+    for index in 0..8 {
+        ws.create_tab("two", &format!("https://hidden-{index}.example/")).unwrap();
+        hidden_tabs.push(ws.selected("two").unwrap().to_owned());
+    }
     ws.last_selected.clear();
-    for (rank, tab) in tabs.iter().enumerate() {
+    for (rank, tab) in tabs.iter().chain(&hidden_tabs).enumerate() {
         ws.last_selected.insert(tab.clone(), rank as u64 + 1);
     }
     let eligibility = |ws: &ararat_core::model::Workspace| command_bar::switcher_thumbnail_items(ws, "one", &space);
@@ -757,6 +764,8 @@ fn thumbnail_eligibility_tracks_the_recent_tabs_and_selection_until_close_or_arc
     ws.archive_item(&tabs[5]).unwrap();
     let expected: Vec<_> = tabs[..5].iter().rev().chain([&tabs[7]]).cloned().collect();
     assert_eq!(eligibility(&ws), expected);
+    let expected: Vec<_> = hidden_tabs[2..].iter().rev().cloned().collect();
+    assert_eq!(command_bar::switcher_thumbnail_items(&ws, "one", &hidden_space), expected);
 }
 
 #[test]

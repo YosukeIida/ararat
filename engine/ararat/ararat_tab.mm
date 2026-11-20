@@ -78,7 +78,6 @@
 @end
 
 @interface ARTab (SwitcherThumbnail)
-- (void)setSwitcherThumbnailReady:(BOOL)ready;
 - (void)setSwitcherThumbnailNavigating:(BOOL)navigating;
 @end
 
@@ -131,10 +130,6 @@ class TabContentsObserver : public content::WebContentsObserver,
     if (navigation == thumbnail_navigation_) {
       thumbnail_navigation_ = nullptr;
       [tab_ setSwitcherThumbnailNavigating:NO];
-      if (navigation->HasCommitted()) {
-        [tab_ setSwitcherThumbnailReady:navigation->IsServedFromBackForwardCache() ||
-                                        navigation->IsPrerenderedPageActivation()];
-      }
     }
     if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
       const auto error = navigation->GetNetErrorCode();
@@ -152,9 +147,6 @@ class TabContentsObserver : public content::WebContentsObserver,
       [[tab_ ownerHost] traceTabEvent:@"navigation-start" tab:tab_];
       [tab_ refresh];
     }
-  }
-  void OnFirstContentfulPaintInPrimaryMainFrame(base::TimeTicks) override {
-    if (!thumbnail_navigation_) [tab_ setSwitcherThumbnailReady:YES];
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
@@ -192,7 +184,6 @@ class TabContentsObserver : public content::WebContentsObserver,
   NSInteger network_error_;
   NSUInteger navigation_count_;
   NSUInteger thumbnail_document_generation_;
-  BOOL thumbnail_ready_;
   BOOL thumbnail_navigating_;
   BOOL check_opener_alive_;
   NSMutableArray<NSDictionary*>* check_ime_observations_;
@@ -782,7 +773,6 @@ class TabContentsObserver : public content::WebContentsObserver,
 }
 
 - (void)rendererCrashed {
-  thumbnail_ready_ = NO;
   [self invalidateSwitcherThumbnail];
   [host_ tabMetadataChanged:@"crashed" tab:self];
 }
@@ -825,28 +815,44 @@ static void CopyTabSurface(content::WebContents* contents,
 }
 
 - (void)captureSwitcherThumbnail:(void (^)(NSImage*))completion {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  const bool trace = command->HasSwitch("ararat-check") || command->HasSwitch("ararat-screen");
+  const std::string live = trace ? base::SysNSStringToUTF8(live_id_) : std::string();
   auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
-  if (!view || !thumbnail_ready_ || thumbnail_navigating_ || self.crashed ||
-      contents_->GetVisibility() != content::Visibility::VISIBLE) {
+  const gfx::Size viewport = view ? view->GetVisibleViewportSize() : gfx::Size();
+  const int units = std::min(viewport.width() / 3, viewport.height() / 2);
+  const char* skip = nullptr;
+  if (!view) skip = "no-view";
+  else if (thumbnail_navigating_) skip = "navigation-pending";
+  else if (self.crashed) skip = "crashed";
+  else if (contents_->GetVisibility() != content::Visibility::VISIBLE) skip = "not-visible";
+  else if (!contents_->CompletedFirstVisuallyNonEmptyPaint()) skip = "no-paint";
+  else if (!units) skip = "empty-viewport";
+  else if (!view->IsSurfaceAvailableForCopy()) skip = "no-surface";
+  if (skip) {
+    if (trace) std::fprintf(stderr, "ararat-trace: switcher-thumbnail skipped live=%s reason=%s\n", live.c_str(), skip);
     completion(nil);
     return;
   }
-  const gfx::Size viewport = view->GetVisibleViewportSize();
-  const int units = std::min(viewport.width() / 3, viewport.height() / 2);
-  if (!units) { completion(nil); return; }
   const gfx::Rect crop((viewport.width() - units * 3) / 2, 0, units * 3, units * 2);
   __weak ARTab* weak_tab = self;
   const NSUInteger document = thumbnail_document_generation_;
+  if (trace) std::fprintf(stderr, "ararat-trace: switcher-thumbnail requested live=%s\n", live.c_str());
   CopyTabSurface(contents_, view, live_id_, crop, gfx::Size(312, 208),
                  true, false, ^(NSImage* image) {
     ARTab* tab = weak_tab;
-    if (!tab || document != tab->thumbnail_document_generation_) image = nil;
+    const bool stale = !tab || document != tab->thumbnail_document_generation_;
+    if (stale) image = nil;
+    if (trace) {
+      if (image) std::fprintf(stderr, "ararat-trace: switcher-thumbnail completed live=%s\n", live.c_str());
+      else std::fprintf(stderr, "ararat-trace: switcher-thumbnail failed live=%s reason=%s\n",
+                        live.c_str(), stale ? "stale-document" : "readback");
+    }
     image.size = NSMakeSize(156, 104);
     completion(image);
   });
 }
 
-- (void)setSwitcherThumbnailReady:(BOOL)ready { thumbnail_ready_ = ready; }
 - (void)setSwitcherThumbnailNavigating:(BOOL)navigating { thumbnail_navigating_ = navigating; }
 
 - (void)invalidateSwitcherThumbnail {
@@ -901,7 +907,6 @@ static void CopyTabSurface(content::WebContents* contents,
 
 - (void)replaceContents:(content::WebContents*)contents {
   [self invalidateSwitcherThumbnail];
-  thumbnail_ready_ = NO;
   thumbnail_navigating_ = NO;
   AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];

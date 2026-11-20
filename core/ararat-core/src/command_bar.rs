@@ -473,7 +473,8 @@ pub fn switcher_thumbnail_items(ws: &Workspace, window: &str, space: &crate::mod
                     && ws.favorites.get(&space.profile).is_some_and(|id| id == root))
         })
     });
-    let mut items: Vec<_> = recent_tabs_in_space(ws, space, current, SWITCHER_LIMIT)
+    let limit = SWITCHER_LIMIT + usize::from(current.is_none());
+    let mut items: Vec<_> = recent_tabs_in_space(ws, space, current, limit)
         .into_iter().filter_map(|row| match row.target {
             Target::Tab { id, .. } => Some(id),
             _ => None,
