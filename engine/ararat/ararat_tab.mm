@@ -120,6 +120,15 @@ bool HasBlankSwitcherURL(content::WebContents* contents) {
   return frame && IsBlankSwitcherURL(frame->GetLastCommittedURL());
 }
 
+enum class TabFaviconKind { kNone, kDefault, kStale, kPage };
+
+TabFaviconKind ClassifyTabFavicon(content::NavigationEntry* visible,
+                                 const content::NavigationEntry* committed) {
+  if (!visible || visible->GetFavicon().image.IsEmpty()) return TabFaviconKind::kNone;
+  if (!visible->GetFavicon().valid) return TabFaviconKind::kDefault;
+  return visible == committed ? TabFaviconKind::kPage : TabFaviconKind::kStale;
+}
+
 void TraceSwitcherThumbnail(ARWindowHost* host, NSString* live, const char* source,
                             const char* status, const char* reason, int viz_error, double ms) {
   const auto* command = base::CommandLine::ForCurrentProcess();
@@ -253,8 +262,33 @@ class TabContentsObserver : public content::WebContentsObserver,
 - (NSString*)title { DCHECK([NSThread isMainThread]); return title_; }
 - (NSString*)url { DCHECK([NSThread isMainThread]); return url_; }
 - (NSImage*)favicon {
-  auto* entry = contents_ ? contents_->GetController().GetVisibleEntry() : nullptr;
-  return entry && !entry->GetFavicon().image.IsEmpty() ? entry->GetFavicon().image.ToNSImage() : nil;
+  if (!contents_) return nil;
+  auto& controller = contents_->GetController();
+  auto* entry = controller.GetVisibleEntry();
+  return ClassifyTabFavicon(entry, controller.GetLastCommittedEntry()) == TabFaviconKind::kPage
+      ? entry->GetFavicon().image.ToNSImage() : nil;
+}
+- (NSDictionary<NSString*, id>*)checkFaviconState {
+  if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen") != "tab-switcher")
+    return @{};
+  auto& controller = contents_->GetController();
+  auto* visible = controller.GetVisibleEntry();
+  const auto* committed = controller.GetLastCommittedEntry();
+  const auto kind = ClassifyTabFavicon(visible, committed);
+  const auto* status = visible ? &visible->GetFavicon() : nullptr;
+  NSString* name = @"none";
+  switch (kind) {
+    case TabFaviconKind::kNone: break;
+    case TabFaviconKind::kDefault: name = @"default"; break;
+    case TabFaviconKind::kStale: name = @"stale"; break;
+    case TabFaviconKind::kPage: name = @"page"; break;
+  }
+  return @{ @"kind": name,
+            @"width_pt": @(status ? status->image.Width() : 0),
+            @"height_pt": @(status ? status->image.Height() : 0),
+            @"source_url": status && !status->url.is_empty() ? base::SysUTF8ToNSString(status->url.spec()) : (id)NSNull.null,
+            @"entry_url": visible ? base::SysUTF8ToNSString(visible->GetURL().spec()) : (id)NSNull.null,
+            @"committed_url": committed ? base::SysUTF8ToNSString(committed->GetURL().spec()) : (id)NSNull.null };
 }
 - (BOOL)isLoading { DCHECK([NSThread isMainThread]); return loading_; }
 - (NSUInteger)navigationCount { DCHECK([NSThread isMainThread]); return navigation_count_; }

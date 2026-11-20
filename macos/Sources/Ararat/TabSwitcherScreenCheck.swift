@@ -553,6 +553,10 @@ final class TabSwitcherScreenCheck {
             let item = try await open(runtime, url: url("red"))
             try await awaitPicture(runtime, item, "red")
             guard let target = tab(runtime, item) else { throw CheckFailure(condition: "blank target tab missing") }
+            try await wait("red fixture favicon in sidebar", observed: { target.checkFaviconState() }) {
+                self.color(runtime.sidebar?.favicons[item], "yellow", at: 0.5)
+            }
+            let faviconBeforeCommit = target.checkFaviconState()
             let live = target.liveId
             let navigationCount = target.navigationCount
             let sourceBeforeCommit = adapter.switcherThumbnailSource(item: item, live: live)
@@ -560,7 +564,7 @@ final class TabSwitcherScreenCheck {
             host.checkNavigate("about:blank", disposition: "current")
             try await wait("blank URL committed and reserve skipped", observed: {
                 ["item": item, "live": live, "previous_navigation_count": navigationCount,
-                 "current_navigation_count": target.navigationCount, "url": target.url,
+                 "current_navigation_count": target.navigationCount, "url": target.url, "favicon": target.checkFaviconState(),
                  "readbacks": self.readbacks(for: [live], since: mark)]
             }) {
                 target.navigationCount > navigationCount && target.url == "about:blank" && !target.isLoading &&
@@ -583,11 +587,14 @@ final class TabSwitcherScreenCheck {
                 "tile_not_filled": tile?.fillsPreview == false,
                 "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_is_globe": matchesGlobe,
                 "no_live_favicon": !hasLiveFavicon,
+                "no_sidebar_favicon": runtime.sidebar?.favicons[item] == nil,
             ], observed: [
                 "item": item, "live": live, "current_live": tab(runtime, item)?.liveId as Any? ?? NSNull(),
                 "url": target.url, "previous_navigation_count": navigationCount, "current_navigation_count": target.navigationCount,
                 "source_before_commit": sourceBeforeCommit, "source_after_commit": sourceAfterCommit, "source": source,
                 "tile": previewDetails(tile), "matches_globe": matchesGlobe, "has_live_favicon": hasLiveFavicon,
+                "favicon_before_commit": faviconBeforeCommit, "favicon": target.checkFaviconState(),
+                "has_sidebar_favicon": runtime.sidebar?.favicons[item] != nil,
                 "readbacks": readbacks(for: [live], since: mark),
             ])
         }
@@ -604,7 +611,8 @@ final class TabSwitcherScreenCheck {
                 "tile_not_filled": tile?.fillsPreview == false, "tile_width_22pt": tile?.size.width == 22,
                 "tile_has_image": tile?.image != nil, "prehide_skipped":
                     hasEvent(live: live, source: "prehide", status: "skipped", reasons: ["navigation-pending", "no-paint"]),
-            ], observed: ["item": slow, "live": live, "tile": previewDetails(tile), "readbacks": readbacks(for: [live])])
+            ], observed: ["item": slow, "live": live, "tile": previewDetails(tile),
+                          "favicon": tab(runtime, slow)?.checkFaviconState() ?? [:], "readbacks": readbacks(for: [live])])
         }
 
         await scene("aborted_navigation") {
@@ -817,6 +825,7 @@ final class TabSwitcherScreenCheck {
                             "item": blank, "live": live, "url": target.url,
                             "loading": target.isLoading, "navigation_count": target.navigationCount,
                             "has_live_favicon": target.favicon != nil, "has_thumbnail": picture(child, blank) != nil,
+                            "favicon": target.checkFaviconState(),
                         ])
                     }
                     try await wait("private globe target loading with no thumbnail") {
@@ -851,6 +860,7 @@ final class TabSwitcherScreenCheck {
                     "tile_present": tile != nil, "tile_not_filled": tile?.fillsPreview == false,
                     "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_has_image": tile?.image != nil,
                     "tile_is_globe": matchesGlobe, "no_live_favicon": liveTab?.favicon == nil,
+                    "no_sidebar_favicon": child.sidebar?.favicons[blank] == nil,
                     "no_saved_favicon": savedFavicon == nil,
                 ], observed: [
                     "item": blank, "live": live, "current_live": liveTab?.liveId as Any? ?? NSNull(), "rows": rows,
@@ -859,6 +869,7 @@ final class TabSwitcherScreenCheck {
                     "loading": liveTab?.isLoading as Any? ?? NSNull(), "tile": previewDetails(tile),
                     "globe_reference_available": expectedGlobe != nil, "matches_globe": matchesGlobe,
                     "has_live_favicon": liveTab?.favicon != nil, "saved_favicon_items": child.switcherUnloadedFavicons.keys.sorted(),
+                    "favicon": liveTab?.checkFaviconState() ?? [:], "has_sidebar_favicon": child.sidebar?.favicons[blank] != nil,
                     "readbacks": events.dropFirst(mark).filter { $0["live"] as? String == live },
                 ])
             }

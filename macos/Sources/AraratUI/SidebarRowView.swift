@@ -1073,7 +1073,7 @@ final class FavoriteTile: NSButton {
     }
 
     func updateStatus(favicon: NSImage?, status: EngineAdapter.RowState?, unread: Bool) {
-        if favicon != nil || status?.loading != true { faviconView.setIcon(favicon: favicon) }
+        faviconView.setIcon(favicon: favicon)
         let muted = status?.muted == true
         let hasAudio = muted || status?.audible == true
         audioMark.isHidden = !hasAudio
