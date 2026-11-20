@@ -126,6 +126,8 @@ source_set("password_prompt") {
     "//components/web_modal",
     "//content/public/browser",
     "//ui/base",
+    "//ui/base/mojom:ui_base_types",
+    "//ui/events",
     "//ui/views",
   ]
 }

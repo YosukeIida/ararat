@@ -99,7 +99,8 @@ final class PromptFixtureServer {
         switch path {
         case "/password-login":
           status = "200 OK"; headers = ""; body = Self.passwordLoginPage
-        case "/password-success" where line.hasPrefix("POST "):
+        case "/password-complete",
+             "/password-success" where line.hasPrefix("POST "):
           status = "200 OK"; headers = ""; body = "<!doctype html><title>Signed in</title><p>Fixture sign-in succeeded.</p>"
         case "/permissions":
           status = "200 OK"; headers = ""; body = Self.permissionsPage

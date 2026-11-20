@@ -10,6 +10,9 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_base.h"
+#include "base/metrics/histogram_samples.h"
+#include "base/metrics/statistics_recorder.h"
 #include "base/no_destructor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
@@ -28,8 +31,11 @@
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/models/dialog_model.h"
+#include "ui/base/mojom/ui_base_types.mojom.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/widget/widget.h"
 
 using password_manager::ui::State;
@@ -47,7 +53,8 @@ AraratPasswordPromptModel::AraratPasswordPromptModel(
       initial_state_(delegate->GetState()),
       can_save_(std::move(can_save)),
       controller_(std::move(delegate),
-                  PasswordBubbleControllerBase::DisplayReason::kAutomatic) {}
+                  PasswordBubbleControllerBase::DisplayReason::kAutomatic,
+                  /*count_implicit_dismissals=*/false) {}
 
 AraratPasswordPromptModel::~AraratPasswordPromptModel() = default;
 
@@ -187,7 +194,6 @@ class Prompt {
                          model_.IsUpdate() ? u"Update" : u"Save"))
         .AddCancelButton(base::BindOnce(&Prompt::Act, weak, Action::kNotNow),
                          ui::DialogModel::Button::Params().SetLabel(u"Not Now"))
-        .SetCloseActionCallback(base::BindOnce(&Prompt::Act, weak, Action::kNotNow))
         .SetDialogDestroyingCallback(base::BindOnce(&Prompt::Destroyed, weak));
     if (has_never_button_) {
       builder.AddExtraButton(
@@ -200,21 +206,16 @@ class Prompt {
     username_ = dialog_->GetTextfieldByUniqueId(kUsername);
     edit_subscription_ = username_->AddOnFieldChangedCallback(
         base::BindRepeating(&Prompt::UsernameChanged, weak));
-    widget_ = constrained_window::ShowWebModal(std::move(dialog), contents_);
+    auto host = views::BubbleDialogModelHost::CreateModal(
+        std::move(dialog), ui::mojom::ModalType::kChild);
+    host->set_esc_should_cancel_dialog_override(true);
+    widget_ = constrained_window::ShowWebModalDialogViews(host.release(), contents_);
   }
 
   void Hide() {
     if (Detach() && widget_) {
       widget_->Close();
     }
-  }
-
-  bool ActForCheck() {
-    if (!model_.Act(Action::kNever)) {
-      return false;
-    }
-    Hide();
-    return true;
   }
 
   views::Widget* widget() const { return widget_; }
@@ -278,9 +279,11 @@ bool HandlePasswordPrompt(content::WebContents* contents,
                           bool show,
                           bool user_action) {
   auto found = Prompts().find(contents);
-  if (!show && found != Prompts().end()) {
+  if (found != Prompts().end()) {
     found->second->Hide();
-    return true;
+    if (!show) {
+      return true;
+    }
   }
 
   auto* browser = GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
@@ -288,7 +291,7 @@ bool HandlePasswordPrompt(content::WebContents* contents,
   if (!browser || !g_ararat_is_window || !g_ararat_is_window(browser)) {
     return false;
   }
-  if (!show || found != Prompts().end()) {
+  if (!show) {
     return true;
   }
   auto* controller = ManagePasswordsUIController::FromWebContents(contents);
@@ -331,7 +334,25 @@ views::Widget* AraratCheckPasswordPromptWidget(content::WebContents* contents) {
                                                 : nullptr;
 }
 
-bool AraratCheckNeverSavePassword(content::WebContents* contents) {
-  auto found = Prompts().find(contents);
-  return CheckMode() && found != Prompts().end() && found->second->ActForCheck();
+bool AraratCheckPressNeverButton(views::Widget* widget) {
+  auto context = views::ElementTrackerViews::GetContextForWidget(widget);
+  for (auto* view : views::ElementTrackerViews::GetInstance()->GetAllMatchingViews(
+           kNever, context, /*require_visible=*/true)) {
+    auto* button = views::Button::AsButton(view);
+    if (button && button->GetWidget() == widget && button->GetEnabled()) {
+      return button->AcceleratorPressed(ui::Accelerator(ui::VKEY_SPACE, ui::EF_NONE));
+    }
+  }
+  return false;
+}
+
+int AraratCheckPasswordPromptNotNowCount() {
+  if (!CheckMode()) {
+    return 0;
+  }
+  auto* histogram = base::StatisticsRecorder::FindHistogram(
+      "PasswordManager.SaveUIDismissalReason");
+  return histogram ? histogram->SnapshotSamples()->GetCount(
+                         password_manager::metrics_util::CLICKED_NOT_NOW)
+                   : 0;
 }

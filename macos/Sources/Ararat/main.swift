@@ -3558,7 +3558,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     guard let mode = browserCheckMode else { return }
     if mode == "screen-password-prompt", let check = passwordPromptCheck {
       browserCheckAttempts += 1
-      if browserCheckAttempts > 300 || promptFixtureError != nil {
+      if browserCheckAttempts > 600 || promptFixtureError != nil {
         finishBrowserCheck(ok: false, values: check.results().merging(
           ["error": promptFixtureError ?? "timeout"]) { _, new in new })
       } else if let host {

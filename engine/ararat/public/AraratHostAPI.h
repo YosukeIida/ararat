@@ -107,6 +107,8 @@ NS_SWIFT_MAIN_ACTOR
 - (BOOL)checkSubmitPasswordFixture;
 - (nullable NSWindow*)checkPasswordPromptWindow;
 - (BOOL)checkPasswordPromptAction:(NSString*)action;
+- (NSInteger)checkPasswordPromptNotNowCount;
+- (BOOL)checkHasPasswordPrompt;
 - (void)checkFullscreenRequest:(BOOL)enter;
 - (void)checkFullscreenElement:(void (^)(BOOL))completion;
 - (void)checkKeyboardScript:(NSInteger)script completion:(void (^)(NSString*))completion;

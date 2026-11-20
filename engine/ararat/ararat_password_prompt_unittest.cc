@@ -11,6 +11,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
+#include "components/password_manager/core/browser/password_store/interactions_stats.h"
+#include "components/password_manager/core/browser/password_store/mock_smart_bubble_stats_store.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -25,6 +27,18 @@ using testing::_;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
+
+class TestStore : public password_manager::TestPasswordStore {
+ public:
+  password_manager::MockSmartBubbleStatsStore* GetSmartBubbleStatsStore()
+      override {
+    return &stats_;
+  }
+
+ private:
+  ~TestStore() override = default;
+  NiceMock<password_manager::MockSmartBubbleStatsStore> stats_;
+};
 
 class AraratPasswordPromptTest : public ChromeRenderViewHostTestHarness {
  protected:
@@ -50,7 +64,14 @@ class AraratPasswordPromptTest : public ChromeRenderViewHostTestHarness {
         ProfilePasswordStoreFactory::GetInstance(),
         base::BindRepeating(
             &password_manager::BuildPasswordStore<
-                content::BrowserContext, password_manager::TestPasswordStore>))};
+                content::BrowserContext, TestStore>))};
+  }
+
+  password_manager::MockSmartBubbleStatsStore& stats_store() {
+    return *static_cast<TestStore*>(ProfilePasswordStoreFactory::GetForProfile(
+                                        profile(), ServiceAccessType::IMPLICIT_ACCESS)
+                                        .get())
+                ->GetSmartBubbleStatsStore();
   }
 
   std::unique_ptr<AraratPasswordPromptModel> Show() {
@@ -125,6 +146,30 @@ TEST_F(AraratPasswordPromptTest, NotNowRoutesToSaveDismissal) {
   EXPECT_CALL(*delegate_, OnBubbleHidden()).Times(1);
   EXPECT_TRUE(prompt->Act(Action::kNotNow));
   EXPECT_FALSE(prompt->Act(Action::kNotNow));
+}
+
+TEST_F(AraratPasswordPromptTest, ImplicitCloseDoesNotIncreaseDismissals) {
+  auto prompt = Show();
+  EXPECT_CALL(*delegate_, OnNoInteraction()).Times(1);
+  EXPECT_CALL(*delegate_, OnNotNowClicked()).Times(0);
+  EXPECT_CALL(stats_store(), AddSiteStats(_)).Times(0);
+  prompt->Close();
+}
+
+TEST_F(AraratPasswordPromptTest, NotNowIncreasesExistingDismissalCount) {
+  password_manager::InteractionsStats prior;
+  prior.origin_domain = url::Origin::Create(pending_.url).GetURL();
+  prior.username_value = pending_.username_value;
+  prior.dismissal_count = 2;
+  ON_CALL(*delegate_, GetCurrentInteractionStats()).WillByDefault(Return(&prior));
+  auto prompt = Show();
+  EXPECT_CALL(*delegate_, OnNotNowClicked()).Times(1);
+  EXPECT_CALL(*delegate_, OnNoInteraction()).Times(0);
+  EXPECT_CALL(stats_store(), AddSiteStats(testing::Field(
+                                 &password_manager::InteractionsStats::dismissal_count,
+                                 3)));
+  EXPECT_TRUE(prompt->Act(Action::kNotNow));
+  prompt->Close();
 }
 
 TEST_F(AraratPasswordPromptTest, NotNowRoutesToUpdateDismissal) {

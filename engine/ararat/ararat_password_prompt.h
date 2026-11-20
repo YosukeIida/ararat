@@ -41,6 +41,7 @@ class AraratPasswordPromptModel {
 
 void AraratInstallPasswordPrompt();
 views::Widget* AraratCheckPasswordPromptWidget(content::WebContents* contents);
-bool AraratCheckNeverSavePassword(content::WebContents* contents);
+bool AraratCheckPressNeverButton(views::Widget* widget);
+int AraratCheckPasswordPromptNotNowCount();
 
 #endif  // ARARAT_CORE_ARARAT_PASSWORD_PROMPT_H_

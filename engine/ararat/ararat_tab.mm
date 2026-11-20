@@ -73,7 +73,6 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/window/dialog_delegate.h"
-#include "ui/views/window/dialog_delegate.h"
 #include "ui/gfx/image/image.h"
 
 @interface NSObject (AraratCheckInputObservation)
@@ -494,14 +493,24 @@ class TabContentsObserver : public content::WebContentsObserver,
 - (BOOL)checkPasswordPromptAction:(NSString*)action {
   auto* widget = contents_ ? AraratCheckPasswordPromptWidget(contents_) : nullptr;
   if (!widget || !widget->IsVisible()) return NO;
-  if ([action isEqualToString:@"never"]) return AraratCheckNeverSavePassword(contents_);
-  if ([action isEqualToString:@"escape"]) {
-    return widget->GetFocusManager()->ProcessAccelerator(
-        ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+  if ([action isEqualToString:@"never"]) return AraratCheckPressNeverButton(widget);
+  if ([action isEqualToString:@"cancel"]) {
+    widget->widget_delegate()->AsDialogDelegate()->CancelDialog();
+    return YES;
   }
-  if (![action isEqualToString:@"accept"]) return NO;
-  widget->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  return YES;
+  if ([action isEqualToString:@"escape"] || [action isEqualToString:@"accept"]) {
+    const auto key = [action isEqualToString:@"escape"] ? ui::VKEY_ESCAPE : ui::VKEY_RETURN;
+    return widget->GetFocusManager()->ProcessAccelerator(ui::Accelerator(key, ui::EF_NONE));
+  }
+  return NO;
+}
+
+- (NSInteger)checkPasswordPromptNotNowCount {
+  return AraratCheckPasswordPromptNotNowCount();
+}
+
+- (BOOL)checkHasPasswordPrompt {
+  return contents_ && AraratCheckPasswordPromptWidget(contents_);
 }
 
 - (NSDictionary<NSString*, id>*)checkAutofillState {
