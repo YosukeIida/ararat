@@ -77,7 +77,7 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ara
   }
 }
 
-if CommandLine.arguments.contains("--ararat-check=passwords"),
+if PasswordsStoreCheck.requiresScratchGuard(CommandLine.arguments),
    !PasswordsStoreCheck.validArguments(CommandLine.arguments) {
   fail("passwords check requires one scratch profile, one scratch database and --use-mock-keychain")
 }

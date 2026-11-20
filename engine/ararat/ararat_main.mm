@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdio>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/scoped_observation.h"
@@ -263,9 +265,26 @@ void CheckGuards(int argc, const char** argv) {
   bool check_toasts = false;
   bool screen_toasts = false;
   bool screen_private = false;
-  for (int i = 0; i < argc; ++i) {
-    const char* arg = argv[i] ? argv[i] : "";
-    if (strcmp(arg, "--") == 0) option_terminator = true;
+  for (int i = 1; i < argc; ++i) {
+    std::string option(base::TrimWhitespaceASCII(argv[i] ? argv[i] : "",
+                                                 base::TRIM_ALL));
+    if (option == "--") {
+      option_terminator = true;
+      continue;
+    }
+    if (option.starts_with("-") && !option.starts_with("--"))
+      option.insert(0, "-");
+    if (option_terminator) {
+      // Swift's check dispatch also inspects the original argv.
+      if (option == "--ararat-check" || option.starts_with("--ararat-check=") ||
+          option == "--ararat-screen" || option.starts_with("--ararat-screen=") ||
+          option == "--ararat-measure" || option.starts_with("--ararat-measure=")) {
+        std::cerr << "engine: check switches must precede --" << std::endl;
+        exit(2);
+      }
+      continue;
+    }
+    const char* arg = option.c_str();
     if (strncmp(arg, "--disable-features", 18) == 0) ++disable_features_count;
     if (strncmp(arg, "--ararat-compositor=", 20) == 0) {
       std::string_view compositor(arg + 20);
@@ -318,6 +337,7 @@ void CheckGuards(int argc, const char** argv) {
           std::string_view(arg + 16) == "settings-websites" ||
           std::string_view(arg + 16) == "settings-general" ||
           std::string_view(arg + 16) == "settings-privacy" ||
+          std::string_view(arg + 16) == "settings-passwords" ||
           std::string_view(arg + 16) == "settings-extensions" ||
           std::string_view(arg + 16) == "settings-about" ||
           std::string_view(arg + 16) == "settings-toolbar") {
@@ -380,6 +400,8 @@ void CheckGuards(int argc, const char** argv) {
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
           && base::FilePath(temp_dir).IsParent(dir);
+    } else if (option == "--user-data-dir") {
+      under_temp = false;
     } else if (std::string_view(arg) == "--use-mock-keychain") {
       mock_keychain = true;
     } else if (std::string_view(arg) == "--disable-features=SystemNotifications") {
@@ -390,6 +412,8 @@ void CheckGuards(int argc, const char** argv) {
       base::FilePath db(std::string(arg + 12));
       db_under_temp = !temp_dir.empty() && !db.empty() &&
                       !db.ReferencesParent() && base::FilePath(temp_dir).IsParent(db);
+    } else if (option == "--ararat-db") {
+      db_under_temp = false;
     }
   }
   auto refuse = [check_permissions, check_dialogs, check_protocol, check_autofill, check_devtools](const char* reason) {

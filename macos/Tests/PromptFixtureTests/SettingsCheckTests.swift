@@ -125,6 +125,9 @@ func settingsWheelsExpireThePauseBeforeReversedPaging() throws {
 func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.screenMode("settings-tabs") == .tabs)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-about") == .about)
+    #expect(SettingsScreenCheck.Mode.screenMode("settings-passwords") == .passwords)
+    #expect(SettingsScreenCheck.Mode.passwords.paneID == "passwords")
+    #expect(SettingsScreenCheck.conditionNames(.passwords).suffix(6) == ["fake_auth", "fixtures", "locked", "search", "detail", "capture"])
     #expect(SettingsScreenCheck.Mode.about.paneID == "about")
     #expect(SettingsScreenCheck.conditionNames(.about).suffix(2) == ["rows", "capture"])
     #expect(SettingsScreenCheck.Mode.screenMode("settings-shortcuts") == .shortcuts)

@@ -340,6 +340,7 @@ struct SettingsPasswordsSection: View {
                 HStack {
                     if model.state == .ready {
                         TextField("Search passwords", text: $model.query).frame(maxWidth: 290)
+                            .background(SettingsMarker(id: "passwords-search"))
                     }
                     Spacer()
                     Button("Add…", action: model.add)
@@ -352,6 +353,7 @@ struct SettingsPasswordsSection: View {
                         Label("Passwords are locked", systemImage: "lock")
                         Spacer()
                         Button("Unlock with Touch ID…", action: model.unlock).disabled(model.busy)
+                            .background(SettingsMarker(id: "passwords-unlock"))
                     }
                 case .loading:
                     SettingsCardRow(first: true) {
@@ -379,7 +381,7 @@ struct SettingsPasswordsSection: View {
                                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                 }.contentShape(Rectangle())
                             }.buttonStyle(.plain)
-                        }
+                        }.background(SettingsMarker(id: "passwords-result"))
                     }
                 }
             }
@@ -427,6 +429,7 @@ struct SettingsPasswordsSection: View {
                     if model.showingPassword {
                         PasswordAppKitField(field: model.revealed, label: "Password", didChange: model.passwordDidChange)
                             .frame(width: 220, height: 24)
+                            .background(SettingsMarker(id: "passwords-revealed"))
                     } else {
                         TextField("Password", text: .constant("••••••••")).labelsHidden().disabled(true)
                             .accessibilityLabel("Password hidden").frame(width: 220)
