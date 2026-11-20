@@ -13,7 +13,26 @@ final class PasswordPromptCheck {
         }
     }
 
-    private enum Phase: String { case unlock, start, fill, submit, wait, switchedAway, reshow, closed, store }
+    private enum Phase: String { case unlock, start, fill, submit, wait, capture, switchedAway, reshow, closed, store }
+
+    struct CaptureSample: Equatable {
+        let window: Int
+        let frame: NSRect
+        let alpha: Double?
+
+        func isSettled(after previous: Self?) -> Bool {
+            alpha == 1 && !frame.isEmpty && self == previous
+        }
+
+        var diagnostics: [String: Any] {
+            ["window": window, "frame": NSStringFromRect(frame), "alpha": alpha as Any? ?? NSNull()]
+        }
+    }
+
+    private static let captureTimeout: TimeInterval = 2
+    private var captureDeadline: TimeInterval = 0
+    private var previousCaptureSample: CaptureSample?
+
     private var phase = Phase.unlock
     private var remaining = Scenario.allCases[...]
     private var tab: (any ARTabAPI)?
@@ -164,11 +183,10 @@ final class PasswordPromptCheck {
             guard dialog.title == expectedTitle else { record(false, runtime: runtime); return }
             switch scenario {
             case .save, .update:
-                guard let capture = runtime.promptScreenCapture(host, name: "password-\(scenario.rawValue)",
-                                                                dialogWindow: dialog) else { return }
-                captures[scenario.rawValue] = capture
-                guard capture["centered"] as? Bool == true,
-                      tab.checkPasswordPromptAction("accept") else { record(false, runtime: runtime); return }
+                captureDeadline = ProcessInfo.processInfo.systemUptime + Self.captureTimeout
+                previousCaptureSample = nil
+                phase = .capture
+                return
             case .masterRevoked:
                 guard store?.setManagerEnabled(false) == true else { record(false, runtime: runtime); return }
             case .offerRevoked:
@@ -193,6 +211,28 @@ final class PasswordPromptCheck {
             case .masterOff, .offerOff, .privateWindow, .neverAgain:
                 return
             }
+            phase = .closed
+        case .capture:
+            let dialog = tab?.checkPasswordPromptWindow()
+            let sample = dialog.map(Self.captureSample)
+            let previous = previousCaptureSample
+            previousCaptureSample = sample
+            let settled = sample?.isSettled(after: previous) == true
+            guard ProcessInfo.processInfo.systemUptime < captureDeadline else {
+                captures[scenario.rawValue] = [
+                    "error": "capture_timeout", "timeout_seconds": Self.captureTimeout,
+                    "settled": settled, "current": sample?.diagnostics as Any? ?? NSNull(),
+                    "previous": previous?.diagnostics as Any? ?? NSNull(),
+                ]
+                record(false, runtime: runtime)
+                return
+            }
+            guard settled, let tab, let dialog, tab.checkIsDialogActive(), tab.checkDialogHostIsOurs(),
+                  let capture = runtime.promptScreenCapture(host, name: "password-\(scenario.rawValue)",
+                                                            dialogWindow: dialog) else { return }
+            captures[scenario.rawValue] = capture
+            guard capture["centered"] as? Bool == true,
+                  tab.checkPasswordPromptAction("accept") else { record(false, runtime: runtime); return }
             phase = .closed
         case .switchedAway:
             guard let tab, tab.checkPasswordPromptWindow() == nil, !tab.checkIsDialogActive(),
@@ -241,6 +281,17 @@ final class PasswordPromptCheck {
                 }
             }
         }
+    }
+
+    private static func captureSample(_ dialog: NSWindow) -> CaptureSample {
+        // Chromium applies the show fade and warp in WindowServer, bypassing NSWindow.alphaValue.
+        let number = dialog.windowNumber
+        let rows = CGWindowID(exactly: number).flatMap {
+            CGWindowListCopyWindowInfo(.optionIncludingWindow, $0) as? [[String: Any]]
+        }
+        let row = rows?.first { $0[kCGWindowNumber as String] as? Int == number &&
+                                $0[kCGWindowIsOnscreen as String] as? Bool == true }
+        return CaptureSample(window: number, frame: dialog.frame, alpha: row?[kCGWindowAlpha as String] as? Double)
     }
 
     private func record(_ passed: Bool, runtime: Runtime) {
