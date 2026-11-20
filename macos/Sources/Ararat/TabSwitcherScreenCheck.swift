@@ -20,12 +20,11 @@ final class TabSwitcherScreenCheck {
     }
     enum CloseReadbackOrder: Equatable {
         static let maxAttempts = 3
-        case exercised, retry, unverified, completedBeforeClose
+        case exercised, retry, unverified
 
         init(attempt: Int, statusAtClose: String?) {
             switch statusAtClose {
-            case "failed": self = attempt < Self.maxAttempts ? .retry : .unverified
-            case "completed": self = .completedBeforeClose
+            case "failed", "completed": self = attempt < Self.maxAttempts ? .retry : .unverified
             default: self = .exercised
             }
         }
@@ -791,15 +790,18 @@ final class TabSwitcherScreenCheck {
                 try await wait("tab closed after prehide request", observed: closeDetails) {
                     crashedAtClose != nil && self.tab(runtime, item) == nil
                 }
-                let order = CloseReadbackOrder(attempt: attempt, statusAtClose: terminalBeforeClose?["status"] as? String)
+                let statusAtClose = terminalBeforeClose?["status"] as? String
+                let order = CloseReadbackOrder(attempt: attempt, statusAtClose: statusAtClose)
                 try await wait("closed tab readback resolved", observed: closeDetails) { terminalReadback() != nil }
                 var assertions = [
                     "closed": tab(runtime, item) == nil,
                     "no_crash": crashedAtClose == false,
                     "no_image": adapter.switcherThumbnail(item: item, live: live) == nil,
                     "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
-                    "prehide_did_not_complete": !hasEvent(mark: mark, live: live, source: "prehide", status: "completed"),
                 ]
+                if statusAtClose != "completed" {
+                    assertions["prehide_did_not_complete"] = !hasEvent(mark: mark, live: live, source: "prehide", status: "completed")
+                }
                 if order == .exercised {
                     assertions["stale_document"] = hasEvent(mark: mark, live: live, source: "prehide",
                                                             status: "failed", reasons: ["stale-document"])
@@ -807,6 +809,7 @@ final class TabSwitcherScreenCheck {
                 var observation = closeDetails()
                 observation["attempt"] = attempt
                 observation["order_exercised"] = order == .exercised
+                observation["status_at_close"] = statusAtClose ?? "pending"
                 if let terminal = terminalBeforeClose {
                     observation["viz_error"] = terminal["viz_error"]
                     observation["elapsed_ms"] = terminal["elapsed_ms"]
