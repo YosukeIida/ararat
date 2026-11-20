@@ -21,7 +21,7 @@ VM では次のチェックを `--ararat-screen=<name>` で実行する。[画�
 
 - サイドバーとウィンドウは `organize`、`header`、`space-name`、`sidebar-rows`、`today`、`folder-empty`、`create-space`、`dock`、`split-commands`、`split-focus`、`fullscreen`、`window-drag`、`urlfield`。
 - ページとパネルは `keyboard`、`prompts`、`dialogs`、`downloads`、`ext-actions`、`site-controls`、`commandbar`、`errorpages`、`little-window`、`private-window`、`toasts`。
-- 設定とオンボーディングは `settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
+- 設定とオンボーディングは `settings-about`、`settings-air-traffic`、`settings-appearance`、`settings-extensions`、`settings-frame`、`settings-toolbar`、`settings-general`、`settings-little-window`、`settings-privacy`、`settings-search`、`settings-shortcuts`、`settings-spaces`、`settings-tabs`、`settings-websites`、`look`、`onboarding`。
 
 ページ内検索と Archive の撮影には、keyboard のメインチェックを `--ararat-keyboard-main-scope` 付きで実行する。
 
@@ -126,13 +126,13 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
-| `E-About` | About と更新状態 | — | 未実装 | 現行の設定画面に About ペインはない。 |
+| `E-About` | About と更新状態 | `settings-about-about` | 修正済み | About と Sparkle の各行を実装した。VM での再確認待ち。 |
 | `E-AirTraffic` | ルーティング規則と移動先の編集 | `settings-air-traffic-settings-air-traffic`, `settings-air-traffic-settings-air-traffic-default-before-press` | 一致 | VM capture design-rowcontrast-1, `settings-air-traffic-settings-air-traffic` で空のルート一覧、既定の行き先、テスト欄、アクセント色のステッパーを確認した。ルート行と行き先の開いたメニューは比較画像待ちである。 |
 | `E-Appearance` | 外観の設定 | `settings-appearance-appearance`, `settings-appearance-theme-light`, `settings-appearance-theme-dark`, `settings-appearance-theme-system` | 相違 | VM capture design-rowcontrast-1, `settings-appearance-appearance` と `settings-appearance-theme-dark` で選択部とスイッチに Look のアクセント色を確認した。Theme、Look、New Tab row、Tooltips は一致し、Page zoom は未実装である（決定 92）。 |
 | `E-Controls` | 設定画面のコントロールと操作時の状態 | `settings-frame-frame`, `settings-appearance-appearance`, `settings-shortcuts-shortcuts-recorder` | 一致 | VM capture design-rowcontrast-1, `settings-frame-frame`、`settings-appearance-appearance`、`settings-shortcuts-shortcuts-recorder` でステッパー、スイッチ、選択セグメント、録音欄のフォーカスリングのアクセント色が一致した（決定 104）。主要ボタンの押下時は比較画像待ちである。 |
 | `E-Extensions` | インストール済み一覧、プロファイルメニュー、レビュー | `settings-extensions-extensions`, `settings-extensions-extensions-profile2`, `settings-extensions-extensions-review` | 相違 | `settings-extensions-extensions` と `settings-extensions-extensions-review` でプロファイル選択、インストール済みの行、Review… の状態を確認した（決定 102）。Add from Arc は下の未実装行に記録する。 |
 | `E-Extensions` | Arc から追加 | — | 未実装 | インポート元の調査と権限の設計が必要である（§14）。 |
-| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。レールにグループの間隔がなく、Passwords、Sync、About を除く 11 ペインが連続して並ぶ。 |
+| `E-Frame` | 設定画面のツールバー、レール、カード | `settings-frame-frame`, `settings-toolbar-toolbar-top`, `settings-toolbar-toolbar-scrolled` | 相違 | `settings-frame-frame` と `settings-toolbar-top/-scrolled` の外枠、スクロール時のタイトル、カードは一致する。現行のレールには 11 ペインが並び、About の直前に余白がある。Tabs と Passwords グループ（現行では Privacy が先頭）の直前の余白は未実装である。Passwords と Sync は未実装である。VM での再確認待ち。 |
 | `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |

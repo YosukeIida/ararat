@@ -42,8 +42,6 @@ extension SettingsPane {
     var groupMarker: String { SettingsModel.groupMarker(id) }
 }
 
-/// The registry: the boards' order, General to About. Panes are built one sub-unit at a time;
-/// what is built today reads Tabs, Shortcuts, Air Traffic Control, Spaces, as §7 says.
 @MainActor
 enum SettingsRegistry {
     static let panes: [SettingsPane] = [
@@ -71,7 +69,7 @@ enum SettingsRegistry {
         SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension",
                      subtitle: "Added and managed per profile.", page: .extensions, rows: extensionsRows),
         SettingsPane(id: .sync, title: "Sync", icon: "arrow.triangle.2.circlepath", subtitle: "", page: nil, rows: { _ in [] }),
-        SettingsPane(id: .about, title: "About", icon: "info.circle", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .about, title: "About", icon: "info.circle", subtitle: "Version and updates.", page: .about, rows: aboutRows),
     ]
 
     private static let byID = Dictionary(uniqueKeysWithValues: panes.map { ($0.id, $0) })
@@ -86,6 +84,14 @@ enum SettingsRegistry {
 
     /// The search index: every built pane's rows, in the rail's order.
     static func rows(_ model: SettingsModel) -> [SettingsModel.Row] { built.flatMap { $0.rows(model) } }
+
+    static func aboutRows(_: SettingsModel) -> [SettingsModel.Row] {
+        [SettingsModel.Row(id: "about-updates", pane: .about, title: "Check for Updates", subtitle: "Version"),
+         SettingsModel.Row(id: "about-automatic", pane: .about, title: "Check for updates automatically", subtitle: ""),
+         SettingsModel.Row(id: "about-licence", pane: .about, title: "Licence", subtitle: "GNU General Public License v3.0"),
+         SettingsModel.Row(id: "about-source", pane: .about, title: "Source code", subtitle: "Corresponding Source"),
+         SettingsModel.Row(id: "about-acknowledgements", pane: .about, title: "Acknowledgements", subtitle: "Chromium, Ardia, Cra and other open-source software")]
+    }
 
     static func generalRows(_ model: SettingsModel) -> [SettingsModel.Row] {
         [SettingsModel.Row(id: SettingsModel.defaultBrowserRowID, pane: .general,
@@ -242,6 +248,7 @@ extension SettingsModel.Page {
         case .littleWindow: .littleWindow
         case .privacy: .privacy
         case .extensions: .extensions
+        case .about: .about
         case .spaces, .space: .spaces
         }
     }

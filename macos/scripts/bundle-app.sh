@@ -10,6 +10,7 @@ Builds an ad-hoc signed Ararat.app using the matching SwiftPM executable and
 Sparkle framework. ARARAT_FEED_URL and ARARAT_ED_PUBLIC_KEY enable updating.
 ARARAT_UPDATE_CHANNEL is stable (default) or nightly. ARARAT_BUILD_VERSION
 overrides CFBundleVersion and is required for builds that enable updating.
+ARARAT_CORRESPONDING_SOURCE_URL is the HTTPS address of the release source archive.
 
 With --release, use a clean release checkout, verify the engine tree against
 the recorded manifest and emit Corresponding Source before staging Ararat.app.
@@ -106,6 +107,11 @@ cp -R -- "$engine_app" "$app"
 rm -f -- "$app/Contents/MacOS/Chromium"
 cp -- "$exe" "$app/Contents/MacOS/Ararat"
 ditto "$sparkle" "$app/Contents/Frameworks/Sparkle.framework"
+cp -- "$package_dir/../LICENSE" "$app/Contents/Resources/Ararat-LICENSE.txt"
+cp -- "$package_dir/../third_party/ardia/LICENSE" "$app/Contents/Resources/Ardia-LICENSE.txt"
+cp -- "$package_dir/../third_party/ardia/LICENSE.Apache-2.0" "$app/Contents/Resources/Ardia-LICENSE.Apache-2.0.txt"
+cp -- "$package_dir/../third_party/ardia/NOTICE" "$app/Contents/Resources/Ardia-NOTICE.txt"
+cp -- "$package_dir/../third_party/cra/LICENSE" "$app/Contents/Resources/Cra-LICENSE.txt"
 cp -- "$package_dir/.build/artifacts/sparkle/Sparkle/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 
 plist="$app/Contents/Info.plist"
@@ -122,6 +128,13 @@ done
 if [[ -n "$version" ]]; then
   # Chromium locates its versioned framework via CFBundleShortVersionString.
   plutil -replace CFBundleVersion -string "$version" "$plist"
+  plutil -insert AraratVersion -string "$version" "$plist"
+fi
+if [[ -n "${ARARAT_CORRESPONDING_SOURCE_URL:-}" ]]; then
+  [[ "$ARARAT_CORRESPONDING_SOURCE_URL" == https://?* ]] || die "set an HTTPS source archive URL"
+  plutil -insert AraratCorrespondingSourceURL -string "$ARARAT_CORRESPONDING_SOURCE_URL" "$plist"
+elif [[ "$release" == 1 ]]; then
+  plutil -insert AraratLocalCorrespondingSource -bool true "$plist"
 fi
 if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
   plutil -insert SUFeedURL -string "$ARARAT_FEED_URL" "$plist"

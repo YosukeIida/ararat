@@ -174,6 +174,11 @@ public final class SettingsWindowController: NSWindowController {
     /// U27x: the engine side of the Extensions pane. The app hands in the AraratHostAPI bridge,
     /// the Manage Extension tab opener, and the window Chromium's review and uninstall dialogs are
     /// parented to. The change handler (X5) re-reads the rows when an extension changes elsewhere.
+    public func setAbout(updater: (any SettingsUpdater)?, openChromiumCredits: @escaping () -> Void) {
+        model.aboutUpdater = updater
+        model.openChromiumCredits = openChromiumCredits
+    }
+
     public func setExtensionSettings(host: ExtensionSettingsHost,
                                      manage: @escaping (String, String) -> Void) {
         model.extensionHost = host
@@ -445,6 +450,7 @@ private struct SettingsRail: View {
                     .background(selected(pane) ? SettingsColor.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
             }.buttonStyle(.plain).accessibilityLabel(pane.title)
                 .background(SettingsMarker(id: pane.railMarker))
+                .padding(.top, pane.id == .about ? 14 : 0)
         }
     }
 
@@ -492,6 +498,8 @@ private struct SettingsDetail: View {
                 VStack(spacing: 10) {
                     header
                     switch model.page {
+                    case .about:
+                        SettingsAboutSection(model: model)
                     case .general:
                         SettingsGeneralSection(model: model)
                     case .tabs:
@@ -575,7 +583,7 @@ private struct SettingsDetail: View {
                         if let space = model.space { spacePage(space) }
                     }
                     if let error = model.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-                }.padding(.horizontal, 19).padding(.top, 19).padding(.bottom, 20)
+                }.padding(.horizontal, 19).padding(.top, model.page == .about ? 0 : 19).padding(.bottom, 20)
                     .id(model.page).offset(x: followedOffset).transition(reduceMotion ? .identity : .asymmetric(insertion: .offset(x: offset), removal: .offset(x: -offset)))
             }.onScrollGeometryChange(for: Double.self) { max(0, $0.contentOffset.y) } action: { _, y in model.headerProgress = min(1, y / 100) }
                 .onChange(of: model.highlighted) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
@@ -595,7 +603,11 @@ private struct SettingsDetail: View {
     }
     var header: some View {
         VStack(spacing: 8) {
-            if let space = model.space {
+            if model.page == .about {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable().frame(width: 56, height: 56).accessibilityHidden(true)
+                    .background(SettingsMarker(id: SettingsModel.headerIconMarker))
+            } else if let space = model.space {
                 Text(space.icon ?? String(space.title.prefix(1))).font(.system(size: 40)).frame(height: 56)
                     .background(SettingsMarker(id: SettingsModel.headerIconMarker))
             } else if case .site(let origin, _) = model.page {
@@ -605,9 +617,11 @@ private struct SettingsDetail: View {
                 Image(systemName: model.icon).font(.system(size: 48)).frame(height: 56)
                     .background(SettingsMarker(id: SettingsModel.headerIconMarker))
             }
-            Text(model.title).font(.title.bold()).background(SettingsMarker(id: SettingsModel.headerTitleMarker))
+            Text(model.page == .about ? "Ararat" : model.title)
+                .font(model.page == .about ? .system(size: 26, weight: .bold) : .title.bold()).background(SettingsMarker(id: SettingsModel.headerTitleMarker))
             Text(model.subtitle).foregroundStyle(.secondary).background(SettingsMarker(id: SettingsModel.headerSubtitleMarker))
-        }.frame(maxWidth: .infinity).padding(.vertical, 18).opacity(1 - model.headerProgress).id("header")
+        }.frame(maxWidth: .infinity).padding(.top, 18).padding(.bottom, model.page == .about ? 8 : 18)
+            .opacity(1 - model.headerProgress).id("header")
     }
     /// One row per card (the panes built before U27 keep this look, D6). A search hit fills the
     /// row's inside with the selection grey, inset 3 pt at radius 9 (D7).

@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case general, websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, space(String), site(String, String) }
+    enum Page: Hashable { case general, websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, about, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -225,7 +225,35 @@ public final class SettingsModel: ObservableObject {
     var icon: String { SettingsRegistry.pane(page: page).icon }
     /// The header's one line: a space page names its tabs and profile, a site page its profile
     /// when there is more than one, a pane its own subtitle.
+    @Published var aboutUpdater: (any SettingsUpdater)?
+    var aboutLicence: URL? { Bundle.main.url(forResource: "Ararat-LICENSE", withExtension: "txt") }
+    var aboutSource: URL? {
+        if let address = Bundle.main.object(forInfoDictionaryKey: "AraratCorrespondingSourceURL") as? String,
+           let url = URL(string: address), url.scheme == "https", url.host != nil { return url }
+        guard Bundle.main.object(forInfoDictionaryKey: "AraratLocalCorrespondingSource") as? Bool == true else { return nil }
+        let archive = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Ararat-source.tar.xz")
+        return Bundle.main.bundleURL.pathExtension == "app" && FileManager.default.isReadableFile(atPath: archive.path) ? archive : nil
+    }
+    static func aboutNotices(in bundle: Bundle = .main) -> [(name: String, url: URL)] {
+        [
+            ("Ardia GPL-3.0 Licence", "Ardia-LICENSE"),
+            ("Ardia Apache-2.0 Licence", "Ardia-LICENSE.Apache-2.0"),
+            ("Ardia NOTICE", "Ardia-NOTICE"),
+            ("Cra MIT Licence", "Cra-LICENSE"),
+            ("Sparkle Licence", "Sparkle-LICENSE"),
+        ].compactMap { name, resource in
+            bundle.url(forResource: resource, withExtension: "txt").map { (name, $0) }
+        }
+    }
+    var openChromiumCredits: (() -> Void)?
+
     var subtitle: String {
+        if page == .about {
+            if let version = Bundle.main.object(forInfoDictionaryKey: "AraratVersion") as? String {
+                return "Version \(version) · built on Chromium"
+            }
+            return "Development build · built on Chromium"
+        }
         if let space { return "\(tabCountLabel(space)) · \(space.profileName)" }
         if case .site(_, let profile) = page {
             return siteProfiles.count > 1 ? "Site settings · \(profile)" : "Site settings"
