@@ -8,7 +8,7 @@ The [reviewed token table](research/mock-values.json) has 134 entries. The Swift
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
-The ledger below has 109 element rows. Counting each row once by status gives 42 matches, 24 open differences (one of them an owner item), 26 fixes awaiting a VM recheck, 4 accepted differences, 3 that cannot be judged, and 10 unbuilt.
+The ledger below has 109 element rows. Counting each row once by status gives 42 matches, 24 open differences (one of them an owner item), 26 fixes awaiting a VM recheck, 5 accepted differences, 3 that cannot be judged, and 9 unbuilt.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -134,7 +134,7 @@ The VM check column gives the check and phase or the capture name, with the file
 | `E-General` | Default browser, startup and downloads | `settings-general-general` | differs | `settings-general-general` has Warn before quitting and lacks the Search and Language groups, the path in the Downloads row and the trailing default-browser action/state (decision 91). |
 | `E-General` | Remaining general preferences | — | not built | Suggestions, search-engine and spelling rows are deferred in §7. |
 | `E-LittleWindow` | Shortcut, destination, closing and frame memory | `settings-little-window-little-window` | matches | `settings-little-window-little-window` shows the five rows and controls in decision 99 order. The shortcut and switch states come from the fixture. |
-| `E-Passwords` | Password manager switch, saved passwords and Touch ID | `passwords` | differs, VM check pending | The pane has a per-profile switch. The saved-passwords list, detail and Touch ID await the native pane unit. Arc import is separate. |
+| `E-Passwords` | Password manager switch, saved passwords and Touch ID | `passwords` | differs | The pane has a per-profile switch. The saved-passwords list, detail and Touch ID await the native pane unit. Arc import is separate. VM check pending. |
 | `E-Privacy` | Clear data, retention, cookie and privacy controls | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | differs | `settings-privacy-privacy` omits the open Protection features (decision 97). `settings-privacy-sheet` shows a filled Cancel, Clear in place of Clear Data, a static profile label and no Site permissions checkbox. |
 | `E-Privacy` | Blocker and dangerous-site warnings | — | not built | Design and sources are open (§14). |
 | `E-Search` | Search in Settings and highlighted result | `settings-search-search`, `settings-search-search-cleared` | matches | `settings-search-search` and `settings-search-search-cleared` show results replacing the rail, first-result selection and a grey highlight after scrolling to the target row. |
