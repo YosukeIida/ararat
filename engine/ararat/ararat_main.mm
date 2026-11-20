@@ -501,7 +501,8 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   // the pane writes decides the signal on every page. Inserted before any `--` terminator, which
   // would otherwise make Chrome read the switch as a positional argument.
   browser_args.insert(browser_args.begin() + 1,
-                      "--enable-features=UniversalOptOut,UniversalOptOutSettings,GlobalPrivacyControlApi");
+                      "--enable-features=UniversalOptOut,UniversalOptOutSettings,GlobalPrivacyControlApi,"
+                      "OverlayScrollbar:mode/overlay");
   bool has_no_startup_window = false;
   for (const char* arg : browser_args) {
     if (arg && strcmp(arg, "--") == 0) break;
