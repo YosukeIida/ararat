@@ -27,7 +27,8 @@ private final class MatrixFakeTab: NSObject {
     }
     @objc(closeWithCommandId:) func close(_ command: String) { owner?.closed.append(command) }
     @objc(captureSnapshot:) func capture(_ completion: @escaping (NSImage?) -> Void) { owner?.captureCompletions.append(completion) }
-    @objc(captureSwitcherThumbnail:) func captureThumbnail(_ completion: @escaping (NSImage?) -> Void) {
+    @objc(captureSwitcherThumbnailForReserve:completion:)
+    func captureThumbnail(_ reserve: Bool, completion: @escaping (NSImage?) -> Void) {
         owner?.thumbnailCompletions.append(completion)
     }
 }
@@ -149,7 +150,7 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
 }
 
 @Test @MainActor
-func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() throws {
+func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -177,9 +178,17 @@ func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() throws {
 
     try #require(adapter.responds(to: #selector(ARWindowHostDelegate.windowHost(_:captureSwitcherThumbnailsForTabs:))))
     try #require(adapter.responds(to: #selector(ARWindowHostDelegate.windowHost(_:invalidateSwitcherThumbnailForTab:))))
-    adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
+    try #require(adapter.responds(to: #selector(ARWindowHostDelegate.windowHost(_:reserveSwitcherThumbnailForTab:afterDelay:))))
+    adapter.windowHost(host, reserveSwitcherThumbnailForTab: tabAPI, afterDelay: 0)
+    for _ in 0..<30 where fake.thumbnailCompletions.isEmpty {
+        try await Task.sleep(for: .milliseconds(10))
+    }
     try #require(fake.thumbnailCompletions.count == 1)
     fake.thumbnailCompletions.removeFirst()(image)
+    #expect(adapter.switcherThumbnailSource(item: item, live: live) == "reserve")
+    adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
+    try #require(fake.thumbnailCompletions.count == 1)
+    fake.thumbnailCompletions.removeFirst()(nil)
     #expect(adapter.switcherThumbnail(item: item, live: live) === image)
     #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
 

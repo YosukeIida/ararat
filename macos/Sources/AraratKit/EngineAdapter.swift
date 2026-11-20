@@ -68,6 +68,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var displayedSelection: String?
     private var switcherThumbnails = SwitcherThumbnailCache()
     public var onSwitcherThumbnailsChanged: (@MainActor (Set<String>) -> Void)?
+    public var onSwitcherThumbnailTrace: (@MainActor ([String: Any]) -> Void)?
     private var dragBaseline: SplitPane?
     private var dragFactors: [SplitFactor]?
     private var dragSplit: String?
@@ -431,6 +432,11 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     }
 
     @MainActor
+    public func switcherThumbnailSource(item: String, live: String) -> String {
+        switcherThumbnails.source(item: item, live: live)
+    }
+
+    @MainActor
     private func thumbnailImagesChanged(_ items: Set<String>) {
         if !items.isEmpty { onSwitcherThumbnailsChanged?(items) }
     }
@@ -454,18 +460,50 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 guard let item = tab.itemId,
                       let key = switcherThumbnails.key(item: item, live: tab.liveId),
                       let request = switcherThumbnails.begin(key) else { continue }
-                tab.captureSwitcherThumbnail { [weak self] image in
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.reconcileSwitcherThumbnails()
-                        let current = self.tab(key.live)?.itemId == item
-                        if self.switcherThumbnails.finish(key, request: request, image: current ? image : nil) {
-                            self.thumbnailImagesChanged([item])
-                        }
-                    }
+                captureSwitcherThumbnail(tab, key: key, request: request, source: .prehide)
+            }
+        }
+    }
+
+    public func windowHost(_ source: any ARWindowHostAPI, reserveSwitcherThumbnailForTab tab: any ARTabAPI,
+                           afterDelay delay: TimeInterval) {
+        MainActor.assumeIsolated {
+            guard !selectionClosed, (source as AnyObject) === (host as AnyObject?), let item = tab.itemId else { return }
+            reconcileSwitcherThumbnails()
+            let now = ProcessInfo.processInfo.systemUptime
+            guard let key = switcherThumbnails.key(item: item, live: tab.liveId),
+                  let pending = switcherThumbnails.scheduleReserve(key, now: now, minimumDelay: delay) else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + pending.delay) { [weak self] in
+                guard let self, !self.selectionClosed else { return }
+                self.reconcileSwitcherThumbnails()
+                guard let request = self.switcherThumbnails.startReserve(key, scheduled: pending.id,
+                    now: ProcessInfo.processInfo.systemUptime) else { return }
+                guard let current = self.tab(key.live), current.itemId == item else {
+                    _ = self.switcherThumbnails.finish(key, request: request, image: nil, source: .reserve)
+                    return
+                }
+                self.captureSwitcherThumbnail(current, key: key, request: request, source: .reserve)
+            }
+        }
+    }
+
+    @MainActor
+    private func captureSwitcherThumbnail(_ tab: any ARTabAPI, key: SwitcherThumbnailCache.Key,
+                                          request: UUID, source: SwitcherThumbnailCache.Source) {
+        tab.captureSwitcherThumbnail(forReserve: source == .reserve) { [weak self] image in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.reconcileSwitcherThumbnails()
+                let current = self.tab(key.live)?.itemId == key.item
+                if self.switcherThumbnails.finish(key, request: request, image: current ? image : nil, source: source) {
+                    self.thumbnailImagesChanged([key.item])
                 }
             }
         }
+    }
+
+    public func windowHost(_ source: any ARWindowHostAPI, switcherThumbnailTrace event: [String: Any]) {
+        MainActor.assumeIsolated { onSwitcherThumbnailTrace?(event) }
     }
 
     public func windowHost(_ source: any ARWindowHostAPI, invalidateSwitcherThumbnailForTab tab: any ARTabAPI) {

@@ -12,18 +12,33 @@ struct SwitcherThumbnailCache {
         let live: String
     }
 
-    private var scopes: [String: Scope] = [:]
-    private var images: [String: (key: Key, image: NSImage)] = [:]
-    private var requests: [Key: UUID] = [:]
-    private var inFlight: Set<UUID> = []
+    enum Source: String, Hashable { case prehide, reserve }
+    private struct Capture: Hashable {
+        let key: Key
+        let source: Source
+    }
+    private struct Images {
+        let key: Key
+        var prehide: NSImage?
+        var reserve: NSImage?
+    }
 
-    var hasImagesOrRequests: Bool { !images.isEmpty || !requests.isEmpty }
+    private var scopes: [String: Scope] = [:]
+    private var images: [String: Images] = [:]
+    private var requests: [Capture: UUID] = [:]
+    private var inFlight: Set<UUID> = []
+    private var scheduled: [Key: UUID] = [:]
+    private var lastReserve: [Key: TimeInterval] = [:]
+
+    var hasImagesOrRequests: Bool { !images.isEmpty || !requests.isEmpty || !scheduled.isEmpty }
 
     mutating func reconcile(_ next: [String: Scope]) -> Set<String> {
         scopes = next
         let removed = Set(images.values.filter { next[$0.key.item] != $0.key.scope }.map { $0.key.item })
         for item in removed { images.removeValue(forKey: item) }
-        requests = requests.filter { next[$0.key.item] == $0.key.scope }
+        requests = requests.filter { next[$0.key.key.item] == $0.key.key.scope }
+        scheduled = scheduled.filter { next[$0.key.item] == $0.key.scope }
+        lastReserve = lastReserve.filter { next[$0.key.item] == $0.key.scope }
         return removed
     }
 
@@ -33,33 +48,63 @@ struct SwitcherThumbnailCache {
 
     func image(item: String, live: String) -> NSImage? {
         guard let entry = images[item], entry.key.live == live else { return nil }
-        return entry.image
+        return entry.prehide ?? entry.reserve
     }
 
-    mutating func begin(_ key: Key) -> UUID? {
-        guard scopes[key.item] == key.scope, requests[key] == nil, inFlight.count < 4 else { return nil }
+    func source(item: String, live: String) -> String {
+        guard let entry = images[item], entry.key.live == live else { return "favicon" }
+        if entry.prehide != nil { return Source.prehide.rawValue }
+        return entry.reserve != nil ? Source.reserve.rawValue : "favicon"
+    }
+
+    mutating func scheduleReserve(_ key: Key, now: TimeInterval, minimumDelay: TimeInterval = 0) -> (id: UUID, delay: TimeInterval)? {
+        guard scopes[key.item] == key.scope, scheduled[key] == nil else { return nil }
+        let delay = max(minimumDelay, lastReserve[key].map { $0 + 2 - now } ?? 0)
+        let id = UUID()
+        scheduled[key] = id
+        return (id, delay)
+    }
+
+    mutating func startReserve(_ key: Key, scheduled id: UUID, now: TimeInterval) -> UUID? {
+        guard scheduled[key] == id else { return nil }
+        scheduled.removeValue(forKey: key)
+        guard lastReserve[key].map({ now - $0 >= 2 }) ?? true,
+              let request = begin(key, source: .reserve) else { return nil }
+        lastReserve[key] = now
+        return request
+    }
+
+    mutating func begin(_ key: Key, source: Source = .prehide) -> UUID? {
+        let capture = Capture(key: key, source: source)
+        guard scopes[key.item] == key.scope, requests[capture] == nil, inFlight.count < 4 else { return nil }
         let request = UUID()
-        requests[key] = request
+        requests[capture] = request
         inFlight.insert(request)
         return request
     }
 
-    mutating func finish(_ key: Key, request: UUID, image: NSImage?) -> Bool {
-        guard inFlight.remove(request) != nil, requests[key] == request else { return false }
-        requests.removeValue(forKey: key)
-        if let image {
-            images[key.item] = (key, image)
-            return true
+    mutating func finish(_ key: Key, request: UUID, image: NSImage?, source: Source = .prehide) -> Bool {
+        let capture = Capture(key: key, source: source)
+        guard inFlight.remove(request) != nil, requests[capture] == request else { return false }
+        requests.removeValue(forKey: capture)
+        let previous = self.image(item: key.item, live: key.live)
+        var entry = images[key.item].flatMap { $0.key == key ? $0 : nil } ?? Images(key: key)
+        switch source {
+        case .prehide: entry.prehide = image
+        case .reserve:
+            if let image { entry.reserve = image }
         }
-        guard images[key.item]?.key == key else { return false }
-        images.removeValue(forKey: key.item)
-        return true
+        if entry.prehide != nil || entry.reserve != nil { images[key.item] = entry }
+        else if images[key.item]?.key == key { images.removeValue(forKey: key.item) }
+        return previous !== self.image(item: key.item, live: key.live)
     }
 
     mutating func invalidate(live: String) -> Set<String> {
         let removed = Set(images.values.filter { $0.key.live == live }.map { $0.key.item })
         for item in removed { images.removeValue(forKey: item) }
-        requests = requests.filter { $0.key.live != live }
+        requests = requests.filter { $0.key.key.live != live }
+        scheduled = scheduled.filter { $0.key.live != live }
+        lastReserve = lastReserve.filter { $0.key.live != live }
         return removed
     }
 }

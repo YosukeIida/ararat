@@ -9,6 +9,8 @@ public final class TabSwitcher {
     private(set) var isRevealed = false
     public var onSelect: (Suggestion) -> Void = { _ in }
     public var onClose: () -> Void = {}
+    public var onPresentationForCheck: ((Bool, TimeInterval, Bool) -> Void)?
+    private let started = ProcessInfo.processInfo.systemUptime
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     public var visibleWindow: NSWindow? { panel.isVisible ? panel : nil }
     private weak var parent: NSWindow?
@@ -118,7 +120,10 @@ public final class TabSwitcher {
         if let deactivate { NotificationCenter.default.removeObserver(deactivate); self.deactivate = nil }
         if let resignKey { NotificationCenter.default.removeObserver(resignKey); self.resignKey = nil }
         if panel.parent != nil { parent?.removeChildWindow(panel) }
-        if panel.isVisible { panel.orderOut(nil) }
+        if panel.isVisible {
+            panel.orderOut(nil)
+            onPresentationForCheck?(false, ProcessInfo.processInfo.systemUptime - started, panel.animationBehavior == .none)
+        }
         onClose()
     }
 
@@ -133,6 +138,11 @@ public final class TabSwitcher {
         for item in items {
             if let tile = tileImages[item] { updateImages(for: item, tile: tile) }
         }
+    }
+
+    public func previewForCheck(item: String) -> (image: NSImage?, fillsPreview: Bool, size: NSSize)? {
+        guard panel.isVisible, let tile = tileImages[item] else { return nil }
+        return (tile.picture.image, tile.picture.frame == tile.preview.bounds, tile.picture.frame.size)
     }
 
     private func updateImages(for item: String?, tile: TileImages) {
@@ -153,7 +163,12 @@ public final class TabSwitcher {
         panel.contentView = overlay.content
         panel.setFrame(overlay.frame, display: true)
         if panel.parent == nil { parent.addChildWindow(panel, ordered: .above) }
-        if !panel.isVisible { panel.orderFront(nil) }
+        if !panel.isVisible {
+            panel.orderFront(nil)
+            if panel.isVisible {
+                onPresentationForCheck?(true, ProcessInfo.processInfo.systemUptime - started, panel.animationBehavior == .none)
+            }
+        }
     }
 
     func makeOverlay() -> (content: NSView, frame: NSRect)? {

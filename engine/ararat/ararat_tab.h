@@ -25,6 +25,7 @@ class WebContents;
 - (void)invalidate;
 - (void)replaceContents:(content::WebContents*)contents;
 - (void)invalidateSwitcherThumbnail;
+- (void)reserveSwitcherThumbnail;
 @end
 
 @interface ARWindowHost (ARTabCommands)
