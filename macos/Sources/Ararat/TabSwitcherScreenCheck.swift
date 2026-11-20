@@ -10,7 +10,7 @@ final class TabSwitcherScreenCheck {
         "quick_tap", "held_once_without_fade", "release_immediate", "escape_immediate",
         "five_previews_after_space_return", "saved_favicon", "navigation_refresh", "slow_page_favicon",
         "aborted_navigation", "split_focus_no_readback", "split_leave_both_readbacks",
-        "little_window_handoff", "private_previews", "private_globe", "private_memory_only",
+        "little_window_handoff", "private_previews", "private_unpainted_globe", "private_memory_only",
         "private_close_releases", "close_during_readback",
     ]
     private struct CheckFailure: Error { let condition: String }
@@ -408,7 +408,7 @@ final class TabSwitcherScreenCheck {
             throw CheckFailure(condition: "private_preview_owner")
         }
         let globe = privatePanel.previewForCheck(item: privateBlank)
-        try check("private_globe", globe?.fillsPreview == false && globe?.size.width == 22 &&
+        try check("private_unpainted_globe", globe?.fillsPreview == false && globe?.size.width == 22 &&
                   globe?.image != nil && tab(child, privateBlank)?.favicon == nil)
         let diskDuring = try diskPreviewFiles()
         try await escape(child)

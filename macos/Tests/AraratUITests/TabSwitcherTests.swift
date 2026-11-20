@@ -4,6 +4,58 @@ import Testing
 @testable import AraratUI
 
 @Test @MainActor
+func unloadedPrivateSwitcherRowUsesGlobeWithoutRequestingSavedFavicon() async throws {
+    let session = WorkspaceSession()
+    let windowID = "private-switcher"
+    let previousURL = "https://previous.example/"
+    let currentURL = "https://current.example/"
+    let previous = try session.queue.sync {
+        let store = WorkspaceStore.openPrivate(profile: .default)
+        session.store = store
+        let opened = try store.createTab(windowId: windowID, url: previousURL)
+        let previous = try #require(opened.selectedId)
+        #expect(opened.spaces.flatMap(\.today).first { $0.id == previous }?.unloaded == false)
+        let selected = try store.createTab(windowId: windowID, url: currentURL)
+        let current = try #require(selected.selectedId)
+        let live = LiveTab(offTheRecord: true, profile: .default, liveId: "current-live", item: current,
+                           opener: nil, navigated: true, url: currentURL, title: "Current")
+        let outcome = try store.liveApply(transaction: LiveTransaction(offTheRecord: true, epoch: 1, rev: 0,
+            cause: .chrome, strips: [LiveStrip(window: windowID, tabs: [live], active: live.liveId)]))
+        #expect(outcome.applied)
+        let snapshot = store.snapshot(windowId: windowID)
+        #expect(snapshot.spaces.flatMap(\.today).first { $0.id == previous }?.unloaded == true)
+        #expect(store.liveTab(item: previous) == nil)
+        return previous
+    }
+
+    let workspace = WorkspaceAdapter(windowID: windowID, session: session, private: true)
+    let recent: (rows: [Suggestion], unloaded: [String: String]) = try await withCheckedThrowingContinuation { continuation in
+        workspace.recentTabs { continuation.resume(with: $0) }
+    }
+    #expect(recent.unloaded.isEmpty)
+    let row = try #require(recent.rows.first {
+        if case .tab(let id, _) = $0.target { return id == previous }
+        return false
+    })
+    #expect(row.url == previousURL)
+
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                          styleMask: .titled, backing: .buffered, defer: false)
+    let savedIcon = try #require(NSImage(systemSymbolName: "star.fill", accessibilityDescription: nil))
+    let switcher = TabSwitcher(parent: window, backwards: false, bindings: [], accent: .systemTeal,
+                               favicon: { recent.unloaded[$0] == nil ? nil : savedIcon }, schedule: { _, _ in })
+    defer { switcher.cancel() }
+    switcher.load([row])
+    let overlay = try #require(switcher.makeOverlay())
+    let preview = try #require(overlay.content.subviews.first?.subviews.first?.subviews.first)
+    let image = try #require(preview.subviews.first as? NSImageView)
+    let globe = try #require(NSImage(systemSymbolName: "globe", accessibilityDescription: nil))
+    let globePixels = try #require(globe.tiffRepresentation)
+    #expect(image.frame.size == NSSize(width: 22, height: 22))
+    #expect(image.image?.tiffRepresentation == globePixels)
+}
+
+@Test @MainActor
 func tabSwitcherCommitsThePreviousTabAndEscapeCanCancel() {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700), styleMask: .titled, backing: .buffered, defer: false)
     let rows = (0..<3).map { index in
