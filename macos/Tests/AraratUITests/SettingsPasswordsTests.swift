@@ -20,6 +20,7 @@ private final class PasswordRow: NSObject, ARPasswordRowAPI {
 private final class PasswordsFixture: NSObject, ARPasswordsAPI {
     var enabled = true
     var offersToSave = true
+    var showsFillAuthentication = true
     var authenticatesBeforeFilling = false
     var invalidated = false
     var auth: ((Bool) -> Void)?
@@ -27,10 +28,21 @@ private final class PasswordsFixture: NSObject, ARPasswordsAPI {
     var changed: (() -> Void)?
     var reveal: ((UnsafePointer<unichar>?, UInt) -> Void)?
     var added: (website: String, username: String, length: UInt)?
+    var edited: (rowID: String, username: String, length: UInt)?
+    var fillRequest: (enabled: Bool, reply: (Bool) -> Void)?
 
     func setManagerEnabled(_ enabled: Bool) -> Bool { self.enabled = enabled; return true }
+    func setAuthenticatesBeforeFilling(_ enabled: Bool, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        fillRequest = (enabled, completion)
+    }
+    func finishFillAuthentication(_ success: Bool) {
+        guard let request = fillRequest else { return }
+        fillRequest = nil
+        if success { authenticatesBeforeFilling = request.enabled }
+        request.reply(success)
+    }
     func authenticate(_ completion: @escaping @MainActor @Sendable (Bool) -> Void) { auth = completion }
-    func cancelAuthentication() {}
+    func cancelAuthentication() { fillRequest = nil }
     func snapshot(_ completion: @escaping @MainActor @Sendable (ARPasswordsState, [any ARPasswordRowAPI]) -> Void) {
         snapshots.append(completion)
     }
@@ -39,10 +51,12 @@ private final class PasswordsFixture: NSObject, ARPasswordsAPI {
         added = (website, username, length)
         return true
     }
-    func editRow(_ rowID: String, username: String, password: UnsafePointer<unichar>?, length: UInt) -> Bool { false }
+    func editRow(_ rowID: String, username: String, password: UnsafePointer<unichar>?, length: UInt) -> Bool {
+        edited = (rowID, username, length)
+        return true
+    }
     func deleteRow(_ rowID: String) -> Bool { false }
     func revealRow(_ rowID: String, completion: @escaping @MainActor @Sendable (UnsafePointer<unichar>?, UInt) -> Void) { reveal = completion }
-    func copyRow(_ rowID: String, completion: @escaping @MainActor @Sendable (Bool) -> Void) { completion(false) }
     func invalidate() { invalidated = true }
 }
 
@@ -102,6 +116,8 @@ struct SettingsPasswordsTests {
         controller.prepare(shownSpaceID: nil, passwords: true)
         #expect(controller.isShowingPasswords())
         #expect(model.passwords.handle === current)
+        model.passwords.setManagerEnabled(false)
+        #expect(!current.enabled)
 
         model.passwords.unlock()
         let third = PasswordsFixture()
@@ -120,6 +136,8 @@ struct SettingsPasswordsTests {
         #expect(model.passwords.state == .locked)
         #expect(model.passwords.rows.isEmpty)
         #expect(controller.passwordsProfile == nil)
+        controller.configurePasswords(profile: nil) { _ in Issue.record("Unexpected profile load") }
+        #expect(model.passwords.state == .failed)
     }
 
     @Test func ignoresOutOfOrderSnapshotsAndClearsTheAppKitReveal() throws {
@@ -169,5 +187,97 @@ struct SettingsPasswordsTests {
         #expect(engine.added?.length == 7)
         #expect(model.input.stringValue.isEmpty)
         #expect(model.page == .list)
+    }
+
+    @Test func changingFillAuthenticationWaitsForSuccessAndDropsCancelledReplies() throws {
+        let model = SettingsPasswordsModel()
+        let engine = PasswordsFixture()
+        model.configure(profile: "Default", openWebsite: { _ in }) { $0(engine) }
+
+        model.setAuthenticatesBeforeFilling(true)
+        #expect(engine.fillRequest?.enabled == true)
+        #expect(!model.authenticatesBeforeFilling)
+        engine.finishFillAuthentication(false)
+        #expect(!model.authenticatesBeforeFilling)
+
+        model.setAuthenticatesBeforeFilling(true)
+        engine.finishFillAuthentication(true)
+        #expect(model.authenticatesBeforeFilling)
+
+        model.setAuthenticatesBeforeFilling(false)
+        let staleReply = try #require(engine.fillRequest?.reply)
+        model.lock()
+        #expect(engine.fillRequest == nil)
+        #expect(model.authenticatesBeforeFilling)
+
+        model.setAuthenticatesBeforeFilling(false)
+        staleReply(false)
+        #expect(model.busy)
+        #expect(model.error == nil)
+        #expect(model.authenticatesBeforeFilling)
+        engine.finishFillAuthentication(true)
+        #expect(!model.authenticatesBeforeFilling)
+    }
+
+    @Test func fillAuthenticationRowFollowsBiometricAvailability() throws {
+        _ = NSApplication.shared
+        let adapter = WorkspaceAdapter(windowID: "settings-password-visibility")
+        let model = SettingsModel(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []),
+            adapter: adapter, publish: { _ in }, resetWidth: {},
+            keyBindings: KeyBindingsModel(adapter: adapter), airTraffic: AirTrafficModel(adapter: adapter))
+        let controller = SettingsWindowController(model: model, orderWindowFront: { _ in Issue.record("Unexpected window ordering") })
+        let probe = try #require(controller.checkProbe())
+        let marker = SettingsModel.rowMarker("password-fill")
+        controller.prepare(shownSpaceID: nil, passwords: true)
+
+        let unavailable = PasswordsFixture()
+        unavailable.showsFillAuthentication = false
+        controller.configurePasswords(profile: "Hidden") { $0(unavailable) }
+        probe.layout()
+        #expect(probe.marker(marker) == nil)
+        #expect(!SettingsRegistry.rows(model).contains { $0.id == "password-fill" })
+        model.passwords.setAuthenticatesBeforeFilling(true)
+        #expect(unavailable.fillRequest == nil)
+
+        controller.configurePasswords(profile: "Shown") { $0(PasswordsFixture()) }
+        probe.layout()
+        #expect(probe.marker(marker) != nil)
+        #expect(SettingsRegistry.rows(model).contains { $0.id == "password-fill" })
+    }
+
+    @Test func inlineEditsUseTheRevealedFieldAndClearItAfterSaving() throws {
+        _ = NSApplication.shared
+        let model = SettingsPasswordsModel()
+        let engine = PasswordsFixture()
+        let row = PasswordRow("1", "https://calendar.test", "Sam")
+        model.configure(profile: "Default", openWebsite: { _ in }) { $0(engine) }
+        model.unlock()
+        engine.auth?(true)
+        engine.snapshots.last?(.ready, [row])
+        model.detail(row)
+        #expect(model.username == "Sam")
+        #expect(!model.canSaveDetail)
+
+        model.toggleReveal()
+        let text = Array("fixture".utf16)
+        let reveal = try #require(engine.reveal)
+        text.withUnsafeBufferPointer { reveal($0.baseAddress, UInt($0.count)) }
+        #expect(model.revealed.isEditable)
+        #expect(model.revealed.isSelectable)
+        model.toggleReveal()
+        #expect(model.revealed.stringValue.isEmpty)
+
+        model.toggleReveal()
+        let secondReveal = try #require(engine.reveal)
+        text.withUnsafeBufferPointer { secondReveal($0.baseAddress, UInt($0.count)) }
+        model.revealed.objectValue = "changed-password" as NSString
+        model.passwordDidChange()
+        model.username = "Pat"
+        model.saveDetail()
+        #expect(engine.edited?.rowID == row.rowID)
+        #expect(engine.edited?.username == "Pat")
+        #expect(engine.edited?.length == 16)
+        #expect(!model.showingPassword)
+        #expect(model.revealed.stringValue.isEmpty)
     }
 }

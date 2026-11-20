@@ -8,7 +8,7 @@ The [reviewed token table](research/mock-values.json) has 134 entries. The Swift
 
 The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
-The ledger below has 111 element rows. Counting each row once by status gives 42 matches, 24 open differences, 28 fixes awaiting a VM recheck, 5 accepted differences, 3 that cannot be judged, and 9 unbuilt.
+The ledger below has 112 element rows. Counting each row once by status gives 42 matches, 24 open differences, 29 fixes awaiting a VM recheck, 5 accepted differences, 3 that cannot be judged, and 9 unbuilt.
 
 ```sh
 MOCK_PROJECT="$HOME/.config/herdr-agent-team/ararat/reports/design-u20/u20mock/project"
@@ -134,7 +134,8 @@ The VM check column gives the check and phase or the capture name, with the file
 | `E-General` | Default browser, startup and downloads | `settings-general-general` | differs | `settings-general-general` has Warn before quitting and lacks the Search and Language groups, the path in the Downloads row and the trailing default-browser action/state (decision 91). |
 | `E-General` | Remaining general preferences | — | not built | Suggestions, search-engine and spelling rows are deferred in §7. |
 | `E-LittleWindow` | Shortcut, destination, closing and frame memory | `settings-little-window-little-window` | matches | `settings-little-window-little-window` shows the five rows and controls in decision 99 order. The shortcut and switch states come from the fixture. |
-| `E-Passwords` | Per-profile switches, saved passwords and device authentication | `passwords` | fixed, VM recheck pending | The native pane unlocks, searches, adds, displays, edits and deletes saved sign-ins. The VM check fakes authentication. Real Touch ID is unverified. |
+| `E-Passwords` | Per-profile switches, saved passwords and device authentication | `passwords` | fixed, VM recheck pending | Search and Add sit above the list card. The empty state keeps Add. Fill passwords appears after Chromium records biometric availability and requires fresh device authentication to change. The VM check fakes authentication. Real Touch ID is unverified. |
+| `E-Passwords` | Sign-in detail | `passwords` | fixed, VM recheck pending | User name and password are edited inline. The revealed password can be selected for standard macOS copying. Website opens in the profile and Delete removes the sign-in. |
 | `E-Passwords` | Import from Arc | — | differs | Unit (c) adds Arc password import. |
 | `E-Passwords` | Save and update prompt | — | differs | Offer to save writes the Chromium preference. Unit (d) implements the prompt. |
 | `E-Privacy` | Clear data, retention, cookie and privacy controls | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | differs | `settings-privacy-privacy` omits the open Protection features (decision 97). `settings-privacy-sheet` shows a filled Cancel, Clear in place of Clear Data, a static profile label and no Site permissions checkbox. |

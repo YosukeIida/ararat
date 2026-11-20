@@ -21,8 +21,11 @@ NS_SWIFT_MAIN_ACTOR
 @protocol ARPasswordsAPI <NSObject>
 @property(nonatomic, readonly) BOOL enabled;
 @property(nonatomic) BOOL offersToSave;
-@property(nonatomic) BOOL authenticatesBeforeFilling;
+@property(nonatomic, readonly) BOOL showsFillAuthentication;
+@property(nonatomic, readonly) BOOL authenticatesBeforeFilling;
 - (BOOL)setManagerEnabled:(BOOL)enabled;
+- (void)setAuthenticatesBeforeFilling:(BOOL)enabled
+                          completion:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL changed))completion;
 - (void)authenticate:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL authorized))completion;
 - (void)cancelAuthentication;
 - (void)snapshot:(void (NS_SWIFT_MAIN_ACTOR ^)(ARPasswordsState state, NSArray<id<ARPasswordRowAPI>>* rows))completion;
@@ -35,7 +38,6 @@ NS_SWIFT_MAIN_ACTOR
 // The borrowed password buffer is cleared as soon as completion returns.
 - (void)revealRow:(NSString*)rowID
        completion:(void (NS_SWIFT_MAIN_ACTOR ^)(const unichar* _Nullable password, NSUInteger length))completion NS_SWIFT_DISABLE_ASYNC;
-- (void)copyRow:(NSString*)rowID completion:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL copied))completion;
 - (void)invalidate;
 @end
 

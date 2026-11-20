@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class SettingsPasswordsModel: ObservableObject {
     enum State: Equatable { case locked, loading, failed, empty, ready }
-    enum Page { case list, detail, add, edit }
+    enum Page { case list, detail, add }
 
     @Published private(set) var profile: String?
     @Published private(set) var state: State = .locked
@@ -15,6 +15,7 @@ final class SettingsPasswordsModel: ObservableObject {
     @Published private(set) var selected: (any ARPasswordRowAPI)?
     @Published private(set) var busy = false
     @Published private(set) var showingPassword = false
+    @Published private(set) var passwordChanged = false
     @Published private(set) var error: String?
     @Published var query = ""
     @Published var website = ""
@@ -29,7 +30,42 @@ final class SettingsPasswordsModel: ObservableObject {
     private var configureRequest = UUID()
     private var openWebsite: ((String) -> Void)?
     lazy var input = NSSecureTextField()
-    lazy var revealed = NSTextField(labelWithString: "")
+    lazy var revealed: NSTextField = {
+        let field = NSTextField()
+        field.cell = RevealedPasswordCell(textCell: "")
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBezeled = true
+        field.drawsBackground = true
+        return field
+    }()
+
+    var showsFillAuthentication: Bool { handle?.showsFillAuthentication == true }
+    var authenticatesBeforeFilling: Bool { handle?.authenticatesBeforeFilling == true }
+
+    func setManagerEnabled(_ enabled: Bool) {
+        guard let handle else { return }
+        _ = handle.setManagerEnabled(enabled)
+        objectWillChange.send()
+    }
+
+    func setAuthenticatesBeforeFilling(_ enabled: Bool) {
+        guard let handle, showsFillAuthentication, !busy,
+              enabled != authenticatesBeforeFilling else { return }
+        let request = generation
+        busy = true
+        error = nil
+        handle.setAuthenticatesBeforeFilling(enabled) { [weak self] changed in
+            guard let self, self.generation == request else { return }
+            self.busy = false
+            if !changed { self.error = "Could not change authentication before filling." }
+        }
+    }
+
+    var canSaveDetail: Bool {
+        guard let selected, !busy else { return false }
+        return passwordChanged || username != selected.username
+    }
 
     var filtered: [any ARPasswordRowAPI] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +138,7 @@ final class SettingsPasswordsModel: ObservableObject {
             }
             self.rows = state == .ready ? rows : []
             if state == .failed, self.busy {
+                self.handle?.cancelAuthentication()
                 self.generation = UUID()
                 self.busy = false
             }
@@ -117,6 +154,7 @@ final class SettingsPasswordsModel: ObservableObject {
         guard authorized, rows.contains(where: { $0.rowID == row.rowID }) else { return }
         list()
         selected = row
+        username = row.username
         page = .detail
     }
 
@@ -137,53 +175,59 @@ final class SettingsPasswordsModel: ObservableObject {
         page = .add
     }
 
-    func edit() {
-        guard let selected else { return }
-        clearPassword()
-        clearInput()
-        error = nil
-        username = selected.username
-        page = .edit
+    func passwordDidChange() {
+        if showingPassword { passwordChanged = true }
     }
 
-    func cancelEdit() {
-        clearInput()
-        error = nil
-        if selected == nil { list() } else { page = .detail }
+    func saveDetail() {
+        guard authorized, canSaveDetail, let handle, let selected else { return }
+        let success: Bool
+        if passwordChanged {
+            success = withPassword(in: revealed) { password, length in
+                guard let password else { return false }
+                return handle.editRow(selected.rowID, username: username, password: password, length: length)
+            }
+        } else {
+            success = handle.editRow(selected.rowID, username: username, password: nil, length: 0)
+        }
+        clearPassword()
+        guard success else { error = "Could not update this password."; return }
+        list()
+        refresh()
     }
 
     func write() {
-        guard authorized, page == .add || page == .edit, let handle else { return }
-        let isAdding = page == .add
-        input.validateEditing()
-        let value = input.stringValue as NSString
-        let length = value.length
-        var characters = [unichar](repeating: 0, count: length)
-        let success = characters.withUnsafeMutableBufferPointer { buffer in
-            defer {
-                if let address = buffer.baseAddress {
-                    let size = length * MemoryLayout<unichar>.stride
-                    _ = memset_s(address, size, 0, size)
-                }
-            }
-            if length > 0, let address = buffer.baseAddress {
-                value.getCharacters(address, range: NSRange(location: 0, length: length))
-                if isAdding {
-                    return handle.addWebsite(website, username: username, password: address, length: UInt(length))
-                }
-            }
-            guard !isAdding, let selected else { return false }
-            return handle.editRow(selected.rowID, username: username,
-                                  password: length == 0 ? nil : buffer.baseAddress, length: UInt(length))
+        guard authorized, page == .add, let handle else { return }
+        let success = withPassword(in: input) { password, length in
+            guard let password else { return false }
+            return handle.addWebsite(website, username: username, password: password, length: length)
         }
         clearInput()
         guard success else {
-            error = isAdding ? "Could not add this password. Check the website and password, or look for an existing sign-in."
-                             : "Could not update this password."
+            error = "Could not add this password. Check the website and password, or look for an existing sign-in."
             return
         }
         list()
         refresh()
+    }
+
+    private func withPassword(in field: NSTextField,
+                              _ action: (UnsafePointer<unichar>?, UInt) -> Bool) -> Bool {
+        field.validateEditing()
+        guard let value = field.objectValue as? NSString, value.length > 0 else {
+            return action(nil, 0)
+        }
+        let length = value.length
+        var characters = [unichar](repeating: 0, count: length)
+        return characters.withUnsafeMutableBufferPointer { buffer in
+            guard let address = buffer.baseAddress else { return false }
+            defer {
+                let size = length * MemoryLayout<unichar>.stride
+                _ = memset_s(address, size, 0, size)
+            }
+            value.getCharacters(address, range: NSRange(location: 0, length: length))
+            return action(address, UInt(length))
+        }
     }
 
     func remove() {
@@ -217,20 +261,6 @@ final class SettingsPasswordsModel: ObservableObject {
         }
     }
 
-    func copyPassword() {
-        guard authorized, let selected, let handle, !busy else { return }
-        busy = true
-        error = nil
-        let request = UUID()
-        detailRequest = request
-        let rowID = selected.rowID
-        handle.copyRow(rowID) { [weak self] ok in
-            guard let self, self.detailRequest == request else { return }
-            self.busy = false
-            if !ok { self.error = "Could not copy this password." }
-        }
-    }
-
     private func clearPassword() {
         detailRequest = UUID()
         if busy, selected != nil {
@@ -238,16 +268,19 @@ final class SettingsPasswordsModel: ObservableObject {
             busy = false
         }
         if showingPassword {
+            revealed.abortEditing()
+            (revealed.cell as? RevealedPasswordCell)?.clearEditor()
             revealed.objectValue = ""
+            passwordChanged = false
             showingPassword = false
         }
     }
 
     private func clearInput() {
-        if page == .add || page == .edit {
+        if page == .add {
             input.currentEditor()?.string = ""
             input.abortEditing()
-            input.stringValue = ""
+            input.objectValue = ""
         }
     }
 }
@@ -261,7 +294,7 @@ struct SettingsPasswordsSection: View {
             switch model.page {
             case .list: list
             case .detail: if let selected = model.selected { detail(selected) }
-            case .add, .edit: form
+            case .add: form
             }
             if let error = model.error {
                 Text(error).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
@@ -282,21 +315,37 @@ struct SettingsPasswordsSection: View {
             SettingsGroupCard {
                 SettingsCardRow(first: true, hit: highlighted == "password-manager",
                                 marker: SettingsModel.rowMarker("password-manager")) {
-                    toggle("Use Ararat’s password manager",
-                           subtitle: model.profile.map { "Profile: " + $0 } ?? "Profile unavailable",
-                           get: { $0.enabled }, set: { _ = $0.setManagerEnabled($1) })
+                    SettingsRowLabel(title: "Use Ararat’s password manager",
+                                     subtitle: model.profile.map { "Profile: " + $0 } ?? "Profile unavailable")
+                    Toggle("Use Ararat’s password manager", isOn: Binding(
+                        get: { model.handle?.enabled == true }, set: model.setManagerEnabled
+                    )).labelsHidden().toggleStyle(.switch).disabled(model.handle == nil)
                 }.id("password-manager")
                 SettingsCardRow(hit: highlighted == "password-save", marker: SettingsModel.rowMarker("password-save")) {
                     toggle("Offer to save passwords",
                            get: { $0.offersToSave }, set: { $0.offersToSave = $1 })
                 }.id("password-save")
-                SettingsCardRow(hit: highlighted == "password-fill", marker: SettingsModel.rowMarker("password-fill")) {
-                    toggle("Fill passwords", subtitle: "Ask for Touch ID before filling",
-                           get: { $0.authenticatesBeforeFilling }, set: { $0.authenticatesBeforeFilling = $1 })
-                }.id("password-fill")
+                if model.showsFillAuthentication {
+                    SettingsCardRow(hit: highlighted == "password-fill", marker: SettingsModel.rowMarker("password-fill")) {
+                        SettingsRowLabel(title: "Fill passwords", subtitle: "Touch ID is asked before filling")
+                        Toggle("Touch ID is asked before filling", isOn: Binding(
+                            get: { model.authenticatesBeforeFilling }, set: model.setAuthenticatesBeforeFilling
+                        )).labelsHidden().toggleStyle(.switch).disabled(model.busy)
+                    }.id("password-fill")
+                }
             }
 
-            SettingsGroupCard(heading: "Saved passwords", marker: "saved-passwords") {
+            SettingsGroupHeading(title: "Saved passwords", marker: "saved-passwords-heading")
+            if model.state == .empty || model.state == .ready {
+                HStack {
+                    if model.state == .ready {
+                        TextField("Search passwords", text: $model.query).frame(maxWidth: 290)
+                    }
+                    Spacer()
+                    Button("Add…", action: model.add)
+                }
+            }
+            SettingsGroupCard(marker: "saved-passwords") {
                 switch model.state {
                 case .locked:
                     SettingsCardRow(first: true) {
@@ -312,18 +361,15 @@ struct SettingsPasswordsSection: View {
                 case .failed:
                     SettingsCardRow(first: true) { Text("Saved passwords could not be loaded.") }
                 case .empty, .ready:
-                    SettingsCardRow(first: true) {
-                        TextField("Search saved passwords", text: $model.query)
-                        Button("Add…", action: model.add)
-                    }
-                    if model.filtered.isEmpty {
-                        SettingsCardRow {
-                            Text(model.state == .empty ? "No saved passwords" : "No matching passwords")
+                    let rows = model.filtered
+                    if rows.isEmpty {
+                        SettingsCardRow(first: true) {
+                            Text(model.state == .empty ? "No saved passwords." : "No matching passwords.")
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    ForEach(model.filtered, id: \.rowID) { row in
-                        SettingsCardRow {
+                    ForEach(rows, id: \.rowID) { row in
+                        SettingsCardRow(first: row.rowID == rows.first?.rowID) {
                             Button { model.detail(row) } label: {
                                 HStack {
                                     let site = siteName(row)
@@ -359,7 +405,6 @@ struct SettingsPasswordsSection: View {
             HStack {
                 Button("Saved passwords", systemImage: "chevron.left", action: model.list)
                 Spacer()
-                Button("Edit…", action: model.edit).disabled(model.busy)
             }
             VStack(spacing: 6) {
                 SettingsSpaceIconTile(text: String(siteName(row).prefix(1)).uppercased())
@@ -370,7 +415,7 @@ struct SettingsPasswordsSection: View {
                 SettingsCardRow(first: true) {
                     Text("User name")
                     Spacer()
-                    Text(row.username).textSelection(.enabled)
+                    TextField("User name", text: $model.username).labelsHidden().frame(width: 220)
                     Button("Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(row.username, forType: .string)
@@ -380,12 +425,13 @@ struct SettingsPasswordsSection: View {
                     Text("Password")
                     Spacer()
                     if model.showingPassword {
-                        PasswordAppKitField(field: model.revealed, label: "Password").frame(width: 190, height: 24)
+                        PasswordAppKitField(field: model.revealed, label: "Password", didChange: model.passwordDidChange)
+                            .frame(width: 220, height: 24)
                     } else {
-                        Text("••••••••").accessibilityLabel("Password hidden")
+                        TextField("Password", text: .constant("••••••••")).labelsHidden().disabled(true)
+                            .accessibilityLabel("Password hidden").frame(width: 220)
                     }
                     Button(model.showingPassword ? "Hide" : "Show", action: model.toggleReveal).disabled(model.busy)
-                    Button("Copy", action: model.copyPassword).accessibilityLabel("Copy password").disabled(model.busy)
                 }
                 SettingsCardRow {
                     SettingsRowLabel(title: "Website", subtitle: row.website)
@@ -393,6 +439,10 @@ struct SettingsPasswordsSection: View {
                         Button("Open", action: model.openSelectedWebsite)
                     }
                 }
+            }
+            if model.canSaveDetail {
+                Button("Save Changes", action: model.saveDetail).keyboardShortcut(.defaultAction)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             SettingsGroupCard {
                 SettingsCardRow(first: true) {
@@ -408,22 +458,19 @@ struct SettingsPasswordsSection: View {
 
     private var form: some View {
         VStack(spacing: SettingsMetrics.cardGap) {
-            Text(model.page == .add ? "Add password" : "Edit password").font(.title.bold())
+            Text("Add password").font(.title.bold())
             SettingsGroupCard {
-                if model.page == .add {
-                    SettingsCardRow(first: true) { TextField("Website", text: $model.website) }
-                }
-                SettingsCardRow(first: model.page == .edit) { TextField("User name", text: $model.username) }
+                SettingsCardRow(first: true) { TextField("Website", text: $model.website) }
+                SettingsCardRow { TextField("User name", text: $model.username) }
                 SettingsCardRow {
-                    let label = model.page == .edit ? "New password (optional)" : "Password"
-                    Text(label)
+                    Text("Password")
                     Spacer()
-                    PasswordAppKitField(field: model.input, label: label).frame(width: 190, height: 24)
+                    PasswordAppKitField(field: model.input, label: "Password").frame(width: 190, height: 24)
                 }
             }
             HStack {
                 Spacer()
-                Button("Cancel", action: model.cancelEdit).keyboardShortcut(.cancelAction)
+                Button("Cancel", action: model.list).keyboardShortcut(.cancelAction)
                 Button("Save", action: model.write).keyboardShortcut(.defaultAction)
             }
         }
@@ -437,10 +484,43 @@ struct SettingsPasswordsSection: View {
 private struct PasswordAppKitField: NSViewRepresentable {
     let field: NSTextField
     let label: String
+    var didChange: (() -> Void)?
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSTextField {
         field.setAccessibilityLabel(label)
+        field.delegate = context.coordinator
         return field
     }
-    func updateNSView(_ field: NSTextField, context: Context) {}
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.didChange = didChange
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var didChange: (() -> Void)?
+
+        func controlTextDidChange(_ notification: Notification) {
+            didChange?()
+        }
+    }
+}
+
+private final class RevealedPasswordCell: NSTextFieldCell {
+    private let editor = NSTextView()
+
+    override func fieldEditor(for controlView: NSView) -> NSTextView? {
+        editor.isFieldEditor = true
+        editor.allowsUndo = false
+        editor.isContinuousSpellCheckingEnabled = false
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isAutomaticTextCompletionEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        return editor
+    }
+
+    func clearEditor() { editor.string = "" }
 }

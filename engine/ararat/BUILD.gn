@@ -76,7 +76,6 @@ source_set("passwords") {
     "//content/public/browser",
     "//content/public/common",
     "//crypto",
-    "//ui/base/clipboard",
     "//url",
   ]
 }

@@ -7,8 +7,12 @@ import AraratEngineAPI
 private final class TestPasswords: NSObject, ARPasswordsAPI {
     var enabled: Bool { true }
     var offersToSave = true
+    var showsFillAuthentication = false
     var authenticatesBeforeFilling = false
     func setManagerEnabled(_ enabled: Bool) -> Bool { false }
+    func setAuthenticatesBeforeFilling(_ enabled: Bool, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        completion(false)
+    }
     func authenticate(_ completion: @escaping @MainActor @Sendable (Bool) -> Void) { completion(false) }
     func cancelAuthentication() {}
     func snapshot(_ completion: @escaping @MainActor @Sendable (ARPasswordsState, [any ARPasswordRowAPI]) -> Void) {
@@ -21,7 +25,6 @@ private final class TestPasswords: NSObject, ARPasswordsAPI {
     func revealRow(_ rowID: String, completion: @escaping @MainActor @Sendable (UnsafePointer<unichar>?, UInt) -> Void) {
         completion(nil, 0)
     }
-    func copyRow(_ rowID: String, completion: @escaping @MainActor @Sendable (Bool) -> Void) { completion(false) }
     func invalidate() {}
 }
 

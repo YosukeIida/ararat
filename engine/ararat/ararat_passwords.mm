@@ -12,6 +12,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
 #include "base/uuid.h"
 #include "chrome/browser/affiliations/affiliation_service_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -30,8 +31,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/url_constants.h"
 #include "crypto/secure_util.h"
-#include "ui/base/clipboard/clipboard.h"
-#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "url/gurl.h"
 
 bool AraratIsPasswordsURL(const GURL& url) {
@@ -54,6 +53,9 @@ using password_manager::SavedPasswordsPresenter;
 @interface ARPasswords : NSObject <ARPasswordsAPI>
 - (instancetype)initWithProfile:(Profile*)profile;
 - (void)profileDestroyed;
+- (void)authenticateWithMessage:(const std::u16string&)message
+                       validity:(base::TimeDelta)validity
+                     completion:(void (^)(BOOL))completion;
 - (void)storeChanged;
 @end
 
@@ -79,23 +81,6 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
   static NSMapTable<NSString*, ARPasswords*>* handles =
       [NSMapTable strongToWeakObjectsMapTable];
   return handles;
-}
-
-void CopyPassword(std::u16string_view password) {
-  constexpr auto buffer = ui::ClipboardBuffer::kCopyPaste;
-  {
-    ui::ScopedClipboardWriter writer(buffer);
-    writer.WriteText(password);
-    writer.MarkAsConfidential();
-  }
-  auto sequence = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(buffer);
-  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE, base::BindOnce([](ui::ClipboardSequenceNumberToken sequence) {
-        auto* clipboard = ui::Clipboard::GetForCurrentThread();
-        if (clipboard->GetSequenceNumber(buffer) == sequence)
-          clipboard->Clear(buffer);
-      }, sequence),
-      base::Seconds(120));
 }
 
 }  // namespace
@@ -181,15 +166,40 @@ void CopyPassword(std::u16string_view password) {
         password_manager::prefs::kCredentialsEnableService, enabled);
 }
 
+- (BOOL)showsFillAuthentication {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr;
+  return profile_ && local_state &&
+         password_manager_util::ShouldBiometricAuthenticationForFillingToggleBeVisible(
+             local_state);
+}
+
 - (BOOL)authenticatesBeforeFilling {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   return profile_ && profile_->GetPrefs()->GetBoolean(
       password_manager::prefs::kBiometricAuthenticationBeforeFilling);
 }
 
-- (void)setAuthenticatesBeforeFilling:(BOOL)enabled {
-  if (profile_)
-    profile_->GetPrefs()->SetBoolean(
+- (void)setAuthenticatesBeforeFilling:(BOOL)enabled
+                          completion:(void (^)(BOOL))completion {
+  if (![self showsFillAuthentication]) {
+    completion(NO);
+    return;
+  }
+  __weak ARPasswords* weak = self;
+  [self authenticateWithMessage:(enabled ? u"turn on Touch ID before filling passwords"
+                                         : u"turn off Touch ID before filling passwords")
+                       validity:base::Seconds(0)
+                     completion:^(BOOL ok) {
+    ARPasswords* strong = weak;
+    if (!ok || !strong || !strong->profile_) {
+      completion(NO);
+      return;
+    }
+    strong->profile_->GetPrefs()->SetBoolean(
         password_manager::prefs::kBiometricAuthenticationBeforeFilling, enabled);
+    completion([strong authenticatesBeforeFilling] == enabled);
+  }];
 }
 
 - (void)cancelAuthentication {
@@ -203,6 +213,7 @@ void CopyPassword(std::u16string_view password) {
 }
 
 - (void)authenticateWithMessage:(const std::u16string&)message
+                       validity:(base::TimeDelta)validity
                      completion:(void (^)(BOOL))completion {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!profile_ || authenticating_) {
@@ -222,30 +233,33 @@ void CopyPassword(std::u16string_view password) {
   const auto* command = base::CommandLine::ForCurrentProcess();
   if (command->GetSwitchValueASCII("ararat-check") == "passwords" &&
       command->HasSwitch("use-mock-keychain")) {
+    g_browser_process->local_state()->SetBoolean(
+        password_manager::prefs::kHadBiometricsAvailable, true);
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(reply), true));
     return;
   }
-  if (!authenticator_) {
-    const device_reauth::DeviceAuthParams params(
-        password_manager::constants::kPasswordManagerAuthValidity,
-        device_reauth::DeviceAuthSource::kPasswordManager,
-        "PasswordManager.ReauthToAccessPasswordInSettings");
-    authenticator_ =
-        ChromeDeviceAuthenticatorFactory::GetForProfile(profile_, params);
-  }
+  const device_reauth::DeviceAuthParams params(
+      validity, device_reauth::DeviceAuthSource::kPasswordManager,
+      "PasswordManager.ReauthToAccessPasswordInSettings");
+  authenticator_ =
+      ChromeDeviceAuthenticatorFactory::GetForProfile(profile_, params);
   authenticator_->AuthenticateWithMessage(
       message, base::BindPostTaskToCurrentDefault(std::move(reply)));
 }
 
 - (void)authenticate:(void (^)(BOOL))completion {
-  [self authenticateWithMessage:u"unlock saved passwords" completion:completion];
+  [self authenticateWithMessage:u"unlock saved passwords"
+                       validity:password_manager::constants::kPasswordManagerAuthValidity
+                     completion:completion];
 }
 
 - (void)revealRow:(NSString*)rowID
        completion:(void (^)(const unichar*, NSUInteger))completion {
   __weak ARPasswords* weak = self;
-  [self authenticateWithMessage:u"show a saved password" completion:^(BOOL ok) {
+  [self authenticateWithMessage:u"show a saved password"
+                       validity:password_manager::constants::kPasswordManagerAuthValidity
+                     completion:^(BOOL ok) {
     ARPasswords* strong = weak;
     if (ok && strong && [strong state] == ARPasswordsStateReady) {
       auto it = strong->credentials_.find(base::SysNSStringToUTF8(rowID));
@@ -259,24 +273,6 @@ void CopyPassword(std::u16string_view password) {
       }
     }
     completion(nullptr, 0);
-  }];
-}
-
-- (void)copyRow:(NSString*)rowID completion:(void (^)(BOOL))completion {
-  __weak ARPasswords* weak = self;
-  [self authenticateWithMessage:u"copy a saved password" completion:^(BOOL ok) {
-    ARPasswords* strong = weak;
-    if (ok && strong && [strong state] == ARPasswordsStateReady) {
-      auto it = strong->credentials_.find(base::SysNSStringToUTF8(rowID));
-      if (it != strong->credentials_.end()) {
-        auto password = it->second.password.secure_value();
-        CopyPassword(password);
-        crypto::SecureZeroBuffer(base::as_writable_byte_span(password));
-        completion(YES);
-        return;
-      }
-    }
-    completion(NO);
   }];
 }
 

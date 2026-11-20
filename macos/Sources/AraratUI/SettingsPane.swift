@@ -64,10 +64,16 @@ enum SettingsRegistry {
                      page: .spaces, rows: spacesRows),
         SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled",
                      subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
-        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "Saved sign-ins.", page: .passwords, rows: { _ in
-                         [.init(id: "password-manager", pane: .passwords, title: "Use Ararat’s password manager", subtitle: ""),
-                          .init(id: "password-save", pane: .passwords, title: "Offer to save passwords", subtitle: ""),
-                          .init(id: "password-fill", pane: .passwords, title: "Fill passwords", subtitle: "Ask for Touch ID before filling")]
+        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "Saved sign-ins.", page: .passwords, rows: { model in
+                         var rows: [SettingsModel.Row] = [
+                             .init(id: "password-manager", pane: .passwords, title: "Use Ararat’s password manager", subtitle: ""),
+                             .init(id: "password-save", pane: .passwords, title: "Offer to save passwords", subtitle: ""),
+                         ]
+                         if model.passwords.showsFillAuthentication {
+                             rows.append(.init(id: "password-fill", pane: .passwords, title: "Fill passwords",
+                                               subtitle: "Touch ID is asked before filling"))
+                         }
+                         return rows
                      }),
         SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised",
                      subtitle: "What Ararat keeps and what sites can see.", page: .privacy, rows: privacyRows),

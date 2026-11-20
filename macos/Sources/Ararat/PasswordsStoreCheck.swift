@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import AraratEngineAPI
 
 @MainActor
@@ -18,7 +18,7 @@ final class PasswordsStoreCheck {
             }
     }
 
-    private enum Phase { case unlock, add, edit, copy, deleted, finished }
+    private enum Phase { case unlock, add, edit, reveal, deleted, finished }
     private let handle: any ARPasswordsAPI
     private let finish: (Bool, [String: Bool]) -> Void
     private let website = "https://pwswitch-check.invalid/"
@@ -49,8 +49,15 @@ final class PasswordsStoreCheck {
         if phase == .unlock {
             handle.authenticate { [weak self] ok in
                 guard let self, self.record("fake_auth", ok) else { return }
-                self.phase = .add
-                self.pending = false
+                guard self.record("fill_switch_visible", self.handle.showsFillAuthentication) else { return }
+                let enabled = !self.handle.authenticatesBeforeFilling
+                self.handle.setAuthenticatesBeforeFilling(enabled) { [weak self] changed in
+                    guard let self,
+                          self.record("fill_switch_changed", changed && self.handle.authenticatesBeforeFilling == enabled)
+                    else { return }
+                    self.phase = .add
+                    self.pending = false
+                }
             }
             return
         }
@@ -81,8 +88,8 @@ final class PasswordsStoreCheck {
                 handle.editRow(row.rowID, username: "fixture-edited", password: $0.baseAddress, length: UInt($0.count))
             }
             guard record("edited", edited) else { return }
-            phase = .copy
-        case .copy:
+            phase = .reveal
+        case .reveal:
             guard let row, row.username == "fixture-edited" else { pending = false; return }
             handle.revealRow(row.rowID) { [weak self] password, count in
                 guard let self else { return }
@@ -90,7 +97,10 @@ final class PasswordsStoreCheck {
                     UnsafeBufferPointer(start: $0, count: Int(count)).elementsEqual(self.revised.utf16)
                 } ?? false
                 guard self.record("revealed", matches) else { return }
-                self.copyAndDelete(row.rowID)
+                self.handle.setChangedHandler { [weak self] in self?.deletionObserved = true }
+                guard self.record("delete_submitted", self.handle.deleteRow(row.rowID)) else { return }
+                self.phase = .deleted
+                self.pending = false
             }
             return
         case .deleted:
@@ -99,21 +109,5 @@ final class PasswordsStoreCheck {
             break
         }
         pending = false
-    }
-
-    private func copyAndDelete(_ rowID: String) {
-        handle.copyRow(rowID) { [weak self] copied in
-            guard let self else { return }
-            let pasteboard = NSPasteboard.general
-            let sequence = pasteboard.changeCount
-            let matches = copied && pasteboard.string(forType: .string) == self.revised
-            let concealed = pasteboard.types?.contains(.init("org.nspasteboard.ConcealedType")) == true
-            if matches && pasteboard.changeCount == sequence { pasteboard.clearContents() }
-            guard self.record("copied_confidentially", matches && concealed) else { return }
-            self.handle.setChangedHandler { [weak self] in self?.deletionObserved = true }
-            guard self.record("delete_submitted", self.handle.deleteRow(rowID)) else { return }
-            self.phase = .deleted
-            self.pending = false
-        }
     }
 }
