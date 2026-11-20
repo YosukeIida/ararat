@@ -111,6 +111,27 @@ bool IsPromptScreen() {
          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check") == "site-controls";
 }
 
+bool IsBlankSwitcherURL(const GURL& url) {
+  return url.IsAboutBlank() || url.IsAboutSrcdoc();
+}
+
+bool HasBlankSwitcherURL(content::WebContents* contents) {
+  const auto* frame = contents ? contents->GetPrimaryMainFrame() : nullptr;
+  return frame && IsBlankSwitcherURL(frame->GetLastCommittedURL());
+}
+
+void TraceSwitcherThumbnail(ARWindowHost* host, NSString* live, const char* source,
+                            const char* status, const char* reason, int viz_error, double ms) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("ararat-check") && !command->HasSwitch("ararat-screen")) return;
+  std::fprintf(stderr, "ararat-trace: switcher-thumbnail %s live=%s source=%s reason=%s viz_error=%d elapsed_ms=%.1f\n",
+               status, live.UTF8String, source, reason, viz_error, ms);
+  id<ARWindowHostDelegate> delegate = host.delegate;
+  if ([delegate respondsToSelector:@selector(windowHost:switcherThumbnailTrace:)])
+    [delegate windowHost:host switcherThumbnailTrace:@{@"status": @(status), @"live": live,
+        @"source": @(source), @"reason": @(reason), @"viz_error": @(viz_error), @"elapsed_ms": @(ms)}];
+}
+
 class SwitcherReserveStamp : public content::PageUserData<SwitcherReserveStamp> {
  public:
   base::TimeTicks last_request;
@@ -147,6 +168,8 @@ class TabContentsObserver : public content::WebContentsObserver,
         [tab_ reserveSwitcherThumbnail];
     }
     if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
+      if (HasBlankSwitcherURL(web_contents()))
+        [tab_ invalidateSwitcherThumbnail];
       const auto error = navigation->GetNetErrorCode();
       [tab_ setNetworkError:(navigation->IsErrorPage() && (error == net::ERR_NAME_NOT_RESOLVED || error == net::ERR_NAME_RESOLUTION_FAILED || error == net::ERR_INTERNET_DISCONNECTED)) ? error : 0];
       if (!navigation->IsSameDocument() && tab_ && web_contents())
@@ -841,7 +864,12 @@ static void CopyTabSurface(content::WebContents* contents,
 
 - (void)reserveSwitcherThumbnail {
   if (!contents_ || contents_->GetVisibility() != content::Visibility::VISIBLE ||
-      !contents_->CompletedFirstVisuallyNonEmptyPaint() || thumbnail_navigating_) return;
+      thumbnail_navigating_) return;
+  if (HasBlankSwitcherURL(contents_)) {
+    TraceSwitcherThumbnail(host_, live_id_, "reserve", "skipped", "blank-url", -1, 0);
+    return;
+  }
+  if (!contents_->CompletedFirstVisuallyNonEmptyPaint()) return;
   ARWindowHost* host = host_;
   id<ARWindowHostDelegate> delegate = host.delegate;
   if (![delegate respondsToSelector:@selector(windowHost:reserveSwitcherThumbnailForTab:afterDelay:)]) return;
@@ -857,29 +885,21 @@ static void CopyTabSurface(content::WebContents* contents,
 }
 
 - (void)captureSwitcherThumbnailForReserve:(BOOL)reserve completion:(void (^)(NSImage*))completion {
-  const auto* command = base::CommandLine::ForCurrentProcess();
-  const bool trace = command->HasSwitch("ararat-check") || command->HasSwitch("ararat-screen");
   const base::TimeTicks start = base::TimeTicks::Now();
   NSString* live = live_id_;
   __weak ARWindowHost* weak_host = host_;
   const char* source = reserve ? "reserve" : "prehide";
   void (^event)(const char*, const char*, int) = ^(const char* status, const char* reason, int viz_error) {
-    if (!trace) return;
-    const double ms = (base::TimeTicks::Now() - start).InMillisecondsF();
-    std::fprintf(stderr, "ararat-trace: switcher-thumbnail %s live=%s source=%s reason=%s viz_error=%d elapsed_ms=%.1f\n",
-                 status, live.UTF8String, source, reason, viz_error, ms);
-    ARWindowHost* host = weak_host;
-    id<ARWindowHostDelegate> delegate = host.delegate;
-    if ([delegate respondsToSelector:@selector(windowHost:switcherThumbnailTrace:)])
-      [delegate windowHost:host switcherThumbnailTrace:@{@"status": @(status), @"live": live,
-          @"source": @(source), @"reason": @(reason), @"viz_error": @(viz_error), @"elapsed_ms": @(ms)}];
+    TraceSwitcherThumbnail(weak_host, live, source, status, reason, viz_error,
+                           (base::TimeTicks::Now() - start).InMillisecondsF());
   };
   auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
   const gfx::Size viewport = view ? view->GetVisibleViewportSize() : gfx::Size();
   const int units = std::min(viewport.width() / 3, viewport.height() / 2);
   const char* skip = nullptr;
-  if (!view) skip = "no-view";
-  else if (thumbnail_navigating_) skip = "navigation-pending";
+  if (thumbnail_navigating_) skip = "navigation-pending";
+  else if (HasBlankSwitcherURL(contents_)) skip = "blank-url";
+  else if (!view) skip = "no-view";
   else if (self.crashed) skip = "crashed";
   else if (contents_->GetVisibility() != content::Visibility::VISIBLE ||
            (reserve && !view->IsShowing())) skip = "not-visible";

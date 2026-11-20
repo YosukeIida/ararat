@@ -8,18 +8,20 @@ final class TabSwitcherScreenCheck {
     private static let names = [
         "visible_vs_detach", "two_real_previews", "top_aligned_crop", "capture",
         "quick_tap", "held_once_without_fade", "release_immediate", "escape_immediate",
-        "five_previews_after_space_return", "saved_favicon", "navigation_refresh", "slow_page_favicon",
+        "five_previews_after_space_return", "saved_favicon", "navigation_refresh", "blank_page_globe", "slow_page_favicon",
         "aborted_navigation", "split_focus_no_readback", "split_leave_both_readbacks",
         "little_window_handoff", "private_previews", "private_unpainted_globe", "private_memory_only",
         "private_close_releases", "close_during_readback",
     ]
     private struct CheckFailure: Error, CustomStringConvertible {
         let condition: String
+        var observed: [String: Any] = [:]
         var description: String { condition }
     }
     private var conditions: [String: Bool] = [:]
     private var failures: [String: String] = [:]
     private var skipped: [String: String] = [:]
+    private var details: [String: [String: Any]] = [:]
     private var events: [[String: Any]] = []
     private var presentations: [(visible: Bool, elapsed: TimeInterval, timestamp: TimeInterval, noAnimation: Bool)] = []
     private var images: [String: String] = [:]
@@ -36,7 +38,7 @@ final class TabSwitcherScreenCheck {
             "condition_failures": failures, "skipped_conditions": skipped,
             "pending_conditions": Self.names.filter { conditions[$0] == nil && skipped[$0] == nil },
             "wait": waiting,
-            "images": images, "readbacks": events, "unverified": ["drm_hover_card_parity"],
+            "details": details, "images": images, "readbacks": events, "unverified": ["drm_hover_card_parity"],
         ]
     }
 
@@ -62,18 +64,33 @@ final class TabSwitcherScreenCheck {
         }
     }
 
-    private func check(_ name: String, _ condition: @autoclosure () -> Bool,
-                       reason: @autoclosure () -> String = "assertion failed") throws {
-        waiting = name
-        guard condition() else { throw CheckFailure(condition: reason()) }
-        conditions[name] = true
-        trace("condition=\(name) ok=true")
-    }
-
-    private func fail(_ name: String, _ error: Error) {
+    private func fail(_ name: String, _ error: Error, context: @autoclosure () -> [String: Any]) {
+        if details[name] == nil {
+            var observed = context()
+            observed["step"] = waiting
+            observed["error"] = String(describing: error)
+            observed["at_failure"] = (error as? CheckFailure)?.observed ?? [:]
+            record(name, observed)
+        }
         conditions[name] = false
         failures[name] = String(describing: error)
         trace("condition=\(name) ok=false reason=\(error)")
+    }
+
+    private func record(_ name: String, _ values: [String: Any]) {
+        details[name] = values
+        if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) {
+            trace("details=\(name) \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
+    private func checkNamed(_ name: String, assertions: [String: Bool], observed: [String: Any]) throws {
+        waiting = name
+        record(name, observed.merging(["assertions": assertions]) { _, assertions in assertions })
+        let failed = assertions.keys.filter { assertions[$0] != true }.sorted()
+        guard failed.isEmpty else { throw CheckFailure(condition: "failed assertions: \(failed.joined(separator: ", "))") }
+        conditions[name] = true
+        trace("condition=\(name) ok=true")
     }
 
     private func skip(_ name: String, because prerequisite: String) {
@@ -82,10 +99,13 @@ final class TabSwitcherScreenCheck {
         trace("condition=\(name) \(reason)")
     }
 
-    private func attempt(_ name: String, _ body: () async throws -> Void) async {
+    private func attempt(_ name: String, onFailure: (@MainActor () -> [String: Any])? = nil,
+                         _ body: () async throws -> Void) async {
         waiting = name
         do { try await body() }
-        catch { fail(name, error) }
+        catch {
+            fail(name, error, context: onFailure?() ?? [:])
+        }
     }
 
     private func scenario(_ names: [String], runtime: Runtime, space: String,
@@ -93,6 +113,7 @@ final class TabSwitcherScreenCheck {
         let label = names[0]
         waiting = label
         trace("scenario=\(label)")
+        let mark = events.count
         scenarioItems.removeAll()
         do {
             try await showSpace(runtime, space)
@@ -100,7 +121,9 @@ final class TabSwitcherScreenCheck {
         } catch {
             let pending = names.filter { conditions[$0] == nil && skipped[$0] == nil }
             if let first = pending.first {
-                fail(first, error)
+                fail(first, error, context: runtimeDetails(runtime).merging([
+                    "fixture_items": scenarioItems, "expected_space": space, "readbacks": Array(events.dropFirst(mark)),
+                ]) { _, value in value })
                 for name in pending.dropFirst() { skip(name, because: first) }
             }
         }
@@ -112,7 +135,10 @@ final class TabSwitcherScreenCheck {
             try await wait("cleanup \(label)") {
                 self.scenarioItems.allSatisfy { self.tab(runtime, $0) == nil }
             }
-        } catch { trace("scenario=\(label) cleanup_failed reason=\(error)") }
+        } catch {
+            record("\(label)_cleanup", ["remaining_items": scenarioItems.filter { tab(runtime, $0) != nil },
+                                        "error": String(describing: error)])
+        }
     }
 
     private func showSpace(_ runtime: Runtime, _ space: String) async throws {
@@ -122,13 +148,37 @@ final class TabSwitcherScreenCheck {
         }
     }
 
-    private func wait(_ name: String, timeout: TimeInterval = 8, until ready: () -> Bool) async throws {
+    private func wait(_ name: String, timeout: TimeInterval = 8, observed: () -> [String: Any] = { [:] },
+                      until ready: () -> Bool) async throws {
         waiting = name
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         while !ready() {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw CheckFailure(condition: "timed out waiting for \(name)") }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                throw CheckFailure(condition: "timed out waiting for \(name)", observed: observed())
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
+    }
+
+    private func presentationDetails() -> [[String: Any]] {
+        presentations.map { ["visible": $0.visible, "elapsed_ms": 1000 * $0.elapsed,
+                             "timestamp": $0.timestamp, "no_fade": $0.noAnimation] }
+    }
+
+    private func runtimeDetails(_ runtime: Runtime) -> [String: Any] {
+        ["fixture_port": runtime.promptFixturePort as Any? ?? NSNull(),
+         "space": runtime.snapshot.shownSpaceId as Any? ?? NSNull(),
+         "has_host": runtime.host != nil, "has_workspace": runtime.workspace != nil, "has_adapter": runtime.adapter != nil,
+         "window_key": runtime.host?.window().isKeyWindow == true,
+         "active_item": runtime.host?.activeItemId() as Any? ?? NSNull(),
+         "panel_open": runtime.tabSwitcher?.isOpen == true,
+         "panel_visible": runtime.tabSwitcher?.visibleWindow != nil,
+         "presentations": presentationDetails(),
+         "tabs": ((runtime.host?.tabs() as? [any ARTabAPI]) ?? []).map { tab in
+            ["item": tab.itemId as Any? ?? NSNull(), "live": tab.liveId, "url": tab.url,
+             "loading": tab.isLoading, "has_favicon": tab.favicon != nil, "navigation_count": tab.navigationCount,
+             "source": tab.itemId.flatMap { runtime.adapter?.switcherThumbnailSource(item: $0, live: tab.liveId) } as Any? ?? NSNull()]
+         }]
     }
 
     private func tab(_ runtime: Runtime, _ id: String) -> (any ARTabAPI)? {
@@ -147,6 +197,10 @@ final class TabSwitcherScreenCheck {
                 (reasons.map { $0.contains(event["reason"] as? String ?? "") } ?? true) &&
                 (event["elapsed_ms"] as? Double).map { $0 >= 0 } == true && event["viz_error"] is Int
         }
+    }
+
+    private func readbacks(for lives: [String], since mark: Int = 0) -> [[String: Any]] {
+        events.dropFirst(mark).filter { ($0["live"] as? String).map { lives.contains($0) } == true }
     }
 
     private func open(_ runtime: Runtime, url: String) async throws -> String {
@@ -224,8 +278,29 @@ final class TabSwitcherScreenCheck {
         return color(tile.image, name)
     }
 
+    private func previewDetails(_ tile: (image: NSImage?, fillsPreview: Bool, size: NSSize)?,
+                                expected: String? = nil) -> [String: Any] {
+        let pixels = bitmap(tile?.image)
+        let matches = expected.map { color(tile?.image, $0, at: $0 == "yellow" ? 0.5 : 0.16) }
+        return ["present": tile != nil, "fills_preview": tile?.fillsPreview as Any? ?? NSNull(),
+                "width_pt": tile?.size.width as Any? ?? NSNull(), "height_pt": tile?.size.height as Any? ?? NSNull(),
+                "has_image": tile?.image != nil,
+                "width_px": pixels?.pixelsWide as Any? ?? NSNull(), "height_px": pixels?.pixelsHigh as Any? ?? NSNull(),
+                "expected_color": expected as Any? ?? NSNull(), "matches_expected_color": matches as Any? ?? NSNull()]
+    }
+
+    private func coloredPreviews(_ panel: TabSwitcher, items: [(String, String)]) -> [[String: Any]] {
+        items.map { item, expected in
+            ["item": item, "tile": previewDetails(panel.previewForCheck(item: item), expected: expected)]
+        }
+    }
+
     private func awaitPicture(_ runtime: Runtime, _ item: String, _ name: String) async throws {
-        try await wait("painted \(name) thumbnail for \(item)") { self.color(self.picture(runtime, item), name) }
+        try await wait("painted \(name) thumbnail for \(item)", observed: {
+            let pixels = self.bitmap(self.picture(runtime, item))
+            return ["item": item, "expected_color": name,
+                    "width_px": pixels?.pixelsWide as Any? ?? NSNull(), "height_px": pixels?.pixelsHigh as Any? ?? NSNull()]
+        }) { self.color(self.picture(runtime, item), name) }
     }
 
     private func diskPreviewFiles() throws -> Set<String> {
@@ -243,7 +318,7 @@ final class TabSwitcherScreenCheck {
         do {
             try await exercise(runtime, host: host)
         } catch {
-            fail("fixture", error)
+            fail("fixture", error, context: runtimeDetails(runtime))
             for name in Self.names where conditions[name] == nil && skipped[name] == nil {
                 skip(name, because: "fixture")
             }
@@ -266,15 +341,22 @@ final class TabSwitcherScreenCheck {
             return (previous, try await open(runtime, url: url("green")))
         }
         func assertHeld() throws {
-            try check("held_once_without_fade", presentations.count == 1 && presentations[0].visible &&
-                      presentations[0].elapsed >= 0.145 && presentations[0].elapsed < 0.3 && presentations[0].noAnimation,
-                      reason: "expected one visible transition at 145–300 ms without animation, got \(presentations)")
+            let first = presentations.first
+            try checkNamed("held_once_without_fade", assertions: [
+                "one_show": presentations.count == 1 && first?.visible == true,
+                "reveal_in_window": first.map { $0.elapsed >= 0.145 && $0.elapsed < 0.3 } == true,
+                "no_fade": first?.noAnimation == true,
+            ], observed: ["presentations": presentationDetails(), "minimum_ms": 145, "maximum_ms_exclusive": 300])
         }
         func assertClosed(_ name: String, sent: TimeInterval, selection: String) throws {
-            try check(name, presentations.map(\.visible) == [true, false] &&
-                      presentations.last?.noAnimation == true && host.activeItemId() == selection &&
-                      (presentations.last?.timestamp ?? .infinity) - sent < 0.25,
-                      reason: "expected visible then hidden within 250 ms, selected=\(host.activeItemId() ?? "none"), transitions=\(presentations)")
+            let elapsed = presentations.last.map { $0.timestamp - sent }
+            try checkNamed(name, assertions: [
+                "show_then_hide": presentations.map(\.visible) == [true, false],
+                "no_fade": presentations.last?.noAnimation == true, "selection_matches": host.activeItemId() == selection,
+                "close_within_limit": elapsed.map { $0 < 0.25 } == true,
+            ], observed: ["presentations": presentationDetails(), "expected_selection": selection,
+                          "actual_selection": host.activeItemId() as Any? ?? NSNull(),
+                          "close_elapsed_ms": elapsed.map { 1000 * $0 } as Any? ?? NSNull(), "close_limit_ms": 250])
         }
 
         await scene("visible_vs_detach") {
@@ -286,9 +368,11 @@ final class TabSwitcherScreenCheck {
                 self.hasEvent(live: live, source: "prehide", status: "completed") ||
                 self.hasEvent(live: live, source: "prehide", status: "failed", reasons: ["timeout", "empty", "error"])
             }
-            try check("visible_vs_detach", hasEvent(live: live, source: "reserve", status: "requested") &&
-                      hasEvent(live: live, source: "reserve", status: "completed") &&
-                      hasEvent(live: live, source: "prehide", status: "requested"))
+            try checkNamed("visible_vs_detach", assertions: [
+                "reserve_requested": hasEvent(live: live, source: "reserve", status: "requested"),
+                "reserve_completed": hasEvent(live: live, source: "reserve", status: "completed"),
+                "prehide_requested": hasEvent(live: live, source: "prehide", status: "requested"),
+            ], observed: ["item": red, "live": live, "readbacks": readbacks(for: [live])])
         }
 
         await scene("quick_tap") {
@@ -296,9 +380,13 @@ final class TabSwitcherScreenCheck {
             presentations.removeAll()
             try key(runtime, 48, flags: .control, chars: "\t")
             try key(runtime, 59, type: .flagsChanged)
-            try await wait("quick tap selected previous") { host.activeItemId() == pair.previous && runtime.tabSwitcher == nil }
+            try await wait("quick tap selected previous", observed: { ["expected_selection": pair.previous] }) {
+                host.activeItemId() == pair.previous && runtime.tabSwitcher == nil
+            }
             try await Task.sleep(for: .milliseconds(170))
-            try check("quick_tap", presentations.isEmpty)
+            try checkNamed("quick_tap", assertions: ["no_panel": presentations.isEmpty],
+                           observed: ["presentations": presentationDetails(), "expected_selection": pair.previous,
+                                      "active_item": host.activeItemId() as Any? ?? NSNull()])
         }
         await scene("held_once_without_fade") {
             _ = try await openPair()
@@ -311,7 +399,9 @@ final class TabSwitcherScreenCheck {
             _ = try await hold(runtime)
             let sent = ProcessInfo.processInfo.systemUptime
             try key(runtime, 59, type: .flagsChanged)
-            try await wait("hold released") { runtime.tabSwitcher == nil && host.activeItemId() == pair.previous }
+            try await wait("hold released", observed: { ["expected_selection": pair.previous, "release_timestamp": sent] }) {
+                runtime.tabSwitcher == nil && host.activeItemId() == pair.previous
+            }
             try assertClosed("release_immediate", sent: sent, selection: pair.previous)
         }
         await scene("escape_immediate") {
@@ -330,7 +420,11 @@ final class TabSwitcherScreenCheck {
             _ = try await open(runtime, url: url("green"))
             let panel = try await hold(runtime)
             await attempt("two_real_previews") {
-                try check("two_real_previews", real(panel, red, "red") && real(panel, blue, "blue"))
+                try checkNamed("two_real_previews", assertions: [
+                    "red_is_real": real(panel, red, "red"), "blue_is_real": real(panel, blue, "blue"),
+                ], observed: ["red": previewDetails(panel.previewForCheck(item: red), expected: "red"),
+                              "blue": previewDetails(panel.previewForCheck(item: blue), expected: "blue"),
+                              "red_item": red, "blue_item": blue])
             }
             guard conditions["two_real_previews"] == true else {
                 skip("capture", because: "two_real_previews")
@@ -341,7 +435,11 @@ final class TabSwitcherScreenCheck {
                    let file = runtime.promptScreenScreenshot(host.window(), name: "tab-switcher-two-previews", overlay: overlay) {
                     images["tab-switcher"] = file
                 }
-                try check("capture", images["tab-switcher"] != nil)
+                try checkNamed("capture", assertions: ["screenshot_saved": images["tab-switcher"] != nil],
+                               observed: ["image": images["tab-switcher"] as Any? ?? NSNull(),
+                                          "panel_visible": panel.visibleWindow != nil,
+                                          "host_window": host.window().windowNumber,
+                                          "host_has_screen": host.window().screen != nil])
             }
         }
 
@@ -353,13 +451,21 @@ final class TabSwitcherScreenCheck {
             let panel = try await hold(runtime)
             let cropHeight = floor(viewport.width / 3) * 2
             let tolerance = 0.03
-            guard cropHeight > 0, viewport.height - cropHeight > 2 * tolerance * cropHeight,
-                  let redPreview = bitmap(panel.previewForCheck(item: red)?.image),
-                  let edgeRow = (0..<redPreview.pixelsHigh).first(where: { !color(redPreview, "red", row: $0) })
-            else { throw CheckFailure(condition: "red edge missing or viewport cannot distinguish crops") }
-            let expectedEdge = 0.44 * viewport.height / cropHeight
-            let measuredEdge = Double(edgeRow) / Double(redPreview.pixelsHigh)
-            try check("top_aligned_crop", abs(measuredEdge - expectedEdge) <= tolerance)
+            let tile = panel.previewForCheck(item: red)
+            let distinguishesCrops = cropHeight > 0 && viewport.height - cropHeight > 2 * tolerance * cropHeight
+            let expectedEdge = cropHeight > 0 ? 0.44 * viewport.height / cropHeight : nil
+            let measuredEdge = bitmap(tile?.image).flatMap { redPreview in
+                (0..<redPreview.pixelsHigh).first { !color(redPreview, "red", row: $0) }.map {
+                    Double($0) / Double(redPreview.pixelsHigh)
+                }
+            }
+            let edgeWithinTolerance = measuredEdge.flatMap { measured in expectedEdge.map { abs(measured - $0) <= tolerance } }
+            try checkNamed("top_aligned_crop", assertions: [
+                "distinguishable_crop": distinguishesCrops, "red_edge_found": measuredEdge != nil,
+                "edge_within_tolerance": edgeWithinTolerance == true,
+            ], observed: ["item": red, "tile": previewDetails(tile), "viewport_width": viewport.width,
+                          "viewport_height": viewport.height, "crop_height": cropHeight, "tolerance": tolerance,
+                          "expected_edge": expectedEdge as Any? ?? NSNull(), "measured_edge": measuredEdge as Any? ?? NSNull()])
         }
 
         await scene("five_previews_after_space_return") {
@@ -371,9 +477,12 @@ final class TabSwitcherScreenCheck {
             }
             let beforeSpace = try await hold(runtime)
             let alternatives = eligible.dropLast()
-            try await wait("five real previews before leaving space") {
+            try await wait("five real previews before leaving space", observed: {
+                ["before": self.coloredPreviews(beforeSpace, items: Array(alternatives))]
+            }) {
                 alternatives.allSatisfy { self.real(beforeSpace, $0.0, $0.1) }
             }
+            let before = coloredPreviews(beforeSpace, items: Array(alternatives))
             try await escape(runtime)
             let newSpace: WorkspaceSnapshot = try await withCheckedThrowingContinuation { continuation in
                 workspace.createSpace(name: "Switcher other space") { continuation.resume(with: $0) }
@@ -383,29 +492,49 @@ final class TabSwitcherScreenCheck {
             runtime.show(newSpace)
             try await showSpace(runtime, other)
             try await showSpace(runtime, originalSpace)
-            try await wait("returned to original tab") { host.activeItemId() == eligible.last?.0 }
+            try await wait("returned to original tab", observed: { ["expected_selection": eligible.last?.0 as Any? ?? NSNull()] }) {
+                host.activeItemId() == eligible.last?.0
+            }
             let afterSpace = try await hold(runtime)
-            try check("five_previews_after_space_return", alternatives.allSatisfy { real(afterSpace, $0.0, $0.1) })
+            try checkNamed("five_previews_after_space_return", assertions: Dictionary(uniqueKeysWithValues: alternatives.map {
+                ("real_\($0.0)", real(afterSpace, $0.0, $0.1))
+            }), observed: ["before": before, "after": coloredPreviews(afterSpace, items: Array(alternatives)),
+                           "visited_space": other, "returned_space": originalSpace])
         }
 
         await scene("saved_favicon") {
             let red = try await open(runtime, url: url("red") + "?favicon")
-            try await wait("red page favicon saved") { self.color(self.tab(runtime, red)?.favicon, "yellow", at: 0.5) }
+            try await wait("red page favicon saved", observed: {
+                ["item": red, "has_favicon": self.tab(runtime, red)?.favicon != nil, "expected_color": "yellow"]
+            }) { self.color(self.tab(runtime, red)?.favicon, "yellow", at: 0.5) }
             let initialIDs = Set(runtime.snapshot.spaces.flatMap { $0.today.map(\.id) })
             let duplicated = try adapter.session.queue.sync {
                 try adapter.session.store?.duplicateItem(windowId: runtime.windowID, id: red)
             }
             guard let duplicated, let unloaded = duplicated.spaces.flatMap(\.today).first(where: {
                 !initialIDs.contains($0.id) && $0.unloaded && $0.url == self.tab(runtime, red)?.url
-            }) else { throw CheckFailure(condition: "unloaded duplicate") }
+            }) else {
+                let candidates = duplicated?.spaces.flatMap(\.today).filter { !initialIDs.contains($0.id) } ?? []
+                throw CheckFailure(condition: "unloaded duplicate", observed: [
+                    "source_item": red, "source_url": tab(runtime, red)?.url as Any? ?? NSNull(),
+                    "candidates": candidates.map { ["item": $0.id, "unloaded": $0.unloaded, "url": $0.url as Any? ?? NSNull()] },
+                ])
+            }
             scenarioItems.append(unloaded.id)
             runtime.show(duplicated)
             let panel = try await hold(runtime)
-            try await wait("unloaded saved favicon visible") {
+            try await wait("unloaded saved favicon visible", observed: {
+                ["item": unloaded.id, "tile": self.previewDetails(panel.previewForCheck(item: unloaded.id), expected: "yellow"),
+                 "lookup_items": runtime.switcherUnloadedFavicons.keys.sorted()]
+            }) {
                 let tile = panel.previewForCheck(item: unloaded.id)
                 return tile?.size == NSSize(width: 22, height: 22) && self.color(tile?.image, "yellow", at: 0.5)
             }
-            try check("saved_favicon", tab(runtime, unloaded.id) == nil && panel.previewForCheck(item: unloaded.id)?.fillsPreview == false)
+            let tile = panel.previewForCheck(item: unloaded.id)
+            try checkNamed("saved_favicon", assertions: [
+                "row_unloaded": tab(runtime, unloaded.id) == nil, "tile_not_filled": tile?.fillsPreview == false,
+            ], observed: ["item": unloaded.id, "live": tab(runtime, unloaded.id)?.liveId as Any? ?? NSNull(),
+                          "tile": previewDetails(tile, expected: "yellow"), "lookup_items": runtime.switcherUnloadedFavicons.keys.sorted()])
         }
 
         await scene("navigation_refresh") {
@@ -415,7 +544,52 @@ final class TabSwitcherScreenCheck {
             try await awaitPicture(runtime, red, "blue")
             _ = try await open(runtime, url: url("green"))
             let panel = try await hold(runtime)
-            try check("navigation_refresh", real(panel, red, "blue"))
+            try checkNamed("navigation_refresh", assertions: ["new_document_preview": real(panel, red, "blue")],
+                           observed: ["item": red, "url": tab(runtime, red)?.url as Any? ?? NSNull(),
+                                      "tile": previewDetails(panel.previewForCheck(item: red), expected: "blue")])
+        }
+
+        await scene("blank_page_globe") {
+            let item = try await open(runtime, url: url("red"))
+            try await awaitPicture(runtime, item, "red")
+            guard let target = tab(runtime, item) else { throw CheckFailure(condition: "blank target tab missing") }
+            let live = target.liveId
+            let navigationCount = target.navigationCount
+            let sourceBeforeCommit = adapter.switcherThumbnailSource(item: item, live: live)
+            let mark = events.count
+            host.checkNavigate("about:blank", disposition: "current")
+            try await wait("blank URL committed and reserve skipped", observed: {
+                ["item": item, "live": live, "previous_navigation_count": navigationCount,
+                 "current_navigation_count": target.navigationCount, "url": target.url,
+                 "readbacks": self.readbacks(for: [live], since: mark)]
+            }) {
+                target.navigationCount > navigationCount && target.url == "about:blank" && !target.isLoading &&
+                    self.hasEvent(mark: mark, live: live, source: "reserve", status: "skipped", reasons: ["blank-url"])
+            }
+            let sourceAfterCommit = adapter.switcherThumbnailSource(item: item, live: live)
+
+            _ = try await open(runtime, url: url("green"))
+            let panel = try await hold(runtime)
+            let tile = panel.previewForCheck(item: item)
+            let globePixels = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?.tiffRepresentation
+            let matchesGlobe = globePixels.map { tile?.image?.tiffRepresentation == $0 } ?? false
+            let source = adapter.switcherThumbnailSource(item: item, live: live)
+            let prehideSkipped = hasEvent(mark: mark, live: live, source: "prehide", status: "skipped", reasons: ["blank-url"])
+            let hasLiveFavicon = target.favicon != nil
+            try checkNamed("blank_page_globe", assertions: [
+                "same_live_tab": tab(runtime, item)?.liveId == live,
+                "picture_dropped_at_commit": sourceBeforeCommit != "favicon" && sourceAfterCommit == "favicon",
+                "prehide_skipped_blank_url": prehideSkipped, "source_favicon": source == "favicon",
+                "tile_not_filled": tile?.fillsPreview == false,
+                "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_is_globe": matchesGlobe,
+                "no_live_favicon": !hasLiveFavicon,
+            ], observed: [
+                "item": item, "live": live, "current_live": tab(runtime, item)?.liveId as Any? ?? NSNull(),
+                "url": target.url, "previous_navigation_count": navigationCount, "current_navigation_count": target.navigationCount,
+                "source_before_commit": sourceBeforeCommit, "source_after_commit": sourceAfterCommit, "source": source,
+                "tile": previewDetails(tile), "matches_globe": matchesGlobe, "has_live_favicon": hasLiveFavicon,
+                "readbacks": readbacks(for: [live], since: mark),
+            ])
         }
 
         await scene("slow_page_favicon") {
@@ -426,9 +600,11 @@ final class TabSwitcherScreenCheck {
             _ = try await open(runtime, url: url("red"))
             let panel = try await hold(runtime)
             let tile = panel.previewForCheck(item: slow)
-            try check("slow_page_favicon", tile?.fillsPreview == false && tile?.size.width == 22 &&
-                      tile?.image != nil && hasEvent(live: live, source: "prehide", status: "skipped",
-                                                     reasons: ["navigation-pending", "no-paint"]))
+            try checkNamed("slow_page_favicon", assertions: [
+                "tile_not_filled": tile?.fillsPreview == false, "tile_width_22pt": tile?.size.width == 22,
+                "tile_has_image": tile?.image != nil, "prehide_skipped":
+                    hasEvent(live: live, source: "prehide", status: "skipped", reasons: ["navigation-pending", "no-paint"]),
+            ], observed: ["item": slow, "live": live, "tile": previewDetails(tile), "readbacks": readbacks(for: [live])])
         }
 
         await scene("aborted_navigation") {
@@ -447,9 +623,17 @@ final class TabSwitcherScreenCheck {
             let mark = events.count
             _ = try await open(runtime, url: url("green"))
             let panel = try await hold(runtime)
-            try await wait("painted original document after abort") { self.real(panel, blue, "blue") }
-            try check("aborted_navigation", tab(runtime, blue)?.navigationCount == navigationCount &&
-                      hasEvent(mark: mark, live: live, source: "prehide", status: "requested"))
+            try await wait("painted original document after abort", observed: {
+                ["item": blue, "tile": self.previewDetails(panel.previewForCheck(item: blue), expected: "blue")]
+            }) { self.real(panel, blue, "blue") }
+            let actualCount = tab(runtime, blue)?.navigationCount
+            try checkNamed("aborted_navigation", assertions: [
+                "navigation_did_not_commit": actualCount == navigationCount,
+                "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
+            ], observed: ["item": blue, "live": live, "expected_navigation_count": navigationCount,
+                          "actual_navigation_count": actualCount as Any? ?? NSNull(),
+                          "tile": previewDetails(panel.previewForCheck(item: blue), expected: "blue"),
+                          "readbacks": readbacks(for: [live], since: mark)])
         }
 
         func openSplit() async throws -> (blue: String, red: String) {
@@ -461,8 +645,10 @@ final class TabSwitcherScreenCheck {
                 adapter.makeSplit(dragged: blue, target: red, side: .right) { continuation.resume(returning: $0) }
             }
             guard made, let blueLive = tab(runtime, blue)?.liveId, let redLive = tab(runtime, red)?.liveId
-            else { throw CheckFailure(condition: "make split") }
-            try await wait("split visible") { adapter.checkSplitFocus().panes.count == 2 && host.activeItemId() != nil }
+            else { throw CheckFailure(condition: "make split", observed: ["made": made, "blue_item": blue, "red_item": red]) }
+            try await wait("split visible", observed: { ["pane_count": adapter.checkSplitFocus().panes.count] }) {
+                adapter.checkSplitFocus().panes.count == 2 && host.activeItemId() != nil
+            }
             return (blueLive, redLive)
         }
 
@@ -471,27 +657,47 @@ final class TabSwitcherScreenCheck {
             let active = host.activeItemId()
             let mark = events.count
             adapter.focusPane(backwards: false)
-            try await wait("other split pane focused") {
+            try await wait("other split pane focused", observed: {
+                ["previous_active_item": active as Any? ?? NSNull(), "pane_count": adapter.checkSplitFocus().panes.count]
+            }) {
                 host.activeItemId() != active && adapter.checkSplitFocus().panes.count == 2
             }
-            try check("split_focus_no_readback", !hasEvent(mark: mark, live: split.red, source: "prehide", status: "requested") &&
-                      !hasEvent(mark: mark, live: split.blue, source: "prehide", status: "requested"))
+            try checkNamed("split_focus_no_readback", assertions: [
+                "red_not_requested": !hasEvent(mark: mark, live: split.red, source: "prehide", status: "requested"),
+                "blue_not_requested": !hasEvent(mark: mark, live: split.blue, source: "prehide", status: "requested"),
+            ], observed: ["red_live": split.red, "blue_live": split.blue,
+                          "previous_active_item": active as Any? ?? NSNull(),
+                          "active_item": host.activeItemId() as Any? ?? NSNull(),
+                          "readbacks": readbacks(for: [split.red, split.blue], since: mark)])
         }
         await scene("split_leave_both_readbacks") {
             let split = try await openSplit()
             let mark = events.count
             _ = try await open(runtime, url: url("green"))
-            try await wait("both split readbacks requested") {
+            try await wait("both split readbacks requested", observed: {
+                ["red_live": split.red, "blue_live": split.blue,
+                 "readbacks": self.readbacks(for: [split.red, split.blue], since: mark)]
+            }) {
                 self.hasEvent(mark: mark, live: split.red, source: "prehide", status: "requested") &&
                 self.hasEvent(mark: mark, live: split.blue, source: "prehide", status: "requested")
             }
-            try check("split_leave_both_readbacks", adapter.checkSplitFocus().panes.count < 2)
+            let panes = adapter.checkSplitFocus().panes.count
+            try checkNamed("split_leave_both_readbacks", assertions: ["left_split": panes < 2],
+                           observed: ["pane_count": panes, "red_live": split.red, "blue_live": split.blue,
+                                      "readbacks": readbacks(for: [split.red, split.blue], since: mark)])
         }
 
         await scene("little_window_handoff") {
             runtime.openLittleWindow(url: url("red") + "?handoff")
             defer { for little in runtime.littleWindows { little.window?.close() } }
-            try await wait("Little Window document") {
+            try await wait("Little Window document", observed: {
+                ["windows": runtime.littleWindows.map { little in
+                    ["visible": little.window?.isVisible == true,
+                     "tabs": ((little.popup.host?.tabs() as? [any ARTabAPI]) ?? []).map {
+                        ["live": $0.liveId, "title": $0.title, "loading": $0.isLoading]
+                     }]
+                }]
+            }) {
                 guard let popup = runtime.littleWindows.first,
                       let tab = (popup.popup.host?.tabs() as? [any ARTabAPI])?.first else { return false }
                 return tab.title == "Switcher red" && !tab.isLoading && popup.window?.isVisible == true
@@ -504,7 +710,9 @@ final class TabSwitcherScreenCheck {
             let mark = events.count
             little.performOpenIn(spaceID: originalSpace)
             var handedItem: String?
-            try await wait("Little Window handed off without reload") {
+            try await wait("Little Window handed off without reload", observed: {
+                ["live": live, "previous_navigation_count": navigationCount, "handed_item": handedItem as Any? ?? NSNull()]
+            }) {
                 let tab = (host.tabs() as? [any ARTabAPI])?.first { $0.liveId == live }
                 handedItem = tab?.itemId
                 return handedItem != nil && handedItem == host.activeItemId() && tab?.navigationCount == 0 &&
@@ -515,10 +723,15 @@ final class TabSwitcherScreenCheck {
             try await awaitPicture(runtime, handedItem, "red")
             _ = try await open(runtime, url: url("green"))
             let panel = try await hold(runtime)
-            try check("little_window_handoff", real(panel, handedItem, "red") &&
-                      hasEvent(mark: mark, live: live, source: "prehide", status: "requested") &&
-                      (hasEvent(mark: mark, live: live, source: "prehide", status: "completed") ||
-                       hasEvent(mark: mark, live: live, source: "reserve", status: "completed")))
+            try checkNamed("little_window_handoff", assertions: [
+                "preview_is_real": real(panel, handedItem, "red"),
+                "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
+                "readback_completed": hasEvent(mark: mark, live: live, source: "prehide", status: "completed") ||
+                    hasEvent(mark: mark, live: live, source: "reserve", status: "completed"),
+            ], observed: ["item": handedItem, "live": live, "previous_navigation_count": navigationCount,
+                          "current_navigation_count": tab(runtime, handedItem)?.navigationCount as Any? ?? NSNull(),
+                          "tile": previewDetails(panel.previewForCheck(item: handedItem), expected: "red"),
+                          "readbacks": readbacks(for: [live], since: mark)])
         }
 
         await scene("close_during_readback") {
@@ -538,12 +751,18 @@ final class TabSwitcherScreenCheck {
                 }
             }
             _ = try await open(runtime, url: url("green"))
-            try await wait("closed tab with readback pending") { self.tab(runtime, item) == nil }
-            try await wait("closed tab readback reported failure") {
+            let closeDetails = {
+                ["item": item, "live": live, "tab_present": self.tab(runtime, item) != nil,
+                 "readbacks": self.readbacks(for: [live], since: mark)] as [String: Any]
+            }
+            try await wait("closed tab with readback pending", observed: closeDetails) { self.tab(runtime, item) == nil }
+            try await wait("closed tab readback reported failure", observed: closeDetails) {
                 self.hasEvent(mark: mark, live: live, source: "prehide", status: "failed", reasons: ["stale-document", "error"])
             }
-            try check("close_during_readback", hasEvent(mark: mark, live: live, source: "prehide", status: "requested") &&
-                      !hasEvent(mark: mark, live: live, source: "prehide", status: "completed"))
+            try checkNamed("close_during_readback", assertions: [
+                "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
+                "prehide_did_not_complete": !hasEvent(mark: mark, live: live, source: "prehide", status: "completed"),
+            ], observed: closeDetails())
         }
 
         await scene("private_previews", "private_unpainted_globe", "private_memory_only", "private_close_releases") {
@@ -556,24 +775,94 @@ final class TabSwitcherScreenCheck {
                     child.host?.close()
                 }
             }
-            try await wait("private window foreground") {
-                runtime.children.contains { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }
+            do {
+                defer {
+                    record("private_window_foreground", [
+                        "windows": runtime.children.filter(\.isPrivateWindow).map {
+                            ["has_host": $0.host != nil, "key": $0.host?.window().isKeyWindow == true]
+                        },
+                    ])
+                }
+                try await wait("private window foreground") {
+                    runtime.children.contains { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }
+                }
             }
-            guard let child = runtime.children.first(where: { $0.isPrivateWindow && $0.host != nil }),
+            guard let child = runtime.children.first(where: { $0.isPrivateWindow && $0.host?.window().isKeyWindow == true }),
                   let privateHost = child.host else { throw CheckFailure(condition: "private window missing") }
             child.tabSwitcherScreenCheck = self
             observe(child)
+            @MainActor func privateContext() -> [String: Any] {
+                ["key": child.host?.window().isKeyWindow == true,
+                 "active_item": child.host?.activeItemId() as Any? ?? NSNull(),
+                 "tabs": ((child.host?.tabs() as? [any ARTabAPI]) ?? []).map { tab in
+                    ["item": tab.itemId as Any? ?? NSNull(), "live": tab.liveId, "url": tab.url,
+                     "loading": tab.isLoading, "has_favicon": tab.favicon != nil,
+                     "source": tab.itemId.flatMap { child.adapter?.switcherThumbnailSource(item: $0, live: tab.liveId) } as Any? ?? NSNull()]
+                 }]
+            }
 
-            await attempt("private_unpainted_globe") {
+            await attempt("private_unpainted_globe", onFailure: privateContext) {
                 defer { child.tabSwitcher?.cancel() }
                 let blank = try await open(child, url: "about:blank")
+                guard let target = tab(child, blank) else {
+                    record("private_globe_target", ["item": blank, "tab_present": false])
+                    throw CheckFailure(condition: "private globe target tab missing")
+                }
+                let live = target.liveId
+                let mark = events.count
+                privateHost.checkNavigate(url("slow") + "?" + privateToken, disposition: "current")
+                do {
+                    defer {
+                        record("private_globe_target", [
+                            "item": blank, "live": live, "url": target.url,
+                            "loading": target.isLoading, "navigation_count": target.navigationCount,
+                            "has_live_favicon": target.favicon != nil, "has_thumbnail": picture(child, blank) != nil,
+                        ])
+                    }
+                    try await wait("private globe target loading with no thumbnail") {
+                        target.isLoading && self.picture(child, blank) == nil
+                    }
+                }
                 _ = try await open(child, url: url("green") + "?" + privateToken)
-                let panel = try await hold(child)
-                let globe = panel.previewForCheck(item: blank)
-                try check("private_unpainted_globe", globe?.fillsPreview == false && globe?.size.width == 22 &&
-                          globe?.image != nil && tab(child, blank)?.favicon == nil)
+                let panel: TabSwitcher
+                do {
+                    panel = try await hold(child)
+                } catch {
+                    record("private_globe_hold", ["item": blank, "switcher_open": child.tabSwitcher?.isOpen == true,
+                           "panel_visible": child.tabSwitcher?.visibleWindow != nil, "presentation_count": presentations.count])
+                    throw error
+                }
+                let tile = panel.previewForCheck(item: blank)
+                let rows = panel.rows.compactMap { row -> String? in
+                    if case .tab(let id, _) = row.target { return id }
+                    return nil
+                }
+                let expectedGlobe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?.tiffRepresentation
+                let matchesGlobe = expectedGlobe.map { tile?.image?.tiffRepresentation == $0 } ?? false
+                let liveTab = tab(child, blank)
+                let source = child.adapter?.switcherThumbnailSource(item: blank, live: live)
+                let prehideSkipped = hasEvent(mark: mark, live: live, source: "prehide", status: "skipped",
+                                              reasons: ["navigation-pending", "no-paint"])
+                let savedFavicon = child.switcherUnloadedFavicons[blank]
+                try checkNamed("private_unpainted_globe", assertions: [
+                    "panel_visible": panel.visibleWindow != nil, "target_in_rows": rows.contains(blank),
+                    "target_is_live": liveTab?.liveId == live, "target_is_loading": liveTab?.isLoading == true,
+                    "target_prehide_skipped": prehideSkipped, "no_thumbnail": source == "favicon",
+                    "tile_present": tile != nil, "tile_not_filled": tile?.fillsPreview == false,
+                    "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_has_image": tile?.image != nil,
+                    "tile_is_globe": matchesGlobe, "no_live_favicon": liveTab?.favicon == nil,
+                    "no_saved_favicon": savedFavicon == nil,
+                ], observed: [
+                    "item": blank, "live": live, "current_live": liveTab?.liveId as Any? ?? NSNull(), "rows": rows,
+                    "panel_window": panel.visibleWindow?.windowNumber as Any? ?? NSNull(),
+                    "presentation_count": presentations.count, "source": source as Any? ?? NSNull(),
+                    "loading": liveTab?.isLoading as Any? ?? NSNull(), "tile": previewDetails(tile),
+                    "globe_reference_available": expectedGlobe != nil, "matches_globe": matchesGlobe,
+                    "has_live_favicon": liveTab?.favicon != nil, "saved_favicon_items": child.switcherUnloadedFavicons.keys.sorted(),
+                    "readbacks": events.dropFirst(mark).filter { $0["live"] as? String == live },
+                ])
             }
-            await attempt("private_previews") {
+            await attempt("private_previews", onFailure: privateContext) {
                 defer { child.tabSwitcher?.cancel() }
                 let red = try await open(child, url: url("red") + "?" + privateToken)
                 try await awaitPicture(child, red, "red")
@@ -581,7 +870,18 @@ final class TabSwitcherScreenCheck {
                 try await awaitPicture(child, blue, "blue")
                 _ = try await open(child, url: url("green") + "?" + privateToken)
                 let panel = try await hold(child)
-                try check("private_previews", real(panel, red, "red") && real(panel, blue, "blue"))
+                let redIsReal = real(panel, red, "red")
+                let blueIsReal = real(panel, blue, "blue")
+                try checkNamed("private_previews", assertions: [
+                    "panel_visible": panel.visibleWindow != nil,
+                    "red_is_real": redIsReal, "blue_is_real": blueIsReal,
+                ], observed: [
+                    "panel_window": panel.visibleWindow?.windowNumber as Any? ?? NSNull(),
+                    "red_item": red, "red_tile": previewDetails(panel.previewForCheck(item: red)),
+                    "blue_item": blue, "blue_tile": previewDetails(panel.previewForCheck(item: blue)),
+                    "red_pixel_matches": color(panel.previewForCheck(item: red)?.image, "red"),
+                    "blue_pixel_matches": color(panel.previewForCheck(item: blue)?.image, "blue"),
+                ])
             }
             let cached: Result<(item: String, live: String, adapter: EngineAdapter), Error>
             do {
@@ -602,20 +902,33 @@ final class TabSwitcherScreenCheck {
             } catch {
                 closed = .failure(error)
             }
-            await attempt("private_close_releases") {
+            record("private_session_close", [
+                "remaining_host": child.host != nil, "remaining_sessions": PrivateWorkspaces.liveCount,
+                "cached_fixture": (try? cached.get().item) as Any? ?? NSNull(),
+            ])
+            await attempt("private_close_releases", onFailure: privateContext) {
                 let cached = try cached.get()
                 try closed.get()
-                try check("private_close_releases", cached.adapter.switcherThumbnail(item: cached.item, live: cached.live) == nil)
+                let retainsImage = cached.adapter.switcherThumbnail(item: cached.item, live: cached.live) != nil
+                try checkNamed("private_close_releases", assertions: ["cache_released": !retainsImage],
+                                 observed: ["item": cached.item, "live": cached.live, "retains_image": retainsImage])
             }
-            await attempt("private_memory_only") {
+            await attempt("private_memory_only", onFailure: privateContext) {
                 _ = try cached.get()
                 try closed.get()
                 let before = try diskBefore.get()
                 let during = try diskDuring.get()
                 let after = try diskPreviewFiles()
                 let rows = runtime.captureCheckRows()
-                try check("private_memory_only", before == during && during == after && rows != nil &&
-                          rows?.contains(where: { $0.contains(where: { $0.contains(privateToken) }) }) == false)
+                let leaksToken = rows?.contains { $0.contains { $0.contains(privateToken) } }
+                try checkNamed("private_memory_only", assertions: [
+                    "files_unchanged_during": before == during, "files_unchanged_after": during == after,
+                    "regular_rows_available": rows != nil, "private_token_absent": leaksToken == false,
+                ], observed: [
+                    "during_added": during.subtracting(before).sorted(), "during_removed": before.subtracting(during).sorted(),
+                    "after_added": after.subtracting(during).sorted(), "after_removed": during.subtracting(after).sorted(),
+                    "regular_row_count": rows?.count as Any? ?? NSNull(), "private_token_found": leaksToken as Any? ?? NSNull(),
+                ])
             }
         }
     }
